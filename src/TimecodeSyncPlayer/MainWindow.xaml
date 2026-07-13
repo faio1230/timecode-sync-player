@@ -1,0 +1,393 @@
+<Window x:Class="TimecodeSyncPlayer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Timecode Sync Player" Width="1120" Height="680"
+        MinWidth="980" MinHeight="600"
+        Background="#111"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background"   Value="#2A2A2A"/>
+            <Setter Property="Foreground"   Value="White"/>
+            <Setter Property="BorderBrush"  Value="#555"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"      Value="10,5"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="300"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>  <!-- メニューバー -->
+            <RowDefinition Height="*"/>     <!-- 映像 -->
+            <RowDefinition Height="Auto"/>  <!-- シークバー -->
+            <RowDefinition Height="Auto"/>  <!-- コントロール -->
+            <RowDefinition Height="Auto"/>  <!-- タイムライン -->
+        </Grid.RowDefinitions>
+
+        <!-- メニューバー -->
+        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal"
+                    Background="#1C1C1C" Margin="6,4">
+            <Button Content="📂 開く" Width="90" Height="30"
+                    Click="BtnOpen_Click"
+                    AutomationProperties.AutomationId="BtnOpen"/>
+        </StackPanel>
+
+        <!-- 映像エリア（SW レンダーの WriteableBitmap を表示） -->
+        <Border Grid.Row="1" Grid.Column="0" Background="Black">
+            <Image x:Name="VideoImage"
+                   Stretch="Uniform"
+                   RenderOptions.BitmapScalingMode="HighQuality"/>
+        </Border>
+
+        <!-- シークバー -->
+        <Grid Grid.Row="2" Grid.Column="0" Margin="10,6,10,2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Slider x:Name="SeekBar"
+                    AutomationProperties.AutomationId="SeekBar"
+                     Minimum="0" Maximum="{Binding Player.SeekBarMaximum, Mode=OneWay}"
+                     Value="{Binding Player.SeekBarValue, Mode=OneWay}"
+                    IsMoveToPointEnabled="True"
+                    PreviewMouseDown="Seek_MouseDown"
+                    PreviewMouseUp="Seek_MouseUp"
+                    ValueChanged="Seek_ValueChanged"/>
+            <TextBlock x:Name="TimeLabel"
+                       AutomationProperties.AutomationId="TimeLabel"
+                       Grid.Column="1"
+                       Foreground="#BBBBBB"
+                       FontFamily="Consolas" FontSize="13"
+                        VerticalAlignment="Center"
+                        Margin="12,0,0,0"
+                        Text="{Binding Player.TimeLabel}"/>
+            <TextBlock AutomationProperties.AutomationId="MetaLineText"
+                       Grid.Column="2"
+                       Foreground="#BBBBBB"
+                       FontFamily="Consolas" FontSize="11"
+                       VerticalAlignment="Center"
+                       Margin="12,0,0,0"
+                       MaxWidth="300"
+                       TextTrimming="CharacterEllipsis"
+                       Text="{Binding Player.MetaLine}"/>
+        </Grid>
+
+        <!-- 再生コントロール -->
+        <Grid Grid.Row="3" Grid.Column="0" Margin="10,4,10,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="|◀" ToolTip="前のトラック" Width="46" Height="36"
+                        Margin="0,0,6,0" Click="BtnPreviousTrack_Click"
+                        AutomationProperties.AutomationId="BtnPreviousTrack"/>
+                <Button Content="▶|" ToolTip="次のトラック" Width="46" Height="36"
+                        Margin="0,0,10,0" Click="BtnNextTrack_Click"
+                        AutomationProperties.AutomationId="BtnNextTrack"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Button Content="◀◀" ToolTip="-10秒" Width="54" Height="38"
+                        Margin="4,0" Command="{Binding Player.BackCommand}"
+                        AutomationProperties.AutomationId="BtnBack"/>
+                <Button x:Name="BtnPlay" Width="68" Height="38"
+                        Margin="4,0" Command="{Binding Player.PlayPauseCommand}"
+                        Content="{Binding Player.PlayPauseIcon}"
+                        AutomationProperties.AutomationId="BtnPlay"/>
+                <Button Content="▶▶" ToolTip="+10秒" Width="54" Height="38"
+                        Margin="4,0" Command="{Binding Player.FwdCommand}"
+                        AutomationProperties.AutomationId="BtnFwd"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="速度:" Foreground="#888"
+                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <Button Content="{Binding Player.SpeedLabel}" Width="52" Height="34" Margin="2,0"
+                        Command="{Binding Player.SpeedCommand}"
+                        AutomationProperties.AutomationId="BtnSpeed"/>
+            <Button x:Name="BtnSpout" Content="{Binding Sync.SpoutToggleLabel}" Width="88" Height="34"
+                         Margin="10,0,0,0" Click="BtnSpout_Click"
+                         IsEnabled="False"
+                         AutomationProperties.AutomationId="BtnSpout"/>
+                 <Button x:Name="BtnTimeline" Content="{Binding Sync.TimelineToggleLabel}" Width="96" Height="34"
+                         Margin="10,0,0,0" Click="BtnTimeline_Click"
+                         AutomationProperties.AutomationId="BtnTimeline"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- タイムライン -->
+        <Border x:Name="TimelineContainer"
+                Grid.Row="4" Grid.Column="0"
+                Visibility="Collapsed"
+                BorderBrush="#333" BorderThickness="0,1,0,0"/>
+
+        <!-- Playlist -->
+        <Border Grid.Row="0" Grid.Column="1" Grid.RowSpan="5"
+                Background="#171717" BorderBrush="#303030" BorderThickness="1,0,0,0">
+            <Grid Margin="10,8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>  <!-- LTCタイトル -->
+                    <RowDefinition Height="Auto"/>  <!-- デバイス選択 -->
+                    <RowDefinition Height="Auto"/>  <!-- FPSモード -->
+                    <RowDefinition Height="Auto"/>  <!-- Sync Mode + Gap Behavior -->
+                    <RowDefinition Height="Auto"/>  <!-- START/STOP/Sync -->
+                    <RowDefinition Height="Auto"/>  <!-- タイムコード表示 -->
+                    <RowDefinition Height="Auto"/>  <!-- Playlistタイトル -->
+                    <RowDefinition Height="Auto"/>  <!-- 自動オフセットチェックボックス -->
+                    <RowDefinition Height="Auto"/>  <!-- Playlistボタン -->
+                    <RowDefinition Height="Auto"/>  <!-- 保存/読み込みボタン -->
+                    <RowDefinition Height="*"/>     <!-- Playlistリスト -->
+                    <RowDefinition Height="Auto"/>  <!-- CurrentTrackLabel -->
+                </Grid.RowDefinitions>
+
+                <TextBlock Text="LTC"
+                           Foreground="White"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,6"/>
+
+                <Grid Grid.Row="1" Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ComboBox x:Name="LtcDeviceCombo"
+                              AutomationProperties.AutomationId="LtcDeviceCombo"
+                              Height="28"
+                              Background="White"
+                              Foreground="Black"
+                              SelectedItem="{Binding Sync.SelectedDevice, Mode=TwoWay}">
+                    </ComboBox>
+                    <Button Content="更新" Grid.Column="1" Width="50" Height="28"
+                            Margin="6,0,0,0" Click="BtnRefreshLtcDevices_Click"
+                            AutomationProperties.AutomationId="BtnRefreshLtcDevices"/>
+                </Grid>
+
+                <Grid Grid.Row="2" Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="FPS:" Foreground="#BBBBBB"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="LtcFpsModeCombo"
+                              Grid.Column="1"
+                              AutomationProperties.AutomationId="LtcFpsModeCombo"
+                              Height="28"
+                              SelectedIndex="{Binding Sync.LtcFpsModeIndex, Mode=TwoWay}">
+                        <ComboBoxItem Content="Auto" Tag="Auto"/>
+                        <ComboBoxItem Content="24 fps" Tag="Fixed24"/>
+                        <ComboBoxItem Content="25 fps" Tag="Fixed25"/>
+                        <ComboBoxItem Content="29.97 fps DF" Tag="Fixed29_97"/>
+                        <ComboBoxItem Content="30 fps" Tag="Fixed30"/>
+                    </ComboBox>
+                </Grid>
+
+                <UniformGrid Grid.Row="3" Rows="1" Columns="2" Margin="0,0,0,8">
+                    <StackPanel Margin="0,0,4,0">
+                        <TextBlock Text="Mode:" Foreground="#BBBBBB" FontSize="11" Margin="0,0,0,2"/>
+                        <ComboBox x:Name="SyncModeCombo"
+                                  AutomationProperties.AutomationId="SyncModeCombo"
+                                  Height="26"
+                                  SelectedIndex="{Binding Sync.SyncModeIndex, Mode=TwoWay}">
+                            <ComboBoxItem Content="Single" Tag="Single"/>
+                            <ComboBoxItem Content="Continue" Tag="Continue"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Margin="4,0,0,0">
+                        <TextBlock Text="Gap:" Foreground="#BBBBBB" FontSize="11" Margin="0,0,0,2"/>
+                        <ComboBox x:Name="GapBehaviorCombo"
+                                  AutomationProperties.AutomationId="GapBehaviorCombo"
+                                  Height="26"
+                                  SelectedIndex="{Binding Sync.GapBehaviorIndex, Mode=TwoWay}"
+                                  IsEnabled="{Binding Sync.IsContinueMode}">
+                            <ComboBoxItem Content="Black" Tag="Black"/>
+                            <ComboBoxItem Content="Freeze" Tag="Freeze"/>
+                        </ComboBox>
+                    </StackPanel>
+                </UniformGrid>
+
+                <Grid Grid.Row="4" Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="BtnStartLtc" Content="START" Height="28"
+                            Margin="0,0,3,0" Command="{Binding Sync.StartLtcCommand}"
+                            AutomationProperties.AutomationId="BtnStartLtc"/>
+                    <Button x:Name="BtnStopLtc" Content="STOP" Grid.Column="1" Height="28"
+                            Margin="3,0,3,0" Command="{Binding Sync.StopLtcCommand}"
+                            AutomationProperties.AutomationId="BtnStopLtc"/>
+                    <Button x:Name="BtnToggleSync" Content="{Binding Sync.SyncToggleLabel}" Grid.Column="2" Height="28"
+                            Margin="3,0,0,0" Command="{Binding Sync.ToggleSyncCommand}"
+                            AutomationProperties.AutomationId="BtnToggleSync"/>
+                </Grid>
+
+                <StackPanel Grid.Row="5" Margin="0,0,0,10">
+                    <TextBlock x:Name="LtcTimecodeText"
+                               AutomationProperties.AutomationId="LtcTimecodeText"
+                                Text="{Binding Sync.LtcTimecodeText}"
+                                Foreground="#55D86A"
+                               FontFamily="Consolas"
+                               FontSize="26"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="LtcRealTimeText"
+                               AutomationProperties.AutomationId="LtcRealTimeText"
+                                Text="{Binding Sync.LtcRealTimeText}"
+                                Foreground="#BBBBBB"
+                               FontFamily="Consolas"
+                               FontSize="14"
+                               HorizontalAlignment="Center"
+                               Margin="0,2,0,0"/>
+                    <TextBlock x:Name="LtcFormatText"
+                               AutomationProperties.AutomationId="LtcFormatText"
+                                Text="{Binding Sync.LtcFormatText}"
+                                Foreground="#888888"
+                               FontSize="11"
+                               TextTrimming="CharacterEllipsis"
+                               HorizontalAlignment="Center"
+                               Margin="0,2,0,0"/>
+                </StackPanel>
+
+                <TextBlock Grid.Row="6"
+                           Text="Playlist"
+                           Foreground="White"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,6"/>
+
+                <CheckBox x:Name="AutoOffsetCheckBox"
+                          Grid.Row="7"
+                          Content="自動オフセット（追加時に後ろに配置）"
+                          Foreground="#BBBBBB"
+                          FontSize="11"
+                          Margin="0,0,0,6"
+                          IsChecked="True"
+                          Checked="AutoOffsetCheckBox_Changed"
+                          Unchecked="AutoOffsetCheckBox_Changed"
+                          AutomationProperties.AutomationId="AutoOffsetCheckBox"/>
+
+                <UniformGrid Grid.Row="8" Columns="3" Margin="-3,0,-3,6">
+                    <Button Content="追加" Height="28"
+                            Margin="3" Click="BtnAddToPlaylist_Click"
+                            AutomationProperties.AutomationId="BtnAddToPlaylist"/>
+                    <Button Content="削除" Height="28"
+                            Margin="3" Command="{Binding Playlist.RemoveTrackCommand}"
+                            AutomationProperties.AutomationId="BtnRemoveFromPlaylist"/>
+                    <Button Content="クリア" Height="28"
+                            Margin="3" Command="{Binding Playlist.ClearTracksCommand}"
+                            AutomationProperties.AutomationId="BtnClearPlaylist"/>
+                    <Button Content="上へ" Height="28"
+                            Margin="3" Command="{Binding Playlist.MoveUpCommand}"
+                            AutomationProperties.AutomationId="BtnMoveTrackUp"/>
+                    <Button Content="下へ" Height="28"
+                            Margin="3" Command="{Binding Playlist.MoveDownCommand}"
+                            AutomationProperties.AutomationId="BtnMoveTrackDown"/>
+                </UniformGrid>
+
+                <UniformGrid Grid.Row="9" Columns="2" Margin="-3,0,-3,6">
+                    <Button Content="保存" Height="28"
+                            Margin="3" Click="BtnSaveProject_Click"
+                            AutomationProperties.AutomationId="BtnSaveProject"/>
+                    <Button Content="読み込み" Height="28"
+                            Margin="3" Click="BtnLoadProject_Click"
+                            AutomationProperties.AutomationId="BtnLoadProject"/>
+                </UniformGrid>
+
+                <ListBox x:Name="PlaylistList"
+                         Grid.Row="10"
+                         AutomationProperties.AutomationId="PlaylistList"
+                         AllowDrop="True"
+                         Background="#101010"
+                         BorderBrush="#3A3A3A"
+                         Foreground="White"
+                         PreviewMouseLeftButtonDown="PlaylistList_PreviewMouseLeftButtonDown"
+                         PreviewMouseMove="PlaylistList_PreviewMouseMove"
+                         DragOver="PlaylistList_DragOver"
+                         Drop="PlaylistList_Drop"
+                         SelectionChanged="PlaylistList_SelectionChanged"
+                         MouseDoubleClick="PlaylistList_MouseDoubleClick">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="4,3">
+                                <TextBlock Text="{Binding Name}"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding FilePath}"
+                                           FontSize="13"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                    <TextBlock x:Name="TimelineRangeTextBlock"
+                                               Foreground="#666666"
+                                               FontSize="10"
+                                               FontFamily="Consolas"
+                                               Text=""/>
+                                </StackPanel>
+                                 <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                                     <TextBlock Text="Offset:"
+                                                Foreground="#888888"
+                                                FontSize="9"
+                                                FontFamily="Consolas"
+                                                Margin="8,0,4,0"/>
+                                    <TextBox x:Name="TimelineOffsetTextBox"
+                                             AutomationProperties.AutomationId="TimelineOffsetTextBox"
+                                             Width="80"
+                                             Height="18"
+                                             FontSize="9"
+                                             FontFamily="Consolas"
+                                             Text="{Binding TimelineOffsetText, Mode=OneWay}"
+                                             Foreground="White"
+                                             Background="#2A2A2A"
+                                             BorderBrush="#4A4A4A"
+                                             Padding="2,0"
+                                             Tag="{Binding Id}"
+                                             LostFocus="TimelineOffsetTextBox_LostFocus"
+                                             KeyDown="TimelineOffsetTextBox_KeyDown"/>
+                                    <TextBlock Text="Dur:"
+                                               Foreground="#888888"
+                                               FontSize="9"
+                                               FontFamily="Consolas"
+                                               Margin="8,0,4,0"/>
+                                    <TextBlock Text="{Binding MediaDurationText}"
+                                               Foreground="#666666"
+                                               FontSize="9"
+                                               FontFamily="Consolas"/>
+                                    <TextBlock Text=" Eff:"
+                                               Foreground="#888888"
+                                               FontSize="9"
+                                               FontFamily="Consolas"
+                                               Margin="6,0,4,0"/>
+                                    <TextBlock Text="{Binding EffectiveDurationText}"
+                                               Foreground="#666666"
+                                               FontSize="9"
+                                               FontFamily="Consolas"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <TextBlock x:Name="CurrentTrackLabel"
+                           Grid.Row="11"
+                           AutomationProperties.AutomationId="CurrentTrackLabel"
+                           Foreground="#BBBBBB"
+                            Text="{Binding Playlist.CurrentTrackLabel}"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="0,6,0,0"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

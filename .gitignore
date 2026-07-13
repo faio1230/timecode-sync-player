@@ -1,0 +1,7 @@
+bin/
+obj/
+artifacts/
+logs/
+*.user
+native/*.dll
+.dotnet/

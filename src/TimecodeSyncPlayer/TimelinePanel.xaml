@@ -1,0 +1,48 @@
+<UserControl x:Class="TimecodeSyncPlayer.TimelinePanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinHeight="80" MaxHeight="400"
+             Background="#1A1A1A">
+
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ズームボタンバー -->
+        <StackPanel Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                    Orientation="Horizontal" Background="#2A2A2A" Margin="2">
+            <Button Content="+" Width="40" Height="22" Margin="2,0"
+                    Click="BtnZoomIn_Click" ToolTip="ズームイン"/>
+            <Button Content="-" Width="40" Height="22" Margin="2,0"
+                    Click="BtnZoomOut_Click" ToolTip="ズームアウト"/>
+            <TextBlock x:Name="ZoomLevelText" Text="100%" Foreground="#888"
+                       FontSize="10" VerticalAlignment="Center" Margin="8,0,0,0"/>
+        </StackPanel>
+
+        <!-- 描画エリア（コードでTimelineDrawingSurfaceを追加） -->
+        <Border x:Name="DrawingSurfaceContainer"
+                Grid.Row="1" Grid.Column="0"
+                Background="#1A1A1A" ClipToBounds="True"/>
+
+        <!-- 垂直スクロールバー -->
+        <ScrollBar x:Name="VerticalScrollBar"
+                   Grid.Row="1" Grid.Column="1"
+                   Orientation="Vertical" Width="16"
+                   SmallChange="1" LargeChange="5"
+                   Scroll="VerticalScrollBar_Scroll"/>
+
+        <!-- 水平スクロールバー -->
+        <ScrollBar x:Name="HorizontalScrollBar"
+                   Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                   Orientation="Horizontal" Height="16"
+                   SmallChange="1" LargeChange="10"
+                   Scroll="HorizontalScrollBar_Scroll"/>
+    </Grid>
+</UserControl>

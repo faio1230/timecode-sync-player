@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector"          Version="6.0.0" />
+    <PackageReference Include="FlaUI.Core"                  Version="4.0.0" />
+    <PackageReference Include="FlaUI.UIA3"                  Version="4.0.0" />
+    <PackageReference Include="FluentAssertions"             Version="6.12.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk"      Version="17.8.0" />
+    <PackageReference Include="NAudio"                      Version="2.2.1" />
+    <PackageReference Include="xunit"                       Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio"   Version="2.5.3" />
+    <PackageReference Include="Xunit.SkippableFact"         Version="1.4.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj" />
+  </ItemGroup>
+
+  <!-- mpv-2.dll が native/ にあれば出力にコピー -->
+  <ItemGroup>
+    <Content Include="..\..\native\mpv-2.dll"
+             Condition="Exists('..\..\native\mpv-2.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>mpv-2.dll</Link>
+    </Content>
+  </ItemGroup>
+
+</Project>
