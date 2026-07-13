@@ -2,6 +2,7 @@ bin/
 obj/
 artifacts/
 logs/
+TestResults/
 *.user
 native/*.dll
 .dotnet/
