@@ -6,7 +6,7 @@ public class MediaDurationReaderTests
 {
     private readonly MediaDurationReader _reader = new();
 
-    [Fact]
+    [SkippableFact]
     public async Task ReadDurationAsync_RealVideoFile_ReturnsCorrectDuration()
     {
         Skip.IfNot(TestVideoFactory.FfmpegAvailable(), "ffmpeg is not available on PATH");
