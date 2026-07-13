@@ -1,5 +1,7 @@
 # TimecodeSyncPlayer
 
+[![CI](https://github.com/faio1230/timecode-sync-player/actions/workflows/ci.yml/badge.svg)](https://github.com/faio1230/timecode-sync-player/actions/workflows/ci.yml)
+
 An LTC-synchronized video player for live shows (Windows / WPF).
 
 ## Features
