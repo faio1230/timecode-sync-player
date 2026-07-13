@@ -5,3 +5,4 @@ logs/
 *.user
 native/*.dll
 .dotnet/
+.superpowers/
