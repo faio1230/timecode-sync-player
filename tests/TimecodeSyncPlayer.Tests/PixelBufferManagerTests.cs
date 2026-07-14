@@ -153,11 +153,13 @@ public class PixelBufferManagerTests
     {
         using var manager = new PixelBufferManager();
         manager.EnsureFrozenFrameBuffer(2, 2);
+        FillWithPattern(manager.FrozenFrameBuffer!);
+        byte[] frozenBefore = (byte[])manager.FrozenFrameBuffer!.Clone();
 
         Action act = () => manager.CopyToFrozenFrame(2, 2);
 
         act.Should().NotThrow();
-        manager.FrozenFrameBuffer!.Should().OnlyContain(b => b == 0);
+        manager.FrozenFrameBuffer.Should().Equal(frozenBefore);
     }
 
     [Fact]

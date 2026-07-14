@@ -30,7 +30,11 @@ internal static class LtcTestSignalGenerator
         /// <summary>true で波形全体を極性反転する（BMCは極性無依存のはず）。</summary>
         public bool Invert { get; init; }
 
-        /// <summary>全サンプルに加える DC オフセット。</summary>
+        /// <summary>
+        /// 全サンプルに加える DC オフセット。
+        /// 振幅（<see cref="Amplitude"/>）未満であればゼロクロッシングは維持されデコード可能。
+        /// 振幅以上にするとゼロクロッシングが消失し、デコード不能になる点に注意。
+        /// </summary>
         public float DcOffset { get; init; }
 
         /// <summary>加算する一様乱数ノイズの振幅（絶対値）。0 でノイズなし。</summary>

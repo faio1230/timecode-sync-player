@@ -79,6 +79,29 @@ public class LtcDecoderRoundTripTests
         decoder.EstimatedFps.Should().Be((double)fps);
     }
 
+    /// <summary>
+    /// コンストラクタに誤った fps ヒント（25）を渡しても、実際は 30fps の波形を
+    /// 与えれば BMC クロックリカバリの指数移動平均（EMA）により EstimatedFps が
+    /// 真値へ収束することを確認する。EMA の減衰率は 0.9/遷移で、1フレーム
+    /// （80ビット、100件超の遷移）内で誤差はほぼ解消される。
+    /// </summary>
+    [Fact]
+    public void RoundTrip_WrongFpsHint_EstimatedFpsConvergesToActual()
+    {
+        const int sampleRate = 48000;
+        const int actualFps = 30;
+        const double wrongHint = 25.0;
+        var tc = new LtcTimecode(1, 2, 3, 4, false);
+        var stream = new List<LtcTimecode> { tc, tc, tc, tc };
+        var samples = LtcTestSignalGenerator.Generate(stream, actualFps, sampleRate);
+
+        var decoder = new LtcDecoder(sampleRate, wrongHint);
+        decoder.Write(samples, samples.Length);
+
+        decoder.EstimatedFps.Should().Be((double)actualFps,
+            "誤ったfpsヒントで初期化しても、実波形のビットクロックへEMAで収束するはず");
+    }
+
     // ── カテゴリ2: 連続フレーム列（連番で進む） ──────────────────────────────
 
     [Theory]
@@ -107,6 +130,8 @@ public class LtcDecoderRoundTripTests
         // デコード列が期待列の（先頭数フレームずれを許容した）連続部分列であることを確認
         int offset = expected.FindIndex(e => e == decoded[0]);
         offset.Should().BeGreaterThanOrEqualTo(0, "デコードされた先頭は期待列のいずれかに一致するはず");
+        decoded.Count.Should().BeLessThanOrEqualTo(expected.Count - offset,
+            "デコーダが期待列を超えるフレーム数を返した場合はここで検出する（範囲外例外ではなく明確な失敗として）");
         for (int i = 0; i < decoded.Count; i++)
             decoded[i].Should().Be(expected[offset + i], $"index {i} が連番で一致するはず");
     }
@@ -136,6 +161,8 @@ public class LtcDecoderRoundTripTests
         // 読めたフレームはすべて期待列に含まれ、連続していること
         int offset = stream.FindIndex(e => e == decoded[0]);
         offset.Should().BeGreaterThanOrEqualTo(0);
+        decoded.Count.Should().BeLessThanOrEqualTo(stream.Count - offset,
+            "デコーダが期待列を超えるフレーム数を返した場合はここで検出する（範囲外例外ではなく明確な失敗として）");
         for (int i = 0; i < decoded.Count; i++)
             decoded[i].Should().Be(stream[offset + i]);
     }
@@ -193,6 +220,23 @@ public class LtcDecoderRoundTripTests
         var decoded = DecodeAll(samples, sampleRate, fps);
 
         decoded.Should().NotBeEmpty();
+        decoded.Should().OnlyContain(d => d == tc);
+    }
+
+    [Fact]
+    public void RoundTrip_WithDcOffset_StillDecodes()
+    {
+        const int fps = 25;
+        const int sampleRate = 48000;
+        var tc = new LtcTimecode(9, 8, 7, 6, false);
+        var stream = new List<LtcTimecode> { tc, tc, tc, tc };
+        // オフセットが振幅未満ならゼロクロッシングは維持される（振幅と同値/超だと消失する）
+        var opts = new LtcTestSignalGenerator.Options { Amplitude = 1.0f, DcOffset = 0.3f };
+
+        var samples = LtcTestSignalGenerator.Generate(stream, fps, sampleRate, opts);
+        var decoded = DecodeAll(samples, sampleRate, fps);
+
+        decoded.Should().NotBeEmpty("振幅未満のDCオフセットではゼロクロッシングが残るはず");
         decoded.Should().OnlyContain(d => d == tc);
     }
 

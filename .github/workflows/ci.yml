@@ -20,6 +20,8 @@ jobs:
         run: dotnet test tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj -c Debug --filter "FullyQualifiedName!~E2ETests" --collect:"XPlat Code Coverage" --results-directory TestResults -v minimal
       - name: Upload coverage
         uses: actions/upload-artifact@v4
+        # テスト失敗時にもカバレッジを回収するため always() を指定する。
+        # upload-artifact v4 はファイルが無い場合でも warn 止まりでジョブは失敗しない。
         if: always()
         with:
           name: coverage
