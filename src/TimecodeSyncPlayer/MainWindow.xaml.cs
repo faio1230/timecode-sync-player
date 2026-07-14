@@ -601,87 +601,39 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void HandleOnTrackSync(TimelineQueryResult result, double ltcSeconds)
     {
-        // Gap 終了チェックを先頭で実施（mediaPos への正確なシーク付き）
-        var exitAction = _gapFreezeHandler.DecideGapExit();
-        if (exitAction.Type == GapExitActionType.ResumePlayback)
-        {
-            double targetPos = result.MediaPositionSeconds;
-            SeekTo(targetPos);
-            _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
-            ApplyPauseState(false);
-            _mpvApi.SetPropertyString(_mpv, MpvPropertyOsdBar, MpvValueYes);
-            Log.Information("Continue mode: exiting gap, resuming playback at {Pos:F3}", targetPos);
-            UpdateCurrentTrackLabel();
-            return;    // このフレームは Gap 終了処理のみ実行し、次フレームで通常同期へ
-        }
-
-        ContinueOnTrackDecision onTrackDecision = ContinueOnTrackPlanner.Decide(result, _loadedTrackId);
-        var track = onTrackDecision.Track;
-        double mediaPos = onTrackDecision.MediaPositionSeconds;
-
-        if (onTrackDecision.Action == ContinueOnTrackAction.SwitchTrack)
-        {
-            Log.Information("Continue mode: switching to track {TrackName} at media position {Pos:F3}s", track.Name, mediaPos);
-            bool success = LoadFile(track.FilePath, startPosition: mediaPos);
-            if (success)
-            {
-                _loadedTrackId = track.Id;
-                if (_timelinePanel != null)
-                    _timelinePanel.LoadedTrackId = _loadedTrackId;
-
-                _syncService.BeginFileLoad(mediaPos, _playbackPerformanceStats.TotalRenderedFrames);
-                _fileLoadStabilityLogState.Reset();
-            }
-        }
-        else
-        {
-            int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
-            if (timePosRc != 0) return;
-
-            if (!_syncService.TryMarkFileLoaded(playbackSeconds, _playbackPerformanceStats.TotalRenderedFrames))
-            {
-                if (_fileLoadStabilityLogState.ShouldLog(DateTime.UtcNow))
+        var coordinator = new ContinueOnTrackCoordinator(
+            _syncService,
+            _fileLoadStabilityLogState,
+            new ContinueOnTrackEffects(
+                DecideGapExit: () => _gapFreezeHandler.DecideGapExit(),
+                SeekTo: target => SeekTo(target),
+                ResumeMpvPause: () => _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo),
+                ApplyPauseState: paused => ApplyPauseState(paused),
+                ShowOsdBar: () => _mpvApi.SetPropertyString(_mpv, MpvPropertyOsdBar, MpvValueYes),
+                UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel(),
+                GetLoadedTrackId: () => _loadedTrackId,
+                SetLoadedTrackId: id =>
                 {
-                    Log.Debug(
-                        "Continue mode: waiting for file load stability playback={Playback:F3} mediaPos={MediaPos:F3} renderedFrames={RenderedFrames}",
-                        playbackSeconds, mediaPos, _playbackPerformanceStats.TotalRenderedFrames);
-                }
-
-                return;
-            }
-
-            _fileLoadStabilityLogState.Reset();
-
-            if (playbackSeconds < 0.5)
-            {
-                Log.Debug("Continue mode: skipping sync decision, playback just started playback={Playback:F3}", playbackSeconds);
-                return;
-            }
-
-            var state = new SyncPlaybackState(
-                SyncEnabled: true,
-                HasCurrentTrack: true,
-                IsSeeking: _seekBarInteraction.IsSeeking,
-                PlaybackSeconds: playbackSeconds,
-                DurationSeconds: _duration,
-                VideoFps: _fps,
-                TimecodeFps: _ltcFrameProcessor.LastTimecodeFps);
-
-            SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state);
-            bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds);
-            ContinueSyncSeekPlan seekPlan = ContinueSyncSeekPlanner.Decide(decision, suppressSeek, _syncService.IsDebounced());
-
-            if (!seekPlan.ShouldSeek)
-                return;
-
-            bool success = SeekTo(seekPlan.TargetSeconds);
-            if (success)
-                _syncService.ReportSeekSent(seekPlan.TargetSeconds);
-            Log.Information(
-                "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success}",
-                ltcSeconds, playbackSeconds, seekPlan.TargetSeconds,
-                decision.DeltaSeconds, decision.ToleranceSeconds, success);
-        }
+                    _loadedTrackId = id;
+                    if (_timelinePanel != null)
+                        _timelinePanel.LoadedTrackId = _loadedTrackId;
+                },
+                LoadFile: (path, start) => LoadFile(path, startPosition: start),
+                GetTotalRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames,
+                GetTimePos: () =>
+                {
+                    int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
+                    return (rc, playbackSeconds);
+                },
+                BuildPlaybackState: playbackSeconds => new SyncPlaybackState(
+                    SyncEnabled: true,
+                    HasCurrentTrack: true,
+                    IsSeeking: _seekBarInteraction.IsSeeking,
+                    PlaybackSeconds: playbackSeconds,
+                    DurationSeconds: _duration,
+                    VideoFps: _fps,
+                    TimecodeFps: _ltcFrameProcessor.LastTimecodeFps)));
+        coordinator.Handle(result, ltcSeconds);
     }
 
     private void HandleGapSync(TimelineQueryResult result)
