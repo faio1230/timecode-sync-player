@@ -544,44 +544,23 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void ApplySingleModeSync(double ltcSeconds)
     {
-        int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
-        if (timePosRc != 0) return;
-
-        var state = new SyncPlaybackState(
-            SyncEnabled: _vm.Sync.SyncEnabled,
-            HasCurrentTrack: _playlist.Current != null,
-            IsSeeking: _seekBarInteraction.IsSeeking,
-            PlaybackSeconds: playbackSeconds,
-            DurationSeconds: _duration,
-            VideoFps: _fps,
-            TimecodeFps: _ltcFrameProcessor.LastTimecodeFps);
-
-        SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state);
-        if (decision.Action != SyncActionType.Seek)
-            return;
-
-        bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds);
-
-        if (suppressSeek)
-        {
-            Log.Debug(
-                "Timecode sync seek suppressed pendingTarget={PendingTarget:F3} playback={Playback:F3} ltc={Ltc:F3} requestedTarget={RequestedTarget:F3} tolerance={Tolerance:F4}",
-                _syncService.SeekState.TargetSeconds, playbackSeconds, ltcSeconds,
-                decision.TargetSeconds, decision.ToleranceSeconds);
-            return;
-        }
-
-        if (_syncService.IsDebounced())
-            return;
-
-        bool success = SeekTo(decision.TargetSeconds);
-        if (success)
-            _syncService.ReportSeekSent(decision.TargetSeconds);
-        Log.Information(
-            "Timecode sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} videoFps={VideoFps:F3} timecodeFps={TimecodeFps:F3} defaultVideoFps={DefaultVideoFps} defaultTimecodeFps={DefaultTimecodeFps} success={Success}",
-            ltcSeconds, playbackSeconds, decision.TargetSeconds, decision.DeltaSeconds,
-            decision.ToleranceSeconds, decision.VideoFpsUsed, decision.TimecodeFpsUsed,
-            decision.UsedDefaultVideoFps, decision.UsedDefaultTimecodeFps, success);
+        var coordinator = new SingleModeSyncCoordinator(
+            _syncService,
+            getTimePos: () =>
+            {
+                int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
+                return (rc, playbackSeconds);
+            },
+            buildPlaybackState: playbackSeconds => new SyncPlaybackState(
+                SyncEnabled: _vm.Sync.SyncEnabled,
+                HasCurrentTrack: _playlist.Current != null,
+                IsSeeking: _seekBarInteraction.IsSeeking,
+                PlaybackSeconds: playbackSeconds,
+                DurationSeconds: _duration,
+                VideoFps: _fps,
+                TimecodeFps: _ltcFrameProcessor.LastTimecodeFps),
+            seekTo: target => SeekTo(target));
+        coordinator.Apply(ltcSeconds);
     }
 
     private void ApplyContinueModeSync(double ltcSeconds)
