@@ -639,150 +639,52 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void HandleGapSync(TimelineQueryResult result)
     {
         var action = _gapFreezeHandler.DecideGapEnter(result, _vm.Sync.GapBehavior, _loadedTrackId, _fps, _duration);
+        var coordinator = CreateGapEnterCoordinator();
         var dispatcher = new GapEnterActionDispatcher(new GapEnterActionHandlers(
-            EnterBlackGap,
-            EnterForceBlack,
+            coordinator.EnterBlackGap,
+            coordinator.EnterForceBlack,
             () => _frameRenderer.RenderGapFreeze(_videoWidth, _videoHeight),
-            StartGapFreezeCaptureForCurrentTrack,
-            LoadPreviousTrackFinalFrameForGapFreeze));
+            coordinator.StartGapFreezeCaptureForCurrentTrack,
+            coordinator.LoadPreviousTrackFinalFrameForGapFreeze));
         dispatcher.Execute(action, result);
         UpdateCurrentTrackLabel();
     }
 
-    private void EnterBlackGap()
-    {
-        _endAdvanceTriggered = false;
-        _gapPlaybackCommandExecutor.PauseForGap(_mpv);
-        ApplyPauseState(true);
-        _frameRenderer.RenderBlack(_videoWidth, _videoHeight);
-        Log.Information("Continue mode: entered gap, rendering black frame");
-    }
-
-    private void EnterForceBlack()
-    {
-        _endAdvanceTriggered = false;
-        _bufferManager.ClearGapFreezeFrame();
-        _gapPlaybackCommandExecutor.PauseForGap(_mpv);
-        ApplyPauseState(true);
-        _frameRenderer.RenderBlack(_videoWidth, _videoHeight);
-        Log.Information("Continue mode: gap, forcing black frame");
-    }
-
-    private void StartGapFreezeCaptureForCurrentTrack(TimelineQueryResult result, GapEnterAction action)
-    {
-        _endAdvanceTriggered = false;
-        _gapPlaybackCommandExecutor.PauseForGap(_mpv);
-        ApplyPauseState(true);
-
-        PlaylistTrack? previousTrack = result.PreviousTrack;
-        double target = action.TargetSeconds ?? 0;
-        double duration = action.DurationSeconds ?? _duration;
-        double fps = action.Fps ?? (_fps > 0 ? _fps : DefaultFallbackFps);
-        Guid? previousTrackId = action.TrackId ?? previousTrack?.Id;
-
-        if (target <= 0)
-        {
-            Log.Information("Continue mode: gap freeze activated, holding current frame because duration is unavailable");
-            _gapFreezeHandler.OnFreezeComplete(_loadedTrackId);
-            _frameRenderer.RenderGapFreeze(_videoWidth, _videoHeight);
-            return;
-        }
-
-        bool seekSuccess = SeekTo(target);
-        if (seekSuccess)
-        {
-            _gapFreezeHandler.EnterFreezeCapture(previousTrackId ?? _loadedTrackId, target, previousTrack?.FilePath);
-            Log.Information(
-                "Continue mode: entering gap freeze, waiting for final frame target={Target:F3} duration={Duration:F3} fps={Fps:F3}",
-                target, duration, fps);
-        }
-        else
-        {
-            Log.Warning("Continue mode: gap freeze final-frame seek failed, holding current frame");
-            _gapFreezeHandler.ForceFreezeComplete();
-        }
-    }
-
-    private void EnterNoTracksFreeze()
-    {
-        _gapPlaybackCommandExecutor.PauseForGap(_mpv);
-        ApplyPauseState(true);
-
-        int durRc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double duration);
-        if (durRc == 0 && duration > 0)
-        {
-            double fps = _fps > 0 ? _fps : DefaultFallbackFps;
-            double frameSeconds = 1.0 / fps;
-            double target = Math.Max(0, duration - frameSeconds);
-            bool seekSuccess = SeekTo(target);
-            if (seekSuccess)
-            {
-                _gapFreezeHandler.EnterFreezeCapture(_loadedTrackId, target, null);
-                Log.Information("Continue mode: no tracks, entering gap freeze target={Target:F3} duration={Duration:F3}", target, duration);
-            }
-            else
-            {
-                _gapFreezeHandler.CurrentState = GapState.ForceBlack;
-                _frameRenderer.RenderBlack(_videoWidth, _videoHeight);
-                Log.Warning("Continue mode: no tracks, gap freeze seek failed");
-            }
-        }
-        else
-        {
-            _gapFreezeHandler.CurrentState = GapState.ForceBlack;
-            _frameRenderer.RenderBlack(_videoWidth, _videoHeight);
-        }
-        Log.Information("Continue mode: no tracks, freezing last frame");
-    }
-
-
-    private void LoadPreviousTrackFinalFrameForGapFreeze(PlaylistTrack previousTrack, double target, double duration, double fps)
-    {
-        _endAdvanceTriggered = false;
-        if (_mpv == IntPtr.Zero)
-            return;
-
-        GapLoadCommandResult commandResult = _gapPlaybackCommandExecutor.LoadPausedAt(_mpv, previousTrack.FilePath, target);
-
-        if (commandResult.LoadRc != 0)
-        {
-            Log.Warning(
-                "Continue mode: gap freeze previous-track load failed track={Track} target={Target:F3} loadRc={LoadRc} pauseRc={PauseRc}",
-                previousTrack.Name, target, commandResult.LoadRc, commandResult.PauseRc);
-            _gapFreezeHandler.ForceFreezeComplete();
-            return;
-        }
-
-        _loadedTrackId = previousTrack.Id;
-        if (_timelinePanel != null)
-            _timelinePanel.LoadedTrackId = _loadedTrackId;
-
-        ApplyPauseState(true);
-        ResetPlayerStateForNewTrack();
-        _duration = duration;
-        _fps = fps;
-        _gapFreezeHandler.EnterFreezeCaptureWithReload(previousTrack.Id, target, previousTrack.FilePath);
-
-        Log.Information(
-            "Continue mode: loading previous track final frame for gap freeze track={Track} target={Target:F3} duration={Duration:F3} fps={Fps:F3} loadRc={LoadRc} pauseRc={PauseRc}",
-            previousTrack.Name, target, duration, fps, commandResult.LoadRc, commandResult.PauseRc);
-    }
-
     private void HandleNoTracksSync()
     {
-        var action = _gapFreezeHandler.DecideNoTracksEnter(_vm.Sync.GapBehavior, _loadedTrackId);
-
-        switch (action.Type)
-        {
-            case GapEnterActionType.EnterFreezeFromLastTrack:
-                EnterNoTracksFreeze();
-                break;
-            case GapEnterActionType.ForceBlack:
-                EnterForceBlack();
-                break;
-        }
-        UpdateCurrentTrackLabel();
+        CreateGapEnterCoordinator().HandleNoTracks();
     }
+
+    private GapEnterCoordinator CreateGapEnterCoordinator() =>
+        new(_gapFreezeHandler, new GapEnterEffects(
+            ResetEndAdvanceTriggered: () => _endAdvanceTriggered = false,
+            PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(_mpv),
+            ApplyPauseState: paused => ApplyPauseState(paused),
+            RenderBlack: () => _frameRenderer.RenderBlack(_videoWidth, _videoHeight),
+            RenderGapFreeze: () => _frameRenderer.RenderGapFreeze(_videoWidth, _videoHeight),
+            ClearGapFreezeFrame: () => _bufferManager.ClearGapFreezeFrame(),
+            SeekTo: target => SeekTo(target),
+            GetMpvDuration: () =>
+            {
+                int rc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double duration);
+                return (rc, duration);
+            },
+            IsMpvReady: () => _mpv != IntPtr.Zero,
+            LoadPausedAt: (path, target) => _gapPlaybackCommandExecutor.LoadPausedAt(_mpv, path, target),
+            ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
+            GetLoadedTrackId: () => _loadedTrackId,
+            SetLoadedTrackId: id =>
+            {
+                _loadedTrackId = id;
+                if (_timelinePanel != null)
+                    _timelinePanel.LoadedTrackId = _loadedTrackId;
+            },
+            GetDuration: () => _duration,
+            SetDuration: d => _duration = d,
+            GetFps: () => _fps,
+            SetFps: f => _fps = f,
+            GetGapBehavior: () => _vm.Sync.GapBehavior,
+            UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel()));
 
     private void LtcMonitor_Stopped(object? sender, Exception? exception)
     {
