@@ -49,7 +49,7 @@ public sealed class GapFreezeHandler
 {
     public const double TimeoutSec = 3.0;
     public const double EndAdvanceThresholdSec = 0.15;
-    private const double DefaultFallbackFps = 30.0;    // MainWindow と一致させる
+    internal const double DefaultFallbackFps = 30.0;    // MainWindow・GapEnterCoordinator と共有
 
     private GapState _currentState = GapState.Inactive;
 

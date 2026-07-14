@@ -33,9 +33,10 @@ public class SingleModeSyncCoordinatorTests
         var seekCalls = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(
             CreateService(),
-            getTimePos: () => (rc: 1, playbackSeconds: 0.0),
-            buildPlaybackState: _ => { buildCalls++; return SeekYieldingState(0.0); },
-            seekTo: t => { seekCalls.Add(t); return true; });
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 1, playbackSeconds: 0.0),
+                BuildPlaybackState: _ => { buildCalls++; return SeekYieldingState(0.0); },
+                SeekTo: t => { seekCalls.Add(t); return true; }));
 
         coordinator.Apply(ltcSeconds: 100.0);
 
@@ -50,9 +51,10 @@ public class SingleModeSyncCoordinatorTests
         var seekCalls = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(
             service,
-            getTimePos: () => (rc: 0, playbackSeconds: 0.0),
-            buildPlaybackState: NoSeekState,
-            seekTo: t => { seekCalls.Add(t); return true; });
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: 0.0),
+                BuildPlaybackState: NoSeekState,
+                SeekTo: t => { seekCalls.Add(t); return true; }));
 
         coordinator.Apply(ltcSeconds: 100.0);
 
@@ -69,9 +71,10 @@ public class SingleModeSyncCoordinatorTests
         var seekCalls = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(
             service,
-            getTimePos: () => (rc: 0, playbackSeconds: 0.0),
-            buildPlaybackState: SeekYieldingState,
-            seekTo: t => { seekCalls.Add(t); return true; });
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: 0.0),
+                BuildPlaybackState: SeekYieldingState,
+                SeekTo: t => { seekCalls.Add(t); return true; }));
 
         coordinator.Apply(ltcSeconds: 100.0);
 
@@ -92,9 +95,10 @@ public class SingleModeSyncCoordinatorTests
         var seekCalls = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(
             service,
-            getTimePos: () => (rc: 0, playbackSeconds: 0.0),
-            buildPlaybackState: SeekYieldingState,
-            seekTo: t => { seekCalls.Add(t); return true; });
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: 0.0),
+                BuildPlaybackState: SeekYieldingState,
+                SeekTo: t => { seekCalls.Add(t); return true; }));
 
         coordinator.Apply(ltcSeconds: 100.0);
 
@@ -108,9 +112,10 @@ public class SingleModeSyncCoordinatorTests
         var seekCalls = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(
             service,
-            getTimePos: () => (rc: 0, playbackSeconds: 0.0),
-            buildPlaybackState: SeekYieldingState,
-            seekTo: t => { seekCalls.Add(t); return true; });
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: 0.0),
+                BuildPlaybackState: SeekYieldingState,
+                SeekTo: t => { seekCalls.Add(t); return true; }));
 
         coordinator.Apply(ltcSeconds: 100.0);
 
@@ -127,9 +132,10 @@ public class SingleModeSyncCoordinatorTests
         var seekCalls = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(
             service,
-            getTimePos: () => (rc: 0, playbackSeconds: 0.0),
-            buildPlaybackState: SeekYieldingState,
-            seekTo: t => { seekCalls.Add(t); return false; });
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: 0.0),
+                BuildPlaybackState: SeekYieldingState,
+                SeekTo: t => { seekCalls.Add(t); return false; }));
 
         coordinator.Apply(ltcSeconds: 100.0);
 

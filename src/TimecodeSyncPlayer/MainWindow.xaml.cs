@@ -116,8 +116,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private const string SpoutOnLabel = "Spout ON";
     private const string SpoutOffLabel = "Spout OFF";
 
-    // Additional numeric constants
-    private const double DefaultFallbackFps = 30.0;
     // CLI --save-project の起動シーケンス待機時間
     private const int SaveProjectDelayMs = 3000; // playlist ロード完了の暫定待機時間
 
@@ -126,6 +124,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private Guid?                  _loadedTrackId;
     private bool                   _endAdvanceTriggered;
     private System.Windows.Point?  _playlistDragStartPoint;
+
+    // ── 同期コーディネータ（遅延生成キャッシュ。ラムダは this のフィールドのみを参照するため
+    //    呼び出しごとの再生成は不要。RenderFrameCoordinator 等と同様、初回呼び出し時に確定する） ──
+    private SingleModeSyncCoordinator?  _singleModeSyncCoordinator;
+    private ContinueOnTrackCoordinator? _continueOnTrackCoordinator;
+    private GapEnterCoordinator?        _gapEnterCoordinator;
 
     // ── Timeline ──────────────────────────────────────────────────
     private TimelinePanel? _timelinePanel;
@@ -544,23 +548,24 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void ApplySingleModeSync(double ltcSeconds)
     {
-        var coordinator = new SingleModeSyncCoordinator(
+        _singleModeSyncCoordinator ??= new SingleModeSyncCoordinator(
             _syncService,
-            getTimePos: () =>
-            {
-                int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
-                return (rc, playbackSeconds);
-            },
-            buildPlaybackState: playbackSeconds => new SyncPlaybackState(
-                SyncEnabled: _vm.Sync.SyncEnabled,
-                HasCurrentTrack: _playlist.Current != null,
-                IsSeeking: _seekBarInteraction.IsSeeking,
-                PlaybackSeconds: playbackSeconds,
-                DurationSeconds: _duration,
-                VideoFps: _fps,
-                TimecodeFps: _ltcFrameProcessor.LastTimecodeFps),
-            seekTo: target => SeekTo(target));
-        coordinator.Apply(ltcSeconds);
+            new SingleModeSyncEffects(
+                GetTimePos: () =>
+                {
+                    int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
+                    return (rc, playbackSeconds);
+                },
+                BuildPlaybackState: playbackSeconds => new SyncPlaybackState(
+                    SyncEnabled: _vm.Sync.SyncEnabled,
+                    HasCurrentTrack: _playlist.Current != null,
+                    IsSeeking: _seekBarInteraction.IsSeeking,
+                    PlaybackSeconds: playbackSeconds,
+                    DurationSeconds: _duration,
+                    VideoFps: _fps,
+                    TimecodeFps: _ltcFrameProcessor.LastTimecodeFps),
+                SeekTo: target => SeekTo(target)));
+        _singleModeSyncCoordinator.Apply(ltcSeconds);
     }
 
     private void ApplyContinueModeSync(double ltcSeconds)
@@ -601,7 +606,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void HandleOnTrackSync(TimelineQueryResult result, double ltcSeconds)
     {
-        var coordinator = new ContinueOnTrackCoordinator(
+        _continueOnTrackCoordinator ??= new ContinueOnTrackCoordinator(
             _syncService,
             _fileLoadStabilityLogState,
             new ContinueOnTrackEffects(
@@ -612,12 +617,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 ShowOsdBar: () => _mpvApi.SetPropertyString(_mpv, MpvPropertyOsdBar, MpvValueYes),
                 UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel(),
                 GetLoadedTrackId: () => _loadedTrackId,
-                SetLoadedTrackId: id =>
-                {
-                    _loadedTrackId = id;
-                    if (_timelinePanel != null)
-                        _timelinePanel.LoadedTrackId = _loadedTrackId;
-                },
+                SetLoadedTrackId: id => SetLoadedTrack(id),
                 LoadFile: (path, start) => LoadFile(path, startPosition: start),
                 GetTotalRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames,
                 GetTimePos: () =>
@@ -633,7 +633,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     DurationSeconds: _duration,
                     VideoFps: _fps,
                     TimecodeFps: _ltcFrameProcessor.LastTimecodeFps)));
-        coordinator.Handle(result, ltcSeconds);
+        _continueOnTrackCoordinator.Handle(result, ltcSeconds);
     }
 
     private void HandleGapSync(TimelineQueryResult result)
@@ -656,7 +656,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private GapEnterCoordinator CreateGapEnterCoordinator() =>
-        new(_gapFreezeHandler, new GapEnterEffects(
+        _gapEnterCoordinator ??= new(_gapFreezeHandler, new GapEnterEffects(
             ResetEndAdvanceTriggered: () => _endAdvanceTriggered = false,
             PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(_mpv),
             ApplyPauseState: paused => ApplyPauseState(paused),
@@ -673,12 +673,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             LoadPausedAt: (path, target) => _gapPlaybackCommandExecutor.LoadPausedAt(_mpv, path, target),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
             GetLoadedTrackId: () => _loadedTrackId,
-            SetLoadedTrackId: id =>
-            {
-                _loadedTrackId = id;
-                if (_timelinePanel != null)
-                    _timelinePanel.LoadedTrackId = _loadedTrackId;
-            },
+            SetLoadedTrackId: id => SetLoadedTrack(id),
             GetDuration: () => _duration,
             SetDuration: d => _duration = d,
             GetFps: () => _fps,
@@ -903,14 +898,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             });
     }
 
+    /// <summary>
+    /// _loadedTrackId とタイムラインパネルの表示用トラックIDを同時に更新する。
+    /// </summary>
+    private void SetLoadedTrack(Guid? id)
+    {
+        _loadedTrackId = id;
+        if (_timelinePanel != null)
+            _timelinePanel.LoadedTrackId = id;
+    }
+
     private void LoadCurrentPlaylistTrack()
     {
         PlaylistTrack? track = _playlist.Current;
         if (track == null) return;
 
-        _loadedTrackId = track.Id;
-        if (_timelinePanel != null)
-            _timelinePanel.LoadedTrackId = _loadedTrackId;
+        SetLoadedTrack(track.Id);
         LoadFile(track.FilePath);
         UpdateCurrentTrackLabel();
         UpdatePlaylistTimelineDisplay();
@@ -982,7 +985,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             trackId,
             textBox.Text,
             _settingsManager.Current.AutoOffsetOnAdd,
-            DefaultFallbackFps);
+            GapFreezeHandler.DefaultFallbackFps);
         if (result.Status == PlaylistTimelineOffsetEditStatus.TrackNotFound)
             return;
 
@@ -1272,9 +1275,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 bool success = LoadFile(nextTrack.FilePath, startPosition: startPos > 0 ? startPos : null);
                 if (success)
                 {
-                    _loadedTrackId = nextTrack.Id;
-                    if (_timelinePanel != null)
-                        _timelinePanel.LoadedTrackId = _loadedTrackId;
+                    SetLoadedTrack(nextTrack.Id);
                 }
                 return;
             }
@@ -1312,7 +1313,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     timePosRc == 0,
                     actualPos,
                     _gapFreezeHandler.PendingTargetSeconds,
-                    _fps > 0 ? _fps : DefaultFallbackFps);
+                    _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps);
 
                 if (decision != GapFrameCaptureDecision.SendFrameStep)
                 {
@@ -1334,7 +1335,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     timePosRc == 0,
                     actualPos,
                     _gapFreezeHandler.PendingTargetSeconds,
-                    _fps > 0 ? _fps : DefaultFallbackFps);
+                    _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps);
 
                 if (decision != GapFrameCaptureDecision.RenderAndCapture)
                 {

@@ -13,8 +13,6 @@ namespace TimecodeSyncPlayer;
 /// </summary>
 internal sealed class GapEnterCoordinator
 {
-    private const double DefaultFallbackFps = 30.0;    // MainWindow と一致させる
-
     private readonly GapFreezeHandler _gapFreezeHandler;
     private readonly GapEnterEffects _effects;
 
@@ -53,7 +51,7 @@ internal sealed class GapEnterCoordinator
         double target = action.TargetSeconds ?? 0;
         double duration = action.DurationSeconds ?? _effects.GetDuration();
         double currentFps = _effects.GetFps();
-        double fps = action.Fps ?? (currentFps > 0 ? currentFps : DefaultFallbackFps);
+        double fps = action.Fps ?? (currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps);
         Guid? previousTrackId = action.TrackId ?? previousTrack?.Id;
         Guid? loadedTrackId = _effects.GetLoadedTrackId();
 
@@ -89,7 +87,7 @@ internal sealed class GapEnterCoordinator
         if (durRc == 0 && duration > 0)
         {
             double currentFps = _effects.GetFps();
-            double fps = currentFps > 0 ? currentFps : DefaultFallbackFps;
+            double fps = currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps;
             double frameSeconds = 1.0 / fps;
             double target = Math.Max(0, duration - frameSeconds);
             bool seekSuccess = _effects.SeekTo(target);

@@ -10,28 +10,22 @@ namespace TimecodeSyncPlayer;
 internal sealed class SingleModeSyncCoordinator
 {
     private readonly TimecodeSyncService _syncService;
-    private readonly Func<(int rc, double playbackSeconds)> _getTimePos;
-    private readonly Func<double, SyncPlaybackState> _buildPlaybackState;
-    private readonly Func<double, bool> _seekTo;
+    private readonly SingleModeSyncEffects _effects;
 
     public SingleModeSyncCoordinator(
         TimecodeSyncService syncService,
-        Func<(int rc, double playbackSeconds)> getTimePos,
-        Func<double, SyncPlaybackState> buildPlaybackState,
-        Func<double, bool> seekTo)
+        SingleModeSyncEffects effects)
     {
         _syncService = syncService;
-        _getTimePos = getTimePos;
-        _buildPlaybackState = buildPlaybackState;
-        _seekTo = seekTo;
+        _effects = effects;
     }
 
     public void Apply(double ltcSeconds)
     {
-        (int timePosRc, double playbackSeconds) = _getTimePos();
+        (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
         if (timePosRc != 0) return;
 
-        SyncPlaybackState state = _buildPlaybackState(playbackSeconds);
+        SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
 
         SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state);
         if (decision.Action != SyncActionType.Seek)
@@ -51,7 +45,7 @@ internal sealed class SingleModeSyncCoordinator
         if (_syncService.IsDebounced())
             return;
 
-        bool success = _seekTo(decision.TargetSeconds);
+        bool success = _effects.SeekTo(decision.TargetSeconds);
         if (success)
             _syncService.ReportSeekSent(decision.TargetSeconds);
         Log.Information(
@@ -61,3 +55,12 @@ internal sealed class SingleModeSyncCoordinator
             decision.UsedDefaultVideoFps, decision.UsedDefaultTimecodeFps, success);
     }
 }
+
+/// <summary>
+/// <see cref="SingleModeSyncCoordinator"/> が使用する副作用デリゲート群。
+/// MainWindow のフィールド・メソッドをフェイク可能な形で注入する。
+/// </summary>
+internal sealed record SingleModeSyncEffects(
+    Func<(int rc, double playbackSeconds)> GetTimePos,
+    Func<double, SyncPlaybackState> BuildPlaybackState,
+    Func<double, bool> SeekTo);
