@@ -16,7 +16,7 @@ public class MediaDurationReaderTests
         var duration = await _reader.ReadDurationAsync(videoPath);
 
         duration.Should().NotBeNull();
-        duration.Value.TotalSeconds.Should().BeApproximately(20.0, 1.0);
+        duration!.Value.TotalSeconds.Should().BeApproximately(20.0, 1.0);
     }
 
     [Fact]
