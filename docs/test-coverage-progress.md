@@ -63,3 +63,27 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 ```
 
 プロダクションコード（`src/`）は変更しておらず、push も実施していない。
+
+### 実機端点復旧後の再検証（2026-07-15）
+
+- RDP設定変更後、`CABLE Input` / `CABLE Output` / `CABLE In 16ch` の3端点が
+  Present / OK になり、実機3件はスキップされず実行された。
+- 初回実行は3件失敗。アプリログで `CABLE Output` のキャプチャが peak/rms 0 と確認。
+  一時診断により、同じ端点の正弦波ループと `BufferedWaveProvider` 経由のLTCループは成功し、
+  H1のカスタム `ISampleProvider` 経路を原因として特定した。
+- H1修正（コミット `40a3a7b`）: 数十秒分を保持できる明示サイズのNAudioバッファから
+  LTC波形を再生するよう変更。実アプリで peak/rms 0.985、25fpsのLTCデコードを確認。
+- H3修正（コミット `a10c524`）: `TimeLabel` の `時:分:秒:フレーム` を正しく秒へ変換。
+  同期シーク E2E は合格した。
+- 修正後の実機LTC抽出実行: 2件合格、1件失敗、スキップ0。
+  同期シークと信号断は合格し、表示追従も単調進行までは合格したが、STOP押下後も
+  `LtcTimecodeText` が最終値のままで `--:--:--:--` に戻らず失敗した。
+- ソース確認では表示リセットは `LtcMonitor_Stopped` のみで行われる一方、
+  `LtcAudioMonitor.Stop()` は `StopRecording()` 直後に `RecordingStopped` ハンドラーを解除する。
+  この実機では非同期停止通知より先に解除され、表示リセット経路が実行されない。
+- 非E2Eゲートは再度861/861件合格、スキップ0、ビルド警告0。
+- **停止**: H2の「LTC停止後に表示が `--:--:--:--` に戻る」要件を満たすには
+  プロダクションコードの停止通知処理を修正する必要があるが、本タスクでは `src/` 変更が禁止されている。
+  テスト要件を弱める変更は行っていない。
+
+プロダクションコード（`src/`）は変更しておらず、push も実施していない。
