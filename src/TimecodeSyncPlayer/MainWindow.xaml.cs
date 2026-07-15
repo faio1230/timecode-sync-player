@@ -56,6 +56,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly MpvSessionInitializer _mpvSessionInitializer;
     private readonly ProjectLoadApplicator _projectLoadApplicator;
     private readonly ProjectSaveExecutor _projectSaveExecutor;
+    private readonly ProjectFileCoordinator _projectFileCoordinator;
     private readonly IMpvApi _mpvApi;
     private readonly IMpvRenderApi _mpvRenderApi;
 
@@ -218,6 +219,38 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Player   = new PlayerViewModel(this);
         _vm.Playlist = new PlaylistViewModel(_playlist, _mediaDurationReader);
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
+        _projectFileCoordinator = new ProjectFileCoordinator(
+            new ProjectFileActionRunner(),
+            new ProjectFileEffects(
+                SaveAsync: path => _projectSaveExecutor.SaveAsync(path, _vm.Sync.SyncMode, _vm.Sync.GapBehavior),
+                LogSaved: path => Log.Information("プロジェクトを保存しました: {Path}", path),
+                HandleSaveFailure: ex =>
+                {
+                    Log.Error(ex, "プロジェクトの保存に失敗しました");
+                    MessageBox.Show("プロジェクトの保存に失敗しました。", "エラー",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                },
+                LoadAsync: ProjectSerializer.LoadAsync,
+                ApplyProject: project => _ = Dispatcher.BeginInvoke(() =>
+                {
+                    StopPlayback();
+                    ApplyLoadedProject(project);
+
+                    SyncPlaylistSelection();
+                    UpdatePlaylistTimelineDisplay();
+                    UpdateCurrentTrackLabel();
+                    LoadCurrentPlaylistTrack();
+                    _ = ReadDurationsInBackground(_playlist.Tracks.Select(t => t.FilePath).ToList());
+                }),
+                LogLoaded: path => Log.Information("プロジェクトを読み込みました: {Path}", path),
+                HandleInvalidProject: () => MessageBox.Show("プロジェクトファイルの形式が不正です。", "エラー",
+                    MessageBoxButton.OK, MessageBoxImage.Error),
+                HandleLoadFailure: ex =>
+                {
+                    Log.Error(ex, "プロジェクトの読み込みに失敗しました");
+                    MessageBox.Show("プロジェクトの読み込みに失敗しました。ファイルが破損している可能性があります。", "エラー",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }));
         DataContext  = _vm;
 
         _vm.Sync.StartLtcFailed += (_, ex) =>
@@ -849,17 +882,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         };
 
         string? selectedPath = dialog.ShowDialog() == true ? dialog.FileName : null;
-        var runner = new ProjectFileActionRunner();
-        await runner.SaveAsync(
-            selectedPath,
-            path => _projectSaveExecutor.SaveAsync(path, _vm.Sync.SyncMode, _vm.Sync.GapBehavior),
-            path => Log.Information("プロジェクトを保存しました: {Path}", path),
-            ex =>
-            {
-                Log.Error(ex, "プロジェクトの保存に失敗しました");
-                MessageBox.Show("プロジェクトの保存に失敗しました。", "エラー",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-            });
+        await _projectFileCoordinator.SaveAsync(selectedPath);
     }
 
     private async void BtnLoadProject_Click(object sender, RoutedEventArgs e)
@@ -872,30 +895,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         };
 
         string? selectedPath = dialog.ShowDialog() == true ? dialog.FileName : null;
-        var runner = new ProjectFileActionRunner();
-        await runner.LoadAsync(
-            selectedPath,
-            ProjectSerializer.LoadAsync,
-            project => _ = Dispatcher.BeginInvoke(() =>
-            {
-                StopPlayback();
-                ApplyLoadedProject(project);
-
-                SyncPlaylistSelection();
-                UpdatePlaylistTimelineDisplay();
-                UpdateCurrentTrackLabel();
-                LoadCurrentPlaylistTrack();
-                _ = ReadDurationsInBackground(_playlist.Tracks.Select(t => t.FilePath).ToList());
-            }),
-            path => Log.Information("プロジェクトを読み込みました: {Path}", path),
-            () => MessageBox.Show("プロジェクトファイルの形式が不正です。", "エラー",
-                MessageBoxButton.OK, MessageBoxImage.Error),
-            ex =>
-            {
-                Log.Error(ex, "プロジェクトの読み込みに失敗しました");
-                MessageBox.Show("プロジェクトの読み込みに失敗しました。ファイルが破損している可能性があります。", "エラー",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-            });
+        await _projectFileCoordinator.LoadAsync(selectedPath);
     }
 
     /// <summary>
