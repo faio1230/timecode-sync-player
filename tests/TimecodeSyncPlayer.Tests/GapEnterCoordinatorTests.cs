@@ -49,9 +49,9 @@ public class GapEnterCoordinatorTests
             ResetPlayerStateForNewTrack: () => Calls.Add("ResetPlayerStateForNewTrack"),
             GetLoadedTrackId: () => LoadedTrackId,
             SetLoadedTrackId: id => { Calls.Add("SetLoadedTrackId"); SetLoadedTrackIds.Add(id); LoadedTrackId = id; },
-            GetDuration: () => Duration,
+            GetDuration: () => { Calls.Add("GetDuration"); return Duration; },
             SetDuration: d => { Calls.Add("SetDuration"); Duration = d; },
-            GetFps: () => Fps,
+            GetFps: () => { Calls.Add("GetFps"); return Fps; },
             SetFps: f => { Calls.Add("SetFps"); Fps = f; },
             GetGapBehavior: () => GapBehavior,
             UpdateCurrentTrackLabel: () => Calls.Add("UpdateCurrentTrackLabel"));
@@ -123,6 +123,7 @@ public class GapEnterCoordinatorTests
             "ApplyPauseState(True)",
             "RenderGapFreeze");
         rec.SeekTargets.Should().BeEmpty();
+        rec.Calls.Should().NotContain(new[] { "GetDuration", "GetFps" });
         handler.CurrentState.Should().Be(GapState.FreezeComplete);
         // OnFreezeComplete(loadedTrackId): Pending が無いので CachedTrackId は loadedTrackId
         handler.CachedTrackId.Should().Be(loadedId);
@@ -138,6 +139,8 @@ public class GapEnterCoordinatorTests
         coord.StartGapFreezeCaptureForCurrentTrack(GapWithPrevious(prev), action);
 
         rec.SeekTargets.Should().ContainSingle().Which.Should().Be(49.9);
+        rec.Calls.Should().NotContain("GetDuration");
+        rec.Calls.Should().Contain("GetFps");
         handler.CurrentState.Should().Be(GapState.EnteringFreeze);
         handler.PendingTrackId.Should().Be(prev.Id);
         handler.PendingTargetSeconds.Should().Be(49.9);

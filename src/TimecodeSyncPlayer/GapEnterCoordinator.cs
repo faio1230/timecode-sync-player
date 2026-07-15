@@ -49,9 +49,6 @@ internal sealed class GapEnterCoordinator
 
         PlaylistTrack? previousTrack = result.PreviousTrack;
         double target = action.TargetSeconds ?? 0;
-        double duration = action.DurationSeconds ?? _effects.GetDuration();
-        double currentFps = _effects.GetFps();
-        double fps = action.Fps ?? (currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps);
         Guid? previousTrackId = action.TrackId ?? previousTrack?.Id;
         Guid? loadedTrackId = _effects.GetLoadedTrackId();
 
@@ -63,6 +60,9 @@ internal sealed class GapEnterCoordinator
             return;
         }
 
+        double duration = action.DurationSeconds ?? _effects.GetDuration();
+        double currentFps = _effects.GetFps();
+        double fps = action.Fps ?? (currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps);
         bool seekSuccess = _effects.SeekTo(target);
         if (seekSuccess)
         {
