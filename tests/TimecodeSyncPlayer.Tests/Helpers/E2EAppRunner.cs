@@ -37,8 +37,8 @@ internal sealed class E2EAppRunner : IDisposable
         }
 
         string exeDir = Path.GetDirectoryName(exe)!;
-        if (!File.Exists(Path.Combine(exeDir, "mpv-2.dll")))
-            return (exe, $"mpv-2.dll が見つかりません: {exeDir}");
+        if (!HasMpvLibrary(exeDir))
+            return (exe, $"mpv-2.dll / libmpv-2.dll が見つかりません: {exeDir}");
 
         if (!TestVideoFactory.FfmpegAvailable())
             return (exe, "ffmpeg が PATH にありません。");
@@ -193,6 +193,10 @@ internal sealed class E2EAppRunner : IDisposable
         throw new FileNotFoundException(
             "TimecodeSyncPlayer.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
     }
+
+    private static bool HasMpvLibrary(string directory) =>
+        File.Exists(Path.Combine(directory, "mpv-2.dll")) ||
+        File.Exists(Path.Combine(directory, "libmpv-2.dll"));
 
     public static void KillProcess(Process? process)
     {

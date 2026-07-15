@@ -225,3 +225,13 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 非E2E全件: 915/915件合格、失敗0、スキップ0、ビルド警告0。
 - E2E全件: 36/36件合格、失敗0、スキップ0（8分53秒）。実機LTCを含む。
 - pushは実施していない。追跡外の `AGENTS.md` はステージしていない。
+
+## リリース v0.1.0 準備（2026-07-15）
+
+- R0 完了: App静的初期化でmpv用DllImportResolverを登録し、`mpv-2.dll`、
+  `libmpv-2.dll`の順に解決するよう変更。候補順純関数のユニットテスト3件を追加し、
+  アプリ／テストcsprojとE2E前提判定を両方のDLL名へ対応した。
+- R0 Debug非E2E: 918/918件合格、失敗0、スキップ0、警告0。
+- R0 Debug E2E: 36/36件合格、失敗0、スキップ0（実機LTC 11件を含む）。
+- `native/mpv-2.dll`を一時的に`libmpv-2.dll`へ移し、出力の旧名DLLも退避した検証で、
+  ビルド警告0、上流名DLLのみの起動E2E 1/1件合格。検証後は全ファイルを元へ復元した。

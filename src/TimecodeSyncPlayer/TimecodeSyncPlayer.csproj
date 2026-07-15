@@ -21,6 +21,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>mpv-2.dll</Link>
     </Content>
+    <Content Include="..\..\native\libmpv-2.dll" Condition="Exists('..\..\native\libmpv-2.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>libmpv-2.dll</Link>
+    </Content>
     <Content Include="..\..\native\SpoutDX.dll" Condition="Exists('..\..\native\SpoutDX.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>SpoutDX.dll</Link>

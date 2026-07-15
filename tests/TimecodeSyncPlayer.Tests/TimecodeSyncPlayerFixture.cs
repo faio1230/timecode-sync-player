@@ -29,10 +29,10 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
         string exePath = LocateExe();
         string exeDir  = Path.GetDirectoryName(exePath)!;
 
-        if (!File.Exists(Path.Combine(exeDir, "mpv-2.dll")))
+        if (!HasMpvLibrary(exeDir))
         {
             Skipped    = true;
-            SkipReason = $"mpv-2.dll が見つかりません: {exeDir}";
+            SkipReason = $"mpv-2.dll / libmpv-2.dll が見つかりません: {exeDir}";
             return;
         }
 
@@ -204,6 +204,10 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
         throw new FileNotFoundException(
             "TimecodeSyncPlayer.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
     }
+
+    private static bool HasMpvLibrary(string directory) =>
+        File.Exists(Path.Combine(directory, "mpv-2.dll")) ||
+        File.Exists(Path.Combine(directory, "libmpv-2.dll"));
 
     private async Task PausePlaybackIfNeeded()
     {
