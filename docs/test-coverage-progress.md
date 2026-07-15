@@ -36,3 +36,28 @@
 - `SpoutOutput` の native API シームが、実DLLでの呼出し順序・例外処理・senderライフサイクルを変えていないこと。
 - `LtcAudioSampleProcessor` 導入後も、オーディオコールバック上のイベント sender、イベント順序、統計ログ値が従来どおりであること。
 - MainWindow の3 Coordinator Effects 配線が、UI Dispatcher、ダイアログ、D&DのHandled設定を従来と同じ順序で実行すること。
+
+## 実機 LTC ループ E2E（2026-07-15）
+
+- H1 完了（コミット `2535c14`）: `LtcSignalPlayer` を追加し、WASAPI Shared で
+  `CABLE Input` へ連続 LTC フレームを送出する処理と、例外安全な停止・破棄を実装。
+- H2 / H3 実装完了（コミット `ae8a5e2`）: `CABLE Output` を選択する表示追従・停止時リセット・
+  信号断・20秒動画の同期シーク E2E を追加。録音デバイス不在時、および同期シークの
+  ffmpeg 不在時は規約どおりスキップする。
+- H4 完了（コミット `216b716`）: README に目的、VB-CABLE の導入先、再起動の注意、
+  実行コマンド、自動スキップを追記。
+- 非E2Eゲート: 861/861件合格、スキップ0、ビルド警告0。
+- 全E2Eゲート: 既存25件合格、実機LTC 3件スキップ、失敗0（合計28件、4分15秒）。
+- 実機LTC抽出実行: 0件合格、3件スキップ。理由は、Windows Core Audio の有効な
+  録音エンドポイントに `CABLE Output` が見つからないため。
+- PnP 上では `VB-Audio Virtual Cable`（`ROOT\\MEDIA\\0008`）は正常だが、現在の
+  Windows セッションには `CABLE Input` / `CABLE Output` が公開されていない。
+  デバイス再起動・再スキャンは管理者権限不足で実行できなかった。
+- **停止**: 「VB-CABLE がある本機ではスキップされず実行」の完了ゲートに未達。
+  Windows を再起動して両エンドポイントを有効にした後、次を再実行すること。
+
+```powershell
+dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop" --logger "console;verbosity=detailed"
+```
+
+プロダクションコード（`src/`）は変更しておらず、push も実施していない。
