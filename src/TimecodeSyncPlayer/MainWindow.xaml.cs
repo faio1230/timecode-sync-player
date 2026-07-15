@@ -101,7 +101,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private const string MpvPropertyOsdFontSize = "osd-font-size";
 
     // Playback icons
-    private const string IconPlay = "▶";
     private const string IconPause = "⏸";
 
     // Timer interval (ms)
@@ -109,8 +108,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // Additional repeated strings
     private const string MpvCommandNoOsd = "no-osd";
-    private const string MpvCommandStop = "stop";
-    private const string DefaultTimeLabel = "0:00 / 0:00";
     private const string TimelineOnLabel = "Timeline ON";
     private const string TimelineOffLabel = "Timeline OFF";
     private const string SyncOnLabel = "Sync ON";
@@ -132,6 +129,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private SingleModeSyncCoordinator?  _singleModeSyncCoordinator;
     private ContinueOnTrackCoordinator? _continueOnTrackCoordinator;
     private GapEnterCoordinator?        _gapEnterCoordinator;
+    private PlaybackOperationsCoordinator? _playbackOperationsCoordinator;
 
     // ── Timeline ──────────────────────────────────────────────────
     private TimelinePanel? _timelinePanel;
@@ -1022,77 +1020,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private void StopPlayback()
-    {
-        if (_mpv == IntPtr.Zero) return;
-
-        _mpvApi.CommandString(_mpv, MpvCommandStop);
-        _mpvApi.SetPropertyString(_mpv, "pause", MpvValueYes);
-        ApplyPauseState(true);
-        ResetPlayerStateForNewTrack();
-        _videoWidth = 0;
-        _videoHeight = 0;
-        _loadedTrackId = null;
-        if (_timelinePanel != null)
-            _timelinePanel.LoadedTrackId = null;
-        SetSeekBarValueFromPlayer(0);
-        _vm.Player.TimeLabel = DefaultTimeLabel;
-        _vm.Player.PlayPauseIcon = IconPlay;
-        _gapFreezeHandler.ResetAll();
-        _bufferManager.ClearGapFreezeFrame();
-    }
+        => CreatePlaybackOperationsCoordinator().StopPlayback();
 
     private bool LoadFile(string path, double? startPosition = null)
-    {
-        if (_mpv == IntPtr.Zero) return false;
-        bool success;
-        if (startPosition.HasValue)
-        {
-            int loadRc = _mpvApi.CommandString(_mpv, MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition));
-            success = loadRc == 0;
-            Log.Information("LoadFile path={Path} start={Start:F3} loadRc={LoadRc}",
-                path, startPosition.Value, loadRc);
-        }
-        else
-        {
-            int loadRc = _mpvApi.CommandString(_mpv, MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition: null));
-            int pauseRc = _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
-            success = loadRc == 0;
-            Log.Information("LoadFile path={Path} start=none loadRc={LoadRc} pauseRc={PauseRc}",
-                path, loadRc, pauseRc);
-        }
-        if (!success) return false;
-        ApplyPauseState(false);
-        ResetPlayerStateForNewTrack();
-        _videoWidth  = 0;
-        _videoHeight = 0;
-        _gapFreezeHandler.Reset();
-        SetSeekBarValueFromPlayer(0);
-        _vm.Player.TimeLabel = DefaultTimeLabel;
-        return true;
-    }
+        => CreatePlaybackOperationsCoordinator().LoadFile(path, startPosition);
 
     // ── Playback helpers ───────────────────────────────────────────
 
     private bool SeekTo(double seconds, bool suppressOsd = true)
-    {
-        try
-        {
-            var prefix = suppressOsd ? MpvCommandNoOsd : "";
-            var command = $"{prefix} seek {seconds.ToString("F3", CultureInfo.InvariantCulture)} {MpvSeekModeAbsolute}".Trim();
-            int rc = _mpvApi.CommandString(_mpv, command);
-            if (rc != 0)
-            {
-                Log.Warning("Seek failed: rc={Rc}, target={Target}", rc, seconds);
-                return false;
-            }
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Seek error: target={Target}", seconds);
-            return false;
-        }
-    }
+        => CreatePlaybackOperationsCoordinator().SeekTo(seconds, suppressOsd);
 
     // ── IPlaybackController ────────────────────────────────────────────────
     void IPlaybackController.TogglePlayPause()
@@ -1119,10 +1055,25 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private void ApplyPauseState(bool paused)
-    {
-        PlaybackPauseChange change = _playbackControl.SetPaused(paused);
-        _vm.Player.PlayPauseIcon = change.PlayPauseIcon;
-    }
+        => CreatePlaybackOperationsCoordinator().ApplyPauseState(paused);
+
+    private PlaybackOperationsCoordinator CreatePlaybackOperationsCoordinator() =>
+        _playbackOperationsCoordinator ??= new(_playbackControl, new PlaybackOperationsEffects(
+            IsMpvReady: () => _mpv != IntPtr.Zero,
+            CommandString: command => _mpvApi.CommandString(_mpv, command),
+            SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
+            ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
+            ResetVideoWidth: () => _videoWidth = 0,
+            ResetVideoHeight: () => _videoHeight = 0,
+            ClearLoadedTrackId: () => _loadedTrackId = null,
+            HasTimelinePanel: () => _timelinePanel != null,
+            ClearTimelineLoadedTrackId: () => _timelinePanel!.LoadedTrackId = null,
+            SetSeekBarValueFromPlayer: value => SetSeekBarValueFromPlayer(value),
+            SetTimeLabel: value => _vm.Player.TimeLabel = value,
+            SetPlayPauseIcon: value => _vm.Player.PlayPauseIcon = value,
+            ResetGapFreezeAll: () => _gapFreezeHandler.ResetAll(),
+            ResetGapFreeze: () => _gapFreezeHandler.Reset(),
+            ClearGapFreezeFrame: () => _bufferManager.ClearGapFreezeFrame()));
 
     // ── Spout ─────────────────────────────────────────────────────
 
