@@ -11,6 +11,7 @@ public partial class TimelinePanel : UserControl, IDisposable
 {
     private bool _disposed;
     private readonly PlaylistState _playlist;
+    private readonly TimelineInputInterpreter _inputInterpreter;
     private TimelineDrawingSurface? _drawingSurface;
 
     internal event EventHandler<TimelineSeekEventArgs>? TimelineSeekRequested;
@@ -45,6 +46,15 @@ public partial class TimelinePanel : UserControl, IDisposable
         _drawingSurface.SizeChanged += DrawingSurface_SizeChanged;
 
         DrawingSurfaceContainer.Child = _drawingSurface;
+        _inputInterpreter = new TimelineInputInterpreter(new TimelineInputEffects(
+            ZoomIn: () => _drawingSurface?.ZoomIn(),
+            ZoomOut: () => _drawingSurface?.ZoomOut(),
+            GetHorizontalScrollSeconds: () => _drawingSurface?.DisplayState.HorizontalScrollSeconds,
+            ScrollHorizontal: delta => _drawingSurface!.ScrollHorizontal(delta),
+            GetVerticalScrollOffset: () => _drawingSurface?.DisplayState.VerticalScrollOffset,
+            ScrollVertical: delta => _drawingSurface!.ScrollVertical(delta),
+            UpdateScrollBarRanges: UpdateScrollBarRanges,
+            RequestSeek: args => TimelineSeekRequested?.Invoke(this, args)));
 
         UpdateScrollBarRanges();
         _playlist.Tracks.CollectionChanged += OnTracksCollectionChanged;
@@ -108,32 +118,22 @@ public partial class TimelinePanel : UserControl, IDisposable
 
     private void BtnZoomIn_Click(object sender, RoutedEventArgs e)
     {
-        _drawingSurface?.ZoomIn();
-        UpdateScrollBarRanges();
+        _inputInterpreter.ZoomIn();
     }
 
     private void BtnZoomOut_Click(object sender, RoutedEventArgs e)
     {
-        _drawingSurface?.ZoomOut();
-        UpdateScrollBarRanges();
+        _inputInterpreter.ZoomOut();
     }
 
     private void HorizontalScrollBar_Scroll(object sender, ScrollEventArgs e)
     {
-        if (_drawingSurface == null) return;
-
-        double delta = e.NewValue - _drawingSurface.DisplayState.HorizontalScrollSeconds;
-        _drawingSurface.ScrollHorizontal(delta);
-        UpdateScrollBarRanges();
+        _inputInterpreter.ScrollHorizontal(e.NewValue);
     }
 
     private void VerticalScrollBar_Scroll(object sender, ScrollEventArgs e)
     {
-        if (_drawingSurface == null) return;
-
-        int delta = (int)e.NewValue - _drawingSurface.DisplayState.VerticalScrollOffset;
-        _drawingSurface.ScrollVertical(delta);
-        UpdateScrollBarRanges();
+        _inputInterpreter.ScrollVertical(e.NewValue);
     }
 
     private void DrawingSurface_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -143,7 +143,7 @@ public partial class TimelinePanel : UserControl, IDisposable
 
     private void DrawingSurface_TimelineSeekRequested(object? sender, TimelineSeekEventArgs e)
     {
-        TimelineSeekRequested?.Invoke(this, e);
+        _inputInterpreter.RequestSeek(e);
     }
 
     public void UpdatePlaybackPosition(double seconds)
