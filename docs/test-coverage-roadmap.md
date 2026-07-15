@@ -18,7 +18,7 @@
 | T3 | TimelineDrawingSurface | 抽出クラス100% / Surface 8.4% | ロジック抽出＋テスト | 高 | △（制約厳守前提） |
 | T4 | SpoutOutput | 160行・100% | シーム導入＋テスト | 中 | ○ |
 | T5 | TimelinePanel.xaml.cs | 抽出クラス100% / Panel 0% | ロジック抽出＋テスト | 中 | △ |
-| T6 | LtcAudioMonitor | 234行・0% | 部分抽出＋テスト | 中 | △ |
+| T6 | LtcAudioMonitor | 抽出クラス100% / Monitor 0% | 部分抽出＋テスト | 中 | △ |
 | T7 | MainWindow 残り配線（1700行） | 0% | 継続抽出 | 高 | ✕（対話セッション推奨） |
 
 **見送り:** MediaDurationReader（65%、残りは ffmpeg 依存パスで SkippableFact 済み）、Mpv/MpvApi/SpoutNative（P/Invoke 宣言のみ）、MainViewModel（8行）。

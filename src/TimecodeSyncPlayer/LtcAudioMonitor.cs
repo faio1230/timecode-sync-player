@@ -9,7 +9,7 @@ namespace TimecodeSyncPlayer;
 internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
 {
     private WasapiCapture? _capture;
-    private LtcDecoder? _decoder;
+    private LtcAudioSampleProcessor? _sampleProcessor;
     private long _audioCallbacks;
     private long _samplesReceived;
     private long _decodedFrames;
@@ -48,7 +48,7 @@ internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
         WaveFormat format = _capture.WaveFormat;
         _deviceName = deviceName;
         _sampleRate = format.SampleRate;
-        _decoder = new LtcDecoder(format.SampleRate, fps: 25.0);
+        _sampleProcessor = new LtcAudioSampleProcessor(new LtcDecoder(format.SampleRate, fps: 25.0));
         _audioCallbacks = 0;
         _samplesReceived = 0;
         _decodedFrames = 0;
@@ -71,7 +71,7 @@ internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
         _capture.RecordingStopped -= OnRecordingStopped;
         _capture.Dispose();
         _capture = null;
-        _decoder = null;
+        _sampleProcessor = null;
     }
 
     public void Dispose()
@@ -94,28 +94,24 @@ internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
     private void OnAudioData(object? sender, WaveInEventArgs e)
     {
         var capture = _capture;
-        var decoder = _decoder;
-        if (capture == null || decoder == null || e.BytesRecorded <= 0)
+        var sampleProcessor = _sampleProcessor;
+        if (capture == null || sampleProcessor == null || e.BytesRecorded <= 0)
             return;
 
-        float[] samples = PcmSampleConverter.ConvertToMonoFloat(e.Buffer, e.BytesRecorded, capture.WaveFormat);
+        LtcAudioSampleProcessingResult result = sampleProcessor.Process(
+            e.Buffer,
+            e.BytesRecorded,
+            capture.WaveFormat);
         _audioCallbacks++;
-        _samplesReceived += samples.Length;
-        (float peak, float rms) = MeasureLevel(samples);
-        decoder.Write(samples, samples.Length);
+        _samplesReceived += result.SampleCount;
 
-        LtcTimecode? timecode;
-        while ((timecode = decoder.Read()) != null)
+        foreach (LtcFrameReceivedEventArgs frame in result.Frames)
         {
             _decodedFrames++;
-            double fps = decoder.EstimatedFps;
-            FrameReceived?.Invoke(this, new LtcFrameReceivedEventArgs(
-                timecode,
-                fps,
-                timecode.ToRealSeconds(fps)));
+            FrameReceived?.Invoke(this, frame);
         }
 
-        LogStatsIfNeeded(capture.WaveFormat, peak, rms, decoder.EstimatedFps);
+        LogStatsIfNeeded(capture.WaveFormat, result.Peak, result.Rms, result.EstimatedFps);
     }
 
     private void LogStatsIfNeeded(WaveFormat format, float peak, float rms, double estimatedFps)
@@ -136,24 +132,6 @@ internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
         _lastStatsLogAt = now;
     }
 
-    private static (float Peak, float Rms) MeasureLevel(float[] samples)
-    {
-        if (samples.Length == 0)
-            return (0f, 0f);
-
-        double sumSquares = 0;
-        float peak = 0;
-        foreach (float sample in samples)
-        {
-            float abs = Math.Abs(sample);
-            if (abs > peak)
-                peak = abs;
-            sumSquares += sample * sample;
-        }
-
-        return (peak, (float)Math.Sqrt(sumSquares / samples.Length));
-    }
-
     private void OnRecordingStopped(object? sender, StoppedEventArgs e)
     {
         CleanupCapture();
@@ -169,7 +147,7 @@ internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
         _capture.RecordingStopped -= OnRecordingStopped;
         _capture.Dispose();
         _capture = null;
-        _decoder = null;
+        _sampleProcessor = null;
     }
 }
 
