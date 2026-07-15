@@ -39,8 +39,8 @@
 
 ## 実機 LTC ループ E2E（2026-07-15）
 
-- H1 完了（コミット `2535c14`）: `LtcSignalPlayer` を追加し、WASAPI Shared で
-  `CABLE Input` へ連続 LTC フレームを送出する処理と、例外安全な停止・破棄を実装。
+- H1 完了（コミット `2535c14` / `8ca2fa8`）: `LtcSignalPlayer` を追加し、WASAPI Shared で
+  `CABLE Input` へ連続 LTC フレームを送出する処理と、初期化失敗を含む例外安全な停止・破棄を実装。
 - H2 / H3 実装完了（コミット `ae8a5e2`）: `CABLE Output` を選択する表示追従・停止時リセット・
   信号断・20秒動画の同期シーク E2E を追加。録音デバイス不在時、および同期シークの
   ffmpeg 不在時は規約どおりスキップする。
