@@ -137,3 +137,17 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   （実機LTC 3件・Skip 0）、警告0。全体行カバレッジ63.78%、
   WindowLoadedCoordinator / Effectsはいずれも行・分岐100%。
 - M0 / M1 / M2 完了。ブランチ `refactor/mainwindow-core-extraction` で作業し、pushは未実施。
+
+## 実機LTCループ E2E H5（劣化信号、2026-07-15）
+
+- H5 完了（コミット `70d794c`）。既存 `LtcHardwareLoopE2ETests` に次の5ケースを追加:
+  ノイズ0.15（固定シード4242）、低振幅0.1、極性反転、4秒正常＋1.5秒無音＋6秒正常の
+  瞬断・再同期、低振幅0.1＋ノイズ0.015（固定シード4242）の複合条件。
+- `LtcSignalPlayer` は劣化オプションを受け取れるようにし、無音区間を含む単一波形バッファを
+  送出可能にした。瞬断後のタイムコードは無音中の経過フレームを進め、表示停止後に再び
+  単調進行する事実を検証。複合条件は純デコーダのラウンドトリップテストでも合格を確認。
+- 実機LTCクラス: 8/8件合格、失敗0、スキップ0（2分35秒）。
+- 非E2E全件: 881/881件合格、失敗0、スキップ0、ビルド警告0。
+- E2E全件: 33/33件合格、失敗0、スキップ0（6分26秒）。
+- プロダクションコード（`src/`）は変更していない。ブランチ
+  `test/ltc-degraded-signal` で作業し、pushは実施していない。`AGENTS.md` は未追跡のまま。
