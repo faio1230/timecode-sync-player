@@ -4,7 +4,7 @@ namespace TimecodeSyncPlayer.Tests;
 
 public class LtcSignalLossPolicyTests
 {
-    private static readonly DateTime Start = new(2026, 7, 15, 0, 0, 0, DateTimeKind.Utc);
+    private const long Start = 10_000;
 
     [Fact]
     public void Evaluate_ReceivingToLost_ReturnsPauseOnceAtTimeoutEdge()
@@ -13,9 +13,9 @@ public class LtcSignalLossPolicyTests
         LtcSignalLossContext context = Context();
         policy.ObserveValidFrame(Start, context);
 
-        policy.Evaluate(Start.AddMilliseconds(249), context).Should().Be(LtcSignalLossAction.None);
-        policy.Evaluate(Start.AddMilliseconds(250), context).Should().Be(LtcSignalLossAction.Pause);
-        policy.Evaluate(Start.AddSeconds(1), context with { IsPlaybackPaused = true })
+        policy.Evaluate(At(249), context).Should().Be(LtcSignalLossAction.None);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(At(1000), context with { IsPlaybackPaused = true })
             .Should().Be(LtcSignalLossAction.None);
         policy.ShouldSuppressSync.Should().BeTrue();
     }
@@ -26,18 +26,18 @@ public class LtcSignalLossPolicyTests
         var policy = CreatePolicy();
         LtcSignalLossContext context = Context();
         policy.ObserveValidFrame(Start, context);
-        policy.Evaluate(Start.AddMilliseconds(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
 
-        policy.Evaluate(Start.AddMilliseconds(350), context with { IsPlaybackPaused = false })
+        policy.Evaluate(At(350), context with { IsPlaybackPaused = false })
             .Should().Be(LtcSignalLossAction.None);
-        policy.Evaluate(Start.AddSeconds(2), context with { IsPlaybackPaused = false })
+        policy.Evaluate(At(2000), context with { IsPlaybackPaused = false })
             .Should().Be(LtcSignalLossAction.None);
         policy.ShouldSuppressSync.Should().BeFalse();
 
         for (int frame = 0; frame < 5; frame++)
         {
             policy.ObserveValidFrame(
-                    Start.AddSeconds(3).AddMilliseconds(frame * 40),
+                    At(3000 + frame * 40),
                     context with { IsPlaybackPaused = false })
                 .Should().Be(LtcSignalLossAction.None);
         }
@@ -50,16 +50,16 @@ public class LtcSignalLossPolicyTests
         LtcSignalLossContext receiving = Context();
         LtcSignalLossContext paused = receiving with { IsPlaybackPaused = true };
         policy.ObserveValidFrame(Start, receiving);
-        policy.Evaluate(Start.AddMilliseconds(250), receiving).Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(At(250), receiving).Should().Be(LtcSignalLossAction.Pause);
 
         for (int frame = 1; frame < 5; frame++)
         {
-            policy.ObserveValidFrame(Start.AddMilliseconds(300 + frame * 40), paused)
+            policy.ObserveValidFrame(At(300 + frame * 40), paused)
                 .Should().Be(LtcSignalLossAction.None);
             policy.ShouldSuppressSync.Should().BeTrue();
         }
 
-        policy.ObserveValidFrame(Start.AddMilliseconds(500), paused)
+        policy.ObserveValidFrame(At(500), paused)
             .Should().Be(LtcSignalLossAction.ResumeAndSync);
         policy.ShouldSuppressSync.Should().BeFalse();
     }
@@ -70,12 +70,12 @@ public class LtcSignalLossPolicyTests
         var policy = CreatePolicy(resumeFrames: 5);
         LtcSignalLossContext context = Context();
         policy.ObserveValidFrame(Start, context);
-        policy.Evaluate(Start.AddMilliseconds(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
 
         for (int frame = 0; frame < 4; frame++)
         {
             policy.ObserveValidFrame(
-                    Start.AddMilliseconds(300 + frame * 40),
+                    At(300 + frame * 40),
                     context with { IsPlaybackPaused = true })
                 .Should().Be(LtcSignalLossAction.None);
         }
@@ -90,12 +90,12 @@ public class LtcSignalLossPolicyTests
         LtcSignalLossContext context = Context();
         LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
         policy.ObserveValidFrame(Start, context);
-        policy.Evaluate(Start.AddMilliseconds(250), context).Should().Be(LtcSignalLossAction.Pause);
-        policy.ObserveValidFrame(Start.AddMilliseconds(300), paused).Should().Be(LtcSignalLossAction.None);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.ObserveValidFrame(At(300), paused).Should().Be(LtcSignalLossAction.None);
 
-        policy.Evaluate(Start.AddMilliseconds(550), paused).Should().Be(LtcSignalLossAction.None);
-        policy.ObserveValidFrame(Start.AddMilliseconds(600), paused).Should().Be(LtcSignalLossAction.None);
-        policy.ObserveValidFrame(Start.AddMilliseconds(640), paused)
+        policy.Evaluate(At(550), paused).Should().Be(LtcSignalLossAction.None);
+        policy.ObserveValidFrame(At(600), paused).Should().Be(LtcSignalLossAction.None);
+        policy.ObserveValidFrame(At(640), paused)
             .Should().Be(LtcSignalLossAction.ResumeAndSync);
     }
 
@@ -119,7 +119,7 @@ public class LtcSignalLossPolicyTests
             IsPlaybackPaused: false);
         policy.ObserveValidFrame(Start, context with { IsMonitoring = true });
 
-        policy.Evaluate(Start.AddMilliseconds(250), context).Should().Be(LtcSignalLossAction.None);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.None);
         policy.ShouldSuppressSync.Should().BeFalse();
     }
 
@@ -130,8 +130,8 @@ public class LtcSignalLossPolicyTests
         LtcSignalLossContext paused = Context() with { IsPlaybackPaused = true };
         policy.ObserveValidFrame(Start, paused);
 
-        policy.Evaluate(Start.AddMilliseconds(250), paused).Should().Be(LtcSignalLossAction.None);
-        policy.ObserveValidFrame(Start.AddMilliseconds(300), paused)
+        policy.Evaluate(At(250), paused).Should().Be(LtcSignalLossAction.None);
+        policy.ObserveValidFrame(At(300), paused)
             .Should().Be(LtcSignalLossAction.None);
     }
 
@@ -142,12 +142,12 @@ public class LtcSignalLossPolicyTests
         LtcSignalLossContext context = Context() with { Mode = LtcSignalLossMode.RunThrough };
         policy.ObserveValidFrame(Start, context);
 
-        policy.Evaluate(Start.AddMilliseconds(250), context).Should().Be(LtcSignalLossAction.None);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.None);
         policy.ShouldSuppressSync.Should().BeFalse();
-        policy.ObserveValidFrame(Start.AddMilliseconds(300), context)
+        policy.ObserveValidFrame(At(300), context)
             .Should().Be(LtcSignalLossAction.None);
         policy.ShouldSuppressSync.Should().BeFalse();
-        policy.ObserveValidFrame(Start.AddMilliseconds(340), context)
+        policy.ObserveValidFrame(At(340), context)
             .Should().Be(LtcSignalLossAction.None);
     }
 
@@ -163,7 +163,7 @@ public class LtcSignalLossPolicyTests
         var policy = CreatePolicy(resumeFrames: 1);
         LtcSignalLossContext context = Context();
         policy.ObserveValidFrame(Start, context);
-        policy.Evaluate(Start.AddMilliseconds(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
 
         var recoveryContext = context with
         {
@@ -173,8 +173,63 @@ public class LtcSignalLossPolicyTests
             IsPlaybackPaused = true,
         };
 
-        policy.ObserveValidFrame(Start.AddMilliseconds(300), recoveryContext)
+        policy.ObserveValidFrame(At(300), recoveryContext)
             .Should().Be(LtcSignalLossAction.None);
+    }
+
+    [Fact]
+    public void Evaluate_AfterLossInRunThroughMode_PausesWhenModeChangesToStop()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext runThrough = Context() with { Mode = LtcSignalLossMode.RunThrough };
+        policy.ObserveValidFrame(Start, runThrough);
+        policy.Evaluate(At(250), runThrough).Should().Be(LtcSignalLossAction.None);
+
+        policy.Evaluate(At(350), runThrough with { Mode = LtcSignalLossMode.Stop })
+            .Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(
+                At(450),
+                runThrough with { Mode = LtcSignalLossMode.Stop, IsPlaybackPaused = true })
+            .Should().Be(LtcSignalLossAction.None);
+    }
+
+    [Fact]
+    public void Evaluate_AfterLossWhileSyncOff_PausesWhenSyncTurnsOn()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext syncOff = Context() with { SyncEnabled = false };
+        policy.ObserveValidFrame(Start, syncOff);
+        policy.Evaluate(At(250), syncOff).Should().Be(LtcSignalLossAction.None);
+
+        policy.Evaluate(At(350), syncOff with { SyncEnabled = true })
+            .Should().Be(LtcSignalLossAction.Pause);
+    }
+
+    [Fact]
+    public void Evaluate_AfterUnexpectedDeviceStop_TreatsMissingFramesAsSignalLoss()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext receiving = Context();
+        policy.ObserveValidFrame(Start, receiving);
+
+        // 異常停止後も、呼び出し側が信号断検出を有効として扱う。
+        policy.Evaluate(At(250), receiving with { IsMonitoring = true })
+            .Should().Be(LtcSignalLossAction.Pause);
+    }
+
+    [Fact]
+    public void Evaluate_AfterManualPlay_DoesNotPauseWhenModeIsToggledDuringSameLoss()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext stop = Context();
+        policy.ObserveValidFrame(Start, stop);
+        policy.Evaluate(At(250), stop).Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(At(350), stop with { IsPlaybackPaused = false })
+            .Should().Be(LtcSignalLossAction.None);
+
+        policy.Evaluate(At(450), stop with { Mode = LtcSignalLossMode.RunThrough })
+            .Should().Be(LtcSignalLossAction.None);
+        policy.Evaluate(At(550), stop).Should().Be(LtcSignalLossAction.None);
     }
 
     [Fact]
@@ -183,11 +238,11 @@ public class LtcSignalLossPolicyTests
         var policy = CreatePolicy();
         LtcSignalLossContext context = Context();
         policy.ObserveValidFrame(Start, context);
-        policy.Evaluate(Start.AddMilliseconds(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
 
         policy.Reset();
 
-        policy.Evaluate(Start.AddSeconds(5), context).Should().Be(LtcSignalLossAction.None);
+        policy.Evaluate(At(5000), context).Should().Be(LtcSignalLossAction.None);
     }
 
     [Fact]
@@ -202,6 +257,8 @@ public class LtcSignalLossPolicyTests
 
     private static LtcSignalLossPolicy CreatePolicy(int resumeFrames = 5) =>
         new(TimeSpan.FromMilliseconds(250), resumeFrames);
+
+    private static long At(int elapsedMilliseconds) => Start + elapsedMilliseconds;
 
     private static LtcSignalLossContext Context() => new(
         LtcSignalLossMode.Stop,

@@ -14,6 +14,22 @@ internal sealed record LtcSignalLossContext(
     bool IsGapActive,
     bool IsPlaybackPaused);
 
+internal sealed class LtcSignalLossMonitoringState
+{
+    private bool _stoppedUnexpectedly;
+
+    public bool IsDetectionActive(bool isReportedRunning) =>
+        isReportedRunning || _stoppedUnexpectedly;
+
+    public void MarkStarted() => _stoppedUnexpectedly = false;
+
+    public bool MarkStopped(Exception? exception)
+    {
+        _stoppedUnexpectedly = exception != null;
+        return !_stoppedUnexpectedly;
+    }
+}
+
 /// <summary>
 /// LTC signal-loss edge detection and recovery hysteresis without external side effects.
 /// </summary>
@@ -21,9 +37,10 @@ internal sealed class LtcSignalLossPolicy
 {
     private readonly TimeSpan _timeout;
     private readonly int _resumeFrameCount;
-    private DateTime? _lastValidFrameAt;
+    private long? _lastValidFrameAtMilliseconds;
     private bool _isLost;
     private bool _pausedByPolicy;
+    private bool _manualResumeSuppressesPause;
     private int _consecutiveResumeFrames;
 
     public LtcSignalLossPolicy(TimeSpan timeout, int resumeFrameCount)
@@ -41,13 +58,14 @@ internal sealed class LtcSignalLossPolicy
 
     public void Reset()
     {
-        _lastValidFrameAt = null;
+        _lastValidFrameAtMilliseconds = null;
         _isLost = false;
         _pausedByPolicy = false;
+        _manualResumeSuppressesPause = false;
         _consecutiveResumeFrames = 0;
     }
 
-    public LtcSignalLossAction ObserveValidFrame(DateTime receivedAt, LtcSignalLossContext context)
+    public LtcSignalLossAction ObserveValidFrame(long receivedAtMilliseconds, LtcSignalLossContext context)
     {
         if (!context.IsMonitoring)
         {
@@ -59,18 +77,19 @@ internal sealed class LtcSignalLossPolicy
 
         if (!_isLost)
         {
-            _lastValidFrameAt = receivedAt;
+            _lastValidFrameAtMilliseconds = receivedAtMilliseconds;
             _consecutiveResumeFrames = 0;
             return LtcSignalLossAction.None;
         }
 
-        _lastValidFrameAt = receivedAt;
+        _lastValidFrameAtMilliseconds = receivedAtMilliseconds;
         _consecutiveResumeFrames++;
         if (_consecutiveResumeFrames < _resumeFrameCount)
             return LtcSignalLossAction.None;
 
         _isLost = false;
         _consecutiveResumeFrames = 0;
+        _manualResumeSuppressesPause = false;
         bool shouldResume =
             _pausedByPolicy &&
             context.SyncEnabled &&
@@ -83,7 +102,7 @@ internal sealed class LtcSignalLossPolicy
             : LtcSignalLossAction.None;
     }
 
-    public LtcSignalLossAction Evaluate(DateTime now, LtcSignalLossContext context)
+    public LtcSignalLossAction Evaluate(long nowMilliseconds, LtcSignalLossContext context)
     {
         if (!context.IsMonitoring)
         {
@@ -96,25 +115,32 @@ internal sealed class LtcSignalLossPolicy
         if (_isLost)
         {
             if (_consecutiveResumeFrames > 0 &&
-                _lastValidFrameAt.HasValue &&
-                now - _lastValidFrameAt.Value >= _timeout)
+                _lastValidFrameAtMilliseconds.HasValue &&
+                ElapsedMilliseconds(_lastValidFrameAtMilliseconds.Value, nowMilliseconds) >= _timeout.TotalMilliseconds)
             {
                 _consecutiveResumeFrames = 0;
             }
 
-            return LtcSignalLossAction.None;
+            return EvaluatePause(context);
         }
 
-        if (!_lastValidFrameAt.HasValue || now - _lastValidFrameAt.Value < _timeout)
+        if (!_lastValidFrameAtMilliseconds.HasValue ||
+            ElapsedMilliseconds(_lastValidFrameAtMilliseconds.Value, nowMilliseconds) < _timeout.TotalMilliseconds)
             return LtcSignalLossAction.None;
 
         _isLost = true;
         _consecutiveResumeFrames = 0;
+        return EvaluatePause(context);
+    }
 
+    private LtcSignalLossAction EvaluatePause(LtcSignalLossContext context)
+    {
         if (context.Mode != LtcSignalLossMode.Stop ||
             !context.SyncEnabled ||
             context.IsGapActive ||
-            context.IsPlaybackPaused)
+            context.IsPlaybackPaused ||
+            _pausedByPolicy ||
+            _manualResumeSuppressesPause)
         {
             return LtcSignalLossAction.None;
         }
@@ -126,6 +152,12 @@ internal sealed class LtcSignalLossPolicy
     private void DetectManualPlaybackResume(LtcSignalLossContext context)
     {
         if (_pausedByPolicy && !context.IsPlaybackPaused)
+        {
             _pausedByPolicy = false;
+            _manualResumeSuppressesPause = true;
+        }
     }
+
+    private static long ElapsedMilliseconds(long earlier, long later) =>
+        Math.Max(0, later - earlier);
 }

@@ -5,6 +5,7 @@ using System.Text;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Tools;
 using FlaUI.UIA3;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -16,6 +17,7 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
 {
     private UIA3Automation?  _automation;
     private Process?         _process;
+    private string?          _settingsDirectory;
 
     public Window?    MainWindow { get; private set; }
     public bool       Skipped    { get; private set; }
@@ -56,14 +58,26 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
         // アプリを --open で起動
         _automation = new UIA3Automation();
         // --vo null: GPU rendering を無効化（E2Eテストではデコード確認のみ行うため）
-        _process = Process.Start(new ProcessStartInfo
+        var startInfo = new ProcessStartInfo
         {
             FileName = exePath,
             Arguments = $"--vo null --open \"{videoPath}\" --playlist \"{videoPath}\"",
             WorkingDirectory = exeDir,
             UseShellExecute = false,
             CreateNoWindow = false,
-        }) ?? throw new InvalidOperationException("TimecodeSyncPlayer.exe の起動に失敗しました。");
+        };
+        _settingsDirectory = E2ESettingsIsolation.Configure(startInfo);
+        try
+        {
+            _process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("TimecodeSyncPlayer.exe の起動に失敗しました。");
+        }
+        catch
+        {
+            E2ESettingsIsolation.Delete(_settingsDirectory);
+            _settingsDirectory = null;
+            throw;
+        }
 
         // ウィンドウが表示されるまで最大5秒待機
         IntPtr mainWindowHandle = Retry.While(
@@ -98,6 +112,7 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
         KillProcessTree(_process);
         _process?.Dispose();
         _automation?.Dispose();
+        E2ESettingsIsolation.Delete(_settingsDirectory);
         return Task.CompletedTask;
     }
 
@@ -109,7 +124,10 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
         try
         {
             if (!process.HasExited)
+            {
                 process.Kill(entireProcessTree: true);
+                process.WaitForExit(milliseconds: 5000);
+            }
         }
         catch
         {

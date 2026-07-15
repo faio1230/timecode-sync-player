@@ -76,6 +76,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private bool _disposed;
     private readonly GapFreezeHandler _gapFreezeHandler;
     private readonly LtcSignalLossPolicy _ltcSignalLossPolicy;
+    private readonly LtcSignalLossMonitoringState _ltcSignalLossMonitoringState = new();
 
     // ── Constants ──────────────────────────────────────────────────
 
@@ -323,7 +324,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Log.Information("LTC signal loss mode changed mode={Mode}", _vm.Sync.LtcSignalLossMode);
                     break;
                 case nameof(SyncViewModel.IsLtcRunning):
-                    _ltcSignalLossPolicy.Reset();
+                    if (_vm.Sync.IsLtcRunning)
+                    {
+                        _ltcSignalLossMonitoringState.MarkStarted();
+                        _ltcSignalLossPolicy.Reset();
+                    }
+                    else if (!_ltcSignalLossMonitoringState.IsDetectionActive(isReportedRunning: false))
+                    {
+                        _ltcSignalLossPolicy.Reset();
+                    }
                     break;
             }
         };
@@ -576,7 +585,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void LtcMonitor_FrameReceived(object? sender, LtcFrameReceivedEventArgs e)
     {
-        DateTime receivedAt = DateTime.UtcNow;
+        long receivedAtMilliseconds = Environment.TickCount64;
         Dispatcher.BeginInvoke(() =>
         {
             LtcFrameProcessingResult processed = _ltcFrameProcessor.Process(e, _vm.Sync.LtcFpsMode);
@@ -600,7 +609,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             }
 
             LtcSignalLossAction signalLossAction = _ltcSignalLossPolicy.ObserveValidFrame(
-                receivedAt,
+                receivedAtMilliseconds,
                 CreateLtcSignalLossContext());
             ApplyLtcSignalLossAction(signalLossAction);
             if (_ltcSignalLossPolicy.ShouldSuppressSync)
@@ -613,12 +622,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private LtcSignalLossContext CreateLtcSignalLossContext() => new(
         _vm.Sync.LtcSignalLossMode,
         _vm.Sync.SyncEnabled,
-        _vm.Sync.IsLtcRunning,
+        _ltcSignalLossMonitoringState.IsDetectionActive(_vm.Sync.IsLtcRunning),
         IsGapActive: !_gapFreezeHandler.IsInactive,
         IsPlaybackPaused: _playbackControl.IsPaused);
 
     private void ApplyLtcSignalLossAction(LtcSignalLossAction action)
     {
+        if (action == LtcSignalLossAction.None || _mpv == IntPtr.Zero)
+            return;
+
         switch (action)
         {
             case LtcSignalLossAction.Pause:
@@ -811,6 +823,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         Dispatcher.BeginInvoke(() =>
         {
+            bool shouldResetSignalLossPolicy = _ltcSignalLossMonitoringState.MarkStopped(exception);
+            if (shouldResetSignalLossPolicy)
+                _ltcSignalLossPolicy.Reset();
             _vm.Sync.LtcTimecodeText = "--:--:--:--";
             _vm.Sync.LtcRealTimeText = "-.--- s";
             _vm.Sync.LtcFormatText = exception == null ? "LTC 停止中" : "LTC 停止エラー";
@@ -1208,7 +1223,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_mpv == IntPtr.Zero) return;
 
         ApplyLtcSignalLossAction(_ltcSignalLossPolicy.Evaluate(
-            DateTime.UtcNow,
+            Environment.TickCount64,
             CreateLtcSignalLossContext()));
 
         int durationRc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double dur);

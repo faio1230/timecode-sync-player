@@ -43,12 +43,11 @@ public sealed record AppSettings
 /// </summary>
 public sealed class AppSettingsManager
 {
+    public const string SettingsPathEnvironmentVariable = "TIMECODE_SYNC_PLAYER_SETTINGS_PATH";
+
     private static readonly string DefaultSettingsDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "TimecodeSyncPlayer");
-
-    private static readonly string DefaultSettingsFilePath = Path.Combine(
-        DefaultSettingsDirectory, "settings.json");
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -72,7 +71,7 @@ public sealed class AppSettingsManager
             {
                 lock (_lock)
                 {
-                    _instance ??= new AppSettingsManager(DefaultSettingsFilePath);
+                    _instance ??= new AppSettingsManager(ResolveSettingsFilePath());
                 }
             }
             return _instance;
@@ -90,6 +89,14 @@ public sealed class AppSettingsManager
     internal AppSettingsManager(string settingsFilePath)
     {
         _settingsFilePath = settingsFilePath;
+    }
+
+    internal static string ResolveSettingsFilePath()
+    {
+        string? overridePath = Environment.GetEnvironmentVariable(SettingsPathEnvironmentVariable);
+        return string.IsNullOrWhiteSpace(overridePath)
+            ? Path.Combine(DefaultSettingsDirectory, "settings.json")
+            : overridePath;
     }
 
     public async Task LoadAsync()

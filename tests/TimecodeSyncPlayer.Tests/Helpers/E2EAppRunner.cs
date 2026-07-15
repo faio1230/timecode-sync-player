@@ -103,14 +103,34 @@ internal sealed class E2EAppRunner : IDisposable
     public static Process StartProcess(string exePath, string arguments)
     {
         string exeDir = Path.GetDirectoryName(exePath)!;
-        return Process.Start(new ProcessStartInfo
+        var startInfo = new ProcessStartInfo
         {
             FileName = exePath,
             Arguments = arguments,
             WorkingDirectory = exeDir,
             UseShellExecute = false,
             CreateNoWindow = false,
-        }) ?? throw new InvalidOperationException("TimecodeSyncPlayer.exe の起動に失敗しました。");
+        };
+        string settingsDirectory = E2ESettingsIsolation.Configure(startInfo);
+
+        Process process;
+        try
+        {
+            process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("TimecodeSyncPlayer.exe の起動に失敗しました。");
+        }
+        catch
+        {
+            E2ESettingsIsolation.Delete(settingsDirectory);
+            throw;
+        }
+
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => E2ESettingsIsolation.Delete(settingsDirectory);
+        if (process.HasExited)
+            E2ESettingsIsolation.Delete(settingsDirectory);
+
+        return process;
     }
 
     public Button Button(string automationId)
@@ -182,7 +202,10 @@ internal sealed class E2EAppRunner : IDisposable
         try
         {
             if (!process.HasExited)
+            {
                 process.Kill(entireProcessTree: true);
+                process.WaitForExit(milliseconds: 5000);
+            }
         }
         catch
         {
