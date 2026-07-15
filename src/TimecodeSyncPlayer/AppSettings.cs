@@ -94,9 +94,14 @@ public sealed class AppSettingsManager
     internal static string ResolveSettingsFilePath()
     {
         string? overridePath = Environment.GetEnvironmentVariable(SettingsPathEnvironmentVariable);
+        return ResolveSettingsFilePath(overridePath);
+    }
+
+    internal static string ResolveSettingsFilePath(string? overridePath)
+    {
         return string.IsNullOrWhiteSpace(overridePath)
             ? Path.Combine(DefaultSettingsDirectory, "settings.json")
-            : overridePath;
+            : Path.GetFullPath(overridePath);
     }
 
     public async Task LoadAsync()

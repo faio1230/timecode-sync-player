@@ -41,6 +41,7 @@ internal sealed class LtcSignalLossPolicy
     private bool _isLost;
     private bool _pausedByPolicy;
     private bool _manualResumeSuppressesPause;
+    private bool? _lastIsPlaybackPaused;
     private int _consecutiveResumeFrames;
 
     public LtcSignalLossPolicy(TimeSpan timeout, int resumeFrameCount)
@@ -62,6 +63,7 @@ internal sealed class LtcSignalLossPolicy
         _isLost = false;
         _pausedByPolicy = false;
         _manualResumeSuppressesPause = false;
+        _lastIsPlaybackPaused = null;
         _consecutiveResumeFrames = 0;
     }
 
@@ -73,7 +75,7 @@ internal sealed class LtcSignalLossPolicy
             return LtcSignalLossAction.None;
         }
 
-        DetectManualPlaybackResume(context);
+        ObservePlaybackState(context);
 
         if (!_isLost)
         {
@@ -110,7 +112,7 @@ internal sealed class LtcSignalLossPolicy
             return LtcSignalLossAction.None;
         }
 
-        DetectManualPlaybackResume(context);
+        ObservePlaybackState(context);
 
         if (_isLost)
         {
@@ -149,13 +151,17 @@ internal sealed class LtcSignalLossPolicy
         return LtcSignalLossAction.Pause;
     }
 
-    private void DetectManualPlaybackResume(LtcSignalLossContext context)
+    private void ObservePlaybackState(LtcSignalLossContext context)
     {
-        if (_pausedByPolicy && !context.IsPlaybackPaused)
+        if (_isLost &&
+            !context.IsPlaybackPaused &&
+            (_pausedByPolicy || _lastIsPlaybackPaused == true))
         {
             _pausedByPolicy = false;
             _manualResumeSuppressesPause = true;
         }
+
+        _lastIsPlaybackPaused = context.IsPlaybackPaused;
     }
 
     private static long ElapsedMilliseconds(long earlier, long later) =>

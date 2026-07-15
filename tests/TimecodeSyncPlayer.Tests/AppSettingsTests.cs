@@ -139,6 +139,17 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public void ResolveSettingsFilePath_WithRelativeOverride_ReturnsAbsolutePath()
+    {
+        string relativePath = Path.Combine("test-settings", "settings.json");
+
+        string result = AppSettingsManager.ResolveSettingsFilePath(relativePath);
+
+        result.Should().Be(Path.GetFullPath(relativePath));
+        Path.IsPathFullyQualified(result).Should().BeTrue();
+    }
+
+    [Fact]
     public void WithExpression_CloneDoesNotModifyOriginal()
     {
         var original = AppSettings.Default;

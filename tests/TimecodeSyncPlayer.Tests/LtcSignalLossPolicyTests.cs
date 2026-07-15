@@ -136,6 +136,41 @@ public class LtcSignalLossPolicyTests
     }
 
     [Fact]
+    public void Evaluate_WhenAlreadyPausedAtLossThenManuallyPlayed_DoesNotPauseOnNextTick()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext paused = Context() with { IsPlaybackPaused = true };
+        policy.ObserveValidFrame(Start, paused);
+        policy.Evaluate(At(250), paused).Should().Be(LtcSignalLossAction.None);
+
+        LtcSignalLossContext manuallyPlaying = paused with { IsPlaybackPaused = false };
+        policy.Evaluate(At(350), manuallyPlaying).Should().Be(LtcSignalLossAction.None);
+        policy.Evaluate(At(450), manuallyPlaying).Should().Be(LtcSignalLossAction.None);
+        policy.ShouldSuppressSync.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Evaluate_WhenLoadFileUnpausesDuringLoss_DoesNotImmediatelyPauseAgain()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext loadingPaused = Context() with
+        {
+            Mode = LtcSignalLossMode.RunThrough,
+            IsPlaybackPaused = true,
+        };
+        policy.ObserveValidFrame(Start, loadingPaused);
+        policy.Evaluate(At(250), loadingPaused).Should().Be(LtcSignalLossAction.None);
+
+        LtcSignalLossContext loadCompleted = loadingPaused with
+        {
+            Mode = LtcSignalLossMode.Stop,
+            IsPlaybackPaused = false,
+        };
+        policy.Evaluate(At(350), loadCompleted).Should().Be(LtcSignalLossAction.None);
+        policy.Evaluate(At(450), loadCompleted).Should().Be(LtcSignalLossAction.None);
+    }
+
+    [Fact]
     public void RunThroughMode_LossAndRecoveryNeverSuppressesExistingSyncFlow()
     {
         var policy = CreatePolicy(resumeFrames: 2);
