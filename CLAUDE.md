@@ -155,7 +155,7 @@ struct MpvRenderParam { int Type; int _padding; IntPtr Data; }  // 16バイト
 
 | ファイル | 用途 | 入手方法 |
 |---------|------|---------|
-| `mpv-2.dll` | libmpv（動画再生） | https://mpv.io/installation/ |
+| `libmpv-2.dll` | libmpv（動画再生）。`scripts/get-mpv.ps1`で上流名のまま配置（従来名`mpv-2.dll`も互換対応） | https://mpv.io/installation/ |
 | `SpoutDX.dll` | Spout2送信（オプション） | https://github.com/leadedge/Spout2 |
 
-詳細は `native/README.md` および `docs/SETUP.md` を参照。
+詳細は [native/README.md](native/README.md) および [docs/SETUP.md](docs/SETUP.md) を参照。
