@@ -187,6 +187,11 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
         ComboBox fpsCombo = _fixture.MainWindow!.FindFirstDescendant(
             cf => cf.ByAutomationId("LtcFpsModeCombo"))!.AsComboBox();
         fpsCombo.Select(2);
+        E2EAssert.WaitUntil(
+            () => fpsCombo.SelectedItem?.Name.Contains(
+                "25",
+                StringComparison.OrdinalIgnoreCase) == true,
+            TimeSpan.FromSeconds(3));
     }
 
     private void StartLtcMonitor()
@@ -305,6 +310,8 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
                 return false;
             }
 
+            // LTC 用 Fps を流用しているため、動画 fps と偶然一致する場合のみ
+            // フレーム端数まで厳密な秒換算になる。このテストでは広い秒範囲だけを検証する。
             seconds = hours * 3600 + minutes * 60 + wholeSeconds + frames / (double)Fps;
             return true;
         }

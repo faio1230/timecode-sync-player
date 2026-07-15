@@ -1,6 +1,7 @@
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using FluentAssertions;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -260,6 +261,10 @@ public class FrameRendererTests
             catch (Exception ex)
             {
                 exception = ex;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
             }
         });
         thread.SetApartmentState(ApartmentState.STA);

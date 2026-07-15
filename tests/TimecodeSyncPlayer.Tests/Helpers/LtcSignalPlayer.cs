@@ -188,10 +188,24 @@ internal sealed class LtcSignalPlayer : IDisposable
     private static MMDevice? FindActiveDevice(DataFlow dataFlow, string friendlyNamePart)
     {
         using var enumerator = new MMDeviceEnumerator();
-        return enumerator
-            .EnumerateAudioEndPoints(dataFlow, DeviceState.Active)
-            .FirstOrDefault(device =>
-                device.FriendlyName.Contains(friendlyNamePart, StringComparison.OrdinalIgnoreCase));
+        MMDeviceCollection devices = enumerator.EnumerateAudioEndPoints(dataFlow, DeviceState.Active);
+        foreach (MMDevice device in devices)
+        {
+            try
+            {
+                if (device.FriendlyName.Contains(friendlyNamePart, StringComparison.OrdinalIgnoreCase))
+                    return device;
+            }
+            catch
+            {
+                device.Dispose();
+                throw;
+            }
+
+            device.Dispose();
+        }
+
+        return null;
     }
 
 }

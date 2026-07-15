@@ -148,7 +148,7 @@ public class SpoutOutputTests
     }
 
     [Fact]
-    public void TryInitialize_UnexpectedExceptionAfterCreateCleansUpObject()
+    public void TryInitialize_OpenFailureAndDestroyExceptionReturnsFalse()
     {
         var native = new FakeNativeApi();
         native.SetNameResult = true;
