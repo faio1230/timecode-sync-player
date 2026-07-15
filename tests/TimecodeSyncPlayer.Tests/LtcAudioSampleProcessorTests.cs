@@ -46,6 +46,19 @@ public class LtcAudioSampleProcessorTests
     }
 
     [Fact]
+    public void Process_NoDecodedFramesReusesSharedEmptyResult()
+    {
+        const int sampleRate = 48000;
+        var processor = new LtcAudioSampleProcessor(new LtcDecoder(sampleRate, 25));
+        WaveFormat format = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1);
+
+        LtcAudioSampleProcessingResult first = processor.Process([], 0, format);
+        LtcAudioSampleProcessingResult second = processor.Process([], 0, format);
+
+        ReferenceEquals(first.Frames, second.Frames).Should().BeTrue();
+    }
+
+    [Fact]
     public void Process_GeneratedLtcPcmProducesFrameEventArguments()
     {
         const int sampleRate = 48000;

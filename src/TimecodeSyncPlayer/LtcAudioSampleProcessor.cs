@@ -5,6 +5,7 @@ namespace TimecodeSyncPlayer;
 internal sealed class LtcAudioSampleProcessor
 {
     private readonly LtcDecoder _decoder;
+    private readonly List<LtcFrameReceivedEventArgs> _frameBuffer = [];
 
     internal LtcAudioSampleProcessor(LtcDecoder decoder)
     {
@@ -20,16 +21,20 @@ internal sealed class LtcAudioSampleProcessor
         (float peak, float rms) = MeasureLevel(samples);
         _decoder.Write(samples, samples.Length);
 
-        var frames = new List<LtcFrameReceivedEventArgs>();
+        _frameBuffer.Clear();
         LtcTimecode? timecode;
         while ((timecode = _decoder.Read()) != null)
         {
             double fps = _decoder.EstimatedFps;
-            frames.Add(new LtcFrameReceivedEventArgs(
+            _frameBuffer.Add(new LtcFrameReceivedEventArgs(
                 timecode,
                 fps,
                 timecode.ToRealSeconds(fps)));
         }
+
+        IReadOnlyList<LtcFrameReceivedEventArgs> frames = _frameBuffer.Count == 0
+            ? Array.Empty<LtcFrameReceivedEventArgs>()
+            : _frameBuffer.ToArray();
 
         return new LtcAudioSampleProcessingResult(
             samples.Length,
