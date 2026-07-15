@@ -235,3 +235,9 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - R0 Debug E2E: 36/36件合格、失敗0、スキップ0（実機LTC 11件を含む）。
 - `native/mpv-2.dll`を一時的に`libmpv-2.dll`へ移し、出力の旧名DLLも退避した検証で、
   ビルド警告0、上流名DLLのみの起動E2E 1/1件合格。検証後は全ファイルを元へ復元した。
+- R1 完了: Windows PowerShell 5.1互換`scripts/get-mpv.ps1`を追加。mpv公式が案内する
+  shinchiroの最新GitHub Release APIから通常x64開発アーカイブを選択し、Release記載の
+  SHA-256を検証後、7-Zip公式`7zr.exe`で展開して`native/libmpv-2.dll`へ配置する。
+- R1 実行検証: 最新`mpv-dev-x86_64-20260610-git-304426c.7z`から
+  117,532,160バイトのDLLを配置。`-Force`で2回連続実行し、既存DLL上書きとtemp後始末を確認。
+  Debug非E2Eは918/918件合格、失敗0、スキップ0、警告0。
