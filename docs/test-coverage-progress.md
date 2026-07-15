@@ -112,3 +112,10 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 非E2E全件: 861/861件合格、失敗0、スキップ0、ビルド警告0。
 - 実機LTC抽出: 3/3件合格、失敗0、スキップ0（1分11秒）。
 - プロダクションコード（`src/`）は変更しておらず、pushも実施していない。
+
+## MainWindow コア抽出（2026-07-15）
+
+- M0 完了（コミット `ca73830` / `ab5e3bc` / `7535c6e` / `58986c8`）:
+  レビューMinor 9項目を処理。非E2E 862/862件、E2E 28/28件（実機LTC 3件・Skip 0）、
+  警告0。全体行カバレッジ62.72%、LtcAudioSampleProcessor 100%、
+  AppSettingsManager 93.18%、GapEnterCoordinator 100%。
