@@ -130,6 +130,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private ContinueOnTrackCoordinator? _continueOnTrackCoordinator;
     private GapEnterCoordinator?        _gapEnterCoordinator;
     private PlaybackOperationsCoordinator? _playbackOperationsCoordinator;
+    private WindowLoadedCoordinator? _windowLoadedCoordinator;
 
     // ── Timeline ──────────────────────────────────────────────────
     private TimelinePanel? _timelinePanel;
@@ -346,6 +347,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly AppSettingsManager _settingsManager;
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
+        => CreateWindowLoadedCoordinator().Initialize();
+
+    private WindowLoadedCoordinator CreateWindowLoadedCoordinator() =>
+        _windowLoadedCoordinator ??= new(new WindowLoadedEffects(
+            InitializeUi: InitializeWindowLoadedUi,
+            // CLI 引数: --open と --playlist に対応（--vo は SW レンダーに切り替えたため不要）
+            ParseLaunchArguments: () => AppLaunchArguments.Parse(Environment.GetCommandLineArgs()),
+            InitializeSession: InitializeWindowLoadedSession,
+            ScheduleLaunchAction: plan => ScheduleProjectLaunchAction(plan)));
+
+    private void InitializeWindowLoadedUi()
     {
         var uiInitializer = new WindowLoadedUiInitializer(
             bindPlaylist: () => PlaylistList.ItemsSource = _playlist.Tracks,
@@ -357,10 +369,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             refreshLtcDevices: RefreshLtcDevices,
             applyAutoOffset: () => AutoOffsetCheckBox.IsChecked = _settingsManager.Current.AutoOffsetOnAdd);
         uiInitializer.Initialize();
+    }
 
-        // CLI 引数: --open と --playlist に対応（--vo は SW レンダーに切り替えたため不要）
-        AppLaunchArguments launchArguments = AppLaunchArguments.Parse(Environment.GetCommandLineArgs());
-
+    private bool InitializeWindowLoadedSession()
+    {
         var spoutUiApplicator = new SpoutStartupUiApplicator(
             setButtonEnabled: enabled => BtnSpout.IsEnabled = enabled,
             setToggleLabel: label => _vm.Sync.SpoutToggleLabel = label);
@@ -380,10 +392,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             initializeStartupBuffer: () => _startupBufferInitializer.Initialize(RenderPixelFormat),
             initializeTimeline: InitializeTimeline,
             showError: ShowWindowLoadedSessionInitializationError);
-        if (!sessionInitializer.Initialize())
-            return;
+        return sessionInitializer.Initialize();
+    }
 
-        ProjectLaunchActionPlan launchActionPlan = ProjectLaunchActionPlanner.Decide(launchArguments);
+    private void ScheduleProjectLaunchAction(ProjectLaunchActionPlan launchActionPlan)
+    {
         var launchActionExecutor = new ProjectLaunchActionExecutor(
             LoadProjectFromLaunchAsync,
             paths => ReplacePlaylistAndLoadAsync(paths),
@@ -397,7 +410,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             logSaveCompleted: path => Log.Information("--save-project completed: {Path}", path),
             logSaveFailure: (ex, path) => Log.Error(ex, "--save-project failed: {Path}", path));
         launchActionScheduler.Schedule(launchActionPlan, launchActionExecutor, TimeSpan.FromMilliseconds(SaveProjectDelayMs));
-
     }
 
     private static void ShowWindowLoadedSessionInitializationError(WindowLoadedSessionInitializationError error)
