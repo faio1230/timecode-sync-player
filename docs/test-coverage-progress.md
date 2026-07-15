@@ -274,12 +274,28 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   検証フォルダは終了後に削除し、`-SkipBuild`再実行によるzip上書きも成功した。
 - R7 Debug非E2E: 921/921件合格、失敗0、スキップ0、警告0。パッケージ用Releaseビルドも
   警告0・エラー0。
+- R8 完了: `docs/release-0.1-plan.md`へR8節と実行順を追記し、Inno Setup 6用
+  `scripts/installer.iss`を追加。`PrivilegesRequired=lowest`、`{localappdata}\Programs`配下の
+  ユーザー単位インストール、スタートメニューショートカット、アンインストーラ、完了画面の
+  mpv取得チェック項目を実装した。Release一式、SpoutDX、LICENSE、第三者通知、CHANGELOG、
+  `get-mpv.ps1`を含め、mpv両DLLとPDBは除外した。
+- `scripts/package-release.ps1`はzipに加えて
+  `artifacts/release/TimecodeSyncPlayer-v0.1.0-setup.exe`を同時生成する。ISCCは引数、
+  `INNO_SETUP_COMPILER_PATH`、PATH、LocalAppData既定候補の順に解決し、PATH未登録の
+  Inno Setup 6.7.3で通常生成と環境変数上書き再生成がともに成功した。
+- R8 実インストール検証: 取得オプションなしのインストールではmpv DLL 0件、必須ファイル、
+  ショートカット、HKCUアンインストール登録を確認。アンインストール後はいずれも消失した。
+  `/DOWNLOADMPV`で完了オプション相当を有効にした実インストールでは117,532,160バイトの
+  `libmpv-2.dll`取得、アプリ生存、v0.1.0タイトル、バージョンログ、Spout初期化を確認した。
+  再アンインストール後はインストール先、ショートカット、HKCU登録、残留プロセスが全て0。
+- R8 Debug非E2E: 921/921件合格、失敗0、スキップ0、警告0。インストーラー生成時の
+  Releaseビルドも警告0・エラー0。
 
 ### リリース準備の最終状態
 
-- R0→R1→R2→R3→R4→R5→R6→R7を指定順で完了。作業ブランチは
+- R0→R1→R2→R3→R4→R5→R6→R7→R8を指定順で完了。作業ブランチは
   `release/0.1-prep`、push・タグ作成・GitHub Release公開は実施していない。
 - 自動検証の最終基線は非E2E 921件、E2E 36件（実機LTC 11件）、Skip 0、警告0。
 - 人間側に残す作業: `docs/verification-checklist.md`を実際の会場構成で一巡し、内容確認後に
-  v0.1.0タグを作成、配布zipを添付したGitHub Releaseを公開する。
+  v0.1.0タグを作成、配布zipとsetup.exeを添付したGitHub Releaseを公開する。
 - 追跡外の`AGENTS.md`はステージしていない。
