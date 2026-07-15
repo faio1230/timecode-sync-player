@@ -108,7 +108,10 @@ public partial class App : Application
             Shutdown();
         };
 
-        Log.Information("=== TimecodeSyncPlayer 起動 === ログ: {Path}", logPath);
+        Log.Information(
+            "=== TimecodeSyncPlayer v{Version} 起動 === ログ: {Path}",
+            ApplicationVersion.Current,
+            logPath);
 
         var settingsManager = _services.GetRequiredService<AppSettingsManager>();
         settingsManager.LoadAsync().GetAwaiter().GetResult();

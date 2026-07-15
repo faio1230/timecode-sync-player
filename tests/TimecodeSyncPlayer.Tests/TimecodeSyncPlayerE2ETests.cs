@@ -113,7 +113,7 @@ public sealed class TimecodeSyncPlayerE2ETests : IClassFixture<TimecodeSyncPlaye
         SkipIfNeeded();
 
         Win.Should().NotBeNull();
-        Win.Title.Should().Be("Timecode Sync Player");
+        Win.Title.Should().Be(ApplicationVersion.WindowTitle);
         Win.IsOffscreen.Should().BeFalse();
     }
 

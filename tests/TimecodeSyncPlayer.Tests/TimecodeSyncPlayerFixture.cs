@@ -146,7 +146,7 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
                 return true;
 
             string title = GetWindowTitle(handle);
-            if (title == "Timecode Sync Player")
+            if (title == ApplicationVersion.WindowTitle)
             {
                 found = handle;
                 return false;

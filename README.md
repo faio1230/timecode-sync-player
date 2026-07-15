@@ -59,6 +59,7 @@ from source. See the [setup guide](docs/SETUP.md) for details.
 - [Setup and build](docs/SETUP.md)
 - [Native dependencies](native/README.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Settings reference](docs/settings.md)
 - [Manual verification checklist](docs/verification-checklist.md)
 
 ## Hardware LTC loop E2E tests
@@ -139,6 +140,7 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 - [セットアップとビルド](docs/SETUP.md)
 - [ネイティブDLL](native/README.md)
 - [アーキテクチャ](docs/ARCHITECTURE.md)
+- [設定リファレンス](docs/settings.md)
 - [手動検証チェックリスト](docs/verification-checklist.md)
 
 ### 実機LTCループE2Eテスト

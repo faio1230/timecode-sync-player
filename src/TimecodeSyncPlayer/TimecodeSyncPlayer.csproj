@@ -7,6 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <PlatformTarget>x64</PlatformTarget>
+    <Version>0.1.0</Version>
+    <Product>TimecodeSyncPlayer</Product>
     <Authors>Studio Sandix</Authors>
     <Copyright>Copyright (c) 2026 Studio Sandix</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

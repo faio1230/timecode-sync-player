@@ -253,3 +253,11 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   照合し、csprojへAuthors、Copyright、MIT式、RepositoryUrlを追加した。Spout2上流の実ライセンスは
   計画書のBSD-3表記と異なりSimplified BSD（BSD-2-Clause）だったため、正確な全文を採用した。
   Debug非E2Eは918/918件合格、失敗0、スキップ0、警告0。
+- R5 完了: csprojへVersion 0.1.0とProductを設定。アセンブリのInformationalVersionから
+  ビルドメタデータを除いて表示する`ApplicationVersion`を追加し、タイトルバーを
+  `Timecode Sync Player v0.1.0`、起動ログ先頭付近をバージョン付きにした。正規化テスト3件を追加し、
+  E2Eのウィンドウ探索／タイトル検証も同じ動的値へ統一した。`docs/settings.md`にsettings.json全13キー、
+  型、既定値、検証範囲、保存先、環境変数上書き、信号断しきい値の再起動要件を英日併記した。
+- R5 Debug非E2E: 921/921件合格、失敗0、スキップ0、警告0。
+- R5 Debug E2E: 初回は音声端点の一時競合で低振幅LTC 1件がSkip。対象単独1/1合格後に全件を
+  再実行し、36/36件合格、失敗0、スキップ0（4分36秒、実機LTC 11件を含む）。

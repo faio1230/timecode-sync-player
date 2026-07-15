@@ -365,6 +365,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         };
 
         InitializeComponent();
+        Title = ApplicationVersion.WindowTitle;
     }
 
     internal MainViewModel ViewModel => _vm;
