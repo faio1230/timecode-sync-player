@@ -33,10 +33,11 @@ internal sealed class LtcSignalPlayer : IDisposable
     {
         player = null;
         skipReason = null;
+        MMDevice? device = null;
 
         try
         {
-            MMDevice? device = FindActiveDevice(DataFlow.Render, CableRenderDeviceNamePart);
+            device = FindActiveDevice(DataFlow.Render, CableRenderDeviceNamePart);
             if (device == null)
             {
                 skipReason = $"再生デバイス名に '{CableRenderDeviceNamePart}' を含むデバイスがありません。";
@@ -44,12 +45,17 @@ internal sealed class LtcSignalPlayer : IDisposable
             }
 
             player = new LtcSignalPlayer(device);
+            device = null;
             return true;
         }
         catch (Exception ex)
         {
             skipReason = $"VB-CABLE 再生デバイスの初期化に失敗しました: {ex.Message}";
             return false;
+        }
+        finally
+        {
+            device?.Dispose();
         }
     }
 
