@@ -261,3 +261,6 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - R5 Debug非E2E: 921/921件合格、失敗0、スキップ0、警告0。
 - R5 Debug E2E: 初回は音声端点の一時競合で低振幅LTC 1件がSkip。対象単独1/1合格後に全件を
   再実行し、36/36件合格、失敗0、スキップ0（4分36秒、実機LTC 11件を含む）。
+- R6 完了: Release構成のアプリビルドは警告0・エラー0。Release非E2Eは921/921件合格、
+  失敗0、スキップ0。`TIMECODE_SYNC_PLAYER_E2E_APP_PATH`をRelease版exeの絶対パスへ固定した
+  Release E2Eは36/36件合格、失敗0、スキップ0（5分00秒、実機LTC 11件を含む）。
