@@ -241,3 +241,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - R1 実行検証: 最新`mpv-dev-x86_64-20260610-git-304426c.7z`から
   117,532,160バイトのDLLを配置。`-Force`で2回連続実行し、既存DLL上書きとtemp後始末を確認。
   Debug非E2Eは918/918件合格、失敗0、スキップ0、警告0。
+- R2 完了: `native/README.md`の先頭を`get-mpv.ps1`推奨手順へ改訂し、mpv公式から
+  案内される配布Release、通常x64開発アーカイブ名、直下の`libmpv-2.dll`、配置先を
+  手動手順でも明記。配布zipにはSpoutDXを同梱し、ソースビルド時のみ別途必要と整理した。
+  Debug非E2Eは918/918件合格、失敗0、スキップ0、警告0。
