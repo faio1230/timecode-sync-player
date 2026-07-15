@@ -59,4 +59,33 @@ public class PlayerViewModelTests
 
         ctrl.CycleCount.Should().Be(1);
     }
+
+    [Fact]
+    public void DisplayProperties_RaisePropertyChangedAndReturnAssignedValues()
+    {
+        var vm = new PlayerViewModel(new FakeController());
+        var changedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => changedProperties.Add(e.PropertyName);
+
+        vm.PlayPauseIcon = "⏸";
+        vm.TimeLabel = "1:23 / 4:56";
+        vm.MetaLine = "clip.mp4";
+        vm.SeekBarValue = 83;
+        vm.SeekBarMaximum = 296;
+        vm.SpeedLabel = "2×";
+
+        vm.PlayPauseIcon.Should().Be("⏸");
+        vm.TimeLabel.Should().Be("1:23 / 4:56");
+        vm.MetaLine.Should().Be("clip.mp4");
+        vm.SeekBarValue.Should().Be(83);
+        vm.SeekBarMaximum.Should().Be(296);
+        vm.SpeedLabel.Should().Be("2×");
+        changedProperties.Should().Equal(
+            nameof(vm.PlayPauseIcon),
+            nameof(vm.TimeLabel),
+            nameof(vm.MetaLine),
+            nameof(vm.SeekBarValue),
+            nameof(vm.SeekBarMaximum),
+            nameof(vm.SpeedLabel));
+    }
 }

@@ -13,7 +13,7 @@
 
 | # | 対象 | 実測(抽出前) | 種別 | 難易度 | Codex適性 |
 |---|------|------|------|--------|-----------|
-| T1 | PlayerViewModel / SyncViewModel / AppSettingsManager の隙間 | 55% / 70% / 47% | テスト追加のみ | 低 | ◎ |
+| T1 | PlayerViewModel / SyncViewModel / AppSettingsManager の隙間 | 100% / 96.9% / 93.2% | テスト追加のみ | 低 | ◎ |
 | T2 | FrameRenderer | 166行・6% | テスト追加のみ | 中 | ○ |
 | T3 | TimelineDrawingSurface | 604行・9% | ロジック抽出＋テスト | 高 | △（制約厳守前提） |
 | T4 | SpoutOutput | 160行・15% | シーム導入＋テスト | 中 | ○ |

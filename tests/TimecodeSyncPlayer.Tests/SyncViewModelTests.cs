@@ -146,6 +146,91 @@ public class SyncViewModelTests
         vm.IsLtcRunning.Should().BeFalse();
     }
 
+    [Fact]
+    public void StopLtcCommand_FiresStopLtcFailedAndClearsRunningOnException()
+    {
+        var vm = new SyncViewModel(new ThrowingStopLtcMonitor()) { IsLtcRunning = true };
+        Exception? captured = null;
+        vm.StopLtcFailed += (_, ex) => captured = ex;
+
+        vm.StopLtcCommand.Execute(null);
+
+        captured.Should().BeOfType<InvalidOperationException>();
+        vm.IsLtcRunning.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ToggleSyncCommand_RaisesChangedEventWithNewValue()
+    {
+        var vm = new SyncViewModel(new FakeLtcMonitor());
+        var values = new List<bool>();
+        vm.SyncEnabledChanged += (_, enabled) => values.Add(enabled);
+
+        vm.ToggleSyncCommand.Execute(null);
+        vm.ToggleSyncCommand.Execute(null);
+
+        values.Should().Equal(true, false);
+        vm.SyncToggleLabel.Should().Be("Sync OFF");
+    }
+
+    [Theory]
+    [InlineData(0, TimecodeFpsMode.Auto)]
+    [InlineData(1, TimecodeFpsMode.Fixed24)]
+    [InlineData(2, TimecodeFpsMode.Fixed25)]
+    [InlineData(3, TimecodeFpsMode.Fixed29_97)]
+    [InlineData(4, TimecodeFpsMode.Fixed30)]
+    [InlineData(-1, TimecodeFpsMode.Auto)]
+    [InlineData(5, TimecodeFpsMode.Auto)]
+    public void LtcFpsModeIndex_MapsKnownAndOutOfRangeValues(
+        int index,
+        TimecodeFpsMode expected)
+    {
+        var vm = new SyncViewModel(new FakeLtcMonitor());
+
+        vm.LtcFpsModeIndex = index;
+
+        vm.LtcFpsMode.Should().Be(expected);
+    }
+
+    [Fact]
+    public void DisplayProperties_RaisePropertyChangedAndReturnAssignedValues()
+    {
+        var vm = new SyncViewModel(new FakeLtcMonitor());
+        var changedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => changedProperties.Add(e.PropertyName);
+
+        vm.SelectedDevice = "line-in";
+        vm.SyncEnabled = true;
+        vm.GapBehaviorIndex = 1;
+        vm.LtcTimecodeText = "01:02:03:04";
+        vm.LtcRealTimeText = "3723.160 s";
+        vm.LtcFormatText = "fps: 25";
+        vm.SpoutToggleLabel = "Spout ON";
+        vm.TimelineToggleLabel = "Timeline ON";
+
+        vm.SelectedDevice.Should().Be("line-in");
+        vm.SyncEnabled.Should().BeTrue();
+        vm.SyncToggleLabel.Should().Be("Sync ON");
+        vm.GapBehavior.Should().Be(GapBehavior.Freeze);
+        vm.LtcTimecodeText.Should().Be("01:02:03:04");
+        vm.LtcRealTimeText.Should().Be("3723.160 s");
+        vm.LtcFormatText.Should().Be("fps: 25");
+        vm.SpoutToggleLabel.Should().Be("Spout ON");
+        vm.TimelineToggleLabel.Should().Be("Timeline ON");
+        changedProperties.Should().Contain([
+            nameof(vm.SelectedDevice),
+            nameof(vm.SyncEnabled),
+            nameof(vm.SyncToggleLabel),
+            nameof(vm.GapBehaviorIndex),
+            nameof(vm.GapBehavior),
+            nameof(vm.LtcTimecodeText),
+            nameof(vm.LtcRealTimeText),
+            nameof(vm.LtcFormatText),
+            nameof(vm.SpoutToggleLabel),
+            nameof(vm.TimelineToggleLabel)
+        ]);
+    }
+
     private sealed class ThrowingLtcMonitor : ILtcMonitor
     {
         public bool IsRunning => false;
@@ -153,6 +238,19 @@ public class SyncViewModelTests
         public int SampleRate => 0;
         public void Start(string? deviceName) => throw new InvalidOperationException("device error");
         public void Stop() { }
+        public IReadOnlyList<string> GetCaptureDeviceNames() => [];
+        public event EventHandler<LtcFrameReceivedEventArgs>? FrameReceived { add { } remove { } }
+        public event EventHandler<Exception?>? Stopped { add { } remove { } }
+        public void Dispose() { }
+    }
+
+    private sealed class ThrowingStopLtcMonitor : ILtcMonitor
+    {
+        public bool IsRunning => true;
+        public string? DeviceName => null;
+        public int SampleRate => 0;
+        public void Start(string? deviceName) { }
+        public void Stop() => throw new InvalidOperationException("stop error");
         public IReadOnlyList<string> GetCaptureDeviceNames() => [];
         public event EventHandler<LtcFrameReceivedEventArgs>? FrameReceived { add { } remove { } }
         public event EventHandler<Exception?>? Stopped { add { } remove { } }

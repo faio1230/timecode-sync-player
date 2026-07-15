@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 using FluentAssertions;
 
@@ -177,5 +178,114 @@ public class AppSettingsTests
         var instance2 = AppSettingsManager.Instance;
 
         instance1.Should().NotBeSameAs(instance2);
+    }
+
+    [Fact]
+    public async Task SaveAndLoadAsync_RoundTripsSettingsInTemporaryDirectory()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        try
+        {
+            var writer = CreateManager(path);
+            var expected = AppSettings.Default with
+            {
+                SyncMode = SyncMode.Continue,
+                WindowWidth = 1280,
+                LastOpenedProjectPath = @"C:\projects\show.json"
+            };
+
+            await writer.SaveAsync(expected);
+            var reader = CreateManager(path);
+            await reader.LoadAsync();
+
+            reader.Current.Should().Be(expected);
+            File.Exists(path).Should().BeTrue();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_InvalidJsonRestoresDefaults()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        try
+        {
+            await File.WriteAllTextAsync(path, "{ invalid json");
+            var manager = CreateManager(path);
+            await manager.SaveAsync(AppSettings.Default with { WindowWidth = 800 });
+            await File.WriteAllTextAsync(path, "{ invalid json");
+
+            await manager.LoadAsync();
+
+            manager.Current.Should().Be(AppSettings.Default);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_MissingFileKeepsDefaults()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            var manager = CreateManager(Path.Combine(directory, "missing.json"));
+
+            await manager.LoadAsync();
+
+            manager.Current.Should().Be(AppSettings.Default);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateAsync_AppliesConcurrentUpdatesWithoutLosingChanges()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        try
+        {
+            var manager = CreateManager(path);
+
+            await Task.WhenAll(
+                manager.UpdateAsync(settings => settings with { WindowWidth = 1024 }),
+                manager.UpdateAsync(settings => settings with { WindowHeight = 768 }));
+
+            manager.Current.WindowWidth.Should().Be(1024);
+            manager.Current.WindowHeight.Should().Be(768);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static AppSettingsManager CreateManager(string path)
+    {
+        var constructor = typeof(AppSettingsManager).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [typeof(string)],
+            modifiers: null);
+
+        constructor.Should().NotBeNull();
+        return (AppSettingsManager)constructor!.Invoke([path]);
+    }
+
+    private static string CreateTemporaryDirectory()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"TimecodeSyncPlayer.Tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
     }
 }
