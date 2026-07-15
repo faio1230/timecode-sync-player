@@ -119,3 +119,10 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   レビューMinor 9項目を処理。非E2E 862/862件、E2E 28/28件（実機LTC 3件・Skip 0）、
   警告0。全体行カバレッジ62.72%、LtcAudioSampleProcessor 100%、
   AppSettingsManager 93.18%、GapEnterCoordinator 100%。
+- M1 完了（コミット `d72fb7b`）: `LoadFile` / `SeekTo` / `StopPlayback` /
+  `ApplyPauseState` の中核を `PlaybackOperationsCoordinator` + Effectsへ抽出し、
+  MainWindowの既存ラッパーと既存Coordinatorへの配線シグネチャを維持。Effectsは呼び出し時に
+  MainWindowフィールドを参照する。新規単体テスト12件を追加し、ロード成功・失敗、シーク条件と
+  suppressOsd、停止時の状態リセット順を検証。非E2E 874/874件、E2E 28/28件
+  （実機LTC 3件・Skip 0）、警告0。全体行カバレッジ63.75%、
+  PlaybackOperationsCoordinator / Effectsはいずれも行・分岐100%。
