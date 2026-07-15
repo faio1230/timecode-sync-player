@@ -86,9 +86,24 @@
 - 実際にスクリプトで zip を生成し、**別フォルダに展開して mpv を配置すれば起動することを確認**
   （E2E ではなく手動起動確認レベルでよい。Spout 送信は SpoutDX 同梱で有効になること）
 
+## R8: インストーラー作成
+
+- Inno Setup 6を使用する。`ISCC.exe`は環境変数等で上書き可能にし、PATH上の実行ファイルに
+  加えて`C:/Users/codea/AppData/Local/Programs/Inno Setup 6/ISCC.exe`を既定候補として解決する
+- `scripts/installer.iss`（新規）: `PrivilegesRequired=lowest`のユーザー単位インストールとし、
+  Releaseビルド出力一式、`SpoutDX.dll`、`LICENSE`、`THIRD-PARTY-NOTICES.md`、`CHANGELOG.md`、
+  mpv取得用`get-mpv.ps1`を含める。`mpv-2.dll`／`libmpv-2.dll`は同梱しない
+- スタートメニューショートカットとアンインストーラを作成する。インストール完了画面には
+  「mpvを今ダウンロードする」チェック項目を表示し、選択時に同梱`get-mpv.ps1`を実行して
+  インストール先へlibmpvを配置する
+- 出力名は`TimecodeSyncPlayer-v0.1.0-setup.exe`。`scripts/package-release.ps1`の1回の実行で
+  zipとsetup.exeの両方を生成でき、ISCCパスは環境変数または引数で上書き可能にする
+- 実際のsetup.exeでインストールし、mpvダウンロードオプション込みで起動できること、
+  アンインストール後にインストール先・ショートカット等の痕跡が残らないことを確認する
+
 ## 実行順とゲート
 
-R0 → R1 → R2 → R3 → R4 → R5 → R6 → R7。R0 と R5 はコード変更を含むため個別に
+R0 → R1 → R2 → R3 → R4 → R5 → R6 → R7 → R8。R0 と R5 はコード変更を含むため個別に
 非E2E + E2E 全件ゲート。R6 で Release 構成ゲート。完了時に progress へ記録。
 タグ付け・GitHub Release 公開・実機チェックリスト（docs/verification-checklist.md）一巡は
 人間側の作業として残す。

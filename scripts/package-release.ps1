@@ -2,6 +2,7 @@
 param(
     [string]$Version = "0.1.0",
     [string]$OutputDirectory,
+    [string]$InnoSetupCompiler,
     [switch]$SkipBuild
 )
 
@@ -17,7 +18,36 @@ $projectPath = Join-Path (Join-Path (Join-Path $projectRoot "src") "TimecodeSync
 $releaseDirectory = Join-Path (Split-Path -Parent $projectPath) "bin\Release\net8.0-windows"
 $zipName = "TimecodeSyncPlayer-v$Version-win-x64.zip"
 $zipPath = Join-Path $OutputDirectory $zipName
+$setupName = "TimecodeSyncPlayer-v$Version-setup.exe"
+$setupPath = Join-Path $OutputDirectory $setupName
 $stagingDirectory = Join-Path $OutputDirectory (".package-stage-" + [Guid]::NewGuid().ToString("N"))
+
+function Resolve-InnoSetupCompiler([string]$ExplicitPath) {
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        $candidates += $ExplicitPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:INNO_SETUP_COMPILER_PATH)) {
+        $candidates += $env:INNO_SETUP_COMPILER_PATH
+    }
+
+    $pathCommand = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+    if ($pathCommand) {
+        $candidates += $pathCommand.Source
+    }
+
+    $candidates += Join-Path (Join-Path (Join-Path $env:LOCALAPPDATA "Programs") "Inno Setup 6") "ISCC.exe"
+    $candidates += "C:\Users\codea\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and
+            (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+
+    throw "Inno Setup 6 compiler (ISCC.exe) was not found. Use -InnoSetupCompiler or set INNO_SETUP_COMPILER_PATH."
+}
 
 if (-not $SkipBuild) {
     Write-Host "Building TimecodeSyncPlayer $Version (Release)..."
@@ -93,3 +123,15 @@ finally {
         Remove-Item -LiteralPath $stagingDirectory -Recurse -Force
     }
 }
+
+$isccPath = Resolve-InnoSetupCompiler $InnoSetupCompiler
+$installerScript = Join-Path $PSScriptRoot "installer.iss"
+Write-Host "Creating $setupName with $isccPath..."
+& $isccPath "/DMyAppVersion=$Version" "/DReleaseDirectory=$releaseDirectory" "/DProjectRoot=$projectRoot" "/O$OutputDirectory" "/F$([System.IO.Path]::GetFileNameWithoutExtension($setupName))" $installerScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
+}
+if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
+    throw "Inno Setup completed without creating the expected file: $setupPath"
+}
+Write-Host "Created: $setupPath"
