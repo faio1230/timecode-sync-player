@@ -33,7 +33,7 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
             signalPlayer.Play(
                 new LtcTimecode(1, 0, 0, 0, false),
                 Fps,
-                TimeSpan.FromSeconds(8));
+                TimeSpan.FromSeconds(20));
             StartLtcMonitor();
 
             IReadOnlyList<ObservedTimecode> observed = WaitForProgression(
@@ -46,7 +46,6 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
                 value.Seconds >= 0 && value.Seconds <= 9);
 
             StopLtcMonitor();
-            signalPlayer.Stop();
 
             long stableFrame = WaitForStableTimecode(
                 stableFor: TimeSpan.FromSeconds(2),
@@ -147,10 +146,7 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
         bool available = LtcSignalPlayer.TryCreateCablePlayer(
             out LtcSignalPlayer? player,
             out string? skipReason);
-        if (!available)
-        {
-            throw new InvalidOperationException(skipReason ?? "CABLE Input を利用できません。");
-        }
+        Skip.If(!available, skipReason ?? "CABLE Input を利用できません。");
 
         return player!;
     }
