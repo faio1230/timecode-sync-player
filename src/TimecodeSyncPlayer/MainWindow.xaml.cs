@@ -124,7 +124,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly PlaylistState _playlist;
     private Guid?                  _loadedTrackId;
     private bool                   _endAdvanceTriggered;
-    private System.Windows.Point?  _playlistDragStartPoint;
+    private readonly PlaylistDragDropCoordinator _playlistDragDropCoordinator;
 
     // ── 同期コーディネータ（遅延生成キャッシュ。ラムダは this のフィールドのみを参照するため
     //    呼び出しごとの再生成は不要。RenderFrameCoordinator 等と同様、初回呼び出し時に確定する） ──
@@ -219,6 +219,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Player   = new PlayerViewModel(this);
         _vm.Playlist = new PlaylistViewModel(_playlist, _mediaDurationReader);
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
+        _playlistDragDropCoordinator = new PlaylistDragDropCoordinator(new PlaylistDragDropEffects(
+            BeginDrag: track => DragDrop.DoDragDrop(PlaylistList, track, DragDropEffects.Move),
+            IndexOf: track => _playlist.Tracks.IndexOf(track),
+            GetTrackCount: () => _playlist.Tracks.Count,
+            MoveTrack: _playlist.MoveTrack,
+            SetSelectedIndex: index => PlaylistList.SelectedIndex = index,
+            UpdateCurrentTrackLabel: UpdateCurrentTrackLabel,
+            UpdatePlaylistTimelineDisplay: UpdatePlaylistTimelineDisplay));
         _projectFileCoordinator = new ProjectFileCoordinator(
             new ProjectFileActionRunner(),
             new ProjectFileEffects(
@@ -763,33 +771,26 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void PlaylistList_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        _playlistDragStartPoint = e.GetPosition(PlaylistList);
+        System.Windows.Point point = e.GetPosition(PlaylistList);
+        _playlistDragDropCoordinator.SetDragStart(point.X, point.Y);
     }
 
     private void PlaylistList_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
         PlaylistTrack? track = PlaylistList.SelectedItem as PlaylistTrack;
-        System.Windows.Point startPoint = _playlistDragStartPoint.GetValueOrDefault();
         System.Windows.Point currentPoint = e.GetPosition(PlaylistList);
-        double dx = Math.Abs(currentPoint.X - startPoint.X);
-        double dy = Math.Abs(currentPoint.Y - startPoint.Y);
-        if (!PlaylistDragInitiationPolicy.ShouldBeginDrag(
-                _playlistDragStartPoint.HasValue,
-                e.LeftButton == System.Windows.Input.MouseButtonState.Pressed,
-                track != null,
-                dx,
-                dy,
-                SystemParameters.MinimumHorizontalDragDistance,
-                SystemParameters.MinimumVerticalDragDistance))
-            return;
-
-        DragDrop.DoDragDrop(PlaylistList, track!, DragDropEffects.Move);
-        _playlistDragStartPoint = null;
+        _playlistDragDropCoordinator.HandleMouseMove(
+            track,
+            currentPoint.X,
+            currentPoint.Y,
+            e.LeftButton == System.Windows.Input.MouseButtonState.Pressed,
+            SystemParameters.MinimumHorizontalDragDistance,
+            SystemParameters.MinimumVerticalDragDistance);
     }
 
     private void PlaylistList_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(typeof(PlaylistTrack))
+        e.Effects = PlaylistDragDropCoordinator.CanAcceptDrop(e.Data.GetDataPresent(typeof(PlaylistTrack)))
             ? DragDropEffects.Move
             : DragDropEffects.None;
         e.Handled = true;
@@ -800,18 +801,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (e.Data.GetData(typeof(PlaylistTrack)) is not PlaylistTrack draggedTrack)
             return;
 
-        int fromIndex = _playlist.Tracks.IndexOf(draggedTrack);
         int hitIndex = GetPlaylistIndexFromPoint(e.GetPosition(PlaylistList));
-        int toIndex = PlaylistDropTargetPolicy.ResolveTargetIndex(hitIndex, _playlist.Tracks.Count);
-        if (toIndex < 0)
-            return;
-
-        if (!_playlist.MoveTrack(fromIndex, toIndex)) return;
-
-        PlaylistList.SelectedIndex = toIndex;
-        UpdateCurrentTrackLabel();
-        UpdatePlaylistTimelineDisplay();
-        e.Handled = true;
+        e.Handled = _playlistDragDropCoordinator.HandleDrop(
+            draggedTrack,
+            hitIndex);
     }
 
     private int GetPlaylistIndexFromPoint(System.Windows.Point point)
