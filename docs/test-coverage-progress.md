@@ -207,3 +207,21 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - E2E全件: 36/36件合格、失敗0、スキップ0（8分51秒）。実機LTC 11件も全合格。
 - ブランチ `feature/ltc-signal-loss-mode` で作業し、pushは実施していない。
   追跡外の `AGENTS.md` はステージしていない。
+
+### 再レビューImportant対応（2026-07-15）
+
+- コミット `6529aef`。`LtcSignalLossPolicy` が直近の `IsPlaybackPaused` を保持し、
+  信号断中にpauseから再生への遷移を観測した場合は、pauseの所有者にかかわらず
+  `_manualResumeSuppressesPause` を有効にするよう修正した。
+- ポリシーpause直後にpause状態を次tickで観測する前にPlayされた場合は従来の
+  `_pausedByPolicy` でも検出する。既存pause中の信号断後に手動Playしたケースと、
+  LoadFile中のpauseが自動解除されたケースを追加し、以降のtickがNoneのままで
+  手動／ロード処理の再生を上書きしないことをユニットテストで確認した。
+- E2E設定隔離の環境変数名は `AppSettingsManager.SettingsPathEnvironmentVariable` を
+  共用し、重複constを削除。設定パスのオーバーライドは `Path.GetFullPath` で絶対化し、
+  相対パスのユニットテストを追加した。
+- E2E一時設定削除は終了直後のファイルハンドル競合を考慮して短時間再試行する。
+  最終E2E後に残留プロセス0件、一時設定ディレクトリ0件を確認した。
+- 非E2E全件: 915/915件合格、失敗0、スキップ0、ビルド警告0。
+- E2E全件: 36/36件合格、失敗0、スキップ0（8分53秒）。実機LTCを含む。
+- pushは実施していない。追跡外の `AGENTS.md` はステージしていない。
