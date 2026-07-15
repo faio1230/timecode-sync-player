@@ -21,10 +21,7 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
     private double _playbackPositionSeconds;
     private DateTime _lastVerticalScrollAt = DateTime.MinValue;
     private const double VerticalFollowCooldownMs = 500;
-    private const double TimeAxisHeightPx = 20;
-    private const double MinClipWidthPx = 20;
     private const double TextWidthThresholdPx = 30;
-    private const double TickIntervalTargetPx = 50;
 
     internal event EventHandler<TimelineSeekEventArgs>? TimelineSeekRequested;
 
@@ -98,9 +95,10 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         double width = ActualWidth;
         if (width <= 0) return;
 
-        double pivotSeconds = _playbackPositionSeconds > _displayState.HorizontalScrollSeconds
-            ? _playbackPositionSeconds - _displayState.HorizontalScrollSeconds
-            : _displayState.VisibleSeconds(width) / 2;
+        double pivotSeconds = TimelineLayoutCalculator.CalculateZoomPivot(
+            _playbackPositionSeconds,
+            _displayState.HorizontalScrollSeconds,
+            _displayState.VisibleSeconds(width));
         _displayState.ZoomIn(pivotSeconds);
         RenderClips();
     }
@@ -110,9 +108,10 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         double width = ActualWidth;
         if (width <= 0) return;
 
-        double pivotSeconds = _playbackPositionSeconds > _displayState.HorizontalScrollSeconds
-            ? _playbackPositionSeconds - _displayState.HorizontalScrollSeconds
-            : _displayState.VisibleSeconds(width) / 2;
+        double pivotSeconds = TimelineLayoutCalculator.CalculateZoomPivot(
+            _playbackPositionSeconds,
+            _displayState.HorizontalScrollSeconds,
+            _displayState.VisibleSeconds(width));
         _displayState.ZoomOut(pivotSeconds);
         RenderClips();
     }
@@ -181,46 +180,63 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         double dpiScaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
         double dpiScaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
 
-        double timeAxisHeight = TimeAxisHeightPx * dpiScaleY;
-        double timelineWidth = width;
-        double timelineHeight = height - timeAxisHeight;
-        double visibleSeconds = _displayState.VisibleSeconds(timelineWidth);
-        double scrollSeconds = _displayState.HorizontalScrollSeconds;
-        double trackHeight = _displayState.TrackHeight * dpiScaleY;
+        TimelineViewportLayout layout = TimelineLayoutCalculator.CalculateViewport(
+            width,
+            height,
+            dpiScaleY,
+            _displayState.SecondsPerPixel,
+            _displayState.HorizontalScrollSeconds,
+            _displayState.TrackHeight,
+            _displayState.VerticalScrollOffset,
+            _playlist.Tracks.Count);
 
-        int startTrack = _displayState.VerticalScrollOffset;
-        int endTrack = Math.Min(_playlist.Tracks.Count, startTrack + (int)(timelineHeight / trackHeight) + 1);
-
-        for (int i = startTrack; i < endTrack; i++)
+        for (int i = layout.StartTrack; i < layout.EndTrack; i++)
         {
             var track = _playlist.Tracks[i];
-            double y = timeAxisHeight + (i - startTrack) * trackHeight;
+            double y = TimelineLayoutCalculator.CalculateTrackY(
+                i,
+                layout.StartTrack,
+                layout.TimeAxisHeight,
+                layout.TrackHeight);
 
             Color rowBg = i % 2 == 0 ? Color.FromRgb(0x22, 0x22, 0x22) : Color.FromRgb(0x2A, 0x2A, 0x2A);
-            dc.DrawRectangle(new SolidColorBrush(rowBg), null, new Rect(0, y, width, trackHeight));
+            dc.DrawRectangle(new SolidColorBrush(rowBg), null, new Rect(0, y, width, layout.TrackHeight));
 
-            DrawClip(dc, track, y, trackHeight, scrollSeconds, visibleSeconds, timelineWidth, dpiScaleX, timeAxisHeight);
+            DrawClip(
+                dc,
+                track,
+                y,
+                layout.TrackHeight,
+                layout.ScrollSeconds,
+                layout.VisibleSeconds,
+                dpiScaleX);
         }
 
-        DrawTimeAxis(dc, timelineWidth, scrollSeconds, visibleSeconds, dpiScaleX, timeAxisHeight);
+        DrawTimeAxis(
+            dc,
+            layout.ScrollSeconds,
+            layout.VisibleSeconds,
+            dpiScaleX,
+            layout.TimeAxisHeight);
     }
 
-    private void DrawClip(DrawingContext dc, PlaylistTrack track, double y, double trackHeight, double scrollSeconds, double visibleSeconds, double timelineWidth, double dpiScaleX, double timeAxisHeight)
+    private void DrawClip(DrawingContext dc, PlaylistTrack track, double y, double trackHeight, double scrollSeconds, double visibleSeconds, double dpiScaleX)
     {
         double clipStart = track.GetActualTimelineIn().TotalSeconds;
         double clipDuration = track.GetEffectiveDuration().TotalSeconds;
-        double clipEnd = clipStart + clipDuration;
-
-        if (clipEnd < scrollSeconds || clipStart > scrollSeconds + visibleSeconds)
+        TimelineClipLayout? layout = TimelineLayoutCalculator.CalculateClip(
+            clipStart,
+            clipDuration,
+            track.MediaDuration != TimeSpan.Zero,
+            scrollSeconds,
+            visibleSeconds,
+            _displayState.SecondsPerPixel,
+            dpiScaleX);
+        if (layout == null)
             return;
 
-        double x = (clipStart - scrollSeconds) / _displayState.SecondsPerPixel * dpiScaleX;
-        double width = clipDuration / _displayState.SecondsPerPixel * dpiScaleX;
-
-        if (track.MediaDuration == TimeSpan.Zero)
-        {
-            width = Math.Max(MinClipWidthPx * dpiScaleX, width);
-        }
+        double x = layout.Value.X;
+        double width = layout.Value.Width;
 
         int trackIndex = _playlist.FindIndexById(track.Id);
         Color clipColor = GetTrackColor(trackIndex);
@@ -247,18 +263,18 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         }
     }
 
-    private void DrawTimeAxis(DrawingContext dc, double timelineWidth, double scrollSeconds, double visibleSeconds, double dpiScaleX, double timeAxisHeight)
+    private void DrawTimeAxis(DrawingContext dc, double scrollSeconds, double visibleSeconds, double dpiScaleX, double timeAxisHeight)
     {
-        double interval = GetTimeAxisInterval();
-        double start = Math.Floor(scrollSeconds / interval) * interval;
-        double end = scrollSeconds + visibleSeconds;
-
-        for (double t = start; t <= end; t += interval)
+        IReadOnlyList<TimelineTimeTick> ticks = TimelineLayoutCalculator.CalculateTimeTicks(
+            scrollSeconds,
+            visibleSeconds,
+            _displayState.SecondsPerPixel,
+            dpiScaleX);
+        foreach (TimelineTimeTick tick in ticks)
         {
-            double x = (t - scrollSeconds) / _displayState.SecondsPerPixel * dpiScaleX;
-            dc.DrawLine(new Pen(Brushes.Gray, 1), new Point(x, 0), new Point(x, timeAxisHeight));
+            dc.DrawLine(new Pen(Brushes.Gray, 1), new Point(tick.X, 0), new Point(tick.X, timeAxisHeight));
 
-            string label = FormatTimeLabel(t);
+            string label = FormatTimeLabel(tick.Seconds);
             var formattedText = new FormattedText(
                 label,
                 CultureInfo.CurrentCulture,
@@ -268,7 +284,7 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
                 Brushes.Gray,
                 VisualTreeHelper.GetDpi(this).PixelsPerDip);
 
-            dc.DrawText(formattedText, new Point(x + 2, 2));
+            dc.DrawText(formattedText, new Point(tick.X + 2, 2));
         }
     }
 
@@ -287,29 +303,16 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         var dpi = VisualTreeHelper.GetDpi(this);
         double dpiScaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
         double dpiScaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
-        double timeAxisHeight = TimeAxisHeightPx * dpiScaleY;
+        double timeAxisHeight = TimelineLayoutCalculator.TimeAxisHeightPx * dpiScaleY;
 
-        double x = (_playbackPositionSeconds - _displayState.HorizontalScrollSeconds) / _displayState.SecondsPerPixel * dpiScaleX;
+        double x = TimelineLayoutCalculator.SecondsToX(
+            _playbackPositionSeconds,
+            _displayState.HorizontalScrollSeconds,
+            _displayState.SecondsPerPixel,
+            dpiScaleX);
 
         var pen = new Pen(Brushes.Red, 2);
         dc.DrawLine(pen, new Point(x, timeAxisHeight), new Point(x, height));
-    }
-
-    private double GetTimeAxisInterval()
-    {
-        double secondsPerPixel = _displayState.SecondsPerPixel;
-
-        // 目盛間のピクセル距離が50-150pxになるように間隔を計算
-        double[] intervals = { 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600 };
-
-        foreach (double interval in intervals)
-        {
-            double pixelDistance = interval / secondsPerPixel;
-            if (pixelDistance >= TickIntervalTargetPx)
-                return interval;
-        }
-
-        return intervals[^1];
     }
 
     internal static string FormatTimeLabel(double seconds)
@@ -359,11 +362,16 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         var dpi = VisualTreeHelper.GetDpi(this);
         double dpiScaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
 
-        double x = (seconds - _displayState.HorizontalScrollSeconds) / _displayState.SecondsPerPixel * dpiScaleX;
+        double? horizontalScroll = TimelineLayoutCalculator.CalculateHorizontalFollowScroll(
+            seconds,
+            _displayState.HorizontalScrollSeconds,
+            _displayState.SecondsPerPixel,
+            dpiScaleX,
+            width);
 
-        if (x > width - 20 || x < 20)
+        if (horizontalScroll.HasValue)
         {
-            _displayState.HorizontalScrollSeconds = seconds - width * _displayState.SecondsPerPixel / 2;
+            _displayState.HorizontalScrollSeconds = horizontalScroll.Value;
             RenderClips();
         }
 
@@ -378,15 +386,18 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
                     double height = ActualHeight;
                     var dpiY = VisualTreeHelper.GetDpi(this);
                     double dpiScaleY = dpiY.DpiScaleY > 0 ? dpiY.DpiScaleY : 1.0;
-                    double timeAxisHeight = TimeAxisHeightPx * dpiScaleY;
                     double trackHeight = _displayState.TrackHeight;
-                    double visibleTracks = (height - timeAxisHeight) / trackHeight;
                     int startTrack = _displayState.VerticalScrollOffset;
-                    int endTrack = startTrack + (int)visibleTracks;
+                    int? verticalScrollOffset = TimelineLayoutCalculator.CalculateVerticalFollowOffset(
+                        trackIndex,
+                        height,
+                        dpiScaleY,
+                        trackHeight,
+                        startTrack);
 
-                    if (trackIndex < startTrack || trackIndex >= endTrack)
+                    if (verticalScrollOffset.HasValue)
                     {
-                        _displayState.VerticalScrollOffset = Math.Max(0, trackIndex - (int)visibleTracks / 2);
+                        _displayState.VerticalScrollOffset = verticalScrollOffset.Value;
                         RenderClips();
                     }
                 }
@@ -405,24 +416,26 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         var dpi = VisualTreeHelper.GetDpi(this);
         double dpiScaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
         double dpiScaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
-        double timeAxisHeight = TimeAxisHeightPx * dpiScaleY;
-
         var point = e.GetPosition(this);
         double x = point.X;
-        double y = point.Y - timeAxisHeight;
-
-        if (x < 0 || y < 0)
+        int? clickedTrackIndex = TimelineLayoutCalculator.CalculateClickedTrackIndex(
+            x,
+            point.Y,
+            dpiScaleY,
+            _displayState.TrackHeight,
+            _displayState.VerticalScrollOffset,
+            _playlist.Tracks.Count);
+        if (!clickedTrackIndex.HasValue)
             return;
 
-        int trackIndex = _displayState.VerticalScrollOffset + (int)(y / _displayState.TrackHeight);
-        if (trackIndex < 0 || trackIndex >= _playlist.Tracks.Count)
-            return;
-
+        int trackIndex = clickedTrackIndex.Value;
         var track = _playlist.Tracks[trackIndex];
-        double clickSeconds = _displayState.HorizontalScrollSeconds + x / dpiScaleX * _displayState.SecondsPerPixel;
-
-        double targetSeconds = track.GetActualTimelineIn().TotalSeconds +
-            (clickSeconds - track.GetActualTimelineIn().TotalSeconds);
+        double targetSeconds = TimelineLayoutCalculator.CalculateSeekTargetSeconds(
+            x,
+            dpiScaleX,
+            _displayState.SecondsPerPixel,
+            _displayState.HorizontalScrollSeconds,
+            track.GetActualTimelineIn().TotalSeconds);
 
         TimelineSeekRequested?.Invoke(this, new TimelineSeekEventArgs(targetSeconds, trackIndex));
     }
