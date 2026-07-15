@@ -196,7 +196,7 @@
                     </ComboBox>
                 </Grid>
 
-                <UniformGrid Grid.Row="3" Rows="1" Columns="2" Margin="0,0,0,8">
+                <UniformGrid Grid.Row="3" Rows="1" Columns="3" Margin="0,0,0,8">
                     <StackPanel Margin="0,0,4,0">
                         <TextBlock Text="Mode:" Foreground="#BBBBBB" FontSize="11" Margin="0,0,0,2"/>
                         <ComboBox x:Name="SyncModeCombo"
@@ -216,6 +216,16 @@
                                   IsEnabled="{Binding Sync.IsContinueMode}">
                             <ComboBoxItem Content="Black" Tag="Black"/>
                             <ComboBoxItem Content="Freeze" Tag="Freeze"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Margin="4,0,0,0">
+                        <TextBlock Text="信号断時:" Foreground="#BBBBBB" FontSize="11" Margin="0,0,0,2"/>
+                        <ComboBox x:Name="LtcSignalLossModeCombo"
+                                  AutomationProperties.AutomationId="LtcSignalLossModeCombo"
+                                  Height="26"
+                                  SelectedIndex="{Binding Sync.LtcSignalLossModeIndex, Mode=TwoWay}">
+                            <ComboBoxItem Content="ランスルー" Tag="RunThrough"/>
+                            <ComboBoxItem Content="停止" Tag="Stop"/>
                         </ComboBox>
                     </StackPanel>
                 </UniformGrid>

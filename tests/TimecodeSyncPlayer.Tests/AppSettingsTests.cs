@@ -22,6 +22,9 @@ public class AppSettingsTests
         settings.WindowHeight.Should().BeNull();
         settings.IsTimelineVisible.Should().BeFalse();
         settings.AutoOffsetOnAdd.Should().BeTrue();
+        settings.LtcSignalLossMode.Should().Be(LtcSignalLossMode.RunThrough);
+        settings.LtcSignalLossTimeoutMs.Should().Be(250);
+        settings.LtcSignalResumeFrames.Should().Be(5);
     }
 
     [Theory]
@@ -107,6 +110,34 @@ public class AppSettingsTests
         result.LtcDeviceIndex.Should().Be(2);
     }
 
+    [Theory]
+    [InlineData(99, 100)]
+    [InlineData(100, 100)]
+    [InlineData(250, 250)]
+    [InlineData(5000, 5000)]
+    [InlineData(5001, 5000)]
+    public void ValidateSettings_ClampsLtcSignalLossTimeout(int timeoutMs, int expected)
+    {
+        AppSettings settings = AppSettings.Default with { LtcSignalLossTimeoutMs = timeoutMs };
+
+        AppSettingsManager.ValidateSettings(settings).LtcSignalLossTimeoutMs.Should().Be(expected);
+    }
+
+    [Fact]
+    public void ValidateSettings_RejectsInvalidSignalLossModeAndResumeFrameCount()
+    {
+        AppSettings settings = AppSettings.Default with
+        {
+            LtcSignalLossMode = (LtcSignalLossMode)99,
+            LtcSignalResumeFrames = 0,
+        };
+
+        AppSettings result = AppSettingsManager.ValidateSettings(settings);
+
+        result.LtcSignalLossMode.Should().Be(LtcSignalLossMode.RunThrough);
+        result.LtcSignalResumeFrames.Should().Be(AppSettings.DefaultLtcSignalResumeFrames);
+    }
+
     [Fact]
     public void WithExpression_CloneDoesNotModifyOriginal()
     {
@@ -132,7 +163,10 @@ public class AppSettingsTests
             WindowWidth = 1280,
             WindowHeight = 720,
             IsTimelineVisible = true,
-            AutoOffsetOnAdd = false
+            AutoOffsetOnAdd = false,
+            LtcSignalLossMode = LtcSignalLossMode.Stop,
+            LtcSignalLossTimeoutMs = 1200,
+            LtcSignalResumeFrames = 8
         };
 
         var options = new JsonSerializerOptions
@@ -156,6 +190,23 @@ public class AppSettingsTests
         deserialized.WindowHeight.Should().Be(original.WindowHeight);
         deserialized.IsTimelineVisible.Should().Be(original.IsTimelineVisible);
         deserialized.AutoOffsetOnAdd.Should().Be(original.AutoOffsetOnAdd);
+        deserialized.LtcSignalLossMode.Should().Be(original.LtcSignalLossMode);
+        deserialized.LtcSignalLossTimeoutMs.Should().Be(original.LtcSignalLossTimeoutMs);
+        deserialized.LtcSignalResumeFrames.Should().Be(original.LtcSignalResumeFrames);
+    }
+
+    [Fact]
+    public void Deserialization_WithoutSignalLossKeysUsesBackwardCompatibleDefaults()
+    {
+        const string json = """{"syncMode":0}""";
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+        AppSettings? deserialized = JsonSerializer.Deserialize<AppSettings>(json, options);
+
+        deserialized.Should().NotBeNull();
+        deserialized!.LtcSignalLossMode.Should().Be(LtcSignalLossMode.RunThrough);
+        deserialized.LtcSignalLossTimeoutMs.Should().Be(250);
+        deserialized.LtcSignalResumeFrames.Should().Be(5);
     }
 
     [Fact]
@@ -191,7 +242,10 @@ public class AppSettingsTests
             {
                 SyncMode = SyncMode.Continue,
                 WindowWidth = 1280,
-                LastOpenedProjectPath = @"C:\projects\show.json"
+                LastOpenedProjectPath = @"C:\projects\show.json",
+                LtcSignalLossMode = LtcSignalLossMode.Stop,
+                LtcSignalLossTimeoutMs = 900,
+                LtcSignalResumeFrames = 7,
             };
 
             await writer.SaveAsync(expected);

@@ -4,11 +4,22 @@ using System.Threading;
 
 namespace TimecodeSyncPlayer;
 
+public enum LtcSignalLossMode
+{
+    RunThrough,
+    Stop
+}
+
 /// <summary>
 /// アプリケーション設定の不変レコード。
 /// </summary>
 public sealed record AppSettings
 {
+    public const int DefaultLtcSignalLossTimeoutMs = 250;
+    public const int MinimumLtcSignalLossTimeoutMs = 100;
+    public const int MaximumLtcSignalLossTimeoutMs = 5000;
+    public const int DefaultLtcSignalResumeFrames = 5;
+
     public SyncMode SyncMode { get; init; } = SyncMode.Single;
     public GapBehavior GapBehavior { get; init; } = GapBehavior.Freeze;
     public TimecodeFpsMode TimecodeFpsMode { get; init; } = TimecodeFpsMode.Auto;
@@ -20,6 +31,9 @@ public sealed record AppSettings
     public double? WindowHeight { get; init; }
     public bool IsTimelineVisible { get; init; }
     public bool AutoOffsetOnAdd { get; init; } = true;
+    public LtcSignalLossMode LtcSignalLossMode { get; init; } = LtcSignalLossMode.RunThrough;
+    public int LtcSignalLossTimeoutMs { get; init; } = DefaultLtcSignalLossTimeoutMs;
+    public int LtcSignalResumeFrames { get; init; } = DefaultLtcSignalResumeFrames;
 
     public static AppSettings Default => new();
 }
@@ -87,7 +101,8 @@ public sealed class AppSettingsManager
                 return;
             }
 
-            string json = await File.ReadAllTextAsync(_settingsFilePath, System.Text.Encoding.UTF8);
+            string json = await File.ReadAllTextAsync(_settingsFilePath, System.Text.Encoding.UTF8)
+                .ConfigureAwait(false);
             var loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
             if (loaded != null)
             {
@@ -108,6 +123,18 @@ public sealed class AppSettingsManager
         if (settings.WindowLeft is < -7680 or > 7680) settings = settings with { WindowLeft = null };
         if (settings.WindowTop is < -4320 or > 4320) settings = settings with { WindowTop = null };
         if (settings.LtcDeviceIndex < -1) settings = settings with { LtcDeviceIndex = -1 };
+        if (!Enum.IsDefined(settings.LtcSignalLossMode))
+            settings = settings with { LtcSignalLossMode = LtcSignalLossMode.RunThrough };
+        settings = settings with
+        {
+            LtcSignalLossTimeoutMs = Math.Clamp(
+                settings.LtcSignalLossTimeoutMs,
+                AppSettings.MinimumLtcSignalLossTimeoutMs,
+                AppSettings.MaximumLtcSignalLossTimeoutMs),
+            LtcSignalResumeFrames = settings.LtcSignalResumeFrames > 0
+                ? settings.LtcSignalResumeFrames
+                : AppSettings.DefaultLtcSignalResumeFrames,
+        };
 
         return settings;
     }

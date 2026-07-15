@@ -214,6 +214,253 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
             });
     }
 
+    [SkippableFact]
+    public void CableLoop_StopMode_WhenSignalIsLost_PausesPlaybackOnLastFrame()
+    {
+        SkipIfAppUnavailable();
+        SelectCableCaptureDevice();
+        using LtcSignalPlayer signalPlayer = CreateCablePlayer();
+
+        try
+        {
+            PrepareSignalLossPlaybackTest(modeIndex: 1, expectedModeText: "停止");
+            signalPlayer.Play(
+                new LtcTimecode(0, 0, 0, 0, false),
+                Fps,
+                TimeSpan.FromSeconds(15));
+            StartLtcMonitor();
+            WaitForProgressionAfterSignalRestart(
+                expectedHour: 0,
+                initialWindow: TimeSpan.FromSeconds(5),
+                timeout: TimeSpan.FromSeconds(8));
+            EnableSync();
+            EnsurePlaybackRunning();
+            WaitForPlaybackProgression(timeout: TimeSpan.FromSeconds(5));
+
+            signalPlayer.Stop();
+
+            double stablePosition = WaitForStablePlaybackPosition(
+                stableFor: TimeSpan.FromSeconds(1),
+                timeout: TimeSpan.FromSeconds(5));
+            ReadButtonName("BtnPlay").Should().Be("▶");
+            TryReadPlaybackPosition(out double finalPosition).Should().BeTrue();
+            finalPosition.Should().BeApproximately(stablePosition, 0.05);
+        }
+        finally
+        {
+            signalPlayer.Stop();
+            RestoreSignalLossTestState();
+        }
+    }
+
+    [SkippableFact]
+    public void CableLoop_StopMode_WhenSignalReturns_ResumesAndSyncsPlayback()
+    {
+        SkipIfAppUnavailable();
+        SelectCableCaptureDevice();
+        using LtcSignalPlayer signalPlayer = CreateCablePlayer();
+
+        try
+        {
+            PrepareSignalLossPlaybackTest(modeIndex: 1, expectedModeText: "停止");
+            signalPlayer.PlayWithSilence(
+                new LtcTimecode(0, 0, 0, 0, false),
+                Fps,
+                signalBefore: TimeSpan.FromSeconds(7),
+                silence: TimeSpan.FromSeconds(1.5),
+                signalAfter: TimeSpan.FromSeconds(10));
+            StartLtcMonitor();
+            WaitForProgressionAfterSignalRestart(
+                expectedHour: 0,
+                initialWindow: TimeSpan.FromSeconds(5),
+                timeout: TimeSpan.FromSeconds(8));
+            EnableSync();
+            EnsurePlaybackRunning();
+            E2EAssert.WaitUntil(
+                () => ReadButtonName("BtnPlay") == "▶",
+                TimeSpan.FromSeconds(8));
+            TryReadPlaybackPosition(out double stoppedPosition).Should().BeTrue();
+
+            E2EAssert.WaitUntil(
+                () => ReadButtonName("BtnPlay") == "⏸",
+                TimeSpan.FromSeconds(5));
+            E2EAssert.WaitUntil(
+                () => TryReadPlaybackPosition(out double playbackSeconds) &&
+                      playbackSeconds > stoppedPosition + 0.5,
+                TimeSpan.FromSeconds(5));
+            double lastPlaybackSeconds = double.NaN;
+            double lastLtcSeconds = double.NaN;
+            double lastAlignedPlaybackSeconds = double.NaN;
+            try
+            {
+                E2EAssert.WaitUntil(
+                    () =>
+                    {
+                        if (!TryReadPlaybackPosition(out lastPlaybackSeconds))
+                        {
+                            return false;
+                        }
+
+                        long playbackObservedAt = Stopwatch.GetTimestamp();
+                        if (!TryReadTimecode(out ObservedTimecode timecode))
+                        {
+                            return false;
+                        }
+
+                        long ltcObservedAt = Stopwatch.GetTimestamp();
+                        lastLtcSeconds = timecode.TotalFrames / (double)Fps;
+                        lastAlignedPlaybackSeconds = lastPlaybackSeconds +
+                            Stopwatch.GetElapsedTime(playbackObservedAt, ltcObservedAt).TotalSeconds;
+                        return Math.Abs(lastAlignedPlaybackSeconds - lastLtcSeconds) <= 2.0;
+                    },
+                    TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException ex)
+            {
+                throw new TimeoutException(
+                    $"Playback did not sync to recovered LTC. playback={lastPlaybackSeconds:F3}, " +
+                    $"alignedPlayback={lastAlignedPlaybackSeconds:F3}, ltc={lastLtcSeconds:F3}",
+                    ex);
+            }
+        }
+        finally
+        {
+            signalPlayer.Stop();
+            RestoreSignalLossTestState();
+        }
+    }
+
+    [SkippableFact]
+    public void CableLoop_RunThroughMode_WhenSignalIsLost_KeepsPlaybackRunning()
+    {
+        SkipIfAppUnavailable();
+        SelectCableCaptureDevice();
+        using LtcSignalPlayer signalPlayer = CreateCablePlayer();
+
+        try
+        {
+            PrepareSignalLossPlaybackTest(modeIndex: 0, expectedModeText: "ランスルー");
+            signalPlayer.Play(
+                new LtcTimecode(0, 0, 0, 0, false),
+                Fps,
+                TimeSpan.FromSeconds(15));
+            StartLtcMonitor();
+            WaitForProgressionAfterSignalRestart(
+                expectedHour: 0,
+                initialWindow: TimeSpan.FromSeconds(5),
+                timeout: TimeSpan.FromSeconds(8));
+            EnableSync();
+            EnsurePlaybackRunning();
+            WaitForPlaybackProgression(timeout: TimeSpan.FromSeconds(5));
+            TryReadPlaybackPosition(out double positionBeforeLoss).Should().BeTrue();
+
+            signalPlayer.Stop();
+
+            E2EAssert.WaitUntil(
+                () => TryReadPlaybackPosition(out double current) &&
+                      current > positionBeforeLoss + 1.0,
+                TimeSpan.FromSeconds(4));
+            ReadButtonName("BtnPlay").Should().Be("⏸");
+        }
+        finally
+        {
+            signalPlayer.Stop();
+            RestoreSignalLossTestState();
+        }
+    }
+
+    private void PrepareSignalLossPlaybackTest(int modeIndex, string expectedModeText)
+    {
+        SelectFixed25Fps();
+        SelectSignalLossMode(modeIndex, expectedModeText);
+        DisableSyncIfEnabled();
+        SeekToStart();
+    }
+
+    private void SelectSignalLossMode(int index, string expectedText)
+    {
+        ComboBox modeCombo = _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId("LtcSignalLossModeCombo"))!.AsComboBox();
+        modeCombo.Select(index);
+        E2EAssert.WaitUntil(
+            () => modeCombo.SelectedItem?.Name.Contains(
+                expectedText,
+                StringComparison.Ordinal) == true,
+            TimeSpan.FromSeconds(3));
+    }
+
+    private void EnsurePlaybackRunning()
+    {
+        Button playButton = _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId("BtnPlay"))!.AsButton();
+        if (playButton.Name == "▶")
+            playButton.Invoke();
+
+        E2EAssert.WaitUntil(
+            () => playButton.Name == "⏸",
+            TimeSpan.FromSeconds(3));
+    }
+
+    private IReadOnlyList<double> WaitForPlaybackProgression(TimeSpan timeout)
+    {
+        var observed = new List<double>();
+        E2EAssert.WaitUntil(
+            () =>
+            {
+                if (!TryReadPlaybackPosition(out double current))
+                    return false;
+
+                if (observed.Count == 0 || current > observed[^1] + 0.01)
+                    observed.Add(current);
+
+                return observed.Count >= 3;
+            },
+            timeout);
+
+        return observed;
+    }
+
+    private double WaitForStablePlaybackPosition(TimeSpan stableFor, TimeSpan timeout)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        double? lastPosition = null;
+        TimeSpan lastChange = stopwatch.Elapsed;
+
+        E2EAssert.WaitUntil(
+            () =>
+            {
+                if (!TryReadPlaybackPosition(out double current))
+                    return false;
+
+                if (!lastPosition.HasValue || Math.Abs(current - lastPosition.Value) > 0.01)
+                {
+                    lastPosition = current;
+                    lastChange = stopwatch.Elapsed;
+                    return false;
+                }
+
+                return stopwatch.Elapsed - lastChange >= stableFor;
+            },
+            timeout);
+
+        return lastPosition!.Value;
+    }
+
+    private string ReadButtonName(string automationId) =>
+        _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId(automationId))!.AsButton().Name;
+
+    private void RestoreSignalLossTestState()
+    {
+        SelectSignalLossMode(index: 0, expectedText: "ランスルー");
+        RestoreLtcUiState();
+
+        Button playButton = _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId("BtnPlay"))!.AsButton();
+        if (playButton.Name == "⏸")
+            playButton.Invoke();
+    }
+
     private void AssertDegradedSignalProgresses(
         LtcTimecode start,
         LtcTestSignalGenerator.Options options)
@@ -364,6 +611,45 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
         regressed.Should().BeFalse("LTC 表示は巻き戻らない必要があるため");
         observed.Should().HaveCountGreaterThanOrEqualTo(3);
         return observed;
+    }
+
+    private void WaitForProgressionAfterSignalRestart(
+        int expectedHour,
+        TimeSpan initialWindow,
+        TimeSpan timeout)
+    {
+        long initialWindowFrames = (long)(initialWindow.TotalSeconds * Fps);
+        var observed = new List<ObservedTimecode>();
+        bool acquiredRestartedSignal = false;
+
+        E2EAssert.WaitUntil(
+            () =>
+            {
+                if (!TryReadTimecode(out ObservedTimecode current) || current.Hours != expectedHour)
+                {
+                    return false;
+                }
+
+                if (!acquiredRestartedSignal)
+                {
+                    if (current.TotalFrames > initialWindowFrames)
+                    {
+                        return false;
+                    }
+
+                    acquiredRestartedSignal = true;
+                    observed.Add(current);
+                    return false;
+                }
+
+                if (current.TotalFrames > observed[^1].TotalFrames)
+                {
+                    observed.Add(current);
+                }
+
+                return observed.Count >= 3;
+            },
+            timeout);
     }
 
     private long WaitForStableTimecode(TimeSpan stableFor, TimeSpan timeout)

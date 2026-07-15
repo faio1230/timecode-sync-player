@@ -121,6 +121,23 @@ public class SyncViewModelTests
     }
 
     [Fact]
+    public void LtcSignalLossModeIndex_MapsToModeAndRaisesPropertyChanged()
+    {
+        var vm = new SyncViewModel(new FakeLtcMonitor());
+        var changedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => changedProperties.Add(e.PropertyName);
+
+        vm.LtcSignalLossModeIndex = 1;
+
+        vm.LtcSignalLossMode.Should().Be(LtcSignalLossMode.Stop);
+        changedProperties.Should().Contain(nameof(vm.LtcSignalLossModeIndex));
+        changedProperties.Should().Contain(nameof(vm.LtcSignalLossMode));
+
+        vm.LtcSignalLossModeIndex = 0;
+        vm.LtcSignalLossMode.Should().Be(LtcSignalLossMode.RunThrough);
+    }
+
+    [Fact]
     public void IsContinueMode_TrueWhenSyncModeIndexIsOne()
     {
         var vm = new SyncViewModel(new FakeLtcMonitor());
@@ -202,6 +219,7 @@ public class SyncViewModelTests
         vm.SelectedDevice = "line-in";
         vm.SyncEnabled = true;
         vm.GapBehaviorIndex = 1;
+        vm.LtcSignalLossModeIndex = 1;
         vm.LtcTimecodeText = "01:02:03:04";
         vm.LtcRealTimeText = "3723.160 s";
         vm.LtcFormatText = "fps: 25";
@@ -212,6 +230,7 @@ public class SyncViewModelTests
         vm.SyncEnabled.Should().BeTrue();
         vm.SyncToggleLabel.Should().Be("Sync ON");
         vm.GapBehavior.Should().Be(GapBehavior.Freeze);
+        vm.LtcSignalLossMode.Should().Be(LtcSignalLossMode.Stop);
         vm.LtcTimecodeText.Should().Be("01:02:03:04");
         vm.LtcRealTimeText.Should().Be("3723.160 s");
         vm.LtcFormatText.Should().Be("fps: 25");
@@ -223,6 +242,8 @@ public class SyncViewModelTests
             nameof(vm.SyncToggleLabel),
             nameof(vm.GapBehaviorIndex),
             nameof(vm.GapBehavior),
+            nameof(vm.LtcSignalLossModeIndex),
+            nameof(vm.LtcSignalLossMode),
             nameof(vm.LtcTimecodeText),
             nameof(vm.LtcRealTimeText),
             nameof(vm.LtcFormatText),

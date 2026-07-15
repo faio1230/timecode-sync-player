@@ -108,6 +108,9 @@ public partial class App : Application
 
         Log.Information("=== TimecodeSyncPlayer 起動 === ログ: {Path}", logPath);
 
+        var settingsManager = _services.GetRequiredService<AppSettingsManager>();
+        settingsManager.LoadAsync().GetAwaiter().GetResult();
+
         var mainWindow = _services.GetRequiredService<MainWindow>();
         mainWindow.Show();
 

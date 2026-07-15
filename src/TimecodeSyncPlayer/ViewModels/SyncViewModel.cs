@@ -20,6 +20,7 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
     private bool _syncEnabled;
     private int _syncModeIndex;      // 0=Single, 1=Continue
     private int _gapBehaviorIndex;   // 0=Black, 1=Freeze
+    private int _ltcSignalLossModeIndex; // 0=RunThrough, 1=Stop
     private int _ltcFpsModeIndex;    // 0=Auto, 1=Fixed24, 2=Fixed25, 3=Fixed29_97, 4=Fixed30
     private string? _selectedDevice;
 
@@ -126,6 +127,20 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
 
     // GapBehaviorCombo: index 0 = Black, index 1 = Freeze
     public GapBehavior GapBehavior => _gapBehaviorIndex == 1 ? GapBehavior.Freeze : GapBehavior.Black;
+
+    public int LtcSignalLossModeIndex
+    {
+        get => _ltcSignalLossModeIndex;
+        set
+        {
+            _ltcSignalLossModeIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(LtcSignalLossMode));
+        }
+    }
+
+    public LtcSignalLossMode LtcSignalLossMode =>
+        _ltcSignalLossModeIndex == 1 ? LtcSignalLossMode.Stop : LtcSignalLossMode.RunThrough;
 
     public int LtcFpsModeIndex
     {
