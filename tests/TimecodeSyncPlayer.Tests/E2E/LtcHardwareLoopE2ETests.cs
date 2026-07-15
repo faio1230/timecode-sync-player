@@ -46,9 +46,19 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
                 value.Seconds >= 0 && value.Seconds <= 9);
 
             StopLtcMonitor();
-            E2EAssert.WaitUntil(
-                () => ReadText("LtcTimecodeText") == "--:--:--:--",
-                TimeSpan.FromSeconds(3));
+            try
+            {
+                E2EAssert.WaitUntil(
+                    () => ReadText("LtcTimecodeText") == "--:--:--:--" ||
+                          ReadName("LtcTimecodeText") == "--:--:--:--",
+                    TimeSpan.FromSeconds(3));
+            }
+            catch (TimeoutException ex)
+            {
+                throw new InvalidOperationException(
+                    $"STOP後の表示: TextPattern='{ReadText("LtcTimecodeText")}', Name='{ReadName("LtcTimecodeText")}'",
+                    ex);
+            }
         }
         finally
         {
@@ -382,6 +392,10 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
 
         return element.Name.Trim();
     }
+
+    private string ReadName(string automationId) =>
+        _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId(automationId))!.Name.Trim();
 
     private readonly record struct ObservedTimecode(
         int Hours,
