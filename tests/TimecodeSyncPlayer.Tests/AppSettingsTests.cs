@@ -1,5 +1,4 @@
 using System.IO;
-using System.Reflection;
 using System.Text.Json;
 using FluentAssertions;
 
@@ -270,17 +269,7 @@ public class AppSettingsTests
         }
     }
 
-    private static AppSettingsManager CreateManager(string path)
-    {
-        var constructor = typeof(AppSettingsManager).GetConstructor(
-            BindingFlags.Instance | BindingFlags.NonPublic,
-            binder: null,
-            [typeof(string)],
-            modifiers: null);
-
-        constructor.Should().NotBeNull();
-        return (AppSettingsManager)constructor!.Invoke([path]);
-    }
+    private static AppSettingsManager CreateManager(string path) => new(path);
 
     private static string CreateTemporaryDirectory()
     {

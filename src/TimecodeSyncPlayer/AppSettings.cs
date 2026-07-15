@@ -73,7 +73,7 @@ public sealed class AppSettingsManager
         }
     }
 
-    private AppSettingsManager(string settingsFilePath)
+    internal AppSettingsManager(string settingsFilePath)
     {
         _settingsFilePath = settingsFilePath;
     }
