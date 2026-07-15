@@ -102,3 +102,13 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - E2E全件: 28/28件合格、失敗0、スキップ0（5分13秒）。
 - **H1 / H2 / H3 / H4 完了**。プロダクションコード（`src/`）は変更しておらず、
   `test/ltc-hardware-loop` ブランチからpushしていない。
+
+### Importantレビュー対応（2026-07-15）
+
+- コミット `881cdb0`: `CABLE Output` が見えても `CABLE Input` が見えないRDP構成を考慮し、
+  `TryCreateCablePlayer` 失敗時は取得した理由を使って `Skip.If` でスキップするよう修正。
+- 停止保持テストのLTC信号を20秒へ延長し、STOP後2秒の安定確認中も送出を継続。
+  信号停止は `finally` のみで行い、表示停止が信号断ではなくモニター停止によることを保証した。
+- 非E2E全件: 861/861件合格、失敗0、スキップ0、ビルド警告0。
+- 実機LTC抽出: 3/3件合格、失敗0、スキップ0（1分11秒）。
+- プロダクションコード（`src/`）は変更しておらず、pushも実施していない。
