@@ -51,6 +51,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly IRenderUpdateScheduler _renderUpdateScheduler;
     private readonly IMediaDurationReader _mediaDurationReader;
     private readonly PlaylistDurationBackfillService _playlistDurationBackfillService;
+    private readonly PlaylistDurationBackfillCoordinator _playlistDurationBackfillCoordinator;
     private readonly PlaylistLoadCoordinator _playlistLoadCoordinator;
     private readonly MpvStartupPropertyApplier _mpvStartupPropertyApplier;
     private readonly MpvSessionInitializer _mpvSessionInitializer;
@@ -227,6 +228,28 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             SetSelectedIndex: index => PlaylistList.SelectedIndex = index,
             UpdateCurrentTrackLabel: UpdateCurrentTrackLabel,
             UpdatePlaylistTimelineDisplay: UpdatePlaylistTimelineDisplay));
+        _playlistDurationBackfillCoordinator = new PlaylistDurationBackfillCoordinator(
+            _playlistDurationBackfillService,
+            new PlaylistDurationBackfillEffects(
+                GetTracks: () => _playlist.Tracks,
+                ApplyDurationOnUiAsync: async (trackId, duration) =>
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        bool autoOffset = _settingsManager.Current.AutoOffsetOnAdd;
+                        _playlist.UpdateMediaDuration(trackId, duration, recalculate: autoOffset);
+                        UpdatePlaylistTimelineDisplay();
+                    });
+                },
+                HandleFailure: ex =>
+                {
+                    Log.Error(ex, "ReadDurationsInBackground failed");
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        MessageBox.Show("メディアのduration読み込みに失敗しました。", "エラー",
+                            MessageBoxButton.OK, MessageBoxImage.Error);
+                    });
+                }));
         _projectFileCoordinator = new ProjectFileCoordinator(
             new ProjectFileActionRunner(),
             new ProjectFileEffects(
@@ -836,34 +859,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         await ReadDurationsInBackground(loadResult.Paths.ToList());
     }
 
-    private async Task ReadDurationsInBackground(List<string> paths, int startIndex = 0)
-    {
-        try
-        {
-            await _playlistDurationBackfillService.BackfillAsync(
-                _playlist.Tracks,
-                paths,
-                startIndex,
-                async (trackId, duration) =>
-                {
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        bool autoOffset = _settingsManager.Current.AutoOffsetOnAdd;
-                        _playlist.UpdateMediaDuration(trackId, duration, recalculate: autoOffset);
-                        UpdatePlaylistTimelineDisplay();
-                    });
-                });
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "ReadDurationsInBackground failed");
-            _ = Dispatcher.BeginInvoke(() =>
-            {
-                MessageBox.Show("メディアのduration読み込みに失敗しました。", "エラー",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-            });
-        }
-    }
+    private Task ReadDurationsInBackground(List<string> paths, int startIndex = 0) =>
+        _playlistDurationBackfillCoordinator.BackfillAsync(paths, startIndex);
 
     private async void BtnSaveProject_Click(object sender, RoutedEventArgs e)
     {
