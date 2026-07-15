@@ -1,6 +1,5 @@
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
 
 namespace TimecodeSyncPlayer.Tests.Helpers;
 
@@ -89,7 +88,15 @@ internal sealed class LtcSignalPlayer : IDisposable
         IReadOnlyList<LtcTimecode> timecodes = BuildContinuousTimecodes(start, fps, frameCount);
         float[] monoSamples = LtcTestSignalGenerator.Generate(timecodes, fps, SampleRate);
         float[] interleavedSamples = DuplicateToChannels(monoSamples, Channels);
-        var provider = new ArraySampleProvider(interleavedSamples, SampleRate, Channels);
+        byte[] audioBytes = new byte[interleavedSamples.Length * sizeof(float)];
+        Buffer.BlockCopy(interleavedSamples, 0, audioBytes, 0, audioBytes.Length);
+        var provider = new BufferedWaveProvider(
+            WaveFormat.CreateIeeeFloatWaveFormat(SampleRate, Channels))
+        {
+            BufferLength = audioBytes.Length,
+            ReadFully = true,
+        };
+        provider.AddSamples(audioBytes, 0, audioBytes.Length);
         var output = new WasapiOut(
             _device,
             AudioClientShareMode.Shared,
@@ -98,7 +105,7 @@ internal sealed class LtcSignalPlayer : IDisposable
 
         try
         {
-            output.Init(new SampleToWaveProvider(provider));
+            output.Init(provider);
             output.Play();
             _output = output;
         }
@@ -187,25 +194,4 @@ internal sealed class LtcSignalPlayer : IDisposable
                 device.FriendlyName.Contains(friendlyNamePart, StringComparison.OrdinalIgnoreCase));
     }
 
-    private sealed class ArraySampleProvider : ISampleProvider
-    {
-        private readonly float[] _samples;
-        private int _position;
-
-        internal ArraySampleProvider(float[] samples, int sampleRate, int channels)
-        {
-            _samples = samples;
-            WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
-        }
-
-        public WaveFormat WaveFormat { get; }
-
-        public int Read(float[] buffer, int offset, int count)
-        {
-            int available = Math.Min(count, _samples.Length - _position);
-            Array.Copy(_samples, _position, buffer, offset, available);
-            _position += available;
-            return available;
-        }
-    }
 }
