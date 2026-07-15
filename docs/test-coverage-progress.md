@@ -256,7 +256,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - R5 完了: csprojへVersion 0.1.0とProductを設定。アセンブリのInformationalVersionから
   ビルドメタデータを除いて表示する`ApplicationVersion`を追加し、タイトルバーを
   `Timecode Sync Player v0.1.0`、起動ログ先頭付近をバージョン付きにした。正規化テスト3件を追加し、
-  E2Eのウィンドウ探索／タイトル検証も同じ動的値へ統一した。`docs/settings.md`にsettings.json全13キー、
+  E2Eのウィンドウ探索／タイトル検証も同じ動的値へ統一した。`docs/settings.md`にsettings.json全14キー、
   型、既定値、検証範囲、保存先、環境変数上書き、信号断しきい値の再起動要件を英日併記した。
 - R5 Debug非E2E: 921/921件合格、失敗0、スキップ0、警告0。
 - R5 Debug E2E: 初回は音声端点の一時競合で低振幅LTC 1件がSkip。対象単独1/1合格後に全件を
@@ -299,3 +299,32 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 人間側に残す作業: `docs/verification-checklist.md`を実際の会場構成で一巡し、内容確認後に
   v0.1.0タグを作成、配布zipとsetup.exeを添付したGitHub Releaseを公開する。
 - 追跡外の`AGENTS.md`はステージしていない。
+
+### リリースレビュー修正（2026-07-15）
+
+- `docs/SETUP.md`を`get-mpv.ps1`推奨、通常x64開発アーカイブ、上流名
+  `libmpv-2.dll`の無改名配置へ全面更新。`CLAUDE.md`、`docs/ARCHITECTURE.md`、
+  `docs/verification-checklist.md`も同じ方式へ統一し、READMEのclone URLを実URLへ変更した。
+- `get-mpv.ps1`はGitHub assetの有効なSHA-256 digestがない場合にSecurity Warningを表示して
+  既定で中断し、`-AllowUnverified`明示時だけ続行する。SecurityProtocolはSystemDefaultと
+  TLS 1.2のORへ変更。7-Zip 26.02公式`7zr.exe`（602,112バイト）を公式GitHub Release digestと
+  配布実体で照合し、SHA-256
+  `56B8CC9F4971CEF253644FAFE54063ED7FDCA551D4DEE0F8C6BAA81B855ACD72`へピン留めした。
+  実スクリプトでmpvアーカイブと7zrの両検証、117,532,160バイトのDLL再配置を確認した。
+- `THIRD-PARTY-NOTICES.md`のSerilog節へApache License 2.0全文を埋め込み、Apache公式本文との
+  完全一致を確認。Spout節から内部リリース計画への言及を削除した。
+- `package-release.ps1`からユーザー名固定ISCC候補を削除し、`-SkipInstaller`を追加。
+  Release出力にサブディレクトリがあればzipステージングとinstaller.issの非再帰コピー前に
+  明示停止するガードを追加し、既存`logs`での失敗と、除去後の`-SkipInstaller`成功を確認した。
+- インストーラー関連文書にアンインストール時もsettings.jsonを意図的に保持する仕様を明記。
+  `MainWindow.xaml`の死んでいた静的Titleを削除し、settingsキー数を14へ訂正。
+  `ApplicationVersionTests`の0.1.0固定が意図的なリリースゲートである旨をコメントした。
+- Debug非E2E: 921/921件合格、失敗0、スキップ0、警告0。
+- Debug E2E: 36/36件合格、失敗0、スキップ0（4分27秒、実機LTC 11件を含む）。
+- `package-release.ps1`通常実行でReleaseビルド警告0・エラー0、zip/setup.exe再生成成功。
+  zipは823,483バイト、SHA-256
+  `8C98B8AB8460F3A8F5A17D95A95CF9CA0AAC9F6B5E65B7D54BE84E747329AF51`。
+  setup.exeは2,719,033バイト、SHA-256
+  `3EF766D19F6A1C301C8FA06F2E937FBB8E9B27DF3EE1B1BACB7D73145487870D`。
+- 最終setup.exeを`/DOWNLOADMPV`付きで実インストールし、libmpv取得を確認。アンインストール後は
+  インストール先、ショートカット、HKCU登録が全て消失した。push・タグ作成は実施していない。

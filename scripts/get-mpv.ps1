@@ -1,14 +1,18 @@
 [CmdletBinding()]
 param(
     [string]$DestinationDirectory,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$AllowUnverified
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 Set-StrictMode -Version 2.0
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+[Net.ServicePointManager]::SecurityProtocol =
+    [Net.ServicePointManager]::SecurityProtocol -bor
+    [Net.SecurityProtocolType]::SystemDefault -bor
+    [Net.SecurityProtocolType]::Tls12
 
 if ([string]::IsNullOrWhiteSpace($DestinationDirectory)) {
     $DestinationDirectory = Join-Path $PSScriptRoot "..\native"
@@ -16,6 +20,7 @@ if ([string]::IsNullOrWhiteSpace($DestinationDirectory)) {
 
 $releaseApi = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
 $sevenZipUrl = "https://www.7-zip.org/a/7zr.exe"
+$sevenZipSha256 = "56B8CC9F4971CEF253644FAFE54063ED7FDCA551D4DEE0F8C6BAA81B855ACD72"
 $assetPattern = "^mpv-dev-x86_64-\d{8}-git-[^.]+\.7z$"
 $destination = [IO.Path]::GetFullPath($DestinationDirectory)
 $destinationDll = Join-Path $destination "libmpv-2.dll"
@@ -62,18 +67,33 @@ try {
     Write-Step "Downloading libmpv: $($asset.name)"
     Invoke-WebRequest -Uri $asset.browser_download_url -Headers $headers -OutFile $archivePath -UseBasicParsing
 
-    if ($asset.PSObject.Properties.Name -contains "digest" -and
+    $hasVerifiableDigest =
+        $asset.PSObject.Properties.Name -contains "digest" -and
         -not [string]::IsNullOrWhiteSpace($asset.digest) -and
-        $asset.digest -match "^sha256:(?<hash>[0-9a-fA-F]{64})$") {
+        $asset.digest -match "^sha256:(?<hash>[0-9a-fA-F]{64})$"
+    if ($hasVerifiableDigest) {
         $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
         if ($actualHash -ne $Matches.hash) {
             throw "Archive SHA-256 mismatch. expected=$($Matches.hash) actual=$actualHash"
         }
         Write-Step "Verified the archive SHA-256."
     }
+    else {
+        $warning = "The selected GitHub asset has no valid SHA-256 digest, so its integrity cannot be verified: $($asset.name)"
+        Write-Warning ("SECURITY WARNING: " + $warning)
+        if (-not $AllowUnverified) {
+            throw ($warning + ". Refusing to continue. Use -AllowUnverified only after independently verifying the asset.")
+        }
+        Write-Warning "Continuing because -AllowUnverified was explicitly specified."
+    }
 
     Write-Step "Downloading the official 7zr.exe..."
     Invoke-WebRequest -Uri $sevenZipUrl -OutFile $sevenZipPath -UseBasicParsing
+    $actualSevenZipHash = (Get-FileHash -LiteralPath $sevenZipPath -Algorithm SHA256).Hash
+    if ($actualSevenZipHash -ne $sevenZipSha256) {
+        throw "7zr.exe SHA-256 mismatch. expected=$sevenZipSha256 actual=$actualSevenZipHash"
+    }
+    Write-Step "Verified the pinned 7zr.exe SHA-256 (7-Zip 26.02)."
 
     Write-Step "Extracting the archive..."
     & $sevenZipPath x $archivePath ("-o" + $extractDirectory) -y | Out-Null

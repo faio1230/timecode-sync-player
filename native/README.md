@@ -15,7 +15,11 @@ powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1
 [shinchiro Windows builds](https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest)から
 最新の通常x64開発アーカイブを取得し、SHA-256を検証して`native/libmpv-2.dll`へ配置します。
 アーカイブ展開には[7-Zip公式の7zr.exe](https://www.7-zip.org/a/7zr.exe)を一時利用し、
-処理後にダウンロードした一時ファイルを削除します。
+ピン留めしたSHA-256と照合します。処理後にダウンロードした一時ファイルを削除します。
+
+GitHub Releaseに検証可能なSHA-256 digestがない場合、スクリプトは目立つ警告を出して既定で
+中断します。独立した手段でアーカイブを検証済みの場合に限り、`-AllowUnverified`を明示すると
+続行できます。
 
 既存の`libmpv-2.dll`がある場合は上書き確認を行います。自動実行で確認済みとして
 上書きする場合のみ、`-Force`を指定してください。

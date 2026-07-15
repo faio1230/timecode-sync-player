@@ -10,6 +10,12 @@ TimecodeSyncPlayerはユーザーごとの設定を
 場合は、環境変数`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`に絶対または相対ファイルパスを指定できます。
 相対パスはプロセスの作業ディレクトリを基準に絶対化されます。
 
+The installer intentionally retains this settings file during uninstall so that a later reinstall
+can restore the user's preferences. Delete it manually to remove the preferences completely.
+
+インストーラーは再インストール時に設定を復元できるよう、アンインストール時もこのファイルを
+意図的に保持します。設定も完全に削除したい場合は手動で削除してください。
+
 ## Keys / キー一覧
 
 | JSON key | Type | Default | Values and validation / 値・検証 |

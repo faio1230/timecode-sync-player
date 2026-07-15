@@ -10,7 +10,7 @@
 ## 事前準備
 
 - [ ] Debugビルド最新化: `dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj`
-- [ ] `native/` の `mpv-2.dll` 配置確認（Spout確認も行う場合は `SpoutDX.dll` も）
+- [ ] `scripts/get-mpv.ps1`で`native/libmpv-2.dll`を配置済みか確認（Spout確認も行う場合は`SpoutDX.dll`も）
 - [ ] LTC音源の準備。**重要: ループしないLTCソースを使うこと**（ループすると最終EOFを踏めない）。
   - 推奨: LTC音声ファイル（WAV）を用意し、プレイリスト全体の TimelineOut を**十分に越える長さ**まで再生できるようにする
   - LTCジェネレータを使う場合は、最終トラック終端を越えても巻き戻らずに進み続ける設定にする

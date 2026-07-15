@@ -30,6 +30,8 @@
   配布 URL を確認すること）をダウンロード → 展開 → DLL を `native/` に配置（リネームしない）
 - 7z アーカイブしか無い場合は 7-Zip 公式の `7zr.exe` を一時取得して展開する等、
   **実際にスクリプトを実行して端から端まで動くことを検証**してからコミット
+- mpvアーカイブのSHA-256 digestが無い／不正な場合は警告して既定で中断し、独立検証済みの
+  `-AllowUnverified`明示時だけ続行する。7zr.exeも既知のSHA-256へピン留めし、不一致時は中断する
 - 進行状況表示・失敗時の明確なエラーメッセージ・再実行安全（既存 DLL は確認の上上書き）
 
 ## R2: ネイティブ DLL 案内の全面改訂
@@ -88,8 +90,8 @@
 
 ## R8: インストーラー作成
 
-- Inno Setup 6を使用する。`ISCC.exe`は環境変数等で上書き可能にし、PATH上の実行ファイルに
-  加えて`C:/Users/codea/AppData/Local/Programs/Inno Setup 6/ISCC.exe`を既定候補として解決する
+- Inno Setup 6を使用する。`ISCC.exe`は引数／環境変数で上書き可能にし、PATH上の実行ファイルに
+  加えて`%LOCALAPPDATA%/Programs/Inno Setup 6/ISCC.exe`を既定候補として解決する
 - `scripts/installer.iss`（新規）: `PrivilegesRequired=lowest`のユーザー単位インストールとし、
   Releaseビルド出力一式、`SpoutDX.dll`、`LICENSE`、`THIRD-PARTY-NOTICES.md`、`CHANGELOG.md`、
   mpv取得用`get-mpv.ps1`を含める。`mpv-2.dll`／`libmpv-2.dll`は同梱しない
@@ -97,9 +99,11 @@
   「mpvを今ダウンロードする」チェック項目を表示し、選択時に同梱`get-mpv.ps1`を実行して
   インストール先へlibmpvを配置する
 - 出力名は`TimecodeSyncPlayer-v0.1.0-setup.exe`。`scripts/package-release.ps1`の1回の実行で
-  zipとsetup.exeの両方を生成でき、ISCCパスは環境変数または引数で上書き可能にする
+  zipとsetup.exeの両方を生成でき、ISCCパスは環境変数または引数で上書き可能にする。
+  zipだけが必要な場合は`-SkipInstaller`を指定できる
 - 実際のsetup.exeでインストールし、mpvダウンロードオプション込みで起動できること、
-  アンインストール後にインストール先・ショートカット等の痕跡が残らないことを確認する
+  アンインストール後にインストール先・ショートカット等の管理対象痕跡が残らないことを確認する。
+  `%LOCALAPPDATA%/TimecodeSyncPlayer/settings.json`は再インストール向けに意図的に保持する
 
 ## 実行順とゲート
 

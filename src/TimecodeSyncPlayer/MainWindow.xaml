@@ -1,7 +1,7 @@
 <Window x:Class="TimecodeSyncPlayer.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Timecode Sync Player" Width="1120" Height="680"
+        Width="1120" Height="680"
         MinWidth="980" MinHeight="600"
         Background="#111"
         Loaded="Window_Loaded"
