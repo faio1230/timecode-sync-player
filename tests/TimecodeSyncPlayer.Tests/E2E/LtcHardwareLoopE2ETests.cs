@@ -133,6 +133,123 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
         }
     }
 
+    [SkippableFact]
+    public void CableLoop_NoisySignal_TimecodeProgresses()
+    {
+        AssertDegradedSignalProgresses(
+            new LtcTimecode(2, 0, 0, 0, false),
+            new LtcTestSignalGenerator.Options
+            {
+                NoiseAmplitude = 0.15,
+                NoiseSeed = 4242,
+            });
+    }
+
+    [SkippableFact]
+    public void CableLoop_LowAmplitudeSignal_TimecodeProgresses()
+    {
+        AssertDegradedSignalProgresses(
+            new LtcTimecode(3, 0, 0, 0, false),
+            new LtcTestSignalGenerator.Options { Amplitude = 0.1f });
+    }
+
+    [SkippableFact]
+    public void CableLoop_InvertedSignal_TimecodeProgresses()
+    {
+        AssertDegradedSignalProgresses(
+            new LtcTimecode(4, 0, 0, 0, false),
+            new LtcTestSignalGenerator.Options { Invert = true });
+    }
+
+    [SkippableFact]
+    public void CableLoop_AfterSilence_TimecodeStopsThenRecoversProgression()
+    {
+        SkipIfAppUnavailable();
+        SkipIfFfmpegUnavailableForDegradedSignalTest();
+        SelectCableCaptureDevice();
+        using LtcSignalPlayer signalPlayer = CreateCablePlayer();
+
+        try
+        {
+            SelectFixed25Fps();
+
+            signalPlayer.PlayWithSilence(
+                new LtcTimecode(5, 0, 0, 0, false),
+                Fps,
+                signalBefore: TimeSpan.FromSeconds(4),
+                silence: TimeSpan.FromSeconds(1.5),
+                signalAfter: TimeSpan.FromSeconds(6));
+            StartLtcMonitor();
+
+            WaitForProgression(expectedHour: 5, timeout: TimeSpan.FromSeconds(5));
+            long frameBeforeRecovery = WaitForStableTimecode(
+                stableFor: TimeSpan.FromSeconds(1),
+                timeout: TimeSpan.FromSeconds(6));
+
+            IReadOnlyList<ObservedTimecode> recovered = WaitForProgression(
+                expectedHour: 5,
+                timeout: TimeSpan.FromSeconds(8));
+
+            recovered[^1].TotalFrames.Should().BeGreaterThan(
+                frameBeforeRecovery,
+                "無音区間後にLTC表示の進行が再開する必要があるため");
+        }
+        finally
+        {
+            signalPlayer.Stop();
+            RestoreLtcUiState();
+        }
+    }
+
+    [SkippableFact]
+    public void CableLoop_NoisyLowAmplitudeSignal_TimecodeProgresses()
+    {
+        AssertDegradedSignalProgresses(
+            new LtcTimecode(6, 0, 0, 0, false),
+            new LtcTestSignalGenerator.Options
+            {
+                Amplitude = 0.1f,
+                NoiseAmplitude = 0.015,
+                NoiseSeed = 4242,
+            });
+    }
+
+    private void AssertDegradedSignalProgresses(
+        LtcTimecode start,
+        LtcTestSignalGenerator.Options options)
+    {
+        SkipIfAppUnavailable();
+        SkipIfFfmpegUnavailableForDegradedSignalTest();
+        SelectCableCaptureDevice();
+        using LtcSignalPlayer signalPlayer = CreateCablePlayer();
+
+        try
+        {
+            SelectFixed25Fps();
+
+            signalPlayer.Play(start, Fps, TimeSpan.FromSeconds(15), options);
+            StartLtcMonitor();
+
+            IReadOnlyList<ObservedTimecode> observed = WaitForProgression(
+                expectedHour: start.Hours,
+                timeout: TimeSpan.FromSeconds(12));
+
+            observed.Should().OnlyContain(value => value.Hours == start.Hours);
+        }
+        finally
+        {
+            signalPlayer.Stop();
+            RestoreLtcUiState();
+        }
+    }
+
+    private static void SkipIfFfmpegUnavailableForDegradedSignalTest()
+    {
+        Skip.IfNot(
+            TestVideoFactory.FfmpegAvailable(),
+            "ffmpeg が見つからないため、劣化LTC実機ループ E2E をスキップします。");
+    }
+
     private void SkipIfAppUnavailable()
     {
         if (_fixture.Skipped)

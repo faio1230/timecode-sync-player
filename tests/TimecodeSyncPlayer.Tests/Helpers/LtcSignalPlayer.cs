@@ -74,7 +74,11 @@ internal sealed class LtcSignalPlayer : IDisposable
         }
     }
 
-    public void Play(LtcTimecode start, int fps, TimeSpan duration)
+    public void Play(
+        LtcTimecode start,
+        int fps,
+        TimeSpan duration,
+        LtcTestSignalGenerator.Options? options = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (fps <= 0)
@@ -86,7 +90,57 @@ internal sealed class LtcSignalPlayer : IDisposable
 
         int frameCount = Math.Max(1, (int)Math.Ceiling(duration.TotalSeconds * fps));
         IReadOnlyList<LtcTimecode> timecodes = BuildContinuousTimecodes(start, fps, frameCount);
-        float[] monoSamples = LtcTestSignalGenerator.Generate(timecodes, fps, SampleRate);
+        float[] monoSamples = LtcTestSignalGenerator.Generate(timecodes, fps, SampleRate, options);
+        PlaySamples(monoSamples);
+    }
+
+    public void PlayWithSilence(
+        LtcTimecode start,
+        int fps,
+        TimeSpan signalBefore,
+        TimeSpan silence,
+        TimeSpan signalAfter,
+        LtcTestSignalGenerator.Options? options = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (fps <= 0)
+            throw new ArgumentOutOfRangeException(nameof(fps));
+        if (signalBefore <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(signalBefore));
+        if (silence <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(silence));
+        if (signalAfter <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(signalAfter));
+
+        Stop();
+
+        int beforeFrameCount = Math.Max(1, (int)Math.Ceiling(signalBefore.TotalSeconds * fps));
+        int silentFrameCount = Math.Max(1, (int)Math.Round(silence.TotalSeconds * fps));
+        int afterFrameCount = Math.Max(1, (int)Math.Ceiling(signalAfter.TotalSeconds * fps));
+        IReadOnlyList<LtcTimecode> beforeTimecodes =
+            BuildContinuousTimecodes(start, fps, beforeFrameCount);
+        LtcTimecode afterStart = AdvanceTimecode(start, fps, beforeFrameCount + silentFrameCount);
+        IReadOnlyList<LtcTimecode> afterTimecodes =
+            BuildContinuousTimecodes(afterStart, fps, afterFrameCount);
+
+        float[] beforeSamples =
+            LtcTestSignalGenerator.Generate(beforeTimecodes, fps, SampleRate, options);
+        float[] afterSamples =
+            LtcTestSignalGenerator.Generate(afterTimecodes, fps, SampleRate, options);
+        int silenceSampleCount = Math.Max(1, (int)Math.Round(silence.TotalSeconds * SampleRate));
+        var monoSamples = new float[beforeSamples.Length + silenceSampleCount + afterSamples.Length];
+        Array.Copy(beforeSamples, monoSamples, beforeSamples.Length);
+        Array.Copy(
+            afterSamples,
+            0,
+            monoSamples,
+            beforeSamples.Length + silenceSampleCount,
+            afterSamples.Length);
+        PlaySamples(monoSamples);
+    }
+
+    private void PlaySamples(float[] monoSamples)
+    {
         float[] interleavedSamples = DuplicateToChannels(monoSamples, Channels);
         byte[] audioBytes = new byte[interleavedSamples.Length * sizeof(float)];
         Buffer.BlockCopy(interleavedSamples, 0, audioBytes, 0, audioBytes.Length);
@@ -168,6 +222,23 @@ internal sealed class LtcSignalPlayer : IDisposable
         }
 
         return frames;
+    }
+
+    internal static LtcTimecode AdvanceTimecode(
+        LtcTimecode start,
+        int fps,
+        int frameCount)
+    {
+        if (fps <= 0)
+            throw new ArgumentOutOfRangeException(nameof(fps));
+        if (frameCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(frameCount));
+
+        LtcTimecode current = start;
+        for (int i = 0; i < frameCount; i++)
+            current = LtcTestSignalGenerator.Increment(current, fps);
+
+        return current;
     }
 
     internal static float[] DuplicateToChannels(float[] monoSamples, int channels)

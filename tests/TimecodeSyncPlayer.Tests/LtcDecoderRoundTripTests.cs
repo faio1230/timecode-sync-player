@@ -284,6 +284,27 @@ public class LtcDecoderRoundTripTests
         decoded.Should().Contain(tc);
     }
 
+    [Fact]
+    public void RoundTrip_WithLowAmplitudeAndNoise_StillDecodes()
+    {
+        const int fps = 25;
+        const int sampleRate = 48000;
+        var tc = new LtcTimecode(6, 5, 4, 3, false);
+        var stream = new List<LtcTimecode> { tc, tc, tc, tc, tc };
+        var opts = new LtcTestSignalGenerator.Options
+        {
+            Amplitude = 0.1f,
+            NoiseAmplitude = 0.015,
+            NoiseSeed = 4242,
+        };
+
+        var samples = LtcTestSignalGenerator.Generate(stream, fps, sampleRate, opts);
+        var decoded = DecodeAll(samples, sampleRate, fps);
+
+        decoded.Should().NotBeEmpty("低振幅と軽微なノイズの複合条件でもデコードできるはず");
+        decoded.Should().Contain(tc);
+    }
+
     // ── カテゴリ8: 無効入力（null を返し続け、例外を投げない） ──────────────
 
     [Fact]
