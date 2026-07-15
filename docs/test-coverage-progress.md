@@ -264,3 +264,22 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - R6 完了: Release構成のアプリビルドは警告0・エラー0。Release非E2Eは921/921件合格、
   失敗0、スキップ0。`TIMECODE_SYNC_PLAYER_E2E_APP_PATH`をRelease版exeの絶対パスへ固定した
   Release E2Eは36/36件合格、失敗0、スキップ0（5分00秒、実機LTC 11件を含む）。
+- R7 完了: Windows PowerShell 5.1互換`scripts/package-release.ps1`と`CHANGELOG.md`を追加。
+  Release出力からmpv両DLLとPDBを除外し、アプリ一式、SpoutDX、LICENSE、第三者通知、
+  CHANGELOG、簡易README、`get-mpv.ps1`を含む
+  `artifacts/release/TimecodeSyncPlayer-v0.1.0-win-x64.zip`（819,530バイト）を生成した。
+- R7 配布物検証: 一意な別フォルダへ展開し、mpv DLL非同梱と必須ファイルを確認。上流名
+  `libmpv-2.dll`を後置きして実アプリを起動し、プロセス生存、タイトル
+  `Timecode Sync Player v0.1.0`、バージョン付き起動ログ、Spout初期化完了ログを確認した。
+  検証フォルダは終了後に削除し、`-SkipBuild`再実行によるzip上書きも成功した。
+- R7 Debug非E2E: 921/921件合格、失敗0、スキップ0、警告0。パッケージ用Releaseビルドも
+  警告0・エラー0。
+
+### リリース準備の最終状態
+
+- R0→R1→R2→R3→R4→R5→R6→R7を指定順で完了。作業ブランチは
+  `release/0.1-prep`、push・タグ作成・GitHub Release公開は実施していない。
+- 自動検証の最終基線は非E2E 921件、E2E 36件（実機LTC 11件）、Skip 0、警告0。
+- 人間側に残す作業: `docs/verification-checklist.md`を実際の会場構成で一巡し、内容確認後に
+  v0.1.0タグを作成、配布zipを添付したGitHub Releaseを公開する。
+- 追跡外の`AGENTS.md`はステージしていない。
