@@ -126,3 +126,14 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   suppressOsd、停止時の状態リセット順を検証。非E2E 874/874件、E2E 28/28件
   （実機LTC 3件・Skip 0）、警告0。全体行カバレッジ63.75%、
   PlaybackOperationsCoordinator / Effectsはいずれも行・分岐100%。
+- M2 完了（コミット `6926a24`）: `Window_Loaded` に残っていたUI初期化、CLI引数解析、
+  セッション初期化、起動アクション計画・スケジュールの順序と早期returnを
+  `WindowLoadedCoordinator` + Effectsへ抽出。遅延生成・キャッシュし、Effectsは呼び出し時に
+  MainWindow側の処理を実行する。`CreateRenderContext` は既存の
+  `RenderContextParameterBuilder` / `RenderContextCreateResult` より外側に残る処理がP/Invoke、
+  Marshal解放、コールバックのフィールド保持・登録そのものだったため、計画の禁止事項に従って
+  抽出範囲を狭め、一切変更していない。新規単体テスト2件で成功時の順序・計画引き渡しと
+  セッション失敗時の停止を検証。非E2E 876/876件、E2E 28/28件
+  （実機LTC 3件・Skip 0）、警告0。全体行カバレッジ63.78%、
+  WindowLoadedCoordinator / Effectsはいずれも行・分岐100%。
+- M0 / M1 / M2 完了。ブランチ `refactor/mainwindow-core-extraction` で作業し、pushは未実施。
