@@ -51,10 +51,12 @@
 - 実機LTC抽出実行: 0件合格、3件スキップ。理由は、Windows Core Audio の有効な
   録音エンドポイントに `CABLE Output` が見つからないため。
 - PnP 上では `VB-Audio Virtual Cable`（`ROOT\\MEDIA\\0008`）は正常だが、現在の
-  Windows セッションには `CABLE Input` / `CABLE Output` が公開されていない。
-  デバイス再起動・再スキャンは管理者権限不足で実行できなかった。
+  実行環境は RDP セッション（Session 1）で、Present な AudioEndpoint は
+  `リモート オーディオ` のみ。VB-CABLE の `CABLE Input` / `CABLE Output` 子エンドポイントは
+  このセッションに公開されていない。デバイス再起動・再スキャンも管理者権限不足で実行できなかった。
 - **停止**: 「VB-CABLE がある本機ではスキップされず実行」の完了ゲートに未達。
-  Windows を再起動して両エンドポイントを有効にした後、次を再実行すること。
+  ローカルコンソールの音声セッションで両エンドポイントを有効にし、必要なら Windows を
+  再起動した後、次を再実行すること。
 
 ```powershell
 dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop" --logger "console;verbosity=detailed"
