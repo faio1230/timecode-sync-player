@@ -16,7 +16,7 @@
 | T1 | PlayerViewModel / SyncViewModel / AppSettingsManager の隙間 | 100% / 96.9% / 93.2% | テスト追加のみ | 低 | ◎ |
 | T2 | FrameRenderer | 166行・100% | テスト追加のみ | 中 | ○ |
 | T3 | TimelineDrawingSurface | 604行・9% | ロジック抽出＋テスト | 高 | △（制約厳守前提） |
-| T4 | SpoutOutput | 160行・15% | シーム導入＋テスト | 中 | ○ |
+| T4 | SpoutOutput | 160行・100% | シーム導入＋テスト | 中 | ○ |
 | T5 | TimelinePanel.xaml.cs | 170行・0% | ロジック抽出＋テスト | 中 | △ |
 | T6 | LtcAudioMonitor | 234行・0% | 部分抽出＋テスト | 中 | △ |
 | T7 | MainWindow 残り配線（1700行） | 0% | 継続抽出 | 高 | ✕（対話セッション推奨） |

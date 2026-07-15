@@ -15,8 +15,14 @@ public sealed class SpoutOutput : ISpoutOutput
     private bool   _initialized;
     private bool   _disposed;
     private long   _sendCount;   // 送信フレームカウント（ログ用）
+    private readonly ISpoutNativeApi _native;
 
+    public SpoutOutput() : this(SpoutNativeApi.Instance) { }
 
+    internal SpoutOutput(ISpoutNativeApi native)
+    {
+        _native = native;
+    }
     public bool IsEnabled    { get; set; } = false;
     public bool IsAvailable  => _initialized;
 
@@ -26,32 +32,32 @@ public sealed class SpoutOutput : ISpoutOutput
     /// </summary>
     public bool TryInitialize()
     {
-        SpoutNative.ValidateObjectSize();
+        _native.ValidateObjectSize();
 
         if (_initialized) return true;
         if (_disposed) return false;
 
         try
         {
-            _obj = SpoutNative.Create();
+            _obj = _native.Create();
             if (_obj == IntPtr.Zero)
             {
                 Log.Warning("SpoutOutput: spoutDX の生成に失敗");
                 return false;
             }
 
-            if (!SpoutNative.OpenDirectX11(_obj, IntPtr.Zero))
+            if (!_native.OpenDirectX11(_obj, IntPtr.Zero))
             {
                 Log.Warning("SpoutOutput: OpenDirectX11 失敗");
-                SpoutNative.Destroy(_obj);
+                _native.Destroy(_obj);
                 _obj = IntPtr.Zero;
                 return false;
             }
 
-            if (!SpoutNative.SetSenderName(_obj, DefaultSenderName))
+            if (!_native.SetSenderName(_obj, DefaultSenderName))
             {
                 Log.Warning("SpoutOutput: SetSenderName 失敗");
-                SpoutNative.Destroy(_obj);
+                _native.Destroy(_obj);
                 _obj = IntPtr.Zero;
                 return false;
             }
@@ -89,7 +95,7 @@ public sealed class SpoutOutput : ISpoutOutput
         try
         {
             uint pitchBytes = GetTightlyPackedBgraPitch(width);
-            bool ok = SpoutNative.SendImage(_obj, pixels, (uint)width, (uint)height,
+            bool ok = _native.SendImage(_obj, pixels, (uint)width, (uint)height,
                 pitchBytes);
             _sendCount++;
 
@@ -119,7 +125,7 @@ public sealed class SpoutOutput : ISpoutOutput
 
         if (_initialized)
         {
-            try { SpoutNative.ReleaseSender(_obj); }
+            try { _native.ReleaseSender(_obj); }
             catch (Exception ex) { Log.Warning(ex, "SpoutNative.ReleaseSender failed during dispose"); }
         }
 
@@ -130,9 +136,36 @@ public sealed class SpoutOutput : ISpoutOutput
     {
         if (_obj != IntPtr.Zero)
         {
-            try { SpoutNative.Destroy(_obj); }
+            try { _native.Destroy(_obj); }
             catch (Exception ex) { Log.Warning(ex, "SpoutNative.Destroy failed during dispose"); }
             _obj = IntPtr.Zero;
         }
     }
+}
+
+internal interface ISpoutNativeApi
+{
+    void ValidateObjectSize();
+    IntPtr Create();
+    bool OpenDirectX11(IntPtr self, IntPtr device);
+    bool SetSenderName(IntPtr self, string name);
+    bool SendImage(IntPtr self, IntPtr pixels, uint width, uint height, uint pitch);
+    void ReleaseSender(IntPtr self);
+    void Destroy(IntPtr self);
+}
+
+internal sealed class SpoutNativeApi : ISpoutNativeApi
+{
+    internal static SpoutNativeApi Instance { get; } = new();
+
+    private SpoutNativeApi() { }
+
+    public void ValidateObjectSize() => SpoutNative.ValidateObjectSize();
+    public IntPtr Create() => SpoutNative.Create();
+    public bool OpenDirectX11(IntPtr self, IntPtr device) => SpoutNative.OpenDirectX11(self, device);
+    public bool SetSenderName(IntPtr self, string name) => SpoutNative.SetSenderName(self, name);
+    public bool SendImage(IntPtr self, IntPtr pixels, uint width, uint height, uint pitch) =>
+        SpoutNative.SendImage(self, pixels, width, height, pitch);
+    public void ReleaseSender(IntPtr self) => SpoutNative.ReleaseSender(self);
+    public void Destroy(IntPtr self) => SpoutNative.Destroy(self);
 }
