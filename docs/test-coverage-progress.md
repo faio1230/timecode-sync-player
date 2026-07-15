@@ -245,3 +245,6 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   案内される配布Release、通常x64開発アーカイブ名、直下の`libmpv-2.dll`、配置先を
   手動手順でも明記。配布zipにはSpoutDXを同梱し、ソースビルド時のみ別途必要と整理した。
   Debug非E2Eは918/918件合格、失敗0、スキップ0、警告0。
+- R3 完了: `README.md`を英語／日本語の対称構成へ改訂。v0.1.0 betaの位置づけ、主要機能、
+  動作要件、配布zipとソースビルドの手順、関連文書へのリンク、実機LTC E2E、ライセンス、
+  Studio Sandixクレジットを整理した。Debug非E2Eは918/918件合格、失敗0、スキップ0、警告0。
