@@ -293,6 +293,20 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
         string[] parts = current.Split(':');
         seconds = 0;
 
+        if (parts.Length == 4)
+        {
+            if (!int.TryParse(parts[0], out int hours) ||
+                !int.TryParse(parts[1], out int minutes) ||
+                !int.TryParse(parts[2], out int wholeSeconds) ||
+                !int.TryParse(parts[3], out int frames))
+            {
+                return false;
+            }
+
+            seconds = hours * 3600 + minutes * 60 + wholeSeconds + frames / (double)Fps;
+            return true;
+        }
+
         for (int index = 0; index < parts.Length; index++)
         {
             if (!double.TryParse(parts[index], out double component))
