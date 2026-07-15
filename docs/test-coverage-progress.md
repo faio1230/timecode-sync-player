@@ -248,3 +248,8 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - R3 完了: `README.md`を英語／日本語の対称構成へ改訂。v0.1.0 betaの位置づけ、主要機能、
   動作要件、配布zipとソースビルドの手順、関連文書へのリンク、実機LTC E2E、ライセンス、
   Studio Sandixクレジットを整理した。Debug非E2Eは918/918件合格、失敗0、スキップ0、警告0。
+- R4 完了: Studio Sandix名義のMIT `LICENSE`と、配布／リンク対象ランタイム依存だけを扱う
+  `THIRD-PARTY-NOTICES.md`を追加。NuGet 4パッケージの同梱nuspec／licenseと各上流一次情報を
+  照合し、csprojへAuthors、Copyright、MIT式、RepositoryUrlを追加した。Spout2上流の実ライセンスは
+  計画書のBSD-3表記と異なりSimplified BSD（BSD-2-Clause）だったため、正確な全文を採用した。
+  Debug非E2Eは918/918件合格、失敗0、スキップ0、警告0。
