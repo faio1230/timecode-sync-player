@@ -151,3 +151,35 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - E2E全件: 33/33件合格、失敗0、スキップ0（6分26秒）。
 - プロダクションコード（`src/`）は変更していない。ブランチ
   `test/ltc-degraded-signal` で作業し、pushは実施していない。`AGENTS.md` は未追跡のまま。
+
+## LTC信号断時の再生動作モード（2026-07-15）
+
+- 完了（コミット `1c9acec`）。既定のランスルーと停止の2モードを追加し、設定は
+  `AppSettings` にのみ永続化した。タイムアウトは既定250ms（100～5000msへクランプ）、
+  復帰は既定5連続正常フレームとした。プロジェクトファイル形式は変更していない。
+- `LtcSignalLossPolicy` に受信中→信号断のエッジ検出、ポリシー所有pause、手動Play優先、
+  連続フレーム復帰を分離した。Sync OFF、監視外、GapFreeze中、既にpause中は介入しない。
+  手動LTC STOP時は状態をリセットする。
+- UIのGap隣へ常時操作可能な「信号断時」コンボ（ランスルー／停止、
+  AutomationId `LtcSignalLossModeCombo`）を追加。設定をMainWindow生成前に読み込み、
+  既存settings.jsonに新キーがない場合はランスルーへ後方互換フォールバックする。
+- ユニットテストで信号断エッジ1回、手動Play後の再介入禁止、N/N-1フレーム復帰、
+  復帰途中の再断、全発動ガード、設定検証・永続化、ViewModelマッピングを検証。
+  `LtcSignalLossPolicy` は行100%・分岐100%。非E2E全体の行カバレッジは63.86%。
+- 実機E2Eを3件追加。停止モードの信号断pause・最終フレーム保持、5フレーム復帰後の
+  再生再開とLTC同期、ランスルーの再生継続をVB-CABLEで検証した。前テストの最終LTC表示を
+  保持する実仕様とFlaUIの逐次読取り時間を考慮し、新信号の再開検出と観測時刻補正を行った。
+- 非E2E全件: 905/905件合格、失敗0、スキップ0、ビルド警告0。
+- 実機LTCクラス: 11/11件合格、失敗0、スキップ0（5分03秒）。
+- E2E全件: 36/36件合格、失敗0、スキップ0（9分03秒）。
+- ブランチ `feature/ltc-signal-loss-mode` で作業し、pushは実施していない。
+  追跡外の `AGENTS.md` はステージしていない。
+
+### 人間レビュー要点
+
+- `MainWindow` の100msタイマーで無受信を検出し、正常フレーム受信側で復帰ヒステリシスを
+  進める配線が、Single／Continue双方とGapFreezeの既存処理順を阻害しないこと。
+- ポリシー所有pause中にオペレーターがPlayした場合、その受信断サイクルでは再pauseも
+  自動resumeもしないこと。
+- 設定ロードをMainWindow生成前に完了させたことで、従来の設定項目も起動時から
+  `Current` に反映されること。
