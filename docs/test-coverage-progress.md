@@ -85,5 +85,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - **停止**: H2の「LTC停止後に表示が `--:--:--:--` に戻る」要件を満たすには
   プロダクションコードの停止通知処理を修正する必要があるが、本タスクでは `src/` 変更が禁止されている。
   テスト要件を弱める変更は行っていない。
+- 追加診断（コミット `cf2eebd`）: UI Automationのキャッシュ差も確認したが、STOPから3秒後も
+  TextPatternとAutomation Nameの両方が同じ最終値（実測 `01:00:04:10`）のままだった。
 
 プロダクションコード（`src/`）は変更しておらず、push も実施していない。
