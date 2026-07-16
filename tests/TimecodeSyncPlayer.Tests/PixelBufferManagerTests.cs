@@ -66,9 +66,51 @@ public class PixelBufferManagerTests
 
         manager.PixelBuffer.Should().BeNull(
             "overflowing dimensions must not allocate a wrapped zero-length buffer");
-        exception.Should().NotBeNull(
-            "overflowing dimensions must be rejected before allocating a wrapped buffer size");
+        exception.Should().BeOfType<ArgumentOutOfRangeException>(
+            "overflowing dimensions must be rejected consistently");
         manager.PixelPtr.Should().Be(IntPtr.Zero);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-1, 1)]
+    [InlineData(32_768, 32_768)]
+    [InlineData(65_536, 65_536)]
+    public void EnsureMethods_InvalidDimensionsThrowArgumentOutOfRange(int width, int height)
+    {
+        using var manager = new PixelBufferManager();
+
+        Action[] operations =
+        [
+            () => manager.EnsurePixelBuffer(width, height),
+            () => manager.EnsureFrozenFrameBuffer(width, height),
+            () => manager.EnsureGapFreezeFrameBuffer(width, height),
+        ];
+
+        foreach (Action operation in operations)
+        {
+            operation.Should().Throw<ArgumentOutOfRangeException>()
+                .WithMessage("*frame dimensions*");
+        }
+    }
+
+    [Theory]
+    [InlineData(1, 1, 4)]
+    [InlineData(32_768, 1, 131_072)]
+    public void EnsureMethods_ValidBoundaryDimensionsAllocateExpectedSize(
+        int width,
+        int height,
+        int expectedBytes)
+    {
+        using var manager = new PixelBufferManager();
+
+        manager.EnsurePixelBuffer(width, height);
+        manager.EnsureFrozenFrameBuffer(width, height);
+        manager.EnsureGapFreezeFrameBuffer(width, height);
+
+        manager.PixelBuffer.Should().HaveCount(expectedBytes);
+        manager.FrozenFrameBuffer.Should().HaveCount(expectedBytes);
+        manager.CachedGapFreezeFrameBuffer.Should().HaveCount(expectedBytes);
     }
 
     [Fact]
@@ -202,6 +244,26 @@ public class PixelBufferManagerTests
         manager.CopyToFrozenFrame(2, 2);
 
         manager.FrozenFrameBuffer.Should().Equal(manager.PixelBuffer);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-1, 1)]
+    [InlineData(32_768, 32_768)]
+    [InlineData(65_536, 65_536)]
+    public void CopyMethods_InvalidDimensionsThrowArgumentOutOfRange(int width, int height)
+    {
+        using var manager = new PixelBufferManager();
+        manager.EnsurePixelBuffer(1, 1);
+        manager.EnsureFrozenFrameBuffer(1, 1);
+
+        Action copyToFrozen = () => manager.CopyToFrozenFrame(width, height);
+        Action copyToGapFreeze = () => manager.CopyFrozenToGapFreezeFrame(width, height);
+
+        copyToFrozen.Should().Throw<ArgumentOutOfRangeException>()
+            .WithMessage("*frame dimensions*");
+        copyToGapFreeze.Should().Throw<ArgumentOutOfRangeException>()
+            .WithMessage("*frame dimensions*");
     }
 
     // --- CopyFrozenToGapFreezeFrame ---

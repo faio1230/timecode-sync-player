@@ -31,6 +31,9 @@ internal sealed class RenderFrameCoordinator
     public void Render()
     {
         RenderFrameSizeDecision sizeDecision = _decideSize();
+        if (!sizeDecision.ShouldRender)
+            return;
+
         int width = sizeDecision.Width;
         int height = sizeDecision.Height;
 

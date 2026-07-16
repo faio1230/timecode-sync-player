@@ -12,6 +12,7 @@ internal static class RenderFrameParameterBuilder
         int width,
         int height)
     {
+        FrameBufferSize.GetRequiredByteCount(width, height);
         bufferManager.SizeArray[0] = width;
         bufferManager.SizeArray[1] = height;
         Marshal.WriteInt64(bufferManager.StridePtr, (long)(width * 4));

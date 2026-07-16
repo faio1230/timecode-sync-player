@@ -652,3 +652,30 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 共通ルールに従い `src/` は変更していない。V5の残りケース、ミューテーション確認、非E2E全件ゲート、
   V2以降は未実行。ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` も
   ステージしていない。
+
+### テスト強化 V5 完了（2026-07-16）
+
+- ユーザー承認の二段防衛を実装した。第一防衛では `RenderFrameSizePolicy` が幅・高さ1未満、または
+  long/checkedで算出した4bytes/pixelの必要量が `int.MaxValue` を超える寸法を描画不可と判定し、
+  元寸法を `Log.Warning` へ記録する。`RenderFrameCoordinator` はEnsure/native呼出し前にreturnし、
+  ライブ処理を例外で停止させない。
+- 最終防衛として `FrameBufferSize` に共通の必要バイト数検証を追加し、Pixel/Frozen/GapFreezeの
+  3つのEnsure、2つのコピー、`FrameRenderer` の3コピー入口、native parameter構築入口で使用した。
+  第一防衛を迂回して不正寸法が到達した場合は一貫して `ArgumentOutOfRangeException` を投げる。
+  `RenderBlack` / Frozen不可時の非正寸法は従来どおり16x16黒へ安全にフォールバックする。
+- TDD RED: 第一防衛テストは `ShouldRender` 不在のCS1061/CS1739で失敗した。最終防衛追加前は
+  PixelBufferManager 9件が無例外・0バイト確保・OverflowException等で失敗し、FrameRenderer 10件が
+  WPF内部のArgumentException/OverflowExceptionとなり、native parameter 4件は無例外で失敗した。
+  GREEN: 復元後のV5対象5クラスは88/88件合格した。
+- 境界は0、負、1x1、32,768x1、32,768平方、65,536平方を検証した。1x1と32,768x1は正しい
+  バイト数で受理し、0・負・両平方値は第一防衛で描画せず、最終防衛直接呼出しでは明確に拒否した。
+  拡大・縮小・再拡大時の参照/ピン留めと0寸法黒フォールバックの既存テストも維持した。
+- ミューテーション確認1: 必要量計算からlong cast/checkedを外してint計算へ戻すと、32,768平方と
+  65,536平方が `ShouldRender=true` となり、元の再現テストも0バイト確保で、対象5件中3件が失敗した。
+  変更は復元済み。
+- ミューテーション確認2: `RenderFrameCoordinator` の `ShouldRender` 早期returnを削除すると、
+  `Render_InvalidSizeStopsBeforeBufferAndNativeOperations` が期待した空の呼出し列に対して
+  `ensure, build, render` を検出して失敗した。変更は復元済み。
+- 復元後のDebug非E2E全件は1047/1047件合格、失敗0、Skip0、ビルド警告0。
+  Debug E2E全件は実機LTCを含む44/44件合格、失敗0、Skip0（6分40秒）。
+  ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。

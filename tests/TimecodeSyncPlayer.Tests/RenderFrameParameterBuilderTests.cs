@@ -33,6 +33,32 @@ public class RenderFrameParameterBuilderTests
         renderParams[4].Data.Should().Be(IntPtr.Zero);
     }
 
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-1, 1)]
+    [InlineData(32_768, 32_768)]
+    [InlineData(65_536, 65_536)]
+    public void Build_InvalidDimensionsThrowBeforeWritingNativeParameters(int width, int height)
+    {
+        using var bufferManager = new PixelBufferManager();
+        bufferManager.InitFormatString("bgr0");
+        bufferManager.InitStridePtr();
+        bufferManager.EnsurePixelBuffer(1, 1);
+        var renderParams = new MpvRenderNative.MpvRenderParam[5];
+        var api = new FakeMpvRenderApi();
+
+        Action act = () => RenderFrameParameterBuilder.Build(
+            bufferManager,
+            renderParams,
+            api,
+            width,
+            height);
+
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithMessage("*frame dimensions*");
+        renderParams.Should().OnlyContain(parameter => parameter.Type == 0 && parameter.Data == IntPtr.Zero);
+    }
+
     private sealed class FakeMpvRenderApi : IMpvRenderApi
     {
         public int MpvRenderParamApiType => 1;
