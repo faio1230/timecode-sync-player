@@ -60,26 +60,6 @@ public sealed class TimecodeSyncPlayerE2ETests : IClassFixture<TimecodeSyncPlaye
         await WaitUntil(() => BtnLabel("BtnPlay") == "▶", TimeSpan.FromSeconds(2));
     }
 
-    [Fact]
-    public async Task Fullscreen_ToggleOpensAndClosesWindow()
-    {
-        SkipIfNeeded();
-
-        Btn("BtnFullscreen").Invoke();
-        await WaitUntil(() => FullscreenWindow() != null, TimeSpan.FromSeconds(5));
-
-        Window? fullscreen = FullscreenWindow();
-        fullscreen.Should().NotBeNull();
-        BtnLabel("BtnFullscreen").Should().Be("EXIT FULLSCREEN");
-
-        // ESCキー物理入力はRDPセッションで合成不可のためユニットテストで担保する。
-        Btn("BtnFullscreen").Invoke();
-        await WaitUntil(() => FullscreenWindow() == null, TimeSpan.FromSeconds(5));
-
-        FullscreenWindow().Should().BeNull();
-        BtnLabel("BtnFullscreen").Should().Be("FULLSCREEN");
-    }
-
     private string TimeLabelText()
     {
         var el = Win.FindFirstDescendant(cf => cf.ByAutomationId("TimeLabel"));
@@ -142,6 +122,28 @@ public sealed class TimecodeSyncPlayerE2ETests : IClassFixture<TimecodeSyncPlaye
         Win.Should().NotBeNull();
         Win.Title.Should().Be(ApplicationVersion.WindowTitle);
         Win.IsOffscreen.Should().BeFalse();
+    }
+
+    // ── フルスクリーン出力 ────────────────────────────────────────
+
+    [Fact]
+    public async Task Fullscreen_ToggleOpensAndClosesWindow()
+    {
+        SkipIfNeeded();
+
+        Btn("BtnFullscreen").Invoke();
+        await WaitUntil(() => FullscreenWindow() != null, TimeSpan.FromSeconds(5));
+
+        Window? fullscreen = FullscreenWindow();
+        fullscreen.Should().NotBeNull();
+        BtnLabel("BtnFullscreen").Should().Be("EXIT FULLSCREEN");
+
+        // ESCキー物理入力はRDPセッションで合成不可のためユニットテストで担保する。
+        Btn("BtnFullscreen").Invoke();
+        await WaitUntil(() => FullscreenWindow() == null, TimeSpan.FromSeconds(5));
+
+        FullscreenWindow().Should().BeNull();
+        BtnLabel("BtnFullscreen").Should().Be("FULLSCREEN");
     }
 
     // ── テスト 2: 動画ロード確認 ────────────────────────────────────

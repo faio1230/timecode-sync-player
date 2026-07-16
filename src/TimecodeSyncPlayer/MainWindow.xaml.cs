@@ -410,7 +410,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             setButtonEnabled: enabled => BtnSpout.IsEnabled = enabled,
             setToggleLabel: label => _vm.Sync.SpoutToggleLabel = label);
         var sessionInitializer = new WindowLoadedSessionInitializer(
-            initializeMpvSession: _mpvSessionInitializer.Initialize,
+            initializeMpvSession: () => _mpvSessionInitializer.Initialize(_showDebugOsd),
             assignMpv: mpv => _mpv = mpv,
             createRenderContext: CreateRenderContext,
             allocateRenderParameters: () => _renderParams = new MpvRenderNative.MpvRenderParam[5],
@@ -1181,7 +1181,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_isRefreshingDisplays || DisplayCombo.SelectedItem is not DisplayTarget selected)
             return;
 
-        _settingsManager.Update(settings => settings with
+        _ = _settingsManager.UpdateAsync(settings => settings with
         {
             FullscreenDisplayDeviceName = selected.DeviceName,
         });
@@ -1201,10 +1201,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (DisplayCombo.SelectedItem is not DisplayTarget target)
             return;
 
-        var window = new FullscreenOutputWindow(target, _displayCatalog, VideoImage.Source)
-        {
-            Owner = this,
-        };
+        var window = new FullscreenOutputWindow(target, _displayCatalog, VideoImage.Source);
         window.Closed += FullscreenWindow_Closed;
         _frameRenderer.BitmapChanged += FullscreenFrameRenderer_BitmapChanged;
         _fullscreenWindow = window;
@@ -1272,17 +1269,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             DisplayCombo.SelectedItem = selected;
             BtnFullscreen.IsEnabled = _fullscreenWindow != null || selected != null;
 
-            if (selected != null
-                && !string.Equals(
-                    _settingsManager.Current.FullscreenDisplayDeviceName,
-                    selected.DeviceName,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                _settingsManager.Update(settings => settings with
-                {
-                    FullscreenDisplayDeviceName = selected.DeviceName,
-                });
-            }
         }
         finally
         {

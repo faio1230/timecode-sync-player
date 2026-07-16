@@ -37,6 +37,8 @@ can restore the user's preferences. Delete it manually to remove the preferences
 | `showDebugOsd` | boolean | `false` | Shows playback time and media metadata over the video when `true`; restart required / `true` で再生時刻とメディア情報を映像上に表示。変更後は再起動が必要 |
 | `fullscreenDisplayDeviceName` | string | `""` | Device name used for fullscreen output; a missing device falls back to the primary display / フルスクリーン出力先のデバイス名。見つからない場合はプライマリへフォールバック |
 
+フルスクリーン出力中に出力モニターへマウスを載せると、ESCで閉じられるよう出力ウィンドウへフォーカスが移ります。
+
 Enum values are serialized as JSON numbers by the current application. The symbolic names above
 describe their meaning and stable UI labels; use settings written by the application when possible.
 
