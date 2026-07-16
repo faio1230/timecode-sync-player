@@ -423,3 +423,22 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - Debug非E2E: 937/937件合格、失敗0、スキップ0、ビルド警告0。プロダクションコード変更なしのため
   S2ではE2E全件ゲートを省略した。
 - push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### v0.2.0 S4 完了（2026-07-16）
+
+- 実装コミット: `7dbf475`（`release: バージョンを0.2.0へ更新`）。
+- `TimecodeSyncPlayer.csproj`とリリースゲートの`ApplicationVersionTests`を0.2.0へ更新し、
+  `CHANGELOG.md`の0.2.0節を2026-07-16付で確定した。先行テストでは実体が0.1.0のため意図どおり
+  1件失敗し、実装後は対象3/3件が合格した。
+- `package-release.ps1`は`-Version`省略時にcsprojの`Version`を取得するよう変更した。
+  `installer.iss`の版数フォールバックを廃止し、パッケージスクリプトからの明示指定を必須にした。
+- Release非E2E: 937/937件合格、失敗0、スキップ0、ビルド警告0。
+- Release E2E: 37/37件合格、失敗0、スキップ0（9分9秒、実機LTC 11件を含む）。
+- `package-release.ps1`を版数引数なしで実行し、Releaseビルド警告0・エラー0で次を生成した。
+  - `TimecodeSyncPlayer-v0.2.0-win-x64.zip`: 829,003バイト、SHA-256
+    `5E1F494BC4B2683FAFF9E3930201B50A5701C1773B8A8D5559830CE67825CD31`
+  - `TimecodeSyncPlayer-v0.2.0-setup.exe`: 2,723,175バイト、SHA-256
+    `88A19D1364F0716381E1D02A2E5EF6E87B0867B0AC6B77CD4C33DFEB546BD9E0`
+- zipの必須配布物、`SpoutDX.dll`、ライセンス・通知・CHANGELOG・`get-mpv.ps1`を確認し、
+  mpv DLLとPDBが含まれないことを確認した。setup.exeの製品バージョンは0.2.0。
+- push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
