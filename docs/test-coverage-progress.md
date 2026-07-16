@@ -328,3 +328,27 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   `3EF766D19F6A1C301C8FA06F2E937FBB8E9B27DF3EE1B1BACB7D73145487870D`。
 - 最終setup.exeを`/DOWNLOADMPV`付きで実インストールし、libmpv取得を確認。アンインストール後は
   インストール先、ショートカット、HKCU登録が全て消失した。push・タグ作成は実施していない。
+
+### v0.2.0 S1 停止（2026-07-16）
+
+- `ShowDebugOsd`（既定`false`）と純粋な`DebugOsdPolicy`、設定の既定値・後方互換・有効時の
+  ユニットテスト、`docs/settings.md`、`CHANGELOG.md`を実装したが、E2E停止条件により未コミット。
+- Debug非E2E: 924/924件合格、失敗0、スキップ0、ビルド警告0。
+- Debug E2E: 0/36件合格、36件失敗、スキップ0。全件がメインウィンドウを5秒以内に検出できず失敗。
+- 最新ログではWPFの`MS.Internal.FontCache.Util`初期化中に、空のURIを原因とする
+  `UriFormatException`から`System.Windows.Window`の`TypeInitializationException`が発生していた。
+  現在のPowerShellセッションは`SystemRoot=C:\WINDOWS`に対して`WINDIR`が空だった。
+- 診断プロセス内だけ`WINDIR=$env:SystemRoot`を設定すると、同じDebug実行ファイルが
+  `Timecode Sync Player v0.1.0`のメインウィンドウとして起動することを確認した。
+- 「E2Eが1件でも落ちたら原因分析を書いて停止」に従い、E2E再実行、S1コミット、S5以降の作業、
+  push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### v0.2.0 S1 完了（2026-07-16）
+
+- 実装コミット: `1494f61`（`feat: デバッグOSDを既定で非表示にする`）。
+- 前回停止原因だった空の`WINDIR`をE2E実行プロセス内で`SystemRoot`から補い、再開した。
+- Debug非E2E: 924/924件合格、失敗0、スキップ0、ビルド警告0。
+- Debug E2E: 36/36件合格、失敗0、スキップ0（8分59秒、実機LTC 11件を含む）。
+- `ShowDebugOsd`は既定`false`、旧settings.jsonも`false`へ後方互換。`true`時だけ
+  `osd-msg3`へ従来の時刻・メタデータを書き込み、`osd-bar`経路は変更していない。
+- push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
