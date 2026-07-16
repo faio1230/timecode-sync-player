@@ -390,7 +390,10 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
                 Fps,
                 TimeSpan.FromSeconds(15));
             StartLtcMonitor();
-            WaitForProgression(expectedHour: 0, timeout: TimeSpan.FromSeconds(8));
+            WaitForProgressionAfterSignalRestart(
+                expectedHour: 0,
+                initialWindow: TimeSpan.FromSeconds(36),
+                timeout: TimeSpan.FromSeconds(8));
             EnableSync();
 
             E2EAssert.WaitUntil(
@@ -438,7 +441,10 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
                 Fps,
                 TimeSpan.FromSeconds(12));
             StartLtcMonitor();
-            WaitForProgression(expectedHour: 0, timeout: TimeSpan.FromSeconds(8));
+            WaitForProgressionAfterSignalRestart(
+                expectedHour: 0,
+                initialWindow: TimeSpan.FromSeconds(38),
+                timeout: TimeSpan.FromSeconds(8));
             EnableSync();
             E2EAssert.WaitUntil(
                 () => ReadText("CurrentTrackLabel").Contains("Gap: Black", StringComparison.Ordinal),
