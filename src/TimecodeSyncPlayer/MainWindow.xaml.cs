@@ -306,6 +306,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Sync.SyncEnabledChanged += (_, enabled) =>
         {
             if (!enabled) _syncService.ClearSeekState();
+            ExitGapStateForManualControlIfNeeded();
             Log.Information("Timecode sync {State}", enabled ? "enabled" : "disabled");
         };
 
@@ -316,6 +317,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 case nameof(SyncViewModel.SyncMode):
                     _ltcFrameProcessor.ResetDiagnostics();
                     _syncService.ClearSeekState();
+                    ExitGapStateForManualControlIfNeeded();
                     Log.Information("Sync mode changed to {Mode}", _vm.Sync.SyncMode);
                     break;
                 case nameof(SyncViewModel.LtcFpsMode):
@@ -829,6 +831,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             SetFps: f => _fps = f,
             GetGapBehavior: () => _vm.Sync.GapBehavior,
             UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel()));
+
+    private void ExitGapStateForManualControlIfNeeded()
+    {
+        if (!GapStateExitPolicy.ShouldExit(_vm.Sync.SyncEnabled, _vm.Sync.SyncMode, !_gapFreezeHandler.IsInactive))
+            return;
+
+        _gapFreezeHandler.ResetAll();
+        _bufferManager.ClearGapFreezeFrame();
+        Log.Information("Gap state cleared for manual control syncEnabled={SyncEnabled} mode={Mode}",
+            _vm.Sync.SyncEnabled, _vm.Sync.SyncMode);
+    }
 
     private void LtcMonitor_Stopped(object? sender, Exception? exception)
     {
