@@ -84,7 +84,7 @@ public sealed class PixelBufferManager : IDisposable
 
     public void CopyToFrozenFrame(int width, int height)
     {
-        int needed = FrameBufferSize.GetRequiredByteCount(width, height);
+        if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int needed)) return;
         if (_pixelBuffer == null) return;
         if (_frozenFrameBuffer == null || _frozenFrameBuffer.Length < needed) return;
         Array.Copy(_pixelBuffer, _frozenFrameBuffer, needed);
@@ -92,7 +92,7 @@ public sealed class PixelBufferManager : IDisposable
 
     public void CopyFrozenToGapFreezeFrame(int width, int height)
     {
-        int needed = FrameBufferSize.GetRequiredByteCount(width, height);
+        if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int needed)) return;
         if (_frozenFrameBuffer == null) return;
         if (_frozenFrameBuffer.Length < needed) return;
         EnsureGapFreezeFrameBuffer(width, height);

@@ -886,3 +886,26 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 最終ゲートはDebug非E2E 1092/1092件、Debug E2E 44/44件（実機込み）、失敗0、Skip0、警告0。
   ブランチは `test/hardening-v1`、pushは実施していない。未追跡 `AGENTS.md` は一度もステージ・変更
   していない。
+
+### 最終レビュー修正・goal最終完了（2026-07-17）
+
+- `GapFreezeHandler` のpause所有権をギャップエピソード開始時だけ記録するラッチにした。
+  Black/Freeze切替による同一ギャップ内の再進入では所有権を保持し、Reset/ResetAllまたは実際の
+  ギャップ脱出時にだけ解除する。ハーネスへ、切替後のトラック復帰で再生再開するケースと、進入前の
+  手動pauseが切替後も維持されるケースを追加した。
+- `SyncScenarioHarness` はギャップディスパッチ後に `UpdateCurrentTrackLabel` 相当の `update-label` を
+  記録し、実アプリの処理順と一致させた。
+- 不正なレンダー寸法のログをフレーム毎にWarning連発しないようDebugへ下げた。第一防衛の
+  オーバーフロー拒否とEnsure系のchecked/例外契約は維持しつつ、PixelBufferManagerとFrameRendererの
+  コピー入口は不正寸法を安全にearly-returnする従来契約へ戻した。
+- `AtomicFileWriter.PathLocks` はプロセス中に保持されるが、デスクトップアプリが扱う設定パスと
+  ユーザー選択プロジェクトパスの集合は実用上有界である旨をコードコメントに記録した。
+- `PlaylistViewModel.AddFilesAsync` はbackfill開始時の `AutoOffsetOnAdd` をキャプチャし、非同期読込中に
+  UI設定が変わっても一連の追加処理へ同じ値を適用する仕様とした。整合性向上として正式採用する。
+- ミューテーション確認1: pause所有権ラッチの再入ガードを除去すると、GapBehavior切替後の復帰テストが
+  pause継続を検出して失敗した。ミューテーション確認2: コピー入口を例外経路へ戻すと、0/負値/
+  32768平方/65536平方の4境界が失敗した。いずれも復元済み。
+- 復元後のDebug非E2E全件は1094/1094件合格、失敗0、Skip0、警告0。Debug E2E全件は
+  VB-CABLE実機を含む45/45件合格、失敗0、Skip0、警告0（7分16秒）。これをもって
+  `V1 → V8 → V9 → V10 → V5 → V2 → V6 → V3 → V4 → V7` のテスト強化goalを最終完了とする。
+  ブランチは `test/hardening-v1`、pushは実施していない。未追跡 `AGENTS.md` はステージ・変更していない。

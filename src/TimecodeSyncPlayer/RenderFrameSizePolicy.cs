@@ -15,7 +15,7 @@ internal static class RenderFrameSizePolicy
         if (FrameBufferSize.TryGetRequiredByteCount(videoWidth, videoHeight, out _))
             return new RenderFrameSizeDecision(videoWidth, videoHeight, HasDisplayableVideoSize: true);
 
-        Log.Warning(
+        Log.Debug(
             "RenderFrame: invalid video dimensions {Width}x{Height}; frame rendering skipped",
             videoWidth,
             videoHeight);

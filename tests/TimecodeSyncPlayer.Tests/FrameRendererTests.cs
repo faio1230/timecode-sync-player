@@ -244,7 +244,7 @@ public class FrameRendererTests
     [InlineData("buffered", 65_536, 65_536)]
     [InlineData("frozen", 32_768, 32_768)]
     [InlineData("frozen", 65_536, 65_536)]
-    public void CopyEntryPoints_InvalidDimensionsThrowArgumentOutOfRange(
+    public void CopyEntryPoints_InvalidDimensionsReturnSafely(
         string operation,
         int width,
         int height)
@@ -272,8 +272,7 @@ public class FrameRendererTests
             }
         });
 
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*frame dimensions*");
+        act.Should().NotThrow();
     }
 
     [Theory]
