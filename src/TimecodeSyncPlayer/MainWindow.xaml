@@ -335,6 +335,7 @@
                 <ListBox x:Name="PlaylistList"
                          Grid.Row="10"
                          AutomationProperties.AutomationId="PlaylistList"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          AllowDrop="True"
                          Background="#101010"
                          BorderBrush="#3A3A3A"
@@ -357,6 +358,7 @@
                                                Foreground="#666666"
                                                FontSize="10"
                                                FontFamily="Consolas"
+                                               TextTrimming="CharacterEllipsis"
                                                Text=""/>
                                 </StackPanel>
                                  <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
