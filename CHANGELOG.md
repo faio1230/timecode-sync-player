@@ -9,6 +9,7 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 - Added the `showDebugOsd` setting for opt-in playback time and media metadata overlays.
 - Added selectable full-screen video output for connected external displays.
 - Added the `fullscreenDisplayDeviceName` setting to restore the selected output display.
+- Added persistent mute and volume controls that remain unchanged across playback, track, and gap transitions.
 
 ### Fixed
 

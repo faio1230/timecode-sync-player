@@ -909,3 +909,60 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   VB-CABLE実機を含む45/45件合格、失敗0、Skip0、警告0（7分16秒）。これをもって
   `V1 → V8 → V9 → V10 → V5 → V2 → V6 → V3 → V4 → V7` のテスト強化goalを最終完了とする。
   ブランチは `test/hardening-v1`、pushは実施していない。未追跡 `AGENTS.md` はステージ・変更していない。
+
+### 音量コントロール実装 停止（2026-07-17）
+
+- `feature/volume-control` を `main` から作成。開始時のDebug非E2Eは1095/1095件合格、Skip0、警告0。
+- AppSettingsの `IsMuted` / `Volume`（既定false/100、0〜100クランプ）、音声状態・ラベル・
+  mpv `mute` / `volume` 書き込みを担う `AudioControlCoordinator`、PlayerViewModel表示状態、
+  MainWindowのMUTEボタン/音量スライダーをTDDで実装した。音声設定は `mpv_initialize` 成功後に適用し、
+  LoadFileへ音声オプションは追加していない。
+- ユニット対象63/63件、SyncScenarioHarnessの音声状態遷移横断8/8件が合格。通常E2Eの
+  `MuteAndVolume_PersistAndRestoreAcrossApplicationRestart` は1/1件合格し、ラベル・スライダー・
+  settings.json・再起動復元を確認した。
+- 実機E2E `CableLoop_ContinueMuteSurvivesGapAndTrackSwitch` は、ミュートON、実LTC追従、Black gap進入、
+  ラベルとsettings.jsonのミュート保持までは成功した。一方、Gap中の前/次トラック操作後も
+  `CurrentTrackLabel` が `Gap: Black` のままで、トラック切替完了の安定した観測に3回連続で失敗した。
+  Continue同期tickが即座にGap表示を再適用することと、最終トラック後のno-tracks gapで選択状態を
+  UIラベルから判別できないことが原因。製品の音量状態破壊は観測されていない。
+- 「同一失敗3回」および「E2Eが1件でも失敗」の停止条件に従い停止した。全件ゲート、実機E2E全件、
+  ミューテーション確認、docs/settings.md、CHANGELOG、最終コミットは未実施。作業差分は未コミットで保持し、
+  pushしていない。未追跡 `AGENTS.md` はステージ・変更していない。
+
+### 音量コントロール実機E2E方式変更後 停止（2026-07-17）
+
+- 承認された決定論的方式に従い、ProjectSerializerでトラック1（0〜5秒）、Gap（5〜8秒）、
+  トラック2（8〜13秒）のプロジェクトを生成し、`--load-project` で起動して実LTCを3秒12フレームから
+  連続送信する `CableLoop_ContinueMuteSurvivesDeterministicGapAndTrackSwitch` を追加した。
+- 単独実行は1/1件失敗。最初のトラックラベル待機が3秒でタイムアウトした。アプリログでは
+  両トラックのメディアパスがプロジェクトディレクトリ外として拒否され、さらにファイルパスが空と判定されて
+  `Continue mode query result: status="NoTracks"` となったことを確認した。LTC自体はFixed25で正常に復号され、
+  CABLE Outputも正常に開始している。原因は、生成したプロジェクトを専用一時ディレクトリへ置いた一方で、
+  メディアを共通E2E fixtureの別ディレクトリから絶対パス参照したため、ProjectSerializerの安全なパス制約に
+  違反したことにある。
+- E2Eが1件でも失敗した場合の停止条件に従い、再実行・期待値緩和・修正は行わず停止した。次回は
+  プロジェクトと同じ一時ディレクトリ配下へテスト動画を配置し、相対パスとして保存する必要がある。
+  全件ゲート、ミューテーション確認、docs/settings.md、CHANGELOG、最終コミットは未実施。
+  作業差分は未コミット、pushは未実施。未追跡 `AGENTS.md` はステージ・変更していない。
+
+### 音量コントロール実装 完了（2026-07-17）
+
+- ユーザー判断により、上記実機E2E失敗は製品バグではなくテストセットアップ不備として再開した。
+  テスト動画をプロジェクトと同じ一時ディレクトリへコピーし、ProjectSerializerが相対パスとして保存する
+  構成へ修正した。Continueモードのトラック遷移は、Singleモード用の `1/2` ラベルではなく、今回の
+  実行開始位置以降のアプリログに記録される固有トラック名で決定論的に観測するようにした。
+- 実機E2Eはトラック1（0〜5秒）→Black Gap（5〜8秒）→トラック2（8〜13秒）を実LTCで横断し、
+  各段階でMUTEボタンが `MUTE ON` のまま、settings.jsonの `isMuted=true` が維持されることを確認した。
+- `IsMuted` / `Volume`（既定false/100、0〜100クランプ、非有限値は100へ補正）をAppSettingsへ追加し、
+  mpv初期化成功後に `mute` / `volume` を適用するAudioControlCoordinator、MUTEトグル、0〜100音量
+  スライダーを実装した。ミュート中の音量変更は保持され、解除しても選択値を維持する。
+- SyncScenarioHarnessはpause/osdを含む全mpvプロパティ書き込みを単一レコーダーへ通し、Single / Continue、
+  自動・手動トラック切替、Freeze / Black Gap進入脱出、GapBehavior切替、Stopモード信号断・復旧、
+  プロジェクト読込、StopPlayback、LoadFile、シーク中にmute/volumeの状態と書き込みが不変であることを確認した。
+- `docs/settings.md` に `isMuted` / `volume` を追記し、CHANGELOG 0.2.0 Addedへ永続ミュート・音量操作を追記した。
+- ミューテーション確認: ユニット層で音量上限を100から99へ変えると境界2件が失敗、結合層で
+  StopPlaybackへ誤った `mute=no` を加えるとSingle / Continueの2件が失敗、E2E層でBtnMuteの
+  AutomationIdを壊すと実アプリ操作テストが失敗した。すべての変異は復元済み。
+- 復元後のDebug非E2E全件は1120/1120件合格、失敗0、Skip0、警告0。Debug E2E全件は
+  VB-CABLE実機を含む46/46件合格、失敗0、Skip0、警告0（7分59秒）。ブランチは
+  `feature/volume-control`、pushは実施していない。未追跡 `AGENTS.md` はステージ・変更していない。

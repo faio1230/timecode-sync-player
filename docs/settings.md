@@ -31,6 +31,8 @@ can restore the user's preferences. Delete it manually to remove the preferences
 | `windowHeight` | number or null | `null` | Greater than `0`, at most `4320`; otherwise `null` / `0`超～`4320`、範囲外は`null` |
 | `isTimelineVisible` | boolean | `false` | Timeline panel visibility / タイムラインパネル表示 |
 | `autoOffsetOnAdd` | boolean | `true` | Automatically calculate offsets for added clips / 追加クリップのオフセット自動計算 |
+| `isMuted` | boolean | `false` | Audio mute state; restored at startup / 音声ミュート状態。起動時に復元 |
+| `volume` | number | `100` | Player volume, clamped to `0`–`100`; retained while muted / プレイヤー音量。`0`～`100`へクランプし、ミュート中も保持 |
 | `ltcSignalLossMode` | enum | `RunThrough` | `RunThrough` or `Stop`; unknown values reset to `RunThrough` / 不明値は`RunThrough` |
 | `ltcSignalLossTimeoutMs` | integer | `250` | Clamped to `100`–`5000` ms / `100`～`5000`msへクランプ |
 | `ltcSignalResumeFrames` | integer | `5` | Must be greater than `0`; otherwise resets to `5` / `0`以下は`5`へ補正 |

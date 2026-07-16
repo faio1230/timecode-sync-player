@@ -13,6 +13,8 @@ internal sealed class PlayerViewModel : INotifyPropertyChanged
     private double _seekBarValue;
     private double _seekBarMaximum = 1.0;
     private string _speedLabel = "1×";
+    private string _muteToggleLabel = "MUTE OFF";
+    private double _volume = 100;
 
     public PlayerViewModel(IPlaybackController controller)
     {
@@ -61,6 +63,18 @@ internal sealed class PlayerViewModel : INotifyPropertyChanged
     {
         get => _speedLabel;
         set { _speedLabel = value; OnPropertyChanged(); }
+    }
+
+    public string MuteToggleLabel
+    {
+        get => _muteToggleLabel;
+        set { _muteToggleLabel = value; OnPropertyChanged(); }
+    }
+
+    public double Volume
+    {
+        get => _volume;
+        set { _volume = value; OnPropertyChanged(); }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

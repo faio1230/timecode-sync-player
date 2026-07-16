@@ -63,6 +63,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly ProjectFileCoordinator _projectFileCoordinator;
     private readonly IMpvApi _mpvApi;
     private readonly IMpvRenderApi _mpvRenderApi;
+    private readonly AudioControlCoordinator _audioControlCoordinator;
 
     // ── Spout ─────────────────────────────────────────────────────
     private readonly ISpoutOutput _spoutOutput;
@@ -230,6 +231,20 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Player   = new PlayerViewModel(this);
         _vm.Playlist = new PlaylistViewModel(_playlist, _mediaDurationReader);
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
+        var audioState = new AudioControlState(
+            settingsManager.Current.IsMuted,
+            settingsManager.Current.Volume);
+        _audioControlCoordinator = new AudioControlCoordinator(
+            audioState,
+            new AudioControlEffects(
+                SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
+                ApplyUi: ApplyAudioControlUi,
+                Persist: snapshot => _ = _settingsManager.UpdateAsync(settings => settings with
+                {
+                    IsMuted = snapshot.IsMuted,
+                    Volume = snapshot.Volume,
+                })));
+        ApplyAudioControlUi(audioState.Snapshot);
         _vm.Sync.LtcSignalLossModeIndex =
             settingsManager.Current.LtcSignalLossMode == LtcSignalLossMode.Stop ? 1 : 0;
         _playlistDragDropCoordinator = new PlaylistDragDropCoordinator(new PlaylistDragDropEffects(
@@ -415,6 +430,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         var sessionInitializer = new WindowLoadedSessionInitializer(
             initializeMpvSession: () => _mpvSessionInitializer.Initialize(_showDebugOsd),
             assignMpv: mpv => _mpv = mpv,
+            applyAudioSettings: _audioControlCoordinator.ApplyStartup,
             createRenderContext: CreateRenderContext,
             allocateRenderParameters: () => _renderParams = new MpvRenderNative.MpvRenderParam[5],
             initializeSpout: () => SpoutStartupState.FromInitializationResult(_spoutOutput.TryInitialize()),
@@ -1173,6 +1189,26 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         PlaybackSpeedChange change = _playbackControl.CycleSpeed();
         _mpvApi.SetPropertyString(_mpv, "speed", change.Speed.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _vm.Player.SpeedLabel = change.Label;
+    }
+
+    private void BtnMute_Click(object sender, RoutedEventArgs e)
+    {
+        if (_mpv == IntPtr.Zero) return;
+        _audioControlCoordinator.ToggleMute();
+    }
+
+    private void VolumeSlider_ValueChanged(
+        object sender,
+        RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_mpv == IntPtr.Zero) return;
+        _audioControlCoordinator.SetVolume(e.NewValue);
+    }
+
+    private void ApplyAudioControlUi(AudioControlSnapshot snapshot)
+    {
+        _vm.Player.MuteToggleLabel = snapshot.MuteToggleLabel;
+        _vm.Player.Volume = snapshot.Volume;
     }
 
     private void ApplyPauseState(bool paused)

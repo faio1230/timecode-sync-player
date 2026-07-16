@@ -73,6 +73,8 @@ public class PlayerViewModelTests
         vm.SeekBarValue = 83;
         vm.SeekBarMaximum = 296;
         vm.SpeedLabel = "2×";
+        vm.MuteToggleLabel = "MUTE ON";
+        vm.Volume = 37;
 
         vm.PlayPauseIcon.Should().Be("⏸");
         vm.TimeLabel.Should().Be("1:23 / 4:56");
@@ -80,12 +82,16 @@ public class PlayerViewModelTests
         vm.SeekBarValue.Should().Be(83);
         vm.SeekBarMaximum.Should().Be(296);
         vm.SpeedLabel.Should().Be("2×");
+        vm.MuteToggleLabel.Should().Be("MUTE ON");
+        vm.Volume.Should().Be(37);
         changedProperties.Should().Equal(
             nameof(vm.PlayPauseIcon),
             nameof(vm.TimeLabel),
             nameof(vm.MetaLine),
             nameof(vm.SeekBarValue),
             nameof(vm.SeekBarMaximum),
-            nameof(vm.SpeedLabel));
+            nameof(vm.SpeedLabel),
+            nameof(vm.MuteToggleLabel),
+            nameof(vm.Volume));
     }
 }

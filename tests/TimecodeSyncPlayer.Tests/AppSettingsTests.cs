@@ -27,6 +27,8 @@ public class AppSettingsTests
         settings.LtcSignalResumeFrames.Should().Be(5);
         settings.ShowDebugOsd.Should().BeFalse();
         settings.FullscreenDisplayDeviceName.Should().BeEmpty();
+        settings.IsMuted.Should().BeFalse();
+        settings.Volume.Should().Be(100);
     }
 
     [Theory]
@@ -140,6 +142,21 @@ public class AppSettingsTests
         result.LtcSignalResumeFrames.Should().Be(AppSettings.DefaultLtcSignalResumeFrames);
     }
 
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(0, 0)]
+    [InlineData(37.5, 37.5)]
+    [InlineData(100, 100)]
+    [InlineData(101, 100)]
+    [InlineData(double.NaN, 100)]
+    [InlineData(double.PositiveInfinity, 100)]
+    public void ValidateSettings_ClampsVolume(double volume, double expected)
+    {
+        AppSettings settings = AppSettings.Default with { Volume = volume };
+
+        AppSettingsManager.ValidateSettings(settings).Volume.Should().Be(expected);
+    }
+
     [Fact]
     public void ResolveSettingsFilePath_WithRelativeOverride_ReturnsAbsolutePath()
     {
@@ -181,7 +198,9 @@ public class AppSettingsTests
             LtcSignalLossTimeoutMs = 1200,
             LtcSignalResumeFrames = 8,
             ShowDebugOsd = true,
-            FullscreenDisplayDeviceName = @"\\.\DISPLAY2"
+            FullscreenDisplayDeviceName = @"\\.\DISPLAY2",
+            IsMuted = true,
+            Volume = 42.5
         };
 
         var options = new JsonSerializerOptions
@@ -210,6 +229,8 @@ public class AppSettingsTests
         deserialized.LtcSignalResumeFrames.Should().Be(original.LtcSignalResumeFrames);
         deserialized.ShowDebugOsd.Should().BeTrue();
         deserialized.FullscreenDisplayDeviceName.Should().Be(original.FullscreenDisplayDeviceName);
+        deserialized.IsMuted.Should().BeTrue();
+        deserialized.Volume.Should().Be(42.5);
     }
 
     [Fact]

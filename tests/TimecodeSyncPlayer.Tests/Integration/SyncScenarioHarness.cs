@@ -23,6 +23,7 @@ internal sealed class SyncScenarioHarness
     private readonly ContinueOnTrackCoordinator _continueCoordinator;
     private readonly GapEnterCoordinator _gapCoordinator;
     private readonly GapEnterActionDispatcher _gapDispatcher;
+    private readonly AudioControlCoordinator _audioControlCoordinator;
 
     private long _monotonicMilliseconds = 10_000;
     private long _renderedFrames;
@@ -34,6 +35,16 @@ internal sealed class SyncScenarioHarness
 
     public SyncScenarioHarness()
     {
+        _audioControlCoordinator = new AudioControlCoordinator(
+            new AudioControlState(isMuted: false, volume: 100),
+            new AudioControlEffects(
+                SetPropertyString: (name, value) =>
+                {
+                    RecordMpvProperty(name, value);
+                    return 0;
+                },
+                ApplyUi: _ => { },
+                Persist: _ => { }));
         _continueCoordinator = new ContinueOnTrackCoordinator(
             _syncService,
             new FileLoadStabilityLogState(TimeSpan.FromSeconds(1)),
@@ -45,9 +56,17 @@ internal sealed class SyncScenarioHarness
                     return action;
                 },
                 SeekTo: Seek,
-                ResumeMpvPause: () => Operations.Add(new("mpv-resume", Text: "no")),
+                ResumeMpvPause: () =>
+                {
+                    RecordMpvProperty("pause", "no");
+                    Operations.Add(new("mpv-resume", Text: "no"));
+                },
                 ApplyPauseState: SetPaused,
-                ShowOsdBar: () => Operations.Add(new("osd-bar", Text: "yes")),
+                ShowOsdBar: () =>
+                {
+                    RecordMpvProperty("osd-bar", "yes");
+                    Operations.Add(new("osd-bar", Text: "yes"));
+                },
                 UpdateCurrentTrackLabel: () => Operations.Add(new("update-label")),
                 GetLoadedTrackId: () => _loadedTrackId,
                 SetLoadedTrackId: id => _loadedTrackId = id,
@@ -68,7 +87,11 @@ internal sealed class SyncScenarioHarness
             new GapEnterEffects(
                 ResetEndAdvanceTriggered: () => { },
                 IsPlaybackPaused: () => IsPaused,
-                PauseForGap: () => Operations.Add(new("pause-for-gap")),
+                PauseForGap: () =>
+                {
+                    RecordMpvProperty("pause", "yes");
+                    Operations.Add(new("pause-for-gap"));
+                },
                 ApplyPauseState: SetPaused,
                 RenderBlack: RenderBlack,
                 RenderGapFreeze: RenderFreeze,
@@ -101,6 +124,10 @@ internal sealed class SyncScenarioHarness
 
     public PlaylistState Playlist { get; } = new();
     public List<ScenarioMpvOperation> Operations { get; } = [];
+    public List<(string Name, string Value)> MpvPropertyWrites { get; } = [];
+    public IReadOnlyList<(string Name, string Value)> AudioPropertyWrites =>
+        MpvPropertyWrites.Where(write => write.Name is "mute" or "volume").ToArray();
+    public AudioControlSnapshot AudioState => _audioControlCoordinator.State;
     public SyncMode Mode { get; private set; } = SyncMode.Continue;
     public bool SyncEnabled { get; private set; } = true;
     public bool IsSeeking { get; private set; }
@@ -149,8 +176,42 @@ internal sealed class SyncScenarioHarness
             Tick100Milliseconds();
     }
 
-    public void ManualPlay() => SetPaused(false);
-    public void ManualPause() => SetPaused(true);
+    public void ManualPlay()
+    {
+        RecordMpvProperty("pause", "no");
+        SetPaused(false);
+    }
+
+    public void ManualPause()
+    {
+        RecordMpvProperty("pause", "yes");
+        SetPaused(true);
+    }
+    public void ToggleMute() => _audioControlCoordinator.ToggleMute();
+    public void SetVolume(double volume) => _audioControlCoordinator.SetVolume(volume);
+
+    public void ManualNextTrack() => SelectAndLoadTrack(Playlist.CurrentIndex + 1);
+    public void ManualPreviousTrack() => SelectAndLoadTrack(Playlist.CurrentIndex - 1);
+
+    public void StopPlayback()
+    {
+        Operations.Add(new("stop-playback"));
+        RecordMpvProperty("pause", "yes");
+        SetPaused(true);
+    }
+
+    public void LoadCurrentFile()
+    {
+        if (Playlist.Current is { } current)
+            LoadFile(current.FilePath, current.MediaIn.TotalSeconds);
+    }
+
+    public void ReloadProject()
+    {
+        Operations.Add(new("project-load"));
+        StopPlayback();
+        LoadCurrentFile();
+    }
 
     public void ChangeMode(SyncMode mode)
     {
@@ -257,8 +318,18 @@ internal sealed class SyncScenarioHarness
     private bool LoadFile(string path, double start)
     {
         Operations.Add(new("loadfile", start, path));
+        RecordMpvProperty("pause", "no");
         _playbackSeconds = start;
         return true;
+    }
+
+    private void SelectAndLoadTrack(int index)
+    {
+        if (!Playlist.Select(index) || Playlist.Current is not { } current)
+            return;
+
+        _loadedTrackId = current.Id;
+        LoadFile(current.FilePath, current.MediaIn.TotalSeconds);
     }
 
     private bool Seek(double target)
@@ -299,11 +370,13 @@ internal sealed class SyncScenarioHarness
         if (action == LtcSignalLossAction.Pause)
         {
             Operations.Add(new("signal-loss-pause"));
+            RecordMpvProperty("pause", "yes");
             SetPaused(true);
         }
         else if (action == LtcSignalLossAction.ResumeAndSync)
         {
             Operations.Add(new("signal-loss-resume"));
+            RecordMpvProperty("pause", "no");
             SetPaused(false);
         }
     }
@@ -318,4 +391,7 @@ internal sealed class SyncScenarioHarness
         RenderSurface = ScenarioRenderSurface.Video;
         Seek(_playbackSeconds);
     }
+
+    private void RecordMpvProperty(string name, string value) =>
+        MpvPropertyWrites.Add((name, value));
 }
