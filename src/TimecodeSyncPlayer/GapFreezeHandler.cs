@@ -43,7 +43,9 @@ internal enum GapExitActionType
     ResumePlayback
 }
 
-internal sealed record GapExitAction(GapExitActionType Type);
+internal sealed record GapExitAction(
+    GapExitActionType Type,
+    bool ShouldResumePlayback = true);
 
 public sealed class GapFreezeHandler
 {
@@ -52,6 +54,7 @@ public sealed class GapFreezeHandler
     internal const double DefaultFallbackFps = 30.0;    // MainWindow・GapEnterCoordinator と共有
 
     private GapState _currentState = GapState.Inactive;
+    private bool _pauseOwnedByGap;
 
     internal GapState CurrentState
     {
@@ -72,6 +75,7 @@ public sealed class GapFreezeHandler
     public void Reset()
     {
         _currentState = GapState.Inactive;
+        _pauseOwnedByGap = false;
         StartedAt = DateTime.MinValue;
         LastReloadAt = DateTime.MinValue;    // 追加
         PendingTrackId = null;
@@ -154,6 +158,11 @@ public sealed class GapFreezeHandler
         CachedTargetSeconds = 0;
     }
 
+    internal void RecordPauseOwnership(bool wasPlaybackPaused)
+    {
+        _pauseOwnedByGap = !wasPlaybackPaused;
+    }
+
     /// <summary>
     /// Gap 進入時のアクションを決定する。MainWindow はこの戻り値に従って mpv 操作を行う。
     /// </summary>
@@ -221,8 +230,9 @@ public sealed class GapFreezeHandler
         if (CurrentState == GapState.Inactive)
             return new GapExitAction(GapExitActionType.None);
 
+        bool shouldResumePlayback = _pauseOwnedByGap;
         Reset();
-        return new GapExitAction(GapExitActionType.ResumePlayback);
+        return new GapExitAction(GapExitActionType.ResumePlayback, shouldResumePlayback);
     }
 
     private GapEnterAction BuildFreezeEnterAction(

@@ -32,8 +32,11 @@ internal sealed class ContinueOnTrackCoordinator
         {
             double targetPos = result.MediaPositionSeconds;
             _effects.SeekTo(targetPos);
-            _effects.ResumeMpvPause();
-            _effects.ApplyPauseState(false);
+            if (exitAction.ShouldResumePlayback)
+            {
+                _effects.ResumeMpvPause();
+                _effects.ApplyPauseState(false);
+            }
             _effects.ShowOsdBar();
             Log.Information("Continue mode: exiting gap, resuming playback at {Pos:F3}", targetPos);
             _effects.UpdateCurrentTrackLabel();

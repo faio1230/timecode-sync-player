@@ -509,3 +509,31 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   `Expected harness.IsPaused to be true because manual playback control must always win, but found False.` で失敗した。
 - 本体 `src/` は変更していない。実バグ検出による停止のため、ミューテーション確認、V8 全シナリオ実装、
   非E2E全件ゲートは未実施。V9 以降にも進んでいない。push は実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V8 完了（2026-07-16）
+
+- ユーザー承認に基づき、V8 が検出した pause 所有権バグのみ本体を修正した。ギャップ進入前の
+  `PlaybackControlState.IsPaused` を `GapFreezeHandler` に記録し、ギャップ自身が pause を掛けた場合だけ
+  脱出時に resume する。進入前から手動 Pause の場合は正位置への Seek、OSD、ラベル更新だけを行い、
+  pause を維持する。既存の gap 脱出ログメッセージは変更していない。
+- 赤→緑証跡: 修正前の
+  `ManualPause_RemainsPaused_WhenReturningFromFreezeGap` は
+  `manual playback control must always win, but found False` で失敗し、修正後は合格した。
+  `GapFreezeHandler` と `ContinueOnTrackCoordinator` の直接テストでも、gap 所有 pause のみ解除し、
+  手動所有 pause は SeekTo 後も維持することを固定した。
+- 実物の `PlaylistState`、`TimecodeSyncService`、`SyncDecisionEngine`、`GapFreezeHandler`、
+  `LtcSignalLossPolicy`、`ContinueOnTrackPlanner` と3 coordinator を MainWindow 相当で接続し、mpv 境界だけを
+  記録する `SyncScenarioHarness` を完成させた。単調ミリ秒、LTC供給、100ms tick、モード/Sync切替、
+  手動Play/Pause、シークバー操作を DSL として公開した。
+- V8 の5群を実配線で検証した: ショー進行フル、pause所有権12系列、到達可能18状態のモデル遷移と
+  到達不能15状態の根拠、トラック末尾±1フレーム20回の連打、プレイリスト行選択による意図しないloadfileと
+  Black固着の2回帰。状態/描画整合、Continue+Sync ON以外でのgap禁止、信号断pauseの二重発火禁止を
+  `ValidateInvariants` とモデルテストで機械的に確認した。
+- ミューテーション確認1: `RecordPauseOwnership` の否定を外して所有権を反転すると、
+  `ManualPause_RemainsPaused_WhenReturningFromFreezeGap` が
+  `Expected harness.IsPaused to be true ... but found False` で失敗した。変更は復元済み。
+- ミューテーション確認2: `GapStateExitPolicy` の Single 判定を `==` から `!=` に反転すると、
+  `BlackGap_WhenChangingToSingle_ClearsBlackAndRedrawsVideo` が
+  `Expected GapState.Inactive ... but found GapState.BlackFrameActive` で失敗した。変更は復元済み。
+- 復元後のV8対象は40/40件合格。Debug非E2E全件は1010/1010件合格、失敗0、スキップ0、
+  ビルド警告0。ブランチは`test/hardening-v1`、pushは実施せず、未追跡`AGENTS.md`もステージしていない。

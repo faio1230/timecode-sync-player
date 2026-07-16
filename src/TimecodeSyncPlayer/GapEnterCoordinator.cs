@@ -25,8 +25,7 @@ internal sealed class GapEnterCoordinator
     public void EnterBlackGap()
     {
         _effects.ResetEndAdvanceTriggered();
-        _effects.PauseForGap();
-        _effects.ApplyPauseState(true);
+        ApplyGapPause();
         _effects.RenderBlack();
         Log.Information("Continue mode: entered gap, rendering black frame");
     }
@@ -35,8 +34,7 @@ internal sealed class GapEnterCoordinator
     {
         _effects.ResetEndAdvanceTriggered();
         _effects.ClearGapFreezeFrame();
-        _effects.PauseForGap();
-        _effects.ApplyPauseState(true);
+        ApplyGapPause();
         _effects.RenderBlack();
         Log.Information("Continue mode: gap, forcing black frame");
     }
@@ -44,8 +42,7 @@ internal sealed class GapEnterCoordinator
     public void StartGapFreezeCaptureForCurrentTrack(TimelineQueryResult result, GapEnterAction action)
     {
         _effects.ResetEndAdvanceTriggered();
-        _effects.PauseForGap();
-        _effects.ApplyPauseState(true);
+        ApplyGapPause();
 
         PlaylistTrack? previousTrack = result.PreviousTrack;
         double target = action.TargetSeconds ?? 0;
@@ -80,8 +77,7 @@ internal sealed class GapEnterCoordinator
 
     public void EnterNoTracksFreeze()
     {
-        _effects.PauseForGap();
-        _effects.ApplyPauseState(true);
+        ApplyGapPause();
 
         (int durRc, double duration) = _effects.GetMpvDuration();
         if (durRc == 0 && duration > 0)
@@ -116,6 +112,8 @@ internal sealed class GapEnterCoordinator
         _effects.ResetEndAdvanceTriggered();
         if (!_effects.IsMpvReady())
             return;
+
+        _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
 
         GapLoadCommandResult commandResult = _effects.LoadPausedAt(previousTrack.FilePath, target);
 
@@ -156,6 +154,13 @@ internal sealed class GapEnterCoordinator
         }
         _effects.UpdateCurrentTrackLabel();
     }
+
+    private void ApplyGapPause()
+    {
+        _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
+        _effects.PauseForGap();
+        _effects.ApplyPauseState(true);
+    }
 }
 
 /// <summary>
@@ -184,4 +189,5 @@ internal sealed record GapEnterEffects(
     Func<double> GetFps,
     Action<double> SetFps,
     Func<GapBehavior> GetGapBehavior,
-    Action UpdateCurrentTrackLabel);
+    Action UpdateCurrentTrackLabel,
+    Func<bool>? IsPlaybackPaused = null);

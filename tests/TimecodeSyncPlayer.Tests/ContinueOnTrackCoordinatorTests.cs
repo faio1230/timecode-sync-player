@@ -99,6 +99,42 @@ public class ContinueOnTrackCoordinatorTests
         rec.Calls.Should().NotContain(new[] { "GetLoadedTrackId", "LoadFile", "GetTimePos" });
     }
 
+    [Fact]
+    public void GapExit_PreexistingManualPause_SeeksButDoesNotResume()
+    {
+        var track = CreateTrack(Guid.NewGuid());
+        var rec = new Recorder();
+        var coordinator = new ContinueOnTrackCoordinator(
+            CreateService(),
+            CreateLogState(),
+            new ContinueOnTrackEffects(
+                DecideGapExit: () =>
+                {
+                    rec.Calls.Add("DecideGapExit");
+                    return new GapExitAction(GapExitActionType.ResumePlayback, ShouldResumePlayback: false);
+                },
+                SeekTo: target => { rec.Calls.Add("SeekTo"); rec.SeekTargets.Add(target); return true; },
+                ResumeMpvPause: () => rec.Calls.Add("ResumeMpvPause"),
+                ApplyPauseState: paused => rec.Calls.Add($"ApplyPauseState({paused})"),
+                ShowOsdBar: () => rec.Calls.Add("ShowOsdBar"),
+                UpdateCurrentTrackLabel: () => rec.Calls.Add("UpdateCurrentTrackLabel"),
+                GetLoadedTrackId: () => rec.LoadedTrackId,
+                SetLoadedTrackId: id => rec.LoadedTrackId = id,
+                LoadFile: (_, _) => true,
+                GetTotalRenderedFrames: () => 0,
+                GetTimePos: () => (0, 0),
+                BuildPlaybackState: SeekYieldingState));
+
+        coordinator.Handle(OnTrack(track, mediaPos: 42.0), ltcSeconds: 42.0);
+
+        rec.Calls.Should().Equal(
+            "DecideGapExit",
+            "SeekTo",
+            "ShowOsdBar",
+            "UpdateCurrentTrackLabel");
+        rec.SeekTargets.Should().ContainSingle().Which.Should().Be(42.0);
+    }
+
     // ---- (b) SwitchTrack 分岐 ----
 
     [Fact]

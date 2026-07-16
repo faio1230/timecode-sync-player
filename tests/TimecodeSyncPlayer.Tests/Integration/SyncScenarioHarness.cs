@@ -2,6 +2,13 @@ namespace TimecodeSyncPlayer.Tests.Integration;
 
 internal sealed record ScenarioMpvOperation(string Name, double? Value = null, string? Text = null);
 
+internal enum ScenarioRenderSurface
+{
+    Video,
+    Black,
+    Freeze
+}
+
 /// <summary>
 /// MainWindow の同期配線を UI なしで再現し、mpv 境界だけを記録するシナリオ基盤。
 /// </summary>
@@ -23,6 +30,7 @@ internal sealed class SyncScenarioHarness
     private double _playbackSeconds = 1;
     private double _durationSeconds = 5;
     private double _videoFps = 25;
+    private bool _renderVideoOnNextSeek;
 
     public SyncScenarioHarness()
     {
@@ -30,9 +38,14 @@ internal sealed class SyncScenarioHarness
             _syncService,
             new FileLoadStabilityLogState(TimeSpan.FromSeconds(1)),
             new ContinueOnTrackEffects(
-                DecideGapExit: _gap.DecideGapExit,
+                DecideGapExit: () =>
+                {
+                    GapExitAction action = _gap.DecideGapExit();
+                    _renderVideoOnNextSeek = action.Type == GapExitActionType.ResumePlayback;
+                    return action;
+                },
                 SeekTo: Seek,
-                ResumeMpvPause: () => Operations.Add(new("pause", Text: "no")),
+                ResumeMpvPause: () => Operations.Add(new("mpv-resume", Text: "no")),
                 ApplyPauseState: SetPaused,
                 ShowOsdBar: () => Operations.Add(new("osd-bar", Text: "yes")),
                 UpdateCurrentTrackLabel: () => Operations.Add(new("update-label")),
@@ -54,10 +67,11 @@ internal sealed class SyncScenarioHarness
             _gap,
             new GapEnterEffects(
                 ResetEndAdvanceTriggered: () => { },
+                IsPlaybackPaused: () => IsPaused,
                 PauseForGap: () => Operations.Add(new("pause-for-gap")),
                 ApplyPauseState: SetPaused,
-                RenderBlack: () => Operations.Add(new("render-black")),
-                RenderGapFreeze: () => Operations.Add(new("render-freeze")),
+                RenderBlack: RenderBlack,
+                RenderGapFreeze: RenderFreeze,
                 ClearGapFreezeFrame: () => Operations.Add(new("clear-freeze")),
                 SeekTo: Seek,
                 GetMpvDuration: () => (0, _durationSeconds),
@@ -80,22 +94,25 @@ internal sealed class SyncScenarioHarness
         _gapDispatcher = new GapEnterActionDispatcher(new GapEnterActionHandlers(
             _gapCoordinator.EnterBlackGap,
             _gapCoordinator.EnterForceBlack,
-            () => Operations.Add(new("render-freeze")),
+            RenderFreeze,
             _gapCoordinator.StartGapFreezeCaptureForCurrentTrack,
             _gapCoordinator.LoadPreviousTrackFinalFrameForGapFreeze));
     }
 
     public PlaylistState Playlist { get; } = new();
     public List<ScenarioMpvOperation> Operations { get; } = [];
-    public SyncMode Mode { get; set; } = SyncMode.Continue;
-    public bool SyncEnabled { get; set; } = true;
+    public SyncMode Mode { get; private set; } = SyncMode.Continue;
+    public bool SyncEnabled { get; private set; } = true;
     public bool IsSeeking { get; private set; }
     public bool IsMonitoring { get; set; } = true;
     public GapBehavior GapBehavior { get; set; } = GapBehavior.Freeze;
     public LtcSignalLossMode SignalLossMode { get; set; } = LtcSignalLossMode.Stop;
     public bool IsPaused => _playback.IsPaused;
     public bool IsGapActive => !_gap.IsInactive;
+    public GapState GapState => _gap.CurrentState;
     public Guid? LoadedTrackId => _loadedTrackId;
+    public double PlaybackSeconds => _playbackSeconds;
+    public ScenarioRenderSurface RenderSurface { get; private set; } = ScenarioRenderSurface.Video;
 
     public PlaylistTrack AddTrack(string name, double timelineIn, double duration = 5)
     {
@@ -126,8 +143,32 @@ internal sealed class SyncScenarioHarness
         ApplySignalLossAction(_signalLoss.Evaluate(_monotonicMilliseconds, SignalContext()));
     }
 
+    public void Tick100Milliseconds(int count)
+    {
+        for (int i = 0; i < count; i++)
+            Tick100Milliseconds();
+    }
+
     public void ManualPlay() => SetPaused(false);
     public void ManualPause() => SetPaused(true);
+
+    public void ChangeMode(SyncMode mode)
+    {
+        Mode = mode;
+        ExitGapStateForManualControlIfNeeded();
+    }
+
+    public void SetSyncEnabled(bool enabled)
+    {
+        SyncEnabled = enabled;
+        ExitGapStateForManualControlIfNeeded();
+    }
+
+    public void SelectPlaylistRow(int index)
+    {
+        if (Playlist.Select(index))
+            Operations.Add(new("select-row", index));
+    }
     public void BeginSeekBarInteraction() => IsSeeking = true;
     public void EndSeekBarInteraction(double target)
     {
@@ -144,7 +185,33 @@ internal sealed class SyncScenarioHarness
     public void CompleteFreezeCapture()
     {
         _gap.OnFreezeComplete(_loadedTrackId);
-        Operations.Add(new("render-freeze"));
+        RenderFreeze();
+    }
+
+    public void ArrangeGapStateForModel(GapState state)
+    {
+        _gap.CurrentState = state;
+        RenderSurface = state switch
+        {
+            GapState.BlackFrameActive or GapState.ForceBlack => ScenarioRenderSurface.Black,
+            GapState.FreezeComplete => ScenarioRenderSurface.Freeze,
+            _ => ScenarioRenderSurface.Video,
+        };
+    }
+
+    public IReadOnlyList<string> ValidateInvariants()
+    {
+        var violations = new List<string>();
+        if (IsGapActive && (Mode != SyncMode.Continue || !SyncEnabled))
+            violations.Add("active gap requires Continue + Sync ON");
+        if (GapState is GapState.BlackFrameActive or GapState.ForceBlack &&
+            RenderSurface != ScenarioRenderSurface.Black)
+            violations.Add("black gap state requires black rendering");
+        if (GapState == GapState.FreezeComplete && RenderSurface != ScenarioRenderSurface.Freeze)
+            violations.Add("completed freeze requires freeze rendering");
+        if (GapState == GapState.Inactive && RenderSurface != ScenarioRenderSurface.Video)
+            violations.Add("inactive gap requires video rendering");
+        return violations;
     }
 
     private void ApplySync(double ltcSeconds)
@@ -197,7 +264,24 @@ internal sealed class SyncScenarioHarness
     {
         Operations.Add(new("seek", target));
         _playbackSeconds = target;
+        if (_renderVideoOnNextSeek)
+        {
+            RenderSurface = ScenarioRenderSurface.Video;
+            _renderVideoOnNextSeek = false;
+        }
         return true;
+    }
+
+    private void RenderBlack()
+    {
+        RenderSurface = ScenarioRenderSurface.Black;
+        Operations.Add(new("render-black"));
+    }
+
+    private void RenderFreeze()
+    {
+        RenderSurface = ScenarioRenderSurface.Freeze;
+        Operations.Add(new("render-freeze"));
     }
 
     private void SetPaused(bool paused)
@@ -212,8 +296,25 @@ internal sealed class SyncScenarioHarness
     private void ApplySignalLossAction(LtcSignalLossAction action)
     {
         if (action == LtcSignalLossAction.Pause)
+        {
+            Operations.Add(new("signal-loss-pause"));
             SetPaused(true);
+        }
         else if (action == LtcSignalLossAction.ResumeAndSync)
+        {
+            Operations.Add(new("signal-loss-resume"));
             SetPaused(false);
+        }
+    }
+
+    private void ExitGapStateForManualControlIfNeeded()
+    {
+        if (!GapStateExitPolicy.ShouldExit(SyncEnabled, Mode, IsGapActive))
+            return;
+
+        _gap.ResetAll();
+        Operations.Add(new("clear-freeze"));
+        RenderSurface = ScenarioRenderSurface.Video;
+        Seek(_playbackSeconds);
     }
 }
