@@ -45,6 +45,33 @@ public class PlaylistDurationBackfillServiceTests
     }
 
     [Fact]
+    public async Task BackfillAsync_WithUnknownAndKnownDurations_AppliesOnlyKnownDuration()
+    {
+        var playlist = new PlaylistState();
+        playlist.AddFiles(["C:\\Videos\\unknown.mp4", "C:\\Videos\\known.mp4"], autoOffset: false);
+        playlist.Tracks[0] = playlist.Tracks[0] with { TimelineOffset = TimeSpan.FromSeconds(7) };
+        playlist.Tracks[1] = playlist.Tracks[1] with { TimelineOffset = TimeSpan.FromSeconds(20) };
+        var reader = new FakeDurationReader
+        {
+            Durations =
+            {
+                ["C:\\Videos\\known.mp4"] = TimeSpan.FromSeconds(12),
+            },
+        };
+        var service = new PlaylistDurationBackfillService(reader);
+
+        await service.BackfillAsync(
+            playlist.Tracks,
+            playlist.Tracks.Select(track => track.FilePath).ToList(),
+            applyDurationAsync: ApplyDurationAsync(playlist, autoOffset: false));
+
+        playlist.Tracks[0].MediaDuration.Should().Be(TimeSpan.Zero);
+        playlist.Tracks[0].TimelineOffset.Should().Be(TimeSpan.FromSeconds(7));
+        playlist.Tracks[1].MediaDuration.Should().Be(TimeSpan.FromSeconds(12));
+        playlist.Tracks[1].TimelineOffset.Should().Be(TimeSpan.FromSeconds(20));
+    }
+
+    [Fact]
     public async Task BackfillAsync_UsesStartIndexForSnapshot()
     {
         var playlist = new PlaylistState();

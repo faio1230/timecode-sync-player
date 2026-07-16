@@ -5,6 +5,45 @@ namespace TimecodeSyncPlayer.Tests;
 public class PlaylistTimelineOffsetEditorTests
 {
     [Fact]
+    public void Apply_OnEmptyPlaylist_ReturnsTrackNotFoundWithoutMutation()
+    {
+        var state = new PlaylistState();
+
+        PlaylistTimelineOffsetEditResult result = PlaylistTimelineOffsetEditor.Apply(
+            state,
+            Guid.NewGuid(),
+            "00:00:00:00",
+            autoOffset: true,
+            fallbackFps: 30);
+
+        result.Status.Should().Be(PlaylistTimelineOffsetEditStatus.TrackNotFound);
+        result.Index.Should().Be(-1);
+        state.Tracks.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("-1:00:00:00")]
+    [InlineData("100:00:00:00")]
+    [InlineData("NaN:00:00:00")]
+    [InlineData("Infinity:00:00:00")]
+    public void Apply_RejectsNegativeHugeAndNonFiniteOffsetText(string input)
+    {
+        var state = CreatePlaylist();
+        PlaylistTrack original = state.Tracks[0];
+
+        PlaylistTimelineOffsetEditResult result = PlaylistTimelineOffsetEditor.Apply(
+            state,
+            original.Id,
+            input,
+            autoOffset: true,
+            fallbackFps: 30);
+
+        result.Status.Should().Be(PlaylistTimelineOffsetEditStatus.ParseFailed);
+        state.Tracks[0].Should().BeSameAs(original);
+        state.Tracks[1].TimelineOffset.Should().Be(TimeSpan.FromSeconds(60));
+    }
+
+    [Fact]
     public void Apply_UpdatesTimelineOffset_WhenInputIsValid()
     {
         var state = CreatePlaylist();

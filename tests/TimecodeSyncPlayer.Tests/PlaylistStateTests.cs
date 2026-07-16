@@ -5,6 +5,29 @@ namespace TimecodeSyncPlayer.Tests;
 public class PlaylistStateTests
 {
     [Fact]
+    public void EmptyPlaylist_AllPublicOperationsRemainSafeAndEmpty()
+    {
+        var state = new PlaylistState();
+
+        state.Select(0).Should().BeFalse();
+        state.MoveNext().Should().BeFalse();
+        state.MovePrevious().Should().BeFalse();
+        state.RemoveAt(0).Should().BeFalse();
+        state.MoveTrackUp(0).Should().BeFalse();
+        state.MoveTrackDown(0).Should().BeFalse();
+        state.MoveTrack(0, 1).Should().BeFalse();
+        state.RecalculateTimelineFrom(0);
+        state.UpdateMediaDuration(Guid.NewGuid(), TimeSpan.FromSeconds(1));
+        state.Clear();
+
+        state.Tracks.Should().BeEmpty();
+        state.CurrentIndex.Should().Be(-1);
+        state.Current.Should().BeNull();
+        state.FindTrackById(Guid.NewGuid()).Should().BeNull();
+        state.FindIndexById(Guid.NewGuid()).Should().Be(-1);
+    }
+
+    [Fact]
     public void AddFiles_SelectsFirstTrack_WhenPlaylistIsEmpty()
     {
         var state = new PlaylistState();
