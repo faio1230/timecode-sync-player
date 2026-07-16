@@ -34,6 +34,7 @@ public sealed record AppSettings
     public LtcSignalLossMode LtcSignalLossMode { get; init; } = LtcSignalLossMode.RunThrough;
     public int LtcSignalLossTimeoutMs { get; init; } = DefaultLtcSignalLossTimeoutMs;
     public int LtcSignalResumeFrames { get; init; } = DefaultLtcSignalResumeFrames;
+    public bool ShowDebugOsd { get; init; }
 
     public static AppSettings Default => new();
 }

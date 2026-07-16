@@ -173,6 +173,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _gapPlaybackCommandExecutor = gapPlaybackCommandExecutor;
         _gapFreezeHandler = gapFreezeHandler;
         _settingsManager = settingsManager;
+        _showDebugOsd = settingsManager.Current.ShowDebugOsd;
         _ltcSignalLossPolicy = new LtcSignalLossPolicy(
             TimeSpan.FromMilliseconds(settingsManager.Current.LtcSignalLossTimeoutMs),
             settingsManager.Current.LtcSignalResumeFrames);
@@ -371,6 +372,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     internal MainViewModel ViewModel => _vm;
 
     private readonly AppSettingsManager _settingsManager;
+    private readonly bool _showDebugOsd;
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
         => CreateWindowLoadedCoordinator().Initialize();
@@ -1590,10 +1592,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void UpdateOsd(double pos)
     {
         if (_mpv == IntPtr.Zero) return;
+        if (!DebugOsdPolicy.ShouldWrite(_showDebugOsd)) return;
         int frame = _fps > 0 ? (int)(pos * _fps) : (int)pos;
         if (!_osdUpdateState.ShouldUpdate(frame, DateTime.UtcNow)) return;
         string timePart = PlaybackTimeFormatter.FormatFrames(pos, _fps);
-        string text = MetadataDisplayFormatter.FormatOsdText(timePart, _metaLine);
+        string text = DebugOsdPolicy.FormatText(timePart, _metaLine);
         _mpvApi.SetPropertyString(_mpv, "osd-msg3", text);
     }
 
