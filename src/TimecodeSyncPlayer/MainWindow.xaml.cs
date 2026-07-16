@@ -34,6 +34,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private int               _videoHeight     = 0;
     private readonly PixelBufferManager _bufferManager;
     private FrameRenderer _frameRenderer = null!;
+    private readonly IDisplayCatalog _displayCatalog = new NativeDisplayCatalog();
+    private FullscreenOutputWindow? _fullscreenWindow;
+    private bool _isRefreshingDisplays;
     private readonly PlaybackPerformanceStats _playbackPerformanceStats;
     private readonly RenderFramePerformanceRecorder _renderFramePerformanceRecorder;
     private readonly RenderFrameDisplayUpdater _renderFrameDisplayUpdater;
@@ -116,6 +119,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private const string SyncOffLabel = "Sync OFF";
     private const string SpoutOnLabel = "Spout ON";
     private const string SpoutOffLabel = "Spout OFF";
+    private const string FullscreenOpenLabel = "FULLSCREEN";
+    private const string FullscreenCloseLabel = "EXIT FULLSCREEN";
 
     // CLI --save-project の起動シーケンス待機時間
     private const int SaveProjectDelayMs = 3000; // playlist ロード完了の暫定待機時間
@@ -420,7 +425,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             initializeStartupBuffer: () => _startupBufferInitializer.Initialize(RenderPixelFormat),
             initializeTimeline: InitializeTimeline,
             showError: ShowWindowLoadedSessionInitializationError);
-        return sessionInitializer.Initialize();
+        bool initialized = sessionInitializer.Initialize();
+        if (initialized)
+            RefreshDisplaySelection(_settingsManager.Current.FullscreenDisplayDeviceName);
+        return initialized;
     }
 
     private void ScheduleProjectLaunchAction(ProjectLaunchActionPlan launchActionPlan)
@@ -1166,6 +1174,122 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         Log.Information("Spout 出力: {State}", _spoutOutput.IsEnabled ? "ON" : "OFF");
     }
 
+    private void DisplayCombo_SelectionChanged(
+        object sender,
+        System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_isRefreshingDisplays || DisplayCombo.SelectedItem is not DisplayTarget selected)
+            return;
+
+        _settingsManager.Update(settings => settings with
+        {
+            FullscreenDisplayDeviceName = selected.DeviceName,
+        });
+    }
+
+    private void BtnFullscreen_Click(object sender, RoutedEventArgs e)
+    {
+        if (_fullscreenWindow != null)
+        {
+            CloseFullscreenOutput();
+            return;
+        }
+
+        string? preferredDevice = (DisplayCombo.SelectedItem as DisplayTarget)?.DeviceName
+            ?? _settingsManager.Current.FullscreenDisplayDeviceName;
+        RefreshDisplaySelection(preferredDevice);
+        if (DisplayCombo.SelectedItem is not DisplayTarget target)
+            return;
+
+        var window = new FullscreenOutputWindow(target, _displayCatalog, VideoImage.Source)
+        {
+            Owner = this,
+        };
+        window.Closed += FullscreenWindow_Closed;
+        _frameRenderer.BitmapChanged += FullscreenFrameRenderer_BitmapChanged;
+        _fullscreenWindow = window;
+
+        try
+        {
+            window.Show();
+            DisplayCombo.IsEnabled = false;
+            BtnFullscreen.Content = FullscreenCloseLabel;
+            Log.Information("Fullscreen output opened on {Display}", target.DeviceName);
+        }
+        catch
+        {
+            _frameRenderer.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
+            window.Closed -= FullscreenWindow_Closed;
+            _fullscreenWindow = null;
+            throw;
+        }
+    }
+
+    private void FullscreenFrameRenderer_BitmapChanged(WriteableBitmap bitmap) =>
+        _fullscreenWindow?.UpdateBitmap(bitmap);
+
+    private void FullscreenWindow_Closed(object? sender, EventArgs e)
+    {
+        _frameRenderer.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
+        if (sender is FullscreenOutputWindow window)
+            window.Closed -= FullscreenWindow_Closed;
+        _fullscreenWindow = null;
+        BtnFullscreen.Content = FullscreenOpenLabel;
+        DisplayCombo.IsEnabled = true;
+        string? selectedDeviceName = (DisplayCombo.SelectedItem as DisplayTarget)?.DeviceName
+            ?? _settingsManager.Current.FullscreenDisplayDeviceName;
+        RefreshDisplaySelection(selectedDeviceName);
+        Log.Information("Fullscreen output closed");
+    }
+
+    private void CloseFullscreenOutput()
+    {
+        FullscreenOutputWindow? window = _fullscreenWindow;
+        if (window == null)
+            return;
+
+        window.Close();
+    }
+
+    private void RefreshDisplaySelection(string? preferredDeviceName)
+    {
+        _isRefreshingDisplays = true;
+        try
+        {
+            IReadOnlyList<DisplayTarget> displays;
+            try
+            {
+                displays = _displayCatalog.GetDisplays();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to enumerate displays");
+                displays = [];
+            }
+
+            DisplayTarget? selected = DisplaySelectionPolicy.Select(displays, preferredDeviceName);
+            DisplayCombo.ItemsSource = displays;
+            DisplayCombo.SelectedItem = selected;
+            BtnFullscreen.IsEnabled = _fullscreenWindow != null || selected != null;
+
+            if (selected != null
+                && !string.Equals(
+                    _settingsManager.Current.FullscreenDisplayDeviceName,
+                    selected.DeviceName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _settingsManager.Update(settings => settings with
+                {
+                    FullscreenDisplayDeviceName = selected.DeviceName,
+                });
+            }
+        }
+        finally
+        {
+            _isRefreshingDisplays = false;
+        }
+    }
+
     private void BtnTimeline_Click(object sender, RoutedEventArgs e)
     {
         bool isVisible = TimelineContainer.Visibility != Visibility.Visible;
@@ -1500,6 +1624,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_disposed) return;
         _disposed = true;
+
+        CloseFullscreenOutput();
 
         var disposer = new MainWindowResourceDisposer(
             disposeTimer: () =>

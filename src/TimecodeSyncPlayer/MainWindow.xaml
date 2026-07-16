@@ -38,6 +38,19 @@
             <Button Content="📂 開く" Width="90" Height="30"
                     Click="BtnOpen_Click"
                     AutomationProperties.AutomationId="BtnOpen"/>
+            <TextBlock Text="Display:" Foreground="#BBBBBB"
+                       VerticalAlignment="Center" Margin="16,0,6,0"/>
+            <ComboBox x:Name="DisplayCombo"
+                      Width="180" Height="30"
+                      DisplayMemberPath="DisplayName"
+                      SelectionChanged="DisplayCombo_SelectionChanged"
+                      AutomationProperties.AutomationId="DisplayCombo"/>
+            <Button x:Name="BtnFullscreen"
+                    Content="FULLSCREEN" Width="120" Height="30"
+                    Margin="8,0,0,0"
+                    IsEnabled="False"
+                    Click="BtnFullscreen_Click"
+                    AutomationProperties.AutomationId="BtnFullscreen"/>
         </StackPanel>
 
         <!-- 映像エリア（SW レンダーの WriteableBitmap を表示） -->

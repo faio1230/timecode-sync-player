@@ -33,6 +33,13 @@ public sealed class TimecodeSyncPlayerE2ETests : IClassFixture<TimecodeSyncPlaye
     private Slider SeekBar()           => Win.FindFirstDescendant(cf => cf.ByAutomationId("SeekBar")).AsSlider();
     private AutomationElement? Element(string id) => Win.FindFirstDescendant(cf => cf.ByAutomationId(id));
 
+    private Window? FullscreenWindow()
+    {
+        AutomationElement? element = Win.Automation.GetDesktop()
+            .FindFirstDescendant(cf => cf.ByAutomationId("FullscreenOutputWindow"));
+        return element?.AsWindow();
+    }
+
     private static async Task WaitUntil(Func<bool> condition, TimeSpan timeout)
     {
         DateTime deadline = DateTime.UtcNow + timeout;
@@ -51,6 +58,26 @@ public sealed class TimecodeSyncPlayerE2ETests : IClassFixture<TimecodeSyncPlaye
 
         Btn("BtnPlay").Invoke();
         await WaitUntil(() => BtnLabel("BtnPlay") == "▶", TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task Fullscreen_ToggleOpensAndClosesWindow()
+    {
+        SkipIfNeeded();
+
+        Btn("BtnFullscreen").Invoke();
+        await WaitUntil(() => FullscreenWindow() != null, TimeSpan.FromSeconds(5));
+
+        Window? fullscreen = FullscreenWindow();
+        fullscreen.Should().NotBeNull();
+        BtnLabel("BtnFullscreen").Should().Be("EXIT FULLSCREEN");
+
+        // ESCキー物理入力はRDPセッションで合成不可のためユニットテストで担保する。
+        Btn("BtnFullscreen").Invoke();
+        await WaitUntil(() => FullscreenWindow() == null, TimeSpan.FromSeconds(5));
+
+        FullscreenWindow().Should().BeNull();
+        BtnLabel("BtnFullscreen").Should().Be("FULLSCREEN");
     }
 
     private string TimeLabelText()
