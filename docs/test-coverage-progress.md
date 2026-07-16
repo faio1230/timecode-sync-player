@@ -746,3 +746,29 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   `CableLoop_StopMode_SignalLossDuringGap_IsEvaluatedAfterGapRecovery` は1/1件合格、Skip0。
   Debug非E2E全件は1066/1066件合格、失敗0、Skip0、ビルド警告0。ブランチは
   `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V3 完了（2026-07-17）
+
+- `PlaylistState` の空状態に対するSelect/Move/Remove/Recalculate/Update/Clear/検索を一括検証し、
+  すべて安全にfalse・null・-1または空状態を維持することを固定した。オフセット編集の空状態も
+  `TrackNotFound` となりコレクションを変更しない。
+- 1000トラックを1秒間隔に配置し、先頭・500番目・末尾・末尾直後のクエリ結果を検証した。
+  実行時間ではなく返却track、media位置、gapのprevious trackだけを評価し、アロケーション爆発や
+  例外なく決定的な結果を返すことを確認した。
+- 負オフセットはモデル上の有効値として負の区間をクエリ可能、`TimeSpan.MaxValue` 近傍も
+  オーバーフローせずクエリ可能であることを固定した。文字列編集経路は負値・100時間・NaN・
+  Infinityを`ParseFailed`で拒否する。クエリ位置のNaN/±Infinity/`double.MaxValue` は例外を
+  漏らさず決定的にGapを返す。
+- duration未取得（`MediaOut=null`かつ`MediaDuration=0`）と既知durationの混在では、長さ0を
+  OnTrackとせず厳密な半開区間でGap/既知track/末尾Gapを返すことを確認した。backfillはnullを
+  スキップし、既知durationだけを補完して保存済みオフセットを維持する。
+- 既存の重複テストはduration更新前に保持した古いrecordを再代入して2本目をduration 0へ戻しており、
+  実際には区間が重複していなかった。更新後の `state.Tracks[1]` を基にオフセットだけ変更し、
+  0～60秒と30～90秒が真に重なる状態で低playlist index優先を固定した。本体コードは変更していない。
+- ミューテーション確認1: タイムライン走査を末尾からの逆順へ変更すると、重複位置40秒で2本目を
+  返し、低indexの1本目を期待するテストが参照不一致で失敗した。変更は復元済み。
+- ミューテーション確認2: OnTrack終端判定を `< tlOut` から `<= tlOut` に変更すると、duration 0の
+  未取得trackが開始点0秒でOnTrackとなり、期待Gapに対する不一致で失敗した。変更は復元済み。
+- 復元後のV3対象5クラスは61/61件合格。Debug非E2E全件は1081/1081件合格、失敗0、Skip0、
+  ビルド警告0。ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` も
+  ステージしていない。
