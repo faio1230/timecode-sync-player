@@ -873,6 +873,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void PlaylistList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
+        // MouseDoubleClick は ListBox 全域（スクロールバー・空白領域含む）で発火するため、
+        // 実際に項目上でのダブルクリックのときだけロードする
+        if (ListBoxItemHitTester.GetItemIndexAt(PlaylistList, e.GetPosition(PlaylistList)) < 0)
+            return;
+
         if (_playlist.Select(PlaylistList.SelectedIndex))
         {
             SyncPlaylistSelection();
@@ -919,17 +924,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private int GetPlaylistIndexFromPoint(System.Windows.Point point)
-    {
-        var element = PlaylistList.InputHitTest(point) as DependencyObject;
-        while (element != null)
-        {
-            if (element is System.Windows.Controls.ListBoxItem item)
-                return PlaylistList.ItemContainerGenerator.IndexFromContainer(item);
-            element = VisualTreeHelper.GetParent(element);
-        }
-
-        return -1;
-    }
+        => ListBoxItemHitTester.GetItemIndexAt(PlaylistList, point);
 
     private async Task ReplacePlaylistAndLoadAsyncSingle(string path)
         => await ReplacePlaylistAndLoadAsync([path]);
