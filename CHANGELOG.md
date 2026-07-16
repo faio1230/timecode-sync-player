@@ -10,6 +10,10 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 - Added selectable full-screen video output for connected external displays.
 - Added the `fullscreenDisplayDeviceName` setting to restore the selected output display.
 
+### Fixed
+
+- Double-clicking the playlist scrollbar or empty area no longer starts playback of the selected track.
+
 ### Changed
 
 - Debug OSD is hidden by default while seek feedback via the mpv OSD bar remains available.
