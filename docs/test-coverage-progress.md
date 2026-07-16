@@ -489,3 +489,23 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - V1対象: 68/68件合格。Debug非E2E: 970/970件合格、失敗0、スキップ0、警告0。
 - Debug E2E: 37/37件合格、失敗0、スキップ0（4分16秒、実機LTC 11件を含む）。
 - ブランチは`test/hardening-v1`。pushは実施せず、未追跡`AGENTS.md`もステージしていない。
+
+### テスト強化 V8 停止（2026-07-16）
+
+- `tests/TimecodeSyncPlayer.Tests/Integration/SyncScenarioHarness.cs` に、実物の `PlaylistState`、
+  `TimecodeSyncService`、`SyncDecisionEngine`、`GapFreezeHandler`、`LtcSignalLossPolicy`、
+  `ContinueOnTrackPlanner`（`ContinueOnTrackCoordinator` 内から使用）と、3つの coordinator を
+  MainWindow と同じ分岐で接続する統合ハーネスの最小再現を追加した。mpv 境界のみ記録型とし、
+  LTC供給、100ms tick、手動 Play/Pause、シークバー操作、単調ミリ秒を公開した。
+- ハーネス自己検証
+  `HarnessSelfTest_LtcOnTrack_UsesRealPlaylistAndCoordinatorToLoadTrack` は成功し、LTC の OnTrack 判定から
+  実 coordinator を経て期待する `loadfile` が記録されることを確認した。
+- V8 の pause 所有権シナリオで実バグを検出したため、共通ルールに従い V8 を停止した。
+  再現手順は `Continue + Sync ON → track 1 → 手動 Pause → Freeze gap → freeze capture 完了 → track 2`。
+  gap 終了時に `ContinueOnTrackCoordinator` が `ResumeMpvPause` と `ApplyPauseState(false)` を無条件実行し、
+  手動 Pause を解除する。これは「解除するのは所有者だけ」「手動操作は常に勝つ」という V8 の不変条件に反する。
+- 失敗証跡: `dotnet test ... --filter "FullyQualifiedName~SyncScenarioHarnessTests"` は 2件中1件成功・1件失敗。
+  `ManualPause_RemainsPaused_WhenReturningFromFreezeGap` の最終 assertion が
+  `Expected harness.IsPaused to be true because manual playback control must always win, but found False.` で失敗した。
+- 本体 `src/` は変更していない。実バグ検出による停止のため、ミューテーション確認、V8 全シナリオ実装、
+  非E2E全件ゲートは未実施。V9 以降にも進んでいない。push は実施せず、未追跡 `AGENTS.md` もステージしていない。
