@@ -597,3 +597,19 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 復元後のDebug非E2E全件は1013/1013件合格、失敗0、Skip0、ビルド警告0。
   Debug E2E全件は実機LTCを含む41/41件合格、失敗0、Skip0（6分7秒）。
   ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V10 停止（2026-07-16）
+
+- 実機VB-CABLEを使う組み合わせシナリオ3件を `LtcHardwareLoopE2ETests` に追加した。
+  Continue + BlackギャップからSingleへ切り替える映像復帰、Stopモードでギャップ中に信号断して
+  ギャップ脱出後も信号断評価が生きていること、信号継続中のSingle/Continue反復切替を対象とした。
+- 1件目を単独実行すると、実LTCが40秒を越えて `Gap: Black` に入り、Single切替後のログには
+  `Gap state cleared for manual control syncEnabled=true mode="Single"` と、再描画用の
+  `Seek`（再生位置14.467秒から19.967秒）が記録された。一方、UIの `CurrentTrackLabel` は
+  3秒後も `Gap: Black` のままで、1/1件が `TimeoutException` により失敗した（25.6秒）。
+- 原因は `MainWindow.ExitGapStateForManualControlIfNeeded` がギャップ状態とフレームバッファを解除して
+  現在位置へ再シークする一方、`UpdateCurrentTrackLabel` を呼ばないこと。内部状態と映像は復帰するが、
+  画面上のトラック表示だけが解除前のギャップ表示のまま残る実バグである。
+- このプロダクション修正は承認範囲外のため `src/` は変更していない。V10の残り2シナリオ、
+  ミューテーション確認、非E2E/E2E全件ゲート、V5以降は未実行。ブランチは
+  `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
