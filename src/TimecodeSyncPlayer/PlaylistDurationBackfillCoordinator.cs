@@ -16,7 +16,10 @@ internal sealed class PlaylistDurationBackfillCoordinator
         _effects = effects;
     }
 
-    internal async Task BackfillAsync(IReadOnlyList<string> paths, int startIndex = 0)
+    internal async Task BackfillAsync(
+        IReadOnlyList<string> paths,
+        int startIndex = 0,
+        bool recalculateTimeline = true)
     {
         try
         {
@@ -24,7 +27,8 @@ internal sealed class PlaylistDurationBackfillCoordinator
                 _effects.GetTracks(),
                 paths,
                 startIndex,
-                _effects.ApplyDurationOnUiAsync);
+                (trackId, duration) =>
+                    _effects.ApplyDurationOnUiAsync(trackId, duration, recalculateTimeline));
         }
         catch (Exception ex)
         {
@@ -35,5 +39,5 @@ internal sealed class PlaylistDurationBackfillCoordinator
 
 internal sealed record PlaylistDurationBackfillEffects(
     Func<IReadOnlyList<PlaylistTrack>> GetTracks,
-    Func<Guid, TimeSpan, Task> ApplyDurationOnUiAsync,
+    Func<Guid, TimeSpan, bool, Task> ApplyDurationOnUiAsync,
     Action<Exception> HandleFailure);

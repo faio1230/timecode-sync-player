@@ -574,3 +574,26 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   ログでも読込直後に track[0] が10秒から0秒、track[1] が30秒から20秒へ再計算された。
 - 新しい実バグの修正は未承認。V9 のミューテーション確認、非E2E/E2E全件ゲート、V10以降は
   未実行。ブランチは `test/hardening-v1`、push はしておらず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V9 完了（2026-07-16）
+
+- 承認に基づき、プロジェクト読込経路のduration backfillを「duration補完のみ」に変更した。
+  `PlaylistDurationBackfillCoordinator` は `recalculateTimeline` をUI適用処理へ明示伝搬し、
+  プロジェクト読込は `false`、通常のファイル置換・追加経路は従来どおり `AutoOffsetOnAdd` の値を渡す。
+  読込後も保存済み `TimelineOffset` を変更しない。誤った再計算を期待する既存テストは存在しなかった。
+- TDD RED: 保存値10秒・30秒を持つ実 `PlaylistState` にduration backfillを行う新ユニットテストは、
+  修正前には3引数の適用delegateと `recalculateTimeline` 引数が存在せず、CS1593/CS1739で失敗した。
+  GREEN: 修正後の `PlaylistDurationBackfillCoordinatorTests` は5/5件合格し、durationが20秒へ
+  補完されてもオフセット10秒・30秒が維持されることを確認した。
+- V9 E2E 4シナリオは4/4件合格。プロジェクト往復は2本の追加・並べ替え・10秒オフセット編集・
+  Continue/Freeze設定・保存・クリア・読込・全状態一致・再生・シークまで実アプリと実mpvで通過した。
+  モード往復、再生中フルスクリーン2周、破損プロジェクト読込後の継続利用も合格した。
+- ミューテーション確認1: プロジェクト読込の `recalculateTimeline: false` を `true` に戻すと、
+  `ProjectRoundTrip_RestoresPlaylistOrderOffsetModeAndPlayback` が期待 `00:00:10:00` に対して
+  `00:00:00:00` となり失敗した。変更は復元済み。
+- ミューテーション確認2: `FullscreenCloseLabel` を `EXIT FULLSCREEN` から `FULLSCREEN` に壊すと、
+  `FullscreenDuringPlayback_TwoCyclesPreservePlaybackAndSpoutState` が開状態ラベル待機で
+  `TimeoutException` となり失敗した。変更は復元済み。
+- 復元後のDebug非E2E全件は1013/1013件合格、失敗0、Skip0、ビルド警告0。
+  Debug E2E全件は実機LTCを含む41/41件合格、失敗0、Skip0（6分7秒）。
+  ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
