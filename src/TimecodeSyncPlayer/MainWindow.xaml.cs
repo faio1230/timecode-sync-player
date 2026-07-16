@@ -839,6 +839,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         _gapFreezeHandler.ResetAll();
         _bufferManager.ClearGapFreezeFrame();
+
+        // ギャップ演出で黒/フリーズを描いた後は mpv から新フレームが来るまで画面が戻らない。
+        // 現在位置へ再シークして最終フレームを即座に再描画させる（一時停止中でも描画される）
+        if (_mpv != IntPtr.Zero &&
+            _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double currentPos) == 0)
+        {
+            SeekTo(currentPos);
+        }
+
         Log.Information("Gap state cleared for manual control syncEnabled={SyncEnabled} mode={Mode}",
             _vm.Sync.SyncEnabled, _vm.Sync.SyncMode);
     }
