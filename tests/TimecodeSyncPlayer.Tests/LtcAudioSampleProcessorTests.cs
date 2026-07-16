@@ -7,7 +7,7 @@ namespace TimecodeSyncPlayer.Tests;
 public class LtcAudioSampleProcessorTests
 {
     [Fact]
-    public void Process_NonFiniteFloatSamples_DoesNotPropagateNaNToLevels()
+    public void Process_AllNonFiniteFloatSamples_ReturnsZeroLevels()
     {
         const int sampleRate = 48_000;
         float[] samples = [float.NaN, float.PositiveInfinity, float.NegativeInfinity];
@@ -18,8 +18,35 @@ public class LtcAudioSampleProcessorTests
             samples.Length * sizeof(float),
             WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1));
 
-        float.IsNaN(result.Peak).Should().BeFalse();
-        float.IsNaN(result.Rms).Should().BeFalse();
+        result.Peak.Should().Be(0);
+        result.Rms.Should().Be(0);
+    }
+
+    [Fact]
+    public void Process_MixedFiniteAndNonFiniteFloatSamples_MeasuresOnlyFiniteSamples()
+    {
+        const int sampleRate = 48_000;
+        float[] samples =
+        [
+            float.NaN,
+            0.5f,
+            float.PositiveInfinity,
+            -1.0f,
+            float.NegativeInfinity,
+        ];
+        var processor = new LtcAudioSampleProcessor(new LtcDecoder(sampleRate, 25));
+
+        LtcAudioSampleProcessingResult result = processor.Process(
+            ToBytes(samples),
+            samples.Length * sizeof(float),
+            WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1));
+
+        result.SampleCount.Should().Be(samples.Length,
+            "non-finite samples remain on the decoder supply path");
+        result.Peak.Should().Be(1.0f);
+        result.Rms.Should().BeApproximately(
+            (float)Math.Sqrt((0.25 + 1.0) / 2),
+            0.000001f);
     }
 
     [Fact]

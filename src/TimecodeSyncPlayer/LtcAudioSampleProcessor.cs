@@ -51,15 +51,22 @@ internal sealed class LtcAudioSampleProcessor
 
         double sumSquares = 0;
         float peak = 0;
+        int finiteSampleCount = 0;
         foreach (float sample in samples)
         {
+            if (!float.IsFinite(sample))
+                continue;
+
+            finiteSampleCount++;
             float abs = Math.Abs(sample);
             if (abs > peak)
                 peak = abs;
             sumSquares += sample * sample;
         }
 
-        return (peak, (float)Math.Sqrt(sumSquares / samples.Length));
+        return finiteSampleCount == 0
+            ? (0f, 0f)
+            : (peak, (float)Math.Sqrt(sumSquares / finiteSampleCount));
     }
 }
 
