@@ -48,7 +48,7 @@ public class MpvSessionInitializerTests
     }
 
     [Fact]
-    public void Initialize_ReturnsFailure_WhenInitializeFails()
+    public void Initialize_WhenInitializeFailsDestroysHandleAndReturnsFailure()
     {
         var api = new FakeMpvApi { CreateResult = s_mpv, InitializeResult = -1 };
         var initializer = new MpvSessionInitializer(api, new MpvStartupPropertyApplier(api));
@@ -57,7 +57,8 @@ public class MpvSessionInitializerTests
 
         result.Success.Should().BeFalse();
         result.Failure.Should().Be(MpvSessionInitializationFailure.InitializeFailed);
-        result.Mpv.Should().Be(s_mpv);
+        result.Mpv.Should().Be(IntPtr.Zero);
+        api.Calls.Last().Should().Be($"terminate-destroy:{s_mpv}");
     }
 
     private sealed class FakeMpvApi : IMpvApi
@@ -78,7 +79,7 @@ public class MpvSessionInitializerTests
             return InitializeResult;
         }
 
-        public void TerminateDestroy(IntPtr ctx) { }
+        public void TerminateDestroy(IntPtr ctx) => Calls.Add($"terminate-destroy:{ctx}");
         public int SetPropertyString(IntPtr ctx, string name, string value)
         {
             Calls.Add($"set:{name}={value}");
