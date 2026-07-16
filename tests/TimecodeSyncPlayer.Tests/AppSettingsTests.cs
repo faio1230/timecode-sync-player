@@ -303,6 +303,174 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public async Task SaveAsync_NewDestinationWritesTemporaryFileThenMovesIt()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"settings-{Guid.NewGuid():N}.json");
+        var operations = new RecordingAtomicFileOperations();
+        var manager = new AppSettingsManager(path, operations);
+        AppSettings expected = AppSettings.Default with { WindowWidth = 1280 };
+
+        await manager.SaveAsync(expected);
+
+        operations.Writes.Should().ContainSingle();
+        string temporaryPath = operations.Writes.Single().Path;
+        temporaryPath.Should().NotBe(path);
+        Path.GetDirectoryName(temporaryPath).Should().Be(Path.GetDirectoryName(path));
+        operations.Moves.Should().Equal((temporaryPath, path));
+        operations.Replaces.Should().BeEmpty();
+        manager.Current.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task SaveAsync_TemporaryWriteFailurePreservesExistingDestinationAndCurrentSettings()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        const string original = "existing-settings";
+        await File.WriteAllTextAsync(path, original);
+        try
+        {
+            var operations = new RecordingAtomicFileOperations(path) { ThrowAfterWrite = true };
+            var manager = new AppSettingsManager(path, operations);
+
+            await manager.SaveAsync(AppSettings.Default with { WindowWidth = 1280 });
+
+            (await File.ReadAllTextAsync(path)).Should().Be(original);
+            manager.Current.Should().Be(AppSettings.Default);
+            Directory.GetFiles(directory, ".*.tmp").Should().BeEmpty();
+            operations.Deletes.Should().ContainSingle().Which.Should().Be(operations.Writes.Single().Path);
+            operations.Replaces.Should().BeEmpty();
+            operations.Moves.Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_WhenDestinationIsLockedPreservesExistingFile()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        const string original = "locked-existing-settings";
+        await File.WriteAllTextAsync(path, original);
+        try
+        {
+            var manager = CreateManager(path);
+            await using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                await manager.SaveAsync(AppSettings.Default with { WindowWidth = 1280 });
+            }
+
+            (await File.ReadAllTextAsync(path)).Should().Be(original);
+            manager.Current.Should().Be(AppSettings.Default);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("{\"windowWidth\":800")]
+    [InlineData("not-json")]
+    [InlineData("")]
+    public async Task LoadAsync_CorruptVariantsRestoreDefaultsAndUpdateRegeneratesFile(string content)
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        try
+        {
+            await File.WriteAllTextAsync(path, content, System.Text.Encoding.UTF8);
+            var manager = CreateManager(path);
+
+            await manager.LoadAsync();
+            manager.Current.Should().Be(AppSettings.Default);
+
+            await manager.UpdateAsync(settings => settings with { WindowWidth = 1280 });
+
+            var reloaded = CreateManager(path);
+            await reloaded.LoadAsync();
+            reloaded.Current.WindowWidth.Should().Be(1280);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LoadAsync_BomOnlyOrInvalidUtf8BytesRestoresDefaults(bool bomOnly)
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        try
+        {
+            byte[] bytes = bomOnly
+                ? System.Text.Encoding.UTF8.GetPreamble()
+                : [0xff, 0xfe, 0xfd];
+            await File.WriteAllBytesAsync(path, bytes);
+            var manager = CreateManager(path);
+
+            await manager.LoadAsync();
+
+            manager.Current.Should().Be(AppSettings.Default);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_MissingAndUnknownKeysUsesDefaultsAndKnownValues()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        try
+        {
+            await File.WriteAllTextAsync(
+                path,
+                """{"windowWidth":1280,"unknownFutureKey":{"nested":true}}""",
+                System.Text.Encoding.UTF8);
+            var manager = CreateManager(path);
+
+            await manager.LoadAsync();
+
+            manager.Current.WindowWidth.Should().Be(1280);
+            manager.Current.SyncMode.Should().Be(SyncMode.Single);
+            manager.Current.AutoOffsetOnAdd.Should().BeTrue();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_TypeMismatchRestoresDefaults()
+    {
+        string directory = CreateTemporaryDirectory();
+        string path = Path.Combine(directory, "settings.json");
+        try
+        {
+            await File.WriteAllTextAsync(path, """{"windowWidth":"wide"}""", System.Text.Encoding.UTF8);
+            var manager = CreateManager(path);
+
+            await manager.LoadAsync();
+
+            manager.Current.Should().Be(AppSettings.Default);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task LoadAsync_MissingFileKeepsDefaults()
     {
         string directory = CreateTemporaryDirectory();
@@ -335,6 +503,11 @@ public class AppSettingsTests
 
             manager.Current.WindowWidth.Should().Be(1024);
             manager.Current.WindowHeight.Should().Be(768);
+
+            var reloaded = CreateManager(path);
+            await reloaded.LoadAsync();
+            reloaded.Current.WindowWidth.Should().Be(1024);
+            reloaded.Current.WindowHeight.Should().Be(768);
         }
         finally
         {

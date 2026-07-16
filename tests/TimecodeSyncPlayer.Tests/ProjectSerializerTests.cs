@@ -3,6 +3,7 @@ using FluentAssertions;
 
 namespace TimecodeSyncPlayer.Tests;
 
+[Collection("Project serializer state")]
 public class ProjectSerializerTests : IDisposable
 {
     private readonly string _tempDir;
@@ -180,6 +181,64 @@ public class ProjectSerializerTests : IDisposable
             .Should().ThrowAsync<System.Text.Json.JsonException>();
     }
 
+    [Theory]
+    [InlineData("{\"version\":1")]
+    [InlineData("not-json")]
+    public async Task LoadAsync_CorruptJsonVariants_ThrowJsonException(string content)
+    {
+        string filePath = GetTempPath($"corrupt-{Guid.NewGuid():N}.tsp");
+        await File.WriteAllTextAsync(filePath, content, System.Text.Encoding.UTF8);
+
+        await FluentActions.Awaiting(() => ProjectSerializer.LoadAsync(filePath))
+            .Should().ThrowAsync<System.Text.Json.JsonException>();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LoadAsync_BomOnlyOrInvalidUtf8Bytes_ThrowsJsonException(bool bomOnly)
+    {
+        string filePath = GetTempPath($"corrupt-bytes-{Guid.NewGuid():N}.tsp");
+        byte[] bytes = bomOnly
+            ? System.Text.Encoding.UTF8.GetPreamble()
+            : [0xff, 0xfe, 0xfd];
+        await File.WriteAllBytesAsync(filePath, bytes);
+
+        await FluentActions.Awaiting(() => ProjectSerializer.LoadAsync(filePath))
+            .Should().ThrowAsync<System.Text.Json.JsonException>();
+    }
+
+    [Fact]
+    public async Task LoadAsync_MissingAndUnknownKeys_UsesDefaultsAndIgnoresUnknownKey()
+    {
+        string filePath = GetTempPath("missing-unknown.tsp");
+        await File.WriteAllTextAsync(
+            filePath,
+            """{"version":1,"unknownFutureKey":{"nested":true}}""",
+            System.Text.Encoding.UTF8);
+
+        ProjectData? project = await ProjectSerializer.LoadAsync(filePath);
+
+        project.Should().NotBeNull();
+        project!.Version.Should().Be(1);
+        project.SyncMode.Should().Be(SyncMode.Single);
+        project.GapBehavior.Should().Be(GapBehavior.Freeze);
+        project.Tracks.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_TypeMismatch_ThrowsJsonException()
+    {
+        string filePath = GetTempPath("type-mismatch.tsp");
+        await File.WriteAllTextAsync(
+            filePath,
+            """{"version":"one","tracks":[]}""",
+            System.Text.Encoding.UTF8);
+
+        await FluentActions.Awaiting(() => ProjectSerializer.LoadAsync(filePath))
+            .Should().ThrowAsync<System.Text.Json.JsonException>();
+    }
+
     [Fact]
     public async Task ApplyToPlaylist_RestoresTracksCorrectly()
     {
@@ -351,6 +410,120 @@ public class ProjectSerializerTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_ExistingDestinationWritesTemporaryFileThenReplacesIt()
+    {
+        string path = GetTempPath("atomic-existing.tsp");
+        var operations = new RecordingAtomicFileOperations(path);
+
+        await ProjectSerializer.SaveAsync(
+            path,
+            new PlaylistState(),
+            SyncMode.Continue,
+            GapBehavior.Black,
+            operations);
+
+        operations.Writes.Should().ContainSingle();
+        string temporaryPath = operations.Writes.Single().Path;
+        temporaryPath.Should().NotBe(path);
+        Path.GetDirectoryName(temporaryPath).Should().Be(Path.GetDirectoryName(path));
+        operations.Replaces.Should().Equal((temporaryPath, path));
+        operations.Moves.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SaveAsync_SuccessPreservesPreviousWriteAllTextByteSequence()
+    {
+        string path = GetTempPath("byte-compatible.tsp");
+        string referencePath = GetTempPath("byte-compatible-reference.tsp");
+        var operations = new RecordingAtomicFileOperations();
+        var playlist = CreateNamedPlaylist("Byte Compatible");
+
+        await ProjectSerializer.SaveAsync(
+            path,
+            playlist,
+            SyncMode.Continue,
+            GapBehavior.Black,
+            operations);
+        string serialized = operations.Writes.Single().Contents;
+        await File.WriteAllTextAsync(referencePath, serialized, System.Text.Encoding.UTF8);
+
+        await ProjectSerializer.SaveAsync(path, playlist, SyncMode.Continue, GapBehavior.Black);
+
+        (await File.ReadAllBytesAsync(path)).Should().Equal(await File.ReadAllBytesAsync(referencePath));
+    }
+
+    [Fact]
+    public async Task SaveAsync_TemporaryWriteFailurePreservesExistingDestinationAndCleansTemporaryFile()
+    {
+        string path = GetTempPath("atomic-write-failure.tsp");
+        const string original = "existing-project";
+        await File.WriteAllTextAsync(path, original);
+        var operations = new RecordingAtomicFileOperations(path) { ThrowAfterWrite = true };
+
+        await FluentActions.Awaiting(() => ProjectSerializer.SaveAsync(
+                path,
+                new PlaylistState(),
+                SyncMode.Single,
+                GapBehavior.Freeze,
+                operations))
+            .Should().ThrowAsync<IOException>();
+
+        (await File.ReadAllTextAsync(path)).Should().Be(original);
+        operations.Deletes.Should().ContainSingle().Which.Should().Be(operations.Writes.Single().Path);
+        operations.Replaces.Should().BeEmpty();
+        operations.Moves.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SaveAsync_ConcurrentWritesProduceOneCompleteProject()
+    {
+        string path = GetTempPath("concurrent.tsp");
+        PlaylistState first = CreateNamedPlaylist("First");
+        PlaylistState second = CreateNamedPlaylist("Second");
+
+        await Task.WhenAll(
+            ProjectSerializer.SaveAsync(path, first, SyncMode.Single, GapBehavior.Freeze),
+            ProjectSerializer.SaveAsync(path, second, SyncMode.Continue, GapBehavior.Black));
+
+        ProjectData? loaded = await ProjectSerializer.LoadAsync(path);
+        loaded.Should().NotBeNull();
+        loaded!.Tracks.Should().ContainSingle();
+        string name = loaded.Tracks[0].Name;
+        name.Should().BeOneOf("First", "Second");
+        if (name == "First")
+        {
+            loaded.SyncMode.Should().Be(SyncMode.Single);
+            loaded.GapBehavior.Should().Be(GapBehavior.Freeze);
+        }
+        else
+        {
+            loaded.SyncMode.Should().Be(SyncMode.Continue);
+            loaded.GapBehavior.Should().Be(GapBehavior.Black);
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_WhenDestinationIsLockedThrowsAndPreservesExistingFile()
+    {
+        string path = GetTempPath("locked.tsp");
+        const string original = "locked-existing-project";
+        await File.WriteAllTextAsync(path, original);
+
+        await using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            await FluentActions.Awaiting(() => ProjectSerializer.SaveAsync(
+                    path,
+                    new PlaylistState(),
+                    SyncMode.Single,
+                    GapBehavior.Freeze))
+                .Should().ThrowAsync<IOException>();
+        }
+
+        (await File.ReadAllTextAsync(path)).Should().Be(original);
+        Directory.GetFiles(_tempDir, ".*.tmp").Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task ApplyToPlaylist_RejectsPathTraversalPaths()
     {
         var tempFile = GetTempPath("valid.mp4");
@@ -391,6 +564,14 @@ public class ProjectSerializerTests : IDisposable
         {
             File.Delete(tempFile);
         }
+    }
+
+    private PlaylistState CreateNamedPlaylist(string name)
+    {
+        var playlist = new PlaylistState();
+        playlist.AddFiles([GetTempPath($"{name}.mp4")]);
+        playlist.Tracks[0] = playlist.Tracks[0] with { Name = name };
+        return playlist;
     }
 
     [Fact]
@@ -553,5 +734,53 @@ public class ProjectSerializerTests : IDisposable
         ProjectSerializer.ApplyToPlaylist(project, playlist);
 
         playlist.Tracks.Should().BeEmpty();
+    }
+}
+
+internal sealed class RecordingAtomicFileOperations : IAtomicFileOperations
+{
+    private readonly HashSet<string> _existingPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    public RecordingAtomicFileOperations(params string[] existingPaths)
+    {
+        foreach (string path in existingPaths)
+            _existingPaths.Add(path);
+    }
+
+    public bool ThrowAfterWrite { get; init; }
+    public List<(string Path, string Contents)> Writes { get; } = [];
+    public List<(string Source, string Destination)> Replaces { get; } = [];
+    public List<(string Source, string Destination)> Moves { get; } = [];
+    public List<string> Deletes { get; } = [];
+
+    public bool Exists(string path) => _existingPaths.Contains(path);
+
+    public Task WriteAllTextAsync(string path, string contents, System.Text.Encoding encoding)
+    {
+        Writes.Add((path, contents));
+        _existingPaths.Add(path);
+        return ThrowAfterWrite
+            ? Task.FromException(new IOException("injected temporary write failure"))
+            : Task.CompletedTask;
+    }
+
+    public void Replace(string source, string destination)
+    {
+        Replaces.Add((source, destination));
+        _existingPaths.Remove(source);
+        _existingPaths.Add(destination);
+    }
+
+    public void Move(string source, string destination)
+    {
+        Moves.Add((source, destination));
+        _existingPaths.Remove(source);
+        _existingPaths.Add(destination);
+    }
+
+    public void Delete(string path)
+    {
+        Deletes.Add(path);
+        _existingPaths.Remove(path);
     }
 }

@@ -61,6 +61,7 @@ public sealed class AppSettingsManager
     private static readonly object _lock = new();
 
     private readonly string _settingsFilePath;
+    private readonly IAtomicFileOperations? _fileOperations;
     private readonly SemaphoreSlim _updateSemaphore = new(1, 1);
 
     public AppSettings Current { get; private set; } = AppSettings.Default;
@@ -88,9 +89,12 @@ public sealed class AppSettingsManager
         }
     }
 
-    internal AppSettingsManager(string settingsFilePath)
+    internal AppSettingsManager(
+        string settingsFilePath,
+        IAtomicFileOperations? fileOperations = null)
     {
         _settingsFilePath = settingsFilePath;
+        _fileOperations = fileOperations;
     }
 
     internal static string ResolveSettingsFilePath()
@@ -165,7 +169,11 @@ public sealed class AppSettingsManager
             string directory = Path.GetDirectoryName(Path.GetFullPath(_settingsFilePath))!;
             Directory.CreateDirectory(directory);
             string json = JsonSerializer.Serialize(settings, JsonOptions);
-            await File.WriteAllTextAsync(_settingsFilePath, json, System.Text.Encoding.UTF8);
+            await AtomicFileWriter.WriteAllTextAsync(
+                _settingsFilePath,
+                json,
+                System.Text.Encoding.UTF8,
+                _fileOperations);
             Current = settings;
         }
         catch (Exception ex)
