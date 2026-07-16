@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using FlaUI.Core.AutomationElements;
 using FluentAssertions;
@@ -12,7 +12,7 @@ public sealed class VolumeControlE2ETests
 {
     private const int Fps = 25;
 
-    [Fact]
+    [SkippableFact]
     public void MuteAndVolume_PersistAndRestoreAcrossApplicationRestart()
     {
         (string exe, string? skipReason) = E2EAppRunner.ResolvePrereqs();
@@ -95,7 +95,7 @@ public sealed class VolumeControlE2ETests
                     () => app.Button("BtnMute").Name == "MUTE ON" && ReadAudioSettings(settingsPath).IsMuted,
                     TimeSpan.FromSeconds(5));
 
-                string logPath = GetLatestApplicationLogPath();
+                string logPath = GetLatestApplicationLogPath(exe);
                 long logOffset = new FileInfo(logPath).Length;
                 signalPlayer!.Play(
                     new LtcTimecode(0, 0, 3, 12, false),
@@ -179,9 +179,11 @@ public sealed class VolumeControlE2ETests
         ReadAudioSettings(settingsPath).IsMuted.Should().BeTrue();
     }
 
-    private static string GetLatestApplicationLogPath()
+    private static string GetLatestApplicationLogPath(string exePath)
     {
-        string logDirectory = Path.Combine(AppContext.BaseDirectory, "logs");
+        // ログは実際に起動した exe の隣に出るため、解決済み exe パスから導出する
+        // （TIMECODE_SYNC_PLAYER_E2E_APP_PATH 上書きや src ツリーfallback でも正しく追える）
+        string logDirectory = Path.Combine(Path.GetDirectoryName(exePath)!, "logs");
         return Directory.EnumerateFiles(logDirectory, "timecodesyncplayer-*.log")
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .First();
