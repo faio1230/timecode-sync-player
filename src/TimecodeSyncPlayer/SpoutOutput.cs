@@ -107,11 +107,11 @@ public sealed class SpoutOutput : ISpoutOutput
                     _sendCount, width, height, pitchBytes);
 
             if (!ok)
-                Log.Warning("SpoutOutput: SendImage が false を返した count={Count} (device lost?)", _sendCount);
+                InvalidateAfterSendFailure();
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "SpoutOutput: SendFrame 中に例外が発生 count={Count}", _sendCount);
+            InvalidateAfterSendFailure(ex);
         }
     }
 
@@ -128,6 +128,25 @@ public sealed class SpoutOutput : ISpoutOutput
             try { _native.ReleaseSender(_obj); }
             catch (Exception ex) { Log.Warning(ex, "SpoutNative.ReleaseSender failed during dispose"); }
         }
+
+        CleanupObj();
+    }
+
+    private void InvalidateAfterSendFailure(Exception? exception = null)
+    {
+        if (!_initialized)
+            return;
+
+        _initialized = false;
+        IsEnabled = false;
+
+        if (exception == null)
+            Log.Warning("SpoutOutput: SendImage が false を返した count={Count} (device lost?)", _sendCount);
+        else
+            Log.Warning(exception, "SpoutOutput: SendFrame 中に例外が発生 count={Count}", _sendCount);
+
+        try { _native.ReleaseSender(_obj); }
+        catch (Exception ex) { Log.Warning(ex, "SpoutNative.ReleaseSender failed after send failure"); }
 
         CleanupObj();
     }

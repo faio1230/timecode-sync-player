@@ -221,6 +221,10 @@ public class SpoutOutputTests
 
         output.IsAvailable.Should().BeFalse();
         output.IsEnabled.Should().BeFalse();
+        native.Calls.Should().Equal(
+            "Send",
+            $"Release:{native.Object}",
+            $"Destroy:{native.Object}");
 
         native.SendResult = true;
         output.TryInitialize().Should().BeTrue();
@@ -233,7 +237,7 @@ public class SpoutOutputTests
     }
 
     [Fact]
-    public void SendFrame_NativeExceptionIsSwallowed()
+    public void SendFrame_NativeExceptionInvalidatesOutputAndTryInitializeCanRecover()
     {
         var native = new FakeNativeApi { SendException = new InvalidOperationException("send failed") };
         using var output = CreateInitializedEnabledOutput(native);
@@ -241,6 +245,35 @@ public class SpoutOutputTests
         Action act = () => output.SendFrame(new IntPtr(1), 2, 3);
 
         act.Should().NotThrow();
+        output.IsAvailable.Should().BeFalse();
+        output.IsEnabled.Should().BeFalse();
+        native.Calls.Should().Equal(
+            "Send",
+            $"Release:{native.Object}",
+            $"Destroy:{native.Object}");
+
+        native.SendException = null;
+        output.TryInitialize().Should().BeTrue();
+        output.IsEnabled = true;
+        output.SendFrame(new IntPtr(2), 4, 5);
+        native.SentImages.Should().ContainSingle().Which.Should().Be(
+            (native.Object, new IntPtr(2), 4u, 5u, 16u));
+    }
+
+    [Fact]
+    public void SendFrame_AfterFailureSecondAttemptAndDisposeDoNotDoubleCleanup()
+    {
+        var native = new FakeNativeApi { SendResult = false };
+        var output = CreateInitializedEnabledOutput(native);
+
+        output.SendFrame(new IntPtr(1), 2, 3);
+        output.SendFrame(new IntPtr(1), 2, 3);
+        output.Dispose();
+
+        native.Calls.Should().Equal(
+            "Send",
+            $"Release:{native.Object}",
+            $"Destroy:{native.Object}");
     }
 
     [Fact]

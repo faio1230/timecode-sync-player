@@ -827,3 +827,25 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   なので `src/` は変更していない。native例外側の同経路、mpv初期化各段階の後始末、
   MediaDurationReader異常出力、ミューテーション、非E2E全件ゲートは未実行。V7と全goalは未完了。
   ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V7 Spout復旧修正・mpv後始末で再停止（2026-07-17）
+
+- ユーザー承認どおり、`SpoutOutput.SendFrame` のnative `false` 応答または例外時に一度だけ実行する
+  無効化遷移を追加した。最初に `_initialized=false` と `IsEnabled=false` を確定して後続送信を遮断し、
+  Warningを1回出して、既存Disposeと同じRelease→Destroy順でnative objectを解放する。
+  通常の初期化・Disposeのログと呼出し順序は変更していない。
+- false応答と例外の両方で `IsAvailable=false`、`IsEnabled=false`、Release→Destroyとなり、その後の
+  `TryInitialize` がCreate/Open/SetNameを再実行して復旧できることを確認した。失敗後の2回目送信は
+  nativeへ到達せず、続くDisposeもRelease/Destroyを重複実行しない。SpoutOutputTestsは21/21件合格。
+- 続くmpv必須ケースとして、Create成功後にInitializeが負値を返した場合、同じhandleを
+  `TerminateDestroy` して結果にはzero handleと `InitializeFailed` を返す回帰テストを追加した。
+  単独実行は0/1件合格、1件失敗で、出力は
+  `Expected result.Mpv to be equal to 0, but found 321.` だった。
+- 根本原因は `MpvSessionInitializer.Initialize` がInitialize失敗時に
+  `MpvSessionInitializationResult(false, mpv, InitializeFailed)` を返すだけで
+  `_mpvApi.TerminateDestroy(mpv)` を呼ばないこと。handleはMainWindowへ代入され終了時まで残るため、
+  V7要件の初期化失敗直後の後始末を満たさない。
+- このmpv本体修正は今回のSpout承認範囲外なので `MpvSessionInitializer` は変更していない。
+  RenderContext失敗後始末、MediaDurationReader異常出力、V7ミューテーション、非E2E全件ゲートは
+  未実行。V7と全goalは未完了。ブランチは `test/hardening-v1`、pushは実施せず、未追跡
+  `AGENTS.md` もステージしていない。
