@@ -772,3 +772,20 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 復元後のV3対象5クラスは61/61件合格。Debug非E2E全件は1081/1081件合格、失敗0、Skip0、
   ビルド警告0。ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` も
   ステージしていない。
+
+### テスト強化 V4 停止（2026-07-17）
+
+- 0チャンネル、3/8チャンネル、8kHz/192kHz、64bit float、frame境界を1byte超える
+  `bytesRecorded` を追加し、現行変換挙動を確認した。3/8チャンネルは先頭チャンネルを正しく
+  モノラル化し、サンプルレートは値変換へ影響せず、0チャンネルは空、未対応64bit floatは
+  既存8bitと同様に0へフォールスルー、余剰1byteは切り捨てとなる。これら24件は合格した。
+- 必須の非有限値ケースとして、NaN・+Infinity・-Infinityを含むfloat PCMを実
+  `LtcAudioSampleProcessor.Process` へ入力し、Peak/RMSがNaNを返さないことを期待する回帰テストを
+  追加した。対象25件の実行は24件合格、1件失敗で、RMSがNaNとなった。
+- 失敗出力は `Expected float.IsNaN(result.Rms) to be false, but found True.`。根本原因は
+  `LtcAudioSampleProcessor.MeasureLevel` が非有限sampleを無条件に `sample * sample` して
+  `sumSquares` へ加算するため、1つのNaNでRMS計算全体へNaNが伝播すること。
+- これはV4保証内容「統計値が破綻せずNaN伝播しない」に反する実バグであり、本体変更の承認範囲外
+  なので `src/` は変更していない。長時間相当カウンタの適用可否確認、ミューテーション確認、
+  非E2E全件ゲート、V4完了、V7は未実行。ブランチは `test/hardening-v1`、pushは実施せず、
+  未追跡 `AGENTS.md` もステージしていない。
