@@ -244,12 +244,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _playlistDurationBackfillService,
             new PlaylistDurationBackfillEffects(
                 GetTracks: () => _playlist.Tracks,
-                ApplyDurationOnUiAsync: async (trackId, duration) =>
+                ApplyDurationOnUiAsync: async (trackId, duration, recalculateTimeline) =>
                 {
                     await Dispatcher.InvokeAsync(() =>
                     {
-                        bool autoOffset = _settingsManager.Current.AutoOffsetOnAdd;
-                        _playlist.UpdateMediaDuration(trackId, duration, recalculate: autoOffset);
+                        _playlist.UpdateMediaDuration(trackId, duration, recalculate: recalculateTimeline);
                         UpdatePlaylistTimelineDisplay();
                     });
                 },
@@ -283,7 +282,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     UpdatePlaylistTimelineDisplay();
                     UpdateCurrentTrackLabel();
                     LoadCurrentPlaylistTrack();
-                    _ = ReadDurationsInBackground(_playlist.Tracks.Select(t => t.FilePath).ToList());
+                    _ = ReadDurationsInBackground(
+                        _playlist.Tracks.Select(t => t.FilePath).ToList(),
+                        recalculateTimeline: false);
                 }),
                 LogLoaded: path => Log.Information("プロジェクトを読み込みました: {Path}", path),
                 HandleInvalidProject: () => MessageBox.Show("プロジェクトファイルの形式が不正です。", "エラー",
@@ -962,11 +963,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         UpdatePlaylistTimelineDisplay();
         if (loadResult.ShouldLoadCurrentTrack)
             LoadCurrentPlaylistTrack();
-        await ReadDurationsInBackground(loadResult.Paths.ToList());
+        await ReadDurationsInBackground(loadResult.Paths.ToList(), recalculateTimeline: autoOffset);
     }
 
-    private Task ReadDurationsInBackground(List<string> paths, int startIndex = 0) =>
-        _playlistDurationBackfillCoordinator.BackfillAsync(paths, startIndex);
+    private Task ReadDurationsInBackground(
+        List<string> paths,
+        int startIndex = 0,
+        bool recalculateTimeline = true) =>
+        _playlistDurationBackfillCoordinator.BackfillAsync(paths, startIndex, recalculateTimeline);
 
     private async void BtnSaveProject_Click(object sender, RoutedEventArgs e)
     {

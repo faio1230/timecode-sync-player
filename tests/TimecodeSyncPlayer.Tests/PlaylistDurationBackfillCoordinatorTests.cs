@@ -23,10 +23,10 @@ public class PlaylistDurationBackfillCoordinatorTests
                     calls.Add("get-tracks");
                     return playlist.Tracks;
                 },
-                ApplyDurationOnUiAsync: (trackId, duration) =>
+                ApplyDurationOnUiAsync: (trackId, duration, recalculateTimeline) =>
                 {
                     calls.Add($"apply:{trackId}:{duration.TotalSeconds}");
-                    playlist.UpdateMediaDuration(trackId, duration, recalculate: true);
+                    playlist.UpdateMediaDuration(trackId, duration, recalculateTimeline);
                     return Task.CompletedTask;
                 },
                 HandleFailure: _ => calls.Add("failure")));
@@ -42,6 +42,42 @@ public class PlaylistDurationBackfillCoordinatorTests
     }
 
     [Fact]
+    public async Task BackfillAsync_PreservesSavedTimelineOffsets_WhenRecalculationIsDisabled()
+    {
+        var playlist = new PlaylistState();
+        playlist.AddFiles(["a.mp4", "b.mp4"], autoOffset: false);
+        playlist.Tracks[0] = playlist.Tracks[0] with { TimelineOffset = TimeSpan.FromSeconds(10) };
+        playlist.Tracks[1] = playlist.Tracks[1] with { TimelineOffset = TimeSpan.FromSeconds(30) };
+        var reader = new RecordingDurationReader
+        {
+            Durations =
+            {
+                ["a.mp4"] = TimeSpan.FromSeconds(20),
+                ["b.mp4"] = TimeSpan.FromSeconds(20)
+            }
+        };
+        var coordinator = new PlaylistDurationBackfillCoordinator(
+            new PlaylistDurationBackfillService(reader),
+            new PlaylistDurationBackfillEffects(
+                GetTracks: () => playlist.Tracks,
+                ApplyDurationOnUiAsync: (trackId, duration, recalculateTimeline) =>
+                {
+                    playlist.UpdateMediaDuration(trackId, duration, recalculateTimeline);
+                    return Task.CompletedTask;
+                },
+                HandleFailure: _ => { }));
+
+        await coordinator.BackfillAsync(
+            ["a.mp4", "b.mp4"],
+            recalculateTimeline: false);
+
+        playlist.Tracks.Select(track => track.MediaDuration)
+            .Should().Equal(TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
+        playlist.Tracks.Select(track => track.TimelineOffset)
+            .Should().Equal(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
     public async Task BackfillAsync_NullDurationDoesNotApplyOrFail()
     {
         var playlist = new PlaylistState();
@@ -51,7 +87,7 @@ public class PlaylistDurationBackfillCoordinatorTests
             new PlaylistDurationBackfillService(new RecordingDurationReader()),
             new PlaylistDurationBackfillEffects(
                 GetTracks: () => playlist.Tracks,
-                ApplyDurationOnUiAsync: (_, _) =>
+                ApplyDurationOnUiAsync: (_, _, _) =>
                 {
                     calls.Add("apply");
                     return Task.CompletedTask;
@@ -74,7 +110,7 @@ public class PlaylistDurationBackfillCoordinatorTests
             new PlaylistDurationBackfillService(new ThrowingDurationReader(expected)),
             new PlaylistDurationBackfillEffects(
                 GetTracks: () => playlist.Tracks,
-                ApplyDurationOnUiAsync: (_, _) => Task.CompletedTask,
+                ApplyDurationOnUiAsync: (_, _, _) => Task.CompletedTask,
                 HandleFailure: ex => captured = ex));
 
         await coordinator.BackfillAsync(["broken.mp4"]);
@@ -97,7 +133,7 @@ public class PlaylistDurationBackfillCoordinatorTests
             new PlaylistDurationBackfillService(reader),
             new PlaylistDurationBackfillEffects(
                 GetTracks: () => playlist.Tracks,
-                ApplyDurationOnUiAsync: (_, _) => throw expected,
+                ApplyDurationOnUiAsync: (_, _, _) => throw expected,
                 HandleFailure: ex => captured = ex));
 
         await coordinator.BackfillAsync(["clip.mp4"]);
