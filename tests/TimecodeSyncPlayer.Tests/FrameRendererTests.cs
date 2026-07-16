@@ -233,6 +233,88 @@ public class FrameRendererTests
         });
     }
 
+    [Theory]
+    [InlineData("update", 0, 1)]
+    [InlineData("update", -1, 1)]
+    [InlineData("update", 32_768, 32_768)]
+    [InlineData("update", 65_536, 65_536)]
+    [InlineData("buffered", 0, 1)]
+    [InlineData("buffered", -1, 1)]
+    [InlineData("buffered", 32_768, 32_768)]
+    [InlineData("buffered", 65_536, 65_536)]
+    [InlineData("frozen", 32_768, 32_768)]
+    [InlineData("frozen", 65_536, 65_536)]
+    public void CopyEntryPoints_InvalidDimensionsThrowArgumentOutOfRange(
+        string operation,
+        int width,
+        int height)
+    {
+        Action act = () => RunOnSta(() =>
+        {
+            using var buffers = new PixelBufferManager();
+            buffers.EnsurePixelBuffer(1, 1);
+            buffers.EnsureFrozenFrameBuffer(1, 1);
+            var renderer = new FrameRenderer(buffers, new FakeSpout());
+
+            switch (operation)
+            {
+                case "update":
+                    renderer.UpdateFromPixelBuffer(width, height);
+                    break;
+                case "buffered":
+                    renderer.RenderBuffered(new byte[4], IntPtr.Zero, width, height);
+                    break;
+                case "frozen":
+                    renderer.RenderFrozen(width, height);
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unknown operation: {operation}");
+            }
+        });
+
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithMessage("*frame dimensions*");
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(32_768, 1)]
+    public void RenderBuffered_ValidBoundaryDimensionsWithShortBufferReturnSafely(
+        int width,
+        int height)
+    {
+        RunOnSta(() =>
+        {
+            using var buffers = new PixelBufferManager();
+            var renderer = new FrameRenderer(buffers, new FakeSpout());
+            int changedCount = 0;
+            renderer.BitmapChanged += _ => changedCount++;
+
+            Action act = () => renderer.RenderBuffered(Array.Empty<byte>(), IntPtr.Zero, width, height);
+
+            act.Should().NotThrow();
+            changedCount.Should().Be(0);
+        });
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(-1, -1)]
+    public void RenderBlack_NonPositiveVideoSizeUsesSafeFallback(int width, int height)
+    {
+        RunOnSta(() =>
+        {
+            using var buffers = new PixelBufferManager();
+            var spout = new FakeSpout();
+            var renderer = new FrameRenderer(buffers, spout);
+
+            renderer.RenderBlack(width, height);
+
+            spout.SentFrames.Should().ContainSingle().Which
+                .Should().Be((buffers.PixelPtr, 16, 16));
+        });
+    }
+
     private static byte[] ReadPixels(WriteableBitmap bitmap)
     {
         int stride = bitmap.PixelWidth * 4;

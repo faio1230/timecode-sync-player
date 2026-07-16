@@ -88,4 +88,34 @@ public class RenderFrameCoordinatorTests
         logged.Should().BeFalse();
         published.Should().BeFalse();
     }
+
+    [Fact]
+    public void Render_InvalidSizeStopsBeforeBufferAndNativeOperations()
+    {
+        var calls = new List<string>();
+        var coordinator = new RenderFrameCoordinator(
+            decideSize: () => new RenderFrameSizeDecision(
+                16,
+                16,
+                HasDisplayableVideoSize: false,
+                ShouldRender: false),
+            ensurePixelBuffer: (_, _) => calls.Add("ensure"),
+            buildRenderParameters: (_, _) =>
+            {
+                calls.Add("build");
+                return IntPtr.Zero;
+            },
+            renderFrame: () =>
+            {
+                calls.Add("render");
+                return new MpvRenderFrameResult(0, 0);
+            },
+            decidePublish: RenderFramePublishPolicy.Decide,
+            logRenderFailure: _ => calls.Add("log"),
+            publishFrame: (_, _, _, _) => calls.Add("publish"));
+
+        coordinator.Render();
+
+        calls.Should().BeEmpty();
+    }
 }
