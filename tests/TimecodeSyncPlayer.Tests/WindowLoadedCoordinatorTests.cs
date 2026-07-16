@@ -1,7 +1,9 @@
+using System.IO;
 using FluentAssertions;
 
 namespace TimecodeSyncPlayer.Tests;
 
+[Collection("Project serializer state")]
 public class WindowLoadedCoordinatorTests
 {
     [Fact]
@@ -58,5 +60,44 @@ public class WindowLoadedCoordinatorTests
             "InitializeUi",
             "ParseLaunchArguments",
             "InitializeSession");
+    }
+
+    [Fact]
+    public async Task Initialize_WithCorruptProjectRoutesLoadFailureWithoutEscapingStartupAction()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"TimecodeSyncPlayer.Tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "corrupt.tsp");
+        await File.WriteAllTextAsync(path, "{\"version\":1");
+        try
+        {
+            Func<Task>? scheduledStartup = null;
+            Exception? capturedFailure = null;
+            var executor = new ProjectLaunchActionExecutor(
+                async projectPath => _ = await ProjectSerializer.LoadAsync(projectPath),
+                _ => Task.CompletedTask,
+                _ => Task.CompletedTask);
+            var scheduler = new ProjectLaunchActionScheduler(
+                scheduleStartup: action => scheduledStartup = action,
+                scheduleSave: _ => { },
+                delayAsync: _ => Task.CompletedTask,
+                logStartupFailure: (exception, _) => capturedFailure = exception,
+                logSaveCompleted: _ => { },
+                logSaveFailure: (_, _) => { });
+            var coordinator = new WindowLoadedCoordinator(new WindowLoadedEffects(
+                InitializeUi: () => { },
+                ParseLaunchArguments: () => new AppLaunchArguments(null, [], path, null),
+                InitializeSession: () => true,
+                ScheduleLaunchAction: plan => scheduler.Schedule(plan, executor, TimeSpan.Zero)));
+
+            coordinator.Initialize();
+            await scheduledStartup!();
+
+            capturedFailure.Should().BeOfType<System.Text.Json.JsonException>();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 }

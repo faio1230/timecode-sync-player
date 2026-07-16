@@ -22,7 +22,12 @@ internal static class ProjectSerializer
     /// </summary>
     public static string? ProjectPath { get; private set; }
 
-    public static async Task SaveAsync(string filePath, PlaylistState playlist, SyncMode syncMode, GapBehavior gapBehavior)
+    public static async Task SaveAsync(
+        string filePath,
+        PlaylistState playlist,
+        SyncMode syncMode,
+        GapBehavior gapBehavior,
+        IAtomicFileOperations? fileOperations = null)
     {
         string projectDirectory = Path.GetDirectoryName(filePath) ?? "";
 
@@ -47,7 +52,11 @@ internal static class ProjectSerializer
         };
 
         string json = JsonSerializer.Serialize(project, JsonOptions);
-        await File.WriteAllTextAsync(filePath, json, System.Text.Encoding.UTF8);
+        await AtomicFileWriter.WriteAllTextAsync(
+            filePath,
+            json,
+            System.Text.Encoding.UTF8,
+            fileOperations);
     }
 
     public static async Task<ProjectData?> LoadAsync(string filePath)
