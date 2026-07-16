@@ -150,6 +150,18 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
+    public void IsDebounced_ReturnsFalse_AtOrAfterExact250MillisecondBoundary()
+    {
+        var service = new TimecodeSyncService(
+            new MockSyncDecisionEngine(),
+            new MockTimecodeSyncSeekState());
+        DateTime exactBoundary = DateTime.UtcNow.AddMilliseconds(-250);
+        s_lastSyncSeekAtField.SetValue(service, exactBoundary);
+
+        service.IsDebounced().Should().BeFalse();
+    }
+
+    [Fact]
     public void BeginFileLoad_SetsLoadingFlag()
     {
         var engine = new MockSyncDecisionEngine();

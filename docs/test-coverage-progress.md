@@ -679,3 +679,24 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 復元後のDebug非E2E全件は1047/1047件合格、失敗0、Skip0、ビルド警告0。
   Debug E2E全件は実機LTCを含む44/44件合格、失敗0、Skip0（6分40秒）。
   ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V2 完了（2026-07-16）
+
+- `SyncDecisionEngineTests`、`TimecodeSyncServiceTests`、`LtcFrameProcessorTests` に時間軸境界を追加した。
+  本体コードは変更していない。
+- 23:59:59:24から00:00:00:00への日跨ぎは単一Jumpとして同期を抑止し、次の00:00:00:01で
+  Normalへ復帰して同期可能になる現行仕様を固定した。25fpsで1フレームずつ連続逆走する3フレームは
+  毎回Reverseとして診断状態が追従し、全フレームで同期を抑止することを確認した。
+- duration 0、1フレーム0.04秒、LTCとduration完全一致、duration+1msを検証した。
+  許容差は二進表現で厳密な0.25秒の正負境界をNone、境界外1msをSeekとして固定し、逆走時も
+  許容差内はNone、外は負方向Seekとなることを確認した。IsSeeking中の大幅TC差は完全にNoneとなる。
+- デバウンスは `_lastSyncSeekAt` を境界時刻へ設定し、250msちょうど以降で解除されることを確認した。
+  実装が `DateTime.UtcNow` を直接取得するため、決定論的には「境界未満」と「境界到達以降」のうち
+  後者を固定し、既存の直後デバウンステストと組み合わせて両側を覆った。
+- ミューテーション確認1: tolerance比較を `<=` から `<` に変えると、厳密な正負境界2件が
+  NoneではなくSeekとなり失敗した。変更は復元済み。
+- ミューテーション確認2: 逆走診断閾値を `-0.5` から `-1.5` フレームへ変えると、連続逆走3件が
+  ReverseではなくDuplicateとなり失敗した。変更は復元済み。
+- 復元後のV2対象3クラスは56/56件合格。Debug非E2E全件は1060/1060件合格、失敗0、Skip0、
+  ビルド警告0。ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` も
+  ステージしていない。
