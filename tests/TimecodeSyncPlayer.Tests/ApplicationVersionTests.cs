@@ -7,8 +7,8 @@ public sealed class ApplicationVersionTests
     [Fact]
     public void Normalize_UsesInformationalVersionWithoutBuildMetadata()
     {
-        ApplicationVersion.Normalize("0.1.0+abcdef", new Version(9, 9, 9, 9))
-            .Should().Be("0.1.0");
+        ApplicationVersion.Normalize("0.2.0+abcdef", new Version(9, 9, 9, 9))
+            .Should().Be("0.2.0");
     }
 
     [Fact]
@@ -21,8 +21,8 @@ public sealed class ApplicationVersionTests
     [Fact]
     public void CurrentVersionAndWindowTitle_ComeFromApplicationAssembly()
     {
-        // 0.1.0への固定は、リリース成果物の意図しないバージョン変更を検出するリリースゲート。
-        ApplicationVersion.Current.Should().Be("0.1.0");
-        ApplicationVersion.WindowTitle.Should().Be("Timecode Sync Player v0.1.0");
+        // 0.2.0への固定は、リリース成果物の意図しないバージョン変更を検出するリリースゲート。
+        ApplicationVersion.Current.Should().Be("0.2.0");
+        ApplicationVersion.WindowTitle.Should().Be("Timecode Sync Player v0.2.0");
     }
 }

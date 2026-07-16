@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #error MyAppVersion must be supplied by package-release.ps1
 #endif
 #ifndef ReleaseDirectory
   #error ReleaseDirectory must be supplied by package-release.ps1
