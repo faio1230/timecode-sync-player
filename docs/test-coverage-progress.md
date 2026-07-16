@@ -789,3 +789,24 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   なので `src/` は変更していない。長時間相当カウンタの適用可否確認、ミューテーション確認、
   非E2E全件ゲート、V4完了、V7は未実行。ブランチは `test/hardening-v1`、pushは実施せず、
   未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V4 完了（2026-07-17）
+
+- ユーザー承認どおり `LtcAudioSampleProcessor.MeasureLevel` の統計計算だけを修正した。
+  `float.IsFinite` がfalseのsampleはpeak/RMSの最大値・二乗和・分母から除外し、有限sample数が0なら
+  `(peak=0, rms=0)` を返す。`PcmSampleConverter` の出力と `_decoder.Write(samples, samples.Length)`
+  は変更せず、LTC decoderへの供給パスを維持した。
+- 全sampleがNaN/+Infinity/-InfinityのケースはSampleCount 3のままpeak/RMSとも0、一部だけ有限の
+  ケースはSampleCount 5のまま有限値0.5/-1.0だけでpeak 1.0、RMS `sqrt(1.25/2)` を返すことを
+  実 `LtcDecoder` と合成して検証した。decoder側の例外・停止・追加のNaN起因問題は観測されなかった。
+- 長時間相当カウンタは適用対象を確認したが、`PcmSampleConverter` と
+  `LtcAudioSampleProcessor` に累積frame/sampleカウンタは存在せず、`SampleCount` は各呼出しの
+  配列長である。`LtcDecoder._sinceTrans` はprivateでテスト用注入口がなくV4対象外のため、
+  int上限相当の巨大配列確保による非現実的な試験は対象外とした。
+- ミューテーション確認1: `!float.IsFinite(sample)` を `float.IsFinite(sample)` に反転すると、
+  全非有限ケースのpeakが期待0に対してPositiveInfinityとなり失敗した。変更は復元済み。
+- ミューテーション確認2: RMSの分母を有限sample数から全sample数へ戻すと、混在ケースの期待
+  0.7905694に対して0.5となり失敗した。変更は復元済み。
+- 復元後のV4対象3クラスは28/28件合格。Debug非E2E全件は1090/1090件合格、失敗0、Skip0、
+  ビルド警告0。ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` も
+  ステージしていない。
