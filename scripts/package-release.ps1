@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version,
     [string]$OutputDirectory,
     [string]$InnoSetupCompiler,
     [switch]$SkipBuild,
@@ -16,6 +16,21 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 
 $projectPath = Join-Path (Join-Path (Join-Path $projectRoot "src") "TimecodeSyncPlayer") "TimecodeSyncPlayer.csproj"
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    [xml]$projectXml = Get-Content -LiteralPath $projectPath -Raw
+    $versionNodes = @($projectXml.SelectNodes("/Project/PropertyGroup/Version"))
+    if ($versionNodes.Count -ne 1 -or [string]::IsNullOrWhiteSpace($versionNodes[0].InnerText)) {
+        throw "Exactly one non-empty Version element is required in $projectPath."
+    }
+
+    $Version = $versionNodes[0].InnerText.Trim()
+}
+
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Version must use the numeric major.minor.patch format: $Version"
+}
+
 $releaseDirectory = Join-Path (Split-Path -Parent $projectPath) "bin\Release\net8.0-windows"
 $zipName = "TimecodeSyncPlayer-v$Version-win-x64.zip"
 $zipPath = Join-Path $OutputDirectory $zipName

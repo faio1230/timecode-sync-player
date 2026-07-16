@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.2.0 - Unreleased
+## 0.2.0 - 2026-07-16
 
 ### Added
 
@@ -12,6 +12,7 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 ### Changed
 
 - Debug OSD is hidden by default while seek feedback via the mpv OSD bar remains available.
+- Split the README into dedicated Japanese and English editions with streamlined release and setup guidance.
 
 ## 0.1.0 - 2026-07-15
 
