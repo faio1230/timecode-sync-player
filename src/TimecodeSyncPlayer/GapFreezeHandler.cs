@@ -55,6 +55,7 @@ public sealed class GapFreezeHandler
 
     private GapState _currentState = GapState.Inactive;
     private bool _pauseOwnedByGap;
+    private bool _pauseOwnershipRecorded;
 
     internal GapState CurrentState
     {
@@ -76,6 +77,7 @@ public sealed class GapFreezeHandler
     {
         _currentState = GapState.Inactive;
         _pauseOwnedByGap = false;
+        _pauseOwnershipRecorded = false;
         StartedAt = DateTime.MinValue;
         LastReloadAt = DateTime.MinValue;    // 追加
         PendingTrackId = null;
@@ -160,6 +162,10 @@ public sealed class GapFreezeHandler
 
     internal void RecordPauseOwnership(bool wasPlaybackPaused)
     {
+        if (_pauseOwnershipRecorded)
+            return;
+
+        _pauseOwnershipRecorded = true;
         _pauseOwnedByGap = !wasPlaybackPaused;
     }
 

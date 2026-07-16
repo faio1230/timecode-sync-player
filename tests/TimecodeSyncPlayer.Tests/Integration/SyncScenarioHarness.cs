@@ -246,6 +246,7 @@ internal sealed class SyncScenarioHarness
                 GapEnterAction action = _gap.DecideGapEnter(
                     result, GapBehavior, _loadedTrackId, _videoFps, _durationSeconds);
                 _gapDispatcher.Execute(action, result);
+                Operations.Add(new("update-label"));
                 break;
             case TimelineQueryStatus.NoTracks:
                 _gapCoordinator.HandleNoTracks();

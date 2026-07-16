@@ -15,6 +15,8 @@ internal interface IAtomicFileOperations
 
 internal static class AtomicFileWriter
 {
+    // Entries live for the process lifetime. The desktop app writes only a practically bounded set
+    // of user-selected project paths plus its settings path, so retaining one lock per path is acceptable.
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> PathLocks =
         new(StringComparer.OrdinalIgnoreCase);
 

@@ -251,7 +251,7 @@ public class PixelBufferManagerTests
     [InlineData(-1, 1)]
     [InlineData(32_768, 32_768)]
     [InlineData(65_536, 65_536)]
-    public void CopyMethods_InvalidDimensionsThrowArgumentOutOfRange(int width, int height)
+    public void CopyMethods_InvalidDimensionsReturnWithoutChangingBuffers(int width, int height)
     {
         using var manager = new PixelBufferManager();
         manager.EnsurePixelBuffer(1, 1);
@@ -260,10 +260,12 @@ public class PixelBufferManagerTests
         Action copyToFrozen = () => manager.CopyToFrozenFrame(width, height);
         Action copyToGapFreeze = () => manager.CopyFrozenToGapFreezeFrame(width, height);
 
-        copyToFrozen.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*frame dimensions*");
-        copyToGapFreeze.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*frame dimensions*");
+        byte[] frozenBefore = (byte[])manager.FrozenFrameBuffer!.Clone();
+
+        copyToFrozen.Should().NotThrow();
+        copyToGapFreeze.Should().NotThrow();
+        manager.FrozenFrameBuffer.Should().Equal(frozenBefore);
+        manager.CachedGapFreezeFrameBuffer.Should().BeNull();
     }
 
     // --- CopyFrozenToGapFreezeFrame ---

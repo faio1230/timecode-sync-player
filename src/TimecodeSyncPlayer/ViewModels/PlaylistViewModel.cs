@@ -96,7 +96,8 @@ internal sealed class PlaylistViewModel : INotifyPropertyChanged
     {
         var pathList = paths.ToList();
         int startIndex = _playlist.Tracks.Count;
-        _playlist.AddFiles(pathList, AutoOffsetOnAdd);
+        bool autoOffsetOnAdd = AutoOffsetOnAdd;
+        _playlist.AddFiles(pathList, autoOffsetOnAdd);
 
         var snapshot = pathList.Zip(_playlist.Tracks.Skip(startIndex)).ToList();
         foreach (var (path, track) in snapshot)
@@ -105,7 +106,7 @@ internal sealed class PlaylistViewModel : INotifyPropertyChanged
             var duration = await _durationReader.ReadDurationAsync(path);
             ct.ThrowIfCancellationRequested();
             if (duration.HasValue)
-                _playlist.UpdateMediaDuration(track.Id, duration.Value, recalculate: AutoOffsetOnAdd);
+                _playlist.UpdateMediaDuration(track.Id, duration.Value, recalculate: autoOffsetOnAdd);
         }
     }
 

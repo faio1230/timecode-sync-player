@@ -29,7 +29,7 @@ internal sealed class FrameRenderer
     /// <summary>_bufferManager.PixelBuffer の内容を WriteableBitmap に書き込む（RenderFrame 用）。</summary>
     public void UpdateFromPixelBuffer(int w, int h)
     {
-        int byteCount = FrameBufferSize.GetRequiredByteCount(w, h);
+        if (!FrameBufferSize.TryGetRequiredByteCount(w, h, out int byteCount)) return;
         if (_bufferManager.PixelBuffer == null) return;
         EnsureBitmap(w, h);
         _bitmap!.Lock();
@@ -66,7 +66,7 @@ internal sealed class FrameRenderer
         }
         int w = videoWidth;
         int h = videoHeight;
-        int frameNeeded = FrameBufferSize.GetRequiredByteCount(w, h);
+        if (!FrameBufferSize.TryGetRequiredByteCount(w, h, out int frameNeeded)) return;
         if (_bufferManager.FrozenFrameBuffer!.Length < frameNeeded)
         {
             RenderBlack(videoWidth, videoHeight);
@@ -106,7 +106,7 @@ internal sealed class FrameRenderer
     /// <summary>任意のバイト配列を描画して Spout 送信する。</summary>
     public void RenderBuffered(byte[] buffer, IntPtr handle, int width, int height)
     {
-        int frameNeeded = FrameBufferSize.GetRequiredByteCount(width, height);
+        if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int frameNeeded)) return;
         if (buffer.Length < frameNeeded)
             return;
         EnsureBitmap(width, height);

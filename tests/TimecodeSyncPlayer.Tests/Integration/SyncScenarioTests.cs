@@ -265,6 +265,48 @@ public class SyncScenarioTests
         harness.ValidateInvariants().Should().BeEmpty();
     }
 
+    [Fact]
+    public void GapBehaviorSwitch_DuringGap_PreservesGapPauseOwnershipAndResumesOnTrack()
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.GapBehavior = GapBehavior.Black;
+        harness.ManualPlay();
+        harness.SupplyLtc(1);
+        harness.SupplyLtc(6);
+
+        harness.GapBehavior = GapBehavior.Freeze;
+        harness.SupplyLtc(6);
+        if (harness.GapState == GapState.EnteringFreeze)
+            harness.CompleteFreezeCapture();
+        ExitGap(harness);
+
+        harness.IsPaused.Should().BeFalse();
+        harness.GapState.Should().Be(GapState.Inactive);
+        harness.RenderSurface.Should().Be(ScenarioRenderSurface.Video);
+        harness.ValidateInvariants().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GapBehaviorSwitch_DuringGap_PreservesPreexistingManualPause()
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.GapBehavior = GapBehavior.Black;
+        harness.SupplyLtc(1);
+        harness.ManualPause();
+        harness.SupplyLtc(6);
+
+        harness.GapBehavior = GapBehavior.Freeze;
+        harness.SupplyLtc(6);
+        if (harness.GapState == GapState.EnteringFreeze)
+            harness.CompleteFreezeCapture();
+        ExitGap(harness);
+
+        harness.IsPaused.Should().BeTrue();
+        harness.GapState.Should().Be(GapState.Inactive);
+        harness.RenderSurface.Should().Be(ScenarioRenderSurface.Video);
+        harness.ValidateInvariants().Should().BeEmpty();
+    }
+
     private static SyncScenarioHarness CreateTwoTrackHarness()
     {
         var harness = new SyncScenarioHarness();

@@ -13,6 +13,13 @@ public class PlaylistViewModelTests
             Task.FromResult(ReturnValue);
     }
 
+    private sealed class ControlledDurationReader : IMediaDurationReader
+    {
+        public Dictionary<string, TaskCompletionSource<TimeSpan?>> Results { get; } = [];
+
+        public Task<TimeSpan?> ReadDurationAsync(string filePath) => Results[filePath].Task;
+    }
+
     private static PlaylistState MakePlaylist(params string[] paths)
     {
         var pl = new PlaylistState();
@@ -41,6 +48,24 @@ public class PlaylistViewModelTests
         await vm.AddFilesAsync(["test.mp4"], CancellationToken.None);
 
         playlist.Tracks[0].MediaDuration.TotalSeconds.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task AddFilesAsync_CapturesAutoOffsetAtBackfillStart()
+    {
+        var playlist = new PlaylistState();
+        var reader = new ControlledDurationReader();
+        reader.Results["a.mp4"] = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        reader.Results["b.mp4"] = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var vm = new PlaylistViewModel(playlist, reader) { AutoOffsetOnAdd = true };
+
+        Task adding = vm.AddFilesAsync(["a.mp4", "b.mp4"], CancellationToken.None);
+        vm.AutoOffsetOnAdd = false;
+        reader.Results["a.mp4"].SetResult(TimeSpan.FromSeconds(10));
+        reader.Results["b.mp4"].SetResult(TimeSpan.FromSeconds(20));
+        await adding;
+
+        playlist.Tracks[1].TimelineOffset.Should().Be(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
