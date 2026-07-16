@@ -1,7 +1,11 @@
 # TimecodeSyncPlayer
 
+[English](README.en.md)
+
 [![CI](https://github.com/faio1230/timecode-sync-player/actions/workflows/ci.yml/badge.svg)](https://github.com/faio1230/timecode-sync-player/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+![TimecodeSyncPlayer screenshot](assets/screenshot.png)
 
 An LTC-synchronized video player for live shows on Windows. v0.1.0 is a beta release intended
 for real-show validation before a future 1.0 release.
