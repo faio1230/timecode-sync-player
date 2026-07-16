@@ -352,3 +352,32 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - `ShowDebugOsd`は既定`false`、旧settings.jsonも`false`へ後方互換。`true`時だけ
   `osd-msg3`へ従来の時刻・メタデータを書き込み、`osd-bar`経路は変更していない。
 - push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### v0.2.0 S5 停止（2026-07-16）
+
+- S5計画追記、ディスプレイ選択純ロジック、Win32モニター列挙、PerMonitorV2 manifest、
+  フルスクリーンWPFウィンドウ、メインUI配線、設定保存、ユニットテスト、FlaUI E2Eを実装途中。
+- 純ロジック・設定の対象テスト: 39/39件合格。Debugアプリビルド: 警告0、エラー0。
+- 新規E2E `Fullscreen_OpensWindowAndEscapeClosesIt` は、FULLSCREEN押下後の別ウィンドウ検出と
+  `EXIT FULLSCREEN`ラベルまでは成功したが、ESC入力による閉鎖で3回連続失敗した。
+- 1回目はFlaUIの`Keyboard.Type`がRDPセッション上で`Win32Exception: アクセスが拒否されました`。
+  2回目はFlaUIでフォーカス後に対象HWNDへESCを`PostMessage`したがWPFのキーイベントへ届かず、
+  3回目はフルスクリーン窓の`ShowActivated=False`を除去して再実行したが同じく窓が残留した。
+- 「同一の失敗に3回連続で対処できなかったら停止」に従い、非E2E全件・E2E全件ゲート、
+  S5コミット、S3以降の作業は実施していない。S5差分は未コミットのまま保持している。
+- push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### v0.2.0 S5 完了（2026-07-16）
+
+- 実装コミット: `3273657`（`feat: 外部モニターのフルスクリーン出力を追加`）。
+- 接続ディスプレイ選択、プライマリ表記、設定保存・復元、対象切断時の安全な閉鎖、メイン終了時破棄、
+  FULLSCREEN再押下での閉鎖、MouseEnter時のフォーカス取得を実装した。
+- 出力窓は`WindowStyle=None`、`ResizeMode=NoResize`、`Topmost`、`Cursor=None`、黒背景・
+  `Stretch=Uniform`とし、PerMonitorV2 manifestと物理ピクセル配置でDPI差へ対応した。
+- 既存`FrameRenderer`のレンダーパスは変更せず、現在の`VideoImage.Source`を共有し、表示中だけ
+  `BitmapChanged`を追加購読して新しい`WriteableBitmap`へ追従する。
+- ESC判定を純粋な`FullscreenInputPolicy`へ抽出し、ESCで閉じる／他キーで閉じないことを
+  ユニットテスト4件で検証。RDPで物理キー合成を行わず、E2EはUIA Invokeによる開閉を検証した。
+- Debug非E2E: 937/937件合格、失敗0、スキップ0、ビルド警告0。
+- Debug E2E: 37/37件合格、失敗0、スキップ0（9分18秒、実機LTC 11件を含む）。
+- push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
