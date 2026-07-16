@@ -700,3 +700,21 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 復元後のV2対象3クラスは56/56件合格。Debug非E2E全件は1060/1060件合格、失敗0、Skip0、
   ビルド警告0。ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` も
   ステージしていない。
+
+### テスト強化 V6 停止（2026-07-16）
+
+- 実物の `LtcSignalLossPolicy` と `GapFreezeHandler` を合成し、信号断ポリシーがpauseを所有した状態で
+  「信号復旧→ギャップ進入」と「ギャップ進入→信号復旧」の両順序を実行し、ギャップ脱出後の
+  最終pause状態が一致する回帰テストを追加した。
+- 単独実行は1/1件失敗。復旧→ギャップの順は最終的に再生へ戻ったが、ギャップ→復旧の順は
+  ギャップ脱出後もpauseが残り、`Expected gapThenRecoveryPaused to be false ... but found True.` となった。
+- 根本原因は、信号断pause中にギャップへ入ると `GapFreezeHandler.RecordPauseOwnership(true)` により
+  ギャップはpauseを所有せず、その後 `LtcSignalLossPolicy.ObserveValidFrame` がギャップ中の復旧を
+  `ResumeAndSync` なしとして処理しながら `_pausedByPolicy` をfalseへ消すこと。両ポリシーが所有権を
+  手放すため、ギャップ脱出時に再生を再開する所有者がいなくなる。
+- 実配線でも有効な再現である。`MainWindow` は有効LTCフレーム受信時に、現在のGap状態を含むcontextで
+  `ObserveValidFrame` と信号断アクション適用を先に行い、その後 `ApplyTimecodeSync` でGap脱出を処理する。
+  したがってGap中に復旧フレームがOnTrackへ戻す順序がこの失敗経路に一致する。
+- 挙動判定ロジックの修正は承認範囲外のため `src/` は変更していない。V6の残り境界、
+  ミューテーション確認、非E2E全件ゲート、V3以降は未実行。ブランチは `test/hardening-v1`、
+  pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
