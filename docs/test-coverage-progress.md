@@ -409,3 +409,17 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - Debug非E2E: 937/937件合格、失敗0、スキップ0、ビルド警告0。プロダクションコード変更なしのため
   S3ではE2E全件ゲートを省略した。
 - push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### v0.2.0 S2 完了（2026-07-16）
+
+- 実装コミット: `0f68bc8`（`docs: READMEを日本語版と英語版に分離`）。
+- README.mdを日本語のみの既定入口、README.en.mdを英語版として再構成し、冒頭の言語リンクで
+  相互移動できるようにした。
+- 両版を11節の対称構成とし、CI／MITバッジ、`assets/screenshot.png`参照、GitHub Releasesの
+  ダウンロード導線、S5外部モニター出力、導入・利用・ビルド手順、ドキュメント、実機LTC E2E、
+  ライセンス、Studio Sandixロゴを維持した。
+- スクリーンショット（後日ユーザー提供）以外の全ローカルリンクが存在すること、両版の
+  screenshot／Releases／ロゴ参照数が一致することを検証した。
+- Debug非E2E: 937/937件合格、失敗0、スキップ0、ビルド警告0。プロダクションコード変更なしのため
+  S2ではE2E全件ゲートを省略した。
+- push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
