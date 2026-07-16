@@ -444,3 +444,25 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - zipの必須配布物、`SpoutDX.dll`、ライセンス・通知・CHANGELOG・`get-mpv.ps1`を確認し、
   mpv DLLとPDBが含まれないことを確認した。setup.exeの製品バージョンは0.2.0。
 - push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### v0.2.0 リリースレビュー対応（2026-07-16）
+
+- 実装コミット: `96f9e28`（`fix: OSDとフルスクリーン設定のレビュー指摘を修正`）。
+- `ShowDebugOsd=false`時は起動プロパティを`osd-level=1`、`osd-bar=yes`とし、mpv標準の
+  ステータス行を抑止しながらシークバーを維持するよう修正した。`true`時は`osd-level=3`と
+  既存`osd-msg3`更新を維持した。実際のmpv property名と値を検証するテストを2件追加した。
+- フルスクリーン出力ウィンドウのOwner指定を撤廃し、メインウィンドウ最小化から独立させた。
+  ディスプレイ選択の自動フォールバックでは保存値を書き換えず、ユーザーの選択操作時だけ
+  `UpdateAsync`で`fullscreenDisplayDeviceName`を保存するよう変更した。
+- E2Eのフルスクリーン開閉テストをヘルパー群からテスト群へ移動。MouseEnterによるフォーカス取得は
+  維持し、`docs/settings.md`へ挙動を追記した。CHANGELOGにはPerMonitorV2 DPI対応と設定キーを追記した。
+- Release非E2E: 939/939件合格、失敗0、スキップ0、ビルド警告0。
+- Release E2E: 37/37件合格、失敗0、スキップ0（9分8秒、実機LTC 11件を含む）。
+- `package-release.ps1`を版数引数なしで再実行し、Releaseビルド警告0・エラー0で再生成した。
+  - `TimecodeSyncPlayer-v0.2.0-win-x64.zip`: 829,065バイト、SHA-256
+    `F89AA5D63C8A36093B1CD2969ADDEB5AE676AF5A8A9D49AF02D01BB58A2BD9F9`
+  - `TimecodeSyncPlayer-v0.2.0-setup.exe`: 2,723,142バイト、SHA-256
+    `59649E91CE1D517E891E1C6708A321299658E9BBAA72D09F8A15E91C1FDDE5B9`
+- Release EXEの情報バージョンは`0.2.0+96f9e28b0c6ef0c62b71f2cfd041b6bba5216f65`。
+  zipの必須配布物とmpv DLL/PDB除外、setup.exeの製品バージョン0.2.0を確認した。
+- push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
