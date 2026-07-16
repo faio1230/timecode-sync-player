@@ -307,6 +307,110 @@ public class SyncScenarioTests
         harness.ValidateInvariants().Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData(SyncMode.Single)]
+    [InlineData(SyncMode.Continue)]
+    public void AudioState_PlaybackOperationsPreserveStateWithoutPropertyRewrites(SyncMode mode)
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.ChangeMode(mode);
+        harness.ToggleMute();
+        harness.SetVolume(41);
+        AudioControlSnapshot expected = harness.AudioState;
+        int writeCount = harness.AudioPropertyWrites.Count;
+
+        harness.SupplyLtc(1);
+        harness.ManualNextTrack();
+        harness.ManualPreviousTrack();
+        harness.BeginSeekBarInteraction();
+        harness.EndSeekBarInteraction(2.5);
+        harness.StopPlayback();
+        harness.LoadCurrentFile();
+        harness.ReloadProject();
+
+        harness.AudioState.Should().Be(expected);
+        harness.AudioPropertyWrites.Should().HaveCount(writeCount);
+    }
+
+    [Fact]
+    public void AudioState_ContinueTrackChangesPreserveStateWithoutPropertyRewrites()
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.ToggleMute();
+        harness.SetVolume(62);
+        AudioControlSnapshot expected = harness.AudioState;
+        int writeCount = harness.AudioPropertyWrites.Count;
+
+        harness.SupplyLtc(1);
+        harness.SupplyLtc(9);
+        harness.SupplyLtc(9);
+        harness.ManualPreviousTrack();
+        harness.ManualNextTrack();
+
+        harness.AudioState.Should().Be(expected);
+        harness.AudioPropertyWrites.Should().HaveCount(writeCount);
+    }
+
+    [Theory]
+    [InlineData(GapBehavior.Freeze)]
+    [InlineData(GapBehavior.Black)]
+    public void AudioState_GapEntryAndExitPreserveStateWithoutPropertyRewrites(GapBehavior behavior)
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.GapBehavior = behavior;
+        harness.ToggleMute();
+        harness.SetVolume(23);
+        AudioControlSnapshot expected = harness.AudioState;
+        int writeCount = harness.AudioPropertyWrites.Count;
+
+        EnterAndCompleteGap(harness);
+        ExitGap(harness);
+
+        harness.AudioState.Should().Be(expected);
+        harness.AudioPropertyWrites.Should().HaveCount(writeCount);
+    }
+
+    [Fact]
+    public void AudioState_GapBehaviorSwitchPreservesStateWithoutPropertyRewrites()
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.GapBehavior = GapBehavior.Black;
+        harness.ToggleMute();
+        harness.SetVolume(88);
+        AudioControlSnapshot expected = harness.AudioState;
+        int writeCount = harness.AudioPropertyWrites.Count;
+
+        harness.SupplyLtc(6);
+        harness.GapBehavior = GapBehavior.Freeze;
+        harness.SupplyLtc(6);
+        if (harness.GapState == GapState.EnteringFreeze)
+            harness.CompleteFreezeCapture();
+        ExitGap(harness);
+
+        harness.AudioState.Should().Be(expected);
+        harness.AudioPropertyWrites.Should().HaveCount(writeCount);
+    }
+
+    [Theory]
+    [InlineData(SyncMode.Single)]
+    [InlineData(SyncMode.Continue)]
+    public void AudioState_SignalLossPauseAndRecoveryPreserveStateWithoutPropertyRewrites(SyncMode mode)
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.ChangeMode(mode);
+        harness.ToggleMute();
+        harness.SetVolume(54);
+        AudioControlSnapshot expected = harness.AudioState;
+        int writeCount = harness.AudioPropertyWrites.Count;
+
+        harness.SupplyLtc(1);
+        LoseSignal(harness);
+        RecoverSignal(harness);
+
+        harness.AudioState.Should().Be(expected);
+        harness.AudioPropertyWrites.Should().HaveCount(writeCount);
+    }
+
     private static SyncScenarioHarness CreateTwoTrackHarness()
     {
         var harness = new SyncScenarioHarness();

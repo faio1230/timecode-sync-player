@@ -126,8 +126,23 @@
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="速度:" Foreground="#888"
+                <Button x:Name="BtnMute"
+                        Content="{Binding Player.MuteToggleLabel}"
+                        Width="88" Height="34" Margin="0,0,10,0"
+                        Click="BtnMute_Click"
+                        AutomationProperties.AutomationId="BtnMute"/>
+                <TextBlock Text="音量:" Foreground="#888"
                            VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <Slider x:Name="VolumeSlider"
+                        Width="100"
+                        Minimum="0" Maximum="100"
+                        TickFrequency="1"
+                        IsSnapToTickEnabled="True"
+                        Value="{Binding Player.Volume, Mode=OneWay}"
+                        ValueChanged="VolumeSlider_ValueChanged"
+                        AutomationProperties.AutomationId="VolumeSlider"/>
+                <TextBlock Text="速度:" Foreground="#888"
+                           VerticalAlignment="Center" Margin="10,0,6,0"/>
                 <Button Content="{Binding Player.SpeedLabel}" Width="52" Height="34" Margin="2,0"
                         Command="{Binding Player.SpeedCommand}"
                         AutomationProperties.AutomationId="BtnSpeed"/>

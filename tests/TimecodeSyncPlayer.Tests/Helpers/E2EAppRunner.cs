@@ -56,11 +56,14 @@ internal sealed class E2EAppRunner : IDisposable
     }
 
     public static E2EAppRunner Start(string exePath, string arguments)
+        => Start(exePath, arguments, settingsFilePath: null);
+
+    public static E2EAppRunner Start(string exePath, string arguments, string? settingsFilePath)
     {
         string exeDir = Path.GetDirectoryName(exePath)!;
         var automation = new UIA3Automation();
 
-        Process process = StartProcess(exePath, arguments);
+        Process process = StartProcess(exePath, arguments, settingsFilePath);
 
         try
         {
@@ -101,6 +104,9 @@ internal sealed class E2EAppRunner : IDisposable
     }
 
     public static Process StartProcess(string exePath, string arguments)
+        => StartProcess(exePath, arguments, settingsFilePath: null);
+
+    public static Process StartProcess(string exePath, string arguments, string? settingsFilePath)
     {
         string exeDir = Path.GetDirectoryName(exePath)!;
         var startInfo = new ProcessStartInfo
@@ -111,7 +117,17 @@ internal sealed class E2EAppRunner : IDisposable
             UseShellExecute = false,
             CreateNoWindow = false,
         };
-        string settingsDirectory = E2ESettingsIsolation.Configure(startInfo);
+        string? settingsDirectory = null;
+        if (string.IsNullOrWhiteSpace(settingsFilePath))
+        {
+            settingsDirectory = E2ESettingsIsolation.Configure(startInfo);
+        }
+        else
+        {
+            string fullSettingsPath = Path.GetFullPath(settingsFilePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullSettingsPath)!);
+            startInfo.Environment[AppSettingsManager.SettingsPathEnvironmentVariable] = fullSettingsPath;
+        }
 
         Process process;
         try
@@ -125,10 +141,13 @@ internal sealed class E2EAppRunner : IDisposable
             throw;
         }
 
-        process.EnableRaisingEvents = true;
-        process.Exited += (_, _) => E2ESettingsIsolation.Delete(settingsDirectory);
-        if (process.HasExited)
-            E2ESettingsIsolation.Delete(settingsDirectory);
+        if (settingsDirectory != null)
+        {
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) => E2ESettingsIsolation.Delete(settingsDirectory);
+            if (process.HasExited)
+                E2ESettingsIsolation.Delete(settingsDirectory);
+        }
 
         return process;
     }

@@ -36,6 +36,8 @@ public sealed record AppSettings
     public int LtcSignalResumeFrames { get; init; } = DefaultLtcSignalResumeFrames;
     public bool ShowDebugOsd { get; init; }
     public string FullscreenDisplayDeviceName { get; init; } = "";
+    public bool IsMuted { get; init; }
+    public double Volume { get; init; } = 100;
 
     public static AppSettings Default => new();
 }
@@ -152,6 +154,7 @@ public sealed class AppSettingsManager
             LtcSignalResumeFrames = settings.LtcSignalResumeFrames > 0
                 ? settings.LtcSignalResumeFrames
                 : AppSettings.DefaultLtcSignalResumeFrames,
+            Volume = double.IsFinite(settings.Volume) ? Math.Clamp(settings.Volume, 0, 100) : 100,
         };
 
         return settings;

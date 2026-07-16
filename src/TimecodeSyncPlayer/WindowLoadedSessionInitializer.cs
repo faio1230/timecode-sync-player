@@ -11,6 +11,7 @@ internal sealed class WindowLoadedSessionInitializer
 {
     private readonly Func<MpvSessionInitializationResult> _initializeMpvSession;
     private readonly Action<IntPtr> _assignMpv;
+    private readonly Action _applyAudioSettings;
     private readonly Func<bool> _createRenderContext;
     private readonly Action _allocateRenderParameters;
     private readonly Func<SpoutStartupState> _initializeSpout;
@@ -24,6 +25,7 @@ internal sealed class WindowLoadedSessionInitializer
     public WindowLoadedSessionInitializer(
         Func<MpvSessionInitializationResult> initializeMpvSession,
         Action<IntPtr> assignMpv,
+        Action applyAudioSettings,
         Func<bool> createRenderContext,
         Action allocateRenderParameters,
         Func<SpoutStartupState> initializeSpout,
@@ -36,6 +38,7 @@ internal sealed class WindowLoadedSessionInitializer
     {
         _initializeMpvSession = initializeMpvSession;
         _assignMpv = assignMpv;
+        _applyAudioSettings = applyAudioSettings;
         _createRenderContext = createRenderContext;
         _allocateRenderParameters = allocateRenderParameters;
         _initializeSpout = initializeSpout;
@@ -63,6 +66,8 @@ internal sealed class WindowLoadedSessionInitializer
             _showError(WindowLoadedSessionInitializationError.MpvInitializeFailed);
             return false;
         }
+
+        _applyAudioSettings();
 
         if (!_createRenderContext())
         {

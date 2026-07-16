@@ -31,7 +31,8 @@ public sealed class WindowLoadedSessionInitializerTests
             {
                 calls.Add("spout-ui");
                 appliedSpoutState = state;
-            });
+            },
+            applyAudioSettings: () => calls.Add("audio-settings"));
 
         bool result = initializer.Initialize();
 
@@ -39,6 +40,7 @@ public sealed class WindowLoadedSessionInitializerTests
         calls.Should().Equal(
             "mpv-session",
             "assign-mpv:100",
+            "audio-settings",
             "render-context",
             "render-params",
             "spout",
@@ -115,13 +117,14 @@ public sealed class WindowLoadedSessionInitializerTests
 
         result.Should().BeFalse();
         error.Should().Be(WindowLoadedSessionInitializationError.RenderContextCreateFailed);
-        calls.Should().Equal("assign-mpv:300", "render-context", "error:RenderContextCreateFailed");
+        calls.Should().Equal("assign-mpv:300", "audio-settings", "render-context", "error:RenderContextCreateFailed");
     }
 
     private static WindowLoadedSessionInitializer CreateInitializer(
         List<string> calls,
         Func<MpvSessionInitializationResult>? initializeMpvSession = null,
         Action<IntPtr>? assignMpv = null,
+        Action? applyAudioSettings = null,
         Func<bool>? createRenderContext = null,
         Action? allocateRenderParameters = null,
         Func<SpoutStartupState>? initializeSpout = null,
@@ -135,6 +138,7 @@ public sealed class WindowLoadedSessionInitializerTests
         return new WindowLoadedSessionInitializer(
             initializeMpvSession ?? (() => new MpvSessionInitializationResult(true, IntPtr.Zero, MpvSessionInitializationFailure.None)),
             assignMpv ?? (mpv => calls.Add($"assign-mpv:{mpv.ToInt64()}")),
+            applyAudioSettings ?? (() => calls.Add("audio-settings")),
             createRenderContext ?? (() => true),
             allocateRenderParameters ?? (() => calls.Add("render-params")),
             initializeSpout ?? (() => new SpoutStartupState(false, "Spout OFF")),
