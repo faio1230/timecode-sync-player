@@ -89,14 +89,17 @@ internal sealed class LtcSignalLossPolicy
         if (_consecutiveResumeFrames < _resumeFrameCount)
             return LtcSignalLossAction.None;
 
-        _isLost = false;
-        _consecutiveResumeFrames = 0;
-        _manualResumeSuppressesPause = false;
-        bool shouldResume =
-            _pausedByPolicy &&
+        bool canApplyPolicyOwnedResume =
             context.SyncEnabled &&
             context.IsMonitoring &&
             !context.IsGapActive;
+        if (_pausedByPolicy && !canApplyPolicyOwnedResume)
+            return LtcSignalLossAction.None;
+
+        _isLost = false;
+        _consecutiveResumeFrames = 0;
+        _manualResumeSuppressesPause = false;
+        bool shouldResume = _pausedByPolicy;
         _pausedByPolicy = false;
 
         return shouldResume

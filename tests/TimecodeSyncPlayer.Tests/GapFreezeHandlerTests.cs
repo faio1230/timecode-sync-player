@@ -336,6 +336,26 @@ public class GapFreezeHandlerTests
     }
 
     [Fact]
+    public void HasTimedOut_AtTwoPointNineNineNineSeconds_ReturnsFalse()
+    {
+        var handler = new GapFreezeHandler();
+        handler.CurrentState = GapState.WaitingForFrameStep;
+        handler.StartedAt = DateTime.UtcNow - TimeSpan.FromSeconds(2.999);
+
+        handler.HasTimedOut().Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasTimedOut_AtThreePointZeroZeroOneSeconds_ReturnsTrue()
+    {
+        var handler = new GapFreezeHandler();
+        handler.CurrentState = GapState.WaitingForFrameStep;
+        handler.StartedAt = DateTime.UtcNow - TimeSpan.FromSeconds(3.001);
+
+        handler.HasTimedOut().Should().BeTrue();
+    }
+
+    [Fact]
     public void EnterFreezeCaptureWithReload_SetsLastReloadAt()
     {
         var handler = new GapFreezeHandler();
