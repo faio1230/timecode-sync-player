@@ -13,6 +13,7 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 ### Fixed
 
 - Double-clicking the playlist scrollbar or empty area no longer starts playback of the selected track.
+- Switching to Single mode or turning Sync off now clears an active gap Freeze/Black state, so manual playback and seeking work instead of staying on the gap frame.
 
 ### Changed
 
