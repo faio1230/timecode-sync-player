@@ -18,6 +18,7 @@ public class MpvSessionInitializerTests
         result.Success.Should().BeFalse();
         result.Failure.Should().Be(MpvSessionInitializationFailure.CreateFailed);
         result.Mpv.Should().Be(IntPtr.Zero);
+        api.Calls.Should().Equal("create");
     }
 
     [Fact]
@@ -30,6 +31,7 @@ public class MpvSessionInitializerTests
 
         result.Success.Should().BeTrue();
         result.Mpv.Should().Be(s_mpv);
+        api.Calls.Should().NotContain(call => call.StartsWith("terminate-destroy:", StringComparison.Ordinal));
         api.Calls[0].Should().Be("create");
         api.Calls[1].Should().StartWith("set:");
         api.Calls.Should().Contain("set:osd-level=1");
@@ -59,6 +61,7 @@ public class MpvSessionInitializerTests
         result.Failure.Should().Be(MpvSessionInitializationFailure.InitializeFailed);
         result.Mpv.Should().Be(IntPtr.Zero);
         api.Calls.Last().Should().Be($"terminate-destroy:{s_mpv}");
+        api.Calls.Should().ContainInOrder("create", "initialize", $"terminate-destroy:{s_mpv}");
     }
 
     private sealed class FakeMpvApi : IMpvApi

@@ -849,3 +849,40 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   RenderContext失敗後始末、MediaDurationReader異常出力、V7ミューテーション、非E2E全件ゲートは
   未実行。V7と全goalは未完了。ブランチは `test/hardening-v1`、pushは実施せず、未追跡
   `AGENTS.md` もステージしていない。
+
+### テスト強化 V7 完了（2026-07-17）
+
+- ユーザー承認どおり、`MpvSessionInitializer` で `mpv_initialize` が負値を返した場合に
+  `TerminateDestroy(mpv)` を直ちに呼び、失敗結果のhandleを `IntPtr.Zero` とした。Create失敗は
+  handleが生成されていないため破棄を呼ばず、成功時も破棄を呼ばない。既存ログは変更していない。
+- mpvのCreate失敗・Initialize負値・成功の3経路について、結果種別、zero/live handle、
+  Create→Initialize→TerminateDestroyの順序を検証した。WindowLoaded側もInitialize失敗結果の
+  zero handleを受け取り、専用エラーを表示して後続初期化を行わない契約へ合わせた。
+- RenderContextはrc=0の成功と、rc=-1/`int.MinValue` の失敗について、成功判定・診断用handle・
+  return code保持を固定した。WindowLoadedは作成失敗で専用エラー停止し、既存
+  `MainWindowResourceDisposer` がRenderContext→mpvの順に解放する経路を維持している。
+- `MediaDurationReader` は計画の適用条件を確認したが、ffprobe出力parserが分離されておらず、
+  外部processをmockしない条件では空/非数値/負値/多行を任意注入できない。計画記載どおりこの4種は
+  対象外とし、既存の実ffprobe正常動画・不存在ファイル・空ファイルの3経路を継続検証した。
+- ミューテーション確認1: Spout送信失敗遷移から `_initialized=false` を削除すると、
+  `SendFrame_NativeFalseInvalidatesOutputAndTryInitializeCanRecover` が期待falseに対する
+  `IsAvailable=true` で失敗した。変更は復元済み。
+- ミューテーション確認2: mpv Initialize失敗分岐から `TerminateDestroy` を削除すると、再現テストが
+  最終呼出し `terminate-destroy:321` の期待に対して `initialize` を検出して失敗した。変更は復元済み。
+- 復元後のV7対象6クラスは36/36件合格。Debug非E2E全件は1092/1092件合格、失敗0、Skip0、
+  ビルド警告0。Debug E2E全件はVB-CABLE実機を含む44/44件合格、失敗0、Skip0（7分15秒）。
+
+### テスト強化goal 最終サマリ（2026-07-17）
+
+- 指定順 `V1 → V8 → V9 → V10 → V5 → V2 → V6 → V3 → V4 → V7` をすべて完了した。
+- V1はProject/AppSettingsのアトミック保存と破損復旧、V8はヘッドレス同期シナリオとpause所有権、
+  V9は実アプリのプロジェクト往復・並べ替え・フルスクリーン、V10はVB-CABLE実信号のGap/信号断/
+  モード切替を強化した。
+- V5はレンダー寸法オーバーフローの二段防衛、V2は日跨ぎ・逆走・境界・デバウンス、V6はGapと
+  信号断のpause所有権競合、V3は空/1000件/重複/極端offset、V4は不正WaveFormatと非有限PCM統計、
+  V7はSpout/mpv外部失敗後の無効化・後始末・復旧を固定した。
+- 各タスクで最低2件のミューテーションを実施し、意図した代表テストが赤になることを確認後、
+  すべて復元した。途中で検出した実バグは停止条件に従って報告し、ユーザー承認後のみ最小修正した。
+- 最終ゲートはDebug非E2E 1092/1092件、Debug E2E 44/44件（実機込み）、失敗0、Skip0、警告0。
+  ブランチは `test/hardening-v1`、pushは実施していない。未追跡 `AGENTS.md` は一度もステージ・変更
+  していない。
