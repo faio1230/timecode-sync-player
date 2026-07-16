@@ -718,3 +718,31 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 挙動判定ロジックの修正は承認範囲外のため `src/` は変更していない。V6の残り境界、
   ミューテーション確認、非E2E全件ゲート、V3以降は未実行。ブランチは `test/hardening-v1`、
   pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V6 完了（2026-07-17）
+
+- ユーザー承認の不変条件「pause所有権は、解除アクション `ResumeAndSync` が実際に適用された時に
+  初めて消費される」に合わせ、`LtcSignalLossPolicy.ObserveValidFrame` を最小修正した。
+  信号断ポリシー所有のpauseがあり、Sync OFF・監視停止・Gapアクティブのいずれかで再開を
+  適用できない間は、`_pausedByPolicy`・`_isLost`・復旧カウントを保持する。
+- 復旧カウントはGap中も保持する方式を選択した。Gap脱出時点で信号が既に連続正常フレーム条件を
+  満たしている場合、次の正常フレームで即 `ResumeAndSync` とすることで、ライブ中に不要な再待機を
+  入れない。先に手動Playが入った場合は既存の再生状態遷移観測が所有権を破棄し、次フレームも
+  `None` のままとなることを合成テストで確認した。
+- V6境界として、Gap中の信号断は介入せず脱出直後のtickでPause、信号断pause中の
+  Continue→SingleによるGap解除は信号断所有権を解除しない、復旧とGap進入の両順序、手動Play優先、
+  `GapFreezeHandler` の2.999秒/3.001秒タイムアウト境界を追加した。フルスクリーン二重実行は
+  V9で追加済みの実アプリ2連続開閉シナリオがコンボ選択後の再Invokeを含み、ロジック単体より強い
+  経路で二重ウィンドウを作らず開閉できることを継続確認するため、重複テストは追加していない。
+- ミューテーション確認1: 復旧時の `if (_pausedByPolicy && !canApplyPolicyOwnedResume)` ガードを
+  削除すると、Gap中に `ResumeAndSync` が返り、
+  `SignalRecoveryAndGapEntry_InEitherOrder_ResumeAfterGapExit` が
+  `Expected blockedRecovery to be None ... but found ResumeAndSync.` で失敗した。変更は復元済み。
+- ミューテーション確認2: `EvaluatePause` の `context.IsGapActive` ガードを削除すると、
+  `Evaluate_LossStartsDuringGap_PausesOnFirstTickAfterGapExit` がGap中の期待 `None` に対して
+  `Pause` を検出して失敗した。変更は復元済み。
+- 復元後のV6対象5クラスは79/79件合格。V8のpause所有権12系列とモデル遷移を含む対象は
+  31/31件合格。VB-CABLE実機の
+  `CableLoop_StopMode_SignalLossDuringGap_IsEvaluatedAfterGapRecovery` は1/1件合格、Skip0。
+  Debug非E2E全件は1066/1066件合格、失敗0、Skip0、ビルド警告0。ブランチは
+  `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。

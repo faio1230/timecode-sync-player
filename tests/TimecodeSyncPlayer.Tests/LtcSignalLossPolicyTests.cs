@@ -21,6 +21,22 @@ public class LtcSignalLossPolicyTests
     }
 
     [Fact]
+    public void Evaluate_LossStartsDuringGap_PausesOnFirstTickAfterGapExit()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext receiving = Context();
+        policy.ObserveValidFrame(Start, receiving);
+
+        policy.Evaluate(At(250), receiving with { IsGapActive = true })
+            .Should().Be(LtcSignalLossAction.None);
+        policy.ShouldSuppressSync.Should().BeFalse();
+
+        policy.Evaluate(At(251), receiving with { IsGapActive = false })
+            .Should().Be(LtcSignalLossAction.Pause);
+        policy.ShouldSuppressSync.Should().BeTrue();
+    }
+
+    [Fact]
     public void Evaluate_AfterOperatorManuallyPlays_DoesNotPauseAgainDuringSameLoss()
     {
         var policy = CreatePolicy();
