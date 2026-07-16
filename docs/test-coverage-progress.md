@@ -537,3 +537,21 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   `Expected GapState.Inactive ... but found GapState.BlackFrameActive` で失敗した。変更は復元済み。
 - 復元後のV8対象は40/40件合格。Debug非E2E全件は1010/1010件合格、失敗0、スキップ0、
   ビルド警告0。ブランチは`test/hardening-v1`、pushは実施せず、未追跡`AGENTS.md`もステージしていない。
+
+### テスト強化 V9 停止（2026-07-16）
+
+- `tests/TimecodeSyncPlayer.Tests/E2E/SystemScenarioE2ETests.cs` を追加し、UIA パターン操作だけで
+  プロジェクト往復、モード切替、再生中フルスクリーン2周、破損プロジェクト読込の4シナリオを実装した。
+  キー/マウス合成と固定 `Sleep` は使用しておらず、前提条件不足も Skip にせず失敗として扱う。
+- モード切替、フルスクリーン、破損プロジェクトの各シナリオは単独実行で合格した。
+  プロジェクト往復は動画2本の追加後、2番目のトラックを選択して「上へ移動」した時点で
+  実アプリの `DispatcherUnhandledException` を再現したため、共通ルールに従い V9 を停止した。
+- 再現コマンド:
+  `$env:WINDIR=$env:SystemRoot; dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --no-restore --filter "FullyQualifiedName~SystemScenarioE2ETests.ProjectRoundTrip"`
+  は 1件中1件失敗。アプリには「予期しないエラーが発生しました。アプリケーションを終了します。」が表示された。
+- 例外は `MainWindow.xaml.cs:362` の `PlaylistList.SelectedIndex = _vm.Playlist.SelectedIndex` に
+  `-2` が渡された `ArgumentException`。`PlaylistViewModel` の MoveUp 中に
+  `ObservableCollection` の移動で WPF 選択が一時的に `-1` となり、`SelectionChanged` が
+  `_selectedIndex=-1` を設定した後、コマンドが `_selectedIndex--` を行って `-2` にする競合が原因。
+- 本体 `src/` は変更していない。実バグ修正の承認待ちのため、V9 のミューテーション確認、
+  非E2E/E2E全件ゲート、V10以降は未実行。ブランチは `test/hardening-v1`、push はしていない。
