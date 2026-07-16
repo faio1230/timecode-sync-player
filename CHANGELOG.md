@@ -8,11 +8,13 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 
 - Added the `showDebugOsd` setting for opt-in playback time and media metadata overlays.
 - Added selectable full-screen video output for connected external displays.
+- Added the `fullscreenDisplayDeviceName` setting to restore the selected output display.
 
 ### Changed
 
 - Debug OSD is hidden by default while seek feedback via the mpv OSD bar remains available.
 - Split the README into dedicated Japanese and English editions with streamlined release and setup guidance.
+- Enabled PerMonitorV2 DPI awareness for sharp, correctly positioned output across displays with different scaling.
 
 ## 0.1.0 - 2026-07-15
 

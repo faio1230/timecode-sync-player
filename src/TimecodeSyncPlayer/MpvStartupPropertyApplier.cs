@@ -11,13 +11,13 @@ public sealed class MpvStartupPropertyApplier
         _mpvApi = mpvApi;
     }
 
-    public void Apply(IntPtr mpv)
+    public void Apply(IntPtr mpv, bool showDebugOsd = false)
     {
         _mpvApi.SetPropertyString(mpv, "vo", "libmpv");
         _mpvApi.SetPropertyString(mpv, "hwdec", "auto-copy");
         _mpvApi.SetPropertyString(mpv, "keep-open", "always");
         _mpvApi.SetPropertyString(mpv, "pause", "yes");
-        _mpvApi.SetPropertyString(mpv, "osd-level", "3");
+        _mpvApi.SetPropertyString(mpv, "osd-level", showDebugOsd ? "3" : "1");
         _mpvApi.SetPropertyString(mpv, "osd-font-size", "20");
         _mpvApi.SetPropertyString(mpv, "osd-bar", "yes");
         _mpvApi.SetPropertyString(mpv, "osd-color", "#FFFFFF");

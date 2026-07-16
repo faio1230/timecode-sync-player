@@ -32,7 +32,19 @@ public class MpvSessionInitializerTests
         result.Mpv.Should().Be(s_mpv);
         api.Calls[0].Should().Be("create");
         api.Calls[1].Should().StartWith("set:");
+        api.Calls.Should().Contain("set:osd-level=1");
         api.Calls.Last().Should().Be("initialize");
+    }
+
+    [Fact]
+    public void Initialize_WhenDebugOsdIsEnabled_AppliesLevelThree()
+    {
+        var api = new FakeMpvApi { CreateResult = s_mpv, InitializeResult = 0 };
+        var initializer = new MpvSessionInitializer(api, new MpvStartupPropertyApplier(api));
+
+        initializer.Initialize(showDebugOsd: true);
+
+        api.Calls.Should().Contain("set:osd-level=3");
     }
 
     [Fact]

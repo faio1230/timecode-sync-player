@@ -6,25 +6,37 @@ namespace TimecodeSyncPlayer.Tests;
 public class MpvStartupPropertyApplierTests
 {
     [Fact]
-    public void Apply_SetsStartupPropertiesInOrder()
+    public void Apply_WhenDebugOsdIsDisabled_SetsLevelOneAndKeepsSeekBarEnabled()
     {
         var api = new FakeMpvApi();
         var applier = new MpvStartupPropertyApplier(api);
         var mpv = new IntPtr(123);
 
-        applier.Apply(mpv);
+        applier.Apply(mpv, showDebugOsd: false);
 
         api.SetProperties.Should().Equal(
             ("vo", "libmpv"),
             ("hwdec", "auto-copy"),
             ("keep-open", "always"),
             ("pause", "yes"),
-            ("osd-level", "3"),
+            ("osd-level", "1"),
             ("osd-font-size", "20"),
             ("osd-bar", "yes"),
             ("osd-color", "#FFFFFF"),
             ("osd-border-color", "#000000"),
             ("osd-border-size", "2"));
+    }
+
+    [Fact]
+    public void Apply_WhenDebugOsdIsEnabled_SetsLevelThreeAndKeepsSeekBarEnabled()
+    {
+        var api = new FakeMpvApi();
+        var applier = new MpvStartupPropertyApplier(api);
+
+        applier.Apply(new IntPtr(123), showDebugOsd: true);
+
+        api.SetProperties.Should().Contain(("osd-level", "3"));
+        api.SetProperties.Should().Contain(("osd-bar", "yes"));
     }
 
     private sealed class FakeMpvApi : IMpvApi

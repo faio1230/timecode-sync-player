@@ -25,13 +25,13 @@ public sealed class MpvSessionInitializer
         _startupPropertyApplier = startupPropertyApplier;
     }
 
-    public MpvSessionInitializationResult Initialize()
+    public MpvSessionInitializationResult Initialize(bool showDebugOsd = false)
     {
         IntPtr mpv = _mpvApi.Create();
         if (mpv == IntPtr.Zero)
             return new MpvSessionInitializationResult(false, IntPtr.Zero, MpvSessionInitializationFailure.CreateFailed);
 
-        _startupPropertyApplier.Apply(mpv);
+        _startupPropertyApplier.Apply(mpv, showDebugOsd);
 
         int rc = _mpvApi.Initialize(mpv);
         if (rc < 0)
