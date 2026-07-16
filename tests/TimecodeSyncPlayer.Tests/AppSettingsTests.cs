@@ -26,6 +26,7 @@ public class AppSettingsTests
         settings.LtcSignalLossTimeoutMs.Should().Be(250);
         settings.LtcSignalResumeFrames.Should().Be(5);
         settings.ShowDebugOsd.Should().BeFalse();
+        settings.FullscreenDisplayDeviceName.Should().BeEmpty();
     }
 
     [Theory]
@@ -179,7 +180,8 @@ public class AppSettingsTests
             LtcSignalLossMode = LtcSignalLossMode.Stop,
             LtcSignalLossTimeoutMs = 1200,
             LtcSignalResumeFrames = 8,
-            ShowDebugOsd = true
+            ShowDebugOsd = true,
+            FullscreenDisplayDeviceName = @"\\.\DISPLAY2"
         };
 
         var options = new JsonSerializerOptions
@@ -207,6 +209,7 @@ public class AppSettingsTests
         deserialized.LtcSignalLossTimeoutMs.Should().Be(original.LtcSignalLossTimeoutMs);
         deserialized.LtcSignalResumeFrames.Should().Be(original.LtcSignalResumeFrames);
         deserialized.ShowDebugOsd.Should().BeTrue();
+        deserialized.FullscreenDisplayDeviceName.Should().Be(original.FullscreenDisplayDeviceName);
     }
 
     [Fact]
@@ -222,6 +225,7 @@ public class AppSettingsTests
         deserialized.LtcSignalLossTimeoutMs.Should().Be(250);
         deserialized.LtcSignalResumeFrames.Should().Be(5);
         deserialized.ShowDebugOsd.Should().BeFalse();
+        deserialized.FullscreenDisplayDeviceName.Should().BeEmpty();
     }
 
     [Fact]

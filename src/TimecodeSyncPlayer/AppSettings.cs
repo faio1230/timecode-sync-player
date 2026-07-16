@@ -35,6 +35,7 @@ public sealed record AppSettings
     public int LtcSignalLossTimeoutMs { get; init; } = DefaultLtcSignalLossTimeoutMs;
     public int LtcSignalResumeFrames { get; init; } = DefaultLtcSignalResumeFrames;
     public bool ShowDebugOsd { get; init; }
+    public string FullscreenDisplayDeviceName { get; init; } = "";
 
     public static AppSettings Default => new();
 }

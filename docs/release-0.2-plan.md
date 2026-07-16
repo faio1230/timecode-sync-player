@@ -60,8 +60,27 @@
   動的取得に直してよい）
 - Release 構成で非E2E + E2E 全件グリーンを確認
 
+## S5: 外部モニターフルスクリーン出力
+
+- UIに接続ディスプレイ選択ComboBox（プライマリ表記、AutomationId付き）とFULLSCREEN
+  トグルボタンを追加。選択ディスプレイへ映像を表示し、表示中はラベルを変更して再押下で閉じる
+- フルスクリーンウィンドウは`WindowStyle=None`、`ResizeMode=NoResize`、`Topmost`、
+  `Cursor=None`とし、選択ディスプレイ全領域へ配置。黒背景のImageをアスペクト比維持で表示する
+- 既存`FrameRenderer`の`WriteableBitmap`を共有し、`BitmapChanged`購読だけを追加する。
+  mpv／FrameRendererの既存レンダーパスは変更しない
+- ESCで閉じる。MouseEnter時にウィンドウをアクティブ化してキーボードフォーカスを取得し、
+  メインウィンドウのFULLSCREEN再押下でも閉じられるようにする
+- 表示中の対象ディスプレイ切断時は安全に閉じ、メインウィンドウ終了時にも破棄する。
+  DPIが異なるモニターでも全領域へ鮮明に配置し、アスペクト比を維持して余白を黒にする
+- 選択ディスプレイを`AppSettings`へ保存し、次回起動時に復元。見つからなければプライマリを選ぶ。
+  `docs/settings.md`へ追記する
+- ディスプレイ選択／表示判定は純クラスへ抽出してユニットテストする。E2Eを1件追加し、
+  FULLSCREEN押下で新ウィンドウが出現し、ESCで閉じることをFlaUIで検証する
+- `CHANGELOG.md`の0.2.0 Addedへ追記する
+
 ## 実行順とゲート
 
-S1 → S3 → S2 → S4（S3 のスクショは S1 完了後・S2 が参照）。
-S1 はコード変更のため非E2E + E2E 全件ゲート。完了時に progress へ記録。
+S1 → S5 → S3 → S2 → S4（S3のスクショはS1完了後。S5はS3の前後どちらでもよいが、
+本一括実行ではS1直後に行う）。S1とS5はコード変更のため非E2E + E2E全件ゲート。
+完了時にprogressへ記録。
 タグ・GitHub Release 公開は人間側に残す。

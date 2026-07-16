@@ -35,6 +35,7 @@ can restore the user's preferences. Delete it manually to remove the preferences
 | `ltcSignalLossTimeoutMs` | integer | `250` | Clamped to `100`–`5000` ms / `100`～`5000`msへクランプ |
 | `ltcSignalResumeFrames` | integer | `5` | Must be greater than `0`; otherwise resets to `5` / `0`以下は`5`へ補正 |
 | `showDebugOsd` | boolean | `false` | Shows playback time and media metadata over the video when `true`; restart required / `true` で再生時刻とメディア情報を映像上に表示。変更後は再起動が必要 |
+| `fullscreenDisplayDeviceName` | string | `""` | Device name used for fullscreen output; a missing device falls back to the primary display / フルスクリーン出力先のデバイス名。見つからない場合はプライマリへフォールバック |
 
 Enum values are serialized as JSON numbers by the current application. The symbolic names above
 describe their meaning and stable UI labels; use settings written by the application when possible.
