@@ -381,3 +381,31 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - Debug非E2E: 937/937件合格、失敗0、スキップ0、ビルド警告0。
 - Debug E2E: 37/37件合格、失敗0、スキップ0（9分18秒、実機LTC 11件を含む）。
 - push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### v0.2.0 S3 停止（2026-07-16）
+
+- ffmpegで1280x720、25fps、25秒、H.264のSMPTE HDカラーバー動画を生成し、drawtextで
+  `00:00:00:00`開始のタイムコードを焼き込んだ。ffprobeでH.264／1280x720／25fps／25秒を確認。
+- 既存E2E基盤の起動引数とUIA Invokeにより、動画投入・再生・Timeline ONまで自動化できた。
+- 画像取得は3方式連続で失敗。FlaUI `CaptureToFile`は1076x680の全黒、
+  `PrintWindow(PW_RENDERFULLCONTENT)`はタイトルバー以外が黒、撮影時限定の
+  `RenderTargetBitmap(Window)`も1076x680の全黒となった。現在のRDP描画経路ではWPFクライアント
+  合成面を取得できていない。
+- 「同一の失敗に3回連続で対処できなかったら停止」に従い、4方式目は試さず停止した。
+  撮影専用の一時テスト・一時プロダクションコード・無効PNGは削除し、S3コミット、S2以降は未実施。
+- push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### v0.2.0 S3 完了（2026-07-16）
+
+- 実装コミット: `448fd44`（`feat: クライアント側スクリーンショットの撮影準備を追加`）。
+- RDP内キャプチャAPIを使わず、ユーザーがRDPクライアント／ローカルOS側で撮影する方式へ
+  `docs/release-0.2-plan.md`を更新した。
+- Windows PowerShell 5.1互換`scripts/capture-setup.ps1`を追加。1コマンドで一時SMPTE動画生成、
+  Timeline ONの隔離settings作成、動画のopen／playlist指定付きアプリ起動まで行う。
+- 実行検証でアプリタイトル`Timecode Sync Player v0.1.0`、settingsの`isTimelineVisible: true`、
+  動画のH.264／1280x720／25fps／25秒を確認した。
+- README.md／README.en.mdへ`assets/screenshot.png`参照を追加。画像本体はユーザー提供後に
+  コミットするため、現時点の一時的なリンク切れは確定仕様どおり。
+- Debug非E2E: 937/937件合格、失敗0、スキップ0、ビルド警告0。プロダクションコード変更なしのため
+  S3ではE2E全件ゲートを省略した。
+- push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
