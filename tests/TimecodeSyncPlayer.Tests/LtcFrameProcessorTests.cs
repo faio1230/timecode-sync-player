@@ -100,6 +100,49 @@ public class LtcFrameProcessorTests
         result.Diagnostic.Status.Should().Be(TimecodeFrameDiagnosticStatus.Initial);
     }
 
+    [Fact]
+    public void Process_MidnightRolloverIsSingleJumpThenNormalWithoutSyncingJumpFrame()
+    {
+        var processor = new LtcFrameProcessor(new TimecodeFpsSelector(), new TimecodeFrameDiagnostics());
+
+        processor.Process(
+            Frame(new LtcTimecode(23, 59, 59, 24, DropFrame: false), 25.0, 86_399.96),
+            TimecodeFpsMode.Fixed25);
+        LtcFrameProcessingResult rollover = processor.Process(
+            Frame(new LtcTimecode(0, 0, 0, 0, DropFrame: false), 25.0, 0.0),
+            TimecodeFpsMode.Fixed25);
+        LtcFrameProcessingResult next = processor.Process(
+            Frame(new LtcTimecode(0, 0, 0, 1, DropFrame: false), 25.0, 0.04),
+            TimecodeFpsMode.Fixed25);
+
+        rollover.Diagnostic.Status.Should().Be(TimecodeFrameDiagnosticStatus.Jump);
+        rollover.ShouldApplySync.Should().BeFalse();
+        next.Diagnostic.Status.Should().Be(TimecodeFrameDiagnosticStatus.Normal);
+        next.ShouldApplySync.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Process_ConsecutiveReverseFramesRemainReverseAndSuppressSync()
+    {
+        var processor = new LtcFrameProcessor(new TimecodeFpsSelector(), new TimecodeFrameDiagnostics());
+        processor.Process(
+            Frame(new LtcTimecode(0, 0, 10, 3, DropFrame: false), 25.0, 10.12),
+            TimecodeFpsMode.Fixed25);
+
+        LtcFrameProcessingResult[] results =
+        [
+            processor.Process(Frame(new LtcTimecode(0, 0, 10, 2, false), 25.0, 10.08), TimecodeFpsMode.Fixed25),
+            processor.Process(Frame(new LtcTimecode(0, 0, 10, 1, false), 25.0, 10.04), TimecodeFpsMode.Fixed25),
+            processor.Process(Frame(new LtcTimecode(0, 0, 10, 0, false), 25.0, 10.00), TimecodeFpsMode.Fixed25),
+        ];
+
+        results.Should().OnlyContain(result =>
+            result.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Reverse &&
+            !result.ShouldApplySync);
+        results.Select(result => result.Diagnostic.DeltaFrames)
+            .Should().OnlyContain(delta => Math.Abs(delta + 1.0) < 0.000001);
+    }
+
     private static LtcFrameReceivedEventArgs Frame(LtcTimecode timecode, double detectedFps, double rawSeconds) =>
         new(timecode, detectedFps, rawSeconds);
 }
