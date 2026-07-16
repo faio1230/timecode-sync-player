@@ -44,6 +44,23 @@ public class GapFreezeHandlerTests
         handler.PendingPath.Should().BeNull();
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void DecideGapExit_OnlyResumesPauseOwnedByGap(
+        bool wasPlaybackPausedBeforeGap,
+        bool expectedResume)
+    {
+        var handler = new GapFreezeHandler { CurrentState = GapState.FreezeComplete };
+        handler.RecordPauseOwnership(wasPlaybackPausedBeforeGap);
+
+        GapExitAction action = handler.DecideGapExit();
+
+        action.Type.Should().Be(GapExitActionType.ResumePlayback);
+        action.ShouldResumePlayback.Should().Be(expectedResume);
+        handler.CurrentState.Should().Be(GapState.Inactive);
+    }
+
     [Fact]
     public void ResetAll_ClearsAllState()
     {

@@ -809,6 +809,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private GapEnterCoordinator CreateGapEnterCoordinator() =>
         _gapEnterCoordinator ??= new(_gapFreezeHandler, new GapEnterEffects(
             ResetEndAdvanceTriggered: () => _endAdvanceTriggered = false,
+            IsPlaybackPaused: () => _playbackControl.IsPaused,
             PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(_mpv),
             ApplyPauseState: paused => ApplyPauseState(paused),
             RenderBlack: () => _frameRenderer.RenderBlack(_videoWidth, _videoHeight),
