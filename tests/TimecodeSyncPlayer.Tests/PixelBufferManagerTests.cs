@@ -57,6 +57,21 @@ public class PixelBufferManagerTests
     }
 
     [Fact]
+    public void EnsurePixelBuffer_OverflowingDimensions_DoesNotAllocateWrappedSize()
+    {
+        using var manager = new PixelBufferManager();
+
+        Exception? exception = Record.Exception(
+            () => manager.EnsurePixelBuffer(65_536, 65_536));
+
+        manager.PixelBuffer.Should().BeNull(
+            "overflowing dimensions must not allocate a wrapped zero-length buffer");
+        exception.Should().NotBeNull(
+            "overflowing dimensions must be rejected before allocating a wrapped buffer size");
+        manager.PixelPtr.Should().Be(IntPtr.Zero);
+    }
+
+    [Fact]
     public void EnsureFrozenFrameBuffer_FirstCall_AllocatesExpectedSizeAndNonZeroPtr()
     {
         using var manager = new PixelBufferManager();

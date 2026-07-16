@@ -637,3 +637,18 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 復元後のDebug非E2E全件は1013/1013件合格、失敗0、Skip0、ビルド警告0。
   Debug E2E全件は実機LTCを含む44/44件合格、失敗0、Skip0（6分48秒）。
   ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V5 停止（2026-07-16）
+
+- 必須ケース `65,536 × 65,536 × 4` を `EnsurePixelBuffer` へ渡す回帰テストを追加した。
+  安全な挙動として、折り返した小容量バッファを確保せず入力を拒否することを期待している。
+- 単独実行は1/1件失敗。`width * height * 4` がuncheckedな `int` 演算で0へ折り返し、
+  例外を投げずに長さ0の `PixelBuffer` を確保した。失敗出力は
+  `Expected manager.PixelBuffer to be <null> ... but found {empty}.` だった。
+- 根本原因は `PixelBufferManager` が必要バイト数を5箇所で `int` のまま乗算し、正の寸法と
+  積の上限を検証していないこと。同じ計算はPixel/Frozen/GapFreezeの3つのEnsure経路と
+  2つのコピー経路にあり、`FrameRenderer` のコピー長計算にも存在する。巨大寸法がネイティブ境界へ
+  不正な小容量バッファとして進む可能性があり、V5が明示した実バグに該当する。
+- 共通ルールに従い `src/` は変更していない。V5の残りケース、ミューテーション確認、非E2E全件ゲート、
+  V2以降は未実行。ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` も
+  ステージしていない。
