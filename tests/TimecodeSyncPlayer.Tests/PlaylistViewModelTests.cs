@@ -175,4 +175,32 @@ public class PlaylistViewModelTests
         capturedIndex.Should().Be(1);
         vm.SelectedIndex.Should().Be(1);
     }
+
+    [Fact]
+    public void MoveUpCommand_RestoresFinalSelection_WhenCollectionChangeEchoClearsSelection()
+    {
+        var playlist = MakePlaylist("a.mp4", "b.mp4", "c.mp4");
+        var vm = new PlaylistViewModel(playlist, new FakeDurationReader());
+        vm.SelectedIndex = 2;
+        playlist.Tracks.CollectionChanged += (_, _) => vm.SelectedIndex = -1;
+
+        vm.MoveUpCommand.Execute(null);
+
+        playlist.Tracks.Select(track => track.Name).Should().Equal("a", "c", "b");
+        vm.SelectedIndex.Should().Be(1);
+    }
+
+    [Fact]
+    public void MoveDownCommand_RestoresFinalSelection_WhenCollectionChangeEchoClearsSelection()
+    {
+        var playlist = MakePlaylist("a.mp4", "b.mp4", "c.mp4");
+        var vm = new PlaylistViewModel(playlist, new FakeDurationReader());
+        vm.SelectedIndex = 1;
+        playlist.Tracks.CollectionChanged += (_, _) => vm.SelectedIndex = -1;
+
+        vm.MoveDownCommand.Execute(null);
+
+        playlist.Tracks.Select(track => track.Name).Should().Equal("a", "c", "b");
+        vm.SelectedIndex.Should().Be(2);
+    }
 }
