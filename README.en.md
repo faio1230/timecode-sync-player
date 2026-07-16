@@ -7,42 +7,74 @@
 
 ![TimecodeSyncPlayer screenshot](assets/screenshot.png)
 
-An LTC-synchronized video player for live shows on Windows. v0.1.0 is a beta release intended
-for real-show validation before a future 1.0 release.
+A live-show video player for Windows that receives LTC (Linear Timecode) audio and synchronizes
+video clips in a playlist.
+
+## Download
+
+**Download the installer or zip from [GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases).**
+
+- For most users, the per-user `TimecodeSyncPlayer-v0.2.0-setup.exe` installer is recommended and
+  does not require administrator privileges.
+- Choose `TimecodeSyncPlayer-v0.2.0-win-x64.zip` for a portable extracted copy.
+- libmpv is not bundled for licensing reasons. Download it from the installer completion screen or
+  with the bundled `scripts/get-mpv.ps1`.
 
 ## Features
 
-- Frame-accurate video playback synchronized to incoming LTC (Linear Timecode) audio
-- Single and Continue sync modes with per-clip timeline offsets
-- Configurable Black/Freeze display across timecode gaps
-- Configurable Run-through/Stop behavior when the LTC signal is lost
+- Frame-based video playback synchronized to LTC audio input
+- Single and Continue synchronization modes with per-clip timeline offsets
+- Black or Freeze display across timecode gaps
+- Run-through or Stop behavior when the LTC signal is lost
+- Selectable full-screen output to a connected external display
 - Spout2 output for VJ tool integration
+- Playlist and project save/load workflows
 - Pure C# LTC decoder and libmpv software rendering
 
 ## Requirements
 
 - Windows 10/11 x64
 - [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) for release packages
-- An x64 libmpv DLL, obtained separately because it is not included in either release package
+- An x64 libmpv DLL
 - An audio input device carrying LTC
 
-`SpoutDX.dll` is included in both release packages and is only needed for Spout output.
+`SpoutDX.dll` is included in release packages and is only needed when using Spout output.
 
 ## Using the installer
 
-1. Run `TimecodeSyncPlayer-v0.1.0-setup.exe`.
+1. Run `TimecodeSyncPlayer-v0.2.0-setup.exe` from Releases. It installs per user and does not
+   require administrator privileges.
 2. Leave **Download mpv now (run get-mpv.ps1)** selected on the completion screen.
 3. Start TimecodeSyncPlayer from the Start menu.
-4. Select the audio capture device carrying LTC and press **START**.
-5. Load a video or playlist, then press **Sync ON**.
 
-## Using the release zip
+Uninstalling removes the application, downloaded libmpv, logs, and shortcuts. Per-user preferences
+in `%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json` are intentionally retained for future
+reinstallation. Delete that file manually to remove the preferences completely.
 
-1. Extract `TimecodeSyncPlayer-v0.1.0-win-x64.zip` to a writable folder.
-2. Run `powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1 -DestinationDirectory .`.
+## Using the zip
+
+1. Extract `TimecodeSyncPlayer-v0.2.0-win-x64.zip` to a writable folder.
+2. Open PowerShell in that folder and install libmpv:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1 -DestinationDirectory .
+   ```
+
 3. Start `TimecodeSyncPlayer.exe`.
 
+See the [native dependency guide](native/README.md) for manual libmpv installation.
+
+## Basic usage
+
+1. Select the audio capture device carrying LTC and press **START**.
+2. Open a video or add clips to the playlist.
+3. Select Single or Continue mode, gap behavior, and signal-loss behavior.
+4. Press **Sync ON** to start LTC synchronization.
+5. For external output, select a Display and press **FULLSCREEN**.
+
 ## Building from source
+
+The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) is required.
 
 ```powershell
 git clone https://github.com/faio1230/timecode-sync-player.git
@@ -51,6 +83,9 @@ powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1
 dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 ```
+
+Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder when building from
+source. See the [setup guide](docs/SETUP.md) for details.
 
 ## Documentation
 
@@ -70,6 +105,8 @@ endpoints are visible. ffmpeg is also required.
 dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
 ```
 
+Hardware tests skip automatically when prerequisites are unavailable.
+
 ## License
 
 TimecodeSyncPlayer is available under the [MIT License](LICENSE). Distribution-specific third-party
@@ -77,7 +114,7 @@ terms are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Credits
 
-Developed by Studio Sandix
+Developed by Studio Sandix.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/studio-sandix-logo-white.png">
