@@ -78,7 +78,7 @@ public sealed class WindowLoadedSessionInitializerTests
         WindowLoadedSessionInitializationError? error = null;
         var initializer = CreateInitializer(
             calls,
-            initializeMpvSession: () => new MpvSessionInitializationResult(false, new IntPtr(200), MpvSessionInitializationFailure.InitializeFailed),
+            initializeMpvSession: () => new MpvSessionInitializationResult(false, IntPtr.Zero, MpvSessionInitializationFailure.InitializeFailed),
             showError: e =>
             {
                 calls.Add($"error:{e}");
@@ -89,7 +89,7 @@ public sealed class WindowLoadedSessionInitializerTests
 
         result.Should().BeFalse();
         error.Should().Be(WindowLoadedSessionInitializationError.MpvInitializeFailed);
-        calls.Should().Equal("assign-mpv:200", "error:MpvInitializeFailed");
+        calls.Should().Equal("assign-mpv:0", "error:MpvInitializeFailed");
     }
 
     [Fact]

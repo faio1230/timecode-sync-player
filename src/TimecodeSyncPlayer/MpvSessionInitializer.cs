@@ -35,7 +35,13 @@ public sealed class MpvSessionInitializer
 
         int rc = _mpvApi.Initialize(mpv);
         if (rc < 0)
-            return new MpvSessionInitializationResult(false, mpv, MpvSessionInitializationFailure.InitializeFailed);
+        {
+            _mpvApi.TerminateDestroy(mpv);
+            return new MpvSessionInitializationResult(
+                false,
+                IntPtr.Zero,
+                MpvSessionInitializationFailure.InitializeFailed);
+        }
 
         return new MpvSessionInitializationResult(true, mpv, MpvSessionInitializationFailure.None);
     }
