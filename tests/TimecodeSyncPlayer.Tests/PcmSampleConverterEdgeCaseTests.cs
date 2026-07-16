@@ -5,6 +5,83 @@ namespace TimecodeSyncPlayer.Tests;
 
 public class PcmSampleConverterEdgeCaseTests
 {
+    [Theory]
+    [InlineData(3)]
+    [InlineData(8)]
+    public void ConvertToMonoFloat_MultichannelPcm_ReadsFirstChannel(int channels)
+    {
+        byte[] buffer = new byte[channels * sizeof(short) * 2];
+        BitConverter.GetBytes((short)16384).CopyTo(buffer, 0);
+        BitConverter.GetBytes((short)-16384).CopyTo(buffer, channels * sizeof(short));
+        var format = new WaveFormat(48_000, 16, channels);
+
+        float[] samples = PcmSampleConverter.ConvertToMonoFloat(buffer, buffer.Length, format);
+
+        samples.Should().Equal(0.5f, -0.5f);
+    }
+
+    [Theory]
+    [InlineData(8_000)]
+    [InlineData(192_000)]
+    public void ConvertToMonoFloat_ExtremeSupportedSampleRates_DoNotChangeConversion(int sampleRate)
+    {
+        byte[] buffer = [0x00, 0x40];
+        var format = new WaveFormat(sampleRate, 16, 1);
+
+        float[] samples = PcmSampleConverter.ConvertToMonoFloat(buffer, buffer.Length, format);
+
+        samples.Should().ContainSingle().Which.Should().BeApproximately(0.5f, 0.0001f);
+    }
+
+    [Fact]
+    public void ConvertToMonoFloat_ZeroChannelFormat_ReturnsEmpty()
+    {
+        WaveFormat format = WaveFormat.CreateCustomFormat(
+            WaveFormatEncoding.Pcm,
+            sampleRate: 48_000,
+            channels: 0,
+            averageBytesPerSecond: 0,
+            blockAlign: 0,
+            bitsPerSample: 16);
+
+        float[] samples = PcmSampleConverter.ConvertToMonoFloat([0x00, 0x40], 2, format);
+
+        samples.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ConvertToMonoFloat_SixtyFourBitFloat_FallsThroughToZero()
+    {
+        byte[] buffer = new byte[16];
+        BitConverter.GetBytes(0.5d).CopyTo(buffer, 0);
+        BitConverter.GetBytes(-0.5d).CopyTo(buffer, 8);
+        WaveFormat format = WaveFormat.CreateCustomFormat(
+            WaveFormatEncoding.IeeeFloat,
+            sampleRate: 48_000,
+            channels: 1,
+            averageBytesPerSecond: 48_000 * sizeof(double),
+            blockAlign: sizeof(double),
+            bitsPerSample: 64);
+
+        float[] samples = PcmSampleConverter.ConvertToMonoFloat(buffer, buffer.Length, format);
+
+        samples.Should().Equal(0f, 0f);
+    }
+
+    [Fact]
+    public void ConvertToMonoFloat_BytesRecordedPastBuffer_TruncatesToAvailableFrames()
+    {
+        byte[] buffer = [0x00, 0x40, 0x00, 0x20];
+        var format = new WaveFormat(48_000, 16, 2);
+
+        float[] samples = PcmSampleConverter.ConvertToMonoFloat(
+            buffer,
+            bytesRecorded: buffer.Length + 1,
+            format);
+
+        samples.Should().ContainSingle().Which.Should().BeApproximately(0.5f, 0.0001f);
+    }
+
     [Fact]
     public void ConvertToMonoFloat_EightBitPcm_FallsThroughToZero()
     {

@@ -7,6 +7,22 @@ namespace TimecodeSyncPlayer.Tests;
 public class LtcAudioSampleProcessorTests
 {
     [Fact]
+    public void Process_NonFiniteFloatSamples_DoesNotPropagateNaNToLevels()
+    {
+        const int sampleRate = 48_000;
+        float[] samples = [float.NaN, float.PositiveInfinity, float.NegativeInfinity];
+        var processor = new LtcAudioSampleProcessor(new LtcDecoder(sampleRate, 25));
+
+        LtcAudioSampleProcessingResult result = processor.Process(
+            ToBytes(samples),
+            samples.Length * sizeof(float),
+            WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1));
+
+        float.IsNaN(result.Peak).Should().BeFalse();
+        float.IsNaN(result.Rms).Should().BeFalse();
+    }
+
+    [Fact]
     public void Process_FloatPcmMeasuresSampleCountPeakAndRms()
     {
         const int sampleRate = 48000;
