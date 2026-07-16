@@ -212,17 +212,24 @@ public class SpoutOutputTests
     }
 
     [Fact]
-    public void SendFrame_NativeFalseAndPeriodicFramesRemainCallable()
+    public void SendFrame_NativeFalseInvalidatesOutputAndTryInitializeCanRecover()
     {
         var native = new FakeNativeApi { SendResult = false };
         using var output = CreateInitializedEnabledOutput(native);
 
-        for (int i = 0; i < 300; i++)
-        {
-            output.SendFrame(new IntPtr(1), 2, 3);
-        }
+        output.SendFrame(new IntPtr(1), 2, 3);
 
-        native.SentImages.Should().HaveCount(300);
+        output.IsAvailable.Should().BeFalse();
+        output.IsEnabled.Should().BeFalse();
+
+        native.SendResult = true;
+        output.TryInitialize().Should().BeTrue();
+        output.IsAvailable.Should().BeTrue();
+        output.IsEnabled.Should().BeFalse("reinitialization must not override the disabled safety state");
+
+        output.IsEnabled = true;
+        output.SendFrame(new IntPtr(2), 4, 5);
+        native.SentImages.Should().HaveCount(2);
     }
 
     [Fact]
