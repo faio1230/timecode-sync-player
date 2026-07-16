@@ -613,3 +613,27 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - このプロダクション修正は承認範囲外のため `src/` は変更していない。V10の残り2シナリオ、
   ミューテーション確認、非E2E/E2E全件ゲート、V5以降は未実行。ブランチは
   `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### テスト強化 V10 完了（2026-07-16）
+
+- ユーザー承認に基づき、`MainWindow.ExitGapStateForManualControlIfNeeded` のギャップ解除処理末尾で
+  `UpdateCurrentTrackLabel()` を呼ぶ最小修正を行った。ギャップ状態・映像復帰処理と画面表示が
+  同じ状態へ更新され、既存の判定ロジックやログは変更していない。
+- 実機VB-CABLEシナリオ3件は、Continue + BlackギャップからSingle切替時の映像・ラベル即時復帰、
+  Stopモードでギャップ中に信号断して脱出後も停止評価が生きること、実LTC供給中に
+  Single/Continueを各2回切り替えて毎回同期へ復帰することを検証した。3件連続で3/3件合格、
+  Skip0、テスト本体28秒で、追加実行時間は5分以内に収まった。
+- 共有fixtureで前テストの最終TCから次の信号開始TCへ戻る正常な再開を巻き戻りと誤認しないよう、
+  新シナリオの初回取得にも既存の `WaitForProgressionAfterSignalRestart` を使用した。固定Sleepや
+  新規Skipは追加していない。
+- ミューテーション確認1: `ExitGapStateForManualControlIfNeeded` から
+  `UpdateCurrentTrackLabel()` を削除すると、Single切替後も `Gap: Black` が残り、
+  `CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately` が
+  ラベル待機の `TimeoutException` で失敗した。変更は復元済み。
+- ミューテーション確認2: `LtcSignalLossPolicy.EvaluatePause` の `context.IsGapActive` ガードを
+  `!context.IsGapActive` に反転すると、ギャップ脱出後の信号断で再生が停止せず、
+  `CableLoop_StopMode_SignalLossDuringGap_IsEvaluatedAfterGapRecovery` が安定再生位置待機の
+  `TimeoutException` で失敗した。変更は復元済み。
+- 復元後のDebug非E2E全件は1013/1013件合格、失敗0、Skip0、ビルド警告0。
+  Debug E2E全件は実機LTCを含む44/44件合格、失敗0、Skip0（6分48秒）。
+  ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。

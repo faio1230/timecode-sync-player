@@ -852,6 +852,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         Log.Information("Gap state cleared for manual control syncEnabled={SyncEnabled} mode={Mode}",
             _vm.Sync.SyncEnabled, _vm.Sync.SyncMode);
+        UpdateCurrentTrackLabel();
     }
 
     private void LtcMonitor_Stopped(object? sender, Exception? exception)
