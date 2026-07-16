@@ -810,3 +810,20 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 復元後のV4対象3クラスは28/28件合格。Debug非E2E全件は1090/1090件合格、失敗0、Skip0、
   ビルド警告0。ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` も
   ステージしていない。
+
+### テスト強化 V7 停止（2026-07-17）
+
+- `SpoutOutput` の必須ライフサイクルとして、初期化・有効化後にnative `SendImage` がfalseを返し、
+  出力が利用不可かつ安全のため無効へ遷移し、native復旧後の `TryInitialize` で利用可能へ戻る一連の
+  回帰テストを追加した。再初期化はユーザーの有効状態を勝手に戻さず、再度有効化した後の送信成功
+  までを期待している。
+- 単独実行は0/1件合格、1件失敗。失敗出力は
+  `Expected output.IsAvailable to be false, but found True.` だった。
+- 根本原因は `SpoutOutput.SendFrame` が `SendImage=false` をログへ記録するだけで、`_initialized`・
+  `IsEnabled`・native objectを無効化しないこと。例外catchも同様にログだけである。そのため
+  `IsAvailable` はtrueのまま残り、次の `TryInitialize()` は `_initialized` の早期returnでtrueを返して
+  Create/Open/SetNameを再実行せず、device lostから実際には復旧できない。
+- これはV7保証内容「送信中失敗→無効化→再初期化」に反する実バグであり、本体変更の承認範囲外
+  なので `src/` は変更していない。native例外側の同経路、mpv初期化各段階の後始末、
+  MediaDurationReader異常出力、ミューテーション、非E2E全件ゲートは未実行。V7と全goalは未完了。
+  ブランチは `test/hardening-v1`、pushは実施せず、未追跡 `AGENTS.md` もステージしていない。
