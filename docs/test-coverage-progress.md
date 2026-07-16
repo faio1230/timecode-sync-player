@@ -466,3 +466,26 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - Release EXEの情報バージョンは`0.2.0+96f9e28b0c6ef0c62b71f2cfd041b6bba5216f65`。
   zipの必須配布物とmpv DLL/PDB除外、setup.exeの製品バージョン0.2.0を確認した。
 - push・タグ作成・GitHub Release公開は実施していない。未追跡`AGENTS.md`もステージしていない。
+
+### テスト強化 V1 完了（2026-07-16）
+
+- 実装コミット: `2c971ce`（`test: 永続化のアトミック保存と破損耐性を強化`）。
+- `ProjectSerializer`と`AppSettingsManager`の保存を、保存先と同じディレクトリの一時ファイルへ
+  従来同一バイト列を書き、既存ファイルには`File.Replace`、新規ファイルには`File.Move`を使う
+  アトミック方式へ変更した。同一パスは直列化し、並行保存後も片方の完全なJSONだけが残る。
+- 切詰め・ゴミ文字列・空・BOMのみ・不正UTF-8バイト、欠落キー・未知キー・型不一致を検証。
+  プロジェクトは`JsonException`を呼出元へ伝播し、WindowLoadedからの`--open`相当経路では
+  スケジューラが失敗を捕捉する。設定は既定値へ復旧し、直後の`UpdateAsync`で正常再生成する。
+- 一時書込み例外と保存先ロックで既存ファイルが無傷、一時ファイルが残らないことを検証。
+  記録型ファイル操作シームはJSON生成・保存経路を実物のまま、OS操作境界だけに限定した。
+- 新規起動エラーテストと既存ProjectSerializerテストが静的`ProjectPath`をクラス並列で競合する
+  テスト干渉を確認。両クラスを同一xUnitコレクションで直列化し、組合せを3回連続27/27合格させた。
+- ミューテーション確認1: 一時パスを保存先自身へ変更すると
+  `SaveAsync_ExistingDestinationWritesTemporaryFileThenReplacesIt`が
+  `Expected temporaryPath not to be ...atomic-existing.tsp`で失敗した。変更は復元済み。
+- ミューテーション確認2: 既存判定を反転してReplace/Moveを逆にすると
+  `SaveAsync_NewDestinationWritesTemporaryFileThenMovesIt`が`operations.Moves`空で失敗した。
+  変更は復元済み。復元後の代表2件は2/2合格。
+- V1対象: 68/68件合格。Debug非E2E: 970/970件合格、失敗0、スキップ0、警告0。
+- Debug E2E: 37/37件合格、失敗0、スキップ0（4分16秒、実機LTC 11件を含む）。
+- ブランチは`test/hardening-v1`。pushは実施せず、未追跡`AGENTS.md`もステージしていない。
