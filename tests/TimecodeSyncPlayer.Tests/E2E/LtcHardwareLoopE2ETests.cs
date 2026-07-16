@@ -369,6 +369,234 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
         }
     }
 
+    [Fact]
+    public void CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately()
+    {
+        SkipIfAppUnavailable();
+        SelectCableCaptureDevice();
+        using LtcSignalPlayer signalPlayer = CreateCablePlayer();
+
+        try
+        {
+            PrepareCombinationTest(
+                signalLossModeIndex: 0,
+                signalLossModeText: "ランスルー",
+                syncModeIndex: 1,
+                syncModeText: "Continue",
+                gapBehaviorIndex: 0,
+                gapBehaviorText: "Black");
+            signalPlayer.Play(
+                new LtcTimecode(0, 0, 34, 0, false),
+                Fps,
+                TimeSpan.FromSeconds(15));
+            StartLtcMonitor();
+            WaitForProgression(expectedHour: 0, timeout: TimeSpan.FromSeconds(8));
+            EnableSync();
+
+            E2EAssert.WaitUntil(
+                () => TryReadPlaybackPosition(out double seconds) && seconds is >= 13 and < 20,
+                TimeSpan.FromSeconds(5));
+            E2EAssert.WaitUntil(
+                () => ReadText("CurrentTrackLabel").Contains("Gap: Black", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(8));
+
+            SelectSyncMode(index: 0, expectedText: "Single");
+
+            E2EAssert.WaitUntil(
+                () => !ReadText("CurrentTrackLabel").Contains("Gap:", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(3));
+            ReadText("CurrentTrackLabel").Should().NotContain("Gap:");
+            E2EAssert.WaitUntil(
+                () => TryReadPlaybackPosition(out double seconds) && seconds >= 19,
+                TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            signalPlayer.Stop();
+            RestoreCombinationTestState();
+        }
+    }
+
+    [Fact]
+    public void CableLoop_StopMode_SignalLossDuringGap_IsEvaluatedAfterGapRecovery()
+    {
+        SkipIfAppUnavailable();
+        SelectCableCaptureDevice();
+        using LtcSignalPlayer signalPlayer = CreateCablePlayer();
+
+        try
+        {
+            PrepareCombinationTest(
+                signalLossModeIndex: 1,
+                signalLossModeText: "停止",
+                syncModeIndex: 1,
+                syncModeText: "Continue",
+                gapBehaviorIndex: 0,
+                gapBehaviorText: "Black");
+            signalPlayer.Play(
+                new LtcTimecode(0, 0, 36, 0, false),
+                Fps,
+                TimeSpan.FromSeconds(12));
+            StartLtcMonitor();
+            WaitForProgression(expectedHour: 0, timeout: TimeSpan.FromSeconds(8));
+            EnableSync();
+            E2EAssert.WaitUntil(
+                () => ReadText("CurrentTrackLabel").Contains("Gap: Black", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(8));
+
+            signalPlayer.Stop();
+            WaitForStableTimecode(
+                stableFor: TimeSpan.FromSeconds(1),
+                timeout: TimeSpan.FromSeconds(5));
+            ReadText("CurrentTrackLabel").Should().Contain("Gap: Black");
+
+            SelectSyncMode(index: 0, expectedText: "Single");
+            E2EAssert.WaitUntil(
+                () => !ReadText("CurrentTrackLabel").Contains("Gap:", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(3));
+
+            signalPlayer.Play(
+                new LtcTimecode(0, 0, 5, 0, false),
+                Fps,
+                TimeSpan.FromSeconds(12));
+            WaitForProgressionAfterSignalRestart(
+                expectedHour: 0,
+                initialWindow: TimeSpan.FromSeconds(10),
+                timeout: TimeSpan.FromSeconds(8));
+            EnsurePlaybackRunning();
+            WaitForPlaybackProgression(timeout: TimeSpan.FromSeconds(5));
+
+            signalPlayer.Stop();
+
+            WaitForStablePlaybackPosition(
+                stableFor: TimeSpan.FromSeconds(1),
+                timeout: TimeSpan.FromSeconds(5));
+            ReadButtonName("BtnPlay").Should().Be("▶");
+        }
+        finally
+        {
+            signalPlayer.Stop();
+            RestoreCombinationTestState();
+        }
+    }
+
+    [Fact]
+    public void CableLoop_WhileSignalRuns_RepeatedModeSwitchesRecoverSyncEveryTime()
+    {
+        SkipIfAppUnavailable();
+        SelectCableCaptureDevice();
+        using LtcSignalPlayer signalPlayer = CreateCablePlayer();
+
+        try
+        {
+            PrepareCombinationTest(
+                signalLossModeIndex: 0,
+                signalLossModeText: "ランスルー",
+                syncModeIndex: 0,
+                syncModeText: "Single",
+                gapBehaviorIndex: 0,
+                gapBehaviorText: "Black");
+            signalPlayer.Play(
+                new LtcTimecode(0, 0, 0, 0, false),
+                Fps,
+                TimeSpan.FromSeconds(20));
+            StartLtcMonitor();
+            WaitForProgressionAfterSignalRestart(
+                expectedHour: 0,
+                initialWindow: TimeSpan.FromSeconds(5),
+                timeout: TimeSpan.FromSeconds(8));
+            EnableSync();
+
+            foreach ((int index, string text) in new[]
+                     {
+                         (1, "Continue"),
+                         (0, "Single"),
+                         (1, "Continue"),
+                         (0, "Single"),
+                     })
+            {
+                TryReadTimecode(out ObservedTimecode beforeSwitch).Should().BeTrue();
+                SelectSyncMode(index, text);
+                WaitForTimecodeAfter(beforeSwitch.TotalFrames, TimeSpan.FromSeconds(3));
+                WaitForPlaybackAlignedToLtc(TimeSpan.FromSeconds(5));
+            }
+        }
+        finally
+        {
+            signalPlayer.Stop();
+            RestoreCombinationTestState();
+        }
+    }
+
+    private void PrepareCombinationTest(
+        int signalLossModeIndex,
+        string signalLossModeText,
+        int syncModeIndex,
+        string syncModeText,
+        int gapBehaviorIndex,
+        string gapBehaviorText)
+    {
+        SelectFixed25Fps();
+        SelectSignalLossMode(signalLossModeIndex, signalLossModeText);
+        DisableSyncIfEnabled();
+        SelectSyncMode(syncModeIndex, syncModeText);
+        if (syncModeIndex == 1)
+            SelectGapBehavior(gapBehaviorIndex, gapBehaviorText);
+        SeekToStart();
+    }
+
+    private void SelectSyncMode(int index, string expectedText)
+    {
+        ComboBox combo = _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId("SyncModeCombo"))!.AsComboBox();
+        combo.Select(index);
+        E2EAssert.WaitUntil(
+            () => combo.SelectedItem?.Name.Contains(expectedText, StringComparison.Ordinal) == true,
+            TimeSpan.FromSeconds(3));
+    }
+
+    private void SelectGapBehavior(int index, string expectedText)
+    {
+        ComboBox combo = _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId("GapBehaviorCombo"))!.AsComboBox();
+        E2EAssert.WaitUntil(() => combo.IsEnabled, TimeSpan.FromSeconds(3));
+        combo.Select(index);
+        E2EAssert.WaitUntil(
+            () => combo.SelectedItem?.Name.Contains(expectedText, StringComparison.Ordinal) == true,
+            TimeSpan.FromSeconds(3));
+    }
+
+    private void WaitForTimecodeAfter(long previousFrame, TimeSpan timeout) =>
+        E2EAssert.WaitUntil(
+            () => TryReadTimecode(out ObservedTimecode current) &&
+                  current.TotalFrames > previousFrame,
+            timeout);
+
+    private void WaitForPlaybackAlignedToLtc(TimeSpan timeout)
+    {
+        double lastPlaybackSeconds = double.NaN;
+        double lastLtcSeconds = double.NaN;
+        E2EAssert.WaitUntil(
+            () =>
+            {
+                if (!TryReadPlaybackPosition(out lastPlaybackSeconds) ||
+                    !TryReadTimecode(out ObservedTimecode timecode))
+                {
+                    return false;
+                }
+
+                lastLtcSeconds = timecode.TotalFrames / (double)Fps;
+                return Math.Abs(lastPlaybackSeconds - lastLtcSeconds) <= 2.0;
+            },
+            timeout);
+    }
+
+    private void RestoreCombinationTestState()
+    {
+        RestoreSignalLossTestState();
+        SelectSyncMode(index: 0, expectedText: "Single");
+    }
+
     private void PrepareSignalLossPlaybackTest(int modeIndex, string expectedModeText)
     {
         SelectFixed25Fps();
