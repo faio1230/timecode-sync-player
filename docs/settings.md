@@ -34,6 +34,7 @@ can restore the user's preferences. Delete it manually to remove the preferences
 | `ltcSignalLossMode` | enum | `RunThrough` | `RunThrough` or `Stop`; unknown values reset to `RunThrough` / 不明値は`RunThrough` |
 | `ltcSignalLossTimeoutMs` | integer | `250` | Clamped to `100`–`5000` ms / `100`～`5000`msへクランプ |
 | `ltcSignalResumeFrames` | integer | `5` | Must be greater than `0`; otherwise resets to `5` / `0`以下は`5`へ補正 |
+| `showDebugOsd` | boolean | `false` | Shows playback time and media metadata over the video when `true`; restart required / `true` で再生時刻とメディア情報を映像上に表示。変更後は再起動が必要 |
 
 Enum values are serialized as JSON numbers by the current application. The symbolic names above
 describe their meaning and stable UI labels; use settings written by the application when possible.
@@ -44,9 +45,9 @@ describe their meaning and stable UI labels; use settings written by the applica
 ## When changes take effect / 反映タイミング
 
 Most settings are applied when they are changed in the UI or loaded at startup. Changes made
-directly to `ltcSignalLossTimeoutMs` or `ltcSignalResumeFrames` require an application restart,
+directly to `ltcSignalLossTimeoutMs`, `ltcSignalResumeFrames`, or `showDebugOsd` require an application restart,
 because the signal-loss policy reads them when the main window is created.
 
-大半の設定はUIでの変更時または起動時に反映されます。`ltcSignalLossTimeoutMs`と
-`ltcSignalResumeFrames`をファイル上で変更した場合は、信号断ポリシーがメインウィンドウ生成時に
+大半の設定はUIでの変更時または起動時に反映されます。`ltcSignalLossTimeoutMs`、
+`ltcSignalResumeFrames`、`showDebugOsd`をファイル上で変更した場合は、メインウィンドウ生成時に
 値を読み込むため、アプリの再起動が必要です。

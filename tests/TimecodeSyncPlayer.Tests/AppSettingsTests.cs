@@ -25,6 +25,7 @@ public class AppSettingsTests
         settings.LtcSignalLossMode.Should().Be(LtcSignalLossMode.RunThrough);
         settings.LtcSignalLossTimeoutMs.Should().Be(250);
         settings.LtcSignalResumeFrames.Should().Be(5);
+        settings.ShowDebugOsd.Should().BeFalse();
     }
 
     [Theory]
@@ -177,7 +178,8 @@ public class AppSettingsTests
             AutoOffsetOnAdd = false,
             LtcSignalLossMode = LtcSignalLossMode.Stop,
             LtcSignalLossTimeoutMs = 1200,
-            LtcSignalResumeFrames = 8
+            LtcSignalResumeFrames = 8,
+            ShowDebugOsd = true
         };
 
         var options = new JsonSerializerOptions
@@ -204,6 +206,7 @@ public class AppSettingsTests
         deserialized.LtcSignalLossMode.Should().Be(original.LtcSignalLossMode);
         deserialized.LtcSignalLossTimeoutMs.Should().Be(original.LtcSignalLossTimeoutMs);
         deserialized.LtcSignalResumeFrames.Should().Be(original.LtcSignalResumeFrames);
+        deserialized.ShowDebugOsd.Should().BeTrue();
     }
 
     [Fact]
@@ -218,6 +221,7 @@ public class AppSettingsTests
         deserialized!.LtcSignalLossMode.Should().Be(LtcSignalLossMode.RunThrough);
         deserialized.LtcSignalLossTimeoutMs.Should().Be(250);
         deserialized.LtcSignalResumeFrames.Should().Be(5);
+        deserialized.ShowDebugOsd.Should().BeFalse();
     }
 
     [Fact]

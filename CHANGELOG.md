@@ -2,6 +2,16 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.2.0 - Unreleased
+
+### Added
+
+- Added the `showDebugOsd` setting for opt-in playback time and media metadata overlays.
+
+### Changed
+
+- Debug OSD is hidden by default while seek feedback via the mpv OSD bar remains available.
+
 ## 0.1.0 - 2026-07-15
 
 Initial beta release for validation in real show environments.
