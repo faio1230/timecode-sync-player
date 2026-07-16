@@ -237,7 +237,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             IndexOf: track => _playlist.Tracks.IndexOf(track),
             GetTrackCount: () => _playlist.Tracks.Count,
             MoveTrack: _playlist.MoveTrack,
-            SetSelectedIndex: index => PlaylistList.SelectedIndex = index,
+            SetSelectedIndex: ApplyPlaylistSelectionIndex,
             UpdateCurrentTrackLabel: UpdateCurrentTrackLabel,
             UpdatePlaylistTimelineDisplay: UpdatePlaylistTimelineDisplay));
         _playlistDurationBackfillCoordinator = new PlaylistDurationBackfillCoordinator(
@@ -359,7 +359,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         };
         _vm.Playlist.TrackMoved += () =>
         {
-            PlaylistList.SelectedIndex = _vm.Playlist.SelectedIndex;
+            ApplyPlaylistSelectionIndex(_vm.Playlist.SelectedIndex);
             UpdatePlaylistTimelineDisplay();
             UpdateCurrentTrackLabel();
         };
@@ -1019,8 +1019,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void SyncPlaylistSelection()
     {
-        PlaylistList.SelectedIndex = _playlist.CurrentIndex;
+        ApplyPlaylistSelectionIndex(_playlist.CurrentIndex);
         UpdateCurrentTrackLabel();
+    }
+
+    private void ApplyPlaylistSelectionIndex(int index)
+    {
+        if (index < -1 || index >= PlaylistList.Items.Count)
+            return;
+
+        PlaylistList.SelectedIndex = index;
     }
 
     private void UpdateCurrentTrackLabel()

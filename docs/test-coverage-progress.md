@@ -555,3 +555,22 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   `_selectedIndex=-1` を設定した後、コマンドが `_selectedIndex--` を行って `-2` にする競合が原因。
 - 本体 `src/` は変更していない。実バグ修正の承認待ちのため、V9 のミューテーション確認、
   非E2E/E2E全件ゲート、V10以降は未実行。ブランチは `test/hardening-v1`、push はしていない。
+
+### テスト強化 V9 再停止（2026-07-16）
+
+- 承認された並べ替えクラッシュを修正した。`PlaylistViewModel` の MoveUp/MoveDown は移動前の
+  選択インデックスと最終インデックスをローカル変数で確定し、コレクション移動後に
+  `SelectedIndex` を絶対代入するよう変更した。`MainWindow` の選択同期は `-1..Items.Count-1`
+  だけを `PlaylistList.SelectedIndex` へ適用し、それ以外を無視する防御を追加した。既存ログは変更していない。
+- RED: 実 `ObservableCollection.CollectionChanged` から `vm.SelectedIndex=-1` のUIエコー相当を
+  差し込む回帰テスト2件は、修正前に MoveUp が期待1に対して `-2`、MoveDown が期待2に対して
+  `0` となって失敗した。GREEN: 修正後の `PlaylistViewModelTests` は14/14件合格した。
+- V9 `ProjectRoundTrip_RestoresPlaylistOrderOffsetModeAndPlayback` は並べ替えクラッシュを通過し、
+  保存・クリア・読込まで進んだが、保存した先頭オフセット `00:00:10:00` が読込後に
+  `00:00:00:00` へ変わる別の実バグを検出したため再停止した。
+- 原因は、`ApplyLoadedProject` が保存済みオフセットを復元した直後に
+  `ReadDurationsInBackground` を呼び、共通 `PlaylistDurationBackfillEffects` が
+  `AutoOffsetOnAdd=true` を参照して `UpdateMediaDuration(..., recalculate: true)` を実行すること。
+  ログでも読込直後に track[0] が10秒から0秒、track[1] が30秒から20秒へ再計算された。
+- 新しい実バグの修正は未承認。V9 のミューテーション確認、非E2E/E2E全件ゲート、V10以降は
+  未実行。ブランチは `test/hardening-v1`、push はしておらず、未追跡 `AGENTS.md` もステージしていない。

@@ -29,13 +29,11 @@ internal sealed class PlaylistViewModel : INotifyPropertyChanged
         _moveUpCommand = new RelayCommand(
             () =>
             {
-                if (_playlist.MoveTrackUp(_selectedIndex))
+                int selectedIndex = _selectedIndex;
+                int finalIndex = selectedIndex - 1;
+                if (_playlist.MoveTrackUp(selectedIndex))
                 {
-                    // フィールドを直接書き換えることで TrackMoved ハンドラが
-                    // 最新のインデックスを参照できる。PropertyChanged は
-                    // MainWindow が PlaylistList.SelectedIndex を更新すると
-                    // SelectionChanged 経由で後から発火する。
-                    _selectedIndex--;
+                    SelectedIndex = finalIndex;
                     TrackMoved?.Invoke();
                 }
             },
@@ -44,9 +42,11 @@ internal sealed class PlaylistViewModel : INotifyPropertyChanged
         _moveDownCommand = new RelayCommand(
             () =>
             {
-                if (_playlist.MoveTrackDown(_selectedIndex))
+                int selectedIndex = _selectedIndex;
+                int finalIndex = selectedIndex + 1;
+                if (_playlist.MoveTrackDown(selectedIndex))
                 {
-                    _selectedIndex++; // 上記 MoveUp と同様の理由でフィールド直接更新
+                    SelectedIndex = finalIndex;
                     TrackMoved?.Invoke();
                 }
             },

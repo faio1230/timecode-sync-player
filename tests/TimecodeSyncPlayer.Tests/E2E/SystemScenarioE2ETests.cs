@@ -22,10 +22,10 @@ public sealed class SystemScenarioE2ETests
         try
         {
             using var app = E2EAppRunner.Start(exe, "--vo null");
-            AddPlaylistFile(app, videoCopy);
-            AddPlaylistFile(app, alternateCopy);
+            AddPlaylistFiles(app, videoCopy, alternateCopy);
             ListBox playlist = Playlist(app);
             E2EAssert.WaitUntil(() => playlist.Items.Length == 2, TimeSpan.FromSeconds(8));
+            EnsurePaused(app);
 
             playlist.Items[1].Select();
             app.Button("BtnMoveTrackUp").Invoke();
@@ -179,49 +179,79 @@ public sealed class SystemScenarioE2ETests
     private static ListBox Playlist(E2EAppRunner app) =>
         app.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList"))!.AsListBox();
 
-    private static void AddPlaylistFile(E2EAppRunner app, string path) =>
-        InvokeFileDialog(app, "BtnAddToPlaylist", path);
+    private static void AddPlaylistFiles(E2EAppRunner app, params string[] paths) =>
+        InvokeFileDialog(app, "BtnAddToPlaylist", paths);
 
     private static void InvokeFileDialog(
         E2EAppRunner app,
         string buttonAutomationId,
         string path,
         bool confirmOverwrite = false,
+        bool expectFollowupDialog = false) =>
+        InvokeFileDialog(app, buttonAutomationId, [path], confirmOverwrite, expectFollowupDialog);
+
+    private static void InvokeFileDialog(
+        E2EAppRunner app,
+        string buttonAutomationId,
+        IReadOnlyList<string> paths,
+        bool confirmOverwrite = false,
         bool expectFollowupDialog = false)
     {
-        app.Button(buttonAutomationId).Invoke();
+        Button button = app.Button(buttonAutomationId);
+        Task invokeTask = Task.Run(button.Invoke);
         Window dialog = WaitForModalWindow(app, _ => true);
         NavigateToVideosFolder(dialog);
-        string fileName = Path.GetFileName(path);
-        AutomationElement? fileItem = null;
-        E2EAssert.WaitUntil(() =>
+        for (int index = 0; index < paths.Count; index++)
         {
-            fileItem = dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem))
-                .FirstOrDefault(element => element.Name == fileName);
-            return fileItem != null;
-        }, TimeSpan.FromSeconds(5));
-        fileItem!.Patterns.SelectionItem.Pattern.Select();
+            string fileName = Path.GetFileName(paths[index]);
+            AutomationElement? fileItem = null;
+            E2EAssert.WaitUntil(() =>
+            {
+                fileItem = dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem))
+                    .FirstOrDefault(element => element.Name == fileName);
+                return fileItem != null;
+            }, TimeSpan.FromSeconds(5));
+            if (index == 0)
+                fileItem!.Patterns.SelectionItem.Pattern.Select();
+            else
+                fileItem!.Patterns.SelectionItem.Pattern.AddToSelection();
+        }
         AutomationElement accept = dialog.FindAllDescendants()
             .Single(element =>
                 element.Properties.AutomationId.ValueOrDefault == "1" &&
-                element.ControlType == ControlType.SplitButton);
+                element.ControlType is ControlType.Button or ControlType.SplitButton);
+        nint dialogHandle = dialog.Properties.NativeWindowHandle.ValueOrDefault;
         accept.Patterns.Invoke.Pattern.Invoke();
-        E2EAssert.WaitUntil(
-            () => app.MainWindow.ModalWindows.All(window => window.Name != dialog.Name),
-            TimeSpan.FromSeconds(8));
 
         if (confirmOverwrite)
         {
-            Window confirmation = WaitForModalWindow(app, window =>
-                window.Name.Contains("確認", StringComparison.Ordinal));
-            Button yes = confirmation.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+            Window? confirmation = null;
+            E2EAssert.WaitUntil(() =>
+            {
+                Window[] modals = app.MainWindow.ModalWindows;
+                confirmation = modals.FirstOrDefault(window =>
+                    window.Properties.NativeWindowHandle.ValueOrDefault != dialogHandle);
+                return confirmation != null || modals.All(window =>
+                    window.Properties.NativeWindowHandle.ValueOrDefault != dialogHandle);
+            }, TimeSpan.FromSeconds(8));
+            confirmation.Should().NotBeNull("an existing project file requires overwrite confirmation");
+            Button yes = confirmation!.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
                 .Select(element => element.AsButton())
                 .First(button => button.Name.StartsWith("はい", StringComparison.Ordinal));
             yes.Invoke();
         }
 
+        E2EAssert.WaitUntil(
+            () => app.MainWindow.ModalWindows.All(window =>
+                window.Properties.NativeWindowHandle.ValueOrDefault != dialogHandle),
+            TimeSpan.FromSeconds(8));
+
         if (!expectFollowupDialog)
+        {
             E2EAssert.WaitUntil(() => app.MainWindow.ModalWindows.Length == 0, TimeSpan.FromSeconds(8));
+            E2EAssert.WaitUntil(() => invokeTask.IsCompleted, TimeSpan.FromSeconds(8));
+            invokeTask.GetAwaiter().GetResult();
+        }
     }
 
     private static void NavigateToVideosFolder(Window dialog)
