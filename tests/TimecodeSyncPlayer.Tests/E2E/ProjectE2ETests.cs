@@ -11,14 +11,17 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 public sealed class ProjectE2ETests : IDisposable
 {
     private readonly string _projectPath;
+    private readonly string _settingsPath;
     public ProjectE2ETests()
     {
         _projectPath = ProjectFileFactory.CreateTempProjectPath();
+        _settingsPath = _projectPath + ".settings.json";
     }
 
     public void Dispose()
     {
         ProjectFileFactory.Cleanup(_projectPath);
+        ProjectFileFactory.Cleanup(_settingsPath);
     }
 
     [SkippableFact]
@@ -27,11 +30,16 @@ public sealed class ProjectE2ETests : IDisposable
         var (exe, video, skipReason) = ResolvePrereqs();
         Skip.If(skipReason != null, skipReason);
 
-        using var process = E2EAppRunner.StartProcess(exe, $"--vo null --save-project \"{_projectPath}\" --playlist \"{video}\" \"{video}\"");
+        using var process = E2EAppRunner.StartProcess(
+            exe,
+            $"--vo null --save-project \"{_projectPath}\" --playlist \"{video}\" \"{video}\"",
+            _settingsPath);
         try
         {
             Assert.True(WaitForFile(_projectPath, TimeSpan.FromSeconds(12)),
                 $"プロジェクトファイルが生成されなかった: {_projectPath}");
+            Assert.True(WaitForLastOpenedProjectPath(_settingsPath, _projectPath, TimeSpan.FromSeconds(5)),
+                "successful CLI save should record lastOpenedProjectPath");
         }
         finally
         {
@@ -106,6 +114,36 @@ public sealed class ProjectE2ETests : IDisposable
             }
 
             Thread.Sleep(500);
+        }
+
+        return false;
+    }
+
+    private static bool WaitForLastOpenedProjectPath(string settingsPath, string expected, TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                if (File.Exists(settingsPath))
+                {
+                    using JsonDocument document = JsonDocument.Parse(File.ReadAllText(settingsPath));
+                    if (document.RootElement.TryGetProperty("lastOpenedProjectPath", out JsonElement path) &&
+                        path.GetString() == expected)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (JsonException)
+            {
+            }
+
+            Thread.Sleep(100);
         }
 
         return false;

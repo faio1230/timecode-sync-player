@@ -81,6 +81,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly GapFreezeHandler _gapFreezeHandler;
     private readonly LtcSignalLossPolicy _ltcSignalLossPolicy;
     private readonly LtcSignalLossMonitoringState _ltcSignalLossMonitoringState = new();
+    private bool _isRefreshingLtcDevices;
 
     // ── Constants ──────────────────────────────────────────────────
 
@@ -246,6 +247,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Volume = snapshot.Volume,
                 })));
         ApplyAudioControlUi(audioState.Snapshot);
+        _vm.Sync.SyncModeIndex = ProjectSyncSelectionMapper.GetSyncModeIndex(settingsManager.Current.SyncMode);
+        _vm.Sync.GapBehaviorIndex = ProjectSyncSelectionMapper.GetGapBehaviorIndex(settingsManager.Current.GapBehavior);
         _vm.Sync.LtcSignalLossModeIndex =
             settingsManager.Current.LtcSignalLossMode == LtcSignalLossMode.Stop ? 1 : 0;
         _playlistDragDropCoordinator = new PlaylistDragDropCoordinator(new PlaylistDragDropEffects(
@@ -281,7 +284,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             new ProjectFileActionRunner(),
             new ProjectFileEffects(
                 SaveAsync: path => _projectSaveExecutor.SaveAsync(path, _vm.Sync.SyncMode, _vm.Sync.GapBehavior),
-                LogSaved: path => Log.Information("プロジェクトを保存しました: {Path}", path),
+                LogSaved: path =>
+                {
+                    RememberProjectPath(path);
+                    Log.Information("プロジェクトを保存しました: {Path}", path);
+                },
                 HandleSaveFailure: ex =>
                 {
                     Log.Error(ex, "プロジェクトの保存に失敗しました");
@@ -293,7 +300,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 {
                     RestoreLoadedProject(project);
                 }),
-                LogLoaded: path => Log.Information("プロジェクトを読み込みました: {Path}", path),
+                LogLoaded: path =>
+                {
+                    RememberProjectPath(path);
+                    Log.Information("プロジェクトを読み込みました: {Path}", path);
+                },
                 HandleInvalidProject: () => MessageBox.Show("プロジェクトファイルの形式が不正です。", "エラー",
                     MessageBoxButton.OK, MessageBoxImage.Error),
                 HandleLoadFailure: ex =>
@@ -323,10 +334,21 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             switch (e.PropertyName)
             {
                 case nameof(SyncViewModel.SyncMode):
+                    _ = _settingsManager.UpdateAsync(settings => settings with
+                    {
+                        SyncMode = _vm.Sync.SyncMode,
+                    });
                     _ltcFrameProcessor.ResetDiagnostics();
                     _syncService.ClearSeekState();
                     ExitGapStateForManualControlIfNeeded();
                     Log.Information("Sync mode changed to {Mode}", _vm.Sync.SyncMode);
+                    break;
+                case nameof(SyncViewModel.GapBehavior):
+                    _ = _settingsManager.UpdateAsync(settings => settings with
+                    {
+                        GapBehavior = _vm.Sync.GapBehavior,
+                    });
+                    Log.Information("Gap behavior changed to {Behavior}", _vm.Sync.GapBehavior);
                     break;
                 case nameof(SyncViewModel.LtcFpsMode):
                     _ltcFrameProcessor.ResetForFpsMode(_vm.Sync.LtcFpsMode);
@@ -454,7 +476,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             delayAsync: Task.Delay,
             logStartupFailure: (ex, plan) => Log.Error(ex, "launch startup action failed action={Action} path={Path}",
                 plan.StartupAction, plan.LoadProjectPath),
-            logSaveCompleted: path => Log.Information("--save-project completed: {Path}", path),
+            logSaveCompleted: path =>
+            {
+                RememberProjectPath(path);
+                Log.Information("--save-project completed: {Path}", path);
+            },
             logSaveFailure: (ex, path) => Log.Error(ex, "--save-project failed: {Path}", path));
         launchActionScheduler.Schedule(launchActionPlan, launchActionExecutor, TimeSpan.FromMilliseconds(SaveProjectDelayMs));
     }
@@ -482,6 +508,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             return;
 
         RestoreLoadedProject(project);
+        RememberProjectPath(path);
     }
 
     private void RestoreLoadedProject(ProjectData project)
@@ -593,6 +620,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         RefreshLtcDevices();
     }
 
+    private void LtcDeviceCombo_SelectionChanged(
+        object sender,
+        System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_isRefreshingLtcDevices || LtcDeviceCombo.SelectedItem is not string deviceName)
+            return;
+
+        _ = _settingsManager.UpdateAsync(settings => settings with { LtcDeviceName = deviceName });
+        Log.Information("LTC capture device selected device={Device}", deviceName);
+    }
+
     private void AutoOffsetCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         bool autoOffset = AutoOffsetCheckBox.IsChecked == true;
@@ -601,24 +639,42 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void RefreshLtcDevices()
     {
-        string? previousSelection = LtcDeviceCombo.SelectedItem as string;
-        LtcDeviceCombo.Items.Clear();
+        string? requestedSelection = LtcDeviceCombo.SelectedItem as string;
+        if (string.IsNullOrEmpty(requestedSelection))
+            requestedSelection = _settingsManager.Current.LtcDeviceName;
+
+        _isRefreshingLtcDevices = true;
 
         try
         {
+            LtcDeviceCombo.Items.Clear();
             IReadOnlyList<string> deviceNames = _ltcMonitor.GetCaptureDeviceNames();
             foreach (string name in deviceNames)
                 LtcDeviceCombo.Items.Add(name);
 
-            LtcDeviceCombo.SelectedIndex =
-                LtcDeviceListRefreshPlanner.ResolveSelectedIndex(previousSelection, deviceNames);
+            int selectedIndex = LtcDeviceListRefreshPlanner.ResolveSelectedIndex(requestedSelection, deviceNames);
+            LtcDeviceCombo.SelectedIndex = selectedIndex;
+            if (!string.IsNullOrEmpty(requestedSelection) &&
+                (selectedIndex < 0 || deviceNames[selectedIndex] != requestedSelection))
+            {
+                Log.Warning(
+                    "Saved LTC capture device was not found; using first available device requested={Device}",
+                    requestedSelection);
+            }
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "LTC capture device enumeration failed");
             _vm.Sync.LtcFormatText = "LTC デバイス列挙失敗";
         }
+        finally
+        {
+            _isRefreshingLtcDevices = false;
+        }
     }
+
+    private void RememberProjectPath(string path) =>
+        _ = _settingsManager.UpdateAsync(settings => settings with { LastOpenedProjectPath = path });
 
     private void LtcMonitor_FrameReceived(object? sender, LtcFrameReceivedEventArgs e)
     {

@@ -24,7 +24,7 @@ public sealed record AppSettings
     public GapBehavior GapBehavior { get; init; } = GapBehavior.Freeze;
     public TimecodeFpsMode TimecodeFpsMode { get; init; } = TimecodeFpsMode.Auto;
     public string LastOpenedProjectPath { get; init; } = "";
-    public int LtcDeviceIndex { get; init; } = -1;
+    public string LtcDeviceName { get; init; } = "";
     public double? WindowLeft { get; init; }
     public double? WindowTop { get; init; }
     public double? WindowWidth { get; init; }
@@ -142,7 +142,10 @@ public sealed class AppSettingsManager
         if (settings.WindowHeight is <= 0 or > 4320) settings = settings with { WindowHeight = null };
         if (settings.WindowLeft is < -7680 or > 7680) settings = settings with { WindowLeft = null };
         if (settings.WindowTop is < -4320 or > 4320) settings = settings with { WindowTop = null };
-        if (settings.LtcDeviceIndex < -1) settings = settings with { LtcDeviceIndex = -1 };
+        if (!Enum.IsDefined(settings.SyncMode))
+            settings = settings with { SyncMode = AppSettings.Default.SyncMode };
+        if (!Enum.IsDefined(settings.GapBehavior))
+            settings = settings with { GapBehavior = AppSettings.Default.GapBehavior };
         if (!Enum.IsDefined(settings.LtcSignalLossMode))
             settings = settings with { LtcSignalLossMode = LtcSignalLossMode.RunThrough };
         settings = settings with

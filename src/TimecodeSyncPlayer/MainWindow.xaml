@@ -197,6 +197,7 @@
                               Height="28"
                               Background="White"
                               Foreground="Black"
+                              SelectionChanged="LtcDeviceCombo_SelectionChanged"
                               SelectedItem="{Binding Sync.SelectedDevice, Mode=TwoWay}">
                     </ComboBox>
                     <Button Content="更新" Grid.Column="1" Width="50" Height="28"
