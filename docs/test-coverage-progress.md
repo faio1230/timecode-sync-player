@@ -982,3 +982,25 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 一括実行ルールの「E2E が1件でも落ちたら停止」に従い停止。Q1/Q2/Q3はいずれも未着手で、
   `src/`・`tests/`・QA対象docsの変更、ミューテーション確認、QA項目対照表は未実施。
 - 未追跡 `AGENTS.md` はステージ・変更していない。
+
+### 第三者QA指摘対応・Q1実機E2E停止（2026-07-17）
+
+- ユーザー許可に基づき既存E2E障害を調査した。失敗時もタイトル取得と他45件は成功し、単独再実行も
+  1/1件成功したため、RDP/UIAの一時的な `IsOffscreen` 非対応と判断した。対応時は従来どおり
+  `IsOffscreen=false` を要求し、非対応時だけ正のBoundingRectangleへフォールバックするテスト専用
+  ヘルパーをTDDで追加した（コミット `58f1f0f`）。復旧後は非E2E 1127/1127件、E2E 46/46件、
+  失敗0、Skip 0、警告0。
+- Q1では、保存済みプロジェクト復元専用のpausedロード、UI/CLI共通復元処理、`.tsp` を渡した
+  `--open` のプロジェクト分類をTDDで実装した。通常動画の追加・`--open` は従来の `pause=no` を維持した。
+- Q1対象は、再生操作・CLI計画・SyncScenarioハーネスの19/19件、UIラウンドトリップ1/1件、
+  CLI `--load-project` / `.tsp` の `--open` 2/2件が合格。非E2E全件は1130/1130件合格、
+  失敗0、Skip 0、警告0。
+- 実機込みE2E全件は47件中46件合格、失敗1、Skip 0（6分35秒）。
+  `VolumeControlE2ETests.CableLoop_ContinueMuteSurvivesDeterministicGapAndTrackSwitch` が、
+  Sync ON後の `switching to track volume-track-1` ログ待機（`VolumeControlE2ETests.cs:108`）で失敗した。
+- 根本原因は、Q1の復元で先頭トラックをpaused状態かつ `_loadedTrackId` 設定済みにした結果、Sync ON後の
+  Continue同期が `ContinueCurrentTrack` 分岐へ入り、この分岐には `pause=no` / UI pause状態解除がないこと。
+  したがって「Sync ON時は同期エンジンにより再生開始」というQ1仕様を満たさない製品実バグである。
+- 一括実行ルールの「製品の実バグ発見」「E2Eが1件でも失敗」に従い停止。Q1差分は未コミットで保持し、
+  Q2/Q3、ミューテーション確認、QA項目対照表は未着手。pushは未実施。未追跡 `AGENTS.md` は
+  ステージ・変更していない。
