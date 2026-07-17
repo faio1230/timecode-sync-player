@@ -1030,3 +1030,36 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   タイムアウトして失敗した。双方を復元後、対象3件が再度合格した。
 - 関連コミット: `58f1f0f`（UIAフレーク頑健化）、`fb38e46`（Q1）、`9631003`（Q2）、
   `4476185`（Q3）。未追跡 `AGENTS.md` はステージ・変更していない。
+
+## QA-002 U1 診断（2026-07-17）
+
+- 診断条件: Debug / 実 `libmpv` SW render（`vo=libmpv`）/ 1280x720・30fps・20秒動画。
+  UIA は別プロセスの FlaUI UIA3 から計測し、広域列挙は
+  `Window.FindAllDescendants()`、個別検索は `BtnPlay` の `FindFirstDescendant` とした。
+  各10回、1回1.5秒を規定時間とした。Codexプロセス環境だけ `windir` が欠落してWPFが
+  起動不能だったため、検証コマンド内だけ `windir=$SystemRoot`（`C:\WINDOWS`）を設定した。
+  マシン／ユーザー環境変数は変更していない。
+- UIA広域列挙: 停止中は10/10成功、失敗率0%、102要素、平均38.76ms、P50 38.11ms、
+  P95/最大44.70ms。通常再生中は0/10成功、失敗率100%（全件1.5秒超）。
+- UIA個別検索: 停止中は10/10成功、平均10.10ms、P95/最大10.94ms。通常再生中は
+  2/10成功・8/10タイムアウト（失敗率80%）で、成功した2件は平均11.12ms、最大12.84ms。
+  既存E2Eは `--vo null` でSW renderを通らないため、実render中の応答性を証明していなかった。
+- Dispatcher遅延: 停止安定区間は20標本で平均0.06ms、P50 0.05ms、P95 0.08ms、
+  最大0.20ms。通常再生安定区間は2秒あたり20～21標本で平均20.70～21.76ms、
+  P50 21.34～21.95ms、P95 22.26～23.56ms、最大24.26msだった
+  （`DispatcherPriority.Input`、100ms間隔）。
+- render実頻度と占有: ソース30fpsに対して2.0～2.1秒あたり60～63回（約30.0回/秒）。
+  `OnRenderUpdate` は平均32.62～32.97ms/回、安定区間最大35.04msで、UIスレッド時間の
+  97.86～98.89%を占有した。内訳は `mpv_render_context_render` が平均約32.3ms、
+  WriteableBitmap更新は平均0.38～0.60msにすぎず、後者は1回の約1～2%だった。
+- 1/2対照実験: WriteableBitmap更新だけを30fpsから約15fpsへ落とし、後段のSpout発行経路は
+  スキップしない一時変更で計測した。bitmap更新30～32回／skip 30～32回（2.0～2.1秒）に
+  なった一方、renderは60～63回、平均32.66～32.88ms、UI占有率98.02～98.63%のまま。
+  UIA広域列挙も0/10成功（失敗率100%）、個別検索も2/10成功（失敗率80%）で回復しなかった。
+- **U1結論**: UIスレッド飽和仮説は成立するが、占有源はWriteableBitmapではない。
+  UIスレッド上で各フレームの `mpv_render_context_render` が次フレーム相当の約32msを消費し、
+  直後に次のBackground renderを再投入するため、UIAプロバイダの広域列挙は全件タイムアウトし、
+  個別検索も断続的にタイムアウトする。表示更新半減とAddDirtyRect最適化では原因を除去できない。
+- **U2進行判定**: UIスレッド飽和そのものは直接確認できたため停止条件には該当せず、U2へ進む。
+  U2では表示だけのスロットリング案を採用せず、`mpv_render_context_render` とSpout全フレーム発行を
+  UIスレッドから分離し、WriteableBitmap公開だけをUI Dispatcherへ戻す構成を検討・検証する。
