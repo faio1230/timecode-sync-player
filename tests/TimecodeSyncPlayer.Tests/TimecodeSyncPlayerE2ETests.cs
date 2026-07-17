@@ -1,5 +1,6 @@
 using FluentAssertions;
 using FlaUI.Core.AutomationElements;
+using TimecodeSyncPlayer.Tests.Helpers;
 using Xunit.Abstractions;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -121,7 +122,9 @@ public sealed class TimecodeSyncPlayerE2ETests : IClassFixture<TimecodeSyncPlaye
 
         Win.Should().NotBeNull();
         Win.Title.Should().Be(ApplicationVersion.WindowTitle);
-        Win.IsOffscreen.Should().BeFalse();
+        E2EAssert.WaitUntil(
+            () => E2EWindowVisibility.IsVisible(Win),
+            TimeSpan.FromSeconds(3));
     }
 
     // ── フルスクリーン出力 ────────────────────────────────────────

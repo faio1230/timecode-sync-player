@@ -1,6 +1,7 @@
 using Xunit;
 using FluentAssertions;
 using FlaUI.Core.AutomationElements;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -23,7 +24,9 @@ public sealed class LtcControlsE2ETests : IClassFixture<TimecodeSyncPlayerFixtur
         Button refresh = Btn("BtnRefreshLtcDevices");
         refresh.IsEnabled.Should().BeTrue();
 
-        Win.IsOffscreen.Should().BeFalse();
+        E2EAssert.WaitUntil(
+            () => E2EWindowVisibility.IsVisible(Win),
+            TimeSpan.FromSeconds(3));
         Element("LtcDeviceCombo").Should().NotBeNull();
         Element("BtnStartLtc").Should().NotBeNull();
         Element("BtnStopLtc").Should().NotBeNull();
