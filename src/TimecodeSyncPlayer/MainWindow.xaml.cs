@@ -128,6 +128,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // ── Playlist ──────────────────────────────────────────────────
     private readonly PlaylistState _playlist;
+    private readonly ProjectRestorePauseState _projectRestorePauseState = new();
     private Guid?                  _loadedTrackId;
     private bool                   _endAdvanceTriggered;
     private readonly PlaylistDragDropCoordinator _playlistDragDropCoordinator;
@@ -290,16 +291,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 LoadAsync: ProjectSerializer.LoadAsync,
                 ApplyProject: project => _ = Dispatcher.BeginInvoke(() =>
                 {
-                    StopPlayback();
-                    ApplyLoadedProject(project);
-
-                    SyncPlaylistSelection();
-                    UpdatePlaylistTimelineDisplay();
-                    UpdateCurrentTrackLabel();
-                    LoadCurrentPlaylistTrack();
-                    _ = ReadDurationsInBackground(
-                        _playlist.Tracks.Select(t => t.FilePath).ToList(),
-                        recalculateTimeline: false);
+                    RestoreLoadedProject(project);
                 }),
                 LogLoaded: path => Log.Information("プロジェクトを読み込みました: {Path}", path),
                 HandleInvalidProject: () => MessageBox.Show("プロジェクトファイルの形式が不正です。", "エラー",
@@ -489,7 +481,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (project == null)
             return;
 
+        RestoreLoadedProject(project);
+    }
+
+    private void RestoreLoadedProject(ProjectData project)
+    {
+        _projectRestorePauseState.Clear();
+        StopPlayback();
         ApplyLoadedProject(project);
+
+        SyncPlaylistSelection();
+        UpdatePlaylistTimelineDisplay();
+        UpdateCurrentTrackLabel();
+        LoadCurrentPlaylistTrack(paused: true);
+        _ = ReadDurationsInBackground(
+            _playlist.Tracks.Select(t => t.FilePath).ToList(),
+            recalculateTimeline: false);
     }
 
     private void ApplyLoadedProject(ProjectData project)
@@ -578,7 +585,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             SyncPlaylistSelection,
             UpdatePlaylistTimelineDisplay,
             () => _playlist.Current != null,
-            LoadCurrentPlaylistTrack);
+            () => LoadCurrentPlaylistTrack());
     }
 
     private void BtnRefreshLtcDevices_Click(object sender, RoutedEventArgs e)
@@ -716,6 +723,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void ApplySingleModeSync(double ltcSeconds)
     {
+        if (_vm.Sync.SyncEnabled && !_seekBarInteraction.IsSeeking && _playlist.Current != null)
+            ResumeProjectRestorePauseForSyncIfNeeded();
+
         _singleModeSyncCoordinator ??= new SingleModeSyncCoordinator(
             _syncService,
             new SingleModeSyncEffects(
@@ -774,6 +784,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void HandleOnTrackSync(TimelineQueryResult result, double ltcSeconds)
     {
+        ResumeProjectRestorePauseForSyncIfNeeded();
+
         _continueOnTrackCoordinator ??= new ContinueOnTrackCoordinator(
             _syncService,
             _fileLoadStabilityLogState,
@@ -1025,13 +1037,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _timelinePanel.LoadedTrackId = id;
     }
 
-    private void LoadCurrentPlaylistTrack()
+    private void LoadCurrentPlaylistTrack(bool paused = false)
     {
         PlaylistTrack? track = _playlist.Current;
         if (track == null) return;
 
         SetLoadedTrack(track.Id);
-        LoadFile(track.FilePath);
+        if (paused)
+        {
+            if (LoadFilePaused(track.FilePath))
+                _projectRestorePauseState.MarkPending();
+        }
+        else
+        {
+            _projectRestorePauseState.Clear();
+            LoadFile(track.FilePath);
+        }
         UpdateCurrentTrackLabel();
         UpdatePlaylistTimelineDisplay();
         Log.Information("Playlist track loaded index={Index} name={Name} path={Path}",
@@ -1162,6 +1183,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private bool LoadFile(string path, double? startPosition = null)
         => CreatePlaybackOperationsCoordinator().LoadFile(path, startPosition);
 
+    private bool LoadFilePaused(string path)
+        => CreatePlaybackOperationsCoordinator().LoadFilePaused(path);
+
     // ── Playback helpers ───────────────────────────────────────────
 
     private bool SeekTo(double seconds, bool suppressOsd = true)
@@ -1171,10 +1195,21 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     void IPlaybackController.TogglePlayPause()
     {
         if (_mpv == IntPtr.Zero) return;
+        _projectRestorePauseState.Clear();
         PlaybackPauseChange change = _playbackControl.TogglePlayPause();
         _mpvApi.SetPropertyString(_mpv, "pause", change.MpvPauseValue);
         ResetPlaybackPerformanceStats();
         _vm.Player.PlayPauseIcon = change.PlayPauseIcon;
+    }
+
+    private void ResumeProjectRestorePauseForSyncIfNeeded()
+    {
+        if (!_projectRestorePauseState.TryConsume())
+            return;
+
+        _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
+        ApplyPauseState(false);
+        Log.Information("Project restore pause released by on-track sync");
     }
 
     void IPlaybackController.SeekRelative(double seconds)

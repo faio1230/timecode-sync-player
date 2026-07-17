@@ -83,6 +83,29 @@ internal sealed class PlaybackOperationsCoordinator
         return true;
     }
 
+    public bool LoadFilePaused(string path)
+    {
+        if (!_effects.IsMpvReady()) return false;
+
+        int loadRc = _effects.CommandString(
+            MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition: null));
+        int pauseRc = _effects.SetPropertyString("pause", MpvValueYes);
+        bool success = loadRc == 0;
+        Log.Information("LoadFile path={Path} start=none loadRc={LoadRc} pauseRc={PauseRc}",
+            path, loadRc, pauseRc);
+
+        if (!success) return false;
+
+        ApplyPauseState(true);
+        _effects.ResetPlayerStateForNewTrack();
+        _effects.ResetVideoWidth();
+        _effects.ResetVideoHeight();
+        _effects.ResetGapFreeze();
+        _effects.SetSeekBarValueFromPlayer(0);
+        _effects.SetTimeLabel(DefaultTimeLabel);
+        return true;
+    }
+
     public bool SeekTo(double seconds, bool suppressOsd = true)
     {
         try

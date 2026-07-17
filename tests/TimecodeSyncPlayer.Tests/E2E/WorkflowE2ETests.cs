@@ -9,19 +9,27 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 [Collection("E2E")]
 public sealed class WorkflowE2ETests
 {
-    [SkippableFact]
-    public async Task LoadProject_RestoresContinueFreezeSelectionInUi()
+    [SkippableTheory]
+    [InlineData("--load-project")]
+    [InlineData("--open")]
+    public async Task LoadProjectFromCli_RestoresSelectionsAndLoadsFirstFramePaused(string projectOption)
     {
         var prereqs = E2EAppRunner.ResolvePrereqs();
         Skip.If(prereqs.SkipReason != null, prereqs.SkipReason);
 
-        string projectPath = ProjectFileFactory.CreateTempProjectPath();
+        string projectPath = Path.Combine(
+            Path.GetTempPath(),
+            $"tsp-workflow-{Guid.NewGuid():N}.tsp");
         try
         {
             string videoPath = TestVideoFactory.GetOrCreate();
             await SaveProjectAsync(projectPath, SyncMode.Continue, GapBehavior.Freeze, CreateTrack(videoPath, "clip-a", 0, 20));
 
-            using var app = E2EAppRunner.Start(prereqs.ExePath, $"--vo null --load-project \"{projectPath}\"");
+            using var app = E2EAppRunner.Start(
+                prereqs.ExePath,
+                $"--vo null {projectOption} \"{projectPath}\"",
+                settingsFilePath: null,
+                pausePlaybackIfNeeded: false);
 
             ComboBox syncModeCombo = app.Combo("SyncModeCombo");
             ComboBox gapBehaviorCombo = app.Combo("GapBehaviorCombo");
@@ -30,6 +38,11 @@ public sealed class WorkflowE2ETests
             syncModeCombo.SelectedItem?.Name.Should().Contain("Continue");
             gapBehaviorCombo.IsEnabled.Should().BeTrue();
             gapBehaviorCombo.SelectedItem?.Name.Should().Contain("Freeze");
+            E2EAssert.WaitUntil(
+                () => app.Text("CurrentTrackLabel").Contains("clip-a", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(8));
+            WaitForDuration(app);
+            app.Button("BtnPlay").Name.Should().Be("▶");
         }
         finally
         {

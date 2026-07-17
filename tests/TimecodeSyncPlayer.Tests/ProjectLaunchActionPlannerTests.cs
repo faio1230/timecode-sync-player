@@ -28,6 +28,18 @@ public class ProjectLaunchActionPlannerTests
     }
 
     [Fact]
+    public void Decide_ReturnsLoadProject_WhenOpenPathIsTspProject()
+    {
+        var args = new AppLaunchArguments(@"C:\projects\show.tsp", [], null, null);
+
+        ProjectLaunchActionPlan plan = ProjectLaunchActionPlanner.Decide(args);
+
+        plan.StartupAction.Should().Be(ProjectLaunchStartupAction.LoadProject);
+        plan.LoadProjectPath.Should().Be(@"C:\projects\show.tsp");
+        plan.InitialPlaylistPaths.Should().BeEmpty();
+    }
+
+    [Fact]
     public void Decide_ReturnsNone_WhenNoStartupInputIsPresent()
     {
         var args = new AppLaunchArguments(null, [], null, null);

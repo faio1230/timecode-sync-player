@@ -52,6 +52,10 @@ public sealed class SystemScenarioE2ETests
             E2EAssert.WaitUntil(() => playlist.Items.Length == 0, TimeSpan.FromSeconds(5));
             InvokeFileDialog(app, "BtnLoadProject", projectPath);
             E2EAssert.WaitUntil(() => playlist.Items.Length == 2, TimeSpan.FromSeconds(8));
+            WaitForDuration(app);
+            E2EAssert.WaitUntil(
+                () => app.Button("BtnPlay").Name == "▶",
+                TimeSpan.FromSeconds(3));
 
             playlist.Items[0].Name.Should().Contain(Path.GetFileNameWithoutExtension(alternateCopy));
             playlist.Items[1].Name.Should().Contain(Path.GetFileNameWithoutExtension(videoCopy));
@@ -61,7 +65,6 @@ public sealed class SystemScenarioE2ETests
             app.Combo("SyncModeCombo").SelectedItem?.Name.Should().Contain("Continue");
             app.Combo("GapBehaviorCombo").SelectedItem?.Name.Should().Contain("Freeze");
 
-            WaitForDuration(app);
             app.Slider("SeekBar").Patterns.RangeValue.Pattern.SetValue(0.25);
             E2EAssert.WaitUntil(() => CurrentSeconds(app) > 0, TimeSpan.FromSeconds(5));
             double beforePlay = CurrentSeconds(app);

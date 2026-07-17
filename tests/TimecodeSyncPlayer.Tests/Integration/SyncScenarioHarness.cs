@@ -20,6 +20,7 @@ internal sealed class SyncScenarioHarness
     private readonly LtcSignalLossPolicy _signalLoss =
         new(TimeSpan.FromMilliseconds(250), resumeFrameCount: 3);
     private readonly PlaybackControlState _playback = new();
+    private readonly ProjectRestorePauseState _projectRestorePauseState = new();
     private readonly ContinueOnTrackCoordinator _continueCoordinator;
     private readonly GapEnterCoordinator _gapCoordinator;
     private readonly GapEnterActionDispatcher _gapDispatcher;
@@ -178,12 +179,14 @@ internal sealed class SyncScenarioHarness
 
     public void ManualPlay()
     {
+        _projectRestorePauseState.Clear();
         RecordMpvProperty("pause", "no");
         SetPaused(false);
     }
 
     public void ManualPause()
     {
+        _projectRestorePauseState.Clear();
         RecordMpvProperty("pause", "yes");
         SetPaused(true);
     }
@@ -210,7 +213,7 @@ internal sealed class SyncScenarioHarness
     {
         Operations.Add(new("project-load"));
         StopPlayback();
-        LoadCurrentFile();
+        LoadCurrentFilePaused();
     }
 
     public void ChangeMode(SyncMode mode)
@@ -282,6 +285,9 @@ internal sealed class SyncScenarioHarness
 
         if (Mode == SyncMode.Single)
         {
+            if (Playlist.Current != null)
+                ResumeProjectRestorePauseForSyncIfNeeded();
+
             var coordinator = new SingleModeSyncCoordinator(
                 _syncService,
                 new SingleModeSyncEffects(
@@ -301,6 +307,7 @@ internal sealed class SyncScenarioHarness
         switch (result.Status)
         {
             case TimelineQueryStatus.OnTrack:
+                ResumeProjectRestorePauseForSyncIfNeeded();
                 _continueCoordinator.Handle(result, ltcSeconds);
                 break;
             case TimelineQueryStatus.Gap:
@@ -321,6 +328,29 @@ internal sealed class SyncScenarioHarness
         RecordMpvProperty("pause", "no");
         _playbackSeconds = start;
         return true;
+    }
+
+    private void LoadCurrentFilePaused()
+    {
+        if (Playlist.Current is not { } current)
+            return;
+
+        Operations.Add(new("loadfile-paused", current.MediaIn.TotalSeconds, current.FilePath));
+        _loadedTrackId = current.Id;
+        RecordMpvProperty("pause", "yes");
+        SetPaused(true);
+        _projectRestorePauseState.MarkPending();
+        _playbackSeconds = current.MediaIn.TotalSeconds;
+    }
+
+    private void ResumeProjectRestorePauseForSyncIfNeeded()
+    {
+        if (!_projectRestorePauseState.TryConsume())
+            return;
+
+        RecordMpvProperty("pause", "no");
+        SetPaused(false);
+        Operations.Add(new("project-restore-resume"));
     }
 
     private void SelectAndLoadTrack(int index)
