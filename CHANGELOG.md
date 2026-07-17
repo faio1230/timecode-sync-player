@@ -24,9 +24,6 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 
 ### Known limitations
 
-- While video is playing, requesting the entire UI Automation tree can be delayed or fail even
-  when direct access to individual controls remains available. UI Automation responsiveness during
-  playback is planned for improvement.
 - After LTC monitoring stops, the LTC display intentionally retains the final received value.
 
 ## 0.1.0 - 2026-07-15
