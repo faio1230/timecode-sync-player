@@ -966,3 +966,19 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 復元後のDebug非E2E全件は1120/1120件合格、失敗0、Skip0、警告0。Debug E2E全件は
   VB-CABLE実機を含む46/46件合格、失敗0、Skip0、警告0（7分59秒）。ブランチは
   `feature/volume-control`、pushは実施していない。未追跡 `AGENTS.md` はステージ・変更していない。
+
+### 第三者QA指摘対応・ベースラインE2E停止（2026-07-17）
+
+- 指定ブランチ `fix/qa-v0.2` を `main`（`8839f7b`）から作成。push は未実施。
+- `docs/qa-fixes-v0.2-plan.md`、`docs/test-coverage-roadmap.md`、QAレポート
+  `C:\Users\codea\Documents\qa-report-v0.2.0.md` を全文確認した。
+- 初回の非E2E実行では、実行セッションの `WINDIR` が空のため WPF FontCache のURI構築に失敗し、
+  `ListBoxItemHitTesterTests` 3件が失敗した。`WINDIR=$env:SystemRoot` をテストプロセス内で補うと
+  対象3/3件が合格し、非E2E全件も1120/1120件合格、失敗0、Skip 0、ビルド警告0となった。
+- Q1着手前のE2Eベースラインは46件中45件合格、失敗1、Skip 0（6分24秒）。
+  `TimecodeSyncPlayerE2ETests.AppLaunches_WindowIsVisible` が
+  `FlaUI.Core.Exceptions.PropertyNotSupportedException: IsOffscreen [#30022] is not supported`
+  （`TimecodeSyncPlayerE2ETests.cs:124`）で失敗した。
+- 一括実行ルールの「E2E が1件でも落ちたら停止」に従い停止。Q1/Q2/Q3はいずれも未着手で、
+  `src/`・`tests/`・QA対象docsの変更、ミューテーション確認、QA項目対照表は未実施。
+- 未追跡 `AGENTS.md` はステージ・変更していない。
