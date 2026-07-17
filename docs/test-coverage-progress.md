@@ -1004,3 +1004,29 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 一括実行ルールの「製品の実バグ発見」「E2Eが1件でも失敗」に従い停止。Q1差分は未コミットで保持し、
   Q2/Q3、ミューテーション確認、QA項目対照表は未着手。pushは未実施。未追跡 `AGENTS.md` は
   ステージ・変更していない。
+
+### 第三者QA指摘対応 Q1/Q2/Q3 完了（2026-07-17）
+
+- ブランチ `fix/qa-v0.2` でQ1→Q2→Q3を直列実行し、pushは実施していない。先行する
+  `AppLaunches_WindowIsVisible` はRDP/UIAの一時的な `IsOffscreen` 非対応と確認し、表示意図を
+  維持したBoundingRectangleフォールバックをテスト側だけに追加済み（`58f1f0f`）。
+- Q1（QA-001、`fb38e46`）: UI/CLIのプロジェクト復元を先頭トラックのfirst frame表示＋pauseへ統一し、
+  `.tsp` の `--open` もプロジェクトとして扱う。復元pauseを専用所有権フラグで手動pauseと分離し、
+  Single/ContinueのOnTrack同期時だけ一度解除する。手動Play/Pauseは即時に所有権を破棄し、既存の
+  pause所有権12系列とモデル遷移テストは無変更で合格した。
+- Q2（QA-007/003/004/005、`9631003`）: `syncMode` / `gapBehavior` の変更保存と起動UI復元、
+  `ltcDeviceName` の名前保存・復元（旧 `ltcDeviceIndex` は無視）、欠落デバイスの先頭フォールバック＋
+  ログ、成功したプロジェクト読込/保存だけの `lastOpenedProjectPath` 更新を実装した。同パスによる
+  自動オープンは行わない。`docs/settings.md` に既定値とenum数値対応を記録した。
+- Q3（QA-002/006、`4476185`）: CHANGELOG 0.2.0へ、再生中のUI Automation全ツリー取得が
+  遅延・失敗し得る制約（個別要素アクセスは可能な場合がある）と、LTC停止後に最終表示値を保持する
+  仕様をKnown limitationsとして追記した。README/README.enにはトラブルシュート節がないため、
+  条件付きのREADME追記は対象外とした。
+- 最終回帰: Debug非E2E 1137/1137件合格、失敗0、skip 0。Debug E2EはVB-CABLE実機系列を含む
+  49/49件合格、失敗0、skip 0（6分39秒）。Q1確定時点も1136/1136＋47/47で全緑を確認した。
+- ミューテーション確認1: 復元pause消費後もフラグを残すと、Single/Continue双方の
+  `RestoredProject_SyncOnOnTrack_ReleasesRestorePauseOnce` がresume 2回を検出して失敗した。
+  ミューテーション確認2: Gap変更保存をFreeze固定にすると、設定変更→正常終了→再起動E2Eが
+  タイムアウトして失敗した。双方を復元後、対象3件が再度合格した。
+- 関連コミット: `58f1f0f`（UIAフレーク頑健化）、`fb38e46`（Q1）、`9631003`（Q2）、
+  `4476185`（Q3）。未追跡 `AGENTS.md` はステージ・変更していない。
