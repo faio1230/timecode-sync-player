@@ -1135,3 +1135,26 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   最終非E2E/E2Eゲート、CHANGELOG制約削除、U2コードコミットへ進まず停止する。
   次の再開条件はRDP/デスクトップセッションの再作成後、同じ純停止基準が回復することである。
   pushは実施せず、未追跡 `AGENTS.md` は変更・ステージしていない。
+
+## QA-002 U1 Active consoleでの再測定（2026-07-17）
+
+- 前回の純停止0/10はRDP切断中でデスクトップ描画が停止していた計測環境要因と判明した。
+  Active console復旧後、デスクトップ直下9要素を56msで列挙でき、TimecodeSyncPlayerプロセス0件、
+  CABLEエンドポイント全可視を確認してからU1を再測定した。
+- 現行E2Eの `Task.Run` 内で別 `UIA3Automation` を生成する経路もCOM境界により純停止0/10となる
+  ハーネス不良だった。同じUIAアパートメントで `MainWindow.FindAllDescendants()` を同期実行する
+  経路へ戻すと、純停止は10/10成功、失敗率0%、84要素固定、平均44.00ms、P50 36.84ms、
+  最大73.11msとなった。
+- 未コミットU2差分を保持したままdetached worktreeで修正前 `3a48273` を構築し、同じ列挙経路で
+  再生中REDを確認した。102要素の列挙は10,519.85ms、10,915.61ms、11,126.70msで、
+  規定1.5秒を大幅に超過した。
+- 修正前のInput優先度Dispatcherプローブは100ms周期208標本で平均13.41ms、P50 3.17ms、
+  P95 11.08ms、最大525.28msだった。1280x720・30fps動画の安定区間では2秒あたり
+  60～61フレーム、`mpv_render_context_render` 平均32.27～32.39ms、bitmap平均0.39～0.43msで、
+  renderだけでUIスレッド時間の約96.8～97.2%を占めた。
+- 表示更新だけを2回に1回へ落とす対照実験でも、102要素列挙は10,796.33ms、renderは
+  平均32.49～32.52ms、bitmap平均0.19～0.21msで復帰しなかった。Spoutを含む後段と
+  mpv render頻度は維持した。
+- **再測定結論**: U1の根因を再確認した。詰まりはWPF bitmap更新ではなく、UIスレッド上の
+  `mpv_render_context_render` が約97%を占有することにある。表示半減では解消しないため、
+  専用レンダースレッドへ分離するU2候補を継続する。診断worktreeの一時変更は製品差分へ含めない。
