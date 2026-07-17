@@ -1063,3 +1063,27 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - **U2進行判定**: UIスレッド飽和そのものは直接確認できたため停止条件には該当せず、U2へ進む。
   U2では表示だけのスロットリング案を採用せず、`mpv_render_context_render` とSpout全フレーム発行を
   UIスレッドから分離し、WriteableBitmap公開だけをUI Dispatcherへ戻す構成を検討・検証する。
+
+## QA-002 U2/U3 停止（2026-07-17）
+
+- U1の証拠に基づき、`mpv_render_context_render` を単一の専用レンダースレッドへ分離した。
+  最初の `Task.Run` 案は実行スレッドが固定されずAccessViolationを起こしたため採用せず、
+  レンダーコンテキストの作成・更新・描画・解放を同じ専用スレッドで直列化する構成へ変更した。
+- QA-002回帰E2Eは修正前に全ツリー列挙が1.5秒を超えてRED、初期修正後は
+  102要素を62.27msで列挙してGREENとなり、5回連続起動でも5/5件合格した。
+  新規ユニット6/6件、Debug非E2E 1135/1135件、実機LTCを含むDebug E2E 50/50件
+  （Skip 0、2分52秒）も一度は合格した。
+- ミューテーション確認では `RenderFrameWorker` の描画可否判定を反転すると対象3/3件が失敗し、
+  復元後は3/3件合格した。
+- コミット前の独立レビューで、通常描画のawait中にUIスレッドのBlack/Freeze描画が同じ
+  PixelBufferとSpoutOutputへ入れる競合を検出した。通常・Black・Freezeのフレーム処理を同じ
+  非同期ゲートで直列化し、Spout送信を既存のテスト済み公開パイプラインへ戻した。
+  ゲートの同時実行防止・投入順と、専用実行器のDispose待機を追加し、RED（型未実装）から
+  関連10/10件GREENまで確認した。
+- 競合修正後のQA-002回帰を5回連続実行したところ、1回目は合格したが2回目の広域列挙が
+  再び1.5秒を超えて失敗した。失敗時ログでも約30fps、平均render 31.17ms、平均bitmap 0.81ms、
+  最大bitmap 16.26msで、mpv描画のUIスレッド占有再発は示されず、残るUIAハング原因は未特定。
+- 「E2Eが1件でも落ちたら停止」に従い、期待値緩和、追加再実行、ミューテーション、非E2E/E2E
+  最終ゲート、U2コードコミットは実施せず停止した。CHANGELOGのUI Automation制約は削除せず保持した。
+  作業差分は未コミットで保持し、U1記録コミットは `b8171e7`。pushは実施していない。
+  未追跡 `AGENTS.md` はステージ・変更していない。
