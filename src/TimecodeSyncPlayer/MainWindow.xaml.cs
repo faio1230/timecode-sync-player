@@ -1781,7 +1781,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// UIスレッドでWriteableBitmapへ反映してからSpoutOutputへ送信する。
     /// Gap描画を含む全フレーム処理は同じゲートで直列化する。
     /// </summary>
-    private Task RenderFrameAsync(int renderGeneration, Action? afterPublish = null)
+    private Task RenderFrameAsync(int renderGeneration, Action? afterFrameProcessed = null)
     {
         return _renderFramePipelineGate.RunAsync(async () =>
         {
@@ -1804,14 +1804,27 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 !result.ShouldPublish)
                 return;
 
-            _renderFramePublishPipeline.Publish(
-                result.Pixels,
-                result.Width,
-                result.Height,
-                result.RenderMs,
-                _spoutOutput.IsEnabled,
-                _gapFreezeHandler.CurrentState);
-            afterPublish?.Invoke();
+            GapState gapState = _gapFreezeHandler.CurrentState;
+            GapRenderFrameDecision gapDecision = GapRenderFramePolicy.Decide(
+                gapState,
+                _vm.Sync.GapBehavior,
+                _bufferManager.FrozenFrameBuffer != null,
+                _videoWidth,
+                _videoHeight);
+            RenderFramePublicationDispatcher.Execute(
+                gapDecision,
+                publishNormalFrame: () => _renderFramePublishPipeline.Publish(
+                    result.Pixels,
+                    result.Width,
+                    result.Height,
+                    result.RenderMs,
+                    _spoutOutput.IsEnabled,
+                    gapState),
+                captureWithoutPublishing: () => _renderedFrameFreezeBufferCopier.CopyIfNeeded(
+                    gapState,
+                    result.Width,
+                    result.Height),
+                afterFrameProcessed);
         });
     }
 
@@ -1887,7 +1900,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_disposed) return;
         _disposed = true;
 
-        _activeRenderWorkerTask?.GetAwaiter().GetResult();
+        RenderWorkerShutdownWaiter.Wait(
+            _activeRenderWorkerTask,
+            ex => Log.Warning(ex, "Active render worker failed during shutdown; continuing resource teardown"));
 
         CloseFullscreenOutput();
 

@@ -1183,3 +1183,21 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   QA-002回帰を含む50/50件合格、失敗0、Skip 0（2分51秒）。CHANGELOGの該当UI Automation
   Known limitationを削除し、`docs/ARCHITECTURE.md`へ専用threadと後着防止規則を記録した。
 - pushは実施していない。未追跡 `AGENTS.md` は変更・ステージしていない。
+
+## QA-002 並行性レビュー追補（2026-07-17）
+
+- Dispose中のactive render待機がfaulted Taskを再スローしてteardownを中断する経路を修正した。
+  待機例外は`Log.Warning`へ記録し、render context、mpv、Spout、LTC、ピン留めbufferの破棄を
+  継続する。faulted／completed／null Taskの3ケースをRED→GREENで確認した。
+- render待機中にGapへ進入した場合は、pipeline gate内の通常Publish直前に
+  `GapRenderFramePolicy`を再評価する。Gapが有効ならWriteableBitmapとSpoutへの通常フレーム公開を
+  抑止し、Freeze最終フレームに必要なcapture-only処理だけを行う。Gap判定反転ミューテーションでは
+  対象3/3件が失敗し、復元後3/3件合格した。
+- MainWindowから参照されない`RenderFrameCoordinator`と専用テスト4件を削除した。
+  最終回帰はDebug非E2E 1157/1157件合格、失敗0、Skip 0。Debug E2EはCABLE実機LTC系列を含む
+  50/50件合格、失敗0、Skip 0（2分52秒）。
+- 独立追補レビューはCritical 0件、Important 0件でコミット可能判定となり、Dispose後始末、
+  Freeze capture、通常状態のSpout全フレーム維持を確認した。
+- **長時間ソークテスト（数時間再生＋トラック切替＋ギャップ遷移の連続）は未実施であり、
+  次のショー投入前またはv0.3タグ前に実施すべきである。**
+- pushは実施していない。未追跡 `AGENTS.md` は変更・ステージしていない。
