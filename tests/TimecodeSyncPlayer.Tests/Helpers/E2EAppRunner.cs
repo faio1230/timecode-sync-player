@@ -58,7 +58,11 @@ internal sealed class E2EAppRunner : IDisposable
     public static E2EAppRunner Start(string exePath, string arguments)
         => Start(exePath, arguments, settingsFilePath: null);
 
-    public static E2EAppRunner Start(string exePath, string arguments, string? settingsFilePath)
+    public static E2EAppRunner Start(
+        string exePath,
+        string arguments,
+        string? settingsFilePath,
+        bool pausePlaybackIfNeeded = true)
     {
         string exeDir = Path.GetDirectoryName(exePath)!;
         var automation = new UIA3Automation();
@@ -91,7 +95,8 @@ internal sealed class E2EAppRunner : IDisposable
             E2EAssert.WaitUntil(
                 () => window.FindFirstDescendant(cf => cf.ByAutomationId("BtnPlay")) != null,
                 TimeSpan.FromSeconds(5));
-            PausePlaybackIfNeeded(window);
+            if (pausePlaybackIfNeeded)
+                PausePlaybackIfNeeded(window);
             return new E2EAppRunner(automation, process, window);
         }
         catch

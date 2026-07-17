@@ -46,6 +46,83 @@ public class SyncScenarioTests
         harness.ValidateInvariants().Should().BeEmpty();
     }
 
+    [Fact]
+    public void ReloadProject_LoadsCurrentTrackPausedWithoutPlayWrite()
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.ManualPlay();
+        harness.Operations.Clear();
+        harness.MpvPropertyWrites.Clear();
+
+        harness.ReloadProject();
+
+        harness.IsPaused.Should().BeTrue();
+        harness.Operations.Select(operation => operation.Name).Should().ContainInOrder(
+            "project-load",
+            "stop-playback",
+            "loadfile-paused");
+        harness.MpvPropertyWrites.Should().NotContain(("pause", "no"));
+        harness.MpvPropertyWrites.Should().Contain(("pause", "yes"));
+    }
+
+    [Theory]
+    [InlineData(SyncMode.Single)]
+    [InlineData(SyncMode.Continue)]
+    public void RestoredProject_SyncOnOnTrack_ReleasesRestorePauseOnce(SyncMode mode)
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.ChangeMode(mode);
+        harness.SetSyncEnabled(false);
+        harness.ReloadProject();
+        harness.MpvPropertyWrites.Clear();
+
+        harness.SetSyncEnabled(true);
+        harness.SupplyLtc(1);
+        harness.SupplyLtc(1.04);
+
+        harness.IsPaused.Should().BeFalse();
+        harness.MpvPropertyWrites.Count(write => write == ("pause", "no")).Should().Be(1,
+            "the project-restore pause is released and consumed only once");
+    }
+
+    [Theory]
+    [InlineData(SyncMode.Single)]
+    [InlineData(SyncMode.Continue)]
+    public void RestoredProject_ManualPlayThenPause_SyncOnDoesNotOverrideManualPause(SyncMode mode)
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.ChangeMode(mode);
+        harness.SetSyncEnabled(false);
+        harness.ReloadProject();
+        harness.ManualPlay();
+        harness.ManualPause();
+        harness.MpvPropertyWrites.Clear();
+
+        harness.SetSyncEnabled(true);
+        harness.SupplyLtc(1);
+
+        harness.IsPaused.Should().BeTrue();
+        harness.MpvPropertyWrites.Should().NotContain(("pause", "no"));
+    }
+
+    [Theory]
+    [InlineData(SyncMode.Single)]
+    [InlineData(SyncMode.Continue)]
+    public void RestoredProject_SyncRemainsOff_StaysPaused(SyncMode mode)
+    {
+        var harness = CreateTwoTrackHarness();
+        harness.ChangeMode(mode);
+        harness.SetSyncEnabled(false);
+        harness.ReloadProject();
+        harness.MpvPropertyWrites.Clear();
+
+        harness.SupplyLtc(1);
+        harness.Tick100Milliseconds(5);
+
+        harness.IsPaused.Should().BeTrue();
+        harness.MpvPropertyWrites.Should().NotContain(("pause", "no"));
+    }
+
     public static TheoryData<int> PauseOwnershipCases => new()
     {
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,

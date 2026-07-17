@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace TimecodeSyncPlayer;
 
 public enum ProjectLaunchStartupAction
@@ -22,6 +24,16 @@ public static class ProjectLaunchActionPlanner
             return new ProjectLaunchActionPlan(
                 ProjectLaunchStartupAction.LoadProject,
                 arguments.LoadProjectPath,
+                [],
+                arguments.SaveProjectPath);
+        }
+
+        if (arguments.OpenPath != null &&
+            string.Equals(Path.GetExtension(arguments.OpenPath), ".tsp", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ProjectLaunchActionPlan(
+                ProjectLaunchStartupAction.LoadProject,
+                arguments.OpenPath,
                 [],
                 arguments.SaveProjectPath);
         }

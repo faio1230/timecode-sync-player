@@ -107,7 +107,7 @@ public sealed class VolumeControlE2ETests
 
                 E2EAssert.WaitUntil(
                     () => ReadLogSince(logPath, logOffset).Contains(
-                        "switching to track volume-track-1",
+                        "Project restore pause released by on-track sync",
                         StringComparison.Ordinal),
                     TimeSpan.FromSeconds(3));
                 AssertMutePreserved(app, settingsPath);

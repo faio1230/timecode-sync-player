@@ -88,6 +88,25 @@ public class PlaybackOperationsCoordinatorTests
             "ResetGapFreeze");
     }
 
+    [Fact]
+    public void LoadFilePaused_OnSuccessLoadsThenPausesWithoutPlayWrite()
+    {
+        var recorder = new Recorder();
+        var coordinator = Create(recorder);
+
+        bool result = coordinator.LoadFilePaused("C:\\media\\clip.mp4");
+
+        result.Should().BeTrue();
+        recorder.Commands.Should().Equal("no-osd loadfile \"C:/media/clip.mp4\" replace");
+        recorder.Properties.Should().Equal(("pause", "yes"));
+        recorder.Calls.Should().ContainInOrder(
+            "CommandString(no-osd loadfile \"C:/media/clip.mp4\" replace)",
+            "SetPropertyString(pause,yes)",
+            "SetPlayPauseIcon(▶)",
+            "ResetPlayerStateForNewTrack");
+        recorder.Properties.Should().NotContain(("pause", "no"));
+    }
+
     [Theory]
     [InlineData(null, true)]
     [InlineData(12.5, false)]
