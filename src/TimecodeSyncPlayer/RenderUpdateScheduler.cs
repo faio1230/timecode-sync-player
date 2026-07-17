@@ -38,8 +38,6 @@ public sealed class RenderUpdateScheduler : IRenderUpdateScheduler
 
     public void Reset()
     {
-        Interlocked.Exchange(ref _dispatchScheduled, 0);
-        Interlocked.Exchange(ref _rescheduleRequested, 0);
         Interlocked.Exchange(ref _requests, 0);
         Interlocked.Exchange(ref _coalescedRequests, 0);
     }

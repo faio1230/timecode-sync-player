@@ -1158,3 +1158,28 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - **再測定結論**: U1の根因を再確認した。詰まりはWPF bitmap更新ではなく、UIスレッド上の
   `mpv_render_context_render` が約97%を占有することにある。表示半減では解消しないため、
   専用レンダースレッドへ分離するU2候補を継続する。診断worktreeの一時変更は製品差分へ含めない。
+
+## QA-002 U2/U3 完了（2026-07-17）
+
+- U1の根因に基づき、mpv render contextの作成・callback登録・更新・描画・解放を単一の
+  `RenderThreadExecutor`へ移した。`mpv_render_context_render`の待機をUIスレッドから外し、
+  完了フレームのWriteableBitmap反映とSpout送信だけをUIへ戻した。Spoutは表示スロットリングせず、
+  成功した各通常フレームを既存の公開パイプラインから1回送信する。
+- 通常・Black・Freezeの共有PixelBuffer／Spout処理は`RenderFramePipelineGate`で直列化した。
+  トラック世代、Gap表示判断、Freeze capture状態をawait完了後とゲート取得時に再確認し、
+  ファイル切替・Sync OFF・Gap退出後に古いフレームやcacheが後着しないようにした。
+  scheduler resetは進行中dispatchとpending通知を保持し、callback例外はログ境界で処理する。
+- U3回帰は、E2E runnerが所有する同じUIA3Automation／Windowを同じテストスレッドから同期的に
+  `FindAllDescendants()`する構成とした。修正前exeでは102要素に10,519.85msかかってRED、
+  U2後は独立起動10/10成功、平均44.54ms、最大49.10msとなった。全修正後の最終単独実行も
+  102要素、43.03msで1.5秒基準を満たした。
+- 新規のworker／専用実行器／pipeline gate／世代・状態ガード／例外境界と既存公開pipelineを含む
+  関連テストは22/22件合格した。描画可否判定を反転するミューテーションではworker対象3/3件が
+  期待どおり失敗し、復元後3/3件合格した。scheduler pending保持もRED→GREENで確認した。
+- 独立コードレビューで、共有buffer競合、async reset再入、古いGap描画・Freeze cache後着、
+  callback例外未処理を検出して修正した。最終再レビューはCritical 0件、Important 0件で、
+  関連テスト22/22件とSpout全フレーム経路を確認してコミット可能判定となった。
+- 最終回帰はDebug非E2E 1155/1155件合格、失敗0、Skip 0。Debug E2EはCABLE実機LTC系列と
+  QA-002回帰を含む50/50件合格、失敗0、Skip 0（2分51秒）。CHANGELOGの該当UI Automation
+  Known limitationを削除し、`docs/ARCHITECTURE.md`へ専用threadと後着防止規則を記録した。
+- pushは実施していない。未追跡 `AGENTS.md` は変更・ステージしていない。
