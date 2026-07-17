@@ -23,8 +23,8 @@ can restore the user's preferences. Delete it manually to remove the preferences
 | `syncMode` | enum | `Single` | `Single` or `Continue` / 同期モード |
 | `gapBehavior` | enum | `Freeze` | `Freeze` or `Black` / タイムコードギャップ中の表示 |
 | `timecodeFpsMode` | enum | `Auto` | `Auto`, `Fixed24`, `Fixed25`, `Fixed29_97`, or `Fixed30` |
-| `lastOpenedProjectPath` | string | `""` | Last project path / 最後に開いたプロジェクトパス |
-| `ltcDeviceIndex` | integer | `-1` | `-1` means no selection; values below `-1` reset to `-1` / `-1`は未選択、未満は`-1`へ補正 |
+| `lastOpenedProjectPath` | string | `""` | Updated only after a successful project load or save; informational and never auto-opened at startup / プロジェクトの読込・保存成功時のみ更新。起動時の自動読込には使用しない |
+| `ltcDeviceName` | string | `""` | Capture-device name restored at startup. A missing name falls back to the first enumerated device and is logged. Legacy `ltcDeviceIndex` is ignored / 起動時に名前で復元。見つからない場合は先頭へフォールバックしてログ記録。旧`ltcDeviceIndex`は無視 |
 | `windowLeft` | number or null | `null` | Valid range `-7680` to `7680`; otherwise `null` / 範囲外は`null` |
 | `windowTop` | number or null | `null` | Valid range `-4320` to `4320`; otherwise `null` / 範囲外は`null` |
 | `windowWidth` | number or null | `null` | Greater than `0`, at most `7680`; otherwise `null` / `0`超～`7680`、範囲外は`null` |
@@ -41,8 +41,17 @@ can restore the user's preferences. Delete it manually to remove the preferences
 
 フルスクリーン出力中に出力モニターへマウスを載せると、ESCで閉じられるよう出力ウィンドウへフォーカスが移ります。
 
-Enum values are serialized as JSON numbers by the current application. The symbolic names above
-describe their meaning and stable UI labels; use settings written by the application when possible.
+Enum values are serialized as JSON numbers by the current application. The exact mappings are:
+
+| JSON key | Numeric mapping |
+| --- | --- |
+| `syncMode` | `0` = `Single`, `1` = `Continue` |
+| `gapBehavior` | `0` = `Freeze`, `1` = `Black` (the UI list is displayed in the opposite order) |
+| `timecodeFpsMode` | `0` = `Auto`, `1` = `Fixed24`, `2` = `Fixed25`, `3` = `Fixed29_97`, `4` = `Fixed30` |
+| `ltcSignalLossMode` | `0` = `RunThrough`, `1` = `Stop` |
+
+`syncMode` and `gapBehavior` are saved immediately when changed and restored into the UI at
+startup. Their defaults are `Single` and `Freeze`, matching `AppSettings.Default` and the initial UI.
 
 現在のアプリはenum値をJSON数値として保存します。上表のシンボル名は意味とUI表示を示します。
 可能な限り、アプリ自身が書き出した設定を利用してください。

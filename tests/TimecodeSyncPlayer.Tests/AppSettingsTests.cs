@@ -15,7 +15,7 @@ public class AppSettingsTests
         settings.GapBehavior.Should().Be(GapBehavior.Freeze);
         settings.TimecodeFpsMode.Should().Be(TimecodeFpsMode.Auto);
         settings.LastOpenedProjectPath.Should().BeEmpty();
-        settings.LtcDeviceIndex.Should().Be(-1);
+        settings.LtcDeviceName.Should().BeEmpty();
         settings.WindowLeft.Should().BeNull();
         settings.WindowTop.Should().BeNull();
         settings.WindowWidth.Should().BeNull();
@@ -81,16 +81,29 @@ public class AppSettingsTests
         result.WindowTop.Should().BeNull();
     }
 
-    [Theory]
-    [InlineData(-2)]
-    [InlineData(-10)]
-    public void ValidateSettings_RejectsInvalidLtcDeviceIndex(int invalidIndex)
+    [Fact]
+    public void ValidateSettings_PreservesLtcDeviceName()
     {
-        var settings = AppSettings.Default with { LtcDeviceIndex = invalidIndex };
+        var settings = AppSettings.Default with { LtcDeviceName = "CABLE Output" };
 
         var result = AppSettingsManager.ValidateSettings(settings);
 
-        result.LtcDeviceIndex.Should().Be(-1);
+        result.LtcDeviceName.Should().Be("CABLE Output");
+    }
+
+    [Fact]
+    public void ValidateSettings_RejectsInvalidSyncAndGapEnums()
+    {
+        var settings = AppSettings.Default with
+        {
+            SyncMode = (SyncMode)99,
+            GapBehavior = (GapBehavior)99,
+        };
+
+        AppSettings result = AppSettingsManager.ValidateSettings(settings);
+
+        result.SyncMode.Should().Be(AppSettings.Default.SyncMode);
+        result.GapBehavior.Should().Be(AppSettings.Default.GapBehavior);
     }
 
     [Fact]
@@ -102,7 +115,7 @@ public class AppSettingsTests
             WindowHeight = 1080,
             WindowLeft = 100,
             WindowTop = 50,
-            LtcDeviceIndex = 2
+            LtcDeviceName = "Input 2"
         };
 
         var result = AppSettingsManager.ValidateSettings(settings);
@@ -111,7 +124,7 @@ public class AppSettingsTests
         result.WindowHeight.Should().Be(1080);
         result.WindowLeft.Should().Be(100);
         result.WindowTop.Should().Be(50);
-        result.LtcDeviceIndex.Should().Be(2);
+        result.LtcDeviceName.Should().Be("Input 2");
     }
 
     [Theory]
@@ -187,7 +200,7 @@ public class AppSettingsTests
             GapBehavior = GapBehavior.Black,
             TimecodeFpsMode = TimecodeFpsMode.Fixed24,
             LastOpenedProjectPath = @"C:\projects\test.json",
-            LtcDeviceIndex = 3,
+            LtcDeviceName = "CABLE Output",
             WindowLeft = 200,
             WindowTop = 100,
             WindowWidth = 1280,
@@ -217,7 +230,7 @@ public class AppSettingsTests
         deserialized.GapBehavior.Should().Be(original.GapBehavior);
         deserialized.TimecodeFpsMode.Should().Be(original.TimecodeFpsMode);
         deserialized.LastOpenedProjectPath.Should().Be(original.LastOpenedProjectPath);
-        deserialized.LtcDeviceIndex.Should().Be(original.LtcDeviceIndex);
+        deserialized.LtcDeviceName.Should().Be(original.LtcDeviceName);
         deserialized.WindowLeft.Should().Be(original.WindowLeft);
         deserialized.WindowTop.Should().Be(original.WindowTop);
         deserialized.WindowWidth.Should().Be(original.WindowWidth);
@@ -247,6 +260,18 @@ public class AppSettingsTests
         deserialized.LtcSignalResumeFrames.Should().Be(5);
         deserialized.ShowDebugOsd.Should().BeFalse();
         deserialized.FullscreenDisplayDeviceName.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Deserialization_LegacyLtcDeviceIndexIsIgnored()
+    {
+        const string json = """{"ltcDeviceIndex":3}""";
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+        AppSettings? deserialized = JsonSerializer.Deserialize<AppSettings>(json, options);
+
+        deserialized.Should().NotBeNull();
+        deserialized!.LtcDeviceName.Should().BeEmpty();
     }
 
     [Fact]
