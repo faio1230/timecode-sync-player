@@ -282,7 +282,7 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
             E2EAssert.WaitUntil(
                 () => ReadOptionalText("LtcSignalLossPauseReason") == "信号断で停止中" &&
                       ReadText("LtcFormatText") == "NO SIGNAL" &&
-                      ReadHelpText("LtcTimecodeText") == "#666666",
+                      ReadItemStatus("LtcTimecodeText") == "#666666",
                 TimeSpan.FromSeconds(3));
             TryReadPlaybackPosition(out double stoppedPosition).Should().BeTrue();
 
@@ -296,7 +296,7 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
             E2EAssert.WaitUntil(
                 () => ReadOptionalText("LtcSignalLossPauseReason") == "" &&
                       ReadText("LtcFormatText") != "NO SIGNAL" &&
-                      ReadHelpText("LtcTimecodeText") == "#55D86A",
+                      ReadItemStatus("LtcTimecodeText") == "#55D86A",
                 TimeSpan.FromSeconds(3));
             double lastPlaybackSeconds = double.NaN;
             double lastLtcSeconds = double.NaN;
@@ -1056,11 +1056,11 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
         return element.Name.Trim();
     }
 
-    private string ReadHelpText(string automationId)
+    private string ReadItemStatus(string automationId)
     {
         AutomationElement element = _fixture.MainWindow!.FindFirstDescendant(
             cf => cf.ByAutomationId(automationId))!;
-        return element.Properties.HelpText.ValueOrDefault.Trim();
+        return element.Properties.ItemStatus.ValueOrDefault.Trim();
     }
 
     private readonly record struct ObservedTimecode(

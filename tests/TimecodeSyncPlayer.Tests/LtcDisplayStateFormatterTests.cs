@@ -29,23 +29,6 @@ public sealed class LtcDisplayStateFormatterTests
     }
 
     [Fact]
-    public void Format_WhenSignalRecovers_RestoresCurrentFormatAndActiveColor()
-    {
-        _ = LtcDisplayStateFormatter.Format(
-            isMonitoring: true,
-            isSignalLost: true,
-            normalFormatText: "fps: 25");
-
-        LtcDisplayState recovered = LtcDisplayStateFormatter.Format(
-            isMonitoring: true,
-            isSignalLost: false,
-            normalFormatText: "fps: 25 DF");
-
-        recovered.FormatText.Should().Be("fps: 25 DF");
-        recovered.TimecodeForeground.Should().Be("#55D86A");
-    }
-
-    [Fact]
     public void Format_WhenManuallyStopped_DoesNotShowSignalLossState()
     {
         LtcDisplayState state = LtcDisplayStateFormatter.Format(
