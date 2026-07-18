@@ -1338,3 +1338,28 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   mpv DLLとPDBが含まれないことを確認した。Release EXEの情報版数は
   `0.3.0+42f2c0591e431a0fbc6552b335400df308a99a46`、setup.exeの製品版数は0.3.0。
   push・タグ作成・GitHub Release公開は実施せず、未追跡 `AGENTS.md` もステージしていない。
+
+### v0.3 レビュー指摘対応（2026-07-18）
+
+- Important指摘のLTCデバイス列挙失敗表示を、ViewModel直書きから
+  `_lastLtcFormatText = "LTC デバイス列挙失敗"` → `RefreshLtcDisplayState()` の正規パイプラインへ修正した。
+  catchの配線と初回／100ms tick相当の繰り返しrefreshでメッセージが維持されることを
+  `MainWindowLtcDisplayWiringTests` で固定した。修正前はbacking field代入がなく1/1件RED、修正後はGREEN。
+- Minor指摘は、LTC前景色のUI Automationメタデータを `HelpText` から `ItemStatus` へ変更して
+  実機E2Eも追随、`LtcMonitor_Stopped` の `MarkStopped` 先行不変条件をコメント化、
+  ステートレスフォーマッタの冗長な復帰テスト1件を削除した。
+- mutationで列挙失敗catchを旧配線（ViewModel直書き・refreshなし）へ一時的に戻すと回帰テストが
+  意図どおり1/1件失敗し、復元後はフォーマッタ対象を含む4/4件合格した。
+  `ItemStatus` 経由の信号断→復帰実機E2E単独は1/1件合格（11秒）。
+- 実装コミット: `4a05ec6`（`fix: LTC状態表示のレビュー指摘を修正`）。
+  Debug非E2Eは1174/1174件合格、失敗0、Skip 0、警告0。Debug E2Eは50/50件合格、失敗0、Skip 0（3分）。
+  Release非E2Eは1174/1174件合格、失敗0、Skip 0、警告0。Release版EXE固定E2Eは50/50件合格、
+  失敗0、Skip 0（2分55秒）。
+- `scripts/package-release.ps1` でReleaseビルド警告0・エラー0、Inno Setup 6.7.3により再生成した。
+  - `TimecodeSyncPlayer-v0.3.0-win-x64.zip`: 841,393バイト、SHA-256
+    `A4183AD93BF48A330C040441C8DA4BFB10FC35C33B945C5B47D7CC8EF388A69B`
+  - `TimecodeSyncPlayer-v0.3.0-setup.exe`: 2,733,572バイト、SHA-256
+    `4B21A691A5D05BAEE4E0AF5DFDBAD308E301CB3097BDB116AE2E6CD2B2BEA28B`
+- zipの必須配布物8項目と `SpoutDX.dll`を確認し、mpv DLL・PDBは0件。パッケージ内EXEの情報版数は
+  `0.3.0+4a05ec6766f4ced62b3d41f5d6db17af4e948380`、setup.exeの製品版数は0.3.0。
+  push・merge・tag作成・GitHub Release公開は実施せず、未追跡 `AGENTS.md` も未ステージ。
