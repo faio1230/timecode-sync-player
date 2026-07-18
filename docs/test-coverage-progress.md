@@ -1302,3 +1302,19 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   失敗0、Skip 0（3分2秒）。カバレッジ再計測でも1167/1167件合格し、
   `PlaylistCurrentTrackLabelFormatter` と `ContinueOnTrackCoordinator` はline/branch 100%だった。
 - X2完了コミット: `d6845b9`（`feat: ギャップ中に次トラック情報を表示`）。push未実施。
+
+### v0.3 X3 完了（2026-07-18）
+
+- Stopモードの信号断でpolicyがpause所有権を持つ間だけ、再生ボタン近傍に
+  `信号断で停止中`を表示するTextBlockとAutomationIdを追加した。手動pause・ギャップpause・通常時は
+  空文字かつCollapsedとし、自動復帰または手動Playで所有権が解除されると表示も消える。
+  `LtcSignalLossPolicy.IsPauseOwned` は既存の `_pausedByPolicy` のread-only公開のみで、所有権遷移は変更していない。
+- RED→GREENとしてownerあり／なし、手動Play解除、自動復帰、手動・ギャップpauseの非owner、
+  ViewModel通知、Stop信号断→復帰と信号断中の手動Playを単体・統合テストで確認した。
+  owner条件を一時反転するmutationで対象4/4件が失敗し、復元後は29/29件合格した。
+- 実機複合E2Eで信号断時の `NO SIGNAL`・`#666666`・理由表示・pauseと、復帰時の
+  `#55D86A`・理由消去・再生再開を1/1件合格（12秒）で確認した。X3最終ゲートはDebug非E2E
+  1174/1174件合格、失敗0、Skip 0、警告0。Debug E2Eは50/50件合格、失敗0、Skip 0（2分58秒）。
+- カバレッジ再計測でも1174/1174件合格し、`LtcSignalLossPauseReasonFormatter` と
+  `LtcSignalLossPolicy` はline/branch 100%、`SyncViewModel` はline 96.36% / branch 90%だった。
+- X3完了コミット: `f604724`（`feat: 信号断による停止理由を表示`）。push未実施。
