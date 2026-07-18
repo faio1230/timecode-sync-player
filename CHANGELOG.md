@@ -2,6 +2,22 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.3.0 - 2026-07-18
+
+### Added
+
+- Added an explicit `NO SIGNAL` state with a muted timecode color while retaining the last received LTC value.
+- Added the next enabled track name and timeline start to Continue-mode gap labels, with a clear no-following-track state.
+- Added a policy-owned pause reason near the playback controls when Stop mode pauses playback after LTC signal loss.
+
+### Changed
+
+- Moved mpv software rendering to a dedicated render thread, reducing QA-002 UI Automation response time from approximately 10.5 seconds to 24 milliseconds while playback is active.
+
+### Known limitations
+
+- After LTC monitoring stops, the LTC display intentionally retains the final received value.
+
 ## 0.2.0 - 2026-07-16
 
 ### Added
