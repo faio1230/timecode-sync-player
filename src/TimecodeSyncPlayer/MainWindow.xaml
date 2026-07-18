@@ -111,18 +111,35 @@
                         AutomationProperties.AutomationId="BtnNextTrack"/>
             </StackPanel>
 
-            <StackPanel Grid.Column="1" Orientation="Horizontal"
+            <StackPanel Grid.Column="1"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Button Content="◀◀" ToolTip="-10秒" Width="54" Height="38"
-                        Margin="4,0" Command="{Binding Player.BackCommand}"
-                        AutomationProperties.AutomationId="BtnBack"/>
-                <Button x:Name="BtnPlay" Width="68" Height="38"
-                        Margin="4,0" Command="{Binding Player.PlayPauseCommand}"
-                        Content="{Binding Player.PlayPauseIcon}"
-                        AutomationProperties.AutomationId="BtnPlay"/>
-                <Button Content="▶▶" ToolTip="+10秒" Width="54" Height="38"
-                        Margin="4,0" Command="{Binding Player.FwdCommand}"
-                        AutomationProperties.AutomationId="BtnFwd"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button Content="◀◀" ToolTip="-10秒" Width="54" Height="38"
+                            Margin="4,0" Command="{Binding Player.BackCommand}"
+                            AutomationProperties.AutomationId="BtnBack"/>
+                    <Button x:Name="BtnPlay" Width="68" Height="38"
+                            Margin="4,0" Command="{Binding Player.PlayPauseCommand}"
+                            Content="{Binding Player.PlayPauseIcon}"
+                            AutomationProperties.AutomationId="BtnPlay"/>
+                    <Button Content="▶▶" ToolTip="+10秒" Width="54" Height="38"
+                            Margin="4,0" Command="{Binding Player.FwdCommand}"
+                            AutomationProperties.AutomationId="BtnFwd"/>
+                </StackPanel>
+                <TextBlock Text="{Binding Sync.LtcSignalLossPauseReason}"
+                           AutomationProperties.AutomationId="LtcSignalLossPauseReason"
+                           Foreground="#D7A24B" FontSize="11"
+                           HorizontalAlignment="Center" Margin="0,2,0,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Sync.LtcSignalLossPauseReason}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -279,6 +296,7 @@
                 <StackPanel Grid.Row="5" Margin="0,0,0,10">
                     <TextBlock x:Name="LtcTimecodeText"
                                AutomationProperties.AutomationId="LtcTimecodeText"
+                               AutomationProperties.HelpText="{Binding Sync.LtcTimecodeForeground}"
                                 Text="{Binding Sync.LtcTimecodeText}"
                                 Foreground="{Binding Sync.LtcTimecodeForeground}"
                                FontFamily="Consolas"

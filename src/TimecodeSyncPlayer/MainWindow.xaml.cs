@@ -737,6 +737,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _lastLtcFormatText);
         _vm.Sync.LtcFormatText = display.FormatText;
         _vm.Sync.LtcTimecodeForeground = display.TimecodeForeground;
+        _vm.Sync.LtcSignalLossPauseReason = LtcSignalLossPauseReasonFormatter.Format(
+            _ltcSignalLossPolicy.IsPauseOwned);
     }
 
     private void ApplyLtcSignalLossAction(LtcSignalLossAction action)
