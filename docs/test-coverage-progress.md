@@ -1318,3 +1318,23 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - カバレッジ再計測でも1174/1174件合格し、`LtcSignalLossPauseReasonFormatter` と
   `LtcSignalLossPolicy` はline/branch 100%、`SyncViewModel` はline 96.36% / branch 90%だった。
 - X3完了コミット: `f604724`（`feat: 信号断による停止理由を表示`）。push未実施。
+
+### v0.3 X4 完了（2026-07-18）
+
+- `TimecodeSyncPlayer.csproj` のVersionとリリースゲートの `ApplicationVersionTests` を0.3.0へ更新し、
+  `CHANGELOG.md` にX1〜X3の表示改善とQA-002のUIA応答改善（約10.5秒→24ms、専用レンダースレッド）
+  を記録した。Known limitationsにUIA制限が復活していないことも確認した。固定ゲートは実体0.2.0の
+  時点で1/3件が意図どおり失敗し、実装後は3/3件合格した。
+- X4完了コミット: `42f2c05`（`release: バージョンを0.3.0へ更新`）。Release非E2Eは
+  1174/1174件合格、失敗0、Skip 0、ビルド警告0。Release版EXEを絶対パスで固定したE2Eは
+  50/50件合格、失敗0、Skip 0（2分58秒）。
+- `scripts/package-release.ps1` を版数引数なしで実行し、Releaseビルド警告0・エラー0、
+  Inno Setup 6.7.3で次の成果物を生成した。
+  - `TimecodeSyncPlayer-v0.3.0-win-x64.zip`: 841,399バイト、SHA-256
+    `4E8E32D175F91811B38D86E5D03E8271BD49B47A810A0DFB3168418FCD30DFDE`
+  - `TimecodeSyncPlayer-v0.3.0-setup.exe`: 2,733,602バイト、SHA-256
+    `F589CF4F4171433273E512F7D690242631BFF1806F8DED2BB99EEBD82895DF1C`
+- zipの必須配布物8項目、`SpoutDX.dll`、ライセンス・通知・CHANGELOG・`get-mpv.ps1` を確認し、
+  mpv DLLとPDBが含まれないことを確認した。Release EXEの情報版数は
+  `0.3.0+42f2c0591e431a0fbc6552b335400df308a99a46`、setup.exeの製品版数は0.3.0。
+  push・タグ作成・GitHub Release公開は実施せず、未追跡 `AGENTS.md` もステージしていない。
