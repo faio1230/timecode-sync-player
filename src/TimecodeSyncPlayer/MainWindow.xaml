@@ -280,7 +280,7 @@
                     <TextBlock x:Name="LtcTimecodeText"
                                AutomationProperties.AutomationId="LtcTimecodeText"
                                 Text="{Binding Sync.LtcTimecodeText}"
-                                Foreground="#55D86A"
+                                Foreground="{Binding Sync.LtcTimecodeForeground}"
                                FontFamily="Consolas"
                                FontSize="26"
                                FontWeight="SemiBold"

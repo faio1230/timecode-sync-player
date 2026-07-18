@@ -56,6 +56,7 @@ internal sealed class LtcSignalLossPolicy
     }
 
     public bool ShouldSuppressSync => _isLost && _pausedByPolicy;
+    public bool IsLost => _isLost;
 
     public void Reset()
     {

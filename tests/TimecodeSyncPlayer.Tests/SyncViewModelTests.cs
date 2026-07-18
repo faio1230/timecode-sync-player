@@ -221,6 +221,7 @@ public class SyncViewModelTests
         vm.GapBehaviorIndex = 1;
         vm.LtcSignalLossModeIndex = 1;
         vm.LtcTimecodeText = "01:02:03:04";
+        vm.LtcTimecodeForeground = "#666666";
         vm.LtcRealTimeText = "3723.160 s";
         vm.LtcFormatText = "fps: 25";
         vm.SpoutToggleLabel = "Spout ON";
@@ -232,6 +233,7 @@ public class SyncViewModelTests
         vm.GapBehavior.Should().Be(GapBehavior.Freeze);
         vm.LtcSignalLossMode.Should().Be(LtcSignalLossMode.Stop);
         vm.LtcTimecodeText.Should().Be("01:02:03:04");
+        vm.LtcTimecodeForeground.Should().Be("#666666");
         vm.LtcRealTimeText.Should().Be("3723.160 s");
         vm.LtcFormatText.Should().Be("fps: 25");
         vm.SpoutToggleLabel.Should().Be("Spout ON");
@@ -245,6 +247,7 @@ public class SyncViewModelTests
             nameof(vm.LtcSignalLossModeIndex),
             nameof(vm.LtcSignalLossMode),
             nameof(vm.LtcTimecodeText),
+            nameof(vm.LtcTimecodeForeground),
             nameof(vm.LtcRealTimeText),
             nameof(vm.LtcFormatText),
             nameof(vm.SpoutToggleLabel),

@@ -12,6 +12,7 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
     private readonly RelayCommand _stopLtcCommand;
     private readonly RelayCommand _toggleSyncCommand;
     private string _ltcTimecodeText = "--:--:--:--";
+    private string _ltcTimecodeForeground = "#55D86A";
     private string _ltcRealTimeText = "-.--- s";
     private string _ltcFormatText = "LTC 停止中";
     private string _spoutToggleLabel = "Spout OFF";
@@ -169,6 +170,12 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
     {
         get => _ltcTimecodeText;
         set { _ltcTimecodeText = value; OnPropertyChanged(); }
+    }
+
+    public string LtcTimecodeForeground
+    {
+        get => _ltcTimecodeForeground;
+        set { _ltcTimecodeForeground = value; OnPropertyChanged(); }
     }
 
     public string LtcRealTimeText
