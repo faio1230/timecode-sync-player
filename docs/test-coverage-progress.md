@@ -1216,3 +1216,75 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   **v0.3 UX候補**: 信号断中のタイムコード表示の淡色化、ギャップ中の次トラック開始時刻表示など、
   オペレーターが状態を読める表示の検討。
 - 前項の「ソーク未実施」注記は本実施をもって解消。
+
+## v0.3 UX パック停止記録（X1、2026-07-18）
+
+- `feature/v0.3-ux` を `main`（`03b2300`）から作成し、X1「信号断中のタイムコード表示」へ着手した。
+  `LtcDisplayStateFormatter` を追加し、LTC 監視中の信号断では `NO SIGNAL` と `#666666`、
+  受信中・復帰後・手動 STOP では通常色 `#55D86A` と通常の補助表示を返す純粋な表示判定へ分離した。
+  `LtcSignalLossPolicy.IsLost` は read-only の状態公開のみで、同期抑止・pause 所有権・復帰ヒステリシスの
+  条件と遷移は変更していない。MainWindow は最終 TC を信号断中も保持し、表示結果だけを ViewModel/XAML
+  へ反映する未コミット差分となっている。
+- RED→GREEN: `LtcDisplayStateFormatterTests` 4件、`LtcSignalLossPolicy.IsLost` 1件、
+  `SyncViewModel` 表示プロパティ1件、`SyncScenarioHarness` の信号断→復帰表示遷移1件を追加・確認した。
+  表示条件を一時的に `isMonitoring || isSignalLost` へ反転したミューテーションでは対象5件中4件が
+  期待どおり失敗し、復元後5/5件合格した。
+- ベースラインは Codex 実行環境で `windir` が空のため WPF FontCache 初期化3件が失敗した。
+  `windir=SystemRoot` をテストプロセスだけに設定すると変更前1157/1157件が合格したため、以降も同じ
+  環境補正を使用した。X1後のDebug非E2Eは1163/1163件合格、失敗0、Skip 0、警告0。
+- Debug E2E全件は50件を11分53秒で完走し、**46件合格・4件失敗・Skip 0**。失敗は
+  `CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately` と
+  `CableLoop_StopMode_SignalLossDuringGap_IsEvaluatedAfterGapRecovery` のLTC送出再開後進行待ち、
+  `CableLoop_ContinueMuteSurvivesDeterministicGapAndTrackSwitch` のギャップ表示待ち、
+  `SyncGapAndLtcDevice_ChangeExitAndRestart_RestoresSelections` のアプリ終了5秒待ちである。
+  最初の10分上限実行はスイート進行中にコマンド側がタイムアウトしたため、残留テストプロセスを限定して
+  終了後、20分上限で再実行して上記の最終結果を得た。最終失敗後に残ったテスト所有アプリも終了した。
+- ロードマップの「E2E が1件でも落ちたら停止」に従い、原因修正・再実行・カバレッジ再計測・コミットは
+  実施していない。X1は未完了、X2/X3/X4は未着手、release packageとSHA-256も未生成。push未実施。
+  次回は、3件の実機LTCタイムアウトが環境／CABLE状態かX1表示配線の負荷・停止処理影響かを個別再現で
+  切り分け、アプリ終了待ち失敗では `LtcMonitor_Stopped` と終了処理の順序を重点レビューすること。
+  未追跡 `AGENTS.md` は変更・ステージしていない。
+
+### v0.3 X1 E2E停止原因の継続監査（2026-07-18）
+
+- X1差分上で最初の失敗E2Eを単独再実行し、46秒後に同じ
+  `WaitForProgressionAfterSignalRestart` タイムアウトを再現した。表示値の同一通知がUIAを遅らせる仮説を
+  最小の通知抑制で検証したが同じ失敗となったため、仮説を棄却して一時変更を復元した。
+- `main` の `03b2300` を一時診断worktreeへ分離し、Debug非E2E 1157/1157件合格後に同じ実機E2Eを
+  単独実行したところ、X1差分なしでも同じ46秒タイムアウトとなった。したがって最終E2E失敗はX1の
+  表示差分による回帰ではなく、現在の実機／Windowsセッション環境で既存ゲートがREDになっている。
+- 失敗時ログでは `CABLE Output` から peak 0.985、約25fps、2秒あたり47〜51 decoded framesを正常受信して
+  いた。一方、テストは信号開始から2秒以内の初期表示を取得できず、開始窓を越えた値を以後受理しない
+  状態だった。CABLE Input / Output / In 16ch はすべて Present / OK。QA-002全ツリー列挙単独テストは合格。
+- `query session` ではユーザー `AVALON` のsession 1が `Disc`、ユーザーのないconsole session 4が
+  `Conn` だった。2026-07-17の既知事例と同様、Active consoleではない状態が実機LTC/UIA取得タイミングを
+  崩している可能性が高い。Active consoleまたは対話デスクトップへ復帰後、まず上記単独E2Eを再測定し、
+  合格を確認してからX1全E2Eゲートを再開すること。
+- 診断worktree、複製native DLL、診断ビルド成果物は検証済み一時パスから削除済み。元の `native/` と
+  feature作業ツリーは保持した。X1は未コミット、X2/X3/X4は未着手、push未実施のまま停止を継続する。
+
+### v0.3 X1 外部環境blocked確定（2026-07-18）
+
+- 3回目の継続監査でも `query session` はユーザー `AVALON` のsession 1が `Disc`、ユーザーのない
+  console session 4が `Conn` のままで、Active console／対話デスクトップは復旧していなかった。
+- 同一条件は、X1全E2E失敗時、`main@03b2300` 比較診断時、今回の再監査の3ターン連続で確認した。
+  実機LTC全件グリーンが必須であり、既存テストのSkip化・待機窓緩和・アサーション弱体化は禁止のため、
+  リポジトリ内の変更だけではゲートを満たせない。
+- `tscon` 等によるユーザーセッションの強制移送は依頼範囲外の外部状態変更となるため実施していない。
+  ユーザーがActive consoleまたは対話デスクトップへ復帰した後に再開すること。再開時は最初に
+  `CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately` を単独実行し、合格後に
+  X1のDebug非E2E／E2E全件ゲートへ戻る。
+- X1未コミット差分と停止記録は `feature/v0.3-ux` に保持。X2/X3/X4は未着手、push未実施、
+  `AGENTS.md` は未変更・未ステージ、TimecodeSyncPlayer残留プロセス0件。
+
+### v0.3 X1 環境復旧後の完了（2026-07-18）
+
+- ユーザー `AVALON` が console session 1で `Active`、CABLEエンドポイント全可視、デスクトップ直下
+  11要素のUIA列挙106msとなった環境で再開した。停止記録どおり最初に
+  `CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately` を単独実行し、
+  1/1件合格（9秒）を確認した。
+- X1最終ゲートはDebug非E2E 1163/1163件合格、失敗0、Skip 0、警告0。Debug E2Eは実機LTC系列を
+  含む50/50件合格、失敗0、Skip 0（3分4秒）。カバレッジ再計測でも1163/1163件合格し、
+  `LtcDisplayStateFormatter` と `LtcSignalLossPolicy` はline/branch 100%、`SyncViewModel` は
+  line 96.26% / branch 90%だった。
+- X1完了コミット: `f2a582b`（`feat: 信号断中のLTC表示を改善`）。push未実施。
