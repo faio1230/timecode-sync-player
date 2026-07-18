@@ -224,6 +224,7 @@ public class SyncViewModelTests
         vm.LtcTimecodeForeground = "#666666";
         vm.LtcRealTimeText = "3723.160 s";
         vm.LtcFormatText = "fps: 25";
+        vm.LtcSignalLossPauseReason = "信号断で停止中";
         vm.SpoutToggleLabel = "Spout ON";
         vm.TimelineToggleLabel = "Timeline ON";
 
@@ -236,6 +237,7 @@ public class SyncViewModelTests
         vm.LtcTimecodeForeground.Should().Be("#666666");
         vm.LtcRealTimeText.Should().Be("3723.160 s");
         vm.LtcFormatText.Should().Be("fps: 25");
+        vm.LtcSignalLossPauseReason.Should().Be("信号断で停止中");
         vm.SpoutToggleLabel.Should().Be("Spout ON");
         vm.TimelineToggleLabel.Should().Be("Timeline ON");
         changedProperties.Should().Contain([
@@ -250,6 +252,7 @@ public class SyncViewModelTests
             nameof(vm.LtcTimecodeForeground),
             nameof(vm.LtcRealTimeText),
             nameof(vm.LtcFormatText),
+            nameof(vm.LtcSignalLossPauseReason),
             nameof(vm.SpoutToggleLabel),
             nameof(vm.TimelineToggleLabel)
         ]);

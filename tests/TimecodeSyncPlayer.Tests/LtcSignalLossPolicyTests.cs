@@ -7,6 +7,47 @@ public class LtcSignalLossPolicyTests
     private const long Start = 10_000;
 
     [Fact]
+    public void IsPauseOwned_TracksPolicyPauseManualPlayAndRecovery()
+    {
+        var policy = CreatePolicy(resumeFrames: 2);
+        LtcSignalLossContext receiving = Context();
+        LtcSignalLossContext paused = receiving with { IsPlaybackPaused = true };
+
+        policy.IsPauseOwned.Should().BeFalse();
+        policy.ObserveValidFrame(Start, receiving);
+        policy.Evaluate(At(250), receiving).Should().Be(LtcSignalLossAction.Pause);
+        policy.IsPauseOwned.Should().BeTrue();
+
+        policy.Evaluate(At(251), receiving).Should().Be(LtcSignalLossAction.None);
+        policy.IsPauseOwned.Should().BeFalse("manual Play releases policy pause ownership");
+
+        policy.Reset();
+        policy.ObserveValidFrame(Start, receiving);
+        policy.Evaluate(At(250), receiving).Should().Be(LtcSignalLossAction.Pause);
+        policy.ObserveValidFrame(At(300), paused).Should().Be(LtcSignalLossAction.None);
+        policy.ObserveValidFrame(At(340), paused).Should().Be(LtcSignalLossAction.ResumeAndSync);
+        policy.IsPauseOwned.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void IsPauseOwned_RemainsFalse_WhenPauseIsManualOrGapOwned(bool isGapActive)
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context() with
+        {
+            IsGapActive = isGapActive,
+            IsPlaybackPaused = true,
+        };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.None);
+
+        policy.IsPauseOwned.Should().BeFalse();
+    }
+
+    [Fact]
     public void IsLost_TracksLossRecoveryAndManualStopReset_InRunThroughMode()
     {
         var policy = CreatePolicy(resumeFrames: 2);

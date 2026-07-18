@@ -279,6 +279,11 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
             E2EAssert.WaitUntil(
                 () => ReadButtonName("BtnPlay") == "▶",
                 TimeSpan.FromSeconds(8));
+            E2EAssert.WaitUntil(
+                () => ReadOptionalText("LtcSignalLossPauseReason") == "信号断で停止中" &&
+                      ReadText("LtcFormatText") == "NO SIGNAL" &&
+                      ReadHelpText("LtcTimecodeText") == "#666666",
+                TimeSpan.FromSeconds(3));
             TryReadPlaybackPosition(out double stoppedPosition).Should().BeTrue();
 
             E2EAssert.WaitUntil(
@@ -288,6 +293,11 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
                 () => TryReadPlaybackPosition(out double playbackSeconds) &&
                       playbackSeconds > stoppedPosition + 0.5,
                 TimeSpan.FromSeconds(5));
+            E2EAssert.WaitUntil(
+                () => ReadOptionalText("LtcSignalLossPauseReason") == "" &&
+                      ReadText("LtcFormatText") != "NO SIGNAL" &&
+                      ReadHelpText("LtcTimecodeText") == "#55D86A",
+                TimeSpan.FromSeconds(3));
             double lastPlaybackSeconds = double.NaN;
             double lastLtcSeconds = double.NaN;
             double lastAlignedPlaybackSeconds = double.NaN;
@@ -1027,6 +1037,30 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
         }
 
         return element.Name.Trim();
+    }
+
+    private string ReadOptionalText(string automationId)
+    {
+        AutomationElement? element = _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId(automationId));
+        if (element == null)
+        {
+            return string.Empty;
+        }
+
+        if (element.Patterns.Text.IsSupported)
+        {
+            return element.Patterns.Text.Pattern.DocumentRange.GetText(-1).Trim();
+        }
+
+        return element.Name.Trim();
+    }
+
+    private string ReadHelpText(string automationId)
+    {
+        AutomationElement element = _fixture.MainWindow!.FindFirstDescendant(
+            cf => cf.ByAutomationId(automationId))!;
+        return element.Properties.HelpText.ValueOrDefault.Trim();
     }
 
     private readonly record struct ObservedTimecode(

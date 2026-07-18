@@ -26,6 +26,41 @@ public class SyncScenarioHarnessTests
     }
 
     [Fact]
+    public void StopModeSignalLossAndRecovery_RecordsPolicyOwnedPauseReasonTransitions()
+    {
+        var harness = new SyncScenarioHarness();
+        harness.AddTrack("track-1", timelineIn: 0);
+        harness.ManualPlay();
+
+        harness.SupplyLtc(1);
+        harness.Tick100Milliseconds(3);
+        harness.SupplyLtc(1.1);
+        harness.SupplyLtc(1.2);
+        harness.SupplyLtc(1.3);
+
+        harness.DisplayStates.Should().ContainInOrder(
+            new ScenarioLtcDisplayState("NO SIGNAL", "#666666", "信号断で停止中"),
+            new ScenarioLtcDisplayState("fps: 25", "#55D86A", ""));
+    }
+
+    [Fact]
+    public void StopModeSignalLossThenManualPlay_ClearsPauseReasonWhileSignalRemainsLost()
+    {
+        var harness = new SyncScenarioHarness();
+        harness.AddTrack("track-1", timelineIn: 0);
+        harness.ManualPlay();
+        harness.SupplyLtc(1);
+        harness.Tick100Milliseconds(3);
+
+        harness.ManualPlay();
+        harness.Tick100Milliseconds();
+
+        harness.DisplayStates.Should().ContainInOrder(
+            new ScenarioLtcDisplayState("NO SIGNAL", "#666666", "信号断で停止中"),
+            new ScenarioLtcDisplayState("NO SIGNAL", "#666666", ""));
+    }
+
+    [Fact]
     public void GapEntryAndExit_RecordsCurrentTrackLabelTransitions()
     {
         var harness = new SyncScenarioHarness { GapBehavior = GapBehavior.Black };

@@ -15,6 +15,7 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
     private string _ltcTimecodeForeground = "#55D86A";
     private string _ltcRealTimeText = "-.--- s";
     private string _ltcFormatText = "LTC 停止中";
+    private string _ltcSignalLossPauseReason = string.Empty;
     private string _spoutToggleLabel = "Spout OFF";
     private string _timelineToggleLabel = "Timeline OFF";
     private bool _isLtcRunning;
@@ -188,6 +189,12 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
     {
         get => _ltcFormatText;
         set { _ltcFormatText = value; OnPropertyChanged(); }
+    }
+
+    public string LtcSignalLossPauseReason
+    {
+        get => _ltcSignalLossPauseReason;
+        set { _ltcSignalLossPauseReason = value; OnPropertyChanged(); }
     }
 
     public string SpoutToggleLabel

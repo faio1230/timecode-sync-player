@@ -1,7 +1,10 @@
 namespace TimecodeSyncPlayer.Tests.Integration;
 
 internal sealed record ScenarioMpvOperation(string Name, double? Value = null, string? Text = null);
-internal sealed record ScenarioLtcDisplayState(string FormatText, string TimecodeForeground);
+internal sealed record ScenarioLtcDisplayState(
+    string FormatText,
+    string TimecodeForeground,
+    string PauseReason = "");
 
 internal enum ScenarioRenderSurface
 {
@@ -438,7 +441,10 @@ internal sealed class SyncScenarioHarness
             IsMonitoring,
             _signalLoss.IsLost,
             normalFormatText: "fps: 25");
-        var state = new ScenarioLtcDisplayState(display.FormatText, display.TimecodeForeground);
+        var state = new ScenarioLtcDisplayState(
+            display.FormatText,
+            display.TimecodeForeground,
+            LtcSignalLossPauseReasonFormatter.Format(_signalLoss.IsPauseOwned));
         if (DisplayStates.Count == 0 || DisplayStates[^1] != state)
             DisplayStates.Add(state);
     }
