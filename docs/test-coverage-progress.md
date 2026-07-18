@@ -1288,3 +1288,17 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
   `LtcDisplayStateFormatter` と `LtcSignalLossPolicy` はline/branch 100%、`SyncViewModel` は
   line 96.26% / branch 90%だった。
 - X1完了コミット: `f2a582b`（`feat: 信号断中のLTC表示を改善`）。push未実施。
+
+### v0.3 X2 完了（2026-07-18）
+
+- Continueモードのギャップ表示を `Gap: Black/Freeze → 次トラック名 @ HH:MM:SS` へ拡張し、
+  無効トラックを除外した次の開始位置を表示するようにした。後続の有効トラックがない場合とNoTracks時は
+  `Gap: Black/Freeze (以降なし)` を表示する。ギャップ退出後のトラック切替成功時にも表示だけを再計算し、
+  同期判断・ファイルロード判定・pause所有権・ギャップ挙動は変更していない。
+- RED→GREENとしてフォーマッタの次トラック／Freeze／無効トラック／後続なし／NoTracks分岐と、
+  ギャップ進入→退出の統合表示遷移、切替成功時だけのラベル更新を追加した。`IsEnabled` 条件を一時反転する
+  mutationでは単体2件・統合1件が失敗し、復元後の対象テストは11/11件合格した。
+- X2最終ゲートはDebug非E2E 1167/1167件合格、失敗0、Skip 0、警告0。Debug E2Eは50/50件合格、
+  失敗0、Skip 0（3分2秒）。カバレッジ再計測でも1167/1167件合格し、
+  `PlaylistCurrentTrackLabelFormatter` と `ContinueOnTrackCoordinator` はline/branch 100%だった。
+- X2完了コミット: `d6845b9`（`feat: ギャップ中に次トラック情報を表示`）。push未実施。
