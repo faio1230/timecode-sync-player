@@ -75,6 +75,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // ── LTC ───────────────────────────────────────────────────────
     private double _lastLtcSeconds;
+    private string _lastLtcFormatText = "LTC 停止中";
     private readonly ILtcMonitor _ltcMonitor;
     private readonly TimecodeSyncService _syncService;
     private readonly LtcFrameProcessor _ltcFrameProcessor;
@@ -362,11 +363,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     {
                         _ltcSignalLossMonitoringState.MarkStarted();
                         _ltcSignalLossPolicy.Reset();
+                        _lastLtcFormatText = "fps: 検出中...";
                     }
                     else if (!_ltcSignalLossMonitoringState.IsDetectionActive(isReportedRunning: false))
                     {
                         _ltcSignalLossPolicy.Reset();
+                        _lastLtcFormatText = "LTC 停止中";
                     }
+                    RefreshLtcDisplayState();
                     break;
             }
         };
@@ -690,7 +694,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _vm.Sync.LtcRealTimeText = processed.RealTimeText;
             double resolvedSeconds = processed.ResolvedSeconds;
             _lastLtcSeconds = resolvedSeconds;
-            _vm.Sync.LtcFormatText = processed.FormatText;
+            _lastLtcFormatText = processed.FormatText;
+            RefreshLtcDisplayState();
             if (processed.ShouldLogFps)
                 LogTimecodeFps(e.Fps, e.Timecode.DropFrame, processed.ResolvedFps);
             LogTimecodeFrameDiagnosticIfNeeded(e, processed);
@@ -708,6 +713,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 receivedAtMilliseconds,
                 CreateLtcSignalLossContext());
             ApplyLtcSignalLossAction(signalLossAction);
+            RefreshLtcDisplayState();
             if (_ltcSignalLossPolicy.ShouldSuppressSync)
                 return;
 
@@ -721,6 +727,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _ltcSignalLossMonitoringState.IsDetectionActive(_vm.Sync.IsLtcRunning),
         IsGapActive: !_gapFreezeHandler.IsInactive,
         IsPlaybackPaused: _playbackControl.IsPaused);
+
+    private void RefreshLtcDisplayState()
+    {
+        bool isMonitoring = _ltcSignalLossMonitoringState.IsDetectionActive(_vm.Sync.IsLtcRunning);
+        LtcDisplayState display = LtcDisplayStateFormatter.Format(
+            isMonitoring,
+            _ltcSignalLossPolicy.IsLost,
+            _lastLtcFormatText);
+        _vm.Sync.LtcFormatText = display.FormatText;
+        _vm.Sync.LtcTimecodeForeground = display.TimecodeForeground;
+    }
 
     private void ApplyLtcSignalLossAction(LtcSignalLossAction action)
     {
@@ -954,11 +971,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             bool shouldResetSignalLossPolicy = _ltcSignalLossMonitoringState.MarkStopped(exception);
             if (shouldResetSignalLossPolicy)
+            {
                 _ltcSignalLossPolicy.Reset();
-            _vm.Sync.LtcTimecodeText = "--:--:--:--";
-            _vm.Sync.LtcRealTimeText = "-.--- s";
-            _vm.Sync.LtcFormatText = exception == null ? "LTC 停止中" : "LTC 停止エラー";
+                _vm.Sync.LtcTimecodeText = "--:--:--:--";
+                _vm.Sync.LtcRealTimeText = "-.--- s";
+            }
+            _lastLtcFormatText = exception == null ? "LTC 停止中" : "LTC 停止エラー";
             _vm.Sync.IsLtcRunning = false;
+            RefreshLtcDisplayState();
         });
 
         if (exception != null)
@@ -1505,6 +1525,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         ApplyLtcSignalLossAction(_ltcSignalLossPolicy.Evaluate(
             Environment.TickCount64,
             CreateLtcSignalLossContext()));
+        RefreshLtcDisplayState();
 
         int durationRc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double dur);
         if (durationRc == 0 && SeekBarUpdateState.IsUsableDuration(dur))

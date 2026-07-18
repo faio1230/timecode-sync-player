@@ -1,6 +1,7 @@
 namespace TimecodeSyncPlayer.Tests.Integration;
 
 internal sealed record ScenarioMpvOperation(string Name, double? Value = null, string? Text = null);
+internal sealed record ScenarioLtcDisplayState(string FormatText, string TimecodeForeground);
 
 internal enum ScenarioRenderSurface
 {
@@ -125,6 +126,7 @@ internal sealed class SyncScenarioHarness
 
     public PlaylistState Playlist { get; } = new();
     public List<ScenarioMpvOperation> Operations { get; } = [];
+    public List<ScenarioLtcDisplayState> DisplayStates { get; } = [];
     public List<(string Name, string Value)> MpvPropertyWrites { get; } = [];
     public IReadOnlyList<(string Name, string Value)> AudioPropertyWrites =>
         MpvPropertyWrites.Where(write => write.Name is "mute" or "volume").ToArray();
@@ -159,6 +161,7 @@ internal sealed class SyncScenarioHarness
         LtcSignalLossAction signalAction = _signalLoss.ObserveValidFrame(
             _monotonicMilliseconds, SignalContext());
         ApplySignalLossAction(signalAction);
+        RecordLtcDisplayState();
         if (_signalLoss.ShouldSuppressSync)
             return;
 
@@ -169,6 +172,7 @@ internal sealed class SyncScenarioHarness
     {
         _monotonicMilliseconds += 100;
         ApplySignalLossAction(_signalLoss.Evaluate(_monotonicMilliseconds, SignalContext()));
+        RecordLtcDisplayState();
     }
 
     public void Tick100Milliseconds(int count)
@@ -424,4 +428,15 @@ internal sealed class SyncScenarioHarness
 
     private void RecordMpvProperty(string name, string value) =>
         MpvPropertyWrites.Add((name, value));
+
+    private void RecordLtcDisplayState()
+    {
+        LtcDisplayState display = LtcDisplayStateFormatter.Format(
+            IsMonitoring,
+            _signalLoss.IsLost,
+            normalFormatText: "fps: 25");
+        var state = new ScenarioLtcDisplayState(display.FormatText, display.TimecodeForeground);
+        if (DisplayStates.Count == 0 || DisplayStates[^1] != state)
+            DisplayStates.Add(state);
+    }
 }

@@ -7,6 +7,26 @@ public class LtcSignalLossPolicyTests
     private const long Start = 10_000;
 
     [Fact]
+    public void IsLost_TracksLossRecoveryAndManualStopReset_InRunThroughMode()
+    {
+        var policy = CreatePolicy(resumeFrames: 2);
+        LtcSignalLossContext context = Context() with { Mode = LtcSignalLossMode.RunThrough };
+
+        policy.IsLost.Should().BeFalse();
+        policy.ObserveValidFrame(Start, context);
+        policy.Evaluate(At(250), context);
+        policy.IsLost.Should().BeTrue();
+
+        policy.ObserveValidFrame(At(300), context);
+        policy.IsLost.Should().BeTrue();
+        policy.ObserveValidFrame(At(340), context);
+        policy.IsLost.Should().BeFalse();
+
+        policy.Reset();
+        policy.IsLost.Should().BeFalse();
+    }
+
+    [Fact]
     public void Evaluate_ReceivingToLost_ReturnsPauseOnceAtTimeoutEdge()
     {
         var policy = CreatePolicy();

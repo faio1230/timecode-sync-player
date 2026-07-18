@@ -5,6 +5,27 @@ namespace TimecodeSyncPlayer.Tests.Integration;
 public class SyncScenarioHarnessTests
 {
     [Fact]
+    public void SignalLossAndRecovery_RecordsLtcDisplayTransitions()
+    {
+        var harness = new SyncScenarioHarness
+        {
+            SignalLossMode = LtcSignalLossMode.RunThrough,
+        };
+        harness.AddTrack("track-1", timelineIn: 0);
+
+        harness.SupplyLtc(1);
+        harness.Tick100Milliseconds(3);
+        harness.SupplyLtc(1.1);
+        harness.SupplyLtc(1.2);
+        harness.SupplyLtc(1.3);
+
+        harness.DisplayStates.Should().ContainInOrder(
+            new ScenarioLtcDisplayState("fps: 25", "#55D86A"),
+            new ScenarioLtcDisplayState("NO SIGNAL", "#666666"),
+            new ScenarioLtcDisplayState("fps: 25", "#55D86A"));
+    }
+
+    [Fact]
     public void HarnessSelfTest_LtcOnTrack_UsesRealPlaylistAndCoordinatorToLoadTrack()
     {
         var harness = new SyncScenarioHarness();
