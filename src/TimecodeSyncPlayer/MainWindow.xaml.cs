@@ -1166,7 +1166,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _gapFreezeHandler.IsInactive,
             _playlist.Tracks,
             _playlist.CurrentIndex,
-            _loadedTrackId);
+            _loadedTrackId,
+            _lastLtcSeconds);
     }
 
     private void UpdatePlaylistTimelineDisplay()

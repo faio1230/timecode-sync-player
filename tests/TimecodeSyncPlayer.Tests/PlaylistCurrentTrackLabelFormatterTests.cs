@@ -15,7 +15,8 @@ public class PlaylistCurrentTrackLabelFormatterTests
             isGapInactive: true,
             tracks,
             currentIndex: 1,
-            loadedTrackId: null);
+            loadedTrackId: null,
+            timelineSeconds: 0);
 
         label.Should().Be("2/2  B");
     }
@@ -29,23 +30,81 @@ public class PlaylistCurrentTrackLabelFormatterTests
             isGapInactive: true,
             tracks: [],
             currentIndex: -1,
-            loadedTrackId: null);
+            loadedTrackId: null,
+            timelineSeconds: 0);
 
         label.Should().Be("No track");
     }
 
     [Fact]
-    public void Format_ReturnsGapLabel_InContinueModeGap()
+    public void Format_ReturnsGapLabelWithNextTrack_InContinueModeGap()
+    {
+        PlaylistTrack current = Track("track1", timelineOffset: TimeSpan.Zero);
+        PlaylistTrack next = Track("track2", timelineOffset: TimeSpan.FromMinutes(13));
+
+        string label = PlaylistCurrentTrackLabelFormatter.Format(
+            SyncMode.Continue,
+            GapBehavior.Black,
+            isGapInactive: false,
+            tracks: [current, next],
+            currentIndex: 0,
+            loadedTrackId: current.Id,
+            timelineSeconds: TimeSpan.FromMinutes(12).TotalSeconds);
+
+        label.Should().Be("Gap: Black → track2 @ 00:13:00");
+    }
+
+    [Fact]
+    public void Format_ReturnsFreezeGapLabelWithNextEnabledTrack()
+    {
+        PlaylistTrack disabled = Track(
+            "disabled",
+            timelineOffset: TimeSpan.FromSeconds(7),
+            isEnabled: false);
+        PlaylistTrack next = Track("next", timelineOffset: TimeSpan.FromSeconds(8));
+
+        string label = PlaylistCurrentTrackLabelFormatter.Format(
+            SyncMode.Continue,
+            GapBehavior.Freeze,
+            isGapInactive: false,
+            tracks: [disabled, next],
+            currentIndex: 0,
+            loadedTrackId: null,
+            timelineSeconds: 6);
+
+        label.Should().Be("Gap: Freeze → next @ 00:00:08");
+    }
+
+    [Fact]
+    public void Format_ReturnsNoFollowingTrack_InContinueModeGap()
+    {
+        PlaylistTrack current = Track("last", timelineOffset: TimeSpan.Zero);
+
+        string label = PlaylistCurrentTrackLabelFormatter.Format(
+            SyncMode.Continue,
+            GapBehavior.Black,
+            isGapInactive: false,
+            tracks: [current],
+            currentIndex: 0,
+            loadedTrackId: current.Id,
+            timelineSeconds: 20);
+
+        label.Should().Be("Gap: Black (以降なし)");
+    }
+
+    [Fact]
+    public void Format_ReturnsNoFollowingTrack_WhenPlaylistHasNoEnabledTracks()
     {
         string label = PlaylistCurrentTrackLabelFormatter.Format(
             SyncMode.Continue,
             GapBehavior.Freeze,
             isGapInactive: false,
-            tracks: [Track("A")],
-            currentIndex: 0,
-            loadedTrackId: null);
+            tracks: [],
+            currentIndex: -1,
+            loadedTrackId: null,
+            timelineSeconds: 0);
 
-        label.Should().Be("Gap: Freeze");
+        label.Should().Be("Gap: Freeze (以降なし)");
     }
 
     [Fact]
@@ -59,7 +118,8 @@ public class PlaylistCurrentTrackLabelFormatterTests
             isGapInactive: true,
             tracks: [Track("Other"), loaded],
             currentIndex: 0,
-            loadedTrackId: loaded.Id);
+            loadedTrackId: loaded.Id,
+            timelineSeconds: 0);
 
         label.Should().Be("Sync: Loaded");
     }
@@ -73,21 +133,25 @@ public class PlaylistCurrentTrackLabelFormatterTests
             isGapInactive: true,
             tracks: [Track("Other")],
             currentIndex: 0,
-            loadedTrackId: Guid.NewGuid());
+            loadedTrackId: Guid.NewGuid(),
+            timelineSeconds: 0);
 
         label.Should().Be("No track");
     }
 
-    private static PlaylistTrack Track(string name) =>
+    private static PlaylistTrack Track(
+        string name,
+        TimeSpan? timelineOffset = null,
+        bool isEnabled = true) =>
         new(
             Id: Guid.NewGuid(),
             FilePath: $"C:/media/{name}.mp4",
             Name: name,
             MediaIn: TimeSpan.Zero,
             MediaOut: null,
-            TimelineOffset: TimeSpan.Zero,
+            TimelineOffset: timelineOffset ?? TimeSpan.Zero,
             MediaDuration: TimeSpan.FromSeconds(10),
             SyncOffset: TimeSpan.Zero,
             FrameRate: null,
-            IsEnabled: true);
+            IsEnabled: isEnabled);
 }

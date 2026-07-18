@@ -33,6 +33,7 @@ internal sealed class SyncScenarioHarness
     private double _playbackSeconds = 1;
     private double _durationSeconds = 5;
     private double _videoFps = 25;
+    private double _lastLtcSeconds;
     private bool _renderVideoOnNextSeek;
 
     public SyncScenarioHarness()
@@ -69,7 +70,7 @@ internal sealed class SyncScenarioHarness
                     RecordMpvProperty("osd-bar", "yes");
                     Operations.Add(new("osd-bar", Text: "yes"));
                 },
-                UpdateCurrentTrackLabel: () => Operations.Add(new("update-label")),
+                UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
                 GetLoadedTrackId: () => _loadedTrackId,
                 SetLoadedTrackId: id => _loadedTrackId = id,
                 LoadFile: LoadFile,
@@ -114,7 +115,7 @@ internal sealed class SyncScenarioHarness
                 GetFps: () => _videoFps,
                 SetFps: fps => _videoFps = fps,
                 GetGapBehavior: () => GapBehavior,
-                UpdateCurrentTrackLabel: () => Operations.Add(new("update-label"))));
+                UpdateCurrentTrackLabel: RecordCurrentTrackLabel));
 
         _gapDispatcher = new GapEnterActionDispatcher(new GapEnterActionHandlers(
             _gapCoordinator.EnterBlackGap,
@@ -127,6 +128,7 @@ internal sealed class SyncScenarioHarness
     public PlaylistState Playlist { get; } = new();
     public List<ScenarioMpvOperation> Operations { get; } = [];
     public List<ScenarioLtcDisplayState> DisplayStates { get; } = [];
+    public List<string> CurrentTrackLabels { get; } = [];
     public List<(string Name, string Value)> MpvPropertyWrites { get; } = [];
     public IReadOnlyList<(string Name, string Value)> AudioPropertyWrites =>
         MpvPropertyWrites.Where(write => write.Name is "mute" or "volume").ToArray();
@@ -158,6 +160,7 @@ internal sealed class SyncScenarioHarness
 
     public void SupplyLtc(double seconds)
     {
+        _lastLtcSeconds = seconds;
         LtcSignalLossAction signalAction = _signalLoss.ObserveValidFrame(
             _monotonicMilliseconds, SignalContext());
         ApplySignalLossAction(signalAction);
@@ -318,7 +321,7 @@ internal sealed class SyncScenarioHarness
                 GapEnterAction action = _gap.DecideGapEnter(
                     result, GapBehavior, _loadedTrackId, _videoFps, _durationSeconds);
                 _gapDispatcher.Execute(action, result);
-                Operations.Add(new("update-label"));
+                RecordCurrentTrackLabel();
                 break;
             case TimelineQueryStatus.NoTracks:
                 _gapCoordinator.HandleNoTracks();
@@ -438,5 +441,20 @@ internal sealed class SyncScenarioHarness
         var state = new ScenarioLtcDisplayState(display.FormatText, display.TimecodeForeground);
         if (DisplayStates.Count == 0 || DisplayStates[^1] != state)
             DisplayStates.Add(state);
+    }
+
+    private void RecordCurrentTrackLabel()
+    {
+        Operations.Add(new("update-label"));
+        string label = PlaylistCurrentTrackLabelFormatter.Format(
+            Mode,
+            GapBehavior,
+            _gap.IsInactive,
+            Playlist.Tracks,
+            Playlist.CurrentIndex,
+            _loadedTrackId,
+            _lastLtcSeconds);
+        if (CurrentTrackLabels.Count == 0 || CurrentTrackLabels[^1] != label)
+            CurrentTrackLabels.Add(label);
     }
 }
