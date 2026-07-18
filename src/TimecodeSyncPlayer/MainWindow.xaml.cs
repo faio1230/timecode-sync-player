@@ -672,7 +672,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         catch (Exception ex)
         {
             Log.Warning(ex, "LTC capture device enumeration failed");
-            _vm.Sync.LtcFormatText = "LTC デバイス列挙失敗";
+            _lastLtcFormatText = "LTC デバイス列挙失敗";
+            RefreshLtcDisplayState();
         }
         finally
         {
@@ -979,6 +980,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 _vm.Sync.LtcRealTimeText = "-.--- s";
             }
             _lastLtcFormatText = exception == null ? "LTC 停止中" : "LTC 停止エラー";
+            // MarkStopped を先に呼ぶこと。IsLtcRunning の PropertyChanged 再入時に
+            // ここで選んだ停止／エラー表示を "LTC 停止中" で上書きさせない。
             _vm.Sync.IsLtcRunning = false;
             RefreshLtcDisplayState();
         });

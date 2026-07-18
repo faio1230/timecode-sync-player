@@ -296,7 +296,7 @@
                 <StackPanel Grid.Row="5" Margin="0,0,0,10">
                     <TextBlock x:Name="LtcTimecodeText"
                                AutomationProperties.AutomationId="LtcTimecodeText"
-                               AutomationProperties.HelpText="{Binding Sync.LtcTimecodeForeground}"
+                               AutomationProperties.ItemStatus="{Binding Sync.LtcTimecodeForeground}"
                                 Text="{Binding Sync.LtcTimecodeText}"
                                 Foreground="{Binding Sync.LtcTimecodeForeground}"
                                FontFamily="Consolas"
