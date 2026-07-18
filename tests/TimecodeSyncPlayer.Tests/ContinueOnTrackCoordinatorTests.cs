@@ -155,6 +155,7 @@ public class ContinueOnTrackCoordinatorTests
 
         rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
         rec.SetLoadedTrackIds.Should().ContainSingle().Which.Should().Be(newTrack.Id);
+        rec.Calls.Should().ContainSingle(call => call == "UpdateCurrentTrackLabel");
         // BeginFileLoad が呼ばれると以後のシークが抑止される
         service.ShouldSuppressSeek(playbackSeconds: 12.5, toleranceSeconds: 0.2).Should().BeTrue();
         // 同一トラック分岐へは進まない
@@ -177,6 +178,7 @@ public class ContinueOnTrackCoordinatorTests
         coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
 
         rec.Calls.Should().Contain("LoadFile");
+        rec.Calls.Should().NotContain("UpdateCurrentTrackLabel");
         rec.SetLoadedTrackIds.Should().BeEmpty();
         // BeginFileLoad は呼ばれていない（抑止フラグが立たない）
         service.ShouldSuppressSeek(playbackSeconds: 12.5, toleranceSeconds: 0.2).Should().BeFalse();

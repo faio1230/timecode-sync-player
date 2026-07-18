@@ -57,6 +57,7 @@ internal sealed class ContinueOnTrackCoordinator
 
                 _syncService.BeginFileLoad(mediaPos, _effects.GetTotalRenderedFrames());
                 _fileLoadStabilityLogState.Reset();
+                _effects.UpdateCurrentTrackLabel();
             }
         }
         else

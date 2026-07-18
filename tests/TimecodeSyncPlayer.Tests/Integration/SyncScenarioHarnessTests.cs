@@ -26,6 +26,23 @@ public class SyncScenarioHarnessTests
     }
 
     [Fact]
+    public void GapEntryAndExit_RecordsCurrentTrackLabelTransitions()
+    {
+        var harness = new SyncScenarioHarness { GapBehavior = GapBehavior.Black };
+        harness.AddTrack("track-1", timelineIn: 0, duration: 5);
+        harness.AddTrack("track-2", timelineIn: 8, duration: 5);
+        harness.SupplyLtc(1);
+
+        harness.SupplyLtc(6);
+        harness.SupplyLtc(9);
+        harness.SupplyLtc(9);
+
+        harness.CurrentTrackLabels.Should().ContainInOrder(
+            "Gap: Black → track-2 @ 00:00:08",
+            "Sync: track-2");
+    }
+
+    [Fact]
     public void HarnessSelfTest_LtcOnTrack_UsesRealPlaylistAndCoordinatorToLoadTrack()
     {
         var harness = new SyncScenarioHarness();
