@@ -200,6 +200,7 @@ internal sealed class RenderSession : IDisposable
         _stopped = true;
         RenderWorkerShutdownWaiter.Wait(_activeWorker,
             ex => Log.Warning(ex, "Active render worker failed during shutdown; continuing resource teardown"));
+        _activeWorker = null;
     }
 
     /// <summary>Must succeed before mpv is destroyed. Called on the owning UI thread.</summary>
@@ -216,10 +217,17 @@ internal sealed class RenderSession : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        FreeContext();
-        _buffers.Dispose();
-        _parameters = null;
-        _thread.Dispose();
+        var errors = new List<Exception>();
+        // On failure retain the thread, callback and pinned buffers alongside the live context.
+        // FreeContext can be explicitly retried by a caller that knows the native failure is recoverable.
+        try { FreeContext(); }
+        catch (Exception ex) { throw new AggregateException("RenderSession context cleanup failed", ex); }
         _disposed = true;
+        try { _buffers.Dispose(); }
+        catch (Exception ex) { errors.Add(ex); }
+        _parameters = null;
+        try { _thread.Dispose(); }
+        catch (Exception ex) { errors.Add(ex); }
+        if (errors.Count != 0) throw new AggregateException("RenderSession resource cleanup failed", errors);
     }
 }
