@@ -3,6 +3,7 @@ namespace TimecodeSyncPlayer.Tests;
 using FluentAssertions;
 using System.IO;
 using System.Reflection;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 public class TimecodeSyncServiceTests
 {
@@ -55,10 +56,6 @@ public class TimecodeSyncServiceTests
             return ShouldSuppress;
         }
     }
-
-    private static readonly FieldInfo s_lastSyncSeekAtField =
-        typeof(TimecodeSyncService).GetField("_lastSyncSeekAt",
-            BindingFlags.NonPublic | BindingFlags.Instance)!;
 
     private static readonly FieldInfo s_lastLoggedSyncActionField =
         typeof(TimecodeSyncService).GetField("_lastLoggedSyncAction",
@@ -116,12 +113,14 @@ public class TimecodeSyncServiceTests
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
-        var service = new TimecodeSyncService(engine, seekState);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 12, 34, 56, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
 
         service.ReportSeekSent(12.5);
 
         seekState.BeginSeekCallCount.Should().Be(1);
         seekState.LastBeginSeekTarget.Should().Be(12.5);
+        seekState.LastBeginSeekSentAt.Should().Be(new DateTime(2026, 9, 7, 12, 34, 56, DateTimeKind.Utc));
         seekState.HasPendingSeek.Should().BeTrue();
     }
 
@@ -130,35 +129,29 @@ public class TimecodeSyncServiceTests
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
-        var service = new TimecodeSyncService(engine, seekState);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
 
         service.ReportSeekSent(12.5);
 
         service.IsDebounced().Should().BeTrue();
     }
 
-    [Fact]
-    public void IsDebounced_ReturnsFalse_AfterSufficientTime()
+    [Theory]
+    [InlineData(2_499_999, true)]
+    [InlineData(2_500_000, false)]
+    [InlineData(2_500_001, false)]
+    public void IsDebounced_UsesInjectedClockAt250MillisecondBoundary(long elapsedTicks, bool expected)
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
-        var service = new TimecodeSyncService(engine, seekState);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.ReportSeekSent(12.5);
 
-        s_lastSyncSeekAtField.SetValue(service, DateTime.UtcNow.AddMilliseconds(-500));
+        clock.Advance(TimeSpan.FromTicks(elapsedTicks));
 
-        service.IsDebounced().Should().BeFalse();
-    }
-
-    [Fact]
-    public void IsDebounced_ReturnsFalse_AtOrAfterExact250MillisecondBoundary()
-    {
-        var service = new TimecodeSyncService(
-            new MockSyncDecisionEngine(),
-            new MockTimecodeSyncSeekState());
-        DateTime exactBoundary = DateTime.UtcNow.AddMilliseconds(-250);
-        s_lastSyncSeekAtField.SetValue(service, exactBoundary);
-
-        service.IsDebounced().Should().BeFalse();
+        service.IsDebounced().Should().Be(expected);
     }
 
     [Fact]
@@ -190,8 +183,8 @@ public class TimecodeSyncServiceTests
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
-        var service = new TimecodeSyncService(engine, seekState);
-        s_lastSyncSeekAtField.SetValue(service, DateTime.MinValue);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
 
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
 
@@ -258,9 +251,10 @@ public class TimecodeSyncServiceTests
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
-        var service = new TimecodeSyncService(engine, seekState);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
-        s_lastSyncSeekAtField.SetValue(service, DateTime.MinValue);
+        clock.Advance(TimeSpan.FromSeconds(1));
 
         service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5);
 
@@ -297,22 +291,25 @@ public class TimecodeSyncServiceTests
         seekState.ShouldSuppressCalled.Should().BeTrue();
     }
 
-    [Fact]
-    public void ShouldSuppressSeek_AutoClearsLoadingAfterTimeout()
+    [Theory]
+    [InlineData(49_999_999, true, true)]
+    [InlineData(50_000_000, true, true)]
+    [InlineData(50_000_001, false, false)]
+    public void ShouldSuppressSeek_UsesInjectedClockAtFiveSecondLoadTimeoutBoundary(
+        long elapsedTicks,
+        bool expectedSuppression,
+        bool expectedLoading)
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState { ShouldSuppress = false };
-        var service = new TimecodeSyncService(engine, seekState);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
 
-        var fileLoadStartedAtField = typeof(TimecodeSyncService)
-            .GetField("_fileLoadStartedAt", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        fileLoadStartedAtField.SetValue(service, DateTime.UtcNow.AddSeconds(-6));
+        clock.Advance(TimeSpan.FromTicks(elapsedTicks));
 
-        bool result = service.ShouldSuppressSeek(0.0, 0.2);
-
-        result.Should().BeFalse();
-        service.IsLoadingFile.Should().BeFalse();
+        service.ShouldSuppressSeek(0.0, 0.2).Should().Be(expectedSuppression);
+        service.IsLoadingFile.Should().Be(expectedLoading);
     }
 
     [Fact]
@@ -320,13 +317,11 @@ public class TimecodeSyncServiceTests
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState { ShouldSuppress = false };
-        var service = new TimecodeSyncService(engine, seekState);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
 
-        // タイムアウト（6秒前に設定）
-        var fileLoadStartedAtField = typeof(TimecodeSyncService)
-            .GetField("_fileLoadStartedAt", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        fileLoadStartedAtField.SetValue(service, DateTime.UtcNow.AddSeconds(-6));
+        clock.Advance(TimeSpan.FromSeconds(5) + TimeSpan.FromTicks(1));
 
         service.ShouldSuppressSeek(0.0, 0.2);    // タイムアウトを発火させる
 

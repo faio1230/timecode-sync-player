@@ -56,6 +56,12 @@ public sealed class GapFreezeHandler
     private GapState _currentState = GapState.Inactive;
     private bool _pauseOwnedByGap;
     private bool _pauseOwnershipRecorded;
+    private readonly TimeProvider _timeProvider;
+
+    public GapFreezeHandler(TimeProvider? timeProvider = null)
+    {
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
 
     internal GapState CurrentState
     {
@@ -95,7 +101,7 @@ public sealed class GapFreezeHandler
     public void EnterFreezeCapture(Guid? trackId, double targetSeconds, string? filePath)
     {
         _currentState = GapState.EnteringFreeze;
-        StartedAt = DateTime.UtcNow;
+        StartedAt = _timeProvider.GetUtcNow().UtcDateTime;
         PendingTrackId = trackId;
         PendingTargetSeconds = targetSeconds;
         PendingPath = filePath;
@@ -104,7 +110,7 @@ public sealed class GapFreezeHandler
     public void EnterFreezeCaptureWithReload(Guid? trackId, double targetSeconds, string? filePath)
     {
         EnterFreezeCapture(trackId, targetSeconds, filePath);
-        LastReloadAt = DateTime.UtcNow;
+        LastReloadAt = _timeProvider.GetUtcNow().UtcDateTime;
     }
 
     public void OnFreezeComplete(Guid? loadedTrackId)
@@ -132,7 +138,7 @@ public sealed class GapFreezeHandler
     public bool HasTimedOut() =>
         _currentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep &&
         StartedAt != DateTime.MinValue &&
-        DateTime.UtcNow - StartedAt > TimeSpan.FromSeconds(TimeoutSec);
+        _timeProvider.GetUtcNow().UtcDateTime - StartedAt > TimeSpan.FromSeconds(TimeoutSec);
 
     public bool ShouldStartFreezeCapture(GapBehavior gapBehavior) =>
         gapBehavior == GapBehavior.Freeze && _currentState == GapState.Inactive;

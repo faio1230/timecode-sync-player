@@ -4,6 +4,7 @@ public sealed class TimecodeSyncService
 {
     private readonly ISyncDecisionEngine _engine;
     private readonly ITimecodeSyncSeekState _seekState;
+    private readonly TimeProvider _timeProvider;
 
     private DateTime _lastSyncSeekAt = DateTime.MinValue;
     private volatile bool _isLoadingFile;
@@ -19,10 +20,14 @@ public sealed class TimecodeSyncService
     private const long FileLoadRenderedFrameProgress = 2;
     private static readonly TimeSpan FileLoadTimeout = TimeSpan.FromSeconds(5);
 
-    public TimecodeSyncService(ISyncDecisionEngine engine, ITimecodeSyncSeekState seekState)
+    public TimecodeSyncService(
+        ISyncDecisionEngine engine,
+        ITimecodeSyncSeekState seekState,
+        TimeProvider? timeProvider = null)
     {
         _engine = engine;
         _seekState = seekState;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public SyncDecision EvaluateDecision(double ltcSeconds, SyncPlaybackState state)
@@ -36,7 +41,7 @@ public sealed class TimecodeSyncService
 
     public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds)
     {
-        DateTime now = DateTime.UtcNow;
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
 
         if (_isLoadingFile)
         {
@@ -63,13 +68,13 @@ public sealed class TimecodeSyncService
 
     public bool IsDebounced()
     {
-        DateTime now = DateTime.UtcNow;
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         return (now - _lastSyncSeekAt).TotalMilliseconds < SeekDebounceMs;
     }
 
     public void ReportSeekSent(double targetSeconds)
     {
-        DateTime now = DateTime.UtcNow;
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _lastSyncSeekAt = now;
         _seekState.BeginSeek(targetSeconds, now);
     }
@@ -81,7 +86,7 @@ public sealed class TimecodeSyncService
     public void BeginFileLoad(double startPositionSeconds, long renderedFrameCount)
     {
         _isLoadingFile = true;
-        DateTime now = DateTime.UtcNow;
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _fileLoadStartedAt = now;
         _fileLoadStartPositionSeconds = Math.Max(0, startPositionSeconds);
         _fileLoadStartedRenderedFrames = Math.Max(0, renderedFrameCount);
@@ -107,7 +112,7 @@ public sealed class TimecodeSyncService
         }
 
         _isLoadingFile = false;
-        DateTime now = DateTime.UtcNow;
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _lastSyncSeekAt = now;                // ロード後デバウンスを再スタート
         return true;
     }
