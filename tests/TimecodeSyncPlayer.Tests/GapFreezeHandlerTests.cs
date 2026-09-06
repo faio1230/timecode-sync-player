@@ -1,5 +1,6 @@
 using Xunit;
 using FluentAssertions;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -30,7 +31,7 @@ public class GapFreezeHandlerTests
     {
         var handler = new GapFreezeHandler();
         handler.CurrentState = GapState.FreezeComplete;
-        handler.StartedAt = DateTime.UtcNow;
+        handler.StartedAt = DateTime.UnixEpoch;
         handler.PendingTrackId = Guid.NewGuid();
         handler.PendingTargetSeconds = 123.456;
         handler.PendingPath = "test.mp4";
@@ -66,7 +67,7 @@ public class GapFreezeHandlerTests
     {
         var handler = new GapFreezeHandler();
         handler.CurrentState = GapState.FreezeComplete;
-        handler.StartedAt = DateTime.UtcNow;
+        handler.StartedAt = DateTime.UnixEpoch;
         handler.PendingTrackId = Guid.NewGuid();
         handler.PendingTargetSeconds = 123.456;
         handler.PendingPath = "test.mp4";
@@ -87,9 +88,9 @@ public class GapFreezeHandlerTests
     [Fact]
     public void EnterFreezeCapture_SetsStateCorrectly()
     {
-        var handler = new GapFreezeHandler();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 12, 34, 56, TimeSpan.Zero));
+        var handler = new GapFreezeHandler(clock);
         var trackId = Guid.NewGuid();
-        var before = DateTime.UtcNow;
 
         handler.EnterFreezeCapture(trackId, 42.5, "/path/to/video.mp4");
 
@@ -97,7 +98,7 @@ public class GapFreezeHandlerTests
         handler.PendingTrackId.Should().Be(trackId);
         handler.PendingTargetSeconds.Should().Be(42.5);
         handler.PendingPath.Should().Be("/path/to/video.mp4");
-        handler.StartedAt.Should().BeOnOrAfter(before).And.BeOnOrBefore(DateTime.UtcNow);
+        handler.StartedAt.Should().Be(new DateTime(2026, 9, 7, 12, 34, 56, DateTimeKind.Utc));
     }
 
     [Fact]
@@ -153,7 +154,7 @@ public class GapFreezeHandlerTests
     public void Reset_ClearsLastReloadAt()
     {
         var handler = new GapFreezeHandler();
-        handler.LastReloadAt = DateTime.UtcNow;
+        handler.LastReloadAt = DateTime.UnixEpoch;
 
         handler.Reset();
 
@@ -311,46 +312,29 @@ public class GapFreezeHandlerTests
         handler.CachedTargetSeconds.Should().Be(0);
     }
 
-    [Fact]
-    public void HasTimedOut_WhenWithinTimeout_ReturnsFalse()
+    [Theory]
+    [InlineData(29_999_999, false)]
+    [InlineData(30_000_000, false)]
+    [InlineData(30_000_001, true)]
+    public void HasTimedOut_UsesInjectedClockAtThreeSecondBoundary(long elapsedTicks, bool expected)
     {
-        var handler = new GapFreezeHandler();
-        handler.CurrentState = GapState.EnteringFreeze;
-        handler.StartedAt = DateTime.UtcNow;
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var handler = new GapFreezeHandler(clock);
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
 
-        bool result = handler.HasTimedOut();
+        clock.Advance(TimeSpan.FromTicks(elapsedTicks));
 
-        result.Should().BeFalse();
+        handler.HasTimedOut().Should().Be(expected);
     }
 
     [Fact]
-    public void HasTimedOut_WhenPastTimeout_ReturnsTrue()
+    public void HasTimedOut_WhenWaitingForFrameStepAndPastTimeout_ReturnsTrue()
     {
-        var handler = new GapFreezeHandler();
-        handler.CurrentState = GapState.EnteringFreeze;
-        handler.StartedAt = DateTime.UtcNow - TimeSpan.FromSeconds(GapFreezeHandler.TimeoutSec + 0.1);
-
-        bool result = handler.HasTimedOut();
-
-        result.Should().BeTrue();
-    }
-
-    [Fact]
-    public void HasTimedOut_AtTwoPointNineNineNineSeconds_ReturnsFalse()
-    {
-        var handler = new GapFreezeHandler();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var handler = new GapFreezeHandler(clock);
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
         handler.CurrentState = GapState.WaitingForFrameStep;
-        handler.StartedAt = DateTime.UtcNow - TimeSpan.FromSeconds(2.999);
-
-        handler.HasTimedOut().Should().BeFalse();
-    }
-
-    [Fact]
-    public void HasTimedOut_AtThreePointZeroZeroOneSeconds_ReturnsTrue()
-    {
-        var handler = new GapFreezeHandler();
-        handler.CurrentState = GapState.WaitingForFrameStep;
-        handler.StartedAt = DateTime.UtcNow - TimeSpan.FromSeconds(3.001);
+        clock.Advance(TimeSpan.FromSeconds(3) + TimeSpan.FromTicks(1));
 
         handler.HasTimedOut().Should().BeTrue();
     }
@@ -358,14 +342,14 @@ public class GapFreezeHandlerTests
     [Fact]
     public void EnterFreezeCaptureWithReload_SetsLastReloadAt()
     {
-        var handler = new GapFreezeHandler();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 12, 34, 56, TimeSpan.Zero));
+        var handler = new GapFreezeHandler(clock);
         var trackId = Guid.NewGuid();
-        var before = DateTime.UtcNow;
 
         handler.EnterFreezeCaptureWithReload(trackId, 42.5, "/path/to/video.mp4");
 
         handler.CurrentState.Should().Be(GapState.EnteringFreeze);
-        handler.LastReloadAt.Should().BeOnOrAfter(before).And.BeOnOrBefore(DateTime.UtcNow);
+        handler.LastReloadAt.Should().Be(new DateTime(2026, 9, 7, 12, 34, 56, DateTimeKind.Utc));
     }
 
     private static PlaylistTrack MakeTrack(Guid id, double durationSeconds, double? fps = 24.0, double? mediaOutSeconds = null)
