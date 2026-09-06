@@ -118,6 +118,9 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // MainWindow owns ordered shutdown of its RenderSession and the shared LTC/Spout services.
+        // Keep the provider rooted until process exit; disposing it here would bypass that order
+        // and retry native resources whose release may have failed in Window_Closing.
         Log.Information("=== TimecodeSyncPlayer 終了 ===");
         Log.CloseAndFlush();
         base.OnExit(e);

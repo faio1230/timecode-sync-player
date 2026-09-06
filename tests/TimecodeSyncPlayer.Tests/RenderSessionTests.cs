@@ -9,6 +9,115 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class RenderSessionTests
 {
     [Fact]
+    public Task Shutdown_ContextFreeFailureRetainsNativeDependenciesAndStillDisposesIndependentResources() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        var failure = new InvalidOperationException("native free");
+        fixture.Api.FreeFailure = failure;
+        var calls = new List<string>();
+        var disposer = new MainWindowResourceDisposer(
+            () => calls.Add("timer"), fixture.Session.FreeContext, () => calls.Add("mpv"),
+            () => calls.Add("ltc"), () => calls.Add("spout"), () => calls.Add("timeline"),
+            () => { calls.Add("buffers"); fixture.Session.Dispose(); },
+            stopRender: fixture.Session.Stop);
+        try
+        {
+            var error = Assert.Throws<AggregateException>(disposer.DisposeAll);
+            error.InnerExceptions.Should().ContainSingle().Which.Should().BeSameAs(failure);
+            calls.Should().Equal("timer", "ltc", "spout", "timeline");
+            fixture.Buffers.PixelPtr.Should().NotBe(IntPtr.Zero);
+            fixture.Buffers.FormatStringPtr.Should().NotBe(IntPtr.Zero);
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
+            callback!(IntPtr.Zero);
+            fixture.Scheduled.Should().BeEmpty();
+            Assert.Throws<AggregateException>(fixture.Session.Dispose).Flatten().InnerExceptions.Should().Contain(failure);
+            fixture.Buffers.PixelPtr.Should().NotBe(IntPtr.Zero);
+        }
+        finally { fixture.Api.FreeFailure = null; }
+        fixture.Session.Dispose();
+        fixture.Session.Dispose();
+        fixture.Buffers.PixelPtr.Should().Be(IntPtr.Zero);
+        fixture.Api.Calls.Count(c => c.Operation == "free").Should().Be(3);
+    });
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public Task Dispose_PartialInitializationReleasesContextAtMostOnce(int phase) => OnUi(() =>
+    {
+        using var fixture = new Fixture(initialize: false);
+        if (phase == 1)
+        {
+            fixture.Api.CreateReturnCode = -1;
+            fixture.Session.Create(new IntPtr(1)).Should().BeFalse();
+        }
+        if (phase == 2)
+        {
+            fixture.Api.CallbackFailure = new InvalidOperationException("register callback");
+            Assert.Throws<InvalidOperationException>(() => fixture.Session.Create(new IntPtr(1)));
+        }
+        fixture.Session.Dispose();
+        fixture.Session.Dispose();
+        fixture.Api.Calls.Count(c => c.Operation == "free").Should().Be(phase == 0 ? 0 : 1);
+        Assert.Throws<ObjectDisposedException>(() => fixture.Session.Create(new IntPtr(1)));
+        return Task.CompletedTask;
+    });
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Dispose_WaitsForRawWorkerBeforeFreeWithoutWaitingForUiContinuation(bool workerFails) => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        using var release = new ManualResetEventSlim();
+        fixture.Api.RenderRelease = release;
+        var failure = new InvalidOperationException("native render");
+        if (workerFails) fixture.Api.RenderFailure = failure;
+        Task rendering = fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        await fixture.Api.RenderStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var observation = Task.Run(() =>
+        {
+            try
+            {
+                SpinWait.SpinUntil(() => !fixture.Session.IsCurrent(fixture.Session.CaptureGeneration()), TimeSpan.FromSeconds(5)).Should().BeTrue();
+                fixture.Api.Calls.Should().NotContain(c => c.Operation == "free");
+                fixture.Buffers.PixelPtr.Should().NotBe(IntPtr.Zero);
+            }
+            finally { release.Set(); }
+        });
+        fixture.Session.Dispose(); // UI thread: only the raw native Task may be waited here.
+        await observation;
+        if (workerFails)
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => rendering)).Should().BeSameAs(failure);
+        else
+            await rendering;
+        fixture.Api.Calls.Select(c => c.Operation).Should().Equal("create", "callback", "render", "render-finished", "free");
+        fixture.Spout.Frames.Should().BeEmpty();
+        fixture.Buffers.PixelPtr.Should().Be(IntPtr.Zero);
+    });
+
+    [Fact]
+    public Task QueuedCallbackAndGapFrame_AreHarmlessAfterDispose() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
+        callback!(IntPtr.Zero);
+        fixture.Scheduled.Should().ContainSingle();
+        fixture.Session.Dispose();
+        fixture.Scheduled[0]();
+        callback(IntPtr.Zero);
+        fixture.State = GapState.BlackFrameActive;
+        await fixture.Session.RenderGapAsync(GapRenderFrameDecision.Black);
+        fixture.Api.Calls.Select(c => c.Operation).Should().Equal("create", "callback", "free");
+        fixture.Spout.Frames.Should().BeEmpty();
+        fixture.Scheduled.Should().ContainSingle();
+    });
+
+    [Fact]
     public Task NativeLifecycle_UsesOneThreadAndPublishesOnUiThread() => OnUi(async () =>
     {
         using var fixture = new Fixture();
@@ -178,10 +287,13 @@ public sealed class RenderSessionTests
         public readonly List<Action> Scheduled = [];
         public GapState State = GapState.Inactive;
         public RenderSession Session { get; }
-        public Fixture()
+        public PixelBufferManager Buffers => (PixelBufferManager)typeof(RenderSession)
+            .GetField("_buffers", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(Session)!;
+        public Fixture(bool initialize = true)
         {
             Session = new RenderSession(Api, Spout, new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)),
                 () => State, () => GapBehavior.Freeze, Scheduled.Add);
+            if (!initialize) return;
             Session.Create(new IntPtr(1)).Should().BeTrue();
             Session.AllocateParameters();
             Session.InitializeFrameRenderer();
@@ -211,6 +323,10 @@ public sealed class RenderSessionTests
         private byte _nextPixel = 73;
         public ManualResetEventSlim? RenderRelease;
         public ManualResetEventSlim? UpdateRelease;
+        public Exception? FreeFailure;
+        public Exception? CallbackFailure;
+        public Exception? RenderFailure;
+        public int CreateReturnCode;
         public int MpvRenderParamApiType => 1;
         public int MpvRenderParamSwSize => 17;
         public int MpvRenderParamSwFormat => 18;
@@ -220,18 +336,21 @@ public sealed class RenderSessionTests
         public ulong MpvRenderUpdateFrame => 1;
         private void Record(string name) => Calls.Enqueue((name, Environment.CurrentManagedThreadId));
         public int RenderContextCreate(out IntPtr res, IntPtr mpv, MpvRenderNative.MpvRenderParam[] parameters)
-        { Record("create"); res = new IntPtr(2); return 0; }
+        { Record("create"); res = new IntPtr(2); return CreateReturnCode; }
         public ulong RenderContextUpdate(IntPtr ctx)
         { Record("update"); UpdateStarted.TrySetResult(); UpdateRelease?.Wait(); return 1; }
         public int RenderContextRender(IntPtr ctx, MpvRenderNative.MpvRenderParam[] parameters)
         {
             Record("render"); RenderStarted.TrySetResult(); RenderRelease?.Wait();
             Marshal.WriteByte(parameters.Single(p => p.Type == MpvRenderParamSwPointer).Data, _nextPixel++);
+            if (RenderRelease != null) Record("render-finished");
+            if (RenderFailure != null) throw RenderFailure;
             return 0;
         }
         public void RenderContextSetUpdateCallback(IntPtr ctx, MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx)
-        { Record("callback"); Callback = new(callback); }
-        public void RenderContextFree(IntPtr ctx) => Record("free");
+        { Record("callback"); Callback = new(callback); if (CallbackFailure != null) throw CallbackFailure; }
+        public void RenderContextFree(IntPtr ctx)
+        { Record("free"); if (FreeFailure != null) throw FreeFailure; }
     }
 
     private static Task OnUi(Func<Task> action)

@@ -55,7 +55,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly TimecodeSyncService _syncService;
     private readonly FileLoadStabilityLogState _fileLoadStabilityLogState = new(TimeSpan.FromSeconds(1));
     private readonly GapPlaybackCommandExecutor _gapPlaybackCommandExecutor;
-    private bool _disposed;
+    private volatile bool _disposed;
     private readonly GapFreezeHandler _gapFreezeHandler;
     private bool _isRefreshingLtcDevices;
 
@@ -604,8 +604,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void LtcMonitor_FrameReceived(object? sender, LtcFrameReceivedEventArgs e)
     {
+        if (_disposed) return;
         long receivedAtMilliseconds = Environment.TickCount64;
-        Dispatcher.BeginInvoke(() => _ltcSyncController.ReceiveFrame(e, receivedAtMilliseconds));
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_disposed) _ltcSyncController.ReceiveFrame(e, receivedAtMilliseconds);
+        });
     }
 
     private SingleModeSyncCoordinator CreateSingleModeSyncCoordinator() =>
@@ -693,7 +697,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void LtcMonitor_Stopped(object? sender, Exception? exception)
     {
-        Dispatcher.BeginInvoke(() => _ltcSyncController.MonitorStopped(exception));
+        if (_disposed) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_disposed) _ltcSyncController.MonitorStopped(exception);
+        });
         if (exception != null)
             Log.Error(exception, "LTC monitor stopped with error");
     }
@@ -1234,7 +1242,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void OnTick(object? sender, EventArgs e)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (_disposed || _mpv == IntPtr.Zero) return;
 
         _ltcSyncController.Tick(Environment.TickCount64);
 
@@ -1488,10 +1496,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_disposed) return;
         _disposed = true;
 
-        _renderSession.Stop();
-
-        CloseFullscreenOutput();
-
         var disposer = new MainWindowResourceDisposer(
             disposeTimer: () =>
             {
@@ -1523,7 +1527,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     _timelinePanel.TimelineSeekRequested -= TimelinePanel_TimelineSeekRequested;
                 _timelinePanel?.Dispose();
             },
-            disposeBuffer: _renderSession.Dispose);
+            disposeBuffer: _renderSession.Dispose,
+            stopRender: _renderSession.Stop,
+            closeFullscreen: CloseFullscreenOutput);
         disposer.DisposeAll();
     }
 
