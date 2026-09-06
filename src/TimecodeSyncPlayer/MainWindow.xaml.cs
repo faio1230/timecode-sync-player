@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -74,18 +74,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly SpoutFramePublisher _spoutFramePublisher;
 
     // ── LTC ───────────────────────────────────────────────────────
-    private double _lastLtcSeconds;
-    private string _lastLtcFormatText = "LTC 停止中";
+    private readonly LtcSyncController _ltcSyncController;
     private readonly ILtcMonitor _ltcMonitor;
     private readonly TimecodeSyncService _syncService;
-    private readonly LtcFrameProcessor _ltcFrameProcessor;
     private readonly FileLoadStabilityLogState _fileLoadStabilityLogState = new(TimeSpan.FromSeconds(1));
-    private readonly ContinueModeQueryLogState _continueModeQueryLogState = new(TimeSpan.FromSeconds(1), mediaPositionToleranceSeconds: 0.5);
     private readonly GapPlaybackCommandExecutor _gapPlaybackCommandExecutor;
     private bool _disposed;
     private readonly GapFreezeHandler _gapFreezeHandler;
-    private readonly LtcSignalLossPolicy _ltcSignalLossPolicy;
-    private readonly LtcSignalLossMonitoringState _ltcSignalLossMonitoringState = new();
     private bool _isRefreshingLtcDevices;
 
     // ── Constants ──────────────────────────────────────────────────
@@ -182,14 +177,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _ltcMonitor = ltcMonitor;
         _playlist = playlist;
         _syncService = syncService;
-        _ltcFrameProcessor = ltcFrameProcessor;
         _gapPlaybackCommandExecutor = gapPlaybackCommandExecutor;
         _gapFreezeHandler = gapFreezeHandler;
         _settingsManager = settingsManager;
         _showDebugOsd = settingsManager.Current.ShowDebugOsd;
-        _ltcSignalLossPolicy = new LtcSignalLossPolicy(
-            TimeSpan.FromMilliseconds(settingsManager.Current.LtcSignalLossTimeoutMs),
-            settingsManager.Current.LtcSignalResumeFrames);
         _spoutOutput = spoutOutput;
         _spoutFramePublisher = spoutFramePublisher;
         _mpvRenderApi = mpvRenderApi;
@@ -230,6 +221,42 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Player   = new PlayerViewModel(this);
         _vm.Playlist = new PlaylistViewModel(_playlist, _mediaDurationReader);
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
+        _ltcSyncController = new LtcSyncController(
+            _playlist, _gapFreezeHandler, _syncService, ltcFrameProcessor,
+            settingsManager.Current.LtcSignalLossTimeoutMs, settingsManager.Current.LtcSignalResumeFrames,
+            new LtcSyncEffects(
+                GetContext: () => new LtcSyncContext(
+                    _mpv != IntPtr.Zero, _vm.Sync.SyncEnabled, _vm.Sync.SyncMode,
+                    _seekBarInteraction.IsSeeking, _vm.Sync.IsLtcRunning, _playbackControl.IsPaused,
+                    _vm.Sync.LtcSignalLossMode, _vm.Sync.LtcFpsMode, _vm.Sync.GapBehavior,
+                    _loadedTrackId, _fps, _duration,
+                    _settingsManager.Current.LtcSignalLossTimeoutMs, _settingsManager.Current.LtcSignalResumeFrames),
+                ApplyFrameText: (timecode, realTime) =>
+                {
+                    _vm.Sync.LtcTimecodeText = timecode;
+                    _vm.Sync.LtcRealTimeText = realTime;
+                },
+                ApplyDisplay: (display, pauseReason) =>
+                {
+                    _vm.Sync.LtcFormatText = display.FormatText;
+                    _vm.Sync.LtcTimecodeForeground = display.TimecodeForeground;
+                    _vm.Sync.LtcSignalLossPauseReason = pauseReason;
+                },
+                SetMonitoring: running => _vm.Sync.IsLtcRunning = running,
+                SetSignalLossPaused: paused =>
+                {
+                    _mpvApi.SetPropertyString(_mpv, "pause", paused ? MpvValueYes : MpvValueNo);
+                    ApplyPauseState(paused);
+                },
+                ResumeProjectRestorePause: ResumeProjectRestorePauseForSyncIfNeeded,
+                ClearGapFreezeFrame: () => _bufferManager.ClearGapFreezeFrame(),
+                RefreshCurrentVideoFrame: RefreshCurrentVideoFrame,
+                UpdateTimelinePosition: seconds => _timelinePanel?.UpdatePlaybackPosition(seconds),
+                UpdateCurrentTrackLabel: UpdateCurrentTrackLabel,
+                RenderGapFreeze: () => QueueGapFramePipelineAction(
+                    GapRenderFrameDecision.GapFreeze,
+                    () => _frameRenderer.RenderGapFreeze(_videoWidth, _videoHeight))),
+            CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
             settingsManager.Current.Volume);
@@ -321,8 +348,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         _vm.Sync.SyncEnabledChanged += (_, enabled) =>
         {
-            if (!enabled) _syncService.ClearSeekState();
-            ExitGapStateForManualControlIfNeeded();
+            _ltcSyncController.SyncEnabledChanged();
             Log.Information("Timecode sync {State}", enabled ? "enabled" : "disabled");
         };
 
@@ -335,9 +361,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     {
                         SyncMode = _vm.Sync.SyncMode,
                     });
-                    _ltcFrameProcessor.ResetDiagnostics();
-                    _syncService.ClearSeekState();
-                    ExitGapStateForManualControlIfNeeded();
+                    _ltcSyncController.SyncModeChanged();
                     Log.Information("Sync mode changed to {Mode}", _vm.Sync.SyncMode);
                     break;
                 case nameof(SyncViewModel.GapBehavior):
@@ -348,7 +372,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Log.Information("Gap behavior changed to {Behavior}", _vm.Sync.GapBehavior);
                     break;
                 case nameof(SyncViewModel.LtcFpsMode):
-                    _ltcFrameProcessor.ResetForFpsMode(_vm.Sync.LtcFpsMode);
+                    _ltcSyncController.FpsModeChanged();
                     Log.Information("LTC fps mode changed mode={Mode}", _vm.Sync.LtcFpsMode);
                     break;
                 case nameof(SyncViewModel.LtcSignalLossMode):
@@ -359,18 +383,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Log.Information("LTC signal loss mode changed mode={Mode}", _vm.Sync.LtcSignalLossMode);
                     break;
                 case nameof(SyncViewModel.IsLtcRunning):
-                    if (_vm.Sync.IsLtcRunning)
-                    {
-                        _ltcSignalLossMonitoringState.MarkStarted();
-                        _ltcSignalLossPolicy.Reset();
-                        _lastLtcFormatText = "fps: 検出中...";
-                    }
-                    else if (!_ltcSignalLossMonitoringState.IsDetectionActive(isReportedRunning: false))
-                    {
-                        _ltcSignalLossPolicy.Reset();
-                        _lastLtcFormatText = "LTC 停止中";
-                    }
-                    RefreshLtcDisplayState();
+                    _ltcSyncController.MonitoringChanged();
                     break;
             }
         };
@@ -672,8 +685,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         catch (Exception ex)
         {
             Log.Warning(ex, "LTC capture device enumeration failed");
-            _lastLtcFormatText = "LTC デバイス列挙失敗";
-            RefreshLtcDisplayState();
+            _ltcSyncController.DeviceEnumerationFailed();
         }
         finally
         {
@@ -687,124 +699,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void LtcMonitor_FrameReceived(object? sender, LtcFrameReceivedEventArgs e)
     {
         long receivedAtMilliseconds = Environment.TickCount64;
-        Dispatcher.BeginInvoke(() =>
-        {
-            LtcFrameProcessingResult processed = _ltcFrameProcessor.Process(e, _vm.Sync.LtcFpsMode);
-
-            _vm.Sync.LtcTimecodeText = processed.TimecodeText;
-            _vm.Sync.LtcRealTimeText = processed.RealTimeText;
-            double resolvedSeconds = processed.ResolvedSeconds;
-            _lastLtcSeconds = resolvedSeconds;
-            _lastLtcFormatText = processed.FormatText;
-            RefreshLtcDisplayState();
-            if (processed.ShouldLogFps)
-                LogTimecodeFps(e.Fps, e.Timecode.DropFrame, processed.ResolvedFps);
-            LogTimecodeFrameDiagnosticIfNeeded(e, processed);
-
-            if (!processed.ShouldApplySync)
-            {
-                Log.Information(
-                    "Timecode sync skipped due to LTC frame diagnostic status={Status} tc={Timecode} resolvedSeconds={ResolvedSeconds:F3} deltaSeconds={DeltaSeconds:F3} deltaFrames={DeltaFrames:F2}",
-                    processed.Diagnostic.Status, e.Timecode, resolvedSeconds,
-                    processed.Diagnostic.DeltaSeconds, processed.Diagnostic.DeltaFrames);
-                return;
-            }
-
-            LtcSignalLossAction signalLossAction = _ltcSignalLossPolicy.ObserveValidFrame(
-                receivedAtMilliseconds,
-                CreateLtcSignalLossContext());
-            ApplyLtcSignalLossAction(signalLossAction);
-            RefreshLtcDisplayState();
-            if (_ltcSignalLossPolicy.ShouldSuppressSync)
-                return;
-
-            ApplyTimecodeSync(resolvedSeconds);
-        });
+        Dispatcher.BeginInvoke(() => _ltcSyncController.ReceiveFrame(e, receivedAtMilliseconds));
     }
 
-    private LtcSignalLossContext CreateLtcSignalLossContext() => new(
-        _vm.Sync.LtcSignalLossMode,
-        _vm.Sync.SyncEnabled,
-        _ltcSignalLossMonitoringState.IsDetectionActive(_vm.Sync.IsLtcRunning),
-        IsGapActive: !_gapFreezeHandler.IsInactive,
-        IsPlaybackPaused: _playbackControl.IsPaused);
-
-    private void RefreshLtcDisplayState()
-    {
-        bool isMonitoring = _ltcSignalLossMonitoringState.IsDetectionActive(_vm.Sync.IsLtcRunning);
-        LtcDisplayState display = LtcDisplayStateFormatter.Format(
-            isMonitoring,
-            _ltcSignalLossPolicy.IsLost,
-            _lastLtcFormatText);
-        _vm.Sync.LtcFormatText = display.FormatText;
-        _vm.Sync.LtcTimecodeForeground = display.TimecodeForeground;
-        _vm.Sync.LtcSignalLossPauseReason = LtcSignalLossPauseReasonFormatter.Format(
-            _ltcSignalLossPolicy.IsPauseOwned);
-    }
-
-    private void ApplyLtcSignalLossAction(LtcSignalLossAction action)
-    {
-        if (action == LtcSignalLossAction.None || _mpv == IntPtr.Zero)
-            return;
-
-        switch (action)
-        {
-            case LtcSignalLossAction.Pause:
-                _mpvApi.SetPropertyString(_mpv, "pause", MpvValueYes);
-                ApplyPauseState(true);
-                Log.Information(
-                    "LTC signal lost: playback paused timeoutMs={TimeoutMs}",
-                    _settingsManager.Current.LtcSignalLossTimeoutMs);
-                break;
-            case LtcSignalLossAction.ResumeAndSync:
-                _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
-                ApplyPauseState(false);
-                Log.Information(
-                    "LTC signal restored: playback resumed resumeFrames={ResumeFrames}",
-                    _settingsManager.Current.LtcSignalResumeFrames);
-                break;
-        }
-    }
-
-    private void LogTimecodeFps(double detectedFps, bool dropFrame, double resolvedFps)
-    {
-        Log.Information(
-            "LTC fps resolved mode={Mode} detectedFps={DetectedFps:F3} dropFrame={DropFrame} resolvedFps={ResolvedFps:F3}",
-            _vm.Sync.LtcFpsMode, detectedFps, dropFrame, resolvedFps);
-    }
-
-    private void LogTimecodeFrameDiagnosticIfNeeded(LtcFrameReceivedEventArgs e, LtcFrameProcessingResult processed)
-    {
-        if (processed.Diagnostic.Status is TimecodeFrameDiagnosticStatus.Initial or TimecodeFrameDiagnosticStatus.Normal)
-            return;
-
-        Log.Warning(
-            "LTC frame diagnostic status={Status} tc={Timecode} rawSeconds={RawSeconds:F3} resolvedSeconds={ResolvedSeconds:F3} deltaSeconds={DeltaSeconds:F3} deltaFrames={DeltaFrames:F2} detectedFps={DetectedFps:F3} resolvedFps={ResolvedFps:F3} mode={Mode}",
-            processed.Diagnostic.Status, e.Timecode, e.RealTimeSeconds, processed.ResolvedSeconds,
-            processed.Diagnostic.DeltaSeconds, processed.Diagnostic.DeltaFrames, e.Fps, processed.ResolvedFps,
-            _vm.Sync.LtcFpsMode);
-    }
-
-    private void ApplyTimecodeSync(double ltcSeconds)
-    {
-        if (_mpv == IntPtr.Zero)
-            return;
-
-        if (_vm.Sync.SyncMode == SyncMode.Continue)
-        {
-            ApplyContinueModeSync(ltcSeconds);
-        }
-        else
-        {
-            ApplySingleModeSync(ltcSeconds);
-        }
-    }
-
-    private void ApplySingleModeSync(double ltcSeconds)
-    {
-        if (_vm.Sync.SyncEnabled && !_seekBarInteraction.IsSeeking && _playlist.Current != null)
-            ResumeProjectRestorePauseForSyncIfNeeded();
-
+    private SingleModeSyncCoordinator CreateSingleModeSyncCoordinator() =>
         _singleModeSyncCoordinator ??= new SingleModeSyncCoordinator(
             _syncService,
             new SingleModeSyncEffects(
@@ -820,51 +718,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     PlaybackSeconds: playbackSeconds,
                     DurationSeconds: _duration,
                     VideoFps: _fps,
-                    TimecodeFps: _ltcFrameProcessor.LastTimecodeFps),
+                    TimecodeFps: _ltcSyncController.LastTimecodeFps),
                 SeekTo: target => SeekTo(target)));
-        _singleModeSyncCoordinator.Apply(ltcSeconds);
-    }
 
-    private void ApplyContinueModeSync(double ltcSeconds)
-    {
-        if (!_vm.Sync.SyncEnabled) return;
-        if (_seekBarInteraction.IsSeeking) return;
-
-        if (_gapFreezeHandler.CurrentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
-        {
-            _timelinePanel?.UpdatePlaybackPosition(ltcSeconds);
-            return;
-        }
-
-        var result = _playlist.FindTrackAtTimelinePosition(ltcSeconds);
-
-        string? queryTrackName = result.Track?.Name;
-        if (_continueModeQueryLogState.ShouldLog(result.Status, queryTrackName, result.MediaPositionSeconds, DateTime.UtcNow))
-        {
-            Log.Debug("Continue mode query result: status={Status} track={Track} mediaPos={MediaPos:F3}",
-                result.Status, queryTrackName ?? "null", result.MediaPositionSeconds);
-        }
-
-        switch (result.Status)
-        {
-            case TimelineQueryStatus.OnTrack:
-                HandleOnTrackSync(result, ltcSeconds);    // Gap 終了処理は内部で実施
-                break;
-
-            case TimelineQueryStatus.Gap:
-                HandleGapSync(result);
-                break;
-
-            case TimelineQueryStatus.NoTracks:
-                HandleNoTracksSync();
-                break;
-        }
-    }
-
-    private void HandleOnTrackSync(TimelineQueryResult result, double ltcSeconds)
-    {
-        ResumeProjectRestorePauseForSyncIfNeeded();
-
+    private ContinueOnTrackCoordinator CreateContinueOnTrackCoordinator() =>
         _continueOnTrackCoordinator ??= new ContinueOnTrackCoordinator(
             _syncService,
             _fileLoadStabilityLogState,
@@ -891,30 +748,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     PlaybackSeconds: playbackSeconds,
                     DurationSeconds: _duration,
                     VideoFps: _fps,
-                    TimecodeFps: _ltcFrameProcessor.LastTimecodeFps)));
-        _continueOnTrackCoordinator.Handle(result, ltcSeconds);
-    }
-
-    private void HandleGapSync(TimelineQueryResult result)
-    {
-        var action = _gapFreezeHandler.DecideGapEnter(result, _vm.Sync.GapBehavior, _loadedTrackId, _fps, _duration);
-        var coordinator = CreateGapEnterCoordinator();
-        var dispatcher = new GapEnterActionDispatcher(new GapEnterActionHandlers(
-            coordinator.EnterBlackGap,
-            coordinator.EnterForceBlack,
-            () => QueueGapFramePipelineAction(
-                GapRenderFrameDecision.GapFreeze,
-                () => _frameRenderer.RenderGapFreeze(_videoWidth, _videoHeight)),
-            coordinator.StartGapFreezeCaptureForCurrentTrack,
-            coordinator.LoadPreviousTrackFinalFrameForGapFreeze));
-        dispatcher.Execute(action, result);
-        UpdateCurrentTrackLabel();
-    }
-
-    private void HandleNoTracksSync()
-    {
-        CreateGapEnterCoordinator().HandleNoTracks();
-    }
+                    TimecodeFps: _ltcSyncController.LastTimecodeFps)));
 
     private GapEnterCoordinator CreateGapEnterCoordinator() =>
         _gapEnterCoordinator ??= new(_gapFreezeHandler, new GapEnterEffects(
@@ -947,45 +781,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             GetGapBehavior: () => _vm.Sync.GapBehavior,
             UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel()));
 
-    private void ExitGapStateForManualControlIfNeeded()
+    private void RefreshCurrentVideoFrame()
     {
-        if (!GapStateExitPolicy.ShouldExit(_vm.Sync.SyncEnabled, _vm.Sync.SyncMode, !_gapFreezeHandler.IsInactive))
-            return;
-
-        _gapFreezeHandler.ResetAll();
-        _bufferManager.ClearGapFreezeFrame();
-
-        // ギャップ演出で黒/フリーズを描いた後は mpv から新フレームが来るまで画面が戻らない。
-        // 現在位置へ再シークして最終フレームを即座に再描画させる（一時停止中でも描画される）
+        // Re-seek the current position to redraw immediately after leaving a black/frozen gap.
         if (_mpv != IntPtr.Zero &&
             _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double currentPos) == 0)
-        {
             SeekTo(currentPos);
-        }
-
-        Log.Information("Gap state cleared for manual control syncEnabled={SyncEnabled} mode={Mode}",
-            _vm.Sync.SyncEnabled, _vm.Sync.SyncMode);
-        UpdateCurrentTrackLabel();
     }
 
     private void LtcMonitor_Stopped(object? sender, Exception? exception)
     {
-        Dispatcher.BeginInvoke(() =>
-        {
-            bool shouldResetSignalLossPolicy = _ltcSignalLossMonitoringState.MarkStopped(exception);
-            if (shouldResetSignalLossPolicy)
-            {
-                _ltcSignalLossPolicy.Reset();
-                _vm.Sync.LtcTimecodeText = "--:--:--:--";
-                _vm.Sync.LtcRealTimeText = "-.--- s";
-            }
-            _lastLtcFormatText = exception == null ? "LTC 停止中" : "LTC 停止エラー";
-            // MarkStopped を先に呼ぶこと。IsLtcRunning の PropertyChanged 再入時に
-            // ここで選んだ停止／エラー表示を "LTC 停止中" で上書きさせない。
-            _vm.Sync.IsLtcRunning = false;
-            RefreshLtcDisplayState();
-        });
-
+        Dispatcher.BeginInvoke(() => _ltcSyncController.MonitorStopped(exception));
         if (exception != null)
             Log.Error(exception, "LTC monitor stopped with error");
     }
@@ -1172,7 +978,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _playlist.Tracks,
             _playlist.CurrentIndex,
             _loadedTrackId,
-            _lastLtcSeconds);
+            _ltcSyncController.LastLtcSeconds);
     }
 
     private void UpdatePlaylistTimelineDisplay()
@@ -1528,10 +1334,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_mpv == IntPtr.Zero) return;
 
-        ApplyLtcSignalLossAction(_ltcSignalLossPolicy.Evaluate(
-            Environment.TickCount64,
-            CreateLtcSignalLossContext()));
-        RefreshLtcDisplayState();
+        _ltcSyncController.Tick(Environment.TickCount64);
 
         int durationRc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double dur);
         if (durationRc == 0 && SeekBarUpdateState.IsUsableDuration(dur))
@@ -1544,9 +1347,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // タイマーでタイムライン位置を更新する
         if (!_gapFreezeHandler.IsInactive
             && _vm.Sync.SyncMode == SyncMode.Continue
-            && _lastLtcSeconds > 0)
+            && _ltcSyncController.LastLtcSeconds > 0)
         {
-            _timelinePanel?.UpdatePlaybackPosition(_lastLtcSeconds);
+            _timelinePanel?.UpdatePlaybackPosition(_ltcSyncController.LastLtcSeconds);
         }
 
         if (_gapFreezeHandler.HasTimedOut())
@@ -1614,7 +1417,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             case ContinueModeEndAdvanceAction.EnterNoTracks:
                 _endAdvanceTriggered = true;
                 Log.Information("Continue mode: reached final track end, entering no-tracks gap state");
-                HandleNoTracksSync();
+                CreateGapEnterCoordinator().HandleNoTracks();
                 return;
         }
     }
@@ -1770,7 +1573,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         double? gapTimelinePosition = PlaybackTimelinePositionPolicy.GetGapTimelinePosition(
             _gapFreezeHandler.IsInactive,
             _vm.Sync.SyncMode,
-            _lastLtcSeconds);
+            _ltcSyncController.LastLtcSeconds);
         if (gapTimelinePosition.HasValue)
             _timelinePanel?.UpdatePlaybackPosition(gapTimelinePosition.Value);
 
@@ -1796,7 +1599,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 double timelinePosition = PlaybackTimelinePositionPolicy.GetNormalTimelinePosition(
                     _vm.Sync.SyncMode,
                     _vm.Sync.SyncEnabled,
-                    _lastLtcSeconds,
+                    _ltcSyncController.LastLtcSeconds,
                     pos);
                 _timelinePanel?.UpdatePlaybackPosition(timelinePosition);
             }

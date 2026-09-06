@@ -14,20 +14,17 @@ internal enum ScenarioRenderSurface
 }
 
 /// <summary>
-/// MainWindow の同期配線を UI なしで再現し、mpv 境界だけを記録するシナリオ基盤。
+/// 本番の LTC 制御を UI なしで実行し、mpv・表示境界だけを記録するシナリオ基盤。
 /// </summary>
 internal sealed class SyncScenarioHarness
 {
     private readonly TimecodeSyncService _syncService =
         new(new SyncDecisionEngine(), new TimecodeSyncSeekState());
     private readonly GapFreezeHandler _gap = new();
-    private readonly LtcSignalLossPolicy _signalLoss =
-        new(TimeSpan.FromMilliseconds(250), resumeFrameCount: 3);
     private readonly PlaybackControlState _playback = new();
     private readonly ProjectRestorePauseState _projectRestorePauseState = new();
     private readonly ContinueOnTrackCoordinator _continueCoordinator;
     private readonly GapEnterCoordinator _gapCoordinator;
-    private readonly GapEnterActionDispatcher _gapDispatcher;
     private readonly AudioControlCoordinator _audioControlCoordinator;
 
     private long _monotonicMilliseconds = 10_000;
@@ -36,7 +33,6 @@ internal sealed class SyncScenarioHarness
     private double _playbackSeconds = 1;
     private double _durationSeconds = 5;
     private double _videoFps = 25;
-    private double _lastLtcSeconds;
     private bool _renderVideoOnNextSeek;
 
     public SyncScenarioHarness()
@@ -120,13 +116,52 @@ internal sealed class SyncScenarioHarness
                 GetGapBehavior: () => GapBehavior,
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel));
 
-        _gapDispatcher = new GapEnterActionDispatcher(new GapEnterActionHandlers(
-            _gapCoordinator.EnterBlackGap,
-            _gapCoordinator.EnterForceBlack,
-            RenderFreeze,
-            _gapCoordinator.StartGapFreezeCaptureForCurrentTrack,
-            _gapCoordinator.LoadPreviousTrackFinalFrameForGapFreeze));
+        var single = new SingleModeSyncCoordinator(
+            _syncService,
+            new SingleModeSyncEffects(
+                GetTimePos: () => (0, _playbackSeconds),
+                BuildPlaybackState: playback => new SyncPlaybackState(
+                    SyncEnabled, Playlist.Current != null, IsSeeking, playback,
+                    _durationSeconds, _videoFps, 25),
+                SeekTo: Seek));
+        Controller = new LtcSyncController(
+            Playlist, _gap, _syncService,
+            new LtcFrameProcessor(new TimecodeFpsSelector(), new TimecodeFrameDiagnostics()),
+            250, 3,
+            new LtcSyncEffects(
+                GetContext: () => new LtcSyncContext(
+                    true, SyncEnabled, Mode, IsSeeking, IsMonitoring, IsPaused,
+                    SignalLossMode, TimecodeFpsMode.Fixed25, GapBehavior,
+                    _loadedTrackId, _videoFps, _durationSeconds, 250, 3),
+                ApplyFrameText: (timecode, realTime) =>
+                {
+                    TimecodeText = timecode;
+                    RealTimeText = realTime;
+                },
+                ApplyDisplay: RecordLtcDisplayState,
+                SetMonitoring: running => IsMonitoring = running,
+                SetSignalLossPaused: paused =>
+                {
+                    Operations.Add(new(paused ? "signal-loss-pause" : "signal-loss-resume"));
+                    RecordMpvProperty("pause", paused ? "yes" : "no");
+                    SetPaused(paused);
+                },
+                ResumeProjectRestorePause: ResumeProjectRestorePauseForSyncIfNeeded,
+                ClearGapFreezeFrame: () => Operations.Add(new("clear-freeze")),
+                RefreshCurrentVideoFrame: () =>
+                {
+                    RenderSurface = ScenarioRenderSurface.Video;
+                    Seek(_playbackSeconds);
+                },
+                UpdateTimelinePosition: _ => { },
+                UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
+                RenderGapFreeze: RenderFreeze),
+            () => single, () => _continueCoordinator, () => _gapCoordinator);
     }
+
+    public LtcSyncController Controller { get; }
+    public string TimecodeText { get; private set; } = "--:--:--:--";
+    public string RealTimeText { get; private set; } = "-.--- s";
 
     public PlaylistState Playlist { get; } = new();
     public List<ScenarioMpvOperation> Operations { get; } = [];
@@ -139,7 +174,16 @@ internal sealed class SyncScenarioHarness
     public SyncMode Mode { get; private set; } = SyncMode.Continue;
     public bool SyncEnabled { get; private set; } = true;
     public bool IsSeeking { get; private set; }
-    public bool IsMonitoring { get; set; } = true;
+    private bool _isMonitoring = true;
+    public bool IsMonitoring
+    {
+        get => _isMonitoring;
+        set
+        {
+            _isMonitoring = value;
+            Controller.MonitoringChanged();
+        }
+    }
     public GapBehavior GapBehavior { get; set; } = GapBehavior.Freeze;
     public LtcSignalLossMode SignalLossMode { get; set; } = LtcSignalLossMode.Stop;
     public bool IsPaused => _playback.IsPaused;
@@ -161,24 +205,16 @@ internal sealed class SyncScenarioHarness
         return track;
     }
 
-    public void SupplyLtc(double seconds)
-    {
-        _lastLtcSeconds = seconds;
-        LtcSignalLossAction signalAction = _signalLoss.ObserveValidFrame(
-            _monotonicMilliseconds, SignalContext());
-        ApplySignalLossAction(signalAction);
-        RecordLtcDisplayState();
-        if (_signalLoss.ShouldSuppressSync)
-            return;
-
-        ApplySync(seconds);
-    }
+    public void SupplyLtc(double seconds) =>
+        Controller.ReceiveProcessedFrame(new LtcFrameProcessingResult(
+            "scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
+            new TimecodeFrameDiagnosticResult(TimecodeFrameDiagnosticStatus.Normal, 0, 0),
+            ShouldApplySync: true, ShouldLogFps: false), _monotonicMilliseconds);
 
     public void Tick100Milliseconds()
     {
         _monotonicMilliseconds += 100;
-        ApplySignalLossAction(_signalLoss.Evaluate(_monotonicMilliseconds, SignalContext()));
-        RecordLtcDisplayState();
+        Controller.Tick(_monotonicMilliseconds);
     }
 
     public void Tick100Milliseconds(int count)
@@ -229,13 +265,13 @@ internal sealed class SyncScenarioHarness
     public void ChangeMode(SyncMode mode)
     {
         Mode = mode;
-        ExitGapStateForManualControlIfNeeded();
+        Controller.SyncModeChanged();
     }
 
     public void SetSyncEnabled(bool enabled)
     {
         SyncEnabled = enabled;
-        ExitGapStateForManualControlIfNeeded();
+        Controller.SyncEnabledChanged();
     }
 
     public void SelectPlaylistRow(int index)
@@ -286,50 +322,6 @@ internal sealed class SyncScenarioHarness
         if (GapState == GapState.Inactive && RenderSurface != ScenarioRenderSurface.Video)
             violations.Add("inactive gap requires video rendering");
         return violations;
-    }
-
-    private void ApplySync(double ltcSeconds)
-    {
-        if (!SyncEnabled || IsSeeking)
-            return;
-
-        if (Mode == SyncMode.Single)
-        {
-            if (Playlist.Current != null)
-                ResumeProjectRestorePauseForSyncIfNeeded();
-
-            var coordinator = new SingleModeSyncCoordinator(
-                _syncService,
-                new SingleModeSyncEffects(
-                    GetTimePos: () => (0, _playbackSeconds),
-                    BuildPlaybackState: playback => new SyncPlaybackState(
-                        SyncEnabled, Playlist.Current != null, IsSeeking, playback,
-                        _durationSeconds, _videoFps, 25),
-                    SeekTo: Seek));
-            coordinator.Apply(ltcSeconds);
-            return;
-        }
-
-        if (_gap.CurrentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
-            return;
-
-        TimelineQueryResult result = Playlist.FindTrackAtTimelinePosition(ltcSeconds);
-        switch (result.Status)
-        {
-            case TimelineQueryStatus.OnTrack:
-                ResumeProjectRestorePauseForSyncIfNeeded();
-                _continueCoordinator.Handle(result, ltcSeconds);
-                break;
-            case TimelineQueryStatus.Gap:
-                GapEnterAction action = _gap.DecideGapEnter(
-                    result, GapBehavior, _loadedTrackId, _videoFps, _durationSeconds);
-                _gapDispatcher.Execute(action, result);
-                RecordCurrentTrackLabel();
-                break;
-            case TimelineQueryStatus.NoTracks:
-                _gapCoordinator.HandleNoTracks();
-                break;
-        }
     }
 
     private bool LoadFile(string path, double start)
@@ -402,49 +394,12 @@ internal sealed class SyncScenarioHarness
         Operations.Add(new("pause", Text: paused ? "yes" : "no"));
     }
 
-    private LtcSignalLossContext SignalContext() => new(
-        SignalLossMode, SyncEnabled, IsMonitoring, IsGapActive, IsPaused);
-
-    private void ApplySignalLossAction(LtcSignalLossAction action)
-    {
-        if (action == LtcSignalLossAction.Pause)
-        {
-            Operations.Add(new("signal-loss-pause"));
-            RecordMpvProperty("pause", "yes");
-            SetPaused(true);
-        }
-        else if (action == LtcSignalLossAction.ResumeAndSync)
-        {
-            Operations.Add(new("signal-loss-resume"));
-            RecordMpvProperty("pause", "no");
-            SetPaused(false);
-        }
-    }
-
-    private void ExitGapStateForManualControlIfNeeded()
-    {
-        if (!GapStateExitPolicy.ShouldExit(SyncEnabled, Mode, IsGapActive))
-            return;
-
-        _gap.ResetAll();
-        Operations.Add(new("clear-freeze"));
-        RenderSurface = ScenarioRenderSurface.Video;
-        Seek(_playbackSeconds);
-    }
-
     private void RecordMpvProperty(string name, string value) =>
         MpvPropertyWrites.Add((name, value));
 
-    private void RecordLtcDisplayState()
+    private void RecordLtcDisplayState(LtcDisplayState display, string pauseReason)
     {
-        LtcDisplayState display = LtcDisplayStateFormatter.Format(
-            IsMonitoring,
-            _signalLoss.IsLost,
-            normalFormatText: "fps: 25");
-        var state = new ScenarioLtcDisplayState(
-            display.FormatText,
-            display.TimecodeForeground,
-            LtcSignalLossPauseReasonFormatter.Format(_signalLoss.IsPauseOwned));
+        var state = new ScenarioLtcDisplayState(display.FormatText, display.TimecodeForeground, pauseReason);
         if (DisplayStates.Count == 0 || DisplayStates[^1] != state)
             DisplayStates.Add(state);
     }
@@ -459,7 +414,7 @@ internal sealed class SyncScenarioHarness
             Playlist.Tracks,
             Playlist.CurrentIndex,
             _loadedTrackId,
-            _lastLtcSeconds);
+            Controller.LastLtcSeconds);
         if (CurrentTrackLabels.Count == 0 || CurrentTrackLabels[^1] != label)
             CurrentTrackLabels.Add(label);
     }
