@@ -1,6 +1,5 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Media;
@@ -16,7 +15,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 {
     // ── mpv ──────────────────────────────────────────────────────
     private IntPtr            _mpv             = IntPtr.Zero;
-    private IntPtr            _renderCtx       = IntPtr.Zero;
     private DispatcherTimer?  _timer;
     private readonly PlaybackControlState _playbackControl = new();
     private readonly SeekBarInteractionController _seekBarInteraction = new();
@@ -30,32 +28,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private DateTime          _lastSeekTickLogAt = DateTime.MinValue;
 
     // ── SW レンダー ────────────────────────────────────────────────
-    private int               _videoWidth      = 0;
-    private int               _videoHeight     = 0;
-    private readonly PixelBufferManager _bufferManager;
-    private FrameRenderer _frameRenderer = null!;
+    private readonly RenderSession _renderSession;
     private readonly IDisplayCatalog _displayCatalog = new NativeDisplayCatalog();
     private FullscreenOutputWindow? _fullscreenWindow;
     private bool _isRefreshingDisplays;
     private readonly PlaybackPerformanceStats _playbackPerformanceStats;
-    private readonly RenderFramePerformanceRecorder _renderFramePerformanceRecorder;
-    private readonly RenderFrameDisplayUpdater _renderFrameDisplayUpdater;
-    private readonly RenderedFrameFreezeBufferCopier _renderedFrameFreezeBufferCopier;
-    private readonly RenderFramePublishPipeline _renderFramePublishPipeline;
-    private readonly StartupBufferInitializer _startupBufferInitializer;
-    private readonly MpvRenderFrameExecutor _mpvRenderFrameExecutor;
-    private readonly RenderFrameWorker _renderFrameWorker;
-    private readonly RenderFramePipelineGate _renderFramePipelineGate = new();
-    private readonly RenderThreadExecutor _renderThread = new();
-    private readonly RenderUpdateGeneration _renderUpdateGeneration = new();
-    private Task? _activeRenderWorkerTask;
 
-    // レンダーパラム用の永続バッファ（PixelBufferManager に移動）
-    private MpvRenderNative.MpvRenderParam[]? _renderParams;
-
-    // 更新コールバック（GC に回収されないようフィールドに保持する）
-    private MpvRenderNative.MpvRenderUpdateFn? _updateCallback;
-    private readonly IRenderUpdateScheduler _renderUpdateScheduler;
     private readonly IMediaDurationReader _mediaDurationReader;
     private readonly PlaylistDurationBackfillService _playlistDurationBackfillService;
     private readonly PlaylistDurationBackfillCoordinator _playlistDurationBackfillCoordinator;
@@ -66,12 +44,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly ProjectSaveExecutor _projectSaveExecutor;
     private readonly ProjectFileCoordinator _projectFileCoordinator;
     private readonly IMpvApi _mpvApi;
-    private readonly IMpvRenderApi _mpvRenderApi;
     private readonly AudioControlCoordinator _audioControlCoordinator;
 
     // ── Spout ─────────────────────────────────────────────────────
     private readonly ISpoutOutput _spoutOutput;
-    private readonly SpoutFramePublisher _spoutFramePublisher;
 
     // ── LTC ───────────────────────────────────────────────────────
     private readonly LtcSyncController _ltcSyncController;
@@ -88,12 +64,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // Seek debounce timing
     private const double SeekDebounceMs = 250.0;
     private const double LoadfileReloadDebounceMs = 1000.0;
-
-    // Fallback render size
-    private const int FallbackRenderSize = 16;
-
-    // Render pixel format
-    private const string RenderPixelFormat = "bgr0";
 
     // MPV command strings
     private const string MpvSeekModeAbsolute = "absolute+exact";
@@ -156,7 +126,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         GapFreezeHandler gapFreezeHandler,
         AppSettingsManager settingsManager,
         ISpoutOutput spoutOutput,
-        SpoutFramePublisher spoutFramePublisher,
         IMediaDurationReader mediaDurationReader,
         PlaylistDurationBackfillService playlistDurationBackfillService,
         PlaylistLoadCoordinator playlistLoadCoordinator,
@@ -166,11 +135,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         ISeekBarUpdateState seekState,
         OsdUpdateState osdUpdateState,
         PlaybackPerformanceStats playbackPerformanceStats,
-        RenderFramePerformanceRecorder renderFramePerformanceRecorder,
-        PixelBufferManager bufferManager,
-        StartupBufferInitializer startupBufferInitializer,
-        RenderedFrameFreezeBufferCopier renderedFrameFreezeBufferCopier,
-        IRenderUpdateScheduler renderUpdateScheduler,
         IMpvApi mpvApi,
         IMpvRenderApi mpvRenderApi)
     {
@@ -182,8 +146,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _settingsManager = settingsManager;
         _showDebugOsd = settingsManager.Current.ShowDebugOsd;
         _spoutOutput = spoutOutput;
-        _spoutFramePublisher = spoutFramePublisher;
-        _mpvRenderApi = mpvRenderApi;
         _mediaDurationReader = mediaDurationReader;
         _playlistDurationBackfillService = playlistDurationBackfillService;
         _playlistLoadCoordinator = playlistLoadCoordinator;
@@ -194,33 +156,18 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _seekState = seekState;
         _osdUpdateState = osdUpdateState;
         _playbackPerformanceStats = playbackPerformanceStats;
-        _renderFramePerformanceRecorder = renderFramePerformanceRecorder;
-        _bufferManager = bufferManager;
-        _startupBufferInitializer = startupBufferInitializer;
-        _renderedFrameFreezeBufferCopier = renderedFrameFreezeBufferCopier;
-        _renderFrameDisplayUpdater = new RenderFrameDisplayUpdater(
-            (width, height) => _frameRenderer.UpdateFromPixelBuffer(width, height),
-            (width, height) => Log.Information("RenderFrame: first frame displayed {W}x{H}", width, height));
-        _renderFramePublishPipeline = new RenderFramePublishPipeline(
-            (width, height) => _renderFrameDisplayUpdater.Update(width, height),
-            (pixels, width, height) => _spoutFramePublisher.Publish(pixels, width, height),
-            measurement => _renderFramePerformanceRecorder.Record(measurement),
-            (state, width, height) => _renderedFrameFreezeBufferCopier.CopyIfNeeded(state, width, height));
-        _mpvRenderFrameExecutor = new MpvRenderFrameExecutor(
-            () => _mpvRenderApi.RenderContextRender(_renderCtx, _renderParams!));
-        _renderFrameWorker = new RenderFrameWorker(
-            ensurePixelBuffer: (width, height) => _bufferManager.EnsurePixelBuffer(width, height),
-            buildRenderParameters: (width, height) => RenderFrameParameterBuilder.Build(_bufferManager, _renderParams!, _mpvRenderApi, width, height),
-            renderFrame: () => _mpvRenderFrameExecutor.Render(),
-            decidePublish: RenderFramePublishPolicy.Decide,
-            logRenderFailure: rc => Log.Debug("mpv_render_context_render: rc={Rc}", rc));
-        _renderUpdateScheduler = renderUpdateScheduler;
         _mpvApi = mpvApi;
 
         _vm = new MainViewModel();
         _vm.Player   = new PlayerViewModel(this);
         _vm.Playlist = new PlaylistViewModel(_playlist, _mediaDurationReader);
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
+        _renderSession = new RenderSession(mpvRenderApi, _spoutOutput, _playbackPerformanceStats,
+            () => _gapFreezeHandler.CurrentState,
+            () => _vm.Sync.GapBehavior,
+            action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action));
+        _renderSession.FrameUpdate = ProcessRenderFrameUpdateAsync;
+        _renderSession.BitmapChanged += bitmap => VideoImage.Source = bitmap;
         _ltcSyncController = new LtcSyncController(
             _playlist, _gapFreezeHandler, _syncService, ltcFrameProcessor,
             settingsManager.Current.LtcSignalLossTimeoutMs, settingsManager.Current.LtcSignalResumeFrames,
@@ -249,13 +196,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     ApplyPauseState(paused);
                 },
                 ResumeProjectRestorePause: ResumeProjectRestorePauseForSyncIfNeeded,
-                ClearGapFreezeFrame: () => _bufferManager.ClearGapFreezeFrame(),
+                ClearGapFreezeFrame: () => _renderSession.ClearGapFreezeFrame(),
                 RefreshCurrentVideoFrame: RefreshCurrentVideoFrame,
                 UpdateTimelinePosition: seconds => _timelinePanel?.UpdatePlaybackPosition(seconds),
                 UpdateCurrentTrackLabel: UpdateCurrentTrackLabel,
-                RenderGapFreeze: () => QueueGapFramePipelineAction(
-                    GapRenderFrameDecision.GapFreeze,
-                    () => _frameRenderer.RenderGapFreeze(_videoWidth, _videoHeight))),
+                RenderGapFreeze: () => _renderSession.QueueGapFrame(GapRenderFrameDecision.GapFreeze)),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
@@ -458,17 +403,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             initializeMpvSession: () => _mpvSessionInitializer.Initialize(_showDebugOsd),
             assignMpv: mpv => _mpv = mpv,
             applyAudioSettings: _audioControlCoordinator.ApplyStartup,
-            createRenderContext: CreateRenderContext,
-            allocateRenderParameters: () => _renderParams = new MpvRenderNative.MpvRenderParam[5],
+            createRenderContext: () => _renderSession.Create(_mpv),
+            allocateRenderParameters: _renderSession.AllocateParameters,
             initializeSpout: () => SpoutStartupState.FromInitializationResult(_spoutOutput.TryInitialize()),
             applySpoutStartupState: spoutUiApplicator.Apply,
-            initializeFrameRenderer: () =>
-            {
-                _frameRenderer = new FrameRenderer(_bufferManager, _spoutOutput);
-                _frameRenderer.BitmapChanged += bmp => VideoImage.Source = bmp;
-            },
+            initializeFrameRenderer: _renderSession.InitializeFrameRenderer,
             startTimer: () => _timer = StartupTimerFactory.CreateStartedTimer(TimeSpan.FromMilliseconds(TimerIntervalMs), OnTick),
-            initializeStartupBuffer: () => _startupBufferInitializer.Initialize(RenderPixelFormat),
+            initializeStartupBuffer: _renderSession.InitializeStartupBuffer,
             initializeTimeline: InitializeTimeline,
             showError: ShowWindowLoadedSessionInitializationError);
         bool initialized = sessionInitializer.Initialize();
@@ -557,42 +498,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Sync.TimelineToggleLabel = startupState.ToggleLabel;
     }
 
-    private bool CreateRenderContext()
-    {
-        // MPV_RENDER_PARAM_API_TYPE = "sw"
-        IntPtr swStr = Marshal.StringToHGlobalAnsi(_mpvRenderApi.MpvRenderApiTypeSw);
-        MpvRenderNative.MpvRenderParam[] initParams = RenderContextParameterBuilder.BuildSoftwareBackendParams(_mpvRenderApi, swStr);
 
-        (int ReturnCode, IntPtr Context) createResult = _renderThread.InvokeAsync(() =>
-        {
-            int rc = _mpvRenderApi.RenderContextCreate(out IntPtr context, _mpv, initParams);
-            return (rc, context);
-        }).GetAwaiter().GetResult();
-        int rc = createResult.ReturnCode;
-        _renderCtx = createResult.Context;
-        Marshal.FreeHGlobal(swStr);
-
-        RenderContextCreateResult result = RenderContextCreateResult.FromReturnCode(_renderCtx, rc);
-        if (!result.Success)
-        {
-            Log.Error("mpv_render_context_create 失敗: rc={Rc}", rc);
-            return false;
-        }
-
-        // 更新コールバックを登録（mpv 内部スレッドから呼ばれる）。
-        // タイマー（Background）と同じ優先度に下げ、UI更新が飢餓状態にならないようにする。
-        _updateCallback = _ =>
-        {
-            if (_renderUpdateScheduler.RequestDispatch())
-                Dispatcher.BeginInvoke(DispatcherPriority.Background, OnRenderUpdate);
-        };
-        _renderThread.InvokeAsync(() =>
-            _mpvRenderApi.RenderContextSetUpdateCallback(
-                _renderCtx, _updateCallback, IntPtr.Zero)).GetAwaiter().GetResult();
-
-        Log.Information("mpv SW レンダーコンテキスト作成完了");
-        return true;
-    }
 
     // ── ファイルを開く ─────────────────────────────────────────────
 
@@ -756,13 +662,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             IsPlaybackPaused: () => _playbackControl.IsPaused,
             PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(_mpv),
             ApplyPauseState: paused => ApplyPauseState(paused),
-            RenderBlack: () => QueueGapFramePipelineAction(
-                GapRenderFrameDecision.Black,
-                () => _frameRenderer.RenderBlack(_videoWidth, _videoHeight)),
-            RenderGapFreeze: () => QueueGapFramePipelineAction(
-                GapRenderFrameDecision.GapFreeze,
-                () => _frameRenderer.RenderGapFreeze(_videoWidth, _videoHeight)),
-            ClearGapFreezeFrame: () => _bufferManager.ClearGapFreezeFrame(),
+            RenderBlack: () => _renderSession.QueueGapFrame(GapRenderFrameDecision.Black),
+            RenderGapFreeze: () => _renderSession.QueueGapFrame(GapRenderFrameDecision.GapFreeze),
+            ClearGapFreezeFrame: () => _renderSession.ClearGapFreezeFrame(),
             SeekTo: target => SeekTo(target),
             GetMpvDuration: () =>
             {
@@ -1152,8 +1054,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             CommandString: command => _mpvApi.CommandString(_mpv, command),
             SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
-            ResetVideoWidth: () => _videoWidth = 0,
-            ResetVideoHeight: () => _videoHeight = 0,
+            ResetVideoWidth: () => _renderSession.Width = 0,
+            ResetVideoHeight: () => _renderSession.Height = 0,
             ClearLoadedTrackId: () => _loadedTrackId = null,
             HasTimelinePanel: () => _timelinePanel != null,
             ClearTimelineLoadedTrackId: () => _timelinePanel!.LoadedTrackId = null,
@@ -1162,7 +1064,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             SetPlayPauseIcon: value => _vm.Player.PlayPauseIcon = value,
             ResetGapFreezeAll: () => _gapFreezeHandler.ResetAll(),
             ResetGapFreeze: () => _gapFreezeHandler.Reset(),
-            ClearGapFreezeFrame: () => _bufferManager.ClearGapFreezeFrame()));
+            ClearGapFreezeFrame: () => _renderSession.ClearGapFreezeFrame()));
 
     // ── Spout ─────────────────────────────────────────────────────
 
@@ -1202,7 +1104,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         var window = new FullscreenOutputWindow(target, _displayCatalog, VideoImage.Source);
         window.Closed += FullscreenWindow_Closed;
-        _frameRenderer.BitmapChanged += FullscreenFrameRenderer_BitmapChanged;
+        _renderSession.BitmapChanged += FullscreenFrameRenderer_BitmapChanged;
         _fullscreenWindow = window;
 
         try
@@ -1214,7 +1116,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
         catch
         {
-            _frameRenderer.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
+            _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
             window.Closed -= FullscreenWindow_Closed;
             _fullscreenWindow = null;
             throw;
@@ -1226,7 +1128,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void FullscreenWindow_Closed(object? sender, EventArgs e)
     {
-        _frameRenderer.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
+        _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
         if (sender is FullscreenOutputWindow window)
             window.Closed -= FullscreenWindow_Closed;
         _fullscreenWindow = null;
@@ -1426,107 +1328,80 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     /// <summary>
     /// mpv のレンダー更新コールバックから Dispatcher 経由で呼ばれる（UI スレッド）。
-    /// 新しいフレームがあれば RenderFrame を呼び、フレームごとのUI更新を行う。
+    /// Gapのキャプチャ状態を接続し、RenderSessionで描画後にフレームごとのUI更新を行う。
     /// </summary>
-    private async void OnRenderUpdate()
+    private async Task ProcessRenderFrameUpdateAsync(int renderGeneration, bool hasFrame)
     {
-        try
+        if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze && hasFrame)
         {
-            await AsyncOperationExceptionBoundary.RunAsync(
-                ProcessRenderUpdateAsync,
-                ex => Log.Error(ex, "Render update callback failed"));
+            int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double actualPos);
+            GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
+                _gapFreezeHandler.CurrentState,
+                hasFrame,
+                IsCurrentMpvPathExpectedForGapFreeze(),
+                timePosRc == 0,
+                actualPos,
+                _gapFreezeHandler.PendingTargetSeconds,
+                _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps);
+
+            if (decision != GapFrameCaptureDecision.SendFrameStep)
+            {
+                Log.Debug("Continue mode: gap freeze seek not yet complete actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
+                return;
+            }
+
+            _mpvApi.CommandString(_mpv, $"{MpvCommandNoOsd} frame-step");
+            _gapFreezeHandler.CurrentState = GapState.WaitingForFrameStep;
+            Log.Debug("Continue mode: seek complete, sent frame-step actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
         }
-        finally
+        else if (_gapFreezeHandler.CurrentState == GapState.WaitingForFrameStep && hasFrame)
         {
-            if (_renderUpdateScheduler.CompleteDispatch() && _renderCtx != IntPtr.Zero)
-                _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(OnRenderUpdate));
+            int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double actualPos);
+            GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
+                _gapFreezeHandler.CurrentState,
+                hasFrame,
+                IsCurrentMpvPathExpectedForGapFreeze(),
+                timePosRc == 0,
+                actualPos,
+                _gapFreezeHandler.PendingTargetSeconds,
+                _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps);
+
+            if (decision != GapFrameCaptureDecision.RenderAndCapture)
+            {
+                Log.Debug("Continue mode: frame-step target not reached actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
+                return;
+            }
+
+            var captureFinalFrame = new DeferredGapStateOperation(
+                GapState.WaitingForFrameStep,
+                () => _gapFreezeHandler.CurrentState,
+                () => _renderSession.CaptureGapFreezeFrame());
+            await _renderSession.RenderFrameAsync(renderGeneration, captureFinalFrame.RunIfCurrent);
+            if (_disposed ||
+                !_renderSession.IsCurrent(renderGeneration) ||
+                _gapFreezeHandler.CurrentState != GapState.WaitingForFrameStep)
+                return;
+            _gapFreezeHandler.OnFreezeComplete(_loadedTrackId);
+            Log.Information("Continue mode: gap freeze activated, final frame captured");
         }
-    }
+        else if (hasFrame && _gapFreezeHandler.IsInactive)
+        {
+            await _renderSession.RenderFrameAsync(renderGeneration);
+            if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
+        }
 
-    private async Task ProcessRenderUpdateAsync()
-    {
-            int renderGeneration = _renderUpdateGeneration.Capture();
-            if (_renderCtx == IntPtr.Zero || _disposed) return;
-            ulong flags = await InvokeRenderThreadAsync(
-                () => _mpvRenderApi.RenderContextUpdate(_renderCtx));
-            if (_disposed || !_renderUpdateGeneration.IsCurrent(renderGeneration)) return;
-            bool hasFrame = (flags & _mpvRenderApi.MpvRenderUpdateFrame) != 0;
-            _playbackPerformanceStats.RecordRenderUpdate(hasFrame);
+        GapRenderFrameDecision gapRenderDecision = _renderSession.GetGapRenderDecision();
+        if (gapRenderDecision == GapRenderFrameDecision.Black)
+        {
+            await _renderSession.RenderGapAsync(gapRenderDecision);
+        }
+        else if (gapRenderDecision == GapRenderFrameDecision.GapFreeze)
+        {
+            await _renderSession.RenderGapAsync(gapRenderDecision);
+        }
 
-            if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze && hasFrame)
-            {
-                int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double actualPos);
-                GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
-                    _gapFreezeHandler.CurrentState,
-                    hasFrame,
-                    IsCurrentMpvPathExpectedForGapFreeze(),
-                    timePosRc == 0,
-                    actualPos,
-                    _gapFreezeHandler.PendingTargetSeconds,
-                    _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps);
-
-                if (decision != GapFrameCaptureDecision.SendFrameStep)
-                {
-                    Log.Debug("Continue mode: gap freeze seek not yet complete actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
-                    return;
-                }
-
-                _mpvApi.CommandString(_mpv, $"{MpvCommandNoOsd} frame-step");
-                _gapFreezeHandler.CurrentState = GapState.WaitingForFrameStep;
-                Log.Debug("Continue mode: seek complete, sent frame-step actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
-            }
-            else if (_gapFreezeHandler.CurrentState == GapState.WaitingForFrameStep && hasFrame)
-            {
-                int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double actualPos);
-                GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
-                    _gapFreezeHandler.CurrentState,
-                    hasFrame,
-                    IsCurrentMpvPathExpectedForGapFreeze(),
-                    timePosRc == 0,
-                    actualPos,
-                    _gapFreezeHandler.PendingTargetSeconds,
-                    _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps);
-
-                if (decision != GapFrameCaptureDecision.RenderAndCapture)
-                {
-                    Log.Debug("Continue mode: frame-step target not reached actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
-                    return;
-                }
-
-                var captureFinalFrame = new DeferredGapStateOperation(
-                    GapState.WaitingForFrameStep,
-                    () => _gapFreezeHandler.CurrentState,
-                    () => _bufferManager.CopyFrozenToGapFreezeFrame(_videoWidth, _videoHeight));
-                await RenderFrameAsync(renderGeneration, captureFinalFrame.RunIfCurrent);
-                if (_disposed ||
-                    !_renderUpdateGeneration.IsCurrent(renderGeneration) ||
-                    _gapFreezeHandler.CurrentState != GapState.WaitingForFrameStep)
-                    return;
-                _gapFreezeHandler.OnFreezeComplete(_loadedTrackId);
-                Log.Information("Continue mode: gap freeze activated, final frame captured");
-            }
-            else if (hasFrame && _gapFreezeHandler.IsInactive)
-            {
-                await RenderFrameAsync(renderGeneration);
-                if (_disposed || !_renderUpdateGeneration.IsCurrent(renderGeneration)) return;
-            }
-
-            GapRenderFrameDecision gapRenderDecision = GetCurrentGapRenderFrameDecision();
-            if (gapRenderDecision == GapRenderFrameDecision.Black)
-            {
-                await RunGapFramePipelineActionAsync(
-                    gapRenderDecision,
-                    () => _frameRenderer.RenderBlack(_videoWidth, _videoHeight));
-            }
-            else if (gapRenderDecision == GapRenderFrameDecision.GapFreeze)
-            {
-                await RunGapFramePipelineActionAsync(
-                    gapRenderDecision,
-                    () => _frameRenderer.RenderGapFreeze(_videoWidth, _videoHeight));
-            }
-
-            if (_disposed || !_renderUpdateGeneration.IsCurrent(renderGeneration)) return;
-            UpdatePerFrameUI();
+        if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
+        UpdatePerFrameUI();
     }
 
     private bool IsCurrentMpvPathExpectedForGapFreeze()
@@ -1562,7 +1437,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     /// <summary>
     /// フレームごとのUI更新（シークバー・時刻表示・OSD・プレイリスト自動送り・パフォーマンス統計）。
-    /// OnRenderUpdate から呼ばれる。
+    /// ProcessRenderFrameUpdateAsync から呼ばれる。
     /// </summary>
     private void UpdatePerFrameUI()
     {
@@ -1606,123 +1481,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
-    /// <summary>
-    /// 現在の動画フレームを専用レンダースレッドでピクセルバッファに描画し、
-    /// UIスレッドでWriteableBitmapへ反映してからSpoutOutputへ送信する。
-    /// Gap描画を含む全フレーム処理は同じゲートで直列化する。
-    /// </summary>
-    private Task RenderFrameAsync(int renderGeneration, Action? afterFrameProcessed = null)
-    {
-        return _renderFramePipelineGate.RunAsync(async () =>
-        {
-            if (_disposed ||
-                !_renderUpdateGeneration.IsCurrent(renderGeneration) ||
-                _renderCtx == IntPtr.Zero ||
-                _mpv == IntPtr.Zero ||
-                _renderParams == null)
-                return;
-
-            RenderFrameSizeDecision sizeDecision = RenderFrameSizePolicy.Decide(
-                _videoWidth,
-                _videoHeight,
-                FallbackRenderSize);
-            RenderFrameWorkerResult result = await InvokeRenderThreadAsync(
-                () => _renderFrameWorker.Execute(sizeDecision));
-
-            if (_disposed ||
-                !_renderUpdateGeneration.IsCurrent(renderGeneration) ||
-                !result.ShouldPublish)
-                return;
-
-            GapState gapState = _gapFreezeHandler.CurrentState;
-            GapRenderFrameDecision gapDecision = GapRenderFramePolicy.Decide(
-                gapState,
-                _vm.Sync.GapBehavior,
-                _bufferManager.FrozenFrameBuffer != null,
-                _videoWidth,
-                _videoHeight);
-            RenderFramePublicationDispatcher.Execute(
-                gapDecision,
-                publishNormalFrame: () => _renderFramePublishPipeline.Publish(
-                    result.Pixels,
-                    result.Width,
-                    result.Height,
-                    result.RenderMs,
-                    _spoutOutput.IsEnabled,
-                    gapState),
-                captureWithoutPublishing: () => _renderedFrameFreezeBufferCopier.CopyIfNeeded(
-                    gapState,
-                    result.Width,
-                    result.Height),
-                afterFrameProcessed);
-        });
-    }
-
-    private Task RunFramePipelineActionAsync(Action operation) =>
-        _renderFramePipelineGate.RunAsync(() =>
-        {
-            if (!_disposed)
-                operation();
-            return Task.CompletedTask;
-        });
-
-    private GapRenderFrameDecision GetCurrentGapRenderFrameDecision() =>
-        GapRenderFramePolicy.Decide(
-            _gapFreezeHandler.CurrentState,
-            _vm.Sync.GapBehavior,
-            _bufferManager.FrozenFrameBuffer != null,
-            _videoWidth,
-            _videoHeight);
-
-    private Task RunGapFramePipelineActionAsync(
-        GapRenderFrameDecision expectedDecision,
-        Action operation)
-    {
-        var deferred = new DeferredGapFrameOperation(
-            expectedDecision,
-            GetCurrentGapRenderFrameDecision,
-            operation);
-        return RunFramePipelineActionAsync(deferred.RunIfCurrent);
-    }
-
-    private void QueueGapFramePipelineAction(
-        GapRenderFrameDecision expectedDecision,
-        Action operation)
-    {
-        var deferred = new DeferredGapFrameOperation(
-            expectedDecision,
-            GetCurrentGapRenderFrameDecision,
-            operation);
-        QueueFramePipelineAction(deferred.RunIfCurrent);
-    }
-
-    private async void QueueFramePipelineAction(Action operation)
-    {
-        try
-        {
-            await RunFramePipelineActionAsync(operation);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Queued frame pipeline operation failed");
-        }
-    }
-
-    private async Task<T> InvokeRenderThreadAsync<T>(Func<T> operation)
-    {
-        Task<T> task = _renderThread.InvokeAsync(operation);
-        _activeRenderWorkerTask = task;
-        try
-        {
-            return await task;
-        }
-        finally
-        {
-            if (ReferenceEquals(_activeRenderWorkerTask, task))
-                _activeRenderWorkerTask = null;
-        }
-    }
-
     // ── 終了 ─────────────────────────────────────────────────────
 
     public void Dispose()
@@ -1730,9 +1488,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_disposed) return;
         _disposed = true;
 
-        RenderWorkerShutdownWaiter.Wait(
-            _activeRenderWorkerTask,
-            ex => Log.Warning(ex, "Active render worker failed during shutdown; continuing resource teardown"));
+        _renderSession.Stop();
 
         CloseFullscreenOutput();
 
@@ -1745,15 +1501,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     _timer.Tick -= OnTick;
                 }
             },
-            disposeRenderContext: () =>
-            {
-                if (_renderCtx != IntPtr.Zero)
-                {
-                    _renderThread.InvokeAsync(
-                        () => _mpvRenderApi.RenderContextFree(_renderCtx)).GetAwaiter().GetResult();
-                    _renderCtx = IntPtr.Zero;
-                }
-            },
+            disposeRenderContext: _renderSession.FreeContext,
             disposeMpv: () =>
             {
                 if (_mpv != IntPtr.Zero)
@@ -1775,9 +1523,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     _timelinePanel.TimelineSeekRequested -= TimelinePanel_TimelineSeekRequested;
                 _timelinePanel?.Dispose();
             },
-            disposeBuffer: () => _bufferManager.Dispose());
+            disposeBuffer: _renderSession.Dispose);
         disposer.DisposeAll();
-        _renderThread.Dispose();
     }
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -1805,19 +1552,19 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         string acodec    = _mpvApi.GetPropertyString(_mpv, "audio-codec");
 
         // レンダー解像度を設定（SW レンダーはこのサイズで描画する）
-        if (int.TryParse(widthStr,  out int w) && w > 0) _videoWidth  = w;
-        if (int.TryParse(heightStr, out int h) && h > 0) _videoHeight = h;
+        if (int.TryParse(widthStr,  out int w) && w > 0) _renderSession.Width  = w;
+        if (int.TryParse(heightStr, out int h) && h > 0) _renderSession.Height = h;
 
-        if (_videoWidth <= 0 || _videoHeight <= 0)
+        if (_renderSession.Width <= 0 || _renderSession.Height <= 0)
             return;
 
         _metadataFetched = true;
         Log.Information("FetchMetadata: {W}x{H} {Fps:F3}fps V:{VCodec} A:{ACodec}",
-            _videoWidth, _videoHeight, _fps, vcodec, acodec);
+            _renderSession.Width, _renderSession.Height, _fps, vcodec, acodec);
 
         _metaLine = MetadataDisplayFormatter.FormatMetadataLine(
-            _videoWidth,
-            _videoHeight,
+            _renderSession.Width,
+            _renderSession.Height,
             _fps,
             vcodec,
             acodec);
@@ -1907,7 +1654,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void LogPlaybackPerformance(PlaybackPerformanceSnapshot snapshot)
     {
-        RenderUpdateSchedulerStats renderStats = _renderUpdateScheduler.ConsumeStats();
+        RenderUpdateSchedulerStats renderStats = _renderSession.ConsumeUpdateStats();
 
         Log.Information(
             "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled}",
@@ -1937,19 +1684,19 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void ResetPlaybackPerformanceStats()
     {
         _playbackPerformanceStats.Reset();
-        _renderUpdateScheduler.Reset();
+        _renderSession.ResetUpdateStats();
     }
 
     private void ResetPlayerStateForNewTrack()
     {
-        _renderUpdateGeneration.Advance();
+        _renderSession.Invalidate();
         _metadataFetched = false;
         _duration = 0;
         _fps = 0;
         _metaLine = "";
         _osdUpdateState.Reset();
-        _renderFrameDisplayUpdater.Reset();
-        _renderUpdateScheduler.Reset();
+        _renderSession.ResetDisplay();
+        _renderSession.ResetUpdateStats();
         ResetPlaybackPerformanceStats();
         _seekState.Clear();
         _endAdvanceTriggered = false;

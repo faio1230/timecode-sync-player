@@ -39,18 +39,12 @@ public partial class App : Application
         services.AddSingleton<ITimecodeFpsSelector, TimecodeFpsSelector>();
         services.AddSingleton<TimecodeFrameDiagnostics>();
         services.AddSingleton<LtcFrameProcessor>();
-        services.AddSingleton<PixelBufferManager>();
         services.AddSingleton<GapFreezeHandler>();
-        services.AddSingleton<SpoutFramePublisher>();
         services.AddSingleton<MpvSessionInitializer>();
         services.AddSingleton<ProjectLoadApplicator>();
-        services.AddSingleton<StartupBufferInitializer>();
-        services.AddSingleton<RenderedFrameFreezeBufferCopier>();
-        services.AddSingleton<RenderFramePerformanceRecorder>();
 
         // State & utilities
         services.AddSingleton(_ => AppSettingsManager.Instance);
-        services.AddSingleton<IRenderUpdateScheduler, RenderUpdateScheduler>();
         services.AddSingleton(_ => new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)));
         services.AddSingleton(_ => new OsdUpdateState(TimeSpan.FromMilliseconds(250)));
         services.AddSingleton<ISeekBarUpdateState, SeekBarUpdateState>();
