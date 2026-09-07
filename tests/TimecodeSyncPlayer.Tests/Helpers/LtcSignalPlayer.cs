@@ -139,6 +139,36 @@ internal sealed class LtcSignalPlayer : IDisposable
         PlaySamples(monoSamples);
     }
 
+    public void PlayHeld(double seconds, int fps, TimeSpan duration)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        float[] samples = BuildHeldSamples(seconds, fps, duration, SampleRate);
+        Stop();
+        PlaySamples(samples);
+    }
+
+    internal static float[] BuildHeldSamples(double seconds, int fps, TimeSpan duration, int sampleRate)
+    {
+        if (!double.IsFinite(seconds) || seconds < 1 || seconds >= 24 * 3600)
+            throw new ArgumentOutOfRangeException(nameof(seconds));
+        if (fps is not (24 or 25 or 30))
+            throw new ArgumentOutOfRangeException(nameof(fps));
+        if (duration < TimeSpan.FromSeconds(1))
+            throw new ArgumentOutOfRangeException(nameof(duration));
+        if (sampleRate <= 0)
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        int targetFrame = (int)Math.Round(seconds * fps);
+        var frames = new List<LtcTimecode>();
+        // A short advancing prelude reacquires a jumped signal, followed by duplicate
+        // timecodes. Settings changes must not depend on another accepted frame.
+        for (int frame = targetFrame - 5; frame < targetFrame; frame++) frames.Add(FromFrame(frame, fps));
+        frames.AddRange(Enumerable.Repeat(FromFrame(targetFrame, fps), (int)Math.Ceiling(duration.TotalSeconds * fps)));
+        return LtcTestSignalGenerator.Generate(frames, fps: fps, sampleRate: sampleRate);
+    }
+
+    private static LtcTimecode FromFrame(int frame, int fps) => new(
+        frame / (fps * 3600), frame / (fps * 60) % 60, frame / fps % 60, frame % fps, false);
+
     private void PlaySamples(float[] monoSamples)
     {
         float[] interleavedSamples = DuplicateToChannels(monoSamples, Channels);
