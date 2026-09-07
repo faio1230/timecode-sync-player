@@ -32,10 +32,10 @@ internal sealed class SingleModeSyncCoordinator
             return SyncRequestResult.Deferred;
 
         SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state);
-        if (decision.Action != SyncActionType.Seek)
-            return SyncRequestResult.Complete;
-
         bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds);
+        if (decision.Action != SyncActionType.Seek)
+            return _syncService.SeekState.HasPendingSeek
+                ? SyncRequestResult.Deferred : SyncRequestResult.Complete;
 
         if (suppressSeek)
         {

@@ -88,7 +88,8 @@ internal sealed class ContinueOnTrackCoordinator
             ContinueSyncSeekPlan seekPlan = ContinueSyncSeekPlanner.Decide(decision, suppressSeek, _syncService.IsDebounced());
 
             if (!seekPlan.ShouldSeek)
-                return seekPlan.SkipReason == ContinueSyncSeekSkipReason.NoSeekDecision
+                return seekPlan.SkipReason == ContinueSyncSeekSkipReason.NoSeekDecision &&
+                       !_syncService.SeekState.HasPendingSeek
                     ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
 
             bool success = _effects.SeekTo(seekPlan.TargetSeconds);
