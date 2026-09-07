@@ -51,10 +51,14 @@ internal sealed class SyncScenarioHarness
             _syncService,
             new FileLoadStabilityLogState(TimeSpan.FromSeconds(1)),
             new ContinueOnTrackEffects(
+                PeekGapExit: () => _gap.PeekGapExit(),
+                IsPlaybackPaused: () => IsPaused,
+                ClearGapFreezeFrame: () => { _gap.ClearCachedFrameInfo(); Operations.Add(new("clear-freeze")); },
                 DecideGapExit: () =>
                 {
                     GapExitAction action = _gap.DecideGapExit();
-                    _renderVideoOnNextSeek = action.Type == GapExitActionType.ResumePlayback;
+                    if (action.Type == GapExitActionType.ResumePlayback)
+                        RenderSurface = ScenarioRenderSurface.Video;
                     return action;
                 },
                 SeekTo: Seek,
@@ -155,7 +159,12 @@ internal sealed class SyncScenarioHarness
                 },
                 UpdateTimelinePosition: _ => { },
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
-                RenderGapFreeze: RenderFreeze),
+                RenderGapFreeze: RenderFreeze,
+                ResumeGapPause: () =>
+                {
+                    RecordMpvProperty("pause", "no");
+                    SetPaused(false);
+                }),
             () => single, () => _continueCoordinator, () => _gapCoordinator);
     }
 
@@ -184,12 +193,23 @@ internal sealed class SyncScenarioHarness
             Controller.MonitoringChanged();
         }
     }
-    public GapBehavior GapBehavior { get; set; } = GapBehavior.Freeze;
+    private GapBehavior _gapBehavior = GapBehavior.Freeze;
+    public GapBehavior GapBehavior
+    {
+        get => _gapBehavior;
+        set
+        {
+            _gapBehavior = value;
+            Controller.GapBehaviorChanged();
+        }
+    }
     public LtcSignalLossMode SignalLossMode { get; set; } = LtcSignalLossMode.Stop;
     public bool IsPaused => _playback.IsPaused;
     public bool IsGapActive => !_gap.IsInactive;
     public GapState GapState => _gap.CurrentState;
     public Guid? LoadedTrackId => _loadedTrackId;
+    public bool LoadSucceeds { get; set; } = true;
+    public bool SeekSucceeds { get; set; } = true;
     public double PlaybackSeconds => _playbackSeconds;
     public ScenarioRenderSurface RenderSurface { get; private set; } = ScenarioRenderSurface.Video;
 
@@ -327,7 +347,10 @@ internal sealed class SyncScenarioHarness
     private bool LoadFile(string path, double start)
     {
         Operations.Add(new("loadfile", start, path));
-        RecordMpvProperty("pause", "no");
+        if (!LoadSucceeds) return false;
+        SetPaused(false);
+        RenderSurface = ScenarioRenderSurface.Video;
+        _renderVideoOnNextSeek = false;
         _playbackSeconds = start;
         return true;
     }
@@ -367,6 +390,7 @@ internal sealed class SyncScenarioHarness
     private bool Seek(double target)
     {
         Operations.Add(new("seek", target));
+        if (!SeekSucceeds) return false;
         _playbackSeconds = target;
         if (_renderVideoOnNextSeek)
         {

@@ -59,6 +59,9 @@ public class ContinueOnTrackCoordinatorTests
         public Func<double, SyncPlaybackState> BuildState = SeekYieldingState;
 
         public ContinueOnTrackEffects Build() => new(
+            PeekGapExit: () => new GapExitAction(GapExit),
+            IsPlaybackPaused: () => true,
+            ClearGapFreezeFrame: () => { },
             DecideGapExit: () => { Calls.Add("DecideGapExit"); return new GapExitAction(GapExit); },
             SeekTo: target => { Calls.Add("SeekTo"); SeekTargets.Add(target); return SeekResult; },
             ResumeMpvPause: () => Calls.Add("ResumeMpvPause"),
@@ -82,32 +85,36 @@ public class ContinueOnTrackCoordinatorTests
     public void GapExit_ResumePlayback_CallsSeekThenPauseThenOsd_InOrder_AndReturns()
     {
         var track = CreateTrack(Guid.NewGuid());
-        var rec = new Recorder { GapExit = GapExitActionType.ResumePlayback };
+        var rec = new Recorder { GapExit = GapExitActionType.ResumePlayback, LoadedTrackId = track.Id };
         var coordinator = new ContinueOnTrackCoordinator(CreateService(), CreateLogState(), rec.Build());
 
         coordinator.Handle(OnTrack(track, mediaPos: 42.0), ltcSeconds: 42.0);
 
         rec.Calls.Should().Equal(
-            "DecideGapExit",
+            "GetLoadedTrackId",
             "SeekTo",
+            "DecideGapExit",
             "ResumeMpvPause",
             "ApplyPauseState(False)",
             "ShowOsdBar",
             "UpdateCurrentTrackLabel");
         rec.SeekTargets.Should().ContainSingle().Which.Should().Be(42.0);
         // 他分岐（トラック判定・LoadFile・GetTimePos）には進まない
-        rec.Calls.Should().NotContain(new[] { "GetLoadedTrackId", "LoadFile", "GetTimePos" });
+        rec.Calls.Should().NotContain(new[] { "LoadFile", "GetTimePos" });
     }
 
     [Fact]
     public void GapExit_PreexistingManualPause_SeeksButDoesNotResume()
     {
         var track = CreateTrack(Guid.NewGuid());
-        var rec = new Recorder();
+        var rec = new Recorder { LoadedTrackId = track.Id };
         var coordinator = new ContinueOnTrackCoordinator(
             CreateService(),
             CreateLogState(),
             new ContinueOnTrackEffects(
+                PeekGapExit: () => new GapExitAction(GapExitActionType.ResumePlayback, ShouldResumePlayback: false),
+                IsPlaybackPaused: () => true,
+                ClearGapFreezeFrame: () => { },
                 DecideGapExit: () =>
                 {
                     rec.Calls.Add("DecideGapExit");
@@ -128,8 +135,8 @@ public class ContinueOnTrackCoordinatorTests
         coordinator.Handle(OnTrack(track, mediaPos: 42.0), ltcSeconds: 42.0);
 
         rec.Calls.Should().Equal(
-            "DecideGapExit",
             "SeekTo",
+            "DecideGapExit",
             "ShowOsdBar",
             "UpdateCurrentTrackLabel");
         rec.SeekTargets.Should().ContainSingle().Which.Should().Be(42.0);

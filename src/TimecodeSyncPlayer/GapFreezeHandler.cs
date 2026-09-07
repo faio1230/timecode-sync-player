@@ -187,6 +187,12 @@ public sealed class GapFreezeHandler
     {
         if (ShouldTransitionFromFreezeToBlack(gapBehavior))
         {
+            StartedAt = DateTime.MinValue;
+            LastReloadAt = DateTime.MinValue;
+            PendingTrackId = null;
+            PendingTargetSeconds = 0;
+            PendingPath = null;
+            ClearCachedFrameInfo();
             SetState(GapState.Inactive);
         }
         else if (ShouldTransitionFromBlackToFreeze(gapBehavior))
@@ -237,6 +243,10 @@ public sealed class GapFreezeHandler
     /// <summary>
     /// OnTrack 状態に戻った時のアクション。
     /// </summary>
+    internal GapExitAction PeekGapExit() => IsInactive
+        ? new GapExitAction(GapExitActionType.None)
+        : new GapExitAction(GapExitActionType.ResumePlayback, _pauseOwnedByGap);
+
     internal GapExitAction DecideGapExit()
     {
         if (CurrentState == GapState.Inactive)
