@@ -62,12 +62,13 @@ internal sealed class E2EAppRunner : IDisposable
         string exePath,
         string arguments,
         string? settingsFilePath,
-        bool pausePlaybackIfNeeded = true)
+        bool pausePlaybackIfNeeded = true,
+        IReadOnlyDictionary<string, string?>? environment = null)
     {
         string exeDir = Path.GetDirectoryName(exePath)!;
         var automation = new UIA3Automation();
 
-        Process process = StartProcess(exePath, arguments, settingsFilePath);
+        Process process = StartProcess(exePath, arguments, settingsFilePath, environment);
 
         try
         {
@@ -111,7 +112,8 @@ internal sealed class E2EAppRunner : IDisposable
     public static Process StartProcess(string exePath, string arguments)
         => StartProcess(exePath, arguments, settingsFilePath: null);
 
-    public static Process StartProcess(string exePath, string arguments, string? settingsFilePath)
+    public static Process StartProcess(string exePath, string arguments, string? settingsFilePath,
+        IReadOnlyDictionary<string, string?>? environment = null)
     {
         string exeDir = Path.GetDirectoryName(exePath)!;
         var startInfo = new ProcessStartInfo
@@ -122,6 +124,14 @@ internal sealed class E2EAppRunner : IDisposable
             UseShellExecute = false,
             CreateNoWindow = false,
         };
+        if (environment != null)
+        {
+            foreach (var entry in environment)
+            {
+                if (entry.Value == null) startInfo.Environment.Remove(entry.Key);
+                else startInfo.Environment[entry.Key] = entry.Value;
+            }
+        }
         string? settingsDirectory = null;
         if (string.IsNullOrWhiteSpace(settingsFilePath))
         {

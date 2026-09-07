@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -14,13 +15,15 @@ internal sealed class FrameRenderer
 {
     private readonly PixelBufferManager _bufferManager;
     private readonly ISpoutOutput _spoutOutput;
+    private readonly SyncAccuracyTrace _accuracyTrace;
     private WriteableBitmap? _bitmap;
     private const double DefaultDpi = 96;
 
-    public FrameRenderer(PixelBufferManager bufferManager, ISpoutOutput spoutOutput)
+    public FrameRenderer(PixelBufferManager bufferManager, ISpoutOutput spoutOutput, SyncAccuracyTrace? accuracyTrace = null)
     {
         _bufferManager = bufferManager;
         _spoutOutput   = spoutOutput;
+        _accuracyTrace = accuracyTrace ?? SyncAccuracyTrace.Current;
     }
 
     /// <summary>WriteableBitmap が新規作成またはリサイズされたときに発火する。</summary>
@@ -28,6 +31,9 @@ internal sealed class FrameRenderer
 
     /// <summary>_bufferManager.PixelBuffer の内容を WriteableBitmap に書き込む（RenderFrame 用）。</summary>
     public void UpdateFromPixelBuffer(int w, int h)
+        => UpdateFromPixelBuffer(w, h, "normal");
+
+    private void UpdateFromPixelBuffer(int w, int h, string kind)
     {
         if (!FrameBufferSize.TryGetRequiredByteCount(w, h, out int byteCount)) return;
         if (_bufferManager.PixelBuffer == null) return;
@@ -43,6 +49,7 @@ internal sealed class FrameRenderer
         {
             _bitmap.Unlock();
         }
+        RecordPublication(kind);
     }
 
     /// <summary>黒フレームを描画して Spout 送信する。</summary>
@@ -51,7 +58,7 @@ internal sealed class FrameRenderer
         (int w, int h) = BlackFrameRenderPolicy.ResolveSize(videoWidth, videoHeight);
         _bufferManager.EnsurePixelBuffer(w, h);
         _bufferManager.ClearPixelBuffer();
-        UpdateFromPixelBuffer(w, h);
+        UpdateFromPixelBuffer(w, h, "black");
         _spoutOutput.SendFrame(_bufferManager.PixelPtr, w, h);
     }
 
@@ -83,6 +90,7 @@ internal sealed class FrameRenderer
         {
             _bitmap.Unlock();
         }
+        RecordPublication("frozen");
         _spoutOutput.SendFrame(_bufferManager.FrozenFramePtr, w, h);
     }
 
@@ -120,8 +128,19 @@ internal sealed class FrameRenderer
         {
             _bitmap.Unlock();
         }
+        RecordPublication("buffered");
         if (handle != IntPtr.Zero)
             _spoutOutput.SendFrame(handle, width, height);
+    }
+
+    private void RecordPublication(string kind)
+    {
+        if (!_accuracyTrace.IsEnabled) return;
+        long publishedTicks = Stopwatch.GetTimestamp();
+        // Read the pixels just copied into the bitmap, including partial-source-buffer cases.
+        // The bitmap stays alive on this UI thread; the probe performs no full-frame copy.
+        _accuracyTrace.RecordFrame(kind, _bitmap!.BackBuffer, _bitmap.PixelWidth,
+            _bitmap.PixelHeight, _bitmap.BackBufferStride, publishedTicks);
     }
 
     private void EnsureBitmap(int w, int h)
