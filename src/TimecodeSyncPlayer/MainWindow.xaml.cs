@@ -165,7 +165,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _renderSession = new RenderSession(mpvRenderApi, _spoutOutput, _playbackPerformanceStats,
             () => _gapFreezeHandler.CurrentState,
             () => _vm.Sync.GapBehavior,
-            action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action));
+            action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action),
+            isGapFreezeConfirmed: () => _gapFreezeHandler.CachedTrackId.HasValue);
         _renderSession.FrameUpdate = ProcessRenderFrameUpdateAsync;
         _renderSession.BitmapChanged += bitmap => VideoImage.Source = bitmap;
         _ltcSyncController = new LtcSyncController(
@@ -641,7 +642,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     VideoFps: _fps,
                     TimecodeFps: _ltcSyncController.LastTimecodeFps),
                 SeekTo: target => SeekTo(target),
-                GetTotalRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames));
+                GetTotalRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames,
+                IsNativeSeeking: IsNativeSeeking));
 
     private ContinueOnTrackCoordinator CreateContinueOnTrackCoordinator() =>
         _continueOnTrackCoordinator ??= new ContinueOnTrackCoordinator(
@@ -678,7 +680,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     PlaybackSeconds: playbackSeconds,
                     DurationSeconds: _duration,
                     VideoFps: _fps,
-                    TimecodeFps: _ltcSyncController.LastTimecodeFps)));
+                    TimecodeFps: _ltcSyncController.LastTimecodeFps),
+                IsNativeSeeking: IsNativeSeeking));
 
     private GapEnterCoordinator CreateGapEnterCoordinator() =>
         _gapEnterCoordinator ??= new(_gapFreezeHandler, new GapEnterEffects(
@@ -1286,6 +1289,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _timelinePanel?.UpdatePlaybackPosition(_ltcSyncController.LastLtcSeconds);
         }
 
+        // A paused seek may finish after its final FRAME callback. Explicitly redraw
+        // once native completion is observable; the capture operation excludes duplicates.
+        if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze)
+            _ = AsyncOperationExceptionBoundary.RunAsync(
+                () => TryCompleteGapFreezeAsync(_renderSession.CaptureGeneration(), false, allowRedraw: true),
+                ex => Log.Error(ex, "Gap freeze completion retry failed"));
+
         if (_gapFreezeHandler.HasTimedOut())
         {
             Log.Warning("Continue mode: gap freeze final-frame capture timed out, holding current frame");
@@ -1364,59 +1374,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// </summary>
     private async Task ProcessRenderFrameUpdateAsync(int renderGeneration, bool hasFrame)
     {
-        if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze && hasFrame)
-        {
-            int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double actualPos);
-            GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
-                _gapFreezeHandler.CurrentState,
-                hasFrame,
-                IsCurrentMpvPathExpectedForGapFreeze(),
-                timePosRc == 0,
-                actualPos,
-                _gapFreezeHandler.PendingTargetSeconds,
-                _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps);
-
-            if (decision != GapFrameCaptureDecision.SendFrameStep)
-            {
-                Log.Debug("Continue mode: gap freeze seek not yet complete actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
-                return;
-            }
-
-            _mpvApi.CommandString(_mpv, $"{MpvCommandNoOsd} frame-step");
-            _gapFreezeHandler.CurrentState = GapState.WaitingForFrameStep;
-            Log.Debug("Continue mode: seek complete, sent frame-step actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
-        }
-        else if (_gapFreezeHandler.CurrentState == GapState.WaitingForFrameStep && hasFrame)
-        {
-            int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double actualPos);
-            GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
-                _gapFreezeHandler.CurrentState,
-                hasFrame,
-                IsCurrentMpvPathExpectedForGapFreeze(),
-                timePosRc == 0,
-                actualPos,
-                _gapFreezeHandler.PendingTargetSeconds,
-                _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps);
-
-            if (decision != GapFrameCaptureDecision.RenderAndCapture)
-            {
-                Log.Debug("Continue mode: frame-step target not reached actual={Actual:F3} target={Target:F3}", actualPos, _gapFreezeHandler.PendingTargetSeconds);
-                return;
-            }
-
-            var captureFinalFrame = new DeferredGapStateOperation(
-                GapState.WaitingForFrameStep,
-                () => _gapFreezeHandler.CurrentState,
-                () => _renderSession.CaptureGapFreezeFrame());
-            await _renderSession.RenderFrameAsync(renderGeneration, captureFinalFrame.RunIfCurrent);
-            if (_disposed ||
-                !_renderSession.IsCurrent(renderGeneration) ||
-                _gapFreezeHandler.CurrentState != GapState.WaitingForFrameStep)
-                return;
-            _gapFreezeHandler.OnFreezeComplete(_loadedTrackId);
-            Log.Information("Continue mode: gap freeze activated, final frame captured");
-        }
-        else if (hasFrame && _gapFreezeHandler.IsInactive)
+        await TryCompleteGapFreezeAsync(renderGeneration, hasFrame);
+        if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
+        if (hasFrame && _gapFreezeHandler.IsInactive)
         {
             await _renderSession.RenderFrameAsync(renderGeneration);
             if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
@@ -1434,6 +1394,60 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
         UpdatePerFrameUI();
+    }
+
+    private async Task TryCompleteGapFreezeAsync(int renderGeneration, bool hasFrame, bool allowRedraw = false)
+    {
+        if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze && !IsNativeSeeking() &&
+            _mpvApi.GetPropertyString(_mpv, "pause") == MpvValueYes)
+        {
+            int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double actualPos);
+            GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
+                _gapFreezeHandler.CurrentState,
+                hasFrame,
+                IsCurrentMpvPathExpectedForGapFreeze(),
+                timePosRc == 0,
+                actualPos,
+                _gapFreezeHandler.PendingTargetSeconds,
+                _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps,
+                allowRedraw: allowRedraw);
+
+            if (decision == GapFrameCaptureDecision.RenderAndCapture)
+            {
+                bool captured = await GapFreezeCaptureOperation.RunAsync(
+                    _gapFreezeHandler, _loadedTrackId,
+                    () => !_disposed && _renderSession.IsCurrent(renderGeneration),
+                    stillCurrent => _renderSession.TryCaptureGapFreezeFrameAsync(renderGeneration,
+                        () => stillCurrent() && IsNativeGapFreezeTargetReady()));
+                if (captured)
+                {
+                    Log.Information("Continue mode: gap freeze activated, final frame captured");
+                    // Timer retries must publish too: a paused decoder may issue no
+                    // further callback after native seek completion becomes visible.
+                    if (!_disposed && _renderSession.IsCurrent(renderGeneration))
+                        await _renderSession.RenderGapAsync(GapRenderFrameDecision.GapFreeze);
+                }
+            }
+        }
+    }
+
+    private bool IsNativeSeeking() =>
+        _mpv == IntPtr.Zero || _mpvApi.GetPropertyString(_mpv, "seeking") != MpvValueNo;
+
+    // Recheck on the UI thread after the native render await. A manual operation can
+    // start and finish during that await without changing the gap capture attempt.
+    private bool IsNativeGapFreezeTargetReady()
+    {
+        if (IsNativeSeeking() || _mpvApi.GetPropertyString(_mpv, "pause") != MpvValueYes)
+            return false;
+        if (!string.IsNullOrWhiteSpace(_gapFreezeHandler.PendingPath) &&
+            !ContinueModePlaybackPolicy.IsExpectedMediaPath(
+                _mpvApi.GetPropertyString(_mpv, "path"), _gapFreezeHandler.PendingPath))
+            return false;
+        int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double position);
+        return GapFrameCaptureCoordinator.Decide(_gapFreezeHandler.CurrentState, true, true,
+            rc == 0, position, _gapFreezeHandler.PendingTargetSeconds, _fps) ==
+            GapFrameCaptureDecision.RenderAndCapture;
     }
 
     private bool IsCurrentMpvPathExpectedForGapFreeze()
@@ -1589,6 +1603,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             return;
 
         _metadataFetched = true;
+        // The native pump consumed any early FRAME while dimensions were unknown.
+        // Paused loads need one explicit redraw after metadata becomes available.
+        if (_gapFreezeHandler.IsInactive)
+            _ = AsyncOperationExceptionBoundary.RunAsync(
+                () => _renderSession.RenderFrameAsync(_renderSession.CaptureGeneration()),
+                ex => Log.Error(ex, "Metadata frame redraw failed"));
         Log.Information("FetchMetadata: {W}x{H} {Fps:F3}fps V:{VCodec} A:{ACodec}",
             _renderSession.Width, _renderSession.Height, _fps, vcodec, acodec);
 

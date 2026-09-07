@@ -52,7 +52,7 @@ internal sealed class GapEnterCoordinator
         if (target <= 0)
         {
             Log.Information("Continue mode: gap freeze activated, holding current frame because duration is unavailable");
-            _gapFreezeHandler.OnFreezeComplete(loadedTrackId);
+            _gapFreezeHandler.ForceFreezeComplete();
             _effects.RenderGapFreeze();
             return;
         }

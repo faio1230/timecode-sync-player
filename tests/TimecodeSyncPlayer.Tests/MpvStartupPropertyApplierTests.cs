@@ -16,7 +16,7 @@ public class MpvStartupPropertyApplierTests
 
         api.SetProperties.Should().Equal(
             ("vo", "libmpv"),
-            ("hwdec", "auto-copy"),
+            ("hwdec", "no"),
             ("keep-open", "always"),
             ("pause", "yes"),
             ("osd-level", "1"),

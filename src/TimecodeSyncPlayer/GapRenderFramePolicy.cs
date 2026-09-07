@@ -5,7 +5,7 @@ internal static class GapRenderFramePolicy
     public static GapRenderFrameDecision Decide(
         GapState state,
         GapBehavior gapBehavior,
-        bool hasFrozenFrame,
+        bool hasConfirmedFrame,
         int videoWidth,
         int videoHeight)
     {
@@ -14,7 +14,7 @@ internal static class GapRenderFramePolicy
 
         if (state == GapState.FreezeComplete)
             return gapBehavior == GapBehavior.Freeze
-                ? GapRenderFrameDecision.GapFreeze
+                ? hasConfirmedFrame ? GapRenderFrameDecision.GapFreeze : GapRenderFrameDecision.Hold
                 : GapRenderFrameDecision.Black;
 
         if (state is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
@@ -22,9 +22,9 @@ internal static class GapRenderFramePolicy
             if (gapBehavior == GapBehavior.Black)
                 return GapRenderFrameDecision.Black;
 
-            return hasFrozenFrame && videoWidth > 0 && videoHeight > 0
-                ? GapRenderFrameDecision.GapFreeze
-                : GapRenderFrameDecision.Black;
+            // Keep the image already visible while the explicit final-frame capture
+            // completes. Frozen buffers can belong to a completely different clip.
+            return GapRenderFrameDecision.Hold;
         }
 
         return GapRenderFrameDecision.None;
@@ -35,5 +35,6 @@ internal enum GapRenderFrameDecision
 {
     None,
     Black,
-    GapFreeze
+    GapFreeze,
+    Hold
 }

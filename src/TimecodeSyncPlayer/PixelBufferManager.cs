@@ -82,23 +82,38 @@ public sealed class PixelBufferManager : IDisposable
         }
     }
 
-    public void CopyToFrozenFrame(int width, int height)
+    public void CopyToFrozenFrame(int width, int height) => TryCopyToFrozenFrame(width, height);
+
+    public bool TryCopyToFrozenFrame(int width, int height)
     {
-        if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int needed)) return;
-        if (_pixelBuffer == null) return;
-        if (_frozenFrameBuffer == null || _frozenFrameBuffer.Length < needed) return;
+        if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int needed)) return false;
+        if (_pixelBuffer == null || _pixelBuffer.Length < needed) return false;
+        if (_frozenFrameBuffer == null || _frozenFrameBuffer.Length < needed) return false;
         Array.Copy(_pixelBuffer, _frozenFrameBuffer, needed);
+        return true;
     }
 
-    public void CopyFrozenToGapFreezeFrame(int width, int height)
+    public void CopyFrozenToGapFreezeFrame(int width, int height) => TryCopyFrozenToGapFreezeFrame(width, height);
+
+    public bool TryCopyFrozenToGapFreezeFrame(int width, int height)
     {
-        if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int needed)) return;
-        if (_frozenFrameBuffer == null) return;
-        if (_frozenFrameBuffer.Length < needed) return;
+        if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int needed)) return false;
+        if (_frozenFrameBuffer == null) return false;
+        if (_frozenFrameBuffer.Length < needed) return false;
         EnsureGapFreezeFrameBuffer(width, height);
         Array.Copy(_frozenFrameBuffer, _cachedGapFreezeFrameBuffer!, needed);
         _cachedGapFreezeFrameWidth = width;
         _cachedGapFreezeFrameHeight = height;
+        return true;
+    }
+
+    internal bool CopySnapshotToPixelBuffer(RenderedFrameSnapshot frame)
+    {
+        if (!FrameBufferSize.TryGetRequiredByteCount(frame.Width, frame.Height, out int needed)) return false;
+        if (frame.Pixels.Length < needed) return false;
+        EnsurePixelBuffer(frame.Width, frame.Height);
+        Array.Copy(frame.Pixels, _pixelBuffer!, needed);
+        return true;
     }
 
     public void ClearGapFreezeFrame()

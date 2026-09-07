@@ -57,17 +57,17 @@ internal static class ContinueModePlaybackPolicy
         double frameSeconds)
     {
         if (!timePosReadSucceeded)
-            return true;
+            return false;
 
         if (!double.IsFinite(actualPositionSeconds) ||
             !double.IsFinite(targetSeconds) ||
             !double.IsFinite(frameSeconds) ||
             frameSeconds <= 0)
         {
-            return true;
+            return false;
         }
 
-        return actualPositionSeconds >= targetSeconds - frameSeconds * 2.0;
+        return Math.Abs(actualPositionSeconds - targetSeconds) <= frameSeconds * 2.0;
     }
 
     public static bool ShouldCopyRenderedFrameToFreezeBuffer(GapState gapState) =>

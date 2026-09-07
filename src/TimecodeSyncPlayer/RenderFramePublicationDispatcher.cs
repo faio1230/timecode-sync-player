@@ -11,6 +11,9 @@ internal static class RenderFramePublicationDispatcher
         ArgumentNullException.ThrowIfNull(publishNormalFrame);
         ArgumentNullException.ThrowIfNull(captureWithoutPublishing);
 
+        if (gapDecision == GapRenderFrameDecision.Hold)
+            return;
+
         if (gapDecision == GapRenderFrameDecision.None)
             publishNormalFrame();
         else

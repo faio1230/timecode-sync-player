@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -25,6 +26,60 @@ public class SingleModeSyncCoordinatorTests
         DurationSeconds: 200.0,
         VideoFps: 30.0,
         TimecodeFps: 30.0);
+
+    [Fact]
+    public void Apply_NativeSeeking_DoesNotSettleSyntheticTarget_AndResumesLatestRequestAfterCompletion()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState(), clock);
+        service.ReportSeekSent(10);
+        bool nativeSeeking = true;
+        double playback = 10; // mpv can report the requested position before it finishes seeking.
+        int positionReads = 0;
+        var seekTargets = new List<double>();
+        var coordinator = new SingleModeSyncCoordinator(service, new SingleModeSyncEffects(
+            GetTimePos: () => { positionReads++; return (0, playback); },
+            BuildPlaybackState: SeekYieldingState,
+            SeekTo: target => { seekTargets.Add(target); return true; },
+            IsNativeSeeking: () => nativeSeeking));
+
+        coordinator.Apply(10).Should().Be(SyncRequestResult.Deferred);
+        clock.Advance(TimeSpan.FromSeconds(3));
+        coordinator.Apply(10).Should().Be(SyncRequestResult.Deferred);
+        coordinator.Apply(30).Should().Be(SyncRequestResult.Deferred);
+        positionReads.Should().Be(0);
+        service.SeekState.HasPendingSeek.Should().BeTrue();
+        service.SeekState.TargetSeconds.Should().Be(10);
+        service.SeekState.LastStatus.Should().Be(TimecodeSyncSeekPendingStatus.Pending);
+        seekTargets.Should().BeEmpty();
+
+        nativeSeeking = false;
+        playback = 11; // A completed seek outside the old target window can now be evaluated.
+        coordinator.Apply(30).Should().Be(SyncRequestResult.Complete);
+        seekTargets.Should().Equal(30);
+        service.SeekState.TargetSeconds.Should().Be(30);
+    }
+
+    [Fact]
+    public void Apply_NativeSeeking_DoesNotMarkFileLoadedFromSyntheticProgress()
+    {
+        var service = CreateService();
+        service.BeginFileLoad(10, 0);
+        bool nativeSeeking = true;
+        var coordinator = new SingleModeSyncCoordinator(service, new SingleModeSyncEffects(
+            GetTimePos: () => (0, 11),
+            BuildPlaybackState: SeekYieldingState,
+            SeekTo: _ => true,
+            GetTotalRenderedFrames: () => 10,
+            IsNativeSeeking: () => nativeSeeking));
+
+        coordinator.Apply(11).Should().Be(SyncRequestResult.Deferred);
+        service.IsLoadingFile.Should().BeTrue();
+
+        nativeSeeking = false;
+        coordinator.Apply(11).Should().Be(SyncRequestResult.Complete);
+        service.IsLoadingFile.Should().BeFalse();
+    }
 
     [Fact]
     public void Apply_DoesNothing_WhenTimePosReadFails()

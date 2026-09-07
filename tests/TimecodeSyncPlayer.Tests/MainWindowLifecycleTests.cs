@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace TimecodeSyncPlayer.Tests;
 
+[Collection("WpfWindow")]
 public sealed class MainWindowLifecycleTests
 {
     [Theory]

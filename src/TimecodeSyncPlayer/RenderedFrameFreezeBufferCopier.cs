@@ -18,7 +18,6 @@ public sealed class RenderedFrameFreezeBufferCopier
             return false;
         }
 
-        _bufferManager.CopyToFrozenFrame(width, height);
-        return true;
+        return _bufferManager.TryCopyToFrozenFrame(width, height);
     }
 }

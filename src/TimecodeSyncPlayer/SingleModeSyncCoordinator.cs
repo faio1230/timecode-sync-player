@@ -22,6 +22,11 @@ internal sealed class SingleModeSyncCoordinator
 
     public SyncRequestResult Apply(double ltcSeconds)
     {
+        // During a native seek, time-pos can still be the synthetic requested target.
+        // Do not let it settle the pending seek or complete file-load stability checks.
+        if (_effects.IsNativeSeeking?.Invoke() == true)
+            return SyncRequestResult.Deferred;
+
         (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
         if (timePosRc != 0) return SyncRequestResult.Deferred;
 
@@ -69,4 +74,5 @@ internal sealed record SingleModeSyncEffects(
     Func<(int rc, double playbackSeconds)> GetTimePos,
     Func<double, SyncPlaybackState> BuildPlaybackState,
     Func<double, bool> SeekTo,
-    Func<long>? GetTotalRenderedFrames = null);
+    Func<long>? GetTotalRenderedFrames = null,
+    Func<bool>? IsNativeSeeking = null);

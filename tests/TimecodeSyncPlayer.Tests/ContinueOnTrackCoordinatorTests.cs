@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -53,6 +54,7 @@ public class ContinueOnTrackCoordinatorTests
         public GapExitActionType GapExit = GapExitActionType.None;
         public bool SeekResult = true;
         public bool LoadFileResult = true;
+        public bool NativeSeeking;
         public Guid? LoadedTrackId;
         public long TotalRenderedFrames;
         public (int rc, double playbackSeconds) TimePos = (0, 1.0);
@@ -73,11 +75,100 @@ public class ContinueOnTrackCoordinatorTests
             LoadFile: (path, start) => { Calls.Add("LoadFile"); LoadFileArgs.Add((path, start)); return LoadFileResult; },
             GetTotalRenderedFrames: () => { Calls.Add("GetTotalRenderedFrames"); return TotalRenderedFrames; },
             GetTimePos: () => { Calls.Add("GetTimePos"); return TimePos; },
-            BuildPlaybackState: ps => { Calls.Add("BuildPlaybackState"); return BuildState(ps); });
+            BuildPlaybackState: ps => { Calls.Add("BuildPlaybackState"); return BuildState(ps); },
+            IsNativeSeeking: () => NativeSeeking);
     }
 
     private static TimelineQueryResult OnTrack(PlaylistTrack track, double mediaPos) =>
         new(TimelineQueryStatus.OnTrack, track, mediaPos, null);
+
+    [Fact]
+    public void SameTrack_NativeSeeking_DoesNotSettleSyntheticTarget_AndResumesLatestRequestAfterCompletion()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState(), clock);
+        service.ReportSeekSent(10);
+        var track = CreateTrack(Guid.NewGuid());
+        var rec = new Recorder { LoadedTrackId = track.Id, NativeSeeking = true, TimePos = (0, 10) };
+        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
+
+        coordinator.Handle(OnTrack(track, 10), 10).Should().Be(SyncRequestResult.Deferred);
+        clock.Advance(TimeSpan.FromSeconds(3));
+        coordinator.Handle(OnTrack(track, 10), 10).Should().Be(SyncRequestResult.Deferred);
+        coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Deferred);
+        rec.Calls.Should().NotContain(new[] { "GetTimePos", "GetTotalRenderedFrames", "BuildPlaybackState" });
+        service.SeekState.HasPendingSeek.Should().BeTrue();
+        service.SeekState.TargetSeconds.Should().Be(10);
+        service.SeekState.LastStatus.Should().Be(TimecodeSyncSeekPendingStatus.Pending);
+        rec.SeekTargets.Should().BeEmpty();
+
+        rec.NativeSeeking = false;
+        rec.TimePos = (0, 11);
+        coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Complete);
+        rec.SeekTargets.Should().Equal(30);
+        service.SeekState.TargetSeconds.Should().Be(30);
+    }
+
+    [Fact]
+    public void SameTrack_NativeSeeking_DoesNotMarkFileLoadedFromSyntheticProgress()
+    {
+        var track = CreateTrack(Guid.NewGuid());
+        var service = CreateService();
+        service.BeginFileLoad(10, 0);
+        var rec = new Recorder
+        {
+            LoadedTrackId = track.Id, NativeSeeking = true,
+            TimePos = (0, 11), TotalRenderedFrames = 10
+        };
+        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
+
+        coordinator.Handle(OnTrack(track, 11), 11).Should().Be(SyncRequestResult.Deferred);
+        service.IsLoadingFile.Should().BeTrue();
+
+        rec.NativeSeeking = false;
+        coordinator.Handle(OnTrack(track, 11), 11).Should().Be(SyncRequestResult.Complete);
+        service.IsLoadingFile.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SwitchTrack_NativeSeeking_AllowsNewClipToOverride(bool exitingGap)
+    {
+        var track = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
+        var rec = new Recorder
+        {
+            LoadedTrackId = Guid.NewGuid(), NativeSeeking = true,
+            GapExit = exitingGap ? GapExitActionType.ResumePlayback : GapExitActionType.None
+        };
+        var coordinator = new ContinueOnTrackCoordinator(CreateService(), CreateLogState(), rec.Build());
+
+        coordinator.Handle(OnTrack(track, 12.5), 12.5).Should().Be(SyncRequestResult.Complete);
+
+        rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
+        rec.LoadedTrackId.Should().Be(track.Id);
+        rec.Calls.Should().NotContain("GetTimePos");
+        if (exitingGap)
+            rec.Calls.IndexOf("LoadFile").Should().BeLessThan(rec.Calls.IndexOf("ResumeMpvPause"));
+    }
+
+    [Fact]
+    public void GapExit_NativeSeeking_AllowsSameClipReentrySeek()
+    {
+        var track = CreateTrack(Guid.NewGuid());
+        var rec = new Recorder
+        {
+            LoadedTrackId = track.Id, NativeSeeking = true,
+            GapExit = GapExitActionType.ResumePlayback
+        };
+        var coordinator = new ContinueOnTrackCoordinator(CreateService(), CreateLogState(), rec.Build());
+
+        coordinator.Handle(OnTrack(track, 12.5), 12.5).Should().Be(SyncRequestResult.Complete);
+
+        rec.SeekTargets.Should().Equal(12.5);
+        rec.Calls.Should().Contain("ResumeMpvPause");
+        rec.Calls.Should().NotContain("GetTimePos");
+    }
 
     // ---- (a) Gap 終了（ResumePlayback）分岐 ----
 
