@@ -6,6 +6,19 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class LtcSyncControllerTests
 {
     [Fact]
+    public void ModeChange_RefreshesTrackLabel_WhenNoGapNeedsExiting()
+    {
+        var h = new SyncScenarioHarness();
+        h.AddTrack("track", 0);
+        h.SetSyncEnabled(false);
+        h.CurrentTrackLabels.Clear();
+
+        h.ChangeMode(SyncMode.Single);
+
+        h.CurrentTrackLabels.Should().ContainSingle().Which.Should().Be("1/1  track");
+    }
+
+    [Fact]
     public void DeviceEnumerationFailure_PersistsAcrossRepeatedTicks()
     {
         var h = new SyncScenarioHarness { IsMonitoring = false };
