@@ -21,10 +21,10 @@ Files: `src/TimecodeSyncPlayer/TimecodeSyncService.cs`, `GapFreezeHandler.cs`, `
 
 Interfaces: 既存constructorを保ち、`TimeProvider? timeProvider = null`を末尾に追加。内部では`_timeProvider.GetUtcNow().UtcDateTime`を既存DateTime.UtcNowの位置で読む。ManualTimeProviderはテスト専用で、SetUtcNow/Advanceに相当する制御を提供する。
 
-- [ ] 時計差し替えが反映されるテストを先に作り、既定時計のままでは失敗することを確認。
-- [ ] 250ms debounce、5秒load timeout、3秒freeze timeoutの直前・同時・直後を固定時計で検証。
-- [ ] 時間操作のreflectionと実時間境界依存を除去。呼び出し側とDI登録の互換性を確認。
-- [ ] 対象テスト、非E2E全件、自己レビュー、日本語コミット。
+- [x] 時計差し替えが反映されるテストを先に作り、既定時計のままでは失敗することを確認。
+- [x] 250ms debounce、5秒load timeout、3秒freeze timeoutの直前・同時・直後を固定時計で検証。
+- [x] 時間操作のreflectionと実時間境界依存を除去。呼び出し側とDI登録の互換性を確認。
+- [x] 対象テスト、非E2E全件、自己レビュー、日本語コミット。
 
 ### Task 2: 本番と統合テストでLTC制御を共用
 
@@ -32,11 +32,11 @@ Files: `src/TimecodeSyncPlayer/LtcSyncController.cs`（新規）, `MainWindow.xa
 
 Interfaces: `LtcSyncController`にLTCフレーム処理、信号断tick、表示状態更新、同期モード分岐と手動Gap退出を集約する。既存LtcFrameProcessor/SignalLossPolicy/SingleModeSyncCoordinator/ContinueOnTrackCoordinator/GapEnterCoordinatorを利用。境界のeffectsはUIとI/Oの意味のある操作単位にとどめる。詳細な署名は既存呼び出しの順序を読み、同一制御を本番/テスト双方が呼べるように定める。
 
-- [ ] 同期抑止、信号断→復帰、手動操作、デバイス列挙失敗→繰り返しtickの振る舞いをテストで固定する。
-- [ ] MainWindowのLTC状態/制御フローをcontrollerへ移し、UI DispatcherはWindow側で維持する。
-- [ ] ハーネス内のSupplyLtc/ApplySync/信号断/手動Gap退出の重複判断を同じcontrollerへの呼び出しへ置換。
-- [ ] 正規表現テストを本番controllerの表示維持テストへ置換。
-- [ ] 対象テスト、非E2E全件、自己レビュー、日本語コミット。
+- [x] 同期抑止、信号断→復帰、手動操作、デバイス列挙失敗→繰り返しtickの振る舞いをテストで固定する。
+- [x] MainWindowのLTC状態/制御フローをcontrollerへ移し、UI DispatcherはWindow側で維持する。
+- [x] ハーネス内のSupplyLtc/ApplySync/信号断/手動Gap退出の重複判断を同じcontrollerへの呼び出しへ置換。
+- [x] 正規表現テストを本番controllerの表示維持テストへ置換。
+- [x] 対象テスト、非E2E全件、自己レビュー、日本語コミット。
 
 ### Task 3: 描画セッションと所有権の抽出
 
@@ -44,11 +44,11 @@ Files: `src/TimecodeSyncPlayer/RenderSession.cs`（新規）, `MainWindow.xaml.c
 
 Interfaces: RenderSessionがnative contextと専用スレッド/params/callback/バッファ/世代/ゲート/進行中workerを所有する。Create/ProcessUpdate/Render/Invalidate/Disposeに相当する呼び出しを提供し、Windowは描画セッションを介して操作する。Task 2で作成したLTC制御とは意味のあるGap状態/表示操作で接続する。メソッド移動だけにせず、所有する状態をMainWindowから除去する。
 
-- [ ] fake native APIと完了制御できるTaskで、旧世代フレーム破棄、処理中の世代変更、直列公開、callback保持、同一スレッドcreate/update/render/freeをテストする。
-- [ ] 描画資源の生成・使用・停止をRenderSessionへ移し既存部品を再利用する。
-- [ ] 通常/Black/Freezeのawait後の再確認とbuffer gateを保つ。UI/Spout公開はUIスレッド。
-- [ ] Task 4が安全に停止/解放できる所有関係を文書化する。
-- [ ] 対象テスト、非E2E全件、自己レビュー、日本語コミット。
+- [x] fake native APIと完了制御できるTaskで、旧世代フレーム破棄、処理中の世代変更、直列公開、callback保持、同一スレッドcreate/update/render/freeをテストする。
+- [x] 描画資源の生成・使用・停止をRenderSessionへ移し既存部品を再利用する。
+- [x] 通常/Black/Freezeのawait後の再確認とbuffer gateを保つ。UI/Spout公開はUIスレッド。
+- [x] Task 4が安全に停止/解放できる所有関係を文書化する。
+- [x] 対象テスト、非E2E全件、自己レビュー、日本語コミット。
 
 ### Task 4: 例外があっても安全に終了する
 
@@ -56,16 +56,16 @@ Files: `src/TimecodeSyncPlayer/MainWindowResourceDisposer.cs`, `MainWindow.xaml.
 
 Interfaces: DisposeAllは順序を保ち各独立処理を試行し、最後にAggregateExceptionで例外を通知する。RenderSessionはnative worker完了前の解放を禁じ、context→thread/bufferなどの依存を明示的に扱う。
 
-- [ ] 途中の解放例外でも後続の独立資源を試行し、複数例外を保持する失敗テストを先に追加。
-- [ ] 初期化途中、二重Dispose、callback後着、進行中workerの終了とnative資源解放順を検証。
-- [ ] Window/RenderSession/DIの解放責任を整理し、例外経路を改善。
-- [ ] 対象テスト、非E2E全件、自己レビュー、日本語コミット。
+- [x] 途中の解放例外でも後続の独立資源を試行し、複数例外を保持する失敗テストを先に追加。
+- [x] 初期化途中、二重Dispose、callback後着、進行中workerの終了とnative資源解放順を検証。
+- [x] Window/RenderSession/DIの解放責任を整理し、例外経路を改善。
+- [x] 対象テスト、非E2E全件、自己レビュー、日本語コミット。
 
 ### Final verification (controller)
 
-- [ ] 全変更の独立レビューと必要な修正。
-- [ ] Debugビルド警告0・エラー0、非E2E全件、E2E全件（テスト対象EXEを今回のworktreeに固定）。
-- [ ] `docs/ARCHITECTURE.md`と本計画へ構成・検証結果を記録し、ユーザーへ作業ブランチと結果を報告。
+- [x] 全変更の独立レビューと必要な修正。
+- [x] Debugビルド警告0・エラー0、非E2E全件、E2E全件（テスト対象EXEを今回のworktreeに固定）。
+- [x] `docs/ARCHITECTURE.md`と本計画へ構成・検証結果を記録し、ユーザーへ作業ブランチと結果を報告。
 
 ## 実施記録
 
@@ -75,10 +75,20 @@ Interfaces: DisposeAllは順序を保ち各独立処理を試行し、最後にA
 | 時計の注入 | `6e3a420` | 非E2E 1177/1177、独立レビューで仕様・品質とも承認 |
 | LTC制御の共用 | `5266760` | 非E2E 1184/1184、実機E2E 50/50（Skip 0）、独立レビュー承認 |
 | 描画セッションの抽出 | `a0de055` | 非E2E 1194/1194、実機E2E 50/50（Skip 0）、独立レビュー承認 |
-| 終了処理の改善 | `0149f1f` | 非E2E 1207/1207、Debug build警告0・エラー0 |
+| 終了処理の改善 | `0149f1f` | 非E2E 1207/1207、実機E2E 50/50（Skip 0）、Debug build警告0・エラー0、独立レビュー承認 |
 
 MainWindowは2163行から1719行へ、コンストラクタの依存は25個から19個へ減少した。
 新しいクラスは単なる呼び出し転送ではなく、LTC状態と制御フロー、描画資源と公開の所有者になっている。
+
+最終検証は2026-09-07、ソース変更の最終コミット `0149f1f` に対して実施した。以降は文書のみの変更。
+`TIMECODE_SYNC_PLAYER_E2E_APP_PATH` を今回のworktreeのDebug EXEに固定し、通常のFlaUIテストと
+LTC実機テストを含む全50件を実行した。非E2Eは1207件、E2Eは50件とも失敗0・Skip 0。
+TRXはworktreeの `TestResults/session-refactor-non-e2e.trx` と `TestResults/session-refactor-e2e.trx` に保存。
+
+各実装タスクとは別のエージェントによる個別レビュー4件と、`ef67b68..0356ac0` の全体レビューを完了した。
+全体レビューはUTC境界、LTC制御の共用、描画のスレッド・Gap接続、終了失敗時の依存保持を確認し、
+Critical / Important / Minorいずれも指摘なしで承認した。未解決・延期した指摘はない。
+成果は `refactor/session-lifecycle` にコミットし、元のmainへのmerge、push、公開は実施していない。
 
 ### 実装上の判断
 
