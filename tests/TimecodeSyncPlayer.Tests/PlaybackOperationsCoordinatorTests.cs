@@ -68,20 +68,25 @@ public class PlaybackOperationsCoordinatorTests
             "SetTimeLabel(0:00 / 0:00)");
     }
 
-    [Fact]
-    public void LoadFile_WithStart_OnSuccessDoesNotWritePauseProperty()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LoadFile_WithStart_KeepsNativePauseAndUiConsistent(bool paused)
     {
         var recorder = new Recorder();
-        var coordinator = Create(recorder);
+        var playback = new PlaybackControlState();
+        playback.SetPaused(paused);
+        var coordinator = new PlaybackOperationsCoordinator(playback, recorder.Build());
 
         bool result = coordinator.LoadFile("C:\\media\\clip.mp4", 12.5);
 
         result.Should().BeTrue();
         recorder.Commands.Should().ContainSingle()
             .Which.Should().Be("no-osd loadfile \"C:/media/clip.mp4\" replace -1 start=12.500000");
-        recorder.Properties.Should().BeEmpty();
+        recorder.Properties.Should().Equal(("pause", paused ? "yes" : "no"));
+        playback.IsPaused.Should().Be(paused);
         recorder.Calls.Should().ContainInOrder(
-            "SetPlayPauseIcon(⏸)",
+            $"SetPlayPauseIcon({(paused ? "▶" : "⏸")})",
             "ResetPlayerStateForNewTrack",
             "ResetVideoWidth",
             "ResetVideoHeight",

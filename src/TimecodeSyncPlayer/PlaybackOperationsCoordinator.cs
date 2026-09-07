@@ -51,6 +51,7 @@ internal sealed class PlaybackOperationsCoordinator
     public bool LoadFile(string path, double? startPosition = null)
     {
         if (!_effects.IsMpvReady()) return false;
+        bool keepPaused = startPosition.HasValue && _playbackControl.IsPaused;
 
         bool success;
         if (startPosition.HasValue)
@@ -73,7 +74,11 @@ internal sealed class PlaybackOperationsCoordinator
 
         if (!success) return false;
 
-        ApplyPauseState(false);
+        // A positioned load can inherit mpv's EOF pause. Apply the intended state
+        // explicitly, while preserving a pause owned by the user or gap policy.
+        if (startPosition.HasValue)
+            _effects.SetPropertyString("pause", keepPaused ? MpvValueYes : MpvValueNo);
+        ApplyPauseState(keepPaused);
         _effects.ResetPlayerStateForNewTrack();
         _effects.ResetVideoWidth();
         _effects.ResetVideoHeight();
