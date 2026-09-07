@@ -109,6 +109,8 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 
 ## 6. 一括検証スクリプト
 
+VB-CABLEを使った乱操作・耐久試験は [MONKEY-TESTING.md](MONKEY-TESTING.md) を参照してください。通常のテストとは別に明示実行します。
+
 ビルド・非E2Eテスト・E2Eテストをまとめて実行する検証スクリプトが `scripts/` に用意されています。
 
 ```powershell
