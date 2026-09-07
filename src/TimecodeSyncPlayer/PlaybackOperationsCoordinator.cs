@@ -124,6 +124,8 @@ internal sealed class PlaybackOperationsCoordinator
                 return false;
             }
 
+            // keep-open may pause mpv at EOF without changing the user's play intent.
+            _effects.SetPropertyString("pause", _playbackControl.IsPaused ? MpvValueYes : MpvValueNo);
             return true;
         }
         catch (Exception ex)

@@ -11,10 +11,13 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class MainWindowManualSeekTests
 {
     [Theory]
-    [InlineData("back")]
-    [InlineData("forward")]
-    [InlineData("timeline")]
-    public Task ManualSeekEntry_CancelsDeferredSyncBeforeTheNextTick(string entry) => OnUi(() =>
+    [InlineData("back", true)]
+    [InlineData("back", false)]
+    [InlineData("forward", true)]
+    [InlineData("forward", false)]
+    [InlineData("timeline", true)]
+    [InlineData("timeline", false)]
+    public Task ManualSeekEntry_CancelsDeferredSyncBeforeTheNextTick(string entry, bool paused) => OnUi(() =>
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var h = new SyncScenarioHarness(clock) { SignalLossMode = LtcSignalLossMode.RunThrough };
@@ -35,6 +38,8 @@ public sealed class MainWindowManualSeekTests
         {
             typeof(MainWindow).GetField("_mpv", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, new IntPtr(1));
             typeof(MainWindow).GetField("_ltcSyncController", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, h.Controller);
+            var playback = (PlaybackControlState)typeof(MainWindow).GetField("_playbackControl", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+            playback.SetPaused(paused);
             switch (entry)
             {
                 case "back": ((IPlaybackController)window).SeekRelative(-10); break;
@@ -45,6 +50,7 @@ public sealed class MainWindowManualSeekTests
                     break;
             }
             api.Commands.Should().ContainSingle();
+            api.Properties.Should().Contain(("pause", paused ? "yes" : "no"));
             h.AdvancePlayback(2.5, 2);
             for (int i = 0; i < 20; i++)
             {
@@ -61,10 +67,11 @@ public sealed class MainWindowManualSeekTests
     private sealed class RecordingMpvApi : IMpvApi
     {
         public List<string> Commands { get; } = [];
+        public List<(string, string)> Properties { get; } = [];
         public IntPtr Create() => new(1);
         public int Initialize(IntPtr ctx) => 0;
         public void TerminateDestroy(IntPtr ctx) { }
-        public int SetPropertyString(IntPtr ctx, string name, string value) => 0;
+        public int SetPropertyString(IntPtr ctx, string name, string value) { Properties.Add((name, value)); return 0; }
         public int GetProperty(IntPtr ctx, string name, int format, out double result) { result = 0; return 0; }
         public string GetPropertyString(IntPtr ctx, string name) => "";
         public int CommandString(IntPtr ctx, string args) { Commands.Add(args); return 0; }

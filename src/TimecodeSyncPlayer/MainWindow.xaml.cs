@@ -1042,7 +1042,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_mpv == IntPtr.Zero) return;
         _ltcSyncController.CancelPendingSync();
-        _mpvApi.CommandString(_mpv, $"seek {seconds} {MpvSeekModeRelative}");
+        if (_mpvApi.CommandString(_mpv, $"seek {seconds} {MpvSeekModeRelative}") == 0)
+            _mpvApi.SetPropertyString(_mpv, "pause", _playbackControl.IsPaused ? MpvValueYes : MpvValueNo);
     }
 
     void IPlaybackController.CycleSpeed()

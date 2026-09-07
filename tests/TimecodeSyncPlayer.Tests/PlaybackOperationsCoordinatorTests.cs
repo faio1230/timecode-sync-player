@@ -167,6 +167,22 @@ public class PlaybackOperationsCoordinatorTests
         Create(recorder).SeekTo(1).Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SeekTo_AfterNativeEofPause_ReappliesIntendedPlaybackState(bool paused)
+    {
+        var recorder = new Recorder();
+        var playback = new PlaybackControlState();
+        playback.SetPaused(paused);
+        var coordinator = new PlaybackOperationsCoordinator(playback, recorder.Build());
+
+        coordinator.SeekTo(5).Should().BeTrue();
+
+        recorder.Properties.Should().Equal(("pause", paused ? "yes" : "no"));
+        playback.IsPaused.Should().Be(paused);
+    }
+
     [Fact]
     public void SeekTo_WhenCommandThrowsReturnsFalse()
     {
