@@ -5,7 +5,7 @@ namespace TimecodeSyncPlayer;
 /// Inactive: 通常再生中（Gap非アクティブ）
 /// BlackFrameActive: ブラックフレーム描画中
 /// EnteringFreeze: Gapフリーズ進入中（seek完了待ち）
-/// WaitingForFrameStep: frame-step実行待ち
+/// WaitingForFrameStep: 最終画像のコピー完了待ち（旧状態名）
 /// FreezeComplete: Gapフリーズ完了（最終フレーム固定）
 /// ForceBlack: トラックなし・ブラック強制
 /// </summary>
@@ -57,6 +57,7 @@ public sealed class GapFreezeHandler
     private bool _pauseOwnedByGap;
     private bool _pauseOwnershipRecorded;
     private readonly TimeProvider _timeProvider;
+    internal long CaptureAttemptId { get; private set; }
 
     public GapFreezeHandler(TimeProvider? timeProvider = null)
     {
@@ -81,6 +82,7 @@ public sealed class GapFreezeHandler
 
     public void Reset()
     {
+        CaptureAttemptId++;
         _currentState = GapState.Inactive;
         _pauseOwnedByGap = false;
         _pauseOwnershipRecorded = false;
@@ -100,6 +102,7 @@ public sealed class GapFreezeHandler
 
     public void EnterFreezeCapture(Guid? trackId, double targetSeconds, string? filePath)
     {
+        CaptureAttemptId++;
         _currentState = GapState.EnteringFreeze;
         StartedAt = _timeProvider.GetUtcNow().UtcDateTime;
         PendingTrackId = trackId;
@@ -128,8 +131,8 @@ public sealed class GapFreezeHandler
     {
         _currentState = GapState.FreezeComplete;
         StartedAt = DateTime.MinValue;
-        CachedTrackId = PendingTrackId;              // Pending から引き継ぐ
-        CachedTargetSeconds = PendingTargetSeconds;   // Pending から引き継ぐ
+        // タイムアウト時の表示は、確定済みの最終画像として再利用しない。
+        ClearCachedFrameInfo();
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;

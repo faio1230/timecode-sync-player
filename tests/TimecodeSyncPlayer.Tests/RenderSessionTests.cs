@@ -8,6 +8,219 @@ namespace TimecodeSyncPlayer.Tests;
 
 public sealed class RenderSessionTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task PendingFreeze_KeepsPublishedImageInsteadOfPriorClipBuffer(bool hasOldCachedFrame) => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        fixture.Buffers.EnsureFrozenFrameBuffer(2, 2);
+        fixture.Buffers.FrozenFrameBuffer!.AsSpan().Fill(5);
+        if (hasOldCachedFrame) fixture.Buffers.CopyFrozenToGapFreezeFrame(2, 2);
+        fixture.State = GapState.EnteringFreeze;
+        await fixture.Session.RenderGapAsync(fixture.Session.GetGapRenderDecision());
+        fixture.Spout.Frames.Select(frame => frame.Pixel).Should().Equal(new byte[] { 73 },
+            "pending Freeze must keep the currently published image, not another clip's frozen buffer");
+    });
+
+    [Fact]
+    public Task FreezeTimeoutWithoutCachedImage_KeepsPublishedImage() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        fixture.Buffers.EnsureFrozenFrameBuffer(2, 2);
+        fixture.Buffers.FrozenFrameBuffer!.AsSpan().Fill(5);
+        fixture.State = GapState.FreezeComplete;
+        await fixture.Session.RenderGapAsync(fixture.Session.GetGapRenderDecision());
+        fixture.Spout.Frames.Select(frame => frame.Pixel).Should().Equal(new byte[] { 73 });
+    });
+
+    [Fact]
+    public Task FreezeTimeoutWithUnconfirmedOldCache_KeepsPublishedImage() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        fixture.Buffers.EnsureFrozenFrameBuffer(2, 2);
+        fixture.Buffers.FrozenFrameBuffer!.AsSpan().Fill(5);
+        fixture.Buffers.CopyFrozenToGapFreezeFrame(2, 2);
+        fixture.FreezeConfirmed = false;
+        fixture.State = GapState.FreezeComplete;
+        fixture.Session.GetGapRenderDecision().Should().Be(GapRenderFrameDecision.Hold);
+        await fixture.Session.RenderGapAsync(GapRenderFrameDecision.Hold);
+        fixture.Spout.Frames.Select(frame => frame.Pixel).Should().Equal(new byte[] { 73 });
+    });
+
+    [Fact]
+    public Task PendingFreezeStillDrainsNativeFramesWhilePreservingPublishedImage() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        fixture.State = GapState.EnteringFreeze;
+        fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
+        callback!(IntPtr.Zero);
+        await WaitUntil(() => fixture.Api.Calls.Count(c => c.Operation == "render") == 2);
+        await WaitUntil(() => fixture.Scheduled.Count == 1);
+        fixture.Scheduled[0]();
+        await fixture.Session.RenderGapAsync(GapRenderFrameDecision.Hold);
+        fixture.Spout.Frames.Select(frame => frame.Pixel).Should().Equal(new byte[] { 73 });
+    });
+
+    [Fact]
+    public Task NormalRenderCompletingDuringPendingFreeze_DoesNotCopyOrCertifyItsPixels() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        using var release = new ManualResetEventSlim();
+        fixture.Api.RenderRelease = release;
+        bool completed = false;
+        Task rendering = fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration(), () => completed = true);
+        try
+        {
+            await WaitUntil(() => fixture.Api.Calls.Count(c => c.Operation == "render") == 2);
+            fixture.State = GapState.EnteringFreeze;
+        }
+        finally { release.Set(); }
+        await rendering;
+        completed.Should().BeFalse("an incidental normal frame is not an explicit final-frame capture");
+        fixture.Buffers.PixelBuffer![0].Should().Be(73);
+        fixture.Spout.Frames.Should().ContainSingle();
+    });
+
+    [Fact]
+    public Task NativeCallback_DrainsFrameWhileUiDispatchIsWithheld() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
+        callback!(IntPtr.Zero);
+        // A synchronous core property call may block this UI. Native rendering must
+        // already be running without executing any of the queued UI actions.
+        await fixture.Api.RenderStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        fixture.Api.Calls.Should().Contain(c => c.Operation == "update");
+        fixture.Spout.Frames.Should().BeEmpty();
+    });
+
+    [Fact]
+    public Task ContinuousNativeCallbacks_DoNotStarveQueuedExplicitRedraw() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        fixture.Api.RepeatCallback = true;
+        fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
+        callback!(IntPtr.Zero);
+        await fixture.Api.RenderStarted.Task;
+        try
+        {
+            // Metadata redraw holds the UI publication gate while waiting for this
+            // explicit native job. Continuous FRAME work must yield the worker queue.
+            await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration())
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            fixture.Spout.Frames.Should().ContainSingle();
+        }
+        finally { fixture.Api.RepeatCallback = false; }
+    });
+
+    [Fact]
+    public Task PreparedFrame_IsStableAcrossAwaitAndNeverRendersAgainOnPublication() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Session.FrameUpdate = async (generation, hasFrame) =>
+        {
+            entered.SetResult();
+            await resume.Task;
+            await fixture.Session.RenderFrameAsync(generation);
+            done.SetResult();
+        };
+        fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
+        callback!(IntPtr.Zero);
+        await WaitUntil(() => fixture.Scheduled.Count == 1);
+        fixture.Scheduled[0]();
+        await entered.Task;
+        callback(IntPtr.Zero);
+        await WaitUntil(() => fixture.Api.Calls.Count(c => c.Operation == "render") == 2);
+        resume.SetResult();
+        await done.Task;
+        fixture.Api.Calls.Count(c => c.Operation == "render").Should().Be(2);
+        fixture.Spout.Frames.Should().ContainSingle().Which.Pixel.Should().Be(73);
+    });
+
+    [Fact]
+    public Task OlderPreparedFrame_DoesNotOverwriteNewerExplicitRedraw() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Session.FrameUpdate = async (generation, hasFrame) =>
+        {
+            entered.SetResult();
+            await resume.Task;
+            await fixture.Session.RenderFrameAsync(generation);
+            done.SetResult();
+        };
+        fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
+        callback!(IntPtr.Zero);
+        await WaitUntil(() => fixture.Scheduled.Count == 1);
+        fixture.Scheduled[0]();
+        await entered.Task;
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        fixture.Spout.Frames.Should().ContainSingle().Which.Pixel.Should().Be(74);
+        resume.SetResult();
+        await done.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        fixture.Spout.Frames.Select(frame => frame.Pixel).Should().Equal(new byte[] { 74 },
+            "an older callback lease must not roll back pixels already published by a newer redraw");
+    });
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task CaptureFreeze_RejectsFailedRenderOrInvalidSize(bool invalidSize) => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        if (invalidSize) fixture.Session.Width = 0;
+        else fixture.Api.RenderReturnCode = -1;
+        bool captured = await fixture.Session.TryCaptureGapFreezeFrameAsync(fixture.Session.CaptureGeneration(), () => true);
+        captured.Should().BeFalse();
+        fixture.Buffers.CachedGapFreezeFrameBuffer.Should().BeNull();
+        fixture.Api.Calls.Count(c => c.Operation == "render").Should().Be(1);
+    });
+
+    [Fact]
+    public Task CaptureFreeze_RejectsAttemptChangedDuringNativeRender() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        using var release = new ManualResetEventSlim();
+        fixture.Api.RenderRelease = release;
+        bool current = true;
+        Task<bool> capture = fixture.Session.TryCaptureGapFreezeFrameAsync(fixture.Session.CaptureGeneration(), () => current);
+        await fixture.Api.RenderStarted.Task;
+        current = false;
+        release.Set();
+        (await capture).Should().BeFalse();
+        fixture.Buffers.CachedGapFreezeFrameBuffer.Should().BeNull();
+    });
+
+    [Fact]
+    public Task CaptureFreeze_CopiesActualSnapshotDimensionsAndReusesExactPixels() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        using var release = new ManualResetEventSlim();
+        fixture.Api.RenderRelease = release;
+        Task<bool> capture = fixture.Session.TryCaptureGapFreezeFrameAsync(fixture.Session.CaptureGeneration(), () => true);
+        await fixture.Api.RenderStarted.Task;
+        fixture.Session.Width = 100;
+        fixture.Session.Height = 100;
+        release.Set();
+        (await capture).Should().BeTrue();
+        fixture.Buffers.CachedGapFreezeFrameWidth.Should().Be(2);
+        fixture.Buffers.CachedGapFreezeFrameHeight.Should().Be(2);
+        fixture.State = GapState.FreezeComplete;
+        await fixture.Session.RenderGapAsync(GapRenderFrameDecision.GapFreeze);
+        fixture.Spout.Frames.Should().ContainSingle().Which.Pixel.Should().Be(73);
+    });
+
     [Fact]
     public Task Shutdown_ContextFreeFailureRetainsNativeDependenciesAndStillDisposesIndependentResources() => OnUi(async () =>
     {
@@ -85,7 +298,7 @@ public sealed class RenderSessionTests
             {
                 SpinWait.SpinUntil(() => !fixture.Session.IsCurrent(fixture.Session.CaptureGeneration()), TimeSpan.FromSeconds(5)).Should().BeTrue();
                 fixture.Api.Calls.Should().NotContain(c => c.Operation == "free");
-                fixture.Buffers.PixelPtr.Should().NotBe(IntPtr.Zero);
+                fixture.NativeBuffers.PixelPtr.Should().NotBe(IntPtr.Zero);
             }
             finally { release.Set(); }
         });
@@ -106,13 +319,14 @@ public sealed class RenderSessionTests
         using var fixture = new Fixture();
         fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
         callback!(IntPtr.Zero);
+        await WaitUntil(() => fixture.Scheduled.Count == 1);
         fixture.Scheduled.Should().ContainSingle();
         fixture.Session.Dispose();
         fixture.Scheduled[0]();
         callback(IntPtr.Zero);
         fixture.State = GapState.BlackFrameActive;
         await fixture.Session.RenderGapAsync(GapRenderFrameDecision.Black);
-        fixture.Api.Calls.Select(c => c.Operation).Should().Equal("create", "callback", "free");
+        fixture.Api.Calls.Select(c => c.Operation).Should().Equal("create", "callback", "update", "render", "free");
         fixture.Spout.Frames.Should().BeEmpty();
         fixture.Scheduled.Should().ContainSingle();
     });
@@ -211,7 +425,7 @@ public sealed class RenderSessionTests
     });
 
     [Fact]
-    public Task Callback_IsRetainedUntilFreeAndDisabledAfterStop() => OnUi(() =>
+    public Task Callback_IsRetainedUntilFreeAndDisabledAfterStop() => OnUi(async () =>
     {
         using var fixture = new Fixture();
         GC.Collect();
@@ -219,11 +433,11 @@ public sealed class RenderSessionTests
         GC.Collect();
         fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
         callback!(IntPtr.Zero);
+        await WaitUntil(() => fixture.Scheduled.Count == 1);
         fixture.Scheduled.Should().HaveCount(1);
         fixture.Session.Stop();
         callback(IntPtr.Zero);
         fixture.Scheduled.Should().HaveCount(1);
-        return Task.CompletedTask;
     });
 
     [Fact]
@@ -231,7 +445,7 @@ public sealed class RenderSessionTests
     {
         using var fixture = new Fixture();
         fixture.State = GapState.WaitingForFrameStep;
-        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration(), fixture.Session.CaptureGapFreezeFrame);
+        (await fixture.Session.TryCaptureGapFreezeFrameAsync(fixture.Session.CaptureGeneration(), () => true)).Should().BeTrue();
         fixture.Spout.Frames.Should().BeEmpty();
         fixture.State = GapState.FreezeComplete;
         await fixture.Session.RenderGapAsync(GapRenderFrameDecision.GapFreeze);
@@ -272,7 +486,9 @@ public sealed class RenderSessionTests
         };
         fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
         callback!(IntPtr.Zero);
+        await WaitUntil(() => fixture.Scheduled.Count == 1);
         callback(IntPtr.Zero);
+        await WaitUntil(() => fixture.Api.Calls.Count(c => c.Operation == "render") == 2);
         fixture.Scheduled.Should().ContainSingle();
         fixture.Scheduled[0]();
         await completion.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -284,15 +500,19 @@ public sealed class RenderSessionTests
     {
         public readonly FakeApi Api = new();
         public readonly FakeSpout Spout = new();
-        public readonly List<Action> Scheduled = [];
+        private readonly ConcurrentQueue<Action> _scheduled = new();
+        public IReadOnlyList<Action> Scheduled => _scheduled.ToArray();
         public GapState State = GapState.Inactive;
+        public bool FreezeConfirmed = true;
         public RenderSession Session { get; }
         public PixelBufferManager Buffers => (PixelBufferManager)typeof(RenderSession)
             .GetField("_buffers", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(Session)!;
+        public PixelBufferManager NativeBuffers => (PixelBufferManager)typeof(RenderSession)
+            .GetField("_nativeBuffers", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(Session)!;
         public Fixture(bool initialize = true)
         {
             Session = new RenderSession(Api, Spout, new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)),
-                () => State, () => GapBehavior.Freeze, Scheduled.Add);
+                () => State, () => GapBehavior.Freeze, _scheduled.Enqueue, () => FreezeConfirmed);
             if (!initialize) return;
             Session.Create(new IntPtr(1)).Should().BeTrue();
             Session.AllocateParameters();
@@ -327,6 +547,8 @@ public sealed class RenderSessionTests
         public Exception? CallbackFailure;
         public Exception? RenderFailure;
         public int CreateReturnCode;
+        public int RenderReturnCode;
+        public volatile bool RepeatCallback;
         public int MpvRenderParamApiType => 1;
         public int MpvRenderParamSwSize => 17;
         public int MpvRenderParamSwFormat => 18;
@@ -345,7 +567,12 @@ public sealed class RenderSessionTests
             Marshal.WriteByte(parameters.Single(p => p.Type == MpvRenderParamSwPointer).Data, _nextPixel++);
             if (RenderRelease != null) Record("render-finished");
             if (RenderFailure != null) throw RenderFailure;
-            return 0;
+            if (RepeatCallback)
+            {
+                Thread.Sleep(1);
+                if (Callback!.TryGetTarget(out var callback)) callback(IntPtr.Zero);
+            }
+            return RenderReturnCode;
         }
         public void RenderContextSetUpdateCallback(IntPtr ctx, MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx)
         { Record("callback"); Callback = new(callback); if (CallbackFailure != null) throw CallbackFailure; }
@@ -372,5 +599,11 @@ public sealed class RenderSessionTests
         thread.IsBackground = true;
         thread.Start();
         return completion.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    private static async Task WaitUntil(Func<bool> predicate)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!predicate()) await Task.Delay(1, timeout.Token);
     }
 }

@@ -1,4 +1,4 @@
-using FluentAssertions;
+﻿using FluentAssertions;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -35,7 +35,7 @@ public class GapFrameCaptureCoordinatorTests
     }
 
     [Fact]
-    public void Decide_ReturnsSendFrameStep_WhenEnteringFreezeReachedTarget()
+    public void Decide_ReturnsRenderAndCapture_WhenEnteringFreezeReachedTarget()
     {
         GapFrameCaptureDecision result = GapFrameCaptureCoordinator.Decide(
             GapState.EnteringFreeze,
@@ -46,7 +46,7 @@ public class GapFrameCaptureCoordinatorTests
             targetSeconds: 10.0,
             fps: 30.0);
 
-        result.Should().Be(GapFrameCaptureDecision.SendFrameStep);
+        result.Should().Be(GapFrameCaptureDecision.RenderAndCapture);
     }
 
     [Fact]

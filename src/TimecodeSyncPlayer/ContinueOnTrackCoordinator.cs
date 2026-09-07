@@ -64,6 +64,11 @@ internal sealed class ContinueOnTrackCoordinator
         }
         else
         {
+            // Track switches and gap exits above may replace the pending operation.
+            // For this clip, native time-pos is not stable until seeking has finished.
+            if (_effects.IsNativeSeeking?.Invoke() == true)
+                return SyncRequestResult.Deferred;
+
             (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
             if (timePosRc != 0) return SyncRequestResult.Deferred;
 
@@ -138,4 +143,5 @@ internal sealed record ContinueOnTrackEffects(
     Func<string, double, bool> LoadFile,
     Func<long> GetTotalRenderedFrames,
     Func<(int rc, double playbackSeconds)> GetTimePos,
-    Func<double, SyncPlaybackState> BuildPlaybackState);
+    Func<double, SyncPlaybackState> BuildPlaybackState,
+    Func<bool>? IsNativeSeeking = null);

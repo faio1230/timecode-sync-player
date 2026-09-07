@@ -14,7 +14,9 @@ public sealed class MpvStartupPropertyApplier
     public void Apply(IntPtr mpv, bool showDebugOsd = false)
     {
         _mpvApi.SetPropertyString(mpv, "vo", "libmpv");
-        _mpvApi.SetPropertyString(mpv, "hwdec", "auto-copy");
+        // The SW renderer needs CPU pixels. Native probes showed hardware-copy seeks
+        // taking longer than the sync tolerance and repeatedly falling behind LTC.
+        _mpvApi.SetPropertyString(mpv, "hwdec", "no");
         _mpvApi.SetPropertyString(mpv, "keep-open", "always");
         _mpvApi.SetPropertyString(mpv, "pause", "yes");
         _mpvApi.SetPropertyString(mpv, "osd-level", showDebugOsd ? "3" : "1");

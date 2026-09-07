@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 using FluentAssertions;
 using TimecodeSyncPlayer.Tests.Helpers;
 
@@ -120,7 +120,7 @@ public class GapFreezeHandlerTests
     }
 
     [Fact]
-    public void ForceFreezeComplete_SavesPendingValuesToCache()
+    public void ForceFreezeComplete_DoesNotCertifyUncapturedTarget()
     {
         var handler = new GapFreezeHandler();
         var trackId = Guid.NewGuid();
@@ -130,8 +130,8 @@ public class GapFreezeHandlerTests
 
         handler.CurrentState.Should().Be(GapState.FreezeComplete);
         handler.StartedAt.Should().Be(DateTime.MinValue);
-        handler.CachedTrackId.Should().Be(trackId);          // Pending から引き継ぐ
-        handler.CachedTargetSeconds.Should().Be(42.5);       // Pending から引き継ぐ
+        handler.CachedTrackId.Should().BeNull();
+        handler.CachedTargetSeconds.Should().Be(0);
         handler.PendingTrackId.Should().BeNull();
         handler.PendingTargetSeconds.Should().Be(0);
         handler.PendingPath.Should().BeNull();

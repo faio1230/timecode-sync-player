@@ -24,6 +24,8 @@ mpv連携やLTC同期の実装上の要点をまとめる。
                               RenderSession / mpv SW render context
                               （専用レンダースレッド）
                                              ↓
+                              最大1枚の待機画像（コピー・世代・順序番号）
+                                             ↓
                               UIスレッド（直列公開処理）
                                       ↙              ↘
                               WriteableBitmap     SpoutOutput.SendFrame()
@@ -51,8 +53,9 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
   PCMサンプルを受け取り、LTCデコードを行う。UIスレッドとは別スレッドで動作するため、
   デコード結果をUIスレッドに引き渡す際はスレッドセーフな手段（Dispatcher経由など）を使う。
 - **mpv内部スレッド**: mpvのレンダー更新コールバックはmpv自身のスレッドから呼び出される。
-  コールバックはUI Dispatcherへ更新通知だけを送り、実際のmpv描画は専用レンダースレッドへ
-  委譲する。完了したフレームの`WriteableBitmap`反映だけをUIスレッドで行う。
+  コールバックは専用レンダースレッドへ直接処理を予約する。UIの位置取得や操作完了を待たず、
+  FRAME要求ごとに描画する。画像をコピーしてからUIへ公開を予約する。1つの予約で1回だけ描画し、
+  連続する更新が明示的な再描画・Freeze取得・終了処理を待たせ続けないようにする。
 
 ## 3. 主要コンポーネント
 
@@ -63,6 +66,8 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
 | `RenderSession.cs` | render context・専用スレッド・callback・パラメータ・ピクセルバッファ・世代・公開ゲートを所有し、描画の開始から停止までを管理する |
 | `FrameRenderer.cs` | `WriteableBitmap`の保持とmpvから受け取ったフレームバッファの描画を担当 |
 | `RenderFrameWorker.cs` | 描画サイズの判定、mpv描画、UI反映用フレーム情報の受け渡しを直列化する |
+| `RenderedFrameSnapshot.cs` | プールから借りた画像コピーを保持し、待機画像を最大1枚に制限する。UIが使用中の画像を上書きしない |
+| `GapFreezeCaptureOperation.cs` | 画像コピー成功と現在の取得試行を確認してからFreeze確定状態へ進める |
 | `RenderThreadExecutor.cs` | mpvレンダーAPIを単一の専用スレッド上で実行する |
 | `RenderFramePipelineGate.cs` | 通常・Black・Freezeのフレーム公開と共有バッファ操作を直列化する |
 | `LtcDecoder.cs` | libltcに依存しない純C#実装のLTCデコーダ。PCMサンプル列からタイムコードを復元する |
@@ -81,6 +86,8 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
 
 - **`vo=libmpv`が必須**: これを設定しないとmpvが自前のウィンドウを開いてしまう。
   `vo=null`は破棄用VOのため、再生自体は進んでもフレームが`WriteableBitmap`側に届かない。
+- **現在のSW描画では`hwdec=no`を既定とする**: ハードウェアコピー方式のシーク遅延が同期追従を
+  妨げた実測に基づく。CPU負荷と本番素材の性能確認が必要。比較は`SYNC-ACCURACY.md`を参照。
 - **SW render param定数は17〜20**: `MPV_RENDER_PARAM_SW_SIZE=17`, `SW_FORMAT=18`,
   `SW_STRIDE=19`, `SW_POINTER=20`。古いドキュメントでは6〜9と記載されている場合があるが、
   これは誤りなので注意。
@@ -99,11 +106,25 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
   フレームを表示・Spout・Freezeキャッシュへ公開しない。Black/Freezeの遅延描画もゲート取得時に
   現在のGap判断を再確認し、Gap退出後の古い副作用を破棄する。レンダーcallbackの例外はUIの
   未処理例外にせずログ境界で処理し、schedulerの完了処理は必ず実行する。
+- **公開順序を逆転させない**: 明示的な再描画で新しい画像を反映した後は、待機していた古い画像を
+  順序番号で破棄する。新しい画像がまだ描画されたに過ぎない場合は、UI使用中の画像を妨げない。
+- **Freezeはコピー成功後に確定する**: nativeの`seeking=no`、`pause=yes`、パスと位置を確認して
+  再描画し、await後にも確認する。画像を最終用バッファへコピーできた場合だけキャッシュを確定する。
+  最終画像からさらにframe-stepは送らない。停止後の通知が来なくてもタイマーで再試行・公開し、
+  取得中の操作・Gap再進入・失敗・タイムアウトを確定済みキャッシュに見せかけない。
+  確定待ちは`Hold`で既に公開した画像を保ち、以前のクリップのFrozenバッファへ切り替えない。
+  キャッシュの画素・サイズとhandlerの確定情報がそろった場合だけ最終画像を再公開する。
+  動画長が不明な場合も確定情報を作らず、現在の画像を保持する。
 - **描画資源の所有者は`RenderSession`**: 内部でバッファ・描画helper・`FrameRenderer`を生成する。
   Windowは`BitmapChanged`をプレビューとFullscreenへ接続し、Gap判断とUI更新を受け持つ。
-  共有バッファの通常/Black/Freeze公開はsession内の同じゲートを通す。
+  native専用バッファとUI公開用バッファを分離し、画像のコピーだけを受け渡す。
+  UIバッファの通常/Black/Freeze公開はsession内の同じゲートを通す。
 
 ## 5. LTC同期の要点
+
+- **nativeシーク中の位置を完了判定に使わない**: `time-pos`が要求先の値を返していても、
+  `seeking=yes`なら同じクリップのロード安定判定・シーク完了判定を保留する。
+  別クリップへの変更やGap退出は、新しい要求で置き換えられる。
 
 - **時間境界は差し替え可能な時計で検証する**: `TimecodeSyncService` と `GapFreezeHandler` は
   `TimeProvider` を受け取り、省略時は `TimeProvider.System` を使う。判定は従来どおりUTC時刻の

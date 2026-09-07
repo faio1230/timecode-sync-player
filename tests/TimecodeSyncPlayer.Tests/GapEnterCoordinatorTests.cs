@@ -125,8 +125,8 @@ public class GapEnterCoordinatorTests
         rec.SeekTargets.Should().BeEmpty();
         rec.Calls.Should().NotContain(new[] { "GetDuration", "GetFps" });
         handler.CurrentState.Should().Be(GapState.FreezeComplete);
-        // OnFreezeComplete(loadedTrackId): Pending が無いので CachedTrackId は loadedTrackId
-        handler.CachedTrackId.Should().Be(loadedId);
+        // A missing duration did not produce or copy a final image.
+        handler.CachedTrackId.Should().BeNull();
     }
 
     [Fact]

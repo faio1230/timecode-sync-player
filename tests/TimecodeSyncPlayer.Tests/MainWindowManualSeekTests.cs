@@ -8,6 +8,7 @@ using TimecodeSyncPlayer.Tests.Integration;
 
 namespace TimecodeSyncPlayer.Tests;
 
+[Collection("WpfWindow")]
 public sealed class MainWindowManualSeekTests
 {
     [Theory]

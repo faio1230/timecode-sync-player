@@ -5,6 +5,15 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class RenderFramePublicationDispatcherTests
 {
     [Fact]
+    public void Execute_HoldDoesNotPublishCopyOrCertifyAnIncidentalFrame()
+    {
+        var calls = new List<string>();
+        RenderFramePublicationDispatcher.Execute(GapRenderFrameDecision.Hold,
+            () => calls.Add("publish"), () => calls.Add("capture"), () => calls.Add("after"));
+        calls.Should().BeEmpty();
+    }
+
+    [Fact]
     public void Execute_NoGapPublishesNormalFrameThenRunsCompletion()
     {
         var calls = new List<string>();

@@ -3,7 +3,6 @@ namespace TimecodeSyncPlayer;
 internal enum GapFrameCaptureDecision
 {
     None,
-    SendFrameStep,
     RenderAndCapture
 }
 
@@ -16,23 +15,17 @@ internal static class GapFrameCaptureCoordinator
         bool hasTimePosition,
         double actualPositionSeconds,
         double targetSeconds,
-        double fps)
+        double fps,
+        bool isNativeSeeking = false,
+        bool allowRedraw = false)
     {
-        if (!hasFrame || !isExpectedPath)
+        if ((!hasFrame && !allowRedraw) || !isExpectedPath || isNativeSeeking)
             return GapFrameCaptureDecision.None;
 
         double effectiveFps = fps > 0 ? fps : 30.0;
         double frameSeconds = 1.0 / effectiveFps;
 
-        if (state == GapState.EnteringFreeze)
-        {
-            double tolerance = frameSeconds * 2.0;
-            return hasTimePosition && Math.Abs(actualPositionSeconds - targetSeconds) <= tolerance
-                ? GapFrameCaptureDecision.SendFrameStep
-                : GapFrameCaptureDecision.None;
-        }
-
-        if (state == GapState.WaitingForFrameStep)
+        if (state is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
         {
             return ContinueModePlaybackPolicy.ShouldCaptureFreezeFrameAfterFrameStep(
                 hasTimePosition,
