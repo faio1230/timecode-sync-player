@@ -7,3 +7,4 @@ TestResults/
 native/*.dll
 .dotnet/
 .superpowers/
+__pycache__/

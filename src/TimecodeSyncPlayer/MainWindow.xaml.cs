@@ -616,6 +616,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_disposed) return;
         long receivedAtMilliseconds = Environment.TickCount64;
+        SyncAccuracyTrace.Current.RecordLtc(e);
         Dispatcher.BeginInvoke(() =>
         {
             if (!_disposed) _ltcSyncController.ReceiveFrame(e, receivedAtMilliseconds);
