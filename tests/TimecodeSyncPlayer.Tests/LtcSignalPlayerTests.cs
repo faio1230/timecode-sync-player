@@ -5,6 +5,23 @@ namespace TimecodeSyncPlayer.Tests;
 
 public class LtcSignalPlayerTests
 {
+    [Theory]
+    [InlineData(24)]
+    [InlineData(25)]
+    [InlineData(30)]
+    public void HeldSignal_HasRealAudioDurationAndDecodesToRepeatedTarget(int fps)
+    {
+        float[] samples = LtcSignalPlayer.BuildHeldSamples(440, fps, TimeSpan.FromSeconds(1), 48000);
+        samples.Length.Should().Be((int)Math.Round((1 + 5d / fps) * 48000));
+        var decoder = new LtcDecoder(48000, fps);
+        decoder.Write(samples, samples.Length);
+        var decoded = new List<LtcTimecode>();
+        while (decoder.Read() is { } frame) decoded.Add(frame);
+        decoded.Count.Should().BeGreaterThanOrEqualTo(fps);
+        decoded.TakeLast(fps - 1).Should().OnlyContain(t => t == new LtcTimecode(0, 7, 20, 0, false));
+        decoded.Should().Contain(t => t.ToRealSeconds(fps) < 440);
+    }
+
     [Fact]
     public void AdvanceTimecode_SkipsElapsedSilentFrames()
     {
