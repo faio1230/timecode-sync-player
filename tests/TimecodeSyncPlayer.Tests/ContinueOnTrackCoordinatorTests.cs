@@ -233,7 +233,7 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void SameTrack_WhenPlaybackBelowHalfSecond_DoesNotSeek()
+    public void SameTrack_WhenLoadIsNotPending_CanSeekFromFirstHalfSecond()
     {
         var id = Guid.NewGuid();
         var track = CreateTrack(id);
@@ -246,7 +246,7 @@ public class ContinueOnTrackCoordinatorTests
 
         coordinator.Handle(OnTrack(track, mediaPos: 100.0), ltcSeconds: 100.0);
 
-        rec.Calls.Should().NotContain(new[] { "BuildPlaybackState", "SeekTo" });
+        rec.SeekTargets.Should().ContainSingle().Which.Should().Be(100.0);
     }
 
     [Fact]

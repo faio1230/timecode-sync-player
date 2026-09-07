@@ -24,7 +24,7 @@ internal sealed class ContinueOnTrackCoordinator
         _effects = effects;
     }
 
-    public void Handle(TimelineQueryResult result, double ltcSeconds)
+    public SyncRequestResult Handle(TimelineQueryResult result, double ltcSeconds)
     {
         ContinueOnTrackDecision onTrackDecision = ContinueOnTrackPlanner.Decide(result, _effects.GetLoadedTrackId());
         PlaylistTrack track = onTrackDecision.Track;
@@ -36,9 +36,10 @@ internal sealed class ContinueOnTrackCoordinator
         // A different clip must be loaded before releasing the gap-owned pause.
         if (exitingGap && onTrackDecision.Action != ContinueOnTrackAction.SwitchTrack)
         {
-            if (_effects.SeekTo(mediaPos))
-                CompleteGapExit(exitAction);
-            return;
+            if (!_effects.SeekTo(mediaPos))
+                return SyncRequestResult.Deferred;
+            CompleteGapExit(exitAction);
+            return SyncRequestResult.Complete;
         }
 
         if (onTrackDecision.Action == ContinueOnTrackAction.SwitchTrack)
@@ -59,11 +60,12 @@ internal sealed class ContinueOnTrackCoordinator
                     CompleteGapExit(exitAction);
                 }
             }
+            return success ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
         }
         else
         {
             (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
-            if (timePosRc != 0) return;
+            if (timePosRc != 0) return SyncRequestResult.Deferred;
 
             if (!_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
             {
@@ -74,16 +76,10 @@ internal sealed class ContinueOnTrackCoordinator
                         playbackSeconds, mediaPos, _effects.GetTotalRenderedFrames());
                 }
 
-                return;
+                return SyncRequestResult.Deferred;
             }
 
             _fileLoadStabilityLogState.Reset();
-
-            if (playbackSeconds < 0.5)
-            {
-                Log.Debug("Continue mode: skipping sync decision, playback just started playback={Playback:F3}", playbackSeconds);
-                return;
-            }
 
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
 
@@ -92,7 +88,8 @@ internal sealed class ContinueOnTrackCoordinator
             ContinueSyncSeekPlan seekPlan = ContinueSyncSeekPlanner.Decide(decision, suppressSeek, _syncService.IsDebounced());
 
             if (!seekPlan.ShouldSeek)
-                return;
+                return seekPlan.SkipReason == ContinueSyncSeekSkipReason.NoSeekDecision
+                    ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
 
             bool success = _effects.SeekTo(seekPlan.TargetSeconds);
             if (success)
@@ -101,6 +98,7 @@ internal sealed class ContinueOnTrackCoordinator
                 "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success}",
                 ltcSeconds, playbackSeconds, seekPlan.TargetSeconds,
                 decision.DeltaSeconds, decision.ToleranceSeconds, success);
+            return success ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
         }
     }
     private void CompleteGapExit(GapExitAction exitAction)

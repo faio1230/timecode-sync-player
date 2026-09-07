@@ -102,6 +102,12 @@ public sealed class TimecodeSyncService
         if (!_isLoadingFile) return true;
         if (!double.IsFinite(playbackSeconds) || playbackSeconds < 0)
             return false;
+        if (_timeProvider.GetUtcNow().UtcDateTime - _fileLoadStartedAt > FileLoadTimeout)
+        {
+            _isLoadingFile = false;
+            _lastSyncSeekAt = _timeProvider.GetUtcNow().UtcDateTime;
+            return true;
+        }
 
         double playbackProgress = playbackSeconds - _fileLoadStartPositionSeconds;
         long renderedFrameProgress = renderedFrameCount - _fileLoadStartedRenderedFrames;

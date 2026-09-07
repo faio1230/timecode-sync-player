@@ -52,6 +52,7 @@ internal sealed class LtcSyncController
     private readonly Func<GapEnterCoordinator> _gapCoordinator;
     private readonly ContinueModeQueryLogState _queryLog = new(TimeSpan.FromSeconds(1), mediaPositionToleranceSeconds: 0.5);
     private double? _lastAcceptedLtcSeconds;
+    private double? _pendingSyncSeconds;
     private string _formatText = "LTC 停止中";
 
     public LtcSyncController(
@@ -95,10 +96,18 @@ internal sealed class LtcSyncController
 
     private void ReapplyLastAcceptedFrame()
     {
+        _pendingSyncSeconds = null;
         LtcSyncContext state = _effects.GetContext();
         if (_lastAcceptedLtcSeconds is double seconds && state.IsMonitoring &&
             state.SyncEnabled && !state.IsSeeking && !_signalLoss.ShouldSuppressSync)
-            ApplySync(seconds);
+            RequestSync(seconds);
+    }
+
+    public void CancelPendingSync() => _pendingSyncSeconds = null;
+
+    private void RequestSync(double seconds)
+    {
+        _pendingSyncSeconds = ApplySync(seconds) == SyncRequestResult.Deferred ? seconds : null;
     }
 
     public void FpsModeChanged() => _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
@@ -106,6 +115,7 @@ internal sealed class LtcSyncController
     public void MonitoringChanged()
     {
         _lastAcceptedLtcSeconds = null;
+        _pendingSyncSeconds = null;
         if (_effects.GetContext().IsMonitoring)
         {
             _monitoring.MarkStarted();
@@ -129,6 +139,7 @@ internal sealed class LtcSyncController
     public void MonitorStopped(Exception? exception)
     {
         _lastAcceptedLtcSeconds = null;
+        _pendingSyncSeconds = null;
         if (_monitoring.MarkStopped(exception))
         {
             _signalLoss.Reset();
@@ -194,14 +205,17 @@ internal sealed class LtcSyncController
     {
         ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
         RefreshDisplay();
+        _pendingSyncSeconds = null;
         if (!_signalLoss.ShouldSuppressSync)
-            ApplySync(seconds);
+            RequestSync(seconds);
     }
 
     public void Tick(long nowMilliseconds)
     {
         ApplySignalLossAction(_signalLoss.Evaluate(nowMilliseconds, SignalContext()));
         RefreshDisplay();
+        if (_pendingSyncSeconds is double seconds)
+            RequestSync(seconds);
     }
 
     private LtcSignalLossContext SignalContext()
@@ -231,20 +245,18 @@ internal sealed class LtcSyncController
             Log.Information("LTC signal restored: playback resumed resumeFrames={ResumeFrames}", state.SignalResumeFrames);
     }
 
-    private void ApplySync(double seconds)
+    private SyncRequestResult ApplySync(double seconds)
     {
         LtcSyncContext state = _effects.GetContext();
-        if (!state.IsMpvReady)
-            return;
+        if (!state.IsMpvReady || !state.IsMonitoring || !state.SyncEnabled ||
+            state.IsSeeking || _signalLoss.ShouldSuppressSync)
+            return SyncRequestResult.Complete;
         if (state.Mode != SyncMode.Continue)
         {
             if (state.SyncEnabled && !state.IsSeeking && _playlist.Current != null)
                 _effects.ResumeProjectRestorePause();
-            _single().Apply(seconds);
-            return;
+            return _single().Apply(seconds);
         }
-        if (!state.SyncEnabled || state.IsSeeking)
-            return;
         TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(seconds);
         string? trackName = result.Track?.Name;
         if (_queryLog.ShouldLog(result.Status, trackName, result.MediaPositionSeconds, DateTime.UtcNow))
@@ -254,8 +266,7 @@ internal sealed class LtcSyncController
         {
             case TimelineQueryStatus.OnTrack:
                 _effects.ResumeProjectRestorePause();
-                _continue().Handle(result, seconds);
-                break;
+                return _continue().Handle(result, seconds);
             case TimelineQueryStatus.Gap:
                 if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
                     _effects.ClearGapFreezeFrame();
@@ -275,6 +286,7 @@ internal sealed class LtcSyncController
                 _gapCoordinator().HandleNoTracks();
                 break;
         }
+        return SyncRequestResult.Complete;
     }
 
     private void ExitGapForManualControl()
