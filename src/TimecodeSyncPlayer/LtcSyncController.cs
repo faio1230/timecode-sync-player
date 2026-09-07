@@ -84,6 +84,7 @@ internal sealed class LtcSyncController
         _frames.ResetDiagnostics();
         _syncService.ClearSeekState();
         ExitGapForManualControl();
+        _effects.UpdateCurrentTrackLabel();
     }
 
     public void FpsModeChanged() => _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
