@@ -296,15 +296,18 @@ public class SyncScenarioTests
     }
 
     [Fact]
-    public void GapBoundaryPlusOrMinusOneFrame_DoesNotReenterWhileCaptureIsPending()
+    public void GapBoundaryDiagnosticReverse_DoesNotReenterWhileCaptureIsPending()
     {
         var harness = CreateTwoTrackHarness();
         harness.ManualPlay();
-        harness.SupplyLtc(4.96);
-
-        harness.SupplyLtc(5.04);
+        harness.Controller.ReceiveFrame(new(new LtcTimecode(0, 0, 4, 24, false), 25, 4.96), 10_000);
+        harness.Controller.ReceiveFrame(new(new LtcTimecode(0, 0, 5, 1, false), 25, 5.04), 10_080);
         for (int i = 0; i < 20; i++)
-            harness.SupplyLtc(i % 2 == 0 ? 4.96 : 5.04);
+        {
+            bool reverse = i % 2 == 0;
+            harness.Controller.ReceiveFrame(new(new LtcTimecode(0, 0, reverse ? 4 : 5, reverse ? 24 : 1, false),
+                25, reverse ? 4.96 : 5.04), 10_100 + i * 40);
+        }
 
         harness.GapState.Should().Be(GapState.EnteringFreeze);
         harness.Operations.Count(operation => operation.Name == "pause-for-gap").Should().Be(1);

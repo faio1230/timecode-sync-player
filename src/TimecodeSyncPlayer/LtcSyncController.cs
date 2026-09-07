@@ -30,7 +30,8 @@ internal sealed record LtcSyncEffects(
     Action RefreshCurrentVideoFrame,
     Action<double> UpdateTimelinePosition,
     Action UpdateCurrentTrackLabel,
-    Action RenderGapFreeze);
+    Action RenderGapFreeze,
+    Action ResumeGapPause);
 
 /// <summary>
 /// UI-thread LTC session orchestration shared by the window and integration scenarios.
@@ -50,6 +51,7 @@ internal sealed class LtcSyncController
     private readonly Func<ContinueOnTrackCoordinator> _continue;
     private readonly Func<GapEnterCoordinator> _gapCoordinator;
     private readonly ContinueModeQueryLogState _queryLog = new(TimeSpan.FromSeconds(1), mediaPositionToleranceSeconds: 0.5);
+    private double? _lastAcceptedLtcSeconds;
     private string _formatText = "LTC 停止中";
 
     public LtcSyncController(
@@ -77,6 +79,7 @@ internal sealed class LtcSyncController
         if (!_effects.GetContext().SyncEnabled)
             _syncService.ClearSeekState();
         ExitGapForManualControl();
+        ReapplyLastAcceptedFrame();
     }
 
     public void SyncModeChanged()
@@ -85,12 +88,24 @@ internal sealed class LtcSyncController
         _syncService.ClearSeekState();
         ExitGapForManualControl();
         _effects.UpdateCurrentTrackLabel();
+        ReapplyLastAcceptedFrame();
+    }
+
+    public void GapBehaviorChanged() => ReapplyLastAcceptedFrame();
+
+    private void ReapplyLastAcceptedFrame()
+    {
+        LtcSyncContext state = _effects.GetContext();
+        if (_lastAcceptedLtcSeconds is double seconds && state.IsMonitoring &&
+            state.SyncEnabled && !state.IsSeeking && !_signalLoss.ShouldSuppressSync)
+            ApplySync(seconds);
     }
 
     public void FpsModeChanged() => _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
 
     public void MonitoringChanged()
     {
+        _lastAcceptedLtcSeconds = null;
         if (_effects.GetContext().IsMonitoring)
         {
             _monitoring.MarkStarted();
@@ -113,6 +128,7 @@ internal sealed class LtcSyncController
 
     public void MonitorStopped(Exception? exception)
     {
+        _lastAcceptedLtcSeconds = null;
         if (_monitoring.MarkStopped(exception))
         {
             _signalLoss.Reset();
@@ -143,6 +159,7 @@ internal sealed class LtcSyncController
             LogFrameDiagnostics(sourceFrame, processed, mode);
         if (!processed.ShouldApplySync)
             return;
+        _lastAcceptedLtcSeconds = processed.ResolvedSeconds;
         ObserveValidFrame(processed.ResolvedSeconds, receivedAtMilliseconds);
     }
 
@@ -228,11 +245,6 @@ internal sealed class LtcSyncController
         }
         if (!state.SyncEnabled || state.IsSeeking)
             return;
-        if (_gap.CurrentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
-        {
-            _effects.UpdateTimelinePosition(seconds);
-            return;
-        }
         TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(seconds);
         string? trackName = result.Track?.Name;
         if (_queryLog.ShouldLog(result.Status, trackName, result.MediaPositionSeconds, DateTime.UtcNow))
@@ -245,6 +257,9 @@ internal sealed class LtcSyncController
                 _continue().Handle(result, seconds);
                 break;
             case TimelineQueryStatus.Gap:
+                if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
+                    _effects.ClearGapFreezeFrame();
+                _effects.UpdateTimelinePosition(seconds);
                 GapEnterAction action = _gap.DecideGapEnter(result, state.GapBehavior,
                     state.LoadedTrackId, state.VideoFps, state.DurationSeconds);
                 GapEnterCoordinator coordinator = _gapCoordinator();
@@ -265,7 +280,10 @@ internal sealed class LtcSyncController
         LtcSyncContext state = _effects.GetContext();
         if (!GapStateExitPolicy.ShouldExit(state.SyncEnabled, state.Mode, !_gap.IsInactive))
             return;
+        GapExitAction exit = _gap.DecideGapExit();
         _gap.ResetAll();
+        if (exit.ShouldResumePlayback && !_signalLoss.IsPauseOwned && state.IsMpvReady)
+            _effects.ResumeGapPause();
         _effects.ClearGapFreezeFrame();
         _effects.RefreshCurrentVideoFrame();
         Log.Information("Gap state cleared for manual control syncEnabled={SyncEnabled} mode={Mode}",

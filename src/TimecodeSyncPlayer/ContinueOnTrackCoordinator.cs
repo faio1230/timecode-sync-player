@@ -5,7 +5,7 @@ namespace TimecodeSyncPlayer;
 /// <summary>
 /// Continue モードの OnTrack パス（Gap 終了 / トラック切替 / 同一トラック同期）の
 /// 判定・シーク発行・トラックロード制御を担う。MainWindow.HandleOnTrackSync から抽出。
-/// 判定条件・実行順序・早期return・ログテンプレートは抽出前と完全に一致させること。
+/// Gap 終了時もトラックを先に判定し、新しい動画のロード後に停止状態を復元する。
 /// 副作用はすべて <see cref="ContinueOnTrackEffects"/> のデリゲート経由で注入する。
 /// </summary>
 internal sealed class ContinueOnTrackCoordinator
@@ -26,26 +26,20 @@ internal sealed class ContinueOnTrackCoordinator
 
     public void Handle(TimelineQueryResult result, double ltcSeconds)
     {
-        // Gap 終了チェックを先頭で実施（mediaPos への正確なシーク付き）
-        GapExitAction exitAction = _effects.DecideGapExit();
-        if (exitAction.Type == GapExitActionType.ResumePlayback)
-        {
-            double targetPos = result.MediaPositionSeconds;
-            _effects.SeekTo(targetPos);
-            if (exitAction.ShouldResumePlayback)
-            {
-                _effects.ResumeMpvPause();
-                _effects.ApplyPauseState(false);
-            }
-            _effects.ShowOsdBar();
-            Log.Information("Continue mode: exiting gap, resuming playback at {Pos:F3}", targetPos);
-            _effects.UpdateCurrentTrackLabel();
-            return;    // このフレームは Gap 終了処理のみ実行し、次フレームで通常同期へ
-        }
-
         ContinueOnTrackDecision onTrackDecision = ContinueOnTrackPlanner.Decide(result, _effects.GetLoadedTrackId());
         PlaylistTrack track = onTrackDecision.Track;
         double mediaPos = onTrackDecision.MediaPositionSeconds;
+        GapExitAction exitAction = _effects.PeekGapExit();
+        bool wasPaused = _effects.IsPlaybackPaused();
+        bool exitingGap = exitAction.Type == GapExitActionType.ResumePlayback;
+
+        // A different clip must be loaded before releasing the gap-owned pause.
+        if (exitingGap && onTrackDecision.Action != ContinueOnTrackAction.SwitchTrack)
+        {
+            if (_effects.SeekTo(mediaPos))
+                CompleteGapExit(exitAction);
+            return;
+        }
 
         if (onTrackDecision.Action == ContinueOnTrackAction.SwitchTrack)
         {
@@ -58,6 +52,12 @@ internal sealed class ContinueOnTrackCoordinator
                 _syncService.BeginFileLoad(mediaPos, _effects.GetTotalRenderedFrames());
                 _fileLoadStabilityLogState.Reset();
                 _effects.UpdateCurrentTrackLabel();
+                if (exitingGap)
+                {
+                    if (!exitAction.ShouldResumePlayback)
+                        _effects.ApplyPauseState(wasPaused);
+                    CompleteGapExit(exitAction);
+                }
             }
         }
         else
@@ -103,6 +103,19 @@ internal sealed class ContinueOnTrackCoordinator
                 decision.DeltaSeconds, decision.ToleranceSeconds, success);
         }
     }
+    private void CompleteGapExit(GapExitAction exitAction)
+    {
+        _effects.DecideGapExit();
+        _effects.ClearGapFreezeFrame();
+        if (exitAction.ShouldResumePlayback)
+        {
+            _effects.ResumeMpvPause();
+            _effects.ApplyPauseState(false);
+        }
+        _effects.ShowOsdBar();
+        _effects.UpdateCurrentTrackLabel();
+    }
+
 }
 
 /// <summary>
@@ -112,7 +125,10 @@ internal sealed class ContinueOnTrackCoordinator
 /// アクセスし、更新タイミング（LoadFile 成功直後）を現行と同一に保つ。
 /// </summary>
 internal sealed record ContinueOnTrackEffects(
+    Func<GapExitAction> PeekGapExit,
     Func<GapExitAction> DecideGapExit,
+    Func<bool> IsPlaybackPaused,
+    Action ClearGapFreezeFrame,
     Func<double, bool> SeekTo,
     Action ResumeMpvPause,
     Action<bool> ApplyPauseState,

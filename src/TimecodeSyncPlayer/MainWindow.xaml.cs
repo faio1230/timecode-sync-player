@@ -196,11 +196,20 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     ApplyPauseState(paused);
                 },
                 ResumeProjectRestorePause: ResumeProjectRestorePauseForSyncIfNeeded,
-                ClearGapFreezeFrame: () => _renderSession.ClearGapFreezeFrame(),
+                ClearGapFreezeFrame: () =>
+                {
+                    _renderSession.Invalidate();
+                    _renderSession.ClearGapFreezeFrame();
+                },
                 RefreshCurrentVideoFrame: RefreshCurrentVideoFrame,
                 UpdateTimelinePosition: seconds => _timelinePanel?.UpdatePlaybackPosition(seconds),
                 UpdateCurrentTrackLabel: UpdateCurrentTrackLabel,
-                RenderGapFreeze: () => _renderSession.QueueGapFrame(GapRenderFrameDecision.GapFreeze)),
+                RenderGapFreeze: () => _renderSession.QueueGapFrame(GapRenderFrameDecision.GapFreeze),
+                ResumeGapPause: () =>
+                {
+                    _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
+                    ApplyPauseState(false);
+                }),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
@@ -315,6 +324,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                         GapBehavior = _vm.Sync.GapBehavior,
                     });
                     Log.Information("Gap behavior changed to {Behavior}", _vm.Sync.GapBehavior);
+                    _ltcSyncController.GapBehaviorChanged();
                     break;
                 case nameof(SyncViewModel.LtcFpsMode):
                     _ltcSyncController.FpsModeChanged();
@@ -636,7 +646,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _syncService,
             _fileLoadStabilityLogState,
             new ContinueOnTrackEffects(
+                PeekGapExit: () => _gapFreezeHandler.PeekGapExit(),
                 DecideGapExit: () => _gapFreezeHandler.DecideGapExit(),
+                IsPlaybackPaused: () => _playbackControl.IsPaused,
+                ClearGapFreezeFrame: () =>
+                {
+                    _gapFreezeHandler.ClearCachedFrameInfo();
+                    _renderSession.Invalidate();
+                    _renderSession.ClearGapFreezeFrame();
+                },
                 SeekTo: target => SeekTo(target),
                 ResumeMpvPause: () => _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo),
                 ApplyPauseState: paused => ApplyPauseState(paused),
