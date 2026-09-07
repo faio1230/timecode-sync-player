@@ -270,6 +270,8 @@ internal sealed class LtcSyncController
                 _effects.UpdateCurrentTrackLabel();
                 break;
             case TimelineQueryStatus.NoTracks:
+                if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
+                    _effects.ClearGapFreezeFrame();
                 _gapCoordinator().HandleNoTracks();
                 break;
         }

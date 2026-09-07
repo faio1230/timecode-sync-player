@@ -187,13 +187,7 @@ public sealed class GapFreezeHandler
     {
         if (ShouldTransitionFromFreezeToBlack(gapBehavior))
         {
-            StartedAt = DateTime.MinValue;
-            LastReloadAt = DateTime.MinValue;
-            PendingTrackId = null;
-            PendingTargetSeconds = 0;
-            PendingPath = null;
-            ClearCachedFrameInfo();
-            SetState(GapState.Inactive);
+            CancelFreezeCaptureForTransition();
         }
         else if (ShouldTransitionFromBlackToFreeze(gapBehavior))
         {
@@ -228,6 +222,12 @@ public sealed class GapFreezeHandler
     /// </summary>
     internal GapEnterAction DecideNoTracksEnter(GapBehavior gapBehavior, Guid? loadedTrackId)
     {
+        if (ShouldTransitionFromFreezeToBlack(gapBehavior))
+            CancelFreezeCaptureForTransition();
+        else if (gapBehavior == GapBehavior.Freeze && loadedTrackId.HasValue &&
+                 CurrentState is GapState.BlackFrameActive or GapState.ForceBlack)
+            SetState(GapState.Inactive);
+
         if (CurrentState != GapState.Inactive)
             return new GapEnterAction(GapEnterActionType.None);
 
@@ -255,6 +255,18 @@ public sealed class GapFreezeHandler
         bool shouldResumePlayback = _pauseOwnedByGap;
         Reset();
         return new GapExitAction(GapExitActionType.ResumePlayback, shouldResumePlayback);
+    }
+
+    // Changing the output must cancel capture work without losing ownership of its pause.
+    private void CancelFreezeCaptureForTransition()
+    {
+        StartedAt = DateTime.MinValue;
+        LastReloadAt = DateTime.MinValue;
+        PendingTrackId = null;
+        PendingTargetSeconds = 0;
+        PendingPath = null;
+        ClearCachedFrameInfo();
+        SetState(GapState.Inactive);
     }
 
     private GapEnterAction BuildFreezeEnterAction(
