@@ -126,7 +126,7 @@ internal static class MonkeyOperationGenerator
                 SyncModeIndex: (int)(random.NextUInt32() % 2),
                 GapBehaviorIndex: (int)(random.NextUInt32() % 2),
                 SignalLossModeIndex: (int)(random.NextUInt32() % 2),
-                SignalStartSeconds: (int)(random.NextUInt32() % 16),
+                SignalStartSeconds: (int)(random.NextUInt32() % 60),
                 NoiseSeed: unchecked((int)random.NextUInt32()),
                 NoiseAmplitude: (20 + random.NextUInt32() % 131) / 1000.0);
         }
@@ -143,7 +143,12 @@ internal static class MonkeyOperationGenerator
         public uint NextUInt32()
         {
             _state = unchecked(_state * 1_664_525U + 1_013_904_223U);
-            return _state;
+            // Mix the output before bounded draws. Raw LCG low bits would make every
+            // mode constant when a fixed even number of draws is consumed per action.
+            uint value = _state;
+            value = unchecked((value ^ (value >> 16)) * 0x7feb352dU);
+            value = unchecked((value ^ (value >> 15)) * 0x846ca68bU);
+            return value ^ (value >> 16);
         }
     }
 }
