@@ -647,21 +647,12 @@ public sealed class LtcHardwareLoopE2ETests : IClassFixture<TimecodeSyncPlayerFi
 
     private IReadOnlyList<double> WaitForPlaybackProgression(TimeSpan timeout)
     {
-        var observed = new List<double>();
+        var observer = new PlaybackProgressionObserver();
         E2EAssert.WaitUntil(
-            () =>
-            {
-                if (!TryReadPlaybackPosition(out double current))
-                    return false;
-
-                if (observed.Count == 0 || current > observed[^1] + 0.01)
-                    observed.Add(current);
-
-                return observed.Count >= 3;
-            },
+            () => TryReadPlaybackPosition(out double current) && observer.Observe(current),
             timeout);
 
-        return observed;
+        return observer.Positions;
     }
 
     private double WaitForStablePlaybackPosition(TimeSpan stableFor, TimeSpan timeout)
