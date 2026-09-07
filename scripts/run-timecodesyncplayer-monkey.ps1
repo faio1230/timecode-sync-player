@@ -28,6 +28,27 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "Build failed: exit $LASTEXITCODE" }
 }
 if (-not (Test-Path -LiteralPath $appPath)) { throw "App not found: $appPath" }
+$gitRevision = $null
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    $gitRevision = & git -C $repoPath rev-parse HEAD
+}
+$binaryEvidence = @()
+foreach ($binary in @(
+    $appPath,
+    (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'TimecodeSyncPlayer.dll'),
+    (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'libmpv-2.dll'),
+    (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'mpv-2.dll'),
+    (Join-Path $repoPath "tests/TimecodeSyncPlayer.Tests/bin/$Configuration/net8.0-windows/TimecodeSyncPlayer.Tests.dll")
+)) {
+    if (Test-Path -LiteralPath $binary) {
+        $binaryEvidence += [pscustomobject]@{ path = $binary; sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash }
+    }
+}
+[pscustomobject]@{
+    startedUtc = [DateTimeOffset]::UtcNow.ToString('O'); gitRevision = $gitRevision
+    configuration = $Configuration; seeds = $Seeds; actions = $Actions
+    timeoutMinutes = $TimeoutMinutes; idleTimeoutSeconds = $IdleTimeoutSeconds; binaries = $binaryEvidence
+} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $runDirectory 'environment.json')
 
 function Stop-OwnedApp {
     param([string]$Directory)
@@ -40,9 +61,30 @@ function Stop-OwnedApp {
         if ($ownedApp.StartTime.ToUniversalTime().Ticks -ne [long]$identity.startTimeUtcTicks) { return }
         if (-not [string]::Equals($ownedApp.Path, $appPath, [StringComparison]::OrdinalIgnoreCase)) { return }
         $ownedApp.Kill($true)
-        $null = $ownedApp.WaitForExit(5000)
+        if (-not $ownedApp.WaitForExit(5000)) { throw 'Owned app survived forced termination.' }
+        throw 'Owned app required forced cleanup instead of confirmed normal exit.'
     }
     finally { $ownedApp.Dispose() }
+}
+
+function Save-AppLogDelta {
+    param([string]$Directory, [hashtable]$Offsets)
+    $hasErrors = $false
+    $logDirectory = Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'logs'
+    foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue)) {
+        $offset = if ($Offsets.ContainsKey($logFile.FullName)) { [long]$Offsets[$logFile.FullName] } else { 0L }
+        if ($logFile.Length -eq $offset) { continue }
+        $destination = Join-Path $Directory ("app-" + $logFile.Name)
+        $source = [IO.File]::Open($logFile.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            if ($source.Length -ge $offset) { $source.Position = $offset }
+            $outputFile = [IO.File]::Create($destination)
+            try { $source.CopyTo($outputFile) } finally { $outputFile.Dispose() }
+        }
+        finally { $source.Dispose() }
+        if (Select-String -LiteralPath $destination -Pattern '\[(ERR|FTL)\]' -Quiet) { $hasErrors = $true }
+    }
+    return $hasErrors
 }
 
 $runs = [Collections.Generic.List[object]]::new()
@@ -72,19 +114,31 @@ foreach ($seed in $Seeds) {
     $reason = $null
     $exitCode = -1
     $success = $false
+    $logOffsets = @{}
+    $logDirectory = Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'logs'
+    foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue)) {
+        $logOffsets[$logFile.FullName] = $logFile.Length
+    }
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
         if (-not $testProcess.Start()) { throw 'Could not start test process.' }
         $stdout = $testProcess.StandardOutput.ReadToEndAsync()
         $stderr = $testProcess.StandardError.ReadToEndAsync()
         $journalPath = Join-Path $seedDirectory 'monkey.jsonl'
+        $lastJournalLength = -1L
+        $lastProgressSeconds = 0.0
         while (-not $testProcess.WaitForExit(1000)) {
             if ($stopwatch.Elapsed.TotalMinutes -gt $TimeoutMinutes) {
                 $reason = "Total timeout ($TimeoutMinutes minutes)"
                 break
             }
             if (Test-Path -LiteralPath $journalPath) {
-                $idle = ([DateTime]::UtcNow - (Get-Item -LiteralPath $journalPath).LastWriteTimeUtc).TotalSeconds
+                $journalLength = (Get-Item -LiteralPath $journalPath).Length
+                if ($journalLength -ne $lastJournalLength) {
+                    $lastJournalLength = $journalLength
+                    $lastProgressSeconds = $stopwatch.Elapsed.TotalSeconds
+                }
+                $idle = $stopwatch.Elapsed.TotalSeconds - $lastProgressSeconds
                 if ($idle -gt $IdleTimeoutSeconds) {
                     $reason = "No journal progress for $IdleTimeoutSeconds seconds (possible hang)"
                     break
@@ -122,6 +176,13 @@ foreach ($seed in $Seeds) {
     }
     finally {
         try { Stop-OwnedApp $seedDirectory } catch { $success = $false; $reason = "Owned app cleanup failed: $_" }
+        try {
+            if (Save-AppLogDelta $seedDirectory $logOffsets) {
+                $success = $false
+                $reason = "$reason Application logged ERR/FTL; see app-*.log.".Trim()
+            }
+        }
+        catch { $success = $false; $reason = "$reason App log collection failed: $_".Trim() }
         $testProcess.Dispose()
         $stopwatch.Stop()
     }

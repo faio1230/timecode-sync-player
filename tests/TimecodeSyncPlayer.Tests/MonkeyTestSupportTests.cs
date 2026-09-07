@@ -59,8 +59,20 @@ public sealed class MonkeyTestSupportTests
             operation.SyncModeIndex >= 0 && operation.SyncModeIndex <= 1 &&
             operation.GapBehaviorIndex >= 0 && operation.GapBehaviorIndex <= 1 &&
             operation.SignalLossModeIndex >= 0 && operation.SignalLossModeIndex <= 1 &&
-            operation.SignalStartSeconds >= 0 && operation.SignalStartSeconds <= 15 &&
+            operation.SignalStartSeconds >= 0 && operation.SignalStartSeconds <= 59 &&
             operation.NoiseAmplitude >= 0.020 && operation.NoiseAmplitude <= 0.150);
+    }
+
+    [Fact]
+    public void Generate_EachModeVariesWithinSeed_AndJumpsReachSecondClipAndGap()
+    {
+        var operations = MonkeyOperationGenerator.Generate(4242, 250);
+        operations.Select(op => op.SyncModeIndex).Should().Contain([0, 1]);
+        operations.Select(op => op.GapBehaviorIndex).Should().Contain([0, 1]);
+        operations.Select(op => op.SignalLossModeIndex).Should().Contain([0, 1]);
+        var jumps = operations.Where(op => op.Kind == MonkeyOperationKind.JumpSignal).ToArray();
+        jumps.Should().Contain(op => op.SignalStartSeconds >= 20 && op.SignalStartSeconds < 25);
+        jumps.Should().Contain(op => op.SignalStartSeconds >= 25 && op.SignalStartSeconds < 45);
     }
 
     [Fact]
