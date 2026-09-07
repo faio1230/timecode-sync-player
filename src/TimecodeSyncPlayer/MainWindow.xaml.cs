@@ -1041,6 +1041,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     void IPlaybackController.SeekRelative(double seconds)
     {
         if (_mpv == IntPtr.Zero) return;
+        _ltcSyncController.CancelPendingSync();
         _mpvApi.CommandString(_mpv, $"seek {seconds} {MpvSeekModeRelative}");
     }
 
@@ -1221,6 +1222,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_mpv == IntPtr.Zero) return;
 
+        _ltcSyncController.CancelPendingSync();
         _syncService.ClearSeekState();
         bool success = SeekTo(e.TargetSeconds);
         Log.Information("Timeline seek target={Target:F3} trackIndex={TrackIndex} success={Success}",

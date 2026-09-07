@@ -156,6 +156,31 @@ public sealed class DeferredLtcSyncTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NewRequestWithinCurrentTolerance_WaitsForEarlierNativeSeekBeforeConsumption(bool single)
+    {
+        var (h, clock) = ArrangePendingLoadSync();
+        if (single) h.ChangeMode(SyncMode.Single);
+        h.AdvancePlayback(1.2, 2);
+        Tick(h, clock, 4); // native seek to 3.04 has been issued
+        h.AdvancePlayback(1, 0); // mpv still reports its old position
+        h.Operations.Clear();
+        Raw(h, 1); // reverse jump
+        Raw(h, 1, 1); // latest accepted target 1.04 appears within tolerance now
+        Raw(h, 1, 1); // subsequently held
+        h.Operations.Should().NotContain(o => o.Name == "seek");
+
+        h.AdvancePlayback(3.04, 2); // the older seek now lands at its target
+        Tick(h, clock, 12);
+
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(1.04);
+        h.AdvancePlayback(2, 20);
+        Tick(h, clock, 30);
+        h.Operations.Should().ContainSingle(o => o.Name == "seek");
+    }
+
+    [Theory]
     [InlineData("sync-off")]
     [InlineData("monitor-stop")]
     [InlineData("seek")]
