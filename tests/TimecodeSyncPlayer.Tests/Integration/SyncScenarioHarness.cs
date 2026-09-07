@@ -18,8 +18,7 @@ internal enum ScenarioRenderSurface
 /// </summary>
 internal sealed class SyncScenarioHarness
 {
-    private readonly TimecodeSyncService _syncService =
-        new(new SyncDecisionEngine(), new TimecodeSyncSeekState());
+    private readonly TimecodeSyncService _syncService;
     private readonly GapFreezeHandler _gap = new();
     private readonly PlaybackControlState _playback = new();
     private readonly ProjectRestorePauseState _projectRestorePauseState = new();
@@ -35,8 +34,9 @@ internal sealed class SyncScenarioHarness
     private double _videoFps = 25;
     private bool _renderVideoOnNextSeek;
 
-    public SyncScenarioHarness()
+    public SyncScenarioHarness(TimeProvider? timeProvider = null)
     {
+        _syncService = new(new SyncDecisionEngine(), new TimecodeSyncSeekState(), timeProvider);
         _audioControlCoordinator = new AudioControlCoordinator(
             new AudioControlState(isMuted: false, volume: 100),
             new AudioControlEffects(
@@ -127,7 +127,8 @@ internal sealed class SyncScenarioHarness
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled, Playlist.Current != null, IsSeeking, playback,
                     _durationSeconds, _videoFps, 25),
-                SeekTo: Seek));
+                SeekTo: Seek,
+                GetTotalRenderedFrames: () => _renderedFrames));
         Controller = new LtcSyncController(
             Playlist, _gap, _syncService,
             new LtcFrameProcessor(new TimecodeFpsSelector(), new TimecodeFrameDiagnostics()),
@@ -299,9 +300,14 @@ internal sealed class SyncScenarioHarness
         if (Playlist.Select(index))
             Operations.Add(new("select-row", index));
     }
-    public void BeginSeekBarInteraction() => IsSeeking = true;
+    public void BeginSeekBarInteraction()
+    {
+        Controller.CancelPendingSync();
+        IsSeeking = true;
+    }
     public void EndSeekBarInteraction(double target)
     {
+        Controller.CancelPendingSync();
         IsSeeking = false;
         Seek(target);
     }
@@ -352,6 +358,12 @@ internal sealed class SyncScenarioHarness
         RenderSurface = ScenarioRenderSurface.Video;
         _renderVideoOnNextSeek = false;
         _playbackSeconds = start;
+        var track = Playlist.Tracks.FirstOrDefault(t => t.FilePath == path);
+        if (track != null)
+        {
+            _durationSeconds = track.MediaDuration.TotalSeconds;
+            _videoFps = track.FrameRate ?? 25;
+        }
         return true;
     }
 

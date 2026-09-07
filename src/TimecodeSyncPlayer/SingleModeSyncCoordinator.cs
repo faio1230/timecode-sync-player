@@ -20,16 +20,20 @@ internal sealed class SingleModeSyncCoordinator
         _effects = effects;
     }
 
-    public void Apply(double ltcSeconds)
+    public SyncRequestResult Apply(double ltcSeconds)
     {
         (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
-        if (timePosRc != 0) return;
+        if (timePosRc != 0) return SyncRequestResult.Deferred;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
 
+        if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
+            !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
+            return SyncRequestResult.Deferred;
+
         SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state);
         if (decision.Action != SyncActionType.Seek)
-            return;
+            return SyncRequestResult.Complete;
 
         bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds);
 
@@ -39,11 +43,11 @@ internal sealed class SingleModeSyncCoordinator
                 "Timecode sync seek suppressed pendingTarget={PendingTarget:F3} playback={Playback:F3} ltc={Ltc:F3} requestedTarget={RequestedTarget:F3} tolerance={Tolerance:F4}",
                 _syncService.SeekState.TargetSeconds, playbackSeconds, ltcSeconds,
                 decision.TargetSeconds, decision.ToleranceSeconds);
-            return;
+            return SyncRequestResult.Deferred;
         }
 
         if (_syncService.IsDebounced())
-            return;
+            return SyncRequestResult.Deferred;
 
         bool success = _effects.SeekTo(decision.TargetSeconds);
         if (success)
@@ -53,6 +57,7 @@ internal sealed class SingleModeSyncCoordinator
             ltcSeconds, playbackSeconds, decision.TargetSeconds, decision.DeltaSeconds,
             decision.ToleranceSeconds, decision.VideoFpsUsed, decision.TimecodeFpsUsed,
             decision.UsedDefaultVideoFps, decision.UsedDefaultTimecodeFps, success);
+        return success ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
     }
 }
 
@@ -63,4 +68,5 @@ internal sealed class SingleModeSyncCoordinator
 internal sealed record SingleModeSyncEffects(
     Func<(int rc, double playbackSeconds)> GetTimePos,
     Func<double, SyncPlaybackState> BuildPlaybackState,
-    Func<double, bool> SeekTo);
+    Func<double, bool> SeekTo,
+    Func<long>? GetTotalRenderedFrames = null);

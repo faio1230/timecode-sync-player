@@ -639,7 +639,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     DurationSeconds: _duration,
                     VideoFps: _fps,
                     TimecodeFps: _ltcSyncController.LastTimecodeFps),
-                SeekTo: target => SeekTo(target)));
+                SeekTo: target => SeekTo(target),
+                GetTotalRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames));
 
     private ContinueOnTrackCoordinator CreateContinueOnTrackCoordinator() =>
         _continueOnTrackCoordinator ??= new ContinueOnTrackCoordinator(
@@ -1230,6 +1231,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void Seek_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
+        _ltcSyncController.CancelPendingSync();
         _seekBarInteraction.BeginSeek();
         TrySetSeekBarFromPointer(e, "MouseDown");
     }
@@ -1650,6 +1652,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         SeekBarCommit commit = _seekBarInteraction.CreateCommit(sliderValue, SeekBar.Minimum, SeekBar.Maximum, _duration);
         if (!commit.ShouldCommit) return;
 
+        _ltcSyncController.CancelPendingSync();
         _vm.Player.SeekBarValue = commit.SliderValue;
         _seekState.MarkSeekSent(commit.TargetSeconds, DateTime.UtcNow);
         bool success = SeekTo(commit.TargetSeconds);
