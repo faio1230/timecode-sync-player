@@ -33,8 +33,11 @@ internal sealed class BitmapRenderTraceScope : IDisposable
     }
 
     public void Record(string stage, bool completed, long start, long end)
+        => Record(stage, completed ? "completed" : "exception", start, end);
+
+    public void Record(string stage, string outcome, long start, long end)
         => _trace.RecordRenderStage(_sessionId, null, _generation, _sequence, stage,
-            completed ? "completed" : "exception", start, end, _width, _height);
+            outcome, start, end, _width, _height);
 
     public void Dispose() => _current = _previous;
 }

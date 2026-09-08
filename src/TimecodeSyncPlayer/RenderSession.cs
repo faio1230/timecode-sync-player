@@ -88,7 +88,8 @@ internal sealed class RenderSession : IDisposable
             (pixels, width, height) => spoutPublisher.Publish(pixels, width, height),
             performanceRecorder.Record,
             (pixels, state, width, height) => _freezeCopier.CopyIfNeeded(pixels, state, width, height),
-            () => _renderer.QueuePreviewFromCurrentBitmap("normal"), () => _preview?.ResetPending());
+            () => _renderer.QueuePreviewFromCurrentBitmap("normal"), () => _preview?.ResetPending(),
+            (pixels, width, height, send) => _displayUpdater.UpdateCombined(pixels, width, height, send, _renderer.UpdateFromPixelsWithSpout));
         var executor = new MpvRenderFrameExecutor(RenderNativeFrame);
         _worker = new RenderFrameWorker(
             ensurePixelBuffer: (width, height) => _nativeBuffers.EnsurePixelBuffer(width, height),
@@ -388,6 +389,8 @@ internal sealed class RenderSession : IDisposable
         _lastFrameWidth = frame.Width;
         _lastFrameHeight = frame.Height;
         GapState state = _getGapState();
+        bool spoutEnabled = _spoutOutput.IsEnabled;
+        bool combineBitmapAndSpout = _fullscreenActive && spoutEnabled;
         long started = _trace.IsEnabled ? Stopwatch.GetTimestamp() : 0;
         bool succeeded = false;
         try
@@ -395,7 +398,7 @@ internal sealed class RenderSession : IDisposable
             RenderFramePublicationDispatcher.Execute(
                 decision,
                 publishNormalFrame: () => _publishPipeline.Publish(pixels, frame.Width, frame.Height,
-                    frame.RenderMs, _spoutOutput.IsEnabled, state, _trace, _traceSessionId, frame.Generation, frame.Sequence),
+                    frame.RenderMs, spoutEnabled, state, _trace, _traceSessionId, frame.Generation, frame.Sequence, combineBitmapAndSpout),
                 captureWithoutPublishing: () => CopyFreezeWithTrace(frame, state),
                 afterFrameProcessed);
             succeeded = true;

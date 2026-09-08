@@ -10,6 +10,34 @@ namespace TimecodeSyncPlayer.Tests;
 
 public sealed class RenderSessionTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public Task CombinedBitmapSend_IsSelectedOnlyForFullscreenAndSpout(bool fullscreen, bool spout) => OnUi(async () =>
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path))
+            using (var fixture = new Fixture(accuracyTrace: trace))
+            {
+                fixture.Spout.IsEnabled = spout;
+                fixture.Session.SetFullscreenActive(fullscreen);
+                await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+                Assert.Single(fixture.Api.Calls.Where(c => c.Operation == "render"));
+                Assert.NotNull(fixture.Session.CurrentExternalBitmap);
+            }
+            var stages = SyncAccuracyTraceTests.Read(path).Where(x => x.GetProperty("type").GetString() == "render-stage").ToArray();
+            Assert.Equal(fullscreen && spout ? 1 : 0, stages.Count(x => Stage(x) == "bitmap-send-scope"));
+            Assert.Equal(fullscreen && spout ? 0 : 1, stages.Count(x => Stage(x) == "bitmap"));
+            Assert.Equal(spout ? "call-returned" : "disabled-call-returned",
+                stages.Single(x => Stage(x) == "spout").GetProperty("outcome").GetString());
+        }
+        finally { File.Delete(path); }
+    });
+
     [Fact]
     public Task FullscreenCap_AffectsOnlyPreview_AndRestoresThirtyHzAfterClose() => OnUi(async () =>
     {
