@@ -1,5 +1,7 @@
 # Spout調査とUIコピー削減（2026-09-09）
 
+その後の再起動・管理者権限での初回WPR採取は [GPU記録採取](SPOUT-GPU-TRACE-2026-09-09.md) に記載した。以下は採取前の実装・検証記録を保持する。
+
 `refactor/session-lifecycle` の `2b64940` を起点に、未追跡のAGENTS.mdを保持して進めた。担当を分けて実装・独立レビューを行い、GPU・OBS・音声の実機試験は親担当が直列実行した。証跡の保存先はGit管理外の `TestResults/obs-clean/implementation-20260909-005400/`。ディレクトリ名は識別子であり、各試験の開始終了は原始結果のUTC／QPCを参照する。
 
 ## 1. GPU未完了の原因調査

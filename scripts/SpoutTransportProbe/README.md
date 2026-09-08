@@ -58,7 +58,9 @@ OBSによる受信、録画、画素・フレームの解析は別途必要で�
 
 profileはCPUスケジュール／stackとDxgKrnl・D3D11・DXGIを記録し、メモリバッファ設定は計256MiBです。循環記録のため、ETLの対象時刻・event loss・必要なproviderの存在をWPAで確認してから失敗QPCと照合してください。`traceSaved=true` だけでは記録の完全性やGPU原因特定を保証しません。観測負荷のある試験として、通常プローブの性能値とは区別します。[WPRのinstance指定](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-options)、[メモリ記録の上書き](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/logging-mode)
 
-今回の環境ではprofile解釈と事前確認まで検証し、管理者権限がないためETLの実採取・解析は未検証です。
+初期検証はprofile解釈・事前確認・mockまででした。その後、ユーザー許可とWindows UACによる昇格で送信のみ30秒の実ETL採取を1回実施しました。採取範囲と解析の限界は [GPU記録採取](../../docs/SPOUT-GPU-TRACE-2026-09-09.md) を参照してください。
+
+初回ETLにはDxgKrnlイベントが確認できず、旧keyword maskにGPUスケジューラ項目が不足していました。現在のprofileはローカルprovider定義に合わせてGPUScheduler／HardwareSchedulingLogを追加済みです。修正版のprofile解釈は成功していますが、再採取のUACがキャンセルされたため、実イベント収録は未検証です。
 
 ## 条件を固定した直列反復
 
