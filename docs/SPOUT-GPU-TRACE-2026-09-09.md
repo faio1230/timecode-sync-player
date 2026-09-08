@@ -1,6 +1,6 @@
 # 再起動後のGPU記録採取（2026-09-09）
 
-最新到達点：NonPagedMemoryの追加後にGPU schedulerイベントを収録でき、GetData未完了によるSpout無効化と同じETLを保存した。失敗の根本原因は未特定。以下は各試験時点の判断を時系列で保持する。
+最新到達点：NonPagedMemoryの追加後にGPU schedulerイベントを収録でき、GetData未完了によるSpout無効化と同じETLを保存した。その後、再起動後のUAC再申請でOSスレッドID付き試験を実施し、今回は無効化未再現・予定欠落7回だった。失敗の根本原因は未特定。以下は各試験時点の判断を時系列で保持する。
 
 `refactor/session-lifecycle` の `617f038` から再開。既存の未追跡AGENTS.md、製品コード・DLL、通常OBS、元の素材・プロジェクトを保持した。証跡はGit管理外の `TestResults/obs-clean/restart-investigation-20260909-021138/`。
 
@@ -114,3 +114,31 @@ Debugビルドは警告0・エラー0。独立担当がプローブのMainとGPU
 ### ID追加後の実採取要求（保留）
 
 03:01:20 JSTに、同じprofileで送信のみ4K60・予定30秒を1回採取するWindows UACを要求した。要求と入力snapshotは`TestResults/obs-clean/gpu-threadid-20260909-030120-86a0c9bc/`に保存している。03:07 JSTの確認時点ではconsentプロセスが存在し、昇格Processの取得・sender起動・WPR開始は確認できず、承認待ちである。この要求を実施済みの試験として数えない。次は承認後の実記録を保存し、start／失敗checkpointのOS TIDをCPUイベントと照合する。
+
+## 再起動後の再申請とOSスレッドID付き採取
+
+ユーザーの再起動報告と再申請依頼を受け、Windows起動時刻03:33:03.5 JST、HEAD `baba53c`、既存未追跡AGENTS.mdの保持を確認した。前節のrootには要求とsnapshotだけが残り、採取結果はなかった。対象試験プロセス・consent・WPR記録はなく、入力DLL／profile／採取scriptは前回準備時のSHA256と一致した。再起動の原因は今回調べておらず、前回のPC停止と同一事象とは扱わない。
+
+新しい原始証跡rootは`TestResults/obs-clean/gpu-threadid-retry-20260909-042248-daae9b92/`。preflight後にUACを再要求し、管理者tokenで04:23:23 JSTから送信のみの固定4K60・30秒試験を1回実行した。OBS・音声・独立受信は併走していない。再ビルドや製品設定変更も行っていない。
+
+| 判定対象 | 結果 |
+| --- | --- |
+| プローブ | exit0、completed／disposed=true、30.0000004秒 |
+| 送信 | 1,793回、予定欠落7回、Spout無効化0 |
+| 最大SendFrame | 149.4522ms、slow-send Warning1件 |
+| 遅延Warning内訳 | SendImage135.7347ms、mutex0.0031ms、poll0.4192ms |
+| GPU完了確認 | 当該WarningはCompleted、S_OK／completed=1 |
+| 失敗checkpoint | 作成の試行なし。無効化未再現のため |
+| OSスレッド | start.nativeThreadId=20976、送信PID20804 |
+| WPR | start／stop成功、traceSaved=true、watchdog・cleanup errorなし |
+| 受信画像・同期精度 | 未測定 |
+
+外側149.45msだけでGPU完了timeoutとは判定しない。今回はSendImage区間が長く、完了確認は成功したが、SendImage内部のGPU処理・スレッド待ちの内訳までは確定していない。予定欠落があるため4K60性能合格とはしない。また無効化しなかった1回の結果で、過去の失敗を解決済みとは扱わない。
+
+ETLは213,909,504 bytes、SHA256 `4B8B8FE41CE5DCDD7E69F9FFB28D829FEAF8CB043677367BCA20D1112794AD72`。原始JSONLとETLのhashは`raw-hashes.json`、採取前後の6入力hash一致は`input-hash-audit.json`に保存した。04:24:52 JSTの確認で対象試験プロセス0・WPR停止・所有する昇格プロセス終了を確認した。
+
+独立担当の`sender-only/accounting-audit.json`は、1,793試行＋欠落7（slot30〜36）=予定1,800、FrameIndex・slot・色・DueQPC・送信時間・summaryの会計整合と全送信前後の有効状態を確認した。唯一の予算超過はFrameIndex29／slot29である。会計整合と性能合格は区別する。原始JSONLの監査前後SHAも一致した。
+
+ETLの独立監査はtracerptで2,376,586 events／204 buffers、DxgKrnl651,407件・D3D11 7,891件・DXGI 4,844件を確認した。EventsLost=0、OpenTrace headerもEventsLost=0／BuffersLost=0。記録範囲はUTC19:23:24.1347871〜19:23:55.3424767で、loss値だけで完全性を保証しない。先頭1bufferの同一イベント照合でQPC30,208,393,145 ↔ UTC19:23:24.1347871、周波数10MHzを取得した。この原点によるslow transfer内部区間はUTC19:23:25.2539943〜19:23:25.3904045で、外側SendFrameやWarning出力時刻とは区別する。詳細と原文は`sender-only/etl-audit/`に保持する。
+
+正常動作中の末尾100ms窓では、明示TID20976がCSwitch／ReadyThreadのpayloadと一致した。窓内3,751件中70件が対象IDに一致し、原文保存は8件に限定した。CPUイベントへのID照合は確認できたが、失敗区間ではないためタイムアウト原因の証拠にはしない。追加した失敗checkpoint側のIDと失敗時ETLを同時照合することは、今回の未再現により残っている。
