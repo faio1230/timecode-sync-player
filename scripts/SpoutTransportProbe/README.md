@@ -60,7 +60,7 @@ profileはCPUスケジュール／stackとDxgKrnl・D3D11・DXGIを記録し、�
 
 初期検証はprofile解釈・事前確認・mockまででした。その後、ユーザー許可とWindows UACによる昇格で送信のみ30秒の実ETL採取を1回実施しました。採取範囲と解析の限界は [GPU記録採取](../../docs/SPOUT-GPU-TRACE-2026-09-09.md) を参照してください。
 
-初回ETLにはDxgKrnlイベントが確認できず、旧keyword maskにGPUスケジューラ項目が不足していました。現在のprofileはローカルprovider定義に合わせてGPUScheduler／HardwareSchedulingLogを追加済みです。修正版のprofile解釈は成功していますが、再採取のUACがキャンセルされたため、実イベント収録は未検証です。
+初回ETLにはDxgKrnlイベントが確認できず、現在のprofileにはGPUScheduler／HardwareSchedulingLogのkeywordを追加しています。その後UAC再申請で実採取しましたが、追加後もDxgKrnlイベントは確認できませんでした。組込みGPU profileも旧maskと同じ0x277を使っているため、keyword不足を未収録原因と断定できません。NonPagedMemory等の標準設定との差が残り、GPUスケジューラ記録の収録は未解決です。ETL保存成功を原因解析可能な記録の保証として扱わないでください。
 
 ## 条件を固定した直列反復
 
