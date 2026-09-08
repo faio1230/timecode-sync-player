@@ -11,6 +11,115 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class RenderSessionTests
 {
     [Fact]
+    public Task FullscreenCap_AffectsOnlyPreview_AndRestoresThirtyHzAfterClose() => OnUi(async () =>
+    {
+        var timer = new PreviewOutputIntegrationTests.ManualPreviewTimer();
+        long now = 0;
+        using var fixture = new Fixture(createPreview: trace => new PreviewFramePresenter(trace, timer, () => now, 1_000_000));
+        int previews = 0;
+        fixture.Session.PreviewBitmapChanged += _ => previews++;
+        fixture.Session.SetFullscreenActive(true);
+        for (int i = 0; i < 3; i++) await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        Assert.Equal(3, fixture.Spout.Frames.Count);
+        var external = fixture.Session.CurrentExternalBitmap;
+        now = 40_000; timer.Fire();
+        Assert.Equal(0, previews);
+        now = 100_000; timer.Fire();
+        Assert.Equal(1, previews);
+        fixture.Session.SetFullscreenActive(false);
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        Assert.Equal(4, fixture.Spout.Frames.Count);
+        Assert.Same(external, fixture.Session.CurrentExternalBitmap);
+        Assert.InRange(timer.Interval.TotalMilliseconds, 1, 34);
+        now = 140_000; timer.Fire();
+        Assert.False(timer.IsEnabled);
+        fixture.Session.Stop();
+        fixture.Session.SetFullscreenActive(false);
+        fixture.Session.SetFullscreenActive(true);
+        Assert.True(timer.Disposed);
+    });
+
+    [Theory]
+    [InlineData("invalidate")]
+    [InlineData("reset")]
+    [InlineData("stop")]
+    [InlineData("dispose")]
+    public Task PreviewPending_IsCancelledBySessionLifecycle(string operation) => OnUi(async () =>
+    {
+        var timer = new PreviewOutputIntegrationTests.ManualPreviewTimer();
+        long now = 0;
+        using var fixture = new Fixture(createPreview: trace => new PreviewFramePresenter(trace, timer, () => now, 1_000_000));
+        int previews = 0;
+        fixture.Session.PreviewBitmapChanged += _ => previews++;
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        Assert.True(timer.IsEnabled);
+        Assert.NotNull(fixture.Session.CurrentExternalBitmap);
+        switch (operation)
+        {
+            case "invalidate": fixture.Session.Invalidate(); break;
+            case "reset": fixture.Session.ResetDisplay(); break;
+            case "stop": fixture.Session.Stop(); break;
+            case "dispose": fixture.Session.Dispose(); break;
+        }
+        now = 40_000; timer.Fire();
+        Assert.Equal(0, previews);
+        Assert.False(timer.IsEnabled);
+        if (operation is "invalidate" or "reset")
+        {
+            await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+            now = 80_000; timer.Fire();
+            Assert.Equal(1, previews);
+        }
+    });
+
+    [Fact]
+    public Task Preview_IsDisposedEvenWhenNativeContextFreeFails() => OnUi(async () =>
+    {
+        var timer = new PreviewOutputIntegrationTests.ManualPreviewTimer();
+        long now = 0;
+        using var fixture = new Fixture(createPreview: trace => new PreviewFramePresenter(trace, timer, () => now, 1_000_000));
+        int previews = 0;
+        fixture.Session.PreviewBitmapChanged += _ => previews++;
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        fixture.Api.FreeFailure = new InvalidOperationException("retain native resources");
+        try
+        {
+            Assert.Throws<AggregateException>(fixture.Session.Dispose);
+            Assert.True(timer.Disposed);
+            now = 40_000; timer.Fire();
+            Assert.Equal(0, previews);
+            fixture.NativeBuffers.PixelPtr.Should().NotBe(IntPtr.Zero);
+        }
+        finally { fixture.Api.FreeFailure = null; }
+    });
+
+    [Fact]
+    public Task Preview_StopOffUiDoesNotWaitForUiOrPublishAnAlreadyQueuedTick() => OnUi(async () =>
+    {
+        var timer = new PreviewOutputIntegrationTests.ManualPreviewTimer();
+        long now = 0;
+        using var fixture = new Fixture(createPreview: trace => new PreviewFramePresenter(trace, timer, () => now, 1_000_000));
+        int previews = 0;
+        fixture.Session.PreviewBitmapChanged += _ => previews++;
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        Exception? stopFailure = null;
+        var stopper = new Thread(() =>
+        {
+            try { fixture.Session.Stop(); }
+            catch (Exception ex) { stopFailure = ex; }
+        }) { IsBackground = true };
+        stopper.Start();
+        // Deliberately hold the owning UI thread: Stop may await native work, never this dispatcher.
+        Assert.True(stopper.Join(TimeSpan.FromSeconds(2)));
+        Assert.Null(stopFailure);
+        now = 40_000; timer.Fire();
+        Assert.Equal(0, previews);
+        await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+        Assert.True(timer.Disposed);
+        fixture.Session.Stop();
+    });
+
+    [Fact]
     public Task RenderTrace_RecordsAllNativeCallsSeparatelyFromPublishedStages() => OnUi(async () =>
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
@@ -660,10 +769,11 @@ public sealed class RenderSessionTests
             .GetField("_buffers", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(Session)!;
         public PixelBufferManager NativeBuffers => (PixelBufferManager)typeof(RenderSession)
             .GetField("_nativeBuffers", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(Session)!;
-        public Fixture(bool initialize = true, SyncAccuracyTrace? accuracyTrace = null)
+        public Fixture(bool initialize = true, SyncAccuracyTrace? accuracyTrace = null,
+            Func<SyncAccuracyTrace, PreviewFramePresenter>? createPreview = null)
         {
             Session = new RenderSession(Api, Spout, new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)),
-                () => State, () => GapBehavior.Freeze, _scheduled.Enqueue, () => FreezeConfirmed, accuracyTrace);
+                () => State, () => GapBehavior.Freeze, _scheduled.Enqueue, () => FreezeConfirmed, accuracyTrace, createPreview);
             if (!initialize) return;
             Session.Create(new IntPtr(1)).Should().BeTrue();
             Session.AllocateParameters();

@@ -168,7 +168,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action),
             isGapFreezeConfirmed: () => _gapFreezeHandler.CachedTrackId.HasValue);
         _renderSession.FrameUpdate = ProcessRenderFrameUpdateAsync;
-        _renderSession.BitmapChanged += bitmap => VideoImage.Source = bitmap;
+        _renderSession.PreviewBitmapChanged += bitmap => VideoImage.Source = bitmap;
         _ltcSyncController = new LtcSyncController(
             _playlist, _gapFreezeHandler, _syncService, ltcFrameProcessor,
             settingsManager.Current.LtcSignalLossTimeoutMs, settingsManager.Current.LtcSignalResumeFrames,
@@ -1135,7 +1135,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (DisplayCombo.SelectedItem is not DisplayTarget target)
             return;
 
-        var window = new FullscreenOutputWindow(target, _displayCatalog, VideoImage.Source);
+        var window = CreateFullscreenOutputWindow(target);
         window.Closed += FullscreenWindow_Closed;
         _renderSession.BitmapChanged += FullscreenFrameRenderer_BitmapChanged;
         _fullscreenWindow = window;
@@ -1143,18 +1143,28 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         try
         {
             window.Show();
+            _renderSession.SetFullscreenActive(true);
             DisplayCombo.IsEnabled = false;
             BtnFullscreen.Content = FullscreenCloseLabel;
-            Log.Information("Fullscreen output opened on {Display}", target.DeviceName);
+            var externalBitmap = _renderSession.CurrentExternalBitmap;
+            var previewBitmap = VideoImage.Source as BitmapSource;
+            Log.Information("Fullscreen output opened on {Display} externalBitmap={ExternalWidth}x{ExternalHeight} previewBitmap={PreviewWidth}x{PreviewHeight}",
+                target.DeviceName, externalBitmap?.PixelWidth ?? 0, externalBitmap?.PixelHeight ?? 0,
+                previewBitmap?.PixelWidth ?? 0, previewBitmap?.PixelHeight ?? 0);
         }
         catch
         {
             _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
             window.Closed -= FullscreenWindow_Closed;
             _fullscreenWindow = null;
+            _renderSession.SetFullscreenActive(false);
             throw;
         }
     }
+
+    // Kept independent of VideoImage.Source: that image is a reduced, delayed preview.
+    private FullscreenOutputWindow CreateFullscreenOutputWindow(DisplayTarget target) =>
+        new(target, _displayCatalog, _renderSession.CurrentExternalBitmap);
 
     private void FullscreenFrameRenderer_BitmapChanged(WriteableBitmap bitmap) =>
         _fullscreenWindow?.UpdateBitmap(bitmap);
@@ -1165,6 +1175,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (sender is FullscreenOutputWindow window)
             window.Closed -= FullscreenWindow_Closed;
         _fullscreenWindow = null;
+        _renderSession.SetFullscreenActive(false);
         BtnFullscreen.Content = FullscreenOpenLabel;
         DisplayCombo.IsEnabled = true;
         string? selectedDeviceName = (DisplayCombo.SelectedItem as DisplayTarget)?.DeviceName
@@ -1708,7 +1719,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         RenderUpdateSchedulerStats renderStats = _renderSession.ConsumeUpdateStats();
 
         Log.Information(
-            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled}",
+            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} frameBoundary=full-resolution-bitmap",
             snapshot.Elapsed.TotalSeconds, _fps, snapshot.PlaybackRate,
             snapshot.DisplayedFps, snapshot.TickCount, renderStats.Requests,
             renderStats.CoalescedRequests, snapshot.RenderUpdates,
@@ -1720,7 +1731,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (PlaybackPerformanceWarningPolicy.ShouldWarnDisplayedFps(snapshot, _fps))
         {
             Log.Warning(
-                "Playback perf warning: displayed FPS is below source FPS expectedFps={ExpectedFps:F3} displayedFps={DisplayedFps:F2} playbackRate={PlaybackRate:F3}",
+                "Playback perf warning: full-resolution bitmap publication FPS is below source FPS expectedFps={ExpectedFps:F3} displayedFps={DisplayedFps:F2} playbackRate={PlaybackRate:F3}",
                 _fps, snapshot.DisplayedFps, snapshot.PlaybackRate);
         }
 

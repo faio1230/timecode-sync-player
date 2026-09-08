@@ -27,12 +27,26 @@ public sealed class MainWindowGapFreezeRetryTests
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
 
         fixture.Spout.Pixels.Should().Contain((byte)73, "timer completion must publish the captured image to Spout");
+        ReadFirstPixel(fixture.Session.CurrentExternalBitmap!).Should().Be(73, "external bitmap publication must not wait for preview");
+        fixture.RenderApi.RenderCount.Should().Be(1);
+        var previewImage = (Image)fixture.Window.FindName("VideoImage");
+        // A Background preview tick can be up to one preview period later; an
+        // ApplicationIdle dispatch alone does not make that timer due. Deliver
+        // no additional OnTick/native callback while awaiting the final pixels.
+        await WaitUntil(() => previewImage.Source is WriteableBitmap pending && ReadFirstPixel(pending) == 73);
         var bitmap = ((Image)fixture.Window.FindName("VideoImage")).Source.Should().BeOfType<WriteableBitmap>().Which;
         byte[] pixels = new byte[16];
         bitmap.CopyPixels(pixels, 8, 0);
         pixels[0].Should().Be(73, "the WPF output must show the captured image without another callback");
         fixture.RenderApi.RenderCount.Should().Be(1);
     });
+
+    private static byte ReadFirstPixel(WriteableBitmap bitmap)
+    {
+        byte[] pixel = new byte[4];
+        bitmap.CopyPixels(new System.Windows.Int32Rect(0, 0, 1, 1), pixel, 4, 0);
+        return pixel[0];
+    }
 
     [Fact]
     public Task TimerRetry_WhileNativePlaybackUnpaused_DoesNotConfirmMovingFrame() => OnUi(async () =>

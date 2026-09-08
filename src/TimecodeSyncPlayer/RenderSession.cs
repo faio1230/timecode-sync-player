@@ -40,6 +40,9 @@ internal sealed class RenderSession : IDisposable
     private readonly RenderFramePublishPipeline _publishPipeline;
     private readonly RenderFrameWorker _worker;
     private FrameRenderer _renderer = null!;
+    private PreviewFramePresenter? _preview;
+    private bool _fullscreenActive;
+    private readonly Func<SyncAccuracyTrace, PreviewFramePresenter> _createPreview;
     private IntPtr _context;
     private MpvRenderNative.MpvRenderParam[]? _parameters;
     // Native code does not root delegates. Retain this until RenderContextFree has returned.
@@ -59,7 +62,8 @@ internal sealed class RenderSession : IDisposable
 
     public RenderSession(IMpvRenderApi api, ISpoutOutput spoutOutput, PlaybackPerformanceStats stats,
         Func<GapState> getGapState, Func<GapBehavior> getGapBehavior, Action<Action> scheduleUpdate,
-        Func<bool>? isGapFreezeConfirmed = null, SyncAccuracyTrace? accuracyTrace = null)
+        Func<bool>? isGapFreezeConfirmed = null, SyncAccuracyTrace? accuracyTrace = null,
+        Func<SyncAccuracyTrace, PreviewFramePresenter>? createPreview = null)
     {
         _api = api;
         _spoutOutput = spoutOutput;
@@ -69,6 +73,7 @@ internal sealed class RenderSession : IDisposable
         _isGapFreezeConfirmed = isGapFreezeConfirmed ?? (() => true);
         _scheduleUpdate = scheduleUpdate;
         _trace = accuracyTrace ?? SyncAccuracyTrace.Current;
+        _createPreview = createPreview ?? (trace => new PreviewFramePresenter(trace));
         _traceSessionId = _trace.AllocateRenderSessionId();
         _mailbox = new LatestRenderedFrameMailbox(_trace.IsEnabled
             ? (frame, reason) => TraceFrame(frame, "discard", reason) : null);
@@ -82,7 +87,8 @@ internal sealed class RenderSession : IDisposable
             (pixels, width, height) => _displayUpdater.Update(pixels, width, height),
             (pixels, width, height) => spoutPublisher.Publish(pixels, width, height),
             performanceRecorder.Record,
-            (pixels, state, width, height) => _freezeCopier.CopyIfNeeded(pixels, state, width, height));
+            (pixels, state, width, height) => _freezeCopier.CopyIfNeeded(pixels, state, width, height),
+            () => _renderer.QueuePreviewFromCurrentBitmap("normal"), () => _preview?.ResetPending());
         var executor = new MpvRenderFrameExecutor(RenderNativeFrame);
         _worker = new RenderFrameWorker(
             ensurePixelBuffer: (width, height) => _nativeBuffers.EnsurePixelBuffer(width, height),
@@ -93,6 +99,15 @@ internal sealed class RenderSession : IDisposable
     }
 
     public event Action<WriteableBitmap>? BitmapChanged;
+    public event Action<WriteableBitmap>? PreviewBitmapChanged;
+    // The fullscreen window must start from this full-resolution image, even paused.
+    public WriteableBitmap? CurrentExternalBitmap => _renderer?.CurrentBitmap;
+    public void SetFullscreenActive(bool active)
+    {
+        if (_stopped) return;
+        _fullscreenActive = active;
+        _preview?.SetMaximumFramesPerSecond(active ? 10 : 30);
+    }
     public Func<int, bool, Task>? FrameUpdate { get; set; }
     public int Width { get => Volatile.Read(ref _width); set => Volatile.Write(ref _width, value); }
     public int Height { get => Volatile.Read(ref _height); set => Volatile.Write(ref _height, value); }
@@ -102,8 +117,13 @@ internal sealed class RenderSession : IDisposable
     {
         _generation.Advance();
         _mailbox.Clear();
+        _preview?.ResetPending();
     }
-    public void ResetDisplay() => _displayUpdater.Reset();
+    public void ResetDisplay()
+    {
+        _preview?.ResetPending();
+        _displayUpdater.Reset();
+    }
     public void ResetUpdateStats() => _scheduler.Reset();
     public RenderUpdateSchedulerStats ConsumeUpdateStats() => _scheduler.ConsumeStats();
 
@@ -152,7 +172,15 @@ internal sealed class RenderSession : IDisposable
     public void AllocateParameters() { } // Native parameters must exist before callback registration.
     public void InitializeFrameRenderer()
     {
-        _renderer = new FrameRenderer(_buffers, _spoutOutput, _trace);
+        _preview?.Dispose();
+        _preview = _createPreview(_trace);
+        _preview.SetMaximumFramesPerSecond(_fullscreenActive ? 10 : 30);
+        _preview.BitmapChanged += bitmap => PreviewBitmapChanged?.Invoke(bitmap);
+        _renderer = new FrameRenderer(_buffers, _spoutOutput, _trace,
+            (bitmap, kind) =>
+            {
+                if (!_stopped) _preview.QueueFrame(bitmap, kind);
+            }, () => _preview?.ResetPending());
         _renderer.BitmapChanged += bitmap => BitmapChanged?.Invoke(bitmap);
     }
     public void InitializeStartupBuffer() => new StartupBufferInitializer(_buffers).Initialize("bgr0");
@@ -461,11 +489,21 @@ internal sealed class RenderSession : IDisposable
     public void Stop()
     {
         Task barrier;
-        lock (_submissionSync)
+        try
         {
-            if (_stopped) return;
-            _stopped = true;
-            barrier = _thread.InvokeAsync(() => { });
+            lock (_submissionSync)
+            {
+                if (_stopped) return;
+                _stopped = true;
+                barrier = _thread.InvokeAsync(() => { });
+            }
+        }
+        finally
+        {
+            // Stop is irreversible. Disposing rejects a QueueFrame that raced
+            // the stopped check, even off-UI; UI resource cleanup never waits.
+            // Also run after an already-stopped return or failed barrier submission.
+            _preview?.Dispose();
         }
         // Every queued native operation precedes this barrier. No UI continuation is awaited.
         barrier.GetAwaiter().GetResult();
@@ -487,10 +525,18 @@ internal sealed class RenderSession : IDisposable
     {
         if (_disposed) return;
         var errors = new List<Exception>();
+        // The preview has no native-owned dependencies and can be released even
+        // when context cleanup must retain mpv buffers and be retried.
+        try { _preview?.Dispose(); }
+        catch (Exception ex) { errors.Add(ex); }
         // On failure retain the thread, callback and pinned buffers alongside the live context.
         // FreeContext can be explicitly retried by a caller that knows the native failure is recoverable.
         try { FreeContext(); }
-        catch (Exception ex) { throw new AggregateException("RenderSession context cleanup failed", ex); }
+        catch (Exception ex)
+        {
+            errors.Add(ex);
+            throw new AggregateException("RenderSession context cleanup failed", errors);
+        }
         _disposed = true;
         try { _buffers.Dispose(); }
         catch (Exception ex) { errors.Add(ex); }
