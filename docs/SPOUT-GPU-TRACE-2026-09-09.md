@@ -47,4 +47,16 @@
 
 修正版での再採取をWindows UACへ要求したが、Start-Processは「この操作はユーザーによって取り消されました」を返した。`scheduler-v2-launch-error.txt` に原文を保持し、再採取は開始していない。再申請を反復せず、修正版での採取・GPU schedulerイベント収録確認を次の再開点とする。元のETLを修正版で採った結果として扱わない。
 
-今回の1回ではSpout無効化が再現していない。以前の単発失敗、実動画でのGetData未完了100ms、timeout後の安全な回収、標準OBSの画像混在は引き続き未解決である。
+## UAC再申請後の修正版採取
+
+ユーザーから再申請の依頼があり、UAC承認後にmask `0x04008277`で送信のみ30秒を1回実行した。原始runは `TestResults/obs-clean/gpu-scheduler-20260909-022454-8921cfcc/sender-only/`。WPR開始・保存終了とsenderはexit0、completed／disposed=true、Spout無効化は0。送信1,798回、予定欠落2（slot191／192）、最大SendMs59.0705ms、slow-send Warning3件で、性能合格とはしない。全送信前後でSpout有効・利用可能、製品DLLと採取入力ハッシュは不変だった。
+
+`sender-accounting-audit.json` は実送信数・予定欠落・連番・QPCの会計整合を確認した。最初の `sender-audit.json` は前回と同じ「1,800回・欠落0・Warning0」の厳しい条件を使用しfalseだったため、その結果も保持し、正常終了や会計整合と区別する。ETLは143,654,912 bytes、SHA256 `05BDE51ADFB93D4D4BF57A4685E170FB7D1E9F6442FB6A099D9C2C5B110C89B4`。試験後は対象プロセス0、WPR停止を確認した。
+
+独立監査のtracerptは137 buffers／1,563,214 events／EventsLost=0／報告時間31秒で、schema mismatch警告が残った。DxgKrnl正式GUIDはsummaryと直接XPath照会の両方で0件。**keyword追加後もGPUスケジューラの実イベント収録は確認できず、採取設定の問題は未解決。** 原始結果をGPU原因解析可能な記録として扱わない。
+
+さらにローカルWPR組込みGPU profileを起動せずexportし、`sender-only/etl-audit/builtin-gpu.wprp`へ保存した。組込みprofileのDxgKrnl keywordも旧設定と同じ`0x277`だった。したがって、前節のkeyword不足を基本GPU記録が得られなかった原因とみなすことはできない。0x8000等の指定がなかった事実と、未収録原因の証明を区別し、原因を特定したという解釈を訂正する。
+
+組込み設定はDxgKrnlをGUIDで指定し、`NonPagedMemory=true`、`Stack=true`、`Strict=true`、開始時のCaptureStateを使用している。現profileとはこれらが異なる。Microsoftもkernel-mode providerの採取にNonPagedMemoryを指定する手順を示しているため、次はこのメモリ設定を含む差を確認する。ただし今回それらの変更・再採取は実施しておらず、未収録の確定原因とは扱わない。[Microsoftのkernel-mode採取手順](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/capture-and-view-tracelogging-data)
+
+今回の採取ではSpout無効化が再現していない。以前の単発失敗、実動画でのGetData未完了100ms、timeout後の安全な回収、標準OBSの画像混在は引き続き未解決である。
