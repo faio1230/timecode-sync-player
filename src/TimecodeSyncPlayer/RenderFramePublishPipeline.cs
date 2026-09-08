@@ -62,7 +62,12 @@ internal sealed class RenderFramePublishPipeline
         double bitmapMs, spoutMs;
         long start = Stopwatch.GetTimestamp();
         bool succeeded = false;
-        try { bitmapMs = _updateDisplay(pixels, width, height); succeeded = true; }
+        try
+        {
+            using var bitmapScope = new BitmapRenderTraceScope(trace, sessionId, generation, sequence, width, height);
+            bitmapMs = _updateDisplay(pixels, width, height);
+            succeeded = true;
+        }
         finally { trace.RecordRenderStage(sessionId, null, generation, sequence, "bitmap", succeeded ? "completed" : "exception", start, Stopwatch.GetTimestamp(), width, height); }
         start = Stopwatch.GetTimestamp(); succeeded = false;
         try { spoutMs = PublishSpout(pixels, width, height); succeeded = true; }

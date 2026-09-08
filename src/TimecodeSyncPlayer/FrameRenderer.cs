@@ -44,7 +44,15 @@ internal sealed class FrameRenderer
     private void UpdateFromPixels(byte[] pixels, int w, int h, string kind)
     {
         if (!FrameBufferSize.TryGetRequiredByteCount(w, h, out int byteCount)) return;
+        // Consume before EnsureBitmap, whose BitmapChanged callback may reenter.
+        var timing = _accuracyTrace.IsEnabled ? BitmapRenderTraceScope.Take(_accuracyTrace, w, h) : null;
         EnsureBitmap(w, h);
+        if (timing != null)
+        {
+            UpdateBitmapTraced(pixels, w, h, byteCount, timing);
+            RecordPublication(kind);
+            return;
+        }
         _bitmap!.Lock();
         try
         {
@@ -57,6 +65,41 @@ internal sealed class FrameRenderer
             _bitmap.Unlock();
         }
         RecordPublication(kind);
+    }
+
+    private void UpdateBitmapTraced(byte[] pixels, int w, int h, int byteCount, BitmapRenderTraceScope timing)
+    {
+        long lockStart = Stopwatch.GetTimestamp(), lockEnd = 0;
+        long copyStart = 0, copyEnd = 0, unlockStart = 0, unlockEnd = 0;
+        bool locked = false, copied = false, unlocked = false;
+        try
+        {
+            try { _bitmap!.Lock(); locked = true; }
+            finally { lockEnd = Stopwatch.GetTimestamp(); }
+            try
+            {
+                copyStart = Stopwatch.GetTimestamp();
+                byteCount = Math.Min(pixels.Length, byteCount);
+                Marshal.Copy(pixels, 0, _bitmap!.BackBuffer, byteCount);
+                _bitmap.AddDirtyRect(new System.Windows.Int32Rect(0, 0, w, h));
+                copied = true;
+            }
+            finally
+            {
+                copyEnd = Stopwatch.GetTimestamp();
+                unlockStart = Stopwatch.GetTimestamp();
+                try { _bitmap!.Unlock(); unlocked = true; }
+                finally { unlockEnd = Stopwatch.GetTimestamp(); }
+            }
+        }
+        finally
+        {
+            // Defer event allocation/queueing until Unlock has been attempted
+            // (or Lock failed). Intervals exclude observer work, unlike bitmap.
+            timing.Record("bitmap-lock", locked, lockStart, lockEnd);
+            if (copyStart != 0) timing.Record("bitmap-copy-dirty", copied, copyStart, copyEnd);
+            if (unlockStart != 0) timing.Record("bitmap-unlock", unlocked, unlockStart, unlockEnd);
+        }
     }
 
     /// <summary>黒フレームを描画して Spout 送信する。</summary>
