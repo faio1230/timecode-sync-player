@@ -97,6 +97,36 @@ public class SyncAccuracyTraceTests
     }
 
     [Fact]
+    public void PreviewFrames_KeepSourceKindAndProbeData_AndRemainSeparateFromExternalFrames()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path))
+            {
+                var pixels = AccuracyFrameMarkerTests.GoldenPixels();
+                var pin = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+                try
+                {
+                    trace.RecordFrame("normal", pin.AddrOfPinnedObject(), 1920, 1080, 7680, 100);
+                    trace.RecordPreviewFrame("frozen", pin.AddrOfPinnedObject(), 1920, 1080, 7680, 200);
+                }
+                finally { pin.Free(); }
+            }
+            var rows = Read(path);
+            Assert.Equal(new[] { "meta", "frame", "preview-frame", "end" }, rows.Select(r => r.GetProperty("type").GetString()));
+            Assert.Equal(1, rows[0].GetProperty("previewFrameSchema").GetInt32());
+            Assert.Equal("frozen", rows[2].GetProperty("kind").GetString());
+            Assert.Equal(200, rows[2].GetProperty("ticks").GetInt64());
+            Assert.True(rows[2].GetProperty("markerValid").GetBoolean());
+            Assert.Equal(0x1234, rows[2].GetProperty("frameIndex").GetInt32());
+            Assert.Equal(2, rows[^1].GetProperty("events").GetInt64());
+            Assert.Equal(0, rows[^1].GetProperty("errors").GetInt64());
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void ConcurrentProducers_AllEventsAreWrittenOrExplicitlyCountedAsDropped()
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");

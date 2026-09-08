@@ -90,6 +90,12 @@ internal sealed class SyncAccuracyTrace : IDisposable
     }
 
     public void RecordFrame(string kind, IntPtr pixels, int width, int height, int stride, long publishedTicks)
+        => RecordPixelFrame("frame", kind, pixels, width, height, stride, publishedTicks);
+
+    public void RecordPreviewFrame(string kind, IntPtr pixels, int width, int height, int stride, long publishedTicks)
+        => RecordPixelFrame("preview-frame", kind, pixels, width, height, stride, publishedTicks);
+
+    private void RecordPixelFrame(string type, string kind, IntPtr pixels, int width, int height, int stride, long publishedTicks)
     {
         if (!IsEnabled) return;
         long before = Stopwatch.GetTimestamp();
@@ -97,7 +103,7 @@ internal sealed class SyncAccuracyTrace : IDisposable
         {
             var probe = AccuracyFrameMarker.Probe(pixels, width, height, stride);
             long probeTicks = Stopwatch.GetTimestamp() - before;
-            Enqueue(new FrameEvent("frame", publishedTicks, kind, width, height,
+            Enqueue(new FrameEvent(type, publishedTicks, kind, width, height,
                 probe.ClipId, probe.FrameIndex, probe.IsBlack, probe.MarkerValid, probeTicks));
         }
         catch (Exception ex)
@@ -129,6 +135,7 @@ internal sealed class SyncAccuracyTrace : IDisposable
                     Boundary = "bitmap-publication", Reference = "decoded-ltc-receipt",
                     NominalLtcFps = ReferenceLtcFps,
                     BlackProbe = "9x9-grid-and-marker-centers", RenderStageSchema = 1,
+                    PreviewFrameSchema = 1, PreviewBoundary = "reduced-preview-bitmap; separate from full-resolution frame events",
                     RenderStageMeasure = "native-render is the entire mpv render call, not decoder-only; stages overlap across threads; join by session/generation/sequence, attempt for unpublished native work"
                 }, JsonOptions)).ConfigureAwait(false);
                 // Arrival order may differ from ticks across producers. Consumers stably sort by ticks.
