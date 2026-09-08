@@ -19,6 +19,8 @@ public sealed class SpoutFrameTransferTests
         internal long Qpc = Stopwatch.Frequency, DelayTicks = Stopwatch.Frequency / 50;
         internal string? DelayedStage, ThrowStage;
         internal bool ReleaseFails;
+        internal int DeviceReason;
+        internal bool DeviceReasonFails;
         private void Stage(string stage) { if (DelayedStage == stage) Qpc += DelayTicks; if (ThrowStage == stage) throw new InvalidOperationException($"Failure in {stage}"); }
         public string Prepare(uint width, uint height) { Calls.Add($"Prepare:{width}:{height}"); Stage("Prepare"); return Name; }
         public bool SendImage(IntPtr pixels, uint width, uint height, uint pitch) { Calls.Add("Send"); Stage("SendImage"); return SendResult; }
@@ -27,6 +29,7 @@ public sealed class SpoutFrameTransferTests
         public void End() { Calls.Add("End"); Stage("End"); }
         public void Flush() { Calls.Add("Flush"); Stage("Flush"); }
         public int GetData(out int completed) { Calls.Add("Poll"); Stage("GetData"); var next = Results.Count > 0 ? Results.Dequeue() : (0, 1); completed = next.Item2; return next.Item1; }
+        public int GetDeviceRemovedReason() { Calls.Add("DeviceReason"); if (DeviceReasonFails) throw new ApplicationException("Device reason read failed"); return DeviceReason; }
         public void Dispose() => Calls.Add("Dispose");
         internal SpoutFrameTransfer Create(ILogger? logger = null) => new(this, this, name => { Calls.Add($"Mutex:{name}"); Stage("CreateMutex"); return this; }, () => { if (Milliseconds.Count > 0) return Milliseconds.Dequeue(); long now = Tick; Tick += Step; return now; }, () => Qpc, logger);
     }
@@ -37,7 +40,7 @@ public sealed class SpoutFrameTransferTests
         public void Emit(LogEvent logEvent)
         {
             // A logger may do I/O; diagnostics must never extend mutex ownership.
-            rig.Calls.Last().Should().Be("Unlock");
+            rig.Calls.Where(x => x != "DeviceReason").Last().Should().Be("Unlock");
             Events.Add(logEvent);
         }
     }
@@ -64,6 +67,7 @@ public sealed class SpoutFrameTransferTests
         details.Properties.Single(x => x.Name == property).Value.Should().Be(new ScalarValue(20.0));
         details.Properties.Single(x => x.Name == "LastCompleted").Value.Should().Be(new ScalarValue(1));
         details.Properties.Single(x => x.Name == "Sender").Value.Should().Be(new ScalarValue("Actual_1"));
+        rig.Calls.Should().NotContain("DeviceReason", "a slow successful send does not query device removal");
     }
 
     [Fact]
@@ -74,6 +78,7 @@ public sealed class SpoutFrameTransferTests
         using var transfer = rig.Create(logger);
         transfer.SendImage(new(1), 2, 3, 8).Should().BeTrue();
         sink.Events.Should().BeEmpty();
+        rig.Calls.Should().NotContain("DeviceReason");
     }
 
     [Fact]
@@ -155,6 +160,7 @@ public sealed class SpoutFrameTransferTests
                 .Contain("stage=WaitMutex; sender=Actual_1;").And.Contain("polls=0; hr=n/a;");
         }
         rig.Calls.Should().NotContain("Send");
+        rig.Calls.Should().NotContain("DeviceReason", "mutex failure never entered the GPU send path");
         rig.Calls.Count(x => x == "Unlock").Should().Be(abandoned ? 1 : 0);
     }
 
@@ -163,7 +169,7 @@ public sealed class SpoutFrameTransferTests
     {
         var rig = new Rig { SendResult = false }; using var transfer = rig.Create();
         transfer.SendImage(new(1), 2, 3, 8).Should().BeFalse();
-        rig.Calls.Should().NotContain("End"); rig.Calls.Last().Should().Be("Unlock");
+        rig.Calls.Should().NotContain("End"); rig.Calls.TakeLast(2).Should().Equal("Unlock", "DeviceReason");
     }
 
     [Theory]
@@ -179,7 +185,7 @@ public sealed class SpoutFrameTransferTests
         failure.HResult.Should().Be(hr);
         failure.Data["SpoutTransfer"].Should().BeOfType<string>().Which.Should()
             .Contain($"hr={hr:X8}; completed=1; gpuElapsedMs={elapsed};");
-        rig.Calls.Should().Equal("Prepare:2:3", "Mutex:Actual_1", "Wait:100", "Send", "End", "Flush", "Poll", "Unlock");
+        rig.Calls.Should().Equal("Prepare:2:3", "Mutex:Actual_1", "Wait:100", "Send", "End", "Flush", "Poll", "Unlock", "DeviceReason");
     }
 
     [Theory]
@@ -238,8 +244,57 @@ public sealed class SpoutFrameTransferTests
             .Contain("stage=GetData; sender=Actual_1; size=3840x2160; polls=1;")
             .And.Contain($"hr={hr:X8}; completed={done}; gpuElapsedMs={elapsed};")
             .And.Contain("totalBeforeCleanupMs=");
-        rig.Calls.Should().Equal("Prepare:3840:2160", "Mutex:Actual_1", "Wait:100", "Send", "End", "Flush", "Poll", "Unlock");
+        rig.Calls.Should().Equal("Prepare:3840:2160", "Mutex:Actual_1", "Wait:100", "Send", "End", "Flush", "Poll", "Unlock", "DeviceReason");
         rig.Results.Should().ContainSingle();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(unchecked((int)0x887A0006))]
+    public void Send_PendingTimeoutRecordsDeviceReasonAfterUnlockAndStillFails(int reason)
+    {
+        var rig = new Rig { Step = 100, DeviceReason = reason };
+        rig.Results.Enqueue((1, 0));
+        using var transfer = rig.Create();
+        Action send = () => transfer.SendImage(new(1), 2, 3, 8);
+        var failure = send.Should().Throw<TimeoutException>().Which;
+        failure.Data["SpoutDeviceRemovedReason"].Should().Be(reason);
+        failure.Data["SpoutTransfer"].Should().BeOfType<string>().Which.Should().Contain($"deviceRemovedReason={reason:X8}");
+        rig.Calls.TakeLast(2).Should().Equal("Unlock", "DeviceReason");
+    }
+
+    [Theory]
+    [InlineData("SendImage")]
+    [InlineData("End")]
+    [InlineData("Flush")]
+    [InlineData("GetData")]
+    public void Send_DeviceReasonDiagnosticFailureDoesNotReplaceTransferFailure(string stage)
+    {
+        var rig = new Rig { ThrowStage = stage, DeviceReasonFails = true };
+        using var transfer = rig.Create();
+        Action send = () => transfer.SendImage(new(1), 2, 3, 8);
+        var failure = send.Should().Throw<InvalidOperationException>().Which;
+        failure.Message.Should().Be($"Failure in {stage}");
+        failure.Data["SpoutDeviceRemovedReasonException"].Should().BeOfType<ApplicationException>();
+        failure.Data["SpoutTransfer"].Should().BeOfType<string>().Which.Should()
+            .Contain("deviceRemovedReason=n/a;").And.Contain("deviceReasonError=Device reason read failed");
+        rig.Calls.TakeLast(2).Should().Equal("Unlock", "DeviceReason");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Send_FalseResultIncludesDeviceDiagnosticAndStillReturnsFalse(bool diagnosticFails)
+    {
+        var rig = new Rig { SendResult = false, DeviceReason = unchecked((int)0x887A0005), DeviceReasonFails = diagnosticFails };
+        var sink = new DiagnosticSink(rig);
+        using var logger = new LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        using var transfer = rig.Create(logger);
+        transfer.SendImage(new(1), 2, 3, 8).Should().BeFalse();
+        var details = (StructureValue)sink.Events.Should().ContainSingle().Which.Properties["Transfer"];
+        details.Properties.Single(x => x.Name == "DeviceRemovedReason").Value.Should().Be(new ScalarValue(diagnosticFails ? null : (object)rig.DeviceReason));
+        details.Properties.Single(x => x.Name == "DeviceReasonError").Value.Should().Be(new ScalarValue(diagnosticFails ? "Device reason read failed" : null));
+        rig.Calls.TakeLast(2).Should().Equal("Unlock", "DeviceReason");
     }
 
     [Fact]

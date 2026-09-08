@@ -17,10 +17,14 @@ if (args.Length != 1 || string.IsNullOrWhiteSpace(args[0]))
 }
 
 string output;
+string failureCheckpoint;
 try
 {
     output = Path.GetFullPath(args[0]);
+    failureCheckpoint = output + ".failure.json";
     Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+    if (File.Exists(failureCheckpoint) || Directory.Exists(failureCheckpoint))
+        throw new IOException($"Failure checkpoint already exists: {failureCheckpoint}");
     // Validate output access before allocating buffers or starting the sender.
     using var outputCheck = new FileStream(output, FileMode.CreateNew, FileAccess.Write);
 }
@@ -31,7 +35,7 @@ catch (Exception ex)
 }
 
 byte[] colors = [64, 128, 192];
-var diagnosticSink = new MemoryDiagnosticSink();
+var diagnosticSink = new MemoryDiagnosticSink(failureCheckpoint);
 using var diagnosticLogger = new LoggerConfiguration()
     .MinimumLevel.Warning()
     .WriteTo.Sink(diagnosticSink)
@@ -124,6 +128,7 @@ try
     writer.WriteLine(JsonSerializer.Serialize(new { @event = "start", mode = "baseline", width, height, fps, seconds,
         colors, alpha = 255, requestedSenderName = SpoutOutput.DefaultSenderName, qpcFrequency = frequency,
         startQpc = start, processId = Environment.ProcessId, initialized,
+        failureCheckpoint,
         cpuMeasure = "process CPU seconds includes pacing and sends, excludes buffer setup/dispose/serialization",
         transportMissMeasure = "unavailable: product SendFrame returns void; receiver observation is required" }));
     foreach (SendRecord row in records)
@@ -147,9 +152,12 @@ try
             messageTemplate = logEvent.MessageTemplate.Text,
             message = logEvent.RenderMessage(),
             properties = logEvent.Properties.ToDictionary(property => property.Key,
-                property => DiagnosticValue(property.Value)),
+                property => MemoryDiagnosticSink.DiagnosticValue(property.Value)),
             exception = logEvent.Exception?.ToString()
         }).ToArray(),
+        failureCheckpoint, failureCheckpointAttempted = diagnosticSink.CheckpointAttempted,
+        failureCheckpointWritten = diagnosticSink.CheckpointWritten,
+        failureCheckpointError = diagnosticSink.CheckpointError,
         completed, disposed, error, exitCode }));
 }
 catch (Exception ex)
@@ -159,17 +167,6 @@ catch (Exception ex)
 }
 Console.WriteLine($"{output}: attempts={records.Count}, scheduleMisses={missedSlots}, completed={completed}, disposed={disposed}, exit={exitCode}; receiver validation required");
 return exitCode;
-
-// Preserve typed stage timings and QPC values for analysis without parsing the
-// rendered message. This conversion runs only after the measurement has ended.
-static object? DiagnosticValue(LogEventPropertyValue value) => value switch
-{
-    ScalarValue scalar => scalar.Value,
-    StructureValue structure => structure.Properties.ToDictionary(property => property.Name,
-        property => DiagnosticValue(property.Value)),
-    SequenceValue sequence => sequence.Elements.Select(DiagnosticValue).ToArray(),
-    _ => value.ToString()
-};
 
 static void WaitUntil(long target, long frequency)
 {
@@ -187,9 +184,70 @@ readonly record struct SendRecord(int FrameIndex, int Slot, int ColorIndex, byte
     long DueQpc, long SendStartQpc, long SendEndQpc, double SendMs, double LateMs,
     bool AvailableBefore, bool EnabledBefore, bool AvailableAfter, bool EnabledAfter);
 
-sealed class MemoryDiagnosticSink : ILogEventSink
+sealed class MemoryDiagnosticSink(string checkpointPath) : ILogEventSink
 {
+    private int _checkpointAttempted;
     public ConcurrentQueue<LogEvent> Events { get; } = new();
+    public bool CheckpointAttempted => Volatile.Read(ref _checkpointAttempted) != 0;
+    public bool CheckpointWritten { get; private set; }
+    public string? CheckpointError { get; private set; }
 
-    public void Emit(LogEvent logEvent) => Events.Enqueue(logEvent);
+    public void Emit(LogEvent logEvent)
+    {
+        Events.Enqueue(logEvent);
+        // These SpoutOutput events occur after transfer failure and before native
+        // cleanup. Ordinary slow-send warnings must never introduce disk I/O.
+        bool sendFailure = logEvent.MessageTemplate.Text is
+            "SpoutOutput: SendFrame 中に例外が発生 count={Count} transfer={Transfer}" or
+            "SpoutOutput: SendImage が false を返した count={Count}";
+        if (!sendFailure || Interlocked.CompareExchange(ref _checkpointAttempted, 1, 0) != 0)
+            return;
+
+        try
+        {
+            var checkpoint = new
+            {
+                @event = "send-failure-before-cleanup", utc = DateTimeOffset.UtcNow,
+                qpc = Stopwatch.GetTimestamp(), qpcFrequency = Stopwatch.Frequency,
+                processId = Environment.ProcessId,
+                timestamp = logEvent.Timestamp, level = logEvent.Level.ToString(),
+                messageTemplate = logEvent.MessageTemplate.Text, message = logEvent.RenderMessage(),
+                properties = logEvent.Properties.ToDictionary(property => property.Key,
+                    property => DiagnosticValue(property.Value)),
+                exception = logEvent.Exception?.ToString(),
+                // SendImage=false's detailed Transfer event precedes the output
+                // invalidation event. Retain both, plus earlier slow warnings.
+                diagnosticLogs = Events.ToArray().Select(previous => new
+                {
+                    timestamp = previous.Timestamp, level = previous.Level.ToString(),
+                    messageTemplate = previous.MessageTemplate.Text, message = previous.RenderMessage(),
+                    properties = previous.Properties.ToDictionary(property => property.Key,
+                        property => DiagnosticValue(property.Value)),
+                    exception = previous.Exception?.ToString()
+                }).ToArray(),
+                measurement = "Failure-only synchronous checkpoint; this I/O is included in outer SendMs. Native cleanup has not started."
+            };
+            byte[] json = JsonSerializer.SerializeToUtf8Bytes(checkpoint);
+            using var stream = new FileStream(checkpointPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            stream.Write(json);
+            stream.Flush(flushToDisk: true);
+            CheckpointWritten = true;
+        }
+        catch (Exception ex)
+        {
+            // Diagnostics must not replace the original failure or prevent cleanup.
+            // Keep this in memory for the summary; do not log recursively from a sink.
+            CheckpointError = ex.ToString();
+        }
+    }
+
+    // Used after measurement, except for the first send failure checkpoint above.
+    internal static object? DiagnosticValue(LogEventPropertyValue value) => value switch
+    {
+        ScalarValue scalar => scalar.Value,
+        StructureValue structure => structure.Properties.ToDictionary(property => property.Name,
+            property => DiagnosticValue(property.Value)),
+        SequenceValue sequence => sequence.Elements.Select(DiagnosticValue).ToArray(),
+        _ => value.ToString()
+    };
 }

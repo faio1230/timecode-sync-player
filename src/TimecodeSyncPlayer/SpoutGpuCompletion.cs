@@ -3,7 +3,8 @@ using System.Runtime.InteropServices;
 namespace TimecodeSyncPlayer;
 
 // Windows SDK 10.0.26100.0 um/d3d11.h: ID3D11DeviceVtbl / ID3D11DeviceContextVtbl.
-// Zero-based COM slots: CreateQuery 24, End 28, GetData 29, Flush 111, IUnknown.Release 2.
+// Zero-based COM slots: CreateQuery 24, GetDeviceRemovedReason 39,
+// End 28, GetData 29, Flush 111, IUnknown.Release 2.
 // D3D11_QUERY_DESC is 8 bytes; EVENT=0. GetData uses a 4-byte BOOL and DONOTFLUSH=1.
 internal sealed class SpoutGpuCompletion : ISpoutGpuCompletion
 {
@@ -18,12 +19,16 @@ internal sealed class SpoutGpuCompletion : ISpoutGpuCompletion
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     internal delegate int GetDataDelegate(IntPtr self, IntPtr query, out int completed, uint size, uint flags);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    internal delegate int GetDeviceRemovedReasonDelegate(IntPtr self);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     internal delegate uint ReleaseDelegate(IntPtr self);
 
     private readonly IntPtr _context; // Borrowed; sender must outlive this object.
+    private readonly IntPtr _device; // Borrowed, like the context; never Release here.
     private readonly EndDelegate _end;
     private readonly FlushDelegate _flush;
     private readonly GetDataDelegate _getData;
+    private readonly GetDeviceRemovedReasonDelegate _getDeviceRemovedReason;
     private ReleaseDelegate? _release;
     private IntPtr _query; // Only this COM reference is owned.
 
@@ -32,9 +37,11 @@ internal sealed class SpoutGpuCompletion : ISpoutGpuCompletion
         if (device == IntPtr.Zero || context == IntPtr.Zero)
             throw new InvalidOperationException("Spout D3D11 device/context is unavailable.");
         _context = context;
+        _device = device;
         _end = Method<EndDelegate>(context, 28);
         _flush = Method<FlushDelegate>(context, 111);
         _getData = Method<GetDataDelegate>(context, 29);
+        _getDeviceRemovedReason = Method<GetDeviceRemovedReasonDelegate>(device, 39);
         var create = Method<CreateQueryDelegate>(device, 24);
         var desc = new QueryDesc();
         int hr = create(device, ref desc, out _query);
@@ -52,6 +59,7 @@ internal sealed class SpoutGpuCompletion : ISpoutGpuCompletion
     public void End() => _end(_context, _query);
     public void Flush() => _flush(_context);
     public int GetData(out int completed) => _getData(_context, _query, out completed, 4, 1);
+    public int GetDeviceRemovedReason() => _getDeviceRemovedReason(_device);
     public void Dispose()
     {
         IntPtr query = _query; _query = IntPtr.Zero;

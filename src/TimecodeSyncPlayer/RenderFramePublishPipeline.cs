@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace TimecodeSyncPlayer;
 
 internal sealed class RenderFramePublishPipeline
@@ -25,8 +27,13 @@ internal sealed class RenderFramePublishPipeline
         int height,
         double renderMs,
         bool spoutEnabled,
-        GapState gapState)
+        GapState gapState, SyncAccuracyTrace? trace = null, long sessionId = 0, int generation = 0, long sequence = 0)
     {
+        if (trace?.IsEnabled == true)
+        {
+            PublishTraced(pixels, width, height, renderMs, spoutEnabled, gapState, trace, sessionId, generation, sequence);
+            return;
+        }
         double bitmapMs = _updateDisplay(width, height);
         double spoutMs = _publishSpout(pixels, width, height);
         _recordPerformance(new RenderFramePerformanceMeasurement(
@@ -37,5 +44,23 @@ internal sealed class RenderFramePublishPipeline
             height,
             spoutEnabled));
         _copyFreezeFrame(gapState, width, height);
+    }
+
+    private void PublishTraced(IntPtr pixels, int width, int height, double renderMs, bool spoutEnabled,
+        GapState gapState, SyncAccuracyTrace trace, long sessionId, int generation, long sequence)
+    {
+        double bitmapMs, spoutMs;
+        long start = Stopwatch.GetTimestamp();
+        bool succeeded = false;
+        try { bitmapMs = _updateDisplay(width, height); succeeded = true; }
+        finally { trace.RecordRenderStage(sessionId, null, generation, sequence, "bitmap", succeeded ? "completed" : "exception", start, Stopwatch.GetTimestamp(), width, height); }
+        start = Stopwatch.GetTimestamp(); succeeded = false;
+        try { spoutMs = _publishSpout(pixels, width, height); succeeded = true; }
+        finally { trace.RecordRenderStage(sessionId, null, generation, sequence, "spout", !succeeded ? "exception" : spoutEnabled ? "call-returned" : "disabled-call-returned", start, Stopwatch.GetTimestamp(), width, height); }
+        // Keep these legacy counters restricted to published frames.
+        _recordPerformance(new RenderFramePerformanceMeasurement(renderMs, bitmapMs, spoutMs, width, height, spoutEnabled));
+        start = Stopwatch.GetTimestamp(); succeeded = false; bool copied = false;
+        try { copied = _copyFreezeFrame(gapState, width, height); succeeded = true; }
+        finally { trace.RecordRenderStage(sessionId, null, generation, sequence, "freeze-copy", !succeeded ? "exception" : copied ? "copied" : "not-needed", start, Stopwatch.GetTimestamp(), width, height); }
     }
 }

@@ -50,6 +50,17 @@ internal sealed class LatestRenderedFrameMailbox : IDisposable
     private readonly object _sync = new();
     private RenderedFrameSnapshot? _latest;
     private bool _disposed;
+    private readonly Action<RenderedFrameSnapshot, string>? _observe;
+
+    public LatestRenderedFrameMailbox(Action<RenderedFrameSnapshot, string>? observe = null) => _observe = observe;
+
+    private void DisposeObserved(RenderedFrameSnapshot? frame, string reason)
+    {
+        if (frame == null) return;
+        try { _observe?.Invoke(frame, reason); }
+        catch (Exception) { /* Diagnostics must not prevent returning pooled pixels. */ }
+        frame.Dispose();
+    }
 
     public void Publish(RenderedFrameSnapshot frame)
     {
@@ -59,7 +70,7 @@ internal sealed class LatestRenderedFrameMailbox : IDisposable
             replaced = _disposed ? frame : _latest;
             if (!_disposed) _latest = frame;
         }
-        replaced?.Dispose();
+        DisposeObserved(replaced, ReferenceEquals(replaced, frame) ? "mailbox-closed" : "mailbox-replaced");
     }
 
     public RenderedFrameSnapshot? Take()
@@ -72,14 +83,14 @@ internal sealed class LatestRenderedFrameMailbox : IDisposable
         }
     }
 
-    public void Clear() => Take()?.Dispose();
+    public void Clear() => DisposeObserved(Take(), "mailbox-cleared");
 
     public void Dispose()
     {
         lock (_sync)
         {
             _disposed = true;
-            _latest?.Dispose();
+            DisposeObserved(_latest, "mailbox-disposed");
             _latest = null;
         }
     }

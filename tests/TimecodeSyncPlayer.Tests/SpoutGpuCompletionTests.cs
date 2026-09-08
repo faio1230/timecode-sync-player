@@ -11,15 +11,19 @@ public sealed class SpoutGpuCompletionTests
         private readonly List<IntPtr> _allocations = [];
         private readonly List<Delegate> _delegates = [];
         internal IntPtr Device, Context, Query;
-        internal int CreateHr, Releases;
+        internal int CreateHr, Releases, DeviceReason;
         internal bool NullQuery;
         internal readonly List<string> Calls = [];
         internal ComFixture()
         {
             Query = Object(3);
             Slot(Query, 2, new SpoutGpuCompletion.ReleaseDelegate(_ => { Releases++; return 0; }));
-            Device = Object(25);
+            Device = Object(40);
             Slot(Device, 24, new SpoutGpuCompletion.CreateQueryDelegate(Create));
+            Slot(Device, 39, new SpoutGpuCompletion.GetDeviceRemovedReasonDelegate(self =>
+            {
+                self.Should().Be(Device); Calls.Add("DeviceReason"); return DeviceReason;
+            }));
             Context = Object(112);
             Slot(Context, 28, new SpoutGpuCompletion.EndDelegate((self, query) => { self.Should().Be(Context); query.Should().Be(Query); Calls.Add("End"); }));
             Slot(Context, 111, new SpoutGpuCompletion.FlushDelegate(self => { self.Should().Be(Context); Calls.Add("Flush"); }));
@@ -46,6 +50,19 @@ public sealed class SpoutGpuCompletionTests
             _delegates.Add(method); Marshal.WriteIntPtr(Marshal.ReadIntPtr(obj), slot * IntPtr.Size, Marshal.GetFunctionPointerForDelegate(method));
         }
         public void Dispose() { foreach (var pointer in _allocations) Marshal.FreeHGlobal(pointer); GC.KeepAlive(_delegates); }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(unchecked((int)0x887A0006))]
+    public void DeviceRemovedReason_ReturnsNativeHResultWithoutReleasingBorrowedDevice(int reason)
+    {
+        using var fixture = new ComFixture { DeviceReason = reason };
+        var completion = new SpoutGpuCompletion(fixture.Device, fixture.Context);
+        completion.GetDeviceRemovedReason().Should().Be(reason);
+        fixture.Calls.Should().Equal("DeviceReason");
+        fixture.Releases.Should().Be(0);
+        completion.Dispose(); fixture.Releases.Should().Be(1);
     }
 
     [Fact]

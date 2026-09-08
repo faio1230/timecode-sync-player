@@ -17,6 +17,36 @@ public class SyncAccuracyTraceTests
     }
 
     [Fact]
+    public void DisabledRenderObserver_DoesNotAllocateEvents()
+    {
+        var trace = SyncAccuracyTrace.Disabled;
+        trace.RecordRenderStage(1, 1, 0, null, "native-render", "completed", 1, 2, 2, 2, 0);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 1000; i++)
+            trace.RecordRenderStage(1, i, 0, null, "native-render", "completed", 1, 2, 2, 2, 0);
+        Assert.Equal(before, GC.GetAllocatedBytesForCurrentThread());
+    }
+
+    [Fact]
+    public void RenderStagePressure_IsBoundedAndWrittenOrCountedAsDropped()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path, capacity: 1))
+                Parallel.For(0, 2000, i => trace.RecordRenderStage(1, i + 1, 0, null,
+                    "native-render", "completed", i, i + 1, 16, 16, -1));
+            var lines = Read(path);
+            long written = lines.Count(x => x.GetProperty("type").GetString() == "render-stage");
+            Assert.Equal(2000, written + lines[^1].GetProperty("dropped").GetInt64());
+            Assert.Equal(written, lines[^1].GetProperty("events").GetInt64());
+            Assert.Equal(0, lines[^1].GetProperty("errors").GetInt64());
+            Assert.Equal(1, lines[0].GetProperty("renderStageSchema").GetInt32());
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void Dispose_FlushesMetaLtcAndPixelFrameWithReceiptAndPublicationTimestamps()
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");

@@ -33,6 +33,26 @@ public sealed class LatestRenderedFrameMailboxTests
         pool.Outstanding.Should().Be(0);
     }
 
+    [Fact]
+    public void ObserverRecordsDiscardIdentityAndCannotPreventPoolReturns()
+    {
+        var pool = new CountingPool();
+        var discarded = new List<(long Sequence, string Reason)>();
+        var mailbox = new LatestRenderedFrameMailbox((frame, reason) =>
+        {
+            discarded.Add((frame.Sequence, reason));
+            throw new InvalidOperationException("observer failure");
+        });
+        mailbox.Publish(RenderedFrameSnapshot.Copy(new byte[4], 1, 1, 7, 1, 0, pool));
+        mailbox.Publish(RenderedFrameSnapshot.Copy(new byte[4], 1, 1, 7, 2, 0, pool));
+        mailbox.Clear();
+        mailbox.Publish(RenderedFrameSnapshot.Copy(new byte[4], 1, 1, 7, 3, 0, pool));
+        mailbox.Dispose();
+        mailbox.Publish(RenderedFrameSnapshot.Copy(new byte[4], 1, 1, 7, 4, 0, pool));
+        discarded.Should().Equal((1, "mailbox-replaced"), (2, "mailbox-cleared"), (3, "mailbox-disposed"), (4, "mailbox-closed"));
+        pool.Outstanding.Should().Be(0);
+    }
+
     private sealed class CountingPool : ArrayPool<byte>
     {
         public int Outstanding;

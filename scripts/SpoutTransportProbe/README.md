@@ -14,7 +14,7 @@ dotnet build scripts/SpoutTransportProbe/SpoutTransportProbe.csproj -c Debug
 $LASTEXITCODE
 ```
 
-出力ファイルのパスは必須です。既存ファイルへの上書きは拒否します。出力先ディレクトリは必要に応じて作成します。製品のビルド設定から `SpoutDX.dll` が実行ファイルの隣にコピーされていることを確認してください。
+出力ファイルのパスは必須です。既存ファイルへの上書きは拒否します。失敗時用の `<output.jsonl>.failure.json` が既に存在する場合も起動を拒否します。出力先ディレクトリは必要に応じて作成します。製品のビルド設定から `SpoutDX.dll` が実行ファイルの隣にコピーされていることを確認してください。
 
 終了コード0は、初期化、30秒の計測、送信元の破棄、結果ファイルの書き出しまで完了したことを示します。引数・出力先の準備エラーは2、実行・終了処理・書き出しの失敗は1です。強制終了などで `summary` 行が残らなかった計測は未完了として扱ってください。
 
@@ -22,13 +22,17 @@ $LASTEXITCODE
 
 JSONL は `start`、スロットごとの `send`、最後の `summary` から成ります。送信呼び出し時間、予定時刻からの遅れ、予定スロット欠落数、プロセスCPU時間、GC回数を記録します。CPU使用率は1コア相当を100%とし、待機処理のスピンも含みます。計測ループ内ではファイル・コンソールへの書き込みやログ出力先の設定を行いません。
 
-製品の Warning 以上のログはスレッドセーフなメモリ内キューに保持し、計測終了後に `summary.diagnosticLogs` へ時刻・レベル・メッセージ・例外詳細を出力します。初期化、送信、破棄で製品側が捕捉した例外も確認できます。通常の Information/Debug ログは記録せず、計測中にsinkでのログの文字列化やディスク・コンソール書き込みは行いません。
+製品の Warning 以上のログはスレッドセーフなメモリ内キューに保持し、計測終了後に `summary.diagnosticLogs` へ時刻・レベル・メッセージ・例外詳細を出力します。初期化、送信、破棄で製品側が捕捉した例外も確認できます。通常の Information/Debug ログは記録せず、正常送信やslow Warningではsinkでの文字列化やディスク・コンソール書き込みは行いません。
 
-各診断ログは既存の `message`・`exception` に加え、`messageTemplate` と型を保った `properties` を持ちます。正常遅延および `SendImage=false` の構造化診断は `properties.Transfer` の `Sender`、`Stage`、`StartQpc`、`EndQpc`、各 `Ms` 値から解析できます。例外の `properties.Transfer` は診断文字列として保持します。これらのJSON向け変換も計測後に行います。
+送信が失敗した場合だけ、SpoutOutputがネイティブ終了処理を始める前に出す例外またはSendImage=falseのログを検出し、最初の1件を `<output.jsonl>.failure.json` へ同期書き込み・flushします。UTC、QPC、所有PID、元ログの時刻・テンプレート・プロパティ・例外を保存します。終了処理が停止し、watchdogによってプローブが終了してsummaryを残せなかった場合にも、この失敗記録を調べられます。ネイティブ呼び出しが失敗ログを出す前に停止した場合の記録は保証しません。書き込みはCreateNewで既存データを保持し、I/O失敗は元の送信失敗を置き換えずメモリへ保持します。正常にsummaryを書けた場合は `failureCheckpointAttempted`、`failureCheckpointWritten`、`failureCheckpointError` に成否が残ります。強制終了時はcheckpoint自体の欠損・不完全JSONも未完了として扱ってください。
+
+この失敗時だけの文字列化・ファイルI/O時間は、外側の送信計測 `SendMs` に含まれます。送信失敗の所要時間を旧版と比較するときは、その差をGPUやmutex待ちと扱わず、I/O前に確定したTransferの段階別時間・`TotalBeforeCleanupMs` を参照してください。正常送信の計測条件は変えません。
+
+各診断ログは既存の `message`・`exception` に加え、`messageTemplate` と型を保った `properties` を持ちます。正常遅延および `SendImage=false` の構造化診断は `properties.Transfer` の `Sender`、`Stage`、`StartQpc`、`EndQpc`、各 `Ms` 値から解析できます。例外の `properties.Transfer` は診断文字列として保持します。summary向けのJSON変換は計測後に行い、上記の失敗checkpointだけは終了処理前に変換します。
 
 転送中の例外には製品側が失敗時に整形する `transfer` 診断が含まれます。正常な転送も16.667ms（1/60秒）を超えると `SpoutFrameTransfer: slow send {@Transfer}` のWarningを出し、`SendImage` がfalseを返した場合は別のWarningで記録します。Warningの存在だけで送信失敗とは判定しません。処理段階、実送信名、画像サイズ、poll回数、最終HRESULTと完了値、GPU待機経過時間に加え、Prepare・CreateMutex・WaitMutex・SendImage・End・Flush・GetData・ReleaseMutexの段階別時間を確認できます。開始した段階は失敗時も実経過時間を記録し、未開始は例外文字列では `not-started`、構造化値では `null` です。
 
-`PollMs` はGetDataとThread.Yieldを含むpoll全体、`TotalBeforeCleanupMs` はログ処理とSpoutOutput側の失敗後解放を除く時間です。プローブの `SendMs` にはそれらも含まれるため、所要時間だけでmutex timeoutやGPU timeoutと判定せず、例外・最終応答・各時間を照合してください。ログイベントの文字列化とファイル書き込みは、引き続き計測終了後です。診断の追加自体は無効化の原因特定や解決を意味しません。
+`PollMs` はGetDataとThread.Yieldを含むpoll全体、`TotalBeforeCleanupMs` はログ処理とSpoutOutput側の失敗後解放を除く時間です。プローブの `SendMs` にはそれらも含まれるため、所要時間だけでmutex timeoutやGPU timeoutと判定せず、例外・最終応答・各時間を照合してください。失敗checkpoint以外のログイベントの文字列化とファイル書き込みは、引き続き計測終了後です。診断の追加自体は無効化の原因特定や解決を意味しません。
 
 GPU完了を確認できた応答は、観測までに100ms以上かかっていても成功として受理し、遅延をWarningへ記録します。未完了応答のpoll期限とmutex待ちの期限は各100msのままです。これは完了済み転送の不要な無効化を避ける処理であり、100ms以内のGPU処理・全体送信時間を保証するものではありません。
 

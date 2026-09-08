@@ -22,6 +22,7 @@ internal sealed class SyncAccuracyTrace : IDisposable
     private long _dropped;
     private long _errors;
     private long _events;
+    private long _renderSessions;
 
     public static SyncAccuracyTrace Disabled { get; } = new();
     public static SyncAccuracyTrace Current { get; set; } = Disabled;
@@ -70,6 +71,24 @@ internal sealed class SyncAccuracyTrace : IDisposable
         Enqueue(new LtcEvent("ltc", ticks, seconds, ReferenceLtcFps));
     }
 
+    internal long AllocateRenderSessionId() => IsEnabled ? Interlocked.Increment(ref _renderSessions) : 0;
+
+    internal void RecordRenderStage(long sessionId, long? attemptId, int generation, long? sequence,
+        string stage, string outcome, long startTicks, long endTicks, int width, int height, int? returnCode = null)
+    {
+        if (!IsEnabled) return;
+        try
+        {
+            Enqueue(new RenderStageEvent("render-stage", endTicks, sessionId, attemptId, generation, sequence,
+                stage, outcome, startTicks, endTicks, width, height, returnCode, Environment.CurrentManagedThreadId));
+        }
+        catch (Exception)
+        {
+            // Observers never interrupt rendering, publication or pooled-buffer cleanup.
+            Interlocked.Increment(ref _errors);
+        }
+    }
+
     public void RecordFrame(string kind, IntPtr pixels, int width, int height, int stride, long publishedTicks)
     {
         if (!IsEnabled) return;
@@ -109,7 +128,8 @@ internal sealed class SyncAccuracyTrace : IDisposable
                     Type = "meta", Ticks = started, Schema = 1, Frequency = Stopwatch.Frequency,
                     Boundary = "bitmap-publication", Reference = "decoded-ltc-receipt",
                     NominalLtcFps = ReferenceLtcFps,
-                    BlackProbe = "9x9-grid-and-marker-centers"
+                    BlackProbe = "9x9-grid-and-marker-centers", RenderStageSchema = 1,
+                    RenderStageMeasure = "native-render is the entire mpv render call, not decoder-only; stages overlap across threads; join by session/generation/sequence, attempt for unpublished native work"
                 }, JsonOptions)).ConfigureAwait(false);
                 // Arrival order may differ from ticks across producers. Consumers stably sort by ticks.
                 await foreach (object value in _queue!.Reader.ReadAllAsync().ConfigureAwait(false))
@@ -152,4 +172,7 @@ internal sealed class SyncAccuracyTrace : IDisposable
     private sealed record LtcEvent(string Type, long Ticks, double Seconds, double Fps);
     private sealed record FrameEvent(string Type, long Ticks, string Kind, int Width, int Height,
         int? ClipId, int? FrameIndex, bool IsBlack, bool MarkerValid, long ProbeTicks);
+    private sealed record RenderStageEvent(string Type, long Ticks, long SessionId, long? AttemptId,
+        int Generation, long? Sequence, string Stage, string Outcome, long StartTicks, long EndTicks,
+        int Width, int Height, int? ReturnCode, int ThreadId);
 }

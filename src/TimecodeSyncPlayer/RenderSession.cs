@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Windows.Media.Imaging;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
@@ -25,7 +26,12 @@ internal sealed class RenderSession : IDisposable
     private readonly RenderUpdateGeneration _generation = new();
     private readonly IRenderUpdateScheduler _scheduler = new RenderUpdateScheduler();
     private readonly RenderUpdateScheduler _nativeScheduler = new();
-    private readonly LatestRenderedFrameMailbox _mailbox = new();
+    private readonly LatestRenderedFrameMailbox _mailbox;
+    private readonly SyncAccuracyTrace _trace;
+    private readonly long _traceSessionId;
+    // Native-thread-only attempt identity includes renders which never publish.
+    private long _traceAttemptId;
+    private int _traceGeneration, _traceWidth, _traceHeight;
     private readonly object _submissionSync = new();
     private readonly AsyncLocal<PreparedFrame?> _preparedFrame = new();
     private readonly RenderFramePipelineGate _gate = new();
@@ -53,7 +59,7 @@ internal sealed class RenderSession : IDisposable
 
     public RenderSession(IMpvRenderApi api, ISpoutOutput spoutOutput, PlaybackPerformanceStats stats,
         Func<GapState> getGapState, Func<GapBehavior> getGapBehavior, Action<Action> scheduleUpdate,
-        Func<bool>? isGapFreezeConfirmed = null)
+        Func<bool>? isGapFreezeConfirmed = null, SyncAccuracyTrace? accuracyTrace = null)
     {
         _api = api;
         _spoutOutput = spoutOutput;
@@ -62,6 +68,10 @@ internal sealed class RenderSession : IDisposable
         _getGapBehavior = getGapBehavior;
         _isGapFreezeConfirmed = isGapFreezeConfirmed ?? (() => true);
         _scheduleUpdate = scheduleUpdate;
+        _trace = accuracyTrace ?? SyncAccuracyTrace.Current;
+        _traceSessionId = _trace.AllocateRenderSessionId();
+        _mailbox = new LatestRenderedFrameMailbox(_trace.IsEnabled
+            ? (frame, reason) => TraceFrame(frame, "discard", reason) : null);
         _freezeCopier = new RenderedFrameFreezeBufferCopier(_buffers);
         var spoutPublisher = new SpoutFramePublisher(spoutOutput);
         var performanceRecorder = new RenderFramePerformanceRecorder(stats);
@@ -73,7 +83,7 @@ internal sealed class RenderSession : IDisposable
             (pixels, width, height) => spoutPublisher.Publish(pixels, width, height),
             performanceRecorder.Record,
             (state, width, height) => _freezeCopier.CopyIfNeeded(state, width, height));
-        var executor = new MpvRenderFrameExecutor(() => _api.RenderContextRender(_context, _parameters!));
+        var executor = new MpvRenderFrameExecutor(RenderNativeFrame);
         _worker = new RenderFrameWorker(
             ensurePixelBuffer: (width, height) => _nativeBuffers.EnsurePixelBuffer(width, height),
             buildRenderParameters: (width, height) => RenderFrameParameterBuilder.Build(_nativeBuffers, _parameters!, _api, width, height),
@@ -142,7 +152,7 @@ internal sealed class RenderSession : IDisposable
     public void AllocateParameters() { } // Native parameters must exist before callback registration.
     public void InitializeFrameRenderer()
     {
-        _renderer = new FrameRenderer(_buffers, _spoutOutput);
+        _renderer = new FrameRenderer(_buffers, _spoutOutput, _trace);
         _renderer.BitmapChanged += bitmap => BitmapChanged?.Invoke(bitmap);
     }
     public void InitializeStartupBuffer() => new StartupBufferInitializer(_buffers).Initialize("bgr0");
@@ -166,7 +176,11 @@ internal sealed class RenderSession : IDisposable
                         if (update.HasFrame) Interlocked.Exchange(ref _pendingHasFrame, 1);
                         if (_scheduler.RequestDispatch()) _scheduleUpdate(OnRenderUpdate);
                     }
-                    else update.Snapshot?.Dispose();
+                    else
+                    {
+                        if (update.Snapshot != null) TraceFrame(update.Snapshot, "discard", "stale-before-mailbox");
+                        update.Snapshot?.Dispose();
+                    }
                 }
                 finally
                 {
@@ -200,10 +214,59 @@ internal sealed class RenderSession : IDisposable
         var size = RenderFrameSizePolicy.Decide(Width, Height, 16);
         if (!size.ShouldRender)
             size = new RenderFrameSizeDecision(16, 16, HasDisplayableVideoSize: false);
+        if (_trace.IsEnabled)
+        {
+            _traceAttemptId++;
+            _traceGeneration = generation; _traceWidth = size.Width; _traceHeight = size.Height;
+        }
         RenderFrameWorkerResult result = _worker.Execute(size);
-        if (!result.ShouldPublish || !IsCurrent(generation)) return null;
-        return RenderedFrameSnapshot.Copy(_nativeBuffers.PixelBuffer!, result.Width, result.Height,
-            generation, Interlocked.Increment(ref _frameSequence), result.RenderMs);
+        if (!result.ShouldPublish || !IsCurrent(generation))
+        {
+            if (_trace.IsEnabled)
+            {
+                long now = Stopwatch.GetTimestamp();
+                _trace.RecordRenderStage(_traceSessionId, _traceAttemptId, generation, null, "discard",
+                    !result.ShouldPublish ? "native-not-publishable" : "stale-after-native", now, now, size.Width, size.Height);
+            }
+            return null;
+        }
+        long sequence = Interlocked.Increment(ref _frameSequence);
+        if (!_trace.IsEnabled)
+            return RenderedFrameSnapshot.Copy(_nativeBuffers.PixelBuffer!, result.Width, result.Height, generation, sequence, result.RenderMs);
+        long started = Stopwatch.GetTimestamp(); bool copied = false;
+        try
+        {
+            var frame = RenderedFrameSnapshot.Copy(_nativeBuffers.PixelBuffer!, result.Width, result.Height,
+                generation, sequence, result.RenderMs);
+            copied = true;
+            return frame;
+        }
+        finally
+        {
+            _trace.RecordRenderStage(_traceSessionId, _traceAttemptId, generation, sequence, "snapshot-copy",
+                copied ? "ready" : "exception", started, Stopwatch.GetTimestamp(), result.Width, result.Height);
+        }
+    }
+
+    private int RenderNativeFrame()
+    {
+        if (!_trace.IsEnabled) return _api.RenderContextRender(_context, _parameters!);
+        long started = Stopwatch.GetTimestamp(); int? rc = null;
+        try { rc = _api.RenderContextRender(_context, _parameters!); return rc.Value; }
+        finally
+        {
+            // Entire native API duration, including its waits/conversion. Not decoder-only.
+            _trace.RecordRenderStage(_traceSessionId, _traceAttemptId, _traceGeneration, null, "native-render",
+                rc.HasValue ? "completed" : "exception", started, Stopwatch.GetTimestamp(), _traceWidth, _traceHeight, rc);
+        }
+    }
+
+    private void TraceFrame(RenderedFrameSnapshot frame, string stage, string outcome)
+    {
+        if (!_trace.IsEnabled) return;
+        long now = Stopwatch.GetTimestamp();
+        _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, stage, outcome,
+            now, now, frame.Width, frame.Height);
     }
 
     private async void OnRenderUpdate()
@@ -240,7 +303,11 @@ internal sealed class RenderSession : IDisposable
     {
         using var snapshot = update.Snapshot;
         int generation = snapshot?.Generation ?? update.Generation;
-        if (!IsCurrent(generation)) return;
+        if (!IsCurrent(generation))
+        {
+            if (snapshot != null) TraceFrame(snapshot, "discard", "stale-prepared");
+            return;
+        }
         var previous = _preparedFrame.Value;
         _preparedFrame.Value = update;
         try
@@ -248,7 +315,11 @@ internal sealed class RenderSession : IDisposable
             _stats.RecordRenderUpdate(update.HasFrame);
             await processFrame(generation, update.HasFrame);
         }
-        finally { _preparedFrame.Value = previous; }
+        finally
+        {
+            _preparedFrame.Value = previous;
+            if (snapshot != null) TraceFrame(snapshot, "lease-release", "processed");
+        }
     }
 
     public Task RenderFrameAsync(int generation, Action? afterFrameProcessed = null)
@@ -258,7 +329,11 @@ internal sealed class RenderSession : IDisposable
         PreparedFrame? prepared = _preparedFrame.Value;
         return _gate.RunAsync(async () =>
         {
-            if (!IsCurrent(generation) || _context == IntPtr.Zero) return;
+            if (!IsCurrent(generation) || _context == IntPtr.Zero)
+            {
+                if (prepared?.Snapshot != null) TraceFrame(prepared.Snapshot, "discard", "stale-before-ui-gate");
+                return;
+            }
             if (prepared != null)
             {
                 if (prepared.Snapshot != null && prepared.Snapshot.Generation == generation)
@@ -266,26 +341,60 @@ internal sealed class RenderSession : IDisposable
                 return;
             }
             using var frame = await _thread.InvokeAsync(() => RenderNativeSnapshot(generation));
-            if (frame != null && IsCurrent(generation)) PublishSnapshot(frame, afterFrameProcessed);
+            if (frame != null)
+            {
+                if (IsCurrent(generation)) PublishSnapshot(frame, afterFrameProcessed);
+                else TraceFrame(frame, "discard", "stale-explicit-render");
+            }
         });
     }
 
     private void PublishSnapshot(RenderedFrameSnapshot frame, Action? afterFrameProcessed)
     {
         GapRenderFrameDecision decision = GetGapRenderDecision();
-        if (decision == GapRenderFrameDecision.Hold) return;
-        if (!IsCurrent(frame.Generation) || frame.Sequence < _lastAppliedSequence ||
-            !_buffers.CopySnapshotToPixelBuffer(frame)) return;
+        if (decision == GapRenderFrameDecision.Hold) { TraceFrame(frame, "discard", "gap-hold"); return; }
+        if (!IsCurrent(frame.Generation)) { TraceFrame(frame, "discard", "stale-before-ui-copy"); return; }
+        if (frame.Sequence < _lastAppliedSequence) { TraceFrame(frame, "discard", "older-than-applied"); return; }
+        if (!CopySnapshotToUi(frame)) return;
         _lastAppliedSequence = frame.Sequence;
         _lastFrameWidth = frame.Width;
         _lastFrameHeight = frame.Height;
         GapState state = _getGapState();
-        RenderFramePublicationDispatcher.Execute(
-            decision,
-            publishNormalFrame: () => _publishPipeline.Publish(_buffers.PixelPtr, frame.Width, frame.Height,
-                frame.RenderMs, _spoutOutput.IsEnabled, state),
-            captureWithoutPublishing: () => _freezeCopier.CopyIfNeeded(state, frame.Width, frame.Height),
-            afterFrameProcessed);
+        long started = _trace.IsEnabled ? Stopwatch.GetTimestamp() : 0;
+        bool succeeded = false;
+        try
+        {
+            RenderFramePublicationDispatcher.Execute(
+                decision,
+                publishNormalFrame: () => _publishPipeline.Publish(_buffers.PixelPtr, frame.Width, frame.Height,
+                    frame.RenderMs, _spoutOutput.IsEnabled, state, _trace, _traceSessionId, frame.Generation, frame.Sequence),
+                captureWithoutPublishing: () => CopyFreezeWithTrace(frame, state),
+                afterFrameProcessed);
+            succeeded = true;
+        }
+        finally
+        {
+            if (_trace.IsEnabled)
+                _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "publish",
+                    !succeeded ? "exception" : decision == GapRenderFrameDecision.None ? "published" : "capture-only",
+                    started, Stopwatch.GetTimestamp(), frame.Width, frame.Height);
+        }
+    }
+
+    private bool CopySnapshotToUi(RenderedFrameSnapshot frame)
+    {
+        if (!_trace.IsEnabled) return _buffers.CopySnapshotToPixelBuffer(frame);
+        long started = Stopwatch.GetTimestamp(); string outcome = "exception";
+        try { bool copied = _buffers.CopySnapshotToPixelBuffer(frame); outcome = copied ? "copied" : "rejected"; return copied; }
+        finally { _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "ui-copy", outcome, started, Stopwatch.GetTimestamp(), frame.Width, frame.Height); }
+    }
+
+    private void CopyFreezeWithTrace(RenderedFrameSnapshot frame, GapState state)
+    {
+        if (!_trace.IsEnabled) { _freezeCopier.CopyIfNeeded(state, frame.Width, frame.Height); return; }
+        long started = Stopwatch.GetTimestamp(); string outcome = "exception";
+        try { outcome = _freezeCopier.CopyIfNeeded(state, frame.Width, frame.Height) ? "copied" : "not-needed"; }
+        finally { _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "freeze-copy", outcome, started, Stopwatch.GetTimestamp(), frame.Width, frame.Height); }
     }
 
     /// <summary>Redraw only after the owner verifies paused seek completion and media identity.</summary>
@@ -297,11 +406,24 @@ internal sealed class RenderSession : IDisposable
         {
             if (!IsCurrent(generation) || !isAttemptCurrent() || _context == IntPtr.Zero) return;
             using var frame = await _thread.InvokeAsync(() => RenderNativeSnapshot(generation));
-            if (frame == null || !IsCurrent(generation) || !isAttemptCurrent()) return;
-            if (!_buffers.CopySnapshotToPixelBuffer(frame)) return;
-            _buffers.EnsureFrozenFrameBuffer(frame.Width, frame.Height);
-            copied = _buffers.TryCopyToFrozenFrame(frame.Width, frame.Height) &&
-                _buffers.TryCopyFrozenToGapFreezeFrame(frame.Width, frame.Height);
+            if (frame == null) return;
+            if (!IsCurrent(generation) || !isAttemptCurrent()) { TraceFrame(frame, "discard", "stale-gap-capture"); return; }
+            if (!CopySnapshotToUi(frame)) return;
+            long started = _trace.IsEnabled ? Stopwatch.GetTimestamp() : 0;
+            bool captureReturned = false;
+            try
+            {
+                _buffers.EnsureFrozenFrameBuffer(frame.Width, frame.Height);
+                copied = _buffers.TryCopyToFrozenFrame(frame.Width, frame.Height) &&
+                    _buffers.TryCopyFrozenToGapFreezeFrame(frame.Width, frame.Height);
+                captureReturned = true;
+            }
+            finally
+            {
+                if (_trace.IsEnabled)
+                    _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "freeze-copy",
+                        !captureReturned ? "exception" : copied ? "explicit-captured" : "rejected", started, Stopwatch.GetTimestamp(), frame.Width, frame.Height);
+            }
             if (copied) _lastAppliedSequence = Math.Max(_lastAppliedSequence, frame.Sequence);
         });
         return copied;

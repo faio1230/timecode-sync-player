@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.IO;
+using System.Text.Json;
 using System.Windows.Threading;
 using FluentAssertions;
 using TimecodeSyncPlayer.Contracts;
@@ -8,6 +10,115 @@ namespace TimecodeSyncPlayer.Tests;
 
 public sealed class RenderSessionTests
 {
+    [Fact]
+    public Task RenderTrace_RecordsAllNativeCallsSeparatelyFromPublishedStages() => OnUi(async () =>
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path))
+            using (var fixture = new Fixture(accuracyTrace: trace))
+            {
+                fixture.Api.RenderReturnCode = -1;
+                await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+                fixture.Api.RenderReturnCode = 0;
+                fixture.Session.Width = fixture.Session.Height = 0;
+                await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+                fixture.Session.Width = fixture.Session.Height = 2;
+                await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+                fixture.Api.Calls.Count(c => c.Operation == "render").Should().Be(3);
+                fixture.Spout.Frames.Should().ContainSingle();
+            }
+            var stages = SyncAccuracyTraceTests.Read(path).Where(x => x.GetProperty("type").GetString() == "render-stage").ToArray();
+            var native = stages.Where(x => Stage(x) == "native-render").ToArray();
+            native.Should().HaveCount(3);
+            native[0].GetProperty("returnCode").GetInt32().Should().Be(-1);
+            native[1].GetProperty("width").GetInt32().Should().Be(16);
+            stages.Count(x => Stage(x) == "discard" && x.GetProperty("outcome").GetString() == "native-not-publishable").Should().Be(2);
+            var ready = stages.Single(x => Stage(x) == "snapshot-copy");
+            ready.GetProperty("attemptId").GetInt64().Should().Be(3);
+            ready.GetProperty("outcome").GetString().Should().Be("ready");
+            var ui = stages.Single(x => Stage(x) == "ui-copy");
+            var publish = stages.Single(x => Stage(x) == "publish");
+            foreach (var stage in stages)
+                stage.GetProperty("endTicks").GetInt64().Should().BeGreaterThanOrEqualTo(stage.GetProperty("startTicks").GetInt64());
+            ready.GetProperty("endTicks").GetInt64().Should().BeLessThanOrEqualTo(ui.GetProperty("startTicks").GetInt64());
+            ui.GetProperty("endTicks").GetInt64().Should().BeLessThanOrEqualTo(publish.GetProperty("startTicks").GetInt64());
+            stages.Where(x => new[] { "bitmap", "spout", "freeze-copy" }.Contains(Stage(x))).Select(Stage).Should().Equal("bitmap", "spout", "freeze-copy");
+            stages.Where(x => x.GetProperty("sequence").ValueKind != JsonValueKind.Null).Select(x => x.GetProperty("sequence").GetInt64()).Distinct().Should().Equal(1);
+            native[0].GetProperty("threadId").GetInt32().Should().NotBe(ui.GetProperty("threadId").GetInt32());
+        }
+        finally { File.Delete(path); }
+    });
+
+    [Fact]
+    public Task RenderTrace_NativeExceptionIsRecordedWithoutInventingSnapshot() => OnUi(async () =>
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path))
+            using (var fixture = new Fixture(accuracyTrace: trace))
+            {
+                fixture.Api.RenderFailure = new InvalidOperationException("native test failure");
+                Func<Task> render = () => fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+                await render.Should().ThrowAsync<InvalidOperationException>();
+                fixture.Spout.Frames.Should().BeEmpty();
+            }
+            var stages = SyncAccuracyTraceTests.Read(path).Where(x => x.GetProperty("type").GetString() == "render-stage").ToArray();
+            var failure = stages.Should().ContainSingle().Which;
+            Stage(failure).Should().Be("native-render");
+            failure.GetProperty("outcome").GetString().Should().Be("exception");
+            failure.GetProperty("returnCode").ValueKind.Should().Be(JsonValueKind.Null);
+        }
+        finally { File.Delete(path); }
+    });
+
+    [Fact]
+    public Task RenderTrace_WithheldUiRecordsMailboxReplacementAndShutdownDiscard() => OnUi(async () =>
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path))
+            using (var fixture = new Fixture(accuracyTrace: trace))
+            {
+                fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
+                callback!(IntPtr.Zero);
+                await WaitUntil(() => fixture.Scheduled.Count == 1);
+                callback(IntPtr.Zero);
+                await WaitUntil(() => fixture.Api.Calls.Count(c => c.Operation == "render") == 2);
+                await WaitUntil(() => fixture.Session.ConsumeUpdateStats().CoalescedRequests == 1);
+                fixture.Session.Stop();
+                fixture.Spout.Frames.Should().BeEmpty();
+            }
+            var stages = SyncAccuracyTraceTests.Read(path).Where(x => x.GetProperty("type").GetString() == "render-stage").ToArray();
+            stages.Count(x => Stage(x) == "native-render").Should().Be(2);
+            stages.Where(x => Stage(x) == "discard").Select(x => x.GetProperty("outcome").GetString()).Should().Equal("mailbox-replaced", "mailbox-disposed");
+            stages.Should().NotContain(x => Stage(x) == "publish");
+        }
+        finally { File.Delete(path); }
+    });
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task RenderTrace_DoesNotChangeNativeCallsOrPublication(bool enabled) => OnUi(async () =>
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using var trace = SyncAccuracyTrace.Create(enabled ? path : null);
+            using var fixture = new Fixture(accuracyTrace: trace);
+            await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+            fixture.Api.Calls.Select(x => x.Operation).Should().Equal("create", "callback", "render");
+            fixture.Spout.Frames.Should().ContainSingle().Which.Pixel.Should().Be(73);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    });
+
+    private static string Stage(JsonElement value) => value.GetProperty("stage").GetString()!;
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -509,10 +620,10 @@ public sealed class RenderSessionTests
             .GetField("_buffers", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(Session)!;
         public PixelBufferManager NativeBuffers => (PixelBufferManager)typeof(RenderSession)
             .GetField("_nativeBuffers", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(Session)!;
-        public Fixture(bool initialize = true)
+        public Fixture(bool initialize = true, SyncAccuracyTrace? accuracyTrace = null)
         {
             Session = new RenderSession(Api, Spout, new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)),
-                () => State, () => GapBehavior.Freeze, _scheduled.Enqueue, () => FreezeConfirmed);
+                () => State, () => GapBehavior.Freeze, _scheduled.Enqueue, () => FreezeConfirmed, accuracyTrace);
             if (!initialize) return;
             Session.Create(new IntPtr(1)).Should().BeTrue();
             Session.AllocateParameters();
