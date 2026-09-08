@@ -1,5 +1,7 @@
 # 再起動後のGPU記録採取（2026-09-09）
 
+最新到達点：NonPagedMemoryの追加後にGPU schedulerイベントを収録でき、GetData未完了によるSpout無効化と同じETLを保存した。失敗の根本原因は未特定。以下は各試験時点の判断を時系列で保持する。
+
 `refactor/session-lifecycle` の `617f038` から再開。既存の未追跡AGENTS.md、製品コード・DLL、通常OBS、元の素材・プロジェクトを保持した。証跡はGit管理外の `TestResults/obs-clean/restart-investigation-20260909-021138/`。
 
 ## 再起動前の停止記録
@@ -59,4 +61,56 @@
 
 組込み設定はDxgKrnlをGUIDで指定し、`NonPagedMemory=true`、`Stack=true`、`Strict=true`、開始時のCaptureStateを使用している。現profileとはこれらが異なる。Microsoftもkernel-mode providerの採取にNonPagedMemoryを指定する手順を示しているため、次はこのメモリ設定を含む差を確認する。ただし今回それらの変更・再採取は実施しておらず、未収録の確定原因とは扱わない。[Microsoftのkernel-mode採取手順](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/capture-and-view-tracelogging-data)
 
-今回の採取ではSpout無効化が再現していない。以前の単発失敗、実動画でのGetData未完了100ms、timeout後の安全な回収、標準OBSの画像混在は引き続き未解決である。
+## NonPagedMemoryの追加と失敗時ETLの取得
+
+`3644823`を起点に、Dxg providerの`NonPagedMemory="true"`だけを追加した。keyword `0x04008277`、Level、provider名、stack、CaptureState、バッファ数・サイズは同時変更していない。Microsoftの仕様ではpaged memoryのsessionへkernel-mode providerは記録できず、WPRのNonPagedMemory既定値はfalseである。効果はsessionのバッファメモリ種別に及ぶため、Dxgイベント1件だけの割当設定ではない。Graphicsの要求約128MiBをnonpagedにする設定で、両collector合計の要求約256MiBは維持した。実割当・metadata等まで含む厳密な使用量上限とはしない。[ETW logging mode](https://learn.microsoft.com/en-us/windows/win32/etw/logging-mode-constants)、[WPR EventProvider](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/eventprovider)
+
+原始証跡rootは `TestResults/obs-clean/gpu-nonpaged-20260909-023342-fc4021a6/`。変更前後のprofileを別ファイルへ保存し、変更後SHA256は `345DAC4DAC9A8DCAFC442EDF24E40E1FA687D37B2250E296A12D918D0E9E25F6`。非昇格preflightでprofile解釈成功、ユーザーの既存許可に従いUAC昇格し、同じ送信のみの固定4K60・予定30秒試験を1回実行した。既存のユーザーPowerShell PID22708は操作せず、OBS・音声等の別負荷試験は併走していない。
+
+### 製品の失敗と記録の保存を分けた判定
+
+今回の計測wallSecondsは14.4260727秒で終了し、748回目の呼出しでSpout無効化を検出した。この所要時間は失敗時の診断保存・後処理も含み、無効化の発生時刻を表さない。製品logのcount747はそれ以前の成功数で、プローブFrameIndex747と一致する。748回を成功送信数としない。
+
+| 項目 | 結果 |
+| --- | --- |
+| プローブ | exit1、completed=false、disposed=true |
+| 予定欠落 | 最後の試行slot755までに8件 |
+| GetData | S_FALSE／completed=0、poll9回、gpuElapsed102ms |
+| 処理区間 | mutex0.020ms、SendImage38.704ms、poll103.281ms |
+| transfer終了判定まで | 142.354ms |
+| deviceRemovedReason | S_OK。GPU完了の証明ではない |
+| 外側SendFrame | 1,791.2305ms。診断保存・後処理を含む |
+| 診断 | slow-send Warning3件＋失敗Warning1件 |
+| WPR | 保存成功、stop exit0、watchdog・cleanup errorなし |
+
+`sender-only/sender.jsonl.failure.json` はnative cleanup前の例外を保持する。checkpointはUTC `2026-09-08T17:34:48.1539449Z`、QPC23,748,575,044。プローブの失敗呼出し開始QPCは23,746,068,250、戻りは23,763,980,555。開始からcheckpointまで250.6794ms、checkpointから戻りまで1,540.5511msある。後半にはJSON化・ディスクへのflushとnative cleanupが含まれ、内訳の時間は測定していない。外側の1.79秒をGPU待機時間と断定しない。
+
+142.354msはSpoutFrameTransferの内部進入から失敗判定までの時間で、外側SendFrame進入との差、判定後のDeviceRemovedReason・例外整形・loggingの時間は未分離。相対所要時間だけから絶対的なGetData開始終了時刻を決めない。失敗後の残りの予定を観測済みの欠落へ水増しせず、`failure-audit.json`で試行済みslot・成功数・失敗1件・時刻会計・入力SHAの整合を確認した。
+
+WPRの保存は約114秒を要したが完了した。`sender-only/result.json`はtraceSaved=true／senderExit1を別々に記録し、ETLは171,966,464 bytes。採取後の試験プロセス0・WPR停止、既存PowerShellの存続を確認した。この試験の確認時間帯に新しいLiveKernelEvent／GPU関連System警告は見つからなかった。これは過去のPC停止との同一原因や因果関係を否定する証明ではない。
+
+### GPU収録と時計の監査
+
+属性追加後、初めてDxgKrnlの実イベントを確認した。ID20 UpdateContextStatusには`0x4000000000008000`、ID432 SchedulingLogには`0x4000000004000000`があり、追加したscheduler keywordに対応する。CPU・D3D11・DXGIも記録された。これは今回の設定で収録できた証拠であり、Spout無効化の原因をNonPagedMemoryやGPU採取負荷だと決めるものではない。
+
+tracerptは164 buffers／1,970,430 events／EventsLost=0／報告時間17秒。schema mismatch警告は残り、全payloadの意味解釈を保証しない。別担当がOpenTraceだけで取得したheaderもEventsLost=0／BuffersLost=0、QPC周波数10,000,000、記録範囲UTC17:34:34.8041313〜17:34:51.8891356を報告した。メモリリングの全期間保持はloss値だけでは証明できない。
+
+headerのBootTimeからQPCを単純換算するとcheckpointの壁時計から203.5595msずれる反例があり、この換算は使用しない。代わりに先頭1buffer・3イベントだけをraw timestampで読み、同じGUID／ID／version／opcode／PID／TID／48bytes payloadのイベントをGet-WinEventのUTC表示と一意に対応付けた。対応はQPC23,615,076,894 ↔ UTC17:34:34.8041313。この原点でcheckpointを換算すると17:34:48.1539463となり、checkpoint自身のUTCとの差は+1.4µsだった。単一原点の線形対応を、長時間の壁時計補正等まで保証するものとはしない。
+
+先頭読みはBufferCallbackで1buffer後に中断し、ProcessTraceのERROR_CANCELLEDとCloseTrace成功を確認した。実装・SDK構造体照合・clock原点・限界は `sender-only/header-audit/`、providerと失敗窓の原文は `sender-only/etl-audit/` に保持する。
+
+今回、失敗とGPUイベントが同じETLに揃うところまで進んだ。ただし過去の失敗との同一原因、timeout後の安全な回収、標準OBSの画像混在は引き続き未解決である。この採取時点では製品コード・DLL・100ms期限・hwdec既定は変更していない。
+
+### 送信スレッド識別の追加
+
+失敗窓のGPU／CPUイベントを限定して調べたが、header PIDが送信プロセスと一致するだけではGetDataを呼んだスレッドを特定できなかった。GPU submit側のTID27312と初期化側の候補TID29996を、そのままSendFrameの実行スレッドとは扱わない。候補29996の最初の時間集計にはPowerShellのDateTime文字列再変換による誤りがあり、原始結果を保持して棄却した。修正版`cpu-candidate29996-state-summary-v2.json`は窓内の時間会計を検証したが、候補の集計から製品のCPU待ちを確定することはできない。
+
+次回の照合に備え、送信プローブへ`start.nativeThreadId`と失敗checkpointの`nativeThreadId`を追加した。前者は計測前に取得した同期SendFrame呼出し元、後者はログEmit時点のWindows OSスレッドIDである。各送信ループには取得処理を追加していない。製品の送信・期限・デコード設定は変更していない。
+
+Debugビルドは警告0・エラー0。独立担当がプローブのMainとGPUを起動せずreflectionで6項目を検証し、別スレッドからの失敗ログのID、PID／QPC、元の例外、重複checkpoint抑止、slow Warningではcheckpointファイルを作らないこと、保存失敗の非伝播を確認した。Warningのメモリ保持・summary出力は維持している。証跡は同じrootの`probe-thread-review/`。startフィールドの実送信との照合は、次の実採取で別途判定する。
+
+ビルド後の製品ソース差分はないが、製品DLLのSHA256は`08CC7D05…C5C2F9`から`E910DF35C0A20F56B1E91CB85EADE5DB99EAD3C7D9EFBA1FA01CA74B46CF907B`へ変わった。生成されるinformational versionのGit revisionが`2b649403`から`3644823`へ変わったことを確認しており、以前のDLLとbyte同一とはしない。`product-build-versions.json`と`post-diagnostics-build.json`に記録した。新プローブDLLのSHA256は`9E6DDF78705F483BF8088E2968EC693CF27AABE18F0CC3AF3CBDB9496CB7876F`。
+
+### ID追加後の実採取要求（保留）
+
+03:01:20 JSTに、同じprofileで送信のみ4K60・予定30秒を1回採取するWindows UACを要求した。要求と入力snapshotは`TestResults/obs-clean/gpu-threadid-20260909-030120-86a0c9bc/`に保存している。03:07 JSTの確認時点ではconsentプロセスが存在し、昇格Processの取得・sender起動・WPR開始は確認できず、承認待ちである。この要求を実施済みの試験として数えない。次は承認後の実記録を保存し、start／失敗checkpointのOS TIDをCPUイベントと照合する。

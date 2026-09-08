@@ -44,6 +44,9 @@ Log.Logger = diagnosticLogger;
 GCHandle[] handles = new GCHandle[colors.Length];
 var records = new List<SendRecord>(fps * seconds);
 using var process = Process.GetCurrentProcess();
+// This probe calls SendFrame synchronously on this thread. Record the OS ID once,
+// outside measurement, so ETW CSwitch/ReadyThread can identify the caller.
+uint sendThreadId = ProbeNativeThread.GetCurrentThreadId();
 long frequency = Stopwatch.Frequency;
 long start = 0, ended = 0, missedSlots = 0;
 double cpuStart = 0, cpuEnd = 0;
@@ -127,7 +130,7 @@ try
     using var writer = new StreamWriter(output, false);
     writer.WriteLine(JsonSerializer.Serialize(new { @event = "start", mode = "baseline", width, height, fps, seconds,
         colors, alpha = 255, requestedSenderName = SpoutOutput.DefaultSenderName, qpcFrequency = frequency,
-        startQpc = start, processId = Environment.ProcessId, initialized,
+        startQpc = start, processId = Environment.ProcessId, nativeThreadId = sendThreadId, initialized,
         failureCheckpoint,
         cpuMeasure = "process CPU seconds includes pacing and sends, excludes buffer setup/dispose/serialization",
         transportMissMeasure = "unavailable: product SendFrame returns void; receiver observation is required" }));
@@ -209,7 +212,7 @@ sealed class MemoryDiagnosticSink(string checkpointPath) : ILogEventSink
             {
                 @event = "send-failure-before-cleanup", utc = DateTimeOffset.UtcNow,
                 qpc = Stopwatch.GetTimestamp(), qpcFrequency = Stopwatch.Frequency,
-                processId = Environment.ProcessId,
+                processId = Environment.ProcessId, nativeThreadId = ProbeNativeThread.GetCurrentThreadId(),
                 timestamp = logEvent.Timestamp, level = logEvent.Level.ToString(),
                 messageTemplate = logEvent.MessageTemplate.Text, message = logEvent.RenderMessage(),
                 properties = logEvent.Properties.ToDictionary(property => property.Key,
@@ -250,4 +253,10 @@ sealed class MemoryDiagnosticSink(string checkpointPath) : ILogEventSink
         SequenceValue sequence => sequence.Elements.Select(DiagnosticValue).ToArray(),
         _ => value.ToString()
     };
+}
+
+internal static class ProbeNativeThread
+{
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    internal static extern uint GetCurrentThreadId();
 }

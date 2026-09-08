@@ -13,7 +13,7 @@
     </SystemProvider>
     <!-- Keep the existing base/resource flags and include GPUScheduler (0x8000)
          and HardwareSchedulingLog (0x4000000), as listed by local logman. -->
-    <EventProvider Id="Dxg" Name="Microsoft-Windows-DxgKrnl" Level="5"><Keywords><Keyword Value="0x04008277"/></Keywords></EventProvider>
+    <EventProvider Id="Dxg" Name="Microsoft-Windows-DxgKrnl" Level="5" NonPagedMemory="true"><Keywords><Keyword Value="0x04008277"/></Keywords></EventProvider>
     <EventProvider Id="D3D11" Name="Microsoft-Windows-Direct3D11" Level="6"><Keywords><Keyword Value="0xf"/></Keywords></EventProvider>
     <EventProvider Id="Dxgi" Name="Microsoft-Windows-DXGI" Level="6"><Keywords><Keyword Value="0xf"/></Keywords></EventProvider>
     <Profile Id="SpoutGpu.Verbose.Memory" Name="SpoutGpu" Description="Bounded-memory CPU scheduling and D3D11 Spout diagnostic" LoggingMode="Memory" DetailLevel="Verbose">
