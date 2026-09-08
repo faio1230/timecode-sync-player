@@ -32,10 +32,11 @@ public sealed class SpoutOutput : ISpoutOutput
     /// </summary>
     public bool TryInitialize()
     {
+        if (_disposed) return false;
+
         _native.ValidateObjectSize();
 
         if (_initialized) return true;
-        if (_disposed) return false;
 
         try
         {
@@ -122,8 +123,11 @@ public sealed class SpoutOutput : ISpoutOutput
     {
         if (_disposed) return;
         _disposed = true;
+        bool wasInitialized = _initialized;
+        _initialized = false;
+        IsEnabled = false;
 
-        if (_initialized)
+        if (wasInitialized)
         {
             try { _native.ReleaseSender(_obj); }
             catch (Exception ex) { Log.Warning(ex, "SpoutNative.ReleaseSender failed during dispose"); }

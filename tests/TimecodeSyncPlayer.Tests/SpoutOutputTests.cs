@@ -162,7 +162,7 @@ public class SpoutOutputTests
     }
 
     [Fact]
-    public void TryInitialize_AfterDisposeValidatesThenReturnsFalse()
+    public void TryInitialize_AfterDisposeReturnsFalseWithoutCallingNative()
     {
         var native = new FakeNativeApi();
         var output = new SpoutOutput(native);
@@ -171,7 +171,7 @@ public class SpoutOutputTests
 
         output.TryInitialize().Should().BeFalse();
 
-        native.Calls.Should().Equal("Validate");
+        native.Calls.Should().BeEmpty();
     }
 
     [Theory]
@@ -291,6 +291,21 @@ public class SpoutOutputTests
     }
 
     [Fact]
+    public void Dispose_InitializedEnabledOutputBecomesUnavailableAndSendFrameDoesNotCallNative()
+    {
+        var native = new FakeNativeApi();
+        var output = CreateInitializedEnabledOutput(native);
+
+        output.Dispose();
+        native.Calls.Clear();
+
+        output.IsAvailable.Should().BeFalse();
+        output.IsEnabled.Should().BeFalse();
+        output.SendFrame(new IntPtr(1), 2, 3);
+        native.Calls.Should().BeEmpty();
+    }
+
+    [Fact]
     public void Dispose_ReleaseAndDestroyExceptionsAreSwallowed()
     {
         var native = new FakeNativeApi
@@ -306,6 +321,14 @@ public class SpoutOutputTests
         act.Should().NotThrow();
         native.Calls.Should().Contain($"Release:{native.Object}");
         native.Calls.Should().Contain($"Destroy:{native.Object}");
+
+        native.Calls.Clear();
+        output.Dispose();
+        output.IsAvailable.Should().BeFalse();
+        output.IsEnabled.Should().BeFalse();
+        output.TryInitialize().Should().BeFalse();
+        output.SendFrame(new IntPtr(1), 2, 3);
+        native.Calls.Should().BeEmpty();
     }
 
     private static SpoutOutput CreateInitializedEnabledOutput(FakeNativeApi native)
