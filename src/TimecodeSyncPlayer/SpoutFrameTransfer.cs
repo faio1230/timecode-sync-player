@@ -25,6 +25,7 @@ internal interface ISpoutGpuCompletion : IDisposable
     void End();
     void Flush();
     int GetData(out int completed);
+    int GetDeviceRemovedReason();
 }
 
 // UI-thread owned; no asynchronous work is permitted while the OS mutex is held.
@@ -62,6 +63,7 @@ internal sealed class SpoutFrameTransfer : ISpoutFrameTransfer
         long? gpuElapsedMs = null;
         bool sendSucceeded = false;
         bool sendReturnedFalse = false;
+        bool sendAttempted = false;
         try
         {
             string name = _backend.Prepare(width, height);
@@ -81,6 +83,7 @@ internal sealed class SpoutFrameTransfer : ISpoutFrameTransfer
                 catch (AbandonedMutexException) { acquired = true; throw; }
                 if (!acquired) throw new TimeoutException($"Spout mutex wait timed out: {name}");
                 timing.Begin("SendImage", Timestamp());
+                sendAttempted = true;
                 if (!_backend.SendImage(pixels, width, height, pitch)) { sendReturnedFalse = true; return false; }
                 timing.Begin("End", Timestamp());
                 long start = _milliseconds();
@@ -138,14 +141,25 @@ internal sealed class SpoutFrameTransfer : ISpoutFrameTransfer
             // Only format on failure, after leaving the mutex. Preserve the final
             // query result for pending timeouts and native failures.
             // These times exclude SpoutOutput's invalidation/native destruction.
-            timing.End(Timestamp());
+            long failedAt = Timestamp();
+            timing.End(failedAt);
+            int? deviceRemovedReason = null;
+            Exception? deviceReasonFailure = null;
+            if (sendAttempted)
+            {
+                deviceRemovedReason = ReadDeviceRemovedReason(out deviceReasonFailure);
+                ex.Data["SpoutDeviceRemovedReason"] = deviceRemovedReason;
+                if (deviceReasonFailure != null) ex.Data["SpoutDeviceRemovedReasonException"] = deviceReasonFailure;
+            }
             ex.Data["SpoutTransfer"] = $"stage={failureStage ?? timing.Stage}; sender={attemptedName ?? "<unregistered>"}; " +
                 $"size={width}x{height}; polls={polls}; hr={lastHr?.ToString("X8") ?? "n/a"}; " +
                 $"completed={lastCompleted}; gpuElapsedMs={gpuElapsedMs}; " +
                 $"prepareMs={Duration(timing.PrepareMs)}; createMutexMs={Duration(timing.CreateMutexMs)}; mutexMs={Duration(timing.MutexMs)}; " +
                 $"sendMs={Duration(timing.SendMs)}; endMs={Duration(timing.EndMs)}; flushMs={Duration(timing.FlushMs)}; " +
                 $"pollMs={Duration(timing.PollMs)}; releaseMutexMs={Duration(timing.ReleaseMutexMs)}; " +
-                $"totalBeforeCleanupMs={Elapsed(entered, Timestamp()):F3}" +
+                $"totalBeforeCleanupMs={Elapsed(entered, failedAt):F3}; " +
+                $"deviceRemovedReason={deviceRemovedReason?.ToString("X8") ?? "n/a"}; " +
+                $"deviceReasonError={deviceReasonFailure?.Message ?? "none"}" +
                 (ex.Data["SpoutTransferPriorException"] is Exception prior
                     ? $"; priorFailureStage={ex.Data["SpoutTransferPriorStage"]}; priorFailure={prior}" : "");
             throw;
@@ -158,6 +172,9 @@ internal sealed class SpoutFrameTransfer : ISpoutFrameTransfer
             long finished = Timestamp();
             if (failureStage == null && (sendReturnedFalse || (sendSucceeded && Elapsed(entered, finished) > 1000.0 / 60)))
             {
+                int? deviceRemovedReason = null;
+                Exception? deviceReasonFailure = null;
+                if (sendReturnedFalse) deviceRemovedReason = ReadDeviceRemovedReason(out deviceReasonFailure);
                 (_logger ?? Log.Logger).Warning(sendReturnedFalse
                     ? "SpoutFrameTransfer: SendImage returned false {@Transfer}"
                     : "SpoutFrameTransfer: slow send {@Transfer}", new
@@ -167,11 +184,21 @@ internal sealed class SpoutFrameTransfer : ISpoutFrameTransfer
                     StartQpc = entered, EndQpc = finished, QpcFrequency = Stopwatch.Frequency,
                     Polls = polls, LastHResult = lastHr, LastCompleted = lastCompleted,
                     GpuElapsedMs = gpuElapsedMs, timing.PrepareMs, timing.CreateMutexMs,
+                    DeviceRemovedReason = deviceRemovedReason, DeviceReasonError = deviceReasonFailure?.Message,
                     timing.MutexMs, timing.SendMs, timing.EndMs, timing.FlushMs,
                     timing.PollMs, timing.ReleaseMutexMs, TotalBeforeCleanupMs = Elapsed(entered, finished)
                 });
             }
         }
+    }
+
+    private int? ReadDeviceRemovedReason(out Exception? failure)
+    {
+        // Failure diagnostics only, after mutex release and before native destruction.
+        // S_OK here does not establish GPU completion or make timeout cleanup safe.
+        // A diagnostic failure must not replace the original transfer failure.
+        try { failure = null; return _completion.GetDeviceRemovedReason(); }
+        catch (Exception ex) { failure = ex; return null; }
     }
 
     private long Timestamp() => _timestamp?.Invoke() ?? Stopwatch.GetTimestamp();

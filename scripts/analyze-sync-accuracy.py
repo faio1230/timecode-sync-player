@@ -17,6 +17,8 @@ PHASES = {"black-sweep": (0, 35), "freeze-sweep": (0, 35),
           "seek-a": (3, 5), "seek-b": (15, 5), "seek-c": (27, 5), "seek-back": (3, 5)}
 THRESHOLDS = (20, 40, 80, 250)
 EPS = 1e-7
+TRACE_DATA_TYPES = ("ltc", "frame", "render-stage")
+TRACE_TYPES = ("meta", "end") + TRACE_DATA_TYPES
 
 
 def number(value):
@@ -25,6 +27,17 @@ def number(value):
 
 def integer(value):
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def valid_render_stage(event):
+    """Validate the diagnostic envelope without using it as frame evidence."""
+    return (all(integer(event.get(key)) for key in
+                ("sessionId", "generation", "startTicks", "endTicks", "width", "height", "threadId")) and
+            event["sessionId"] > 0 and event["threadId"] > 0 and
+            event["width"] >= 0 and event["height"] >= 0 and
+            0 <= event["startTicks"] <= event["endTicks"] == event["ticks"] and
+            all(isinstance(event.get(key), str) and event[key] for key in ("stage", "outcome")) and
+            all(event.get(key) is None or integer(event[key]) for key in ("attemptId", "sequence", "returnCode")))
 
 
 def distribution(rows, key):
@@ -129,6 +142,19 @@ def analyze(events, fixture, journal):
         if not isinstance(event, dict) or not integer(event.get("ticks")):
             reasons.append("invalid-trace-event")
             continue
+        if event.get("type") not in TRACE_TYPES:
+            reasons.append("unknown-trace-event-type")
+            continue
+        # Render diagnostics share the writer/footer but are not pixel or LTC
+        # evidence. Accept only the declared extension version; never treat
+        # arbitrary new event types as a way to satisfy the footer count.
+        if event.get("type") == "render-stage" and (
+                not integer(meta.get("renderStageSchema")) or meta["renderStageSchema"] != 1):
+            reasons.append("unsupported-render-stage-schema")
+            continue
+        if event.get("type") == "render-stage" and not valid_render_stage(event):
+            reasons.append("invalid-render-stage-event")
+            continue
         if event.get("type") == "ltc" and (not number(event.get("seconds")) or event.get("fps") != 25):
             reasons.append("invalid-ltc-event")
             continue
@@ -152,9 +178,9 @@ def analyze(events, fixture, journal):
                 reasons.append("trace-dropped-events")
             if end["errors"]:
                 reasons.append("trace-write-errors")
-            if end["events"] != sum(e["type"] in ("ltc", "frame") for e in events):
+            if end["events"] != sum(e["type"] in TRACE_DATA_TYPES for e in events):
                 reasons.append("trace-event-count-mismatch")
-        if any(e["type"] in ("ltc", "frame") and e["ticks"] > end["ticks"] for e in events):
+        if any(e["type"] in TRACE_DATA_TYPES and e["ticks"] > end["ticks"] for e in events):
             reasons.append("trace-events-after-end")
 
     phases = []
@@ -342,6 +368,7 @@ def analyze(events, fixture, journal):
                           "signedError": "actual frame PTS minus expected media position", "intervalError": "signed distance from expected media position to frame interval",
                           "resolution": "25 fps LTC: 40 ms steps; frame interval depends on source fps; ms units do not prove 1 ms accuracy"},
                "trace": {"ltcEvents": len(rows), "frameEvents": len(frames), "end": ends[0] if len(ends) == 1 else None,
+                         "renderStageEvents": sum(e["type"] == "render-stage" for e in events),
                          "maxProbeMs": max((f["probeTicks"] * 1000 / frequency for f in frames), default=None),
                          "probeOverhead": {"samples": len(probes), "meanMs": sum(probes) / len(probes) if probes else None,
                                            "p95Ms": probes[math.ceil(len(probes) * .95) - 1] if probes else None,

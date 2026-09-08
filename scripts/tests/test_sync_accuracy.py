@@ -29,6 +29,13 @@ def ltc(t, seconds):
     return {"type": "ltc", "ticks": t, "seconds": seconds, "fps": 25}
 
 
+def render_stage(t):
+    return {"type": "render-stage", "ticks": t, "sessionId": 1, "attemptId": 1,
+            "generation": 0, "sequence": 1, "stage": "publish", "outcome": "normal",
+            "startTicks": t - 1, "endTicks": t, "width": 1920, "height": 1080,
+            "returnCode": None, "threadId": 7}
+
+
 def trace(events, **end):
     return [{"type": "meta", "ticks": 0, "schema": 1, "frequency": 1000,
              "boundary": "bitmap-publication", "reference": "decoded-ltc-receipt"}] + events + [
@@ -216,6 +223,72 @@ class AccuracyTests(unittest.TestCase):
         events.pop(10)
         summary, _ = self.analyzer.analyze(events, FIXTURE, journal)
         self.assertIn("trace-event-count-mismatch", summary["incompleteReasons"])
+
+    def test_render_stage_counts_toward_footer_without_changing_accuracy(self):
+        original, journal = complete_run()
+        baseline, baseline_rows = self.analyzer.analyze(original, FIXTURE, journal)
+        diagnostic = render_stage(1000)
+        # Pixel-looking fields on a diagnostic must not replace the bitmap.
+        diagnostic.update(clipId=3, frameIndex=700, markerValid=True, isBlack=False)
+        events = [{**original[0], "renderStageSchema": 1}, *original[1:-1], diagnostic,
+                  {**original[-1], "events": original[-1]["events"] + 1}]
+        summary, rows = self.analyzer.analyze(events, FIXTURE, journal)
+        self.assertTrue(summary["complete"], summary["incompleteReasons"])
+        self.assertEqual(rows, baseline_rows)
+        self.assertEqual(summary["all"], baseline["all"])
+        self.assertEqual(summary["trace"]["probeOverhead"], baseline["trace"]["probeOverhead"])
+        self.assertEqual(summary["trace"]["renderStageEvents"], 1)
+        self.assertEqual(summary["trace"]["frameEvents"], baseline["trace"]["frameEvents"])
+
+    def test_render_stage_does_not_hide_a_missing_frame_from_footer(self):
+        events, journal = complete_run()
+        events[0]["renderStageSchema"] = 1
+        events.insert(-1, render_stage(1000))
+        events[-1]["events"] += 1
+        missing = next(index for index, event in enumerate(events) if event["type"] == "frame")
+        events.pop(missing)
+        summary, _ = self.analyzer.analyze(events, FIXTURE, journal)
+        self.assertFalse(summary["complete"])
+        self.assertIn("trace-event-count-mismatch", summary["incompleteReasons"])
+
+    def test_render_stage_cannot_supply_missing_frame_coverage(self):
+        events = trace([render_stage(999), ltc(1000, 0), render_stage(1039), ltc(1040, .04)])
+        events[0]["renderStageSchema"] = 1
+        summary, rows = self.analyzer.analyze(events, FIXTURE, phase())
+        self.assertNotIn("trace-event-count-mismatch", summary["incompleteReasons"])
+        self.assertIn("frame-coverage:trace", summary["incompleteReasons"])
+        self.assertEqual([row["status"] for row in rows], ["unpublished", "unpublished"])
+        self.assertEqual(summary["trace"]["frameEvents"], 0)
+
+    def test_render_stage_after_end_is_incomplete(self):
+        events, journal = complete_run()
+        events[0]["renderStageSchema"] = 1
+        diagnostic = render_stage(events[-1]["ticks"] + 10)
+        events[-1]["events"] += 1
+        events.append(diagnostic)
+        summary, _ = self.analyzer.analyze(events, FIXTURE, journal)
+        self.assertIn("trace-events-after-end", summary["incompleteReasons"])
+
+    def test_render_stage_requires_supported_declared_schema_and_valid_envelope(self):
+        for schema in (None, 2, True):
+            with self.subTest(schema=schema):
+                events = trace([frame(999), render_stage(1000), ltc(1040, .04)])
+                if schema is not None:
+                    events[0]["renderStageSchema"] = schema
+                summary, _ = self.analyzer.analyze(events, FIXTURE, phase())
+                self.assertIn("unsupported-render-stage-schema", summary["incompleteReasons"])
+        events = trace([frame(999), {**render_stage(1000), "endTicks": 999}, ltc(1040, .04)])
+        events[0]["renderStageSchema"] = 1
+        summary, _ = self.analyzer.analyze(events, FIXTURE, phase())
+        self.assertIn("invalid-render-stage-event", summary["incompleteReasons"])
+
+    def test_unknown_event_type_is_not_silently_allowed_by_footer(self):
+        events, journal = complete_run()
+        # Even an apparently clean old footer cannot authorize an unknown type.
+        events.insert(-1, {"type": "future-observation", "ticks": 1000})
+        summary, _ = self.analyzer.analyze(events, FIXTURE, journal)
+        self.assertFalse(summary["complete"])
+        self.assertIn("unknown-trace-event-type", summary["incompleteReasons"])
 
     def test_unknown_only_clip_has_no_measurable_steady_coverage(self):
         events, journal = complete_run()
