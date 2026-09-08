@@ -24,6 +24,13 @@ internal sealed class E2EAppRunner : IDisposable
 
     public Process Process => _process;
 
+    public bool RequestMainWindowClose()
+    {
+        IntPtr handle = MainWindow.Properties.NativeWindowHandle.Value;
+        GetWindowThreadProcessId(handle, out int ownerId);
+        return ownerId == _process.Id && PostMessage(handle, 0x0010, IntPtr.Zero, IntPtr.Zero);
+    }
+
     public static (string ExePath, string? SkipReason) ResolvePrereqs()
     {
         string exe;
@@ -306,6 +313,10 @@ internal sealed class E2EAppRunner : IDisposable
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);

@@ -146,7 +146,15 @@ public sealed class SpoutDecodeComparisonE2ETests
                 phases.WriteLine(JsonSerializer.Serialize(new { type = "phase-end", name = phase.Name,
                     ticks = Stopwatch.GetTimestamp() }, MonkeyJson.Options));
             }
-            Assert.True(app.Process.CloseMainWindow(), "Could not request graceful app shutdown.");
+            journal.Write("close-targets", details: new
+            {
+                knownWindowHandle = app.MainWindow.Properties.NativeWindowHandle.Value.ToInt64(),
+                processWindowHandle = app.Process.MainWindowHandle.ToInt64(),
+                processWindowTitle = app.Process.MainWindowTitle,
+            });
+            // The process can contain an untitled native window that Process.MainWindowHandle
+            // selects. Close the WPF window already identified and exercised by UIA.
+            Assert.True(app.RequestMainWindowClose(), "Could not post close to the known WPF window.");
             Assert.True(app.Process.WaitForExit(10000), "App did not flush and exit within ten seconds.");
             Assert.Equal(0, app.Process.ExitCode);
             Assert.True(File.Exists(tracePath), "App produced no accuracy trace.");
@@ -183,7 +191,7 @@ public sealed class SpoutDecodeComparisonE2ETests
             signalOwner.Stop();
             if (!app.Process.HasExited)
             {
-                app.Process.CloseMainWindow();
+                app.RequestMainWindowClose();
                 app.Process.WaitForExit(10000);
             }
         }
