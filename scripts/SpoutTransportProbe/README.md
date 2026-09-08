@@ -22,10 +22,42 @@ $LASTEXITCODE
 
 JSONL は `start`、スロットごとの `send`、最後の `summary` から成ります。送信呼び出し時間、予定時刻からの遅れ、予定スロット欠落数、プロセスCPU時間、GC回数を記録します。CPU使用率は1コア相当を100%とし、待機処理のスピンも含みます。計測ループ内ではファイル・コンソールへの書き込みやログ出力先の設定を行いません。
 
-製品の Warning 以上のログはスレッドセーフなメモリ内キューに保持し、計測終了後に `summary.diagnosticLogs` へ時刻・レベル・メッセージ・例外詳細を出力します。初期化、送信、破棄で製品側が捕捉した例外も確認できます。通常の Information/Debug ログは記録せず、計測中にログの文字列化やディスク・コンソール書き込みは行いません。
+製品の Warning 以上のログはスレッドセーフなメモリ内キューに保持し、計測終了後に `summary.diagnosticLogs` へ時刻・レベル・メッセージ・例外詳細を出力します。初期化、送信、破棄で製品側が捕捉した例外も確認できます。通常の Information/Debug ログは記録せず、計測中にsinkでのログの文字列化やディスク・コンソール書き込みは行いません。
+
+各診断ログは既存の `message`・`exception` に加え、`messageTemplate` と型を保った `properties` を持ちます。正常遅延および `SendImage=false` の構造化診断は `properties.Transfer` の `Sender`、`Stage`、`StartQpc`、`EndQpc`、各 `Ms` 値から解析できます。例外の `properties.Transfer` は診断文字列として保持します。これらのJSON向け変換も計測後に行います。
+
+転送中の例外には製品側が失敗時に整形する `transfer` 診断が含まれます。正常な転送も16.667ms（1/60秒）を超えると `SpoutFrameTransfer: slow send {@Transfer}` のWarningを出し、`SendImage` がfalseを返した場合は別のWarningで記録します。Warningの存在だけで送信失敗とは判定しません。処理段階、実送信名、画像サイズ、poll回数、最終HRESULTと完了値、GPU待機経過時間に加え、Prepare・CreateMutex・WaitMutex・SendImage・End・Flush・GetData・ReleaseMutexの段階別時間を確認できます。開始した段階は失敗時も実経過時間を記録し、未開始は例外文字列では `not-started`、構造化値では `null` です。
+
+`PollMs` はGetDataとThread.Yieldを含むpoll全体、`TotalBeforeCleanupMs` はログ処理とSpoutOutput側の失敗後解放を除く時間です。プローブの `SendMs` にはそれらも含まれるため、所要時間だけでmutex timeoutやGPU timeoutと判定せず、例外・最終応答・各時間を照合してください。ログイベントの文字列化とファイル書き込みは、引き続き計測終了後です。診断の追加自体は無効化の原因特定や解決を意味しません。
+
+GPU完了を確認できた応答は、観測までに100ms以上かかっていても成功として受理し、遅延をWarningへ記録します。未完了応答のpoll期限とmutex待ちの期限は各100msのままです。これは完了済み転送の不要な無効化を避ける処理であり、100ms以内のGPU処理・全体送信時間を保証するものではありません。
 
 `attemptedFrames` は送信APIの呼び出し回数です。終了コード0でも予定スロット欠落はあり得るため、`missedScheduledSlots` と `sendOverBudget` を確認してください。`SendFrame` は戻り値を返さず、受信結果も取得しないため、`transportMisses` は `null` です。送信側の定量結果だけでは、受信の成功、全画素の一致、全フレームの到達を保証できません。3色の繰り返しだけでは、受信側で任意のフレーム欠落を一意に判定することもできません。
 
 要求する送信名は `TimecodeSyncPlayer` ですが、同名の送信元が複数あるとSpout側で接尾辞が付く場合があります。製品アプリなど他の送信元を停止するか、受信側でこのプローブに対応する実際の送信名を確認してください。標準出力や要求名だけを見てOBSがこのプローブを受信したと判定しないでください。
 
 OBSによる受信、録画、画素・フレームの解析は別途必要です。OBSの private-copy 対策は本番導入済みとして扱いません。このプローブはOBSのプラグインや受信処理を変更しません。
+
+## 条件を固定した直列反復
+
+`Run-SpoutTransportMatrix.ps1` はビルド済みの製品プローブを30秒ずつ直列実行します。リポジトリルートからWindows PowerShellで実行してください。ビルド、OBS設定変更、音声入力の起動は行いません。
+
+```powershell
+# 送信プローブのみを20回起動する（約11分）。
+& .\scripts\SpoutTransportProbe\Run-SpoutTransportMatrix.ps1 -Runs 20 -Label sender-only
+
+# 独立受信プローブを各試験の送信開始前に起動する。
+& .\scripts\SpoutTransportProbe\Run-SpoutTransportMatrix.ps1 -Runs 20 -Label independent-receiver `
+    -ReceiverExe .\.superpowers\sdd\2026-09-08-spout-decode-compare\receiver\SpoutReceiverProbePixels.exe
+$LASTEXITCODE
+```
+
+`-SenderExe` で別のビルド済み製品プローブを指定できます。受信付きでは指定した実行ファイルへ `--sender TimecodeSyncPlayer --output <新規receiver.jsonl> --duration 50 --poll-ms 8 --stop-file <新規receiver.stop>` を渡します。送信終了後にstopファイルを作成し、受信終了を最大10秒待ちます。送信watchdogは既定45秒です。試験間は既定2秒待ち、前の所有プロセスが終了してから次を起動します。新しいウィンドウは表示しません。
+
+結果は `TestResults/obs-clean/runs/<日時>-<Label>-<GUID>/` に保存します。`-ResultsRoot` で親ディレクトリを指定できます。既存結果は上書きせず、各 `run-NNN` に送受信のJSONL、stdout/stderr、開始時manifest、終了時resultを残します。結果にはUTC開始終了時刻、所有PID、終了コード、watchdogの判定、元のsummary、Warning/Error件数、受信サンプル混在数を保存します。バッチのmanifestと結果に加え、送信exe・プローブDLL・製品DLL・SpoutDX.dll、指定時には受信exeのSHA256を記録し、反復間と最終終了時のバイナリ変更を拒否します。
+
+送信の非zero終了、無効化、未完了、破棄失敗、summary欠損・不整合、Error/Fatal、受信の非zero終了・summary欠損・記録エラー、watchdog超過で最初の該当試験後に停止し、終了コード1を返します。全試験の正常終了は0です。正常な遅い送信にもWarningが出るため、Warningだけでは止めず原文と件数を保持します。予定スロット欠落も記録して続行します。受信混在は既定では記録して続行し、停止させたい場合は `-StopOnReceiverMismatch` を指定します。受信画素判定には `sampleBgrHex` を出力するPixels版が必要で、81点のBGRがすべて64・128・192のいずれか同じ値であることだけを確認します。正常終了、性能、画像整合、同期精度は別々に評価してください。
+
+既知の送信プロセス（製品アプリ、SpoutTransportProbe、PureSpoutSender、指定送信exeと同名）および指定受信exeと同名の既存プロセスを検出した場合は開始を拒否します。追加の競合プロセス名は `-AdditionalConflictProcessNames` に指定できます。他の名前のSpout送信元や実際の送信名の接尾辞はこのチェックでは検出できません。強制終了の対象はこのランナー自身が起動したProcessオブジェクトだけです。
+
+OBSの起動・終了・スクリーンショット保存は外側で管理してください。「sender-only」はこのランナーが受信プローブを起動しないという意味で、OBSなどの受信アプリが動いていない保証ではありません。既存OBSや他アプリを自動停止しません。送信のみ／独立受信／標準OBS／OBS画像保存ありの比較では、条件を外側で切り替え、バッチを一つずつ終了させてください。GPU・音声・OBSの別負荷試験と同時実行しないでください。
