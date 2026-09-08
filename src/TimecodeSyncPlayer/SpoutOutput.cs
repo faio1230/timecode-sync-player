@@ -16,6 +16,7 @@ public sealed class SpoutOutput : ISpoutOutput
     private bool   _disposed;
     private long   _sendCount;   // 送信フレームカウント（ログ用）
     private readonly ISpoutNativeApi _native;
+    private ISpoutFrameTransfer? _transfer;
 
     public SpoutOutput() : this(SpoutNativeApi.Instance) { }
 
@@ -63,6 +64,7 @@ public sealed class SpoutOutput : ISpoutOutput
                 return false;
             }
 
+            _transfer = _native.CreateFrameTransfer(_obj);
             _initialized = true;
             Log.Information("SpoutOutput: 初期化完了 sender='{Name}'", DefaultSenderName);
             return true;
@@ -96,8 +98,9 @@ public sealed class SpoutOutput : ISpoutOutput
         try
         {
             uint pitchBytes = GetTightlyPackedBgraPitch(width);
-            bool ok = _native.SendImage(_obj, pixels, (uint)width, (uint)height,
+            bool ok = _transfer!.SendImage(pixels, (uint)width, (uint)height,
                 pitchBytes);
+            if (!ok) { InvalidateAfterSendFailure(); return; }
             _sendCount++;
 
             if (_sendCount == 1)
@@ -107,8 +110,7 @@ public sealed class SpoutOutput : ISpoutOutput
                 Log.Debug("SpoutOutput: 送信中 {Count} フレーム送信済み ({W}x{H} pitch={Pitch})",
                     _sendCount, width, height, pitchBytes);
 
-            if (!ok)
-                InvalidateAfterSendFailure();
+
         }
         catch (Exception ex)
         {
@@ -127,6 +129,7 @@ public sealed class SpoutOutput : ISpoutOutput
         _initialized = false;
         IsEnabled = false;
 
+        CleanupTransfer();
         if (wasInitialized)
         {
             try { _native.ReleaseSender(_obj); }
@@ -149,14 +152,23 @@ public sealed class SpoutOutput : ISpoutOutput
         else
             Log.Warning(exception, "SpoutOutput: SendFrame 中に例外が発生 count={Count}", _sendCount);
 
+        CleanupTransfer();
         try { _native.ReleaseSender(_obj); }
         catch (Exception ex) { Log.Warning(ex, "SpoutNative.ReleaseSender failed after send failure"); }
 
         CleanupObj();
     }
 
+    private void CleanupTransfer()
+    {
+        var transfer = _transfer; _transfer = null;
+        try { transfer?.Dispose(); }
+        catch (Exception ex) { Log.Warning(ex, "Spout transfer cleanup failed"); }
+    }
+
     private void CleanupObj()
     {
+        CleanupTransfer();
         if (_obj != IntPtr.Zero)
         {
             try { _native.Destroy(_obj); }
@@ -168,6 +180,7 @@ public sealed class SpoutOutput : ISpoutOutput
 
 internal interface ISpoutNativeApi
 {
+    ISpoutFrameTransfer CreateFrameTransfer(IntPtr self);
     void ValidateObjectSize();
     IntPtr Create();
     bool OpenDirectX11(IntPtr self, IntPtr device);
@@ -182,6 +195,11 @@ internal sealed class SpoutNativeApi : ISpoutNativeApi
     internal static SpoutNativeApi Instance { get; } = new();
 
     private SpoutNativeApi() { }
+
+    public ISpoutFrameTransfer CreateFrameTransfer(IntPtr self) =>
+        new SpoutFrameTransfer(new SpoutTransferBackend(self),
+            new SpoutGpuCompletion(SpoutNative.GetDX11Device(self), SpoutNative.GetDX11Context(self)),
+            name => new SpoutTransferMutex(name), () => System.Diagnostics.Stopwatch.GetElapsedTime(0).Ticks / TimeSpan.TicksPerMillisecond);
 
     public void ValidateObjectSize() => SpoutNative.ValidateObjectSize();
     public IntPtr Create() => SpoutNative.Create();

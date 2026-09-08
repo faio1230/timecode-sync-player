@@ -6,6 +6,19 @@ public class SpoutOutputTests
 {
     private sealed class FakeNativeApi : ISpoutNativeApi
     {
+        public Exception? TransferException { get; set; }
+        public Exception? TransferDisposeException { get; set; }
+        public ISpoutFrameTransfer CreateFrameTransfer(IntPtr self)
+        {
+            Calls.Add("CreateTransfer");
+            if (TransferException != null) throw TransferException;
+            return new Transfer(this, self);
+        }
+        private sealed class Transfer(FakeNativeApi native, IntPtr self) : ISpoutFrameTransfer
+        {
+            public bool SendImage(IntPtr pixels, uint width, uint height, uint pitch) => native.SendImage(self, pixels, width, height, pitch);
+            public void Dispose() { native.Calls.Add("DisposeTransfer"); if (native.TransferDisposeException != null) throw native.TransferDisposeException; }
+        }
         public IntPtr Object { get; set; } = new(42);
         public bool OpenResult { get; set; } = true;
         public bool SetNameResult { get; set; } = true;
@@ -85,11 +98,12 @@ public class SpoutOutputTests
         first.Should().BeTrue();
         second.Should().BeTrue();
         output.IsAvailable.Should().BeTrue();
-        native.Calls.Take(5).Should().Equal(
+        native.Calls.Take(6).Should().Equal(
             "Validate",
             "Create",
             $"Open:{native.Object}:0",
             $"SetName:{native.Object}:{SpoutOutput.DefaultSenderName}",
+            "CreateTransfer",
             "Validate");
     }
 
@@ -223,6 +237,7 @@ public class SpoutOutputTests
         output.IsEnabled.Should().BeFalse();
         native.Calls.Should().Equal(
             "Send",
+            "DisposeTransfer",
             $"Release:{native.Object}",
             $"Destroy:{native.Object}");
 
@@ -249,6 +264,7 @@ public class SpoutOutputTests
         output.IsEnabled.Should().BeFalse();
         native.Calls.Should().Equal(
             "Send",
+            "DisposeTransfer",
             $"Release:{native.Object}",
             $"Destroy:{native.Object}");
 
@@ -272,6 +288,7 @@ public class SpoutOutputTests
 
         native.Calls.Should().Equal(
             "Send",
+            "DisposeTransfer",
             $"Release:{native.Object}",
             $"Destroy:{native.Object}");
     }
@@ -287,7 +304,7 @@ public class SpoutOutputTests
         output.Dispose();
         output.Dispose();
 
-        native.Calls.Should().Equal($"Release:{native.Object}", $"Destroy:{native.Object}");
+        native.Calls.Should().Equal("DisposeTransfer", $"Release:{native.Object}", $"Destroy:{native.Object}");
     }
 
     [Fact]
@@ -331,6 +348,26 @@ public class SpoutOutputTests
         native.Calls.Should().BeEmpty();
     }
 
+    [Fact]
+    public void TryInitialize_TransferCreationFailureCleansUpAndCanRetry()
+    {
+        var native = new FakeNativeApi { TransferException = new InvalidOperationException("query create failed") };
+        using var output = new SpoutOutput(native);
+        output.TryInitialize().Should().BeFalse();
+        output.IsAvailable.Should().BeFalse();
+        native.Calls.Last().Should().Be("Destroy:42");
+        native.TransferException = null;
+        output.TryInitialize().Should().BeTrue();
+    }
+
+    [Fact]
+    public void Dispose_TransferExceptionStillReleasesSenderBeforeDestroy()
+    {
+        var native = new FakeNativeApi { TransferDisposeException = new InvalidOperationException("release query failed") };
+        var output = CreateInitializedEnabledOutput(native);
+        output.Dispose(); output.Dispose();
+        native.Calls.Should().Equal("DisposeTransfer", "Release:42", "Destroy:42");
+    }
     private static SpoutOutput CreateInitializedEnabledOutput(FakeNativeApi native)
     {
         var output = new SpoutOutput(native) { IsEnabled = true };

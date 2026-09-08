@@ -56,6 +56,21 @@ internal static class SpoutNative
     internal static extern bool SendImage(
         IntPtr self, IntPtr pData, uint width, uint height, uint pitch);
 
+    // Confirmed x64 DLL export: DWORD is 32-bit even on Windows x64.
+    [DllImport(Dll, EntryPoint = "?CheckSender@spoutDX@@IEAA_NIIK@Z", CallingConvention = CallingConvention.ThisCall)]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static extern bool CheckSender(IntPtr self, uint width, uint height, uint format);
+
+    [DllImport(Dll, EntryPoint = "?GetSenderName@spoutDX@@QEAAPEBDXZ", CallingConvention = CallingConvention.ThisCall)]
+    internal static extern IntPtr GetSenderName(IntPtr self);
+
+    // Borrowed pointers: these exports do not AddRef. Do not Release device/context.
+    [DllImport(Dll, EntryPoint = "?GetDX11Device@spoutDX@@QEAAPEAUID3D11Device@@XZ", CallingConvention = CallingConvention.ThisCall)]
+    internal static extern IntPtr GetDX11Device(IntPtr self);
+
+    [DllImport(Dll, EntryPoint = "?GetDX11Context@spoutDX@@QEAAPEAUID3D11DeviceContext@@XZ", CallingConvention = CallingConvention.ThisCall)]
+    internal static extern IntPtr GetDX11Context(IntPtr self);
+
     // void spoutDX::ReleaseSender()
     [DllImport(Dll, EntryPoint = "?ReleaseSender@spoutDX@@QEAAXXZ",
         CallingConvention = CallingConvention.ThisCall)]
