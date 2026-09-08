@@ -58,9 +58,13 @@ OBSによる受信、録画、画素・フレームの解析は別途必要で�
 
 profileはCPUスケジュール／stackとDxgKrnl・D3D11・DXGIを記録し、メモリバッファ設定は計256MiBです。循環記録のため、ETLの対象時刻・event loss・必要なproviderの存在をWPAで確認してから失敗QPCと照合してください。`traceSaved=true` だけでは記録の完全性やGPU原因特定を保証しません。観測負荷のある試験として、通常プローブの性能値とは区別します。[WPRのinstance指定](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-options)、[メモリ記録の上書き](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/logging-mode)
 
-初期検証はprofile解釈・事前確認・mockまででした。その後、ユーザー許可とWindows UACによる昇格で送信のみ30秒の実ETL採取を1回実施しました。採取範囲と解析の限界は [GPU記録採取](../../docs/SPOUT-GPU-TRACE-2026-09-09.md) を参照してください。
+初期検証はprofile解釈・事前確認・mockまででした。その後、ユーザー許可とWindows UACによる昇格で送信のみの実ETL採取を実施しています。採取範囲と解析の限界は [GPU記録採取](../../docs/SPOUT-GPU-TRACE-2026-09-09.md) を参照してください。
 
-初回ETLにはDxgKrnlイベントが確認できず、現在のprofileにはGPUScheduler／HardwareSchedulingLogのkeywordを追加しています。その後UAC再申請で実採取しましたが、追加後もDxgKrnlイベントは確認できませんでした。組込みGPU profileも旧maskと同じ0x277を使っているため、keyword不足を未収録原因と断定できません。NonPagedMemory等の標準設定との差が残り、GPUスケジューラ記録の収録は未解決です。ETL保存成功を原因解析可能な記録の保証として扱わないでください。
+初回ETLとkeyword追加だけの試験ではDxgKrnlイベントが確認できませんでした。現在はkernel provider用にDxgへ`NonPagedMemory=true`を追加し、実試験でGPU schedulerイベントの収録と失敗時ETLの保存を確認しています。要求バッファ合計約256MiBは維持していますが、Graphics sessionの約128MiBはnonpaged対象になる設定です。収録可能になったこととSpout失敗の原因特定は別です。
+
+記録にはschema解釈の警告が残るため、実provider・loss・時間範囲を監査してください。今回のheaderではBootTimeからQPCを単純換算すると約203.6msのずれがあり、同一イベントのraw QPCとUTCを対応付けて照合しました。ETL保存成功やloss=0だけで記録全体の完全性を保証しないでください。
+
+`start.nativeThreadId` は計測前に取得したSendFrame呼出し元のWindows OSスレッドID、失敗checkpointの`nativeThreadId`はそのログをEmitした時点のOSスレッドIDです。プローブは同期実行で、各送信にID取得処理を追加していません。ETWのCSwitch／ReadyThreadを照合する際はこのIDを使い、GPUイベントのheader PIDだけから呼出しスレッドを推測しないでください。追加前の原始ログにはこのフィールドがなく、後からIDを補完していません。
 
 ## 条件を固定した直列反復
 
