@@ -148,9 +148,10 @@ public sealed class SpoutOutput : ISpoutOutput
         IsEnabled = false;
 
         if (exception == null)
-            Log.Warning("SpoutOutput: SendImage が false を返した count={Count} (device lost?)", _sendCount);
+            Log.Warning("SpoutOutput: SendImage が false を返した count={Count}", _sendCount);
         else
-            Log.Warning(exception, "SpoutOutput: SendFrame 中に例外が発生 count={Count}", _sendCount);
+            Log.Warning(exception, "SpoutOutput: SendFrame 中に例外が発生 count={Count} transfer={Transfer}",
+                _sendCount, exception.Data["SpoutTransfer"]);
 
         CleanupTransfer();
         try { _native.ReleaseSender(_obj); }

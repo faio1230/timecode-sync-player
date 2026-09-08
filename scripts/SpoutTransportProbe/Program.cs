@@ -144,7 +144,10 @@ try
         {
             timestamp = logEvent.Timestamp,
             level = logEvent.Level.ToString(),
+            messageTemplate = logEvent.MessageTemplate.Text,
             message = logEvent.RenderMessage(),
+            properties = logEvent.Properties.ToDictionary(property => property.Key,
+                property => DiagnosticValue(property.Value)),
             exception = logEvent.Exception?.ToString()
         }).ToArray(),
         completed, disposed, error, exitCode }));
@@ -156,6 +159,17 @@ catch (Exception ex)
 }
 Console.WriteLine($"{output}: attempts={records.Count}, scheduleMisses={missedSlots}, completed={completed}, disposed={disposed}, exit={exitCode}; receiver validation required");
 return exitCode;
+
+// Preserve typed stage timings and QPC values for analysis without parsing the
+// rendered message. This conversion runs only after the measurement has ended.
+static object? DiagnosticValue(LogEventPropertyValue value) => value switch
+{
+    ScalarValue scalar => scalar.Value,
+    StructureValue structure => structure.Properties.ToDictionary(property => property.Name,
+        property => DiagnosticValue(property.Value)),
+    SequenceValue sequence => sequence.Elements.Select(DiagnosticValue).ToArray(),
+    _ => value.ToString()
+};
 
 static void WaitUntil(long target, long frequency)
 {

@@ -276,13 +276,28 @@ public class SpoutOutputTests
             (native.Object, new IntPtr(2), 4u, 5u, 16u));
     }
 
-    [Fact]
-    public void SendFrame_AfterFailureSecondAttemptAndDisposeDoNotDoubleCleanup()
+    [Theory]
+    [InlineData("false")]
+    [InlineData("timeout")]
+    [InlineData("hresult")]
+    public void SendFrame_AfterFailureSecondAttemptAndDisposeDoNotDoubleCleanup(string failure)
     {
-        var native = new FakeNativeApi { SendResult = false };
+        var native = new FakeNativeApi
+        {
+            SendResult = false,
+            SendException = failure switch
+            {
+                "timeout" => new TimeoutException("Spout GPU completion exceeded 100 ms."),
+                "hresult" => new System.Runtime.InteropServices.COMException("GPU failure", unchecked((int)0x887A0005)),
+                _ => null
+            }
+        };
         var output = CreateInitializedEnabledOutput(native);
 
         output.SendFrame(new IntPtr(1), 2, 3);
+        output.IsAvailable.Should().BeFalse();
+        output.IsEnabled.Should().BeFalse();
+        output.IsEnabled = true; // Re-enabling the UI toggle cannot reuse failed native state.
         output.SendFrame(new IntPtr(1), 2, 3);
         output.Dispose();
 
