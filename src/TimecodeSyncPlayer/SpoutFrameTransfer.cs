@@ -61,14 +61,16 @@ internal sealed class SpoutFrameTransfer : ISpoutFrameTransfer
             long start = _milliseconds();
             _completion.End();
             _completion.Flush();
-            var spin = new SpinWait();
+            // Match the native fence loop: yield without escalating to Sleep(1).
+            // SpinWait caused EVENT polling timeouts on the validated driver; Thread.Yield
+            // completed 1800 4K sends in 30s. Keep the independent 100ms deadline below.
             while (true)
             {
                 int hr = _completion.GetData(out int completed);
                 if (hr < 0) throw new System.Runtime.InteropServices.COMException($"Spout GPU completion failed (HRESULT 0x{hr:X8}).", hr);
                 if (_milliseconds() - start >= 100) throw new TimeoutException("Spout GPU completion exceeded 100 ms.");
                 if (hr == 0 && completed != 0) return true;
-                spin.SpinOnce();
+                Thread.Yield();
             }
         }
         finally { if (acquired) _mutex!.Release(); }
