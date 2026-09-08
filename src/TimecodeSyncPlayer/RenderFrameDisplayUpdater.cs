@@ -20,13 +20,26 @@ public sealed class RenderFrameDisplayUpdater
         _updateBitmap(pixels, width, height);
         double bitmapMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 
+        RecordFirstFrame(width, height);
+
+        return bitmapMs;
+    }
+
+    internal (double BitmapMs, double SpoutMs) UpdateCombined(byte[] pixels, int width, int height, Func<double> send,
+        Func<byte[], int, int, Func<double>, (double BitmapMs, double SpoutMs)> update)
+    {
+        var result = update(pixels, width, height, send);
+        RecordFirstFrame(width, height); // Arbitrary logging callback stays outside the bitmap lock.
+        return result;
+    }
+
+    private void RecordFirstFrame(int width, int height)
+    {
         if (!_firstFrameDisplayedLogged)
         {
             _firstFrameDisplayedLogged = true;
             _logFirstFrame(width, height);
         }
-
-        return bitmapMs;
     }
 
     public void Reset()

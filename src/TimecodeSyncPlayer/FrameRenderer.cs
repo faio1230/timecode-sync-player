@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Runtime.ExceptionServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Serilog;
@@ -18,17 +19,24 @@ internal sealed class FrameRenderer
     private readonly SyncAccuracyTrace _accuracyTrace;
     private readonly Action<WriteableBitmap, string>? _queuePreview;
     private readonly Action? _cancelPreview;
+    private readonly Action<WriteableBitmap> _unlockCombinedBitmap;
+    private readonly Func<WriteableBitmap, bool> _tryLockCombinedBitmap;
+    private bool _combinedPublicationActive;
     private WriteableBitmap? _bitmap;
     private const double DefaultDpi = 96;
 
     public FrameRenderer(PixelBufferManager bufferManager, ISpoutOutput spoutOutput, SyncAccuracyTrace? accuracyTrace = null,
-        Action<WriteableBitmap, string>? queuePreview = null, Action? cancelPreview = null)
+        Action<WriteableBitmap, string>? queuePreview = null, Action? cancelPreview = null,
+        Action<WriteableBitmap>? unlockCombinedBitmap = null,
+        Func<WriteableBitmap, bool>? tryLockCombinedBitmap = null)
     {
         _bufferManager = bufferManager;
         _spoutOutput   = spoutOutput;
         _accuracyTrace = accuracyTrace ?? SyncAccuracyTrace.Current;
         _queuePreview = queuePreview;
         _cancelPreview = cancelPreview;
+        _unlockCombinedBitmap = unlockCombinedBitmap ?? (bitmap => bitmap.Unlock());
+        _tryLockCombinedBitmap = tryLockCombinedBitmap ?? (bitmap => bitmap.TryLock(new System.Windows.Duration(TimeSpan.Zero)));
     }
 
     /// <summary>WriteableBitmap が新規作成またはリサイズされたときに発火する。</summary>
@@ -60,6 +68,7 @@ internal sealed class FrameRenderer
 
     private void UpdateFromPixelBuffer(int w, int h, string kind)
     {
+        ThrowIfCombinedPublicationActive();
         if (_bufferManager.PixelBuffer is { } pixels) UpdateFromPixels(pixels, w, h, kind);
     }
 
@@ -68,6 +77,7 @@ internal sealed class FrameRenderer
 
     private void UpdateFromPixels(byte[] pixels, int w, int h, string kind, bool useBitmapStageTrace = true)
     {
+        ThrowIfCombinedPublicationActive();
         try { UpdateFromPixelsCore(pixels, w, h, kind, useBitmapStageTrace); }
         catch { CancelPendingPreview(); throw; }
     }
@@ -149,9 +159,96 @@ internal sealed class FrameRenderer
         }
     }
 
+    /// <summary>
+    /// A synchronous normal-frame candidate: if WPF is busy, send the snapshot
+    /// before waiting for its lock; otherwise copy and send while holding it.
+    /// BitmapMs sums disjoint WPF intervals, excluding send in either branch.
+    /// </summary>
+    public (double BitmapMs, double SpoutMs) UpdateFromPixelsWithSpout(byte[] pixels, int w, int h, Func<double> send)
+    {
+        ThrowIfCombinedPublicationActive();
+        ArgumentNullException.ThrowIfNull(send);
+        if (!FrameBufferSize.TryGetRequiredByteCount(w, h, out int byteCount))
+            throw new ArgumentOutOfRangeException(nameof(w), "Invalid bitmap dimensions.");
+        var timing = _accuracyTrace.IsEnabled ? BitmapRenderTraceScope.Take(_accuracyTrace, w, h) : null;
+        _combinedPublicationActive = true;
+        try
+        {
+            ArgumentNullException.ThrowIfNull(pixels);
+            // BitmapChanged observers run here, before taking the WPF lock.
+            EnsureBitmap(w, h);
+            WriteableBitmap bitmap = _bitmap!;
+            long tryStart = Stopwatch.GetTimestamp(), tryEnd = 0, lockStart = 0, lockEnd = 0;
+            long copyStart = 0, copyEnd = 0, unlockStart = 0, unlockEnd = 0;
+            bool locked = false, copied = false, unlocked = false;
+            string tryOutcome = "exception";
+            bool sentBeforeLock = false;
+            double spoutMs = 0;
+            Exception? failure = null;
+            try
+            {
+                try
+                {
+                    locked = _tryLockCombinedBitmap(bitmap);
+                    tryOutcome = locked ? "acquired" : "busy";
+                }
+                finally { tryEnd = Stopwatch.GetTimestamp(); }
+                if (!locked)
+                {
+                    spoutMs = send();
+                    sentBeforeLock = true;
+                    lockStart = Stopwatch.GetTimestamp();
+                    try { bitmap.Lock(); locked = true; }
+                    finally { lockEnd = Stopwatch.GetTimestamp(); }
+                }
+                copyStart = Stopwatch.GetTimestamp();
+                try
+                {
+                    Marshal.Copy(pixels, 0, bitmap.BackBuffer, Math.Min(pixels.Length, byteCount));
+                    bitmap.AddDirtyRect(new System.Windows.Int32Rect(0, 0, w, h));
+                    copied = true;
+                }
+                finally { copyEnd = Stopwatch.GetTimestamp(); }
+                if (!sentBeforeLock) spoutMs = send();
+            }
+            catch (Exception ex) { failure = ex; }
+            finally
+            {
+                if (locked)
+                {
+                    unlockStart = Stopwatch.GetTimestamp();
+                    try { _unlockCombinedBitmap(bitmap); unlocked = true; }
+                    catch (Exception ex)
+                    {
+                        failure = failure == null ? ex : new AggregateException("Frame publication and bitmap Unlock both failed", failure, ex);
+                    }
+                    finally { unlockEnd = Stopwatch.GetTimestamp(); }
+                }
+                // Bitmap stage observers run only after Unlock has been attempted.
+                timing?.Record("bitmap-try-lock", tryOutcome, tryStart, tryEnd);
+                if (lockStart != 0) timing?.Record("bitmap-lock", locked, lockStart, lockEnd);
+                if (copyStart != 0) timing?.Record("bitmap-copy-dirty", copied, copyStart, copyEnd);
+                if (unlockStart != 0) timing?.Record("bitmap-unlock", unlocked, unlockStart, unlockEnd);
+            }
+            if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
+            RecordPublication("normal"); // Full-resolution frame time remains after actual Unlock.
+            long bitmapTicks = tryEnd - tryStart + lockEnd - lockStart + copyEnd - copyStart + unlockEnd - unlockStart;
+            return (bitmapTicks * 1000.0 / Stopwatch.Frequency, spoutMs);
+        }
+        catch { CancelPendingPreview(); throw; }
+        finally { _combinedPublicationActive = false; }
+    }
+
+    private void ThrowIfCombinedPublicationActive()
+    {
+        if (_combinedPublicationActive)
+            throw new InvalidOperationException("A combined bitmap/send callback must not reenter the same FrameRenderer.");
+    }
+
     /// <summary>黒フレームを描画して Spout 送信する。</summary>
     public void RenderBlack(int videoWidth, int videoHeight)
     {
+        ThrowIfCombinedPublicationActive();
         (int w, int h) = BlackFrameRenderPolicy.ResolveSize(videoWidth, videoHeight);
         _bufferManager.EnsurePixelBuffer(w, h);
         _bufferManager.ClearPixelBuffer();
@@ -163,6 +260,7 @@ internal sealed class FrameRenderer
     /// <summary>FrozenFrameBuffer の内容を描画する。利用不可なら黒フレームにフォールバック。</summary>
     public void RenderFrozen(int videoWidth, int videoHeight)
     {
+        ThrowIfCombinedPublicationActive();
         if (_bufferManager.FrozenFrameBuffer == null || videoWidth <= 0 || videoHeight <= 0)
         {
             Log.Debug("Continue mode: frozen frame unavailable, rendering black frame");
@@ -186,6 +284,7 @@ internal sealed class FrameRenderer
     /// <summary>CachedGapFreezeFrame があれば描画、なければ FrozenFrame にフォールバック。</summary>
     public void RenderGapFreeze(int videoWidth, int videoHeight)
     {
+        ThrowIfCombinedPublicationActive();
         if (_bufferManager.CachedGapFreezeFrameBuffer != null &&
             _bufferManager.CachedGapFreezeFrameWidth > 0 &&
             _bufferManager.CachedGapFreezeFrameHeight > 0)
@@ -203,6 +302,7 @@ internal sealed class FrameRenderer
     /// <summary>任意のバイト配列を描画して Spout 送信する。</summary>
     public void RenderBuffered(byte[] buffer, IntPtr handle, int width, int height)
     {
+        ThrowIfCombinedPublicationActive();
         if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int frameNeeded)) return;
         if (buffer.Length < frameNeeded)
             return;
