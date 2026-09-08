@@ -42,6 +42,24 @@ GPU完了を確認できた応答は、観測までに100ms以上かかってい
 
 OBSによる受信、録画、画素・フレームの解析は別途必要です。OBSの private-copy 対策は本番導入済みとして扱いません。このプローブはOBSのプラグインや受信処理を変更しません。
 
+## GPU未完了時の実行記録
+
+`Capture-SpoutGpuTrace.ps1` は1回の製品プローブとGPU／CPUスケジューラのWPR記録を対応付けます。まず通常のPowerShellで `-Preflight` を使うと、既存プロセス・DLLハッシュ・WPR profileの解釈・権限を記録するだけで、プローブや記録を開始しません。`result.json` の `canRecord` が実採取可能性、`traceSaved` がETL保存結果です。
+
+```powershell
+& .\scripts\SpoutTransportProbe\Capture-SpoutGpuTrace.ps1 -OutputDirectory .\TestResults\obs-clean\runs\NEW_PREFLIGHT -Preflight
+# 実採取は管理者として起動したPowerShellから実行する。スクリプト自身は昇格しない。
+& .\scripts\SpoutTransportProbe\Capture-SpoutGpuTrace.ps1 -OutputDirectory .\TestResults\obs-clean\runs\NEW_GPU_TRACE
+```
+
+既定の `SenderOnly` はOBS・プレーヤー・既知の受信／音声プローブがあると拒否します。標準OBS接続を観測する場合は `-Condition ExistingObs -ObservedObsPid <確認済みPID> -ExpectedObsExe <実行ファイル絶対パス>` を指定し、OBS側のsender選択・source表示・4K60設定を別途保存してください。このスクリプトはOBSの起動・設定変更・終了をしないため、引数だけで受信条件成立を証明できません。
+
+新規出力ディレクトリだけを使用し、固有のWPR instance名で開始成功した記録だけを保存終了します。既存記録へのcancelや権限・ポリシー変更は行いません。送信プローブは所有Process handleで監視し、既定45秒で終了させます。WPRのETL統合時間はこの送信watchdogに含みません。保存失敗時は結果とinstance名を保持し、そのinstanceに限定して状態確認・回収してください。OS終了やPowerShell自体の強制終了まで含む自動回収を保証するものではありません。
+
+profileはCPUスケジュール／stackとDxgKrnl・D3D11・DXGIを記録し、メモリバッファ設定は計256MiBです。循環記録のため、ETLの対象時刻・event loss・必要なproviderの存在をWPAで確認してから失敗QPCと照合してください。`traceSaved=true` だけでは記録の完全性やGPU原因特定を保証しません。観測負荷のある試験として、通常プローブの性能値とは区別します。[WPRのinstance指定](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-options)、[メモリ記録の上書き](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/logging-mode)
+
+今回の環境ではprofile解釈と事前確認まで検証し、管理者権限がないためETLの実採取・解析は未検証です。
+
 ## 条件を固定した直列反復
 
 `Run-SpoutTransportMatrix.ps1` はビルド済みの製品プローブを30秒ずつ直列実行します。リポジトリルートからWindows PowerShellで実行してください。ビルド、OBS設定変更、音声入力の起動は行いません。

@@ -35,14 +35,21 @@ internal sealed class FrameRenderer
 
     private void UpdateFromPixelBuffer(int w, int h, string kind)
     {
+        if (_bufferManager.PixelBuffer is { } pixels) UpdateFromPixels(pixels, w, h, kind);
+    }
+
+    /// <summary>Copies a caller-owned snapshot directly to the bitmap during its UI lease.</summary>
+    public void UpdateFromPixels(byte[] pixels, int w, int h) => UpdateFromPixels(pixels, w, h, "normal");
+
+    private void UpdateFromPixels(byte[] pixels, int w, int h, string kind)
+    {
         if (!FrameBufferSize.TryGetRequiredByteCount(w, h, out int byteCount)) return;
-        if (_bufferManager.PixelBuffer == null) return;
         EnsureBitmap(w, h);
         _bitmap!.Lock();
         try
         {
-            byteCount = Math.Min(_bufferManager.PixelBuffer.Length, byteCount);
-            Marshal.Copy(_bufferManager.PixelBuffer, 0, _bitmap.BackBuffer, byteCount);
+            byteCount = Math.Min(pixels.Length, byteCount);
+            Marshal.Copy(pixels, 0, _bitmap.BackBuffer, byteCount);
             _bitmap.AddDirtyRect(new System.Windows.Int32Rect(0, 0, w, h));
         }
         finally
