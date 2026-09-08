@@ -42,7 +42,8 @@ public sealed class SpoutFrameTransferTests
         var rig = new Rig { Acquired = false, Abandoned = abandoned };
         using var transfer = rig.Create();
         Action send = () => transfer.SendImage(new(1), 2, 3, 8);
-        send.Should().Throw<Exception>();
+        if (abandoned) send.Should().Throw<AbandonedMutexException>();
+        else send.Should().Throw<TimeoutException>();
         rig.Calls.Should().NotContain("Send");
         rig.Calls.Count(x => x == "Unlock").Should().Be(abandoned ? 1 : 0);
     }
