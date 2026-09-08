@@ -85,11 +85,14 @@ public sealed class PixelBufferManager : IDisposable
     public void CopyToFrozenFrame(int width, int height) => TryCopyToFrozenFrame(width, height);
 
     public bool TryCopyToFrozenFrame(int width, int height)
+        => TryCopyToFrozenFrame(_pixelBuffer, width, height);
+
+    internal bool TryCopyToFrozenFrame(byte[]? source, int width, int height)
     {
         if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int needed)) return false;
-        if (_pixelBuffer == null || _pixelBuffer.Length < needed) return false;
+        if (source == null || source.Length < needed) return false;
         if (_frozenFrameBuffer == null || _frozenFrameBuffer.Length < needed) return false;
-        Array.Copy(_pixelBuffer, _frozenFrameBuffer, needed);
+        Array.Copy(source, _frozenFrameBuffer, needed);
         return true;
     }
 
@@ -104,15 +107,6 @@ public sealed class PixelBufferManager : IDisposable
         Array.Copy(_frozenFrameBuffer, _cachedGapFreezeFrameBuffer!, needed);
         _cachedGapFreezeFrameWidth = width;
         _cachedGapFreezeFrameHeight = height;
-        return true;
-    }
-
-    internal bool CopySnapshotToPixelBuffer(RenderedFrameSnapshot frame)
-    {
-        if (!FrameBufferSize.TryGetRequiredByteCount(frame.Width, frame.Height, out int needed)) return false;
-        if (frame.Pixels.Length < needed) return false;
-        EnsurePixelBuffer(frame.Width, frame.Height);
-        Array.Copy(frame.Pixels, _pixelBuffer!, needed);
         return true;
     }
 

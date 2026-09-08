@@ -76,13 +76,13 @@ internal sealed class RenderSession : IDisposable
         var spoutPublisher = new SpoutFramePublisher(spoutOutput);
         var performanceRecorder = new RenderFramePerformanceRecorder(stats);
         _displayUpdater = new RenderFrameDisplayUpdater(
-            (width, height) => _renderer.UpdateFromPixelBuffer(width, height),
+            (pixels, width, height) => _renderer.UpdateFromPixels(pixels, width, height),
             (width, height) => Log.Information("RenderFrame: first frame displayed {W}x{H}", width, height));
         _publishPipeline = new RenderFramePublishPipeline(
-            (width, height) => _displayUpdater.Update(width, height),
+            (pixels, width, height) => _displayUpdater.Update(pixels, width, height),
             (pixels, width, height) => spoutPublisher.Publish(pixels, width, height),
             performanceRecorder.Record,
-            (state, width, height) => _freezeCopier.CopyIfNeeded(state, width, height));
+            (pixels, state, width, height) => _freezeCopier.CopyIfNeeded(pixels, state, width, height));
         var executor = new MpvRenderFrameExecutor(RenderNativeFrame);
         _worker = new RenderFrameWorker(
             ensurePixelBuffer: (width, height) => _nativeBuffers.EnsurePixelBuffer(width, height),
@@ -353,9 +353,9 @@ internal sealed class RenderSession : IDisposable
     {
         GapRenderFrameDecision decision = GetGapRenderDecision();
         if (decision == GapRenderFrameDecision.Hold) { TraceFrame(frame, "discard", "gap-hold"); return; }
-        if (!IsCurrent(frame.Generation)) { TraceFrame(frame, "discard", "stale-before-ui-copy"); return; }
+        if (!IsCurrent(frame.Generation)) { TraceFrame(frame, "discard", "stale-before-ui-source"); return; }
         if (frame.Sequence < _lastAppliedSequence) { TraceFrame(frame, "discard", "older-than-applied"); return; }
-        if (!CopySnapshotToUi(frame)) return;
+        byte[] pixels = BorrowSnapshotPixels(frame);
         _lastAppliedSequence = frame.Sequence;
         _lastFrameWidth = frame.Width;
         _lastFrameHeight = frame.Height;
@@ -366,7 +366,7 @@ internal sealed class RenderSession : IDisposable
         {
             RenderFramePublicationDispatcher.Execute(
                 decision,
-                publishNormalFrame: () => _publishPipeline.Publish(_buffers.PixelPtr, frame.Width, frame.Height,
+                publishNormalFrame: () => _publishPipeline.Publish(pixels, frame.Width, frame.Height,
                     frame.RenderMs, _spoutOutput.IsEnabled, state, _trace, _traceSessionId, frame.Generation, frame.Sequence),
                 captureWithoutPublishing: () => CopyFreezeWithTrace(frame, state),
                 afterFrameProcessed);
@@ -381,19 +381,21 @@ internal sealed class RenderSession : IDisposable
         }
     }
 
-    private bool CopySnapshotToUi(RenderedFrameSnapshot frame)
+    private byte[] BorrowSnapshotPixels(RenderedFrameSnapshot frame)
     {
-        if (!_trace.IsEnabled) return _buffers.CopySnapshotToPixelBuffer(frame);
+        // The caller holds the snapshot lease across this synchronous publication.
+        // Mailbox replacement and native rendering cannot modify or return its array.
+        if (!_trace.IsEnabled) return frame.Pixels;
         long started = Stopwatch.GetTimestamp(); string outcome = "exception";
-        try { bool copied = _buffers.CopySnapshotToPixelBuffer(frame); outcome = copied ? "copied" : "rejected"; return copied; }
-        finally { _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "ui-copy", outcome, started, Stopwatch.GetTimestamp(), frame.Width, frame.Height); }
+        try { byte[] pixels = frame.Pixels; outcome = "borrowed"; return pixels; }
+        finally { _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "ui-source", outcome, started, Stopwatch.GetTimestamp(), frame.Width, frame.Height); }
     }
 
     private void CopyFreezeWithTrace(RenderedFrameSnapshot frame, GapState state)
     {
-        if (!_trace.IsEnabled) { _freezeCopier.CopyIfNeeded(state, frame.Width, frame.Height); return; }
+        if (!_trace.IsEnabled) { _freezeCopier.CopyIfNeeded(frame.Pixels, state, frame.Width, frame.Height); return; }
         long started = Stopwatch.GetTimestamp(); string outcome = "exception";
-        try { outcome = _freezeCopier.CopyIfNeeded(state, frame.Width, frame.Height) ? "copied" : "not-needed"; }
+        try { outcome = _freezeCopier.CopyIfNeeded(frame.Pixels, state, frame.Width, frame.Height) ? "copied" : "not-needed"; }
         finally { _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "freeze-copy", outcome, started, Stopwatch.GetTimestamp(), frame.Width, frame.Height); }
     }
 
@@ -408,13 +410,13 @@ internal sealed class RenderSession : IDisposable
             using var frame = await _thread.InvokeAsync(() => RenderNativeSnapshot(generation));
             if (frame == null) return;
             if (!IsCurrent(generation) || !isAttemptCurrent()) { TraceFrame(frame, "discard", "stale-gap-capture"); return; }
-            if (!CopySnapshotToUi(frame)) return;
+            byte[] pixels = BorrowSnapshotPixels(frame);
             long started = _trace.IsEnabled ? Stopwatch.GetTimestamp() : 0;
             bool captureReturned = false;
             try
             {
                 _buffers.EnsureFrozenFrameBuffer(frame.Width, frame.Height);
-                copied = _buffers.TryCopyToFrozenFrame(frame.Width, frame.Height) &&
+                copied = _buffers.TryCopyToFrozenFrame(pixels, frame.Width, frame.Height) &&
                     _buffers.TryCopyFrozenToGapFreezeFrame(frame.Width, frame.Height);
                 captureReturned = true;
             }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0" Author="TimecodeSyncPlayer">
+  <Profiles>
+    <SystemCollector Id="SpoutSystem" Name="Spout CPU scheduling">
+      <BufferSize Value="1024"/><Buffers Value="128"/>
+    </SystemCollector>
+    <EventCollector Id="SpoutGraphics" Name="Spout graphics">
+      <BufferSize Value="1024"/><Buffers Value="128"/>
+    </EventCollector>
+    <SystemProvider Id="SpoutCpu">
+      <Keywords><Keyword Value="ProcessThread"/><Keyword Value="Loader"/><Keyword Value="CSwitch"/><Keyword Value="ReadyThread"/><Keyword Value="SampledProfile"/></Keywords>
+      <Stacks><Stack Value="CSwitch"/><Stack Value="SampledProfile"/></Stacks>
+    </SystemProvider>
+    <EventProvider Id="Dxg" Name="Microsoft-Windows-DxgKrnl" Level="5"><Keywords><Keyword Value="0x277"/></Keywords></EventProvider>
+    <EventProvider Id="D3D11" Name="Microsoft-Windows-Direct3D11" Level="6"><Keywords><Keyword Value="0xf"/></Keywords></EventProvider>
+    <EventProvider Id="Dxgi" Name="Microsoft-Windows-DXGI" Level="6"><Keywords><Keyword Value="0xf"/></Keywords></EventProvider>
+    <Profile Id="SpoutGpu.Verbose.Memory" Name="SpoutGpu" Description="Bounded-memory CPU scheduling and D3D11 Spout diagnostic" LoggingMode="Memory" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="SpoutSystem"><SystemProviderId Value="SpoutCpu"/></SystemCollectorId>
+        <EventCollectorId Value="SpoutGraphics"><EventProviders><EventProviderId Value="Dxg"/><EventProviderId Value="D3D11"/><EventProviderId Value="Dxgi"/></EventProviders></EventCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

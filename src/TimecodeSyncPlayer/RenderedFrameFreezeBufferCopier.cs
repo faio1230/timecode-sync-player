@@ -10,6 +10,9 @@ public sealed class RenderedFrameFreezeBufferCopier
     }
 
     internal bool CopyIfNeeded(GapState gapState, int width, int height)
+        => CopyIfNeeded(_bufferManager.PixelBuffer, gapState, width, height);
+
+    internal bool CopyIfNeeded(byte[]? pixels, GapState gapState, int width, int height)
     {
         _bufferManager.EnsureFrozenFrameBuffer(width, height);
         if (!ContinueModePlaybackPolicy.ShouldCopyRenderedFrameToFreezeBuffer(gapState) ||
@@ -18,6 +21,6 @@ public sealed class RenderedFrameFreezeBufferCopier
             return false;
         }
 
-        return _bufferManager.TryCopyToFrozenFrame(width, height);
+        return _bufferManager.TryCopyToFrozenFrame(pixels, width, height);
     }
 }

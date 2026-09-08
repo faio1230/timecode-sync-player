@@ -240,6 +240,20 @@ class AccuracyTests(unittest.TestCase):
         self.assertEqual(summary["trace"]["renderStageEvents"], 1)
         self.assertEqual(summary["trace"]["frameEvents"], baseline["trace"]["frameEvents"])
 
+    def test_borrowed_ui_source_is_diagnostic_not_a_published_frame(self):
+        events, journal = complete_run()
+        baseline, baseline_rows = self.analyzer.analyze(events, FIXTURE, journal)
+        events[0]["renderStageSchema"] = 1
+        diagnostic = render_stage(1000)
+        diagnostic.update(stage="ui-source", outcome="borrowed", attemptId=None, sequence=1)
+        events.insert(-1, diagnostic)
+        events[-1]["events"] += 1
+        summary, rows = self.analyzer.analyze(events, FIXTURE, journal)
+        self.assertTrue(summary["complete"], summary["incompleteReasons"])
+        self.assertEqual(rows, baseline_rows)
+        self.assertEqual(summary["all"], baseline["all"])
+        self.assertEqual(summary["trace"]["frameEvents"], baseline["trace"]["frameEvents"])
+
     def test_render_stage_does_not_hide_a_missing_frame_from_footer(self):
         events, journal = complete_run()
         events[0]["renderStageSchema"] = 1

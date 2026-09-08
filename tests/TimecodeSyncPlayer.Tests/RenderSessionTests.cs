@@ -38,7 +38,9 @@ public sealed class RenderSessionTests
             var ready = stages.Single(x => Stage(x) == "snapshot-copy");
             ready.GetProperty("attemptId").GetInt64().Should().Be(3);
             ready.GetProperty("outcome").GetString().Should().Be("ready");
-            var ui = stages.Single(x => Stage(x) == "ui-copy");
+            stages.Should().NotContain(x => Stage(x) == "ui-copy");
+            var ui = stages.Single(x => Stage(x) == "ui-source");
+            ui.GetProperty("outcome").GetString().Should().Be("borrowed");
             var publish = stages.Single(x => Stage(x) == "publish");
             foreach (var stage in stages)
                 stage.GetProperty("endTicks").GetInt64().Should().BeGreaterThanOrEqualTo(stage.GetProperty("startTicks").GetInt64());
@@ -119,6 +121,44 @@ public sealed class RenderSessionTests
 
     private static string Stage(JsonElement value) => value.GetProperty("stage").GetString()!;
 
+    [Fact]
+    public Task SnapshotPublication_RemainsIndependentOfBlackBufferAndBitmapResizeCallback() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        System.Windows.Media.Imaging.WriteableBitmap? bitmap = null;
+        fixture.Session.BitmapChanged += next =>
+        {
+            bitmap = next;
+            fixture.Buffers.ClearPixelBuffer();
+            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        };
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        byte[] first = new byte[16];
+        bitmap!.CopyPixels(first, 8, 0);
+        first[0].Should().Be(73);
+        fixture.State = GapState.BlackFrameActive;
+        await fixture.Session.RenderGapAsync(GapRenderFrameDecision.Black);
+        fixture.State = GapState.Inactive;
+        fixture.Session.Width = 3;
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        byte[] resized = new byte[24];
+        bitmap!.CopyPixels(resized, 12, 0);
+        resized[0].Should().Be(74);
+        bitmap.PixelWidth.Should().Be(3);
+        fixture.Spout.Frames.Select(frame => frame.Pixel).Should().Equal((byte)73, (byte)0, (byte)74);
+    });
+
+    [Fact]
+    public Task CapturedFreeze_SurvivesSubsequentSnapshotPublicationAndReturn() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        (await fixture.Session.TryCaptureGapFreezeFrameAsync(fixture.Session.CaptureGeneration(), () => true)).Should().BeTrue();
+        await fixture.Session.RenderFrameAsync(fixture.Session.CaptureGeneration());
+        fixture.State = GapState.FreezeComplete;
+        await fixture.Session.RenderGapAsync(GapRenderFrameDecision.GapFreeze);
+        fixture.Spout.Frames.Select(frame => frame.Pixel).Should().Equal((byte)74, (byte)73);
+    });
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -194,8 +234,7 @@ public sealed class RenderSessionTests
         finally { release.Set(); }
         await rendering;
         completed.Should().BeFalse("an incidental normal frame is not an explicit final-frame capture");
-        fixture.Buffers.PixelBuffer![0].Should().Be(73);
-        fixture.Spout.Frames.Should().ContainSingle();
+        fixture.Spout.Frames.Should().ContainSingle().Which.Pixel.Should().Be(73);
     });
 
     [Fact]
@@ -350,7 +389,7 @@ public sealed class RenderSessionTests
             var error = Assert.Throws<AggregateException>(disposer.DisposeAll);
             error.InnerExceptions.Should().ContainSingle().Which.Should().BeSameAs(failure);
             calls.Should().Equal("timer", "ltc", "spout", "timeline");
-            fixture.Buffers.PixelPtr.Should().NotBe(IntPtr.Zero);
+            fixture.NativeBuffers.PixelPtr.Should().NotBe(IntPtr.Zero);
             fixture.Buffers.FormatStringPtr.Should().NotBe(IntPtr.Zero);
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -358,12 +397,13 @@ public sealed class RenderSessionTests
             callback!(IntPtr.Zero);
             fixture.Scheduled.Should().BeEmpty();
             Assert.Throws<AggregateException>(fixture.Session.Dispose).Flatten().InnerExceptions.Should().Contain(failure);
-            fixture.Buffers.PixelPtr.Should().NotBe(IntPtr.Zero);
+            fixture.NativeBuffers.PixelPtr.Should().NotBe(IntPtr.Zero);
         }
         finally { fixture.Api.FreeFailure = null; }
         fixture.Session.Dispose();
         fixture.Session.Dispose();
         fixture.Buffers.PixelPtr.Should().Be(IntPtr.Zero);
+        fixture.NativeBuffers.PixelPtr.Should().Be(IntPtr.Zero);
         fixture.Api.Calls.Count(c => c.Operation == "free").Should().Be(3);
     });
 
