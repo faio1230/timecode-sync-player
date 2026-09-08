@@ -1,0 +1,14 @@
+# Project-only minimal Codex environment. User-wide installations stay intact.
+# Native coding tools and system skills remain available.
+
+[features]
+plugins = false
+remote_plugin = false
+apps = false
+hooks = false
+
+[mcp_servers.playwright]
+enabled = false
+
+[mcp_servers.node_repl]
+enabled = false
