@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Gst;
 
 namespace TimecodeSyncPlayer;
 
@@ -21,9 +22,25 @@ public partial class App : Application
 
     internal static void ConfigureServices(IServiceCollection services)
     {
-        // Native wrappers
-        services.AddSingleton<IMpvApi, MpvApi>();
-        services.AddSingleton<IMpvRenderApi, MpvRenderApi>();
+        // Native wrappers. The concrete interfaces are selected by
+        // settings (AppSettingsManager.Current) at resolution time, which
+        // happens after settings load (MainWindow construction). Default stays mpv.
+        services.AddSingleton<MpvApi>();
+        services.AddSingleton<MpvRenderApi>();
+        services.AddSingleton<GstNativeApi>();
+        services.AddSingleton<IGstNativeApi>(sp => sp.GetRequiredService<GstNativeApi>());
+        services.AddSingleton<GstBackendState>();
+        services.AddSingleton<GstMpvApiAdapter>();
+        services.AddSingleton<GstMpvRenderApiAdapter>();
+        services.AddSingleton<GstSpoutOutput>();
+        services.AddSingleton<IMpvApi>(sp =>
+            sp.GetRequiredService<AppSettingsManager>().Current.Backend == PlayerBackend.Gstreamer
+                ? sp.GetRequiredService<GstMpvApiAdapter>()
+                : (IMpvApi)sp.GetRequiredService<MpvApi>());
+        services.AddSingleton<IMpvRenderApi>(sp =>
+            sp.GetRequiredService<AppSettingsManager>().Current.Backend == PlayerBackend.Gstreamer
+                ? sp.GetRequiredService<GstMpvRenderApiAdapter>()
+                : (IMpvRenderApi)sp.GetRequiredService<MpvRenderApi>());
 
         // Core services
         services.AddSingleton<IMediaDurationReader, MediaDurationReader>();
@@ -54,7 +71,11 @@ public partial class App : Application
         services.AddSingleton(_ => new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)));
         services.AddSingleton(_ => new OsdUpdateState(TimeSpan.FromMilliseconds(250)));
         services.AddSingleton<ISeekBarUpdateState, SeekBarUpdateState>();
-        services.AddSingleton<ISpoutOutput, SpoutOutput>();
+        services.AddSingleton<SpoutOutput>();
+        services.AddSingleton<ISpoutOutput>(sp =>
+            sp.GetRequiredService<AppSettingsManager>().Current.Backend == PlayerBackend.Gstreamer
+                ? sp.GetRequiredService<GstSpoutOutput>()
+                : (ISpoutOutput)sp.GetRequiredService<SpoutOutput>());
 
         // MainWindow (resolved via DI)
         services.AddSingleton<MainWindow>();
