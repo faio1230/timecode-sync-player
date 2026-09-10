@@ -1,0 +1,22 @@
+# ninja log v6
+65	949	8107665813253684	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutSharedMemory.cpp.obj	47c6b3cc81f94ac6
+32	860	8107705408009379	CMakeFiles/tcs-shim-test.dir/test/shim_test.cpp.obj	de17394d2b842e96
+47	943	8107665813066701	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutGLextensions.cpp.obj	a06e17c60a2722df
+38	1113	8107665812970214	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutFrameCount.cpp.obj	79fe0a1f450b4f4
+69	1040	8107665813293732	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutUtils.cpp.obj	a1c8328ce424e4b7
+30	1078	8107665812895968	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutCopy.cpp.obj	c4be108c994a68a1
+73	1164	8107665813323840	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutDirectX/SpoutDX/SpoutDX.cpp.obj	617924bc57ee2fcd
+60	1073	8107665813197178	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutSenderNames.cpp.obj	10731b4e9cd12e74
+34	1067	8107665812940086	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutDirectX.cpp.obj	ea08183ad88b9773
+51	1122	8107665813106984	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutReceiver.cpp.obj	c2691eee56faec6b
+56	1131	8107665813162082	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutSender.cpp.obj	8d1fe87ee3f5f31d
+27	1137	8107665812865977	CMakeFiles/tcs_gstreamer.dir/C_/Users/codea/Documents/timecode-sync-player-wt-gstreamer-20260911-0141/vendor/Spout2/SPOUTSDK/SpoutGL/Spout.cpp.obj	ceffb4381186d9b
+42	1187	8107665813010625	CMakeFiles/tcs_gstreamer.dir/9e36aa22a6392942ecbedf33075a8332/vendor/Spout2/SPOUTSDK/SpoutGL/SpoutGL.cpp.obj	56fc900309de6508
+1203	1405	8107666593397576	tcs-shim-test.exe	fe4c431f16d6335e
+23	908	8107697485636025	CMakeFiles/tcs_gstreamer.dir/src/tcs_gstreamer.cpp.obj	cd3d4049aee233c2
+908	1045	8107697494484843	tcs_gstreamer.dll	83a075492ba418e6
+908	1045	8107697494484843	tcs_gstreamer.lib	83a075492ba418e6
+19	919	8107705741791240	CMakeFiles/tcs_gstreamer.dir/src/tcs_gstreamer.cpp.obj	cd3d4049aee233c2
+920	1136	8107705752463251	tcs_gstreamer.dll	83a075492ba418e6
+920	1136	8107705752463251	tcs_gstreamer.lib	83a075492ba418e6
+1136	1281	8107705752956234	tcs-shim-test.exe	db939ba8fd8436c7
