@@ -5,5 +5,7 @@ logs/
 TestResults/
 *.user
 native/*.dll
+vendor/
+native/gst-shim/proto/build-*/
 .dotnet/
 .superpowers/
