@@ -1,4 +1,4 @@
-bin/
+﻿bin/
 obj/
 artifacts/
 logs/
@@ -6,6 +6,6 @@ TestResults/
 *.user
 native/*.dll
 vendor/
-native/gst-shim/proto/build-*/
+native/gst-shim/build-*/
 .dotnet/
 .superpowers/
