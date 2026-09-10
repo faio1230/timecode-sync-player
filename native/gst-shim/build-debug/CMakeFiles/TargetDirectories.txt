@@ -1,4 +1,0 @@
-C:/Users/codea/Documents/timecode-sync-player-wt-gstreamer-20260911-0141/native/gst-shim/build-debug/CMakeFiles/tcs_gstreamer.dir
-C:/Users/codea/Documents/timecode-sync-player-wt-gstreamer-20260911-0141/native/gst-shim/build-debug/CMakeFiles/tcs-shim-test.dir
-C:/Users/codea/Documents/timecode-sync-player-wt-gstreamer-20260911-0141/native/gst-shim/build-debug/CMakeFiles/edit_cache.dir
-C:/Users/codea/Documents/timecode-sync-player-wt-gstreamer-20260911-0141/native/gst-shim/build-debug/CMakeFiles/rebuild_cache.dir
