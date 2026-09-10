@@ -7,5 +7,6 @@ TestResults/
 native/*.dll
 vendor/
 native/gst-shim/build-*/
+native/gst-shim/proto/build-*/
 .dotnet/
 .superpowers/
