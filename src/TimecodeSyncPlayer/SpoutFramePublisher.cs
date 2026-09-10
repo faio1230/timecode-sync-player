@@ -14,7 +14,10 @@ public sealed class SpoutFramePublisher
     public double Publish(IntPtr pixels, int width, int height)
     {
         long started = Stopwatch.GetTimestamp();
-        _spoutOutput.SendFrame(pixels, width, height);
+        // GPU フレームソースが利用可能なら CPU 画素送信でなく GPU 画像を送る
+        // （mpv 経路の SpoutOutput は非実装なので従来動作のまま）。
+        if (_spoutOutput is not IGpuSpoutPublisher gpu || !gpu.TryPublishCurrentGpuFrame())
+            _spoutOutput.SendFrame(pixels, width, height);
         return Stopwatch.GetElapsedTime(started).TotalMilliseconds;
     }
 }
