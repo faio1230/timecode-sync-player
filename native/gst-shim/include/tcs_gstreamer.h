@@ -148,6 +148,9 @@ TCS_GST_API int tcs_player_send_image(TcsPlayer* player, const uint8_t* bgra,
                                       int width, int height, int pitch);
 
 TCS_GST_API int tcs_player_get_stats(TcsPlayer* player, TcsStats* out);
+/* Convenience getters (avoid struct marshalling from .NET). */
+TCS_GST_API int tcs_player_decoder_name(TcsPlayer* player, char* out, size_t out_len);
+TCS_GST_API int tcs_player_spout_ready(TcsPlayer* player);
 
 #ifdef __cplusplus
 }

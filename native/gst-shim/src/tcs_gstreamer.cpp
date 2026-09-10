@@ -1326,5 +1326,20 @@ tcs_player_get_stats (TcsPlayer* player, TcsStats* out)
   return TCS_OK;
 }
 
+TCS_GST_API int
+tcs_player_decoder_name (TcsPlayer* player, char* out, size_t out_len)
+{
+  if (!player || !out || !out_len) return TCS_ERR_GENERIC;
+  std::lock_guard<std::mutex> g (player->frame_lock);
+  snprintf (out, out_len, "%s", player->decoder_name.c_str ());
+  return TCS_OK;
+}
+
+TCS_GST_API int
+tcs_player_spout_ready (TcsPlayer* player)
+{
+  return player && player->spout_ready ? 1 : 0;
+}
+
 } /* extern C */
 
