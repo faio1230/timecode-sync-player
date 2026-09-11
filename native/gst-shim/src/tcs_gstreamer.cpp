@@ -268,11 +268,25 @@ on_new_sample (GstAppSink* sink, gpointer user)
       ? GST_BUFFER_PTS (buf)
       : (seg ? (guint64) seg->position : 0);
 
+  /* demux pads (e.g. mpegts) may expose stream caps without width/height;
+   * the negotiated sample caps always carry the real geometry. */
+  int cw = 0, ch = 0, cdn = 0, cdd = 0;
+  GstCaps* sample_caps = gst_sample_get_caps (sample);
+  if (sample_caps && gst_caps_get_size (sample_caps) > 0) {
+    GstStructure* ssc = gst_caps_get_structure (sample_caps, 0);
+    gst_structure_get_int (ssc, "width", &cw);
+    gst_structure_get_int (ssc, "height", &ch);
+    gst_structure_get_fraction (ssc, "framerate", &cdn, &cdd);
+  }
+
   tcs_frame_notify_fn cb = nullptr;
   void* cb_user = nullptr;
   uint64_t cb_gen = 0, cb_seq = 0;
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
+    if (cw > 0) p->width = cw;
+    if (ch > 0) p->height = ch;
+    if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
     if (p->latest)
       gst_sample_unref (p->latest);
     p->latest = sample;
@@ -581,7 +595,7 @@ select_demux_for_path (const char* path)
   if (!_stricmp (dot, ".mxf"))
     return "mxfdemux";
   if (!_stricmp (dot, ".avi"))
-    return "avimux";
+    return "avidemux";
   return "decodebin";
 }
 
