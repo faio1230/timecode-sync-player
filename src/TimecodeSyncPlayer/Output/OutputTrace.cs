@@ -55,7 +55,7 @@ internal sealed class OutputTrace
         else Interlocked.Increment(ref dropped);
     }
 
-    public void Save(OutputTraceRunSummary run, LatestPool pool, ScanoutTracker? scanout)
+    public void Save(OutputTraceRunSummary run, LatestPool pool, ScanoutTracker? scanout, TimecodeSyncPlayer.Contracts.SourceDiagnostics? sourceDiagnostics = null)
     {
         if (!IsEnabled) return;
         try
@@ -64,6 +64,8 @@ internal sealed class OutputTrace
             double end = all.Length == 0 ? 0 : (all[^1].Qpc - OriginQpc) / (double)Stopwatch.Frequency;
             string output = run.SpoutEnabled && run.DisplayAttached ? "both" : run.SpoutEnabled ? "spout" : "fullscreen";
             bool vblank = all.Any(e => e.Stage.StartsWith("present.", StringComparison.Ordinal) || e.Stage.StartsWith("display.vblank.", StringComparison.Ordinal));
+            // source.acquire は契約ソース経路（mpv スナップショットアップロード）を示す。
+            string sourceKind = all.Any(e => e.Stage == "source.acquire") ? "contract-fake" : "pattern";
             var options = new
             {
                 mode = "split",
@@ -85,7 +87,7 @@ internal sealed class OutputTrace
                 presentMarginMs = run.PresentMarginMs,
                 composeAlign = vblank ? "vblank" : "off",
                 composeLeadMs = run.ComposeLeadMs,
-                source = "pattern",
+                source = sourceKind,
                 sourceWidth = run.CanvasWidth,
                 sourceHeight = run.CanvasHeight
             };
@@ -145,6 +147,7 @@ internal sealed class OutputTrace
                 metrics,
                 scanoutPending = scanout?.PendingCount,
                 scanoutDisjoint = scanout?.Disjoint,
+                sourceDiagnostics,
                 limitation = "API/GPU publication timing only; no proof of unique receiver images or physical scanout."
             });
         }
