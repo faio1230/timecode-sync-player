@@ -10,12 +10,13 @@ public class RenderFramePublishPipelineTests
     public void Publish_RunsDisplaySpoutPerformanceAndFreezeCopyInOrder()
     {
         var calls = new List<string>();
-        byte[] source = [123, 0, 0, 0];
+        byte[] source = new byte[320 * 180 * 4];
+        source[0] = 123;
         var pipeline = new RenderFramePublishPipeline(
-            updateDisplay: (pixels, width, height) =>
+            updateDisplay: frame =>
             {
-                pixels.Should().BeSameAs(source);
-                calls.Add($"display:{width}x{height}");
+                frame.Pixels.ToArray().Should().Equal(source);
+                calls.Add($"display:{frame.Width}x{frame.Height}");
                 return 2.0;
             },
             publishSpout: (pixels, width, height) =>
@@ -26,12 +27,12 @@ public class RenderFramePublishPipelineTests
             recordPerformance: measurement => calls.Add($"perf:{measurement.RenderMs}:{measurement.BitmapMs}:{measurement.SpoutMs}:{measurement.SpoutEnabled}"),
             copyFreezeFrame: (pixels, state, width, height) =>
             {
-                pixels.Should().BeSameAs(source);
+                pixels.Take(source.Length).Should().Equal(source);
                 calls.Add($"freeze:{state}:{width}x{height}");
                 return true;
             });
 
-        pipeline.Publish(
+        pipeline.PublishNormal(
             pixels: source,
             width: 320,
             height: 180,
@@ -60,7 +61,7 @@ public class RenderFramePublishPipelineTests
         using var buffers = new PixelBufferManager();
         var copier = new RenderedFrameFreezeBufferCopier(buffers);
         var pipeline = new RenderFramePublishPipeline(
-            (source, _, _) => { source.Should().BeSameAs(pixels); return 0; },
+            frame => { frame.PixelArray.Should().BeSameAs(pixels); return 0; },
             (pointer, _, _) =>
             {
                 for (int i = 0; i < 10; i++)
@@ -75,11 +76,13 @@ public class RenderFramePublishPipelineTests
             },
             _ => { },
             (source, state, w, h) => copier.CopyIfNeeded(source, state, w, h));
-        Action publish = () => pipeline.Publish(pixels, 1, 1, 0, true, GapState.WaitingForFrameStep);
+        using var output = OutputFrame.FromSnapshot(lease);
+        Action publish = () => pipeline.Publish(output, true, GapState.WaitingForFrameStep);
         if (failSpout) publish.Should().Throw<InvalidOperationException>().Which.Should().BeSameAs(failure);
         else publish();
         pool.Outstanding.Should().Be(1);
         lease.Dispose();
+        output.Dispose();
         pool.Outstanding.Should().Be(0);
         pixels[0].Should().Be(255);
         if (failSpout) buffers.FrozenFrameBuffer.Should().BeNull();

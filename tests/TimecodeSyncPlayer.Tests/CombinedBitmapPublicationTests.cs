@@ -22,12 +22,12 @@ public sealed class CombinedBitmapPublicationTests
                 using var trace = SyncAccuracyTrace.Create(traced ? path : null);
                 using var buffers = new PixelBufferManager();
                 var calls = new List<string>();
-                var renderer = new FrameRenderer(buffers, new NullSpout(), trace,
+                var renderer = new FrameRenderer(trace,
                     unlockCombinedBitmap: bitmap => { calls.Add("unlock"); bitmap.Unlock(); },
                     tryLockCombinedBitmap: bitmap => { bitmap.Lock(); return true; });
                 renderer.BitmapChanged += _ => calls.Add("created");
                 var pipeline = new RenderFramePublishPipeline(
-                    (_, _, _) => throw new InvalidOperationException("Ordinary path must not run"),
+                    _ => throw new InvalidOperationException("Ordinary path must not run"),
                     (pointer, _, _) =>
                     {
                         Assert.Equal(73, Marshal.ReadByte(pointer));
@@ -37,9 +37,9 @@ public sealed class CombinedBitmapPublicationTests
                     },
                     value => { Assert.True(renderer.CurrentBitmap!.CanFreeze); calls.Add("stats"); measurement = value; },
                     (_, _, _, _) => { calls.Add("freeze"); return true; },
-                    () => calls.Add("preview"),
-                    updateDisplayWithSpout: renderer.UpdateFromPixelsWithSpout);
-                pipeline.Publish(Enumerable.Repeat((byte)73, 16).ToArray(), 2, 2, 7, true,
+                    _ => calls.Add("preview"),
+                    updateDisplayWithSpout: renderer.UpdateCombined);
+                pipeline.PublishNormal(Enumerable.Repeat((byte)73, 16).ToArray(), 2, 2, 7, true,
                     GapState.Inactive, trace, 11, 4, 101, combineBitmapAndSpout: true);
                 Assert.Equal(new[] { "created", "send", "unlock", "stats", "freeze", "preview" }, calls);
                 Assert.Equal(123, measurement!.SpoutMs);
@@ -77,7 +77,7 @@ public sealed class CombinedBitmapPublicationTests
         int unlocks = 0, sends = 0, cancellations = 0;
         var sendError = new InvalidOperationException("send failure");
         var unlockError = new InvalidOperationException("unlock failure");
-        var renderer = new FrameRenderer(buffers, new NullSpout(),
+        var renderer = new FrameRenderer(
             cancelPreview: () => cancellations++, unlockCombinedBitmap: bitmap =>
             {
                 unlocks++;
@@ -120,7 +120,7 @@ public sealed class CombinedBitmapPublicationTests
                 using var buffers = new PixelBufferManager();
                 int sends = 0, unlocks = 0, cancellations = 0;
                 var sendError = new InvalidOperationException("busy send failure");
-                var renderer = new FrameRenderer(buffers, new NullSpout(), trace,
+                var renderer = new FrameRenderer(trace,
                     unlockCombinedBitmap: bitmap =>
                     {
                         unlocks++;
@@ -128,7 +128,7 @@ public sealed class CombinedBitmapPublicationTests
                         bitmap.Unlock();
                     }, tryLockCombinedBitmap: _ => false);
                 renderer.UpdateFromPixels(Enumerable.Repeat((byte)11, 16).ToArray(), 2, 2);
-                var pipeline = new RenderFramePublishPipeline((_, _, _) => throw new InvalidOperationException("Ordinary path"),
+                var pipeline = new RenderFramePublishPipeline(_ => throw new InvalidOperationException("Ordinary path"),
                     (pointer, _, _) =>
                     {
                         sends++;
@@ -138,8 +138,8 @@ public sealed class CombinedBitmapPublicationTests
                         if (sendThrows) throw sendError;
                         return 123;
                     }, value => measurement = value, (_, _, _, _) => false,
-                    cancelPreview: () => cancellations++, updateDisplayWithSpout: renderer.UpdateFromPixelsWithSpout);
-                var error = Record.Exception(() => pipeline.Publish(Enumerable.Repeat((byte)73, 16).ToArray(),
+                    cancelPreview: () => cancellations++, updateDisplayWithSpout: renderer.UpdateCombined);
+                var error = Record.Exception(() => pipeline.PublishNormal(Enumerable.Repeat((byte)73, 16).ToArray(),
                     2, 2, 0, true, GapState.Inactive, trace, 11, 4, 101, true));
                 Assert.Equal(1, sends);
                 Assert.Equal(sendThrows ? 0 : 1, unlocks);
@@ -181,14 +181,14 @@ public sealed class CombinedBitmapPublicationTests
         buffers.EnsurePixelBuffer(2, 2);
         Array.Fill(buffers.PixelBuffer!, (byte)73);
         int unlocks = 0, cancelled = 0;
-        var renderer = new FrameRenderer(buffers, new NullSpout(),
+        var renderer = new FrameRenderer(
             unlockCombinedBitmap: bitmap => { unlocks++; bitmap.Unlock(); });
-        var pipeline = new RenderFramePublishPipeline((_, _, _) => 0,
-            (_, _, _) => { renderer.RenderBlack(2, 2); return 0; },
+        var pipeline = new RenderFramePublishPipeline(_ => 0,
+            (_, _, _) => { using var black = new OutputFrameFactory(buffers).Black(2, 2); renderer.Update(black); return 0; },
             _ => Assert.Fail("Performance must not receive failed publication"),
             (_, _, _, _) => throw new InvalidOperationException("Freeze must not run"),
-            () => Assert.Fail("Preview must not run"), () => cancelled++, renderer.UpdateFromPixelsWithSpout);
-        Assert.Throws<InvalidOperationException>(() => pipeline.Publish(new byte[16], 2, 2, 0, true,
+            _ => Assert.Fail("Preview must not run"), () => cancelled++, renderer.UpdateCombined);
+        Assert.Throws<InvalidOperationException>(() => pipeline.PublishNormal(new byte[16], 2, 2, 0, true,
             GapState.Inactive, combineBitmapAndSpout: true));
         Assert.All(buffers.PixelBuffer!, value => Assert.Equal(73, value));
         Assert.Equal(1, unlocks);
@@ -208,10 +208,10 @@ public sealed class CombinedBitmapPublicationTests
             {
                 var calls = new List<string>();
                 var pipeline = new RenderFramePublishPipeline(
-                    (_, _, _) => { calls.Add("bitmap"); return 0; },
+                    _ => { calls.Add("bitmap"); return 0; },
                     (_, _, _) => { calls.Add("send"); return 0; }, _ => { }, (_, _, _, _) => false,
-                    updateDisplayWithSpout: (_, _, _, _) => throw new InvalidOperationException("Combined must not run"));
-                pipeline.Publish(new byte[16], 2, 2, 0, false, GapState.Inactive, trace, 1, 1, 1, true);
+                    updateDisplayWithSpout: (_, _) => throw new InvalidOperationException("Combined must not run"));
+                pipeline.PublishNormal(new byte[16], 2, 2, 0, false, GapState.Inactive, trace, 1, 1, 1, true);
                 Assert.Equal(new[] { "bitmap", "send" }, calls);
             }
             if (traced)

@@ -7,6 +7,10 @@ internal sealed class RenderedFrameSnapshot : IDisposable
 {
     private byte[]? _pixels;
     private readonly ArrayPool<byte> _pool;
+    private readonly object _lifetime = new();
+    private RenderedFrameSnapshot? _owner;
+    private int _leases = 1;
+    private bool _disposed;
     private RenderedFrameSnapshot(byte[] pixels, int width, int height, int generation,
         long sequence, double renderMs, ArrayPool<byte> pool)
     {
@@ -19,7 +23,29 @@ internal sealed class RenderedFrameSnapshot : IDisposable
         _pool = pool;
     }
 
-    public byte[] Pixels => _pixels ?? throw new ObjectDisposedException(nameof(RenderedFrameSnapshot));
+    public byte[] Pixels
+    {
+        get
+        {
+            var owner = _owner ?? this;
+            lock (owner._lifetime)
+                return !_disposed ? owner._pixels! : throw new ObjectDisposedException(nameof(RenderedFrameSnapshot));
+        }
+    }
+
+    /// <summary>A separate lifetime for the same immutable pixels; no frame copy.</summary>
+    public RenderedFrameSnapshot Retain()
+    {
+        var owner = _owner ?? this;
+        lock (owner._lifetime)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var lease = new RenderedFrameSnapshot(owner._pixels!, Width, Height, Generation, Sequence, RenderMs, _pool)
+            { _owner = owner };
+            owner._leases++;
+            return lease;
+        }
+    }
     public int Width { get; }
     public int Height { get; }
     public int Generation { get; }
@@ -39,7 +65,19 @@ internal sealed class RenderedFrameSnapshot : IDisposable
 
     public void Dispose()
     {
-        byte[]? pixels = Interlocked.Exchange(ref _pixels, null);
+        byte[]? pixels = null;
+        var owner = _owner ?? this;
+        lock (owner._lifetime)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (--owner._leases == 0)
+            {
+                pixels = owner._pixels;
+                owner._pixels = null;
+            }
+            if (_owner != null) _pixels = null;
+        }
         if (pixels != null) _pool.Return(pixels);
     }
 }
