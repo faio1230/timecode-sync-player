@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -15,20 +16,37 @@ internal partial class FullscreenOutputWindow : Window
 
     private readonly DisplayTarget _target;
     private readonly IDisplayCatalog _displayCatalog;
+    private readonly OutputEngine? _outputEngine;
     private HwndSource? _source;
 
     public FullscreenOutputWindow(
         DisplayTarget target,
         IDisplayCatalog displayCatalog,
-        ImageSource? initialImage)
+        ImageSource? initialImage,
+        OutputEngine? outputEngine = null)
     {
         _target = target;
         _displayCatalog = displayCatalog;
+        _outputEngine = outputEngine;
         InitializeComponent();
-        FullscreenImage.Source = initialImage;
+        if (_outputEngine != null)
+        {
+            FullscreenImage.Source = null;
+            FullscreenImage.Visibility = Visibility.Collapsed;
+            D3DHost.Visibility = Visibility.Visible;
+            D3DHost.ChildHwndReady += hwnd => _outputEngine.AttachFullscreen(hwnd);
+        }
+        else
+        {
+            FullscreenImage.Source = initialImage;
+        }
     }
 
-    public void UpdateBitmap(ImageSource bitmap) => FullscreenImage.Source = bitmap;
+    public void UpdateBitmap(ImageSource bitmap)
+    {
+        if (_outputEngine == null)
+            FullscreenImage.Source = bitmap;
+    }
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -36,6 +54,13 @@ internal partial class FullscreenOutputWindow : Window
         _source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         _source?.AddHook(WindowProcedure);
         PositionOnTargetDisplay();
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        // 子 HWND 破棄より先に swapchain を切断する。
+        _outputEngine?.DetachFullscreen();
+        base.OnClosing(e);
     }
 
     protected override void OnClosed(EventArgs e)

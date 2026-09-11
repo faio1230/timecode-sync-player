@@ -1,6 +1,7 @@
 <Window x:Class="TimecodeSyncPlayer.FullscreenOutputWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:TimecodeSyncPlayer"
         x:ClassModifier="internal"
         Title="Timecode Sync Player Fullscreen"
         AutomationProperties.AutomationId="FullscreenOutputWindow"
@@ -25,5 +26,6 @@
                UseLayoutRounding="True"
                SnapsToDevicePixels="True"
                RenderOptions.BitmapScalingMode="HighQuality"/>
+        <local:FullscreenD3DHost x:Name="D3DHost" Visibility="Collapsed"/>
     </Grid>
 </Window>
