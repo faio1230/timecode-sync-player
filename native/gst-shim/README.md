@@ -27,6 +27,101 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 | リース返却まで再利用しない | acquire は GstSample 参照をそのまま所持。GStreamer のデコーダ/コンバータのプール（有限）は参照解放までそのテクスチャを再使用しない。`release()` で返却 |
 | GPU 完了順序 | 単一 immediate context + MultithreadProtected による投入順保証に依存（同一デバイス・同一コンテキスト）。合成層が読者へ渡す際の共有フェンスは合成側の契約（docs 対応表「共有フェンス」行）。**未実証**: デコーダ→コンバータ間の内部フェンスを跨ぐ順序保証は、実測での破綻未確認のため要追試（既知問題に記録） |
 
+## リース API のセマンティクス
+
+合成層から見た各 API の規則。対応する契約仕様は session-refactor 側
+`docs/GPU-SOURCE-CONTRACT-SPEC.md`（規則 1〜7 と「GStreamer／HAP 実装が満たす条件」、
+読み取り参照）。一致しない点は末尾に理由付きで列挙する。
+
+### `tcs_player_acquire(player, generation, out info)` → 1 = リース成立 / 0 = なし
+
+- **現在世代のフレームだけ**を返す。`latest` の世代が `generation` と一致しない場合は 0。
+  load / seek / step は世代を進め、seek は `latest` を破棄するため、旧世代の
+  デコード済みフレームは返らない。
+- 準備できないときは 0（=なし）を返す。**黒・前フレーム・エラー画像で代用しない**
+  （保持は合成層の責務）。
+- **非ブロッキング**。デコードを待たない（内部 `frame_lock` を短時間取るだけ）。
+- リース保持中の再呼び出し: 同じ世代なら同じリースを返す（新フレームは渡さない）。
+  別世代を要求した場合は 0 で、新しいフレームを取るには先に `release` が必要。
+- `info` = generation / seq / pts_ns / width / height / is_gpu。seq は shim 内の
+  単調増加番号（プロセス内識別用）、pts_ns はサンプル PTS（無ければセグメント位置）。
+
+### `tcs_player_leased_texture(player, out texture, out subresource, out dxgi_format)` → 0 = 成功
+
+- リース保持中のみ有効。`ID3D11Texture2D*` を返す（player のデバイス上）。
+- `dxgi_format` は **87 = B8G8R8A8_UNORM (BGRA)**。NV12 は現状返さない（相違点参照）。
+- `subresource` は **0**。デコーダ配列テクスチャ等は shim 所有の単一サブリソース
+  テクスチャへ平坦化してから返す（pool 由来テクスチャのポインタはリース中のみ有効、
+  平坦化テクスチャは player と同時に破棄）。
+- 返したポインタは **release まで有効**。release 後・destroy 後に使用してはならない。
+
+### `tcs_player_leased_cpu_copy(player, dst, dst_stride)` → 0 = 成功
+
+- リース中のフレームを CPU BGRA へ行コピーする。staging + Map の **GPU 読み戻し**を
+  含むためプレビュー/デバッグ専用。Spout へは `tcs_player_publish_spout`
+  （GPU テクスチャ送信、検証層）を使う。
+
+### `tcs_player_release(player)`
+
+- リースを返却し、プールのテクスチャを再利用可能にする。リースが無ければ no-op（冪等）。
+- **リース中テクスチャへの書き込み（上書き）は行わない**。返却は合成層が GPU 使用
+  完了を確認してから（既存 LatestPool と同じ規則）。
+
+### `tcs_player_set_generation` / `tcs_player_get_generation`
+
+- 世代の現在値はオーナー（合成層/アプリ）が決める。load / seek / step は自動で +1。
+  LTC ジャンプ等を独自世代で表現したい場合は set で上書きでき、以後 acquire は
+  その世代一致のみを返す。get は現在値（診断用）。
+
+### フレーム通知コールバック（`tcs_player_set_frame_callback`）
+
+- 新フレーム到着時に **GStreamer のストリーミングスレッド**から
+  `fn(user_data, generation, seq)` が呼ばれる。データ転送は無い「起きて確認せよ」の合図。
+- コールバック内で acquire しない（合成スレッドで行う）。短時間で戻ること。
+- 登録解除は destroy 前（fn=NULL）。コールバック時点の世代を渡すので、合成側で
+  現在世代と比較して古ければ無視する。
+
+### 保持枚数と破棄規則
+
+- shim が参照を保持するサンプルは **最大 2 枚**: `latest`（未リースの最新）と
+  `leased`（リース中）。加えて appsink 内部キューが最大 4（`max-buffers=4, drop=FALSE`）。
+- 新フレーム到着時は `latest` を置換し、**置換前の latest（未リースの旧フレーム）を
+  捨てる**。`leased` は決して置換・上書きしない。
+- リース中に新フレームが来ても acquire は 0（release 後に最新へ進む）。
+- プール実体は GStreamer のデコーダ/コンバータのバッファプール（有限・可変）。
+  リースを長時間保持した場合はプール拡張 → appsink キュー → バックプレッシャの順で
+  対応し、acquire 自体はブロックしない。
+
+### デバイスと同期
+
+- **外部 `ID3D11Device` を Adopt した場合**: デコード・色変換・リーステクスチャ・Spout
+  送信はすべてそのデバイス上。同一デバイスの読者（合成層）はそのまま読める。
+  **共有フェンス等の追加同期は不要** — 同一 immediate context への投入順で書き込み
+  順序が保たれる（MultithreadProtected は shim が有効化）。
+- **external_device=NULL（shim 所有デバイス）の場合**: リーステクスチャはアプリから
+  直接読めない。`leased_cpu_copy`（CPU コピー）か shim 内の Spout 送信を使う。
+  別デバイス/別プロセスへテクスチャを直接渡すことは**未対応**（共有 NT ハンドル＋
+  フェンス/keyed mutex が必要。Spout 経路は spoutDX の共有で別途検証済み）。
+
+### 契約仕様（規則 1〜7）との対応と相違
+
+| 仕様 | shim | 備考 |
+| --- | --- | --- |
+| 規則1 世代排除 | 一致 | seek/load/step で latest 破棄。acquire(gen) は一致時のみ |
+| 規則2 位置に基づく最新優先 | **部分一致** | position は受け取らず「現世代の最新 1 枚」。位置選択は合成層（pts_ns 参照）。過去行列は持たない |
+| 規則3 なしを返す | 一致 | 0 / TCS_ERR_NO_FRAME。黒・前画像なし |
+| 規則4 lease 寿命 | **部分一致** | プールは GStreamer 側（有限・可変）。shim 保持は最大 2（latest+leased）で置換は未リースのみ。Begin/CompleteGpuUse 相当は無く release のみ（冪等） |
+| 規則5 デバイス | 一致（同一デバイス前提） | 外部デバイス Adopt 対応。別デバイス実装は未対応（フェンス未実装） |
+| 規則6 非ブロッキング | 一致 | acquire/set_generation は短いロックのみ。デコードを待たない |
+| 規則7 診断 | **部分一致** | decoder/gpu_path/frames/generation はあり。世代排除・NotReady・置換・最大同時 lease のカウンタは未実装 |
+| 条件: NV12 テクスチャ | **相違** | 現状 BGRA のみ（d3d11colorconvert）。NV12 直出しは converter 差し替えで可能だが未実装 |
+| 条件: HAP/BC テクスチャ | 未実装 | 専用分岐まで意図的に拒否 |
+| 条件: 時計 | 一致 | pts_ns を返すのみで GStreamer の running time は露出しない。世代は set_generation/seek で合成層が制御 |
+| リング容量 3 以上のプール | 未実装 | 合成層接続時に再検討（現段階は mpv 互換経路で実用上十分） |
+
+相違はいずれも「最小 ABI で現段階の接続（mpv 互換経路）を成立させる」ための
+スコープ判断であり、合成層接続時に規則 2/4/7 と NV12/リングを再検討する。
+
 ## コーデック分岐（命令 4 対応）
 
 decodebin に映像を任せない（decodebin は d3d11 pad を sysmem へ
@@ -44,7 +139,7 @@ decodebin に映像を任せない（decodebin は d3d11 pad を sysmem へ
 | 未知 | 拒否（`TCS_ALLOW_UNKNOWN=1` のときだけ decodebin 照合用フォールバック） | — |
 
 コンテナ: mp4/mov/m4v/3gp→qtdemux、mkv→matroskademux、ts→tsdemux、
-mxf→mxfdemux、avi→avimux、raw ES→直接チェーン、他→未知扱い（同上）。
+mxf→mxfdemux、avi→avidemux、raw ES→直接チェーン、他→未知扱い（同上）。
 
 音声は decodebin（CPU、この経路に GPU 要件なし）+ volume +
 audioconvert + autoaudiosink。
