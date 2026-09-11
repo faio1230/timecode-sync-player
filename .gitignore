@@ -1,10 +1,13 @@
-bin/
+﻿bin/
 obj/
 artifacts/
 logs/
 TestResults/
 *.user
 native/*.dll
+vendor/
+native/gst-shim/build-*/
+native/gst-shim/proto/build-*/
 .dotnet/
 .superpowers/
 __pycache__/
