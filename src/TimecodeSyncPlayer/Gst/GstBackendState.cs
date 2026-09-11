@@ -42,7 +42,9 @@ internal sealed class GstBackendState : IDisposable
     public volatile bool IsPaused = true;
 
     /// <summary>
-    /// outputBackend=Gpu のとき、合成層の ID3D11Device を shim に Adopt させる。
+    /// outputBackend=Gpu のとき、合成層の ID3D11Device を shim に渡す。
+    /// ステージ 6b 以降 shim はこれを Adopt せず、アダプター LUID の読み取りにのみ使い、
+    /// 同じ LUID 上に自前のデバイスと immediate context を作る（合成側 context は触らない）。
     /// プレイヤー生成前にだけ有効（生成後の変更は無視する）。
     /// </summary>
     public void SetExternalDevice(IntPtr device)

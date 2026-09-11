@@ -111,6 +111,10 @@ internal sealed class GstNativeApi : IGstNativeApi
     public int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats)
         => GstNative.Imports.tcs_player_get_delivery_stats(player, out stats);
 
+    public int GetRingInfo(IntPtr player, IntPtr[] handles, uint capacity, out uint count,
+        out IntPtr fence, out int width, out int height)
+        => GstNative.Imports.tcs_player_ring_info(player, handles, capacity, out count, out fence, out width, out height);
+
     private static string DecodeUtf8Z(byte[] buf)
     {
         int len = Array.IndexOf(buf, (byte)0);

@@ -63,10 +63,16 @@ env_flag (const char* name)
 }
 
 struct TcsPlayer {
-  /* D3D11 + Spout */
+  /* D3D11 + Spout.
+   * Stage 6b: the device is ALWAYS owned by the shim. The compositor pointer
+   * passed to create() is only used to read its adapter LUID, then a separate
+   * device is created on that adapter (video support). The compositor's
+   * immediate context is never touched. */
   ID3D11Device* device = nullptr;
   bool owns_device = false;
   ID3D11DeviceContext* context = nullptr;
+  ID3D11Device5* device5 = nullptr;          /* D3D11.4, ring fence creation */
+  ID3D11DeviceContext4* context4 = nullptr;  /* D3D11.4, ring fence signal */
   GstD3D11Device* gst_dev = nullptr;      /* wrapped device, ref'd for lifetime */
   spoutDX* spout = nullptr;               /* verification layer only */
   bool spout_ready = false;
@@ -108,6 +114,7 @@ struct TcsPlayer {
     uint64_t pts_ns;
     uint64_t arrival_qpc;                 /* H-3: for the age-based backlog rule */
     bool gpu;
+    int32_t slot;                         /* stage 6b: shared ring slot; -1 = sample lease */
   };
   static const uint32_t kFrameQueueCapacity = 4;
   std::deque<FrameSlot> frames;
@@ -117,8 +124,21 @@ struct TcsPlayer {
   uint64_t latest_seq = 0;
   bool latest_gpu = false;
   GstSample* leased = nullptr;            /* held by the compositor */
+  int32_t leased_slot = -1;               /* ring slot of the current lease, -1 = sample */
   TcsFrameInfo lease_info = {};
   bool pending_update = false;
+
+  /* shared texture ring (stage 6b, frame_lock). Created once, on the first
+   * GPU sample whose dimensions are known; the compositor opens the NT
+   * handles once via tcs_player_ring_info(). */
+  static const uint32_t kRingSlots = 3;
+  bool ring_ready = false;
+  int ring_width = 0;
+  int ring_height = 0;
+  ID3D11Texture2D* ring_texture[kRingSlots] = {};
+  HANDLE ring_handle[kRingSlots] = {};
+  ID3D11Fence* ring_fence = nullptr;
+  HANDLE ring_fence_handle = nullptr;
   uint64_t generation = 1;                /* bumped by owner on load/seek */
   guint64 frames_decoded = 0;
   guint64 spout_sends = 0;
@@ -198,31 +218,80 @@ demote_foreign_gpu_decoders (void)
   }
 }
 
+static IDXGIAdapter*
+find_adapter_by_luid (LUID luid)
+{
+  IDXGIFactory1* factory = nullptr;
+  if (FAILED (CreateDXGIFactory1 (__uuidof(IDXGIFactory1), (void**) &factory)) || !factory)
+    return nullptr;
+  IDXGIAdapter1* adapter = nullptr;
+  for (UINT i = 0; factory->EnumAdapters1 (i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
+    DXGI_ADAPTER_DESC1 desc = {};
+    adapter->GetDesc1 (&desc);
+    if (memcmp (&desc.AdapterLuid, &luid, sizeof (LUID)) == 0) {
+      factory->Release ();
+      return adapter;
+    }
+    adapter->Release ();
+  }
+  factory->Release ();
+  return nullptr;
+}
+
+/* Stage 6b: the shim NEVER adopts the compositor device. When the owner
+ * passes one we read its adapter LUID (IDXGIDevice::GetAdapter) and create a
+ * separate device + immediate context on that adapter; the compositor device
+ * is not AddRef'd and its context is not used. external == NULL keeps the
+ * default-adapter behavior for standalone use (shim smoke test, CPU output). */
 static gboolean
 create_or_adopt_device (TcsPlayer* p, ID3D11Device* external)
 {
+  IDXGIAdapter* adapter = nullptr;
+  const char* origin = "internal-default";
   if (external) {
-    p->device = external;
-    p->device->AddRef ();
-    p->device->GetImmediateContext (&p->context);
-    p->owns_device = false;
-  } else {
-    UINT flags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-    D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1 };
-    HRESULT hr = D3D11CreateDevice (nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
-        levels, 2, D3D11_SDK_VERSION, &p->device, nullptr, &p->context);
-    if (FAILED (hr)) {
-      set_error (p, "D3D11CreateDevice failed hr=0x%08lx", hr);
+    IDXGIDevice* dxgi = nullptr;
+    if (FAILED (external->QueryInterface (__uuidof(IDXGIDevice), (void**) &dxgi)) || !dxgi) {
+      set_error (p, "external device lacks IDXGIDevice (cannot read the adapter LUID)");
       return FALSE;
     }
-    p->owns_device = true;
+    IDXGIAdapter* external_adapter = nullptr;
+    HRESULT hr = dxgi->GetAdapter (&external_adapter);
+    dxgi->Release ();
+    if (FAILED (hr) || !external_adapter) {
+      set_error (p, "external device GetAdapter failed hr=0x%08lx", hr);
+      return FALSE;
+    }
+    DXGI_ADAPTER_DESC desc = {};
+    external_adapter->GetDesc (&desc);
+    external_adapter->Release ();
+    adapter = find_adapter_by_luid (desc.AdapterLuid);
+    if (!adapter) {
+      set_error (p, "no adapter with the compositor LUID was found");
+      return FALSE;
+    }
+    origin = "external-luid";
   }
+
+  UINT flags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+  D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1 };
+  UINT nLevels = adapter ? 1 : 2;
+  HRESULT hr = D3D11CreateDevice (adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
+      nullptr, flags, levels, nLevels, D3D11_SDK_VERSION, &p->device, nullptr, &p->context);
+  if (adapter)
+    adapter->Release ();
+  if (FAILED (hr)) {
+    set_error (p, "D3D11CreateDevice failed hr=0x%08lx", hr);
+    return FALSE;
+  }
+  p->owns_device = true;
+  LOG ("device created origin=%s (separate from the compositor device)", origin);
+
   if (!p->context) {
     set_error (p, "no immediate context");
     return FALSE;
   }
-  /* external devices may not have been created with multithread protection;
-   * enable it (idempotent) since GStreamer streams from other threads. */
+  /* GStreamer streams from other threads; enable multithread protection on
+   * OUR device explicitly (short calls, no Flush/GetData loops elsewhere). */
   ID3D11Multithread* mt = nullptr;
   if (SUCCEEDED (p->context->QueryInterface (__uuidof(ID3D11Multithread), (void**) &mt)) && mt) {
     mt->SetMultithreadProtected (TRUE);
@@ -231,10 +300,20 @@ create_or_adopt_device (TcsPlayer* p, ID3D11Device* external)
   /* the device must expose the video interfaces for d3d11 dec/convert */
   ID3D11VideoDevice* vd = nullptr;
   if (FAILED (p->device->QueryInterface (__uuidof(ID3D11VideoDevice), (void**) &vd)) || !vd) {
-    set_error (p, "external device lacks ID3D11VideoDevice (needs D3D11_CREATE_DEVICE_VIDEO_SUPPORT)");
+    set_error (p, "device lacks ID3D11VideoDevice (needs D3D11_CREATE_DEVICE_VIDEO_SUPPORT)");
     return FALSE;
   }
   vd->Release ();
+
+  if (SUCCEEDED (p->device->QueryInterface (__uuidof(ID3D11Device5), (void**) &p->device5)) && p->device5)
+    LOG ("ring: ID3D11Device5 available");
+  else
+    LOG ("ring: ID3D11Device5 unavailable; falling back to the legacy lease path");
+  if (SUCCEEDED (p->context->QueryInterface (__uuidof(ID3D11DeviceContext4), (void**) &p->context4)) && p->context4) {
+    /* ok */
+  } else {
+    LOG ("ring: ID3D11DeviceContext4 unavailable; falling back to the legacy lease path");
+  }
 
   p->gst_dev = gst_d3d11_device_new_wrapped (p->device);
   if (!p->gst_dev) {
@@ -278,6 +357,142 @@ give_device_context (TcsPlayer* p, GstElement* el)
   gst_context_unref (ctx);
 }
 
+/* ---------------- shared texture ring (stage 6b, frame_lock) ---------------- */
+
+/* Release the ring resources. The NT handles were created by us and must be
+ * closed here (CreateSharedHandle ownership). Safe on partially built rings;
+ * the compositor's opened references keep their resources alive after this. */
+static void
+destroy_ring (TcsPlayer* p)
+{
+  for (uint32_t i = 0; i < TcsPlayer::kRingSlots; i++) {
+    if (p->ring_handle[i]) { CloseHandle (p->ring_handle[i]); p->ring_handle[i] = nullptr; }
+    if (p->ring_texture[i]) { p->ring_texture[i]->Release (); p->ring_texture[i] = nullptr; }
+  }
+  if (p->ring_fence_handle) { CloseHandle (p->ring_fence_handle); p->ring_fence_handle = nullptr; }
+  if (p->ring_fence) { p->ring_fence->Release (); p->ring_fence = nullptr; }
+  p->ring_ready = false;
+  p->ring_width = p->ring_height = 0;
+}
+
+/* Create the 3-slot BGRA ring + shared fence on first use (caller holds
+ * frame_lock). Created once: dimension changes fall back to the legacy sample
+ * path instead of rebuilding (the compositor's opened handles stay valid for
+ * the whole player lifetime). */
+static bool
+ensure_ring_locked (TcsPlayer* p, int width, int height)
+{
+  if (p->ring_ready)
+    return p->ring_width == width && p->ring_height == height;
+  if (!p->device5 || !p->context4)
+    return false;
+  if (width <= 0 || height <= 0)
+    return false;
+
+  D3D11_TEXTURE2D_DESC d = {};
+  d.Width = (UINT) width;
+  d.Height = (UINT) height;
+  d.MipLevels = 1;
+  d.ArraySize = 1;
+  d.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+  d.SampleDesc.Count = 1;
+  d.Usage = D3D11_USAGE_DEFAULT;
+  d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  d.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+
+  for (uint32_t i = 0; i < TcsPlayer::kRingSlots; i++) {
+    if (FAILED (p->device->CreateTexture2D (&d, nullptr, &p->ring_texture[i])) || !p->ring_texture[i]) {
+      LOG ("ring: CreateTexture2D failed slot=%u", i);
+      destroy_ring (p);
+      return false;
+    }
+    IDXGIResource1* res = nullptr;
+    if (FAILED (p->ring_texture[i]->QueryInterface (__uuidof(IDXGIResource1), (void**) &res)) || !res) {
+      LOG ("ring: IDXGIResource1 unavailable slot=%u", i);
+      destroy_ring (p);
+      return false;
+    }
+    HRESULT hr = res->CreateSharedHandle (nullptr, GENERIC_ALL, nullptr, &p->ring_handle[i]);
+    res->Release ();
+    if (FAILED (hr) || !p->ring_handle[i]) {
+      LOG ("ring: texture CreateSharedHandle failed slot=%u hr=0x%08lx", i, hr);
+      destroy_ring (p);
+      return false;
+    }
+  }
+  if (FAILED (p->device5->CreateFence (0, D3D11_FENCE_FLAG_SHARED, __uuidof(ID3D11Fence),
+      (void**) &p->ring_fence)) || !p->ring_fence) {
+    LOG ("ring: CreateFence failed");
+    destroy_ring (p);
+    return false;
+  }
+  if (FAILED (p->ring_fence->CreateSharedHandle (nullptr, GENERIC_ALL, nullptr,
+      &p->ring_fence_handle)) || !p->ring_fence_handle) {
+    LOG ("ring: fence CreateSharedHandle failed");
+    destroy_ring (p);
+    return false;
+  }
+  p->ring_width = width;
+  p->ring_height = height;
+  p->ring_ready = true;
+  LOG ("ring: created %dx%d BGRA slots=%u", width, height, TcsPlayer::kRingSlots);
+  return true;
+}
+
+/* A ring slot is busy while the current lease holds it or an undelivered FIFO
+ * item refers to it. Pure allocation rule lives in tcs_delivery_policy.h. */
+static int32_t
+pick_free_ring_slot_locked (TcsPlayer* p)
+{
+  uint8_t used[TcsPlayer::kRingSlots] = {};
+  if (p->leased_slot >= 0 && p->leased_slot < (int32_t) TcsPlayer::kRingSlots)
+    used[p->leased_slot] = 1;
+  for (const TcsPlayer::FrameSlot& f : p->frames)
+    if (f.slot >= 0 && f.slot < (int32_t) TcsPlayer::kRingSlots)
+      used[f.slot] = 1;
+  return tcs_ring_pick_slot (used, TcsPlayer::kRingSlots);
+}
+
+/* Latest-first catch-up: evict the oldest undelivered GPU item so its slot can
+ * take the new arrival (counted as replaced by the caller). */
+static bool
+evict_oldest_ring_item_locked (TcsPlayer* p)
+{
+  int32_t item_slots[TcsPlayer::kFrameQueueCapacity + 8];
+  const uint32_t cap = (uint32_t) (sizeof (item_slots) / sizeof (item_slots[0]));
+  uint32_t n = 0;
+  for (const TcsPlayer::FrameSlot& f : p->frames) {
+    if (n >= cap)
+      break;
+    item_slots[n++] = f.slot;
+  }
+  int32_t idx = tcs_ring_evict_index (item_slots, n);
+  if (idx < 0)
+    return false;
+  auto it = p->frames.begin () + idx;
+  if (it->sample)
+    gst_sample_unref (it->sample);
+  p->frames.erase (it);
+  return true;
+}
+
+/* Copy the decoded sample texture into the ring slot (array slices use a box
+ * copy). Caller then signals the fence with the frame seq. */
+static void
+copy_ring_locked (TcsPlayer* p, int32_t slot, ID3D11Texture2D* src, guint sub,
+                  const D3D11_TEXTURE2D_DESC& desc)
+{
+  if (desc.ArraySize == 1 && sub == 0) {
+    p->context->CopyResource (p->ring_texture[slot], src);
+    return;
+  }
+  D3D11_BOX box = {};
+  box.right = MIN (desc.Width, (UINT) p->ring_width);
+  box.bottom = MIN (desc.Height, (UINT) p->ring_height);
+  box.back = 1;
+  p->context->CopySubresourceRegion (p->ring_texture[slot], 0, 0, 0, 0, src, sub, &box);
+}
+
 /* ---------------- frame delivery ---------------- */
 
 /* QoS events (upstream) and decoder output buffers are counted so the
@@ -304,6 +519,20 @@ on_new_sample (GstAppSink* sink, gpointer user)
   GstBuffer* buf = gst_sample_get_buffer (sample);
   GstMemory* mem = buf ? gst_buffer_peek_memory (buf, 0) : nullptr;
   bool gpu = mem && gst_is_d3d11_memory (mem);
+  /* Stage 6b: extract the decoded texture now so the ring copy can run under
+   * frame_lock (the sample ref keeps the pool texture alive until release). */
+  ID3D11Texture2D* src_tex = nullptr;
+  guint src_sub = 0;
+  D3D11_TEXTURE2D_DESC src_desc = {};
+  if (gpu) {
+    GstD3D11Memory* dmem = (GstD3D11Memory*) mem;
+    ID3D11Resource* res = gst_d3d11_memory_get_resource_handle (dmem);
+    src_sub = gst_d3d11_memory_get_subresource_index (dmem);
+    if (res && SUCCEEDED (res->QueryInterface (__uuidof(ID3D11Texture2D), (void**) &src_tex)) && src_tex)
+      src_tex->GetDesc (&src_desc);
+    else
+      src_tex = nullptr;  /* legacy sample path handles the flatten later */
+  }
   const GstSegment* seg = gst_sample_get_segment (sample);
   guint64 pts = buf && GST_BUFFER_PTS (buf) != GST_CLOCK_TIME_NONE
       ? GST_BUFFER_PTS (buf)
@@ -336,17 +565,39 @@ on_new_sample (GstAppSink* sink, gpointer user)
     if (cw > 0) p->width = cw;
     if (ch > 0) p->height = ch;
     if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
-    if (p->frames.size() >= TcsPlayer::kFrameQueueCapacity) {
+    p->latest_gen = p->generation;
+    p->latest_pts_ns = pts;
+    p->latest_seq = ++p->frames_decoded;
+    p->latest_gpu = gpu;
+
+    /* Stage 6b: GPU samples go through the shared ring. If every slot is
+     * busy, evict the oldest undelivered frame first (latest-first catch-up,
+     * counted as replaced / flags bit0). */
+    int32_t ring_slot = -1;
+    if (gpu && src_tex && cw > 0 && ch > 0 && ensure_ring_locked (p, cw, ch) &&
+        (int) src_desc.Width == p->ring_width && (int) src_desc.Height == p->ring_height &&
+        src_desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+      int32_t slot = pick_free_ring_slot_locked (p);
+      if (slot < 0 && evict_oldest_ring_item_locked (p)) {
+        replaced = true;
+        p->delivery_replaced++;
+        slot = pick_free_ring_slot_locked (p);
+      }
+      if (slot >= 0) {
+        copy_ring_locked (p, slot, src_tex, src_sub, src_desc);
+        p->context4->Signal (p->ring_fence, p->latest_seq);
+        p->context->Flush ();  /* submit copy+signal (no wait here) */
+        ring_slot = slot;
+      }
+    }
+    if (ring_slot < 0 && p->frames.size() >= TcsPlayer::kFrameQueueCapacity) {
       gst_sample_unref (p->frames.front().sample);
       p->frames.pop_front();
       replaced = true;
       p->delivery_replaced++;
     }
-    p->latest_gen = p->generation;
-    p->latest_pts_ns = pts;
-    p->latest_seq = ++p->frames_decoded;
-    p->latest_gpu = gpu;
-    p->frames.push_back (TcsPlayer::FrameSlot{sample, p->generation, p->latest_seq, pts, (uint64_t) arrival.QuadPart, gpu});
+    p->frames.push_back (TcsPlayer::FrameSlot{sample, p->generation, p->latest_seq, pts,
+        (uint64_t) arrival.QuadPart, gpu, ring_slot});
     p->pending_update = true;
     p->delivery_arrivals++;
     p->delivery_last_qpc = (uint64_t) arrival.QuadPart;
@@ -382,6 +633,8 @@ on_new_sample (GstAppSink* sink, gpointer user)
     p->delivery_ring[event_slot].callback_us = (uint32_t) (((c1.QuadPart - c0.QuadPart) * 1000000) /
         (qfreq.QuadPart ? qfreq.QuadPart : 1));
   }
+  if (src_tex)
+    src_tex->Release ();
   return GST_FLOW_OK;
 }
 
@@ -788,6 +1041,7 @@ teardown_pipeline (TcsPlayer* p)
       gst_sample_unref (slot.sample);
     p->frames.clear ();
     if (p->leased) { gst_sample_unref (p->leased); p->leased = nullptr; }
+    p->leased_slot = -1;
     p->pending_update = false;
     p->frames_decoded = 0;
   }
@@ -1010,10 +1264,17 @@ ensure_staging (TcsPlayer* p, const D3D11_TEXTURE2D_DESC* src_desc)
   return p->staging_read;
 }
 
+/* Borrowed texture of the current lease; valid until tcs_player_release().
+ * Ring lease (slot >= 0): the shared ring texture (shim-owned). Legacy sample
+ * lease: the pool texture (kept alive by the sample ref) or, for array
+ * textures, the player-owned flattened single_tex. The caller must NOT
+ * Release the returned pointer. */
 static ID3D11Texture2D*
-texture_of_lease (TcsPlayer* p, guint* sub_out, ID3D11Texture2D** owned_out)
+texture_of_lease (TcsPlayer* p, guint* sub_out)
 {
-  *owned_out = nullptr;
+  *sub_out = 0;
+  if (p->leased_slot >= 0 && p->leased_slot < (int32_t) TcsPlayer::kRingSlots)
+    return p->ring_texture[p->leased_slot];
   if (!p->leased)
     return nullptr;
   GstBuffer* buf = gst_sample_get_buffer (p->leased);
@@ -1031,10 +1292,11 @@ texture_of_lease (TcsPlayer* p, guint* sub_out, ID3D11Texture2D** owned_out)
   D3D11_TEXTURE2D_DESC desc;
   tex->GetDesc (&desc);
   if (desc.ArraySize == 1 && sub == 0) {
-    *sub_out = 0;
-    return tex; /* caller releases */
+    tex->Release ();  /* borrowed: the leased sample pins the pool texture */
+    *sub_out = sub;
+    return tex;
   }
-  /* array texture: flatten into our single texture */
+  /* array texture: flatten into our single texture (player-owned) */
   if (!p->single_tex ||
       p->single_desc.Width != desc.Width ||
       p->single_desc.Height != desc.Height ||
@@ -1057,7 +1319,6 @@ texture_of_lease (TcsPlayer* p, guint* sub_out, ID3D11Texture2D** owned_out)
   p->context->Flush ();
   tex->Release ();
   *sub_out = 0;
-  *owned_out = p->single_tex; /* marker: returned tex is owned by player */
   return p->single_tex;
 }
 
@@ -1087,6 +1348,8 @@ tcs_player_create (const char* sender_name, void* external_d3d11_device,
     if (errbuf && errbuf_len)
       snprintf (errbuf, errbuf_len, "%s", p->last_error.c_str ());
     if (p->gst_dev) gst_object_unref (p->gst_dev);
+    if (p->context4) p->context4->Release ();
+    if (p->device5) p->device5->Release ();
     if (p->context) p->context->Release ();
     if (p->device) p->device->Release ();
     delete p;
@@ -1117,6 +1380,9 @@ tcs_player_destroy (TcsPlayer* player)
     p->notify_user = nullptr;
   }
   teardown_pipeline (p);
+  /* ring handles belong to the shim (CreateSharedHandle); close them before
+   * the device goes away. The compositor's opened references stay alive. */
+  destroy_ring (p);
   if (p->staging_read) p->staging_read->Release ();
   if (p->single_tex) p->single_tex->Release ();
   if (p->spout) {
@@ -1125,6 +1391,8 @@ tcs_player_destroy (TcsPlayer* player)
     delete p->spout;
   }
   if (p->gst_dev) gst_object_unref (p->gst_dev);
+  if (p->context4) p->context4->Release ();
+  if (p->device5) p->device5->Release ();
   if (p->context) p->context->Release ();
   if (p->device) p->device->Release ();
   delete p;
@@ -1395,13 +1663,13 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
   TcsPlayer* p = player;
 
   /* Already leased frame of this generation and not stale: keep it. */
-  if (p->leased && p->lease_info.generation == generation) {
+  if ((p->leased || p->leased_slot >= 0) && p->lease_info.generation == generation) {
     *out_info = p->lease_info;
     return 1;
   }
   /* Drop a lease from an older generation? No: the compositor owns it until
    * it releases. If a lease is still held, refuse silently (none). */
-  if (p->leased)
+  if (p->leased || p->leased_slot >= 0)
     return 0;
 
   /* Deliver with bounded latency (problem H-2/H-3): drop older/other
@@ -1432,7 +1700,8 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
 
   TcsPlayer::FrameSlot slot = p->frames.front();
   p->frames.pop_front();
-  p->leased = slot.sample;   /* take ownership; pool texture now pinned */
+  p->leased = slot.sample;   /* take ownership; pool texture now pinned (legacy) */
+  p->leased_slot = slot.slot;
   memset (&p->lease_info, 0, sizeof (p->lease_info));
   p->lease_info.generation = slot.generation;
   p->lease_info.seq = slot.seq;
@@ -1440,6 +1709,7 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
   p->lease_info.width = p->width;
   p->lease_info.height = p->height;
   p->lease_info.is_gpu = slot.gpu ? 1 : 0;
+  p->lease_info.slot = slot.slot;
   *out_info = p->lease_info;
   return 1;
 }
@@ -1450,16 +1720,13 @@ tcs_player_leased_texture (TcsPlayer* player, void** out_texture,
 {
   if (!player || !out_texture) return TCS_ERR_NO_FRAME;
   std::lock_guard<std::mutex> g (player->frame_lock);
-  if (!player->leased) return TCS_ERR_NO_FRAME;
+  if (!player->leased && player->leased_slot < 0) return TCS_ERR_NO_FRAME;
   guint sub = 0;
-  ID3D11Texture2D* owned = nullptr;
-  ID3D11Texture2D* tex = texture_of_lease (player, &sub, &owned);
-  (void) owned;
+  ID3D11Texture2D* tex = texture_of_lease (player, &sub);
   if (!tex) return TCS_ERR_NO_FRAME;
   D3D11_TEXTURE2D_DESC desc;
   tex->GetDesc (&desc);
-  tex->Release ();
-  *out_texture = tex;              /* valid until release() */
+  *out_texture = tex;              /* borrowed; valid until release() */
   if (out_subresource) *out_subresource = sub;
   if (out_dxgi_format) *out_dxgi_format = (uint32_t) desc.Format;
   return TCS_OK;
@@ -1470,21 +1737,16 @@ tcs_player_leased_cpu_copy (TcsPlayer* player, uint8_t* dst, int dst_stride)
 {
   if (!player || !dst) return TCS_ERR_GENERIC;
   std::lock_guard<std::mutex> g (player->frame_lock);
-  if (!player->leased) return TCS_ERR_NO_FRAME;
-  GstBuffer* buf = gst_sample_get_buffer (player->leased);
+  if (!player->leased && player->leased_slot < 0) return TCS_ERR_NO_FRAME;
+  GstBuffer* buf = player->leased ? gst_sample_get_buffer (player->leased) : nullptr;
   GstMemory* mem = buf ? gst_buffer_peek_memory (buf, 0) : nullptr;
-  if (!mem) return TCS_ERR_NO_FRAME;
   int w = player->lease_info.width, h = player->lease_info.height;
   if (w <= 0 || h <= 0) return TCS_ERR_NO_FRAME;
 
-  if (gst_is_d3d11_memory (mem)) {
-    GstD3D11Memory* dmem = (GstD3D11Memory*) mem;
-    ID3D11Resource* res = gst_d3d11_memory_get_resource_handle (dmem);
-    guint sub = gst_d3d11_memory_get_subresource_index (dmem);
-    if (!res) return TCS_ERR_NO_FRAME;
-    ID3D11Texture2D* tex = nullptr;
-    if (FAILED (res->QueryInterface (__uuidof(ID3D11Texture2D), (void**) &tex)) || !tex)
-      return TCS_ERR_NO_FRAME;
+  if (player->leased_slot >= 0 || (mem && gst_is_d3d11_memory (mem))) {
+    guint sub = 0;
+    ID3D11Texture2D* tex = texture_of_lease (player, &sub);
+    if (!tex) return TCS_ERR_NO_FRAME;
     D3D11_TEXTURE2D_DESC desc;
     tex->GetDesc (&desc);
     int rc = TCS_ERR_GENERIC;
@@ -1494,8 +1756,8 @@ tcs_player_leased_cpu_copy (TcsPlayer* player, uint8_t* dst, int dst_stride)
         player->context->CopyResource (staging, tex);
       else {
         D3D11_BOX box = {};
-        box.right = desc.Width;
-        box.bottom = desc.Height;
+        box.right = MIN (desc.Width, (UINT) w);
+        box.bottom = MIN (desc.Height, (UINT) h);
         box.back = 1;
         player->context->CopySubresourceRegion (staging, 0, 0, 0, 0, tex, sub, &box);
       }
@@ -1510,9 +1772,11 @@ tcs_player_leased_cpu_copy (TcsPlayer* player, uint8_t* dst, int dst_stride)
         rc = TCS_OK;
       }
     }
-    tex->Release ();
-    return rc;
+    return rc;  /* tex is borrowed */
   }
+
+  if (!buf || !mem)
+    return TCS_ERR_NO_FRAME;
 
   GstMapInfo info;
   if (!gst_buffer_map (buf, &info, GST_MAP_READ))
@@ -1536,6 +1800,27 @@ tcs_player_release (TcsPlayer* player)
     gst_sample_unref (player->leased);   /* returns the pool texture */
     player->leased = nullptr;
   }
+  /* free the ring slot last: the compositor has finished with it. */
+  player->leased_slot = -1;
+}
+
+/* Stage 6b: NT handles + shared fence of the ring (shim-owned handles). */
+TCS_GST_API int
+tcs_player_ring_info (TcsPlayer* player, void** out_handles, uint32_t capacity,
+                      uint32_t* out_count, void** out_fence, uint32_t* out_width,
+                      uint32_t* out_height)
+{
+  if (!player || !out_handles || !out_count) return TCS_ERR_GENERIC;
+  std::lock_guard<std::mutex> g (player->frame_lock);
+  if (!player->ring_ready) return TCS_ERR_NO_FRAME;
+  if (capacity < TcsPlayer::kRingSlots) return TCS_ERR_SIZE;
+  for (uint32_t i = 0; i < TcsPlayer::kRingSlots; i++)
+    out_handles[i] = player->ring_handle[i];
+  *out_count = TcsPlayer::kRingSlots;
+  if (out_fence) *out_fence = player->ring_fence_handle;
+  if (out_width) *out_width = (uint32_t) player->ring_width;
+  if (out_height) *out_height = (uint32_t) player->ring_height;
+  return TCS_OK;
 }
 
 /* ---- verification layer ---- */
@@ -1546,24 +1831,31 @@ tcs_player_publish_spout (TcsPlayer* player)
   if (!player) return TCS_ERR_GENERIC;
   if (!player->spout_ready) return TCS_ERR_SPOUT;
   std::lock_guard<std::mutex> g (player->frame_lock);
+  bool ok = false;
+
+  if (player->leased_slot >= 0) {
+    /* ring lease: send the shared ring texture on the shim device */
+    ID3D11Texture2D* tex = player->ring_texture[player->leased_slot];
+    if (tex)
+      ok = player->spout->SendTexture (tex);
+    if (ok) player->spout_sends++;
+    return ok ? TCS_OK : TCS_ERR_GENERIC;
+  }
+
   GstSample* sample = player->leased ? player->leased
       : (player->frames.empty() ? nullptr : player->frames.back().sample);
   if (!sample) return TCS_ERR_NO_FRAME;
   GstBuffer* buf = gst_sample_get_buffer (sample);
   GstMemory* mem = buf ? gst_buffer_peek_memory (buf, 0) : nullptr;
-  bool ok = false;
 
   if (mem && gst_is_d3d11_memory (mem)) {
     guint sub = 0;
-    ID3D11Texture2D* owned = nullptr;
     GstSample* keep = player->leased;
     player->leased = sample; /* texture_of_lease reads the lease slot */
-    ID3D11Texture2D* tex = texture_of_lease (player, &sub, &owned);
+    ID3D11Texture2D* tex = texture_of_lease (player, &sub);
     player->leased = keep;
-    if (tex) {
+    if (tex)
       ok = player->spout->SendTexture (tex);
-      tex->Release ();
-    }
   } else if (buf) {
     GstMapInfo info;
     if (gst_buffer_map (buf, &info, GST_MAP_READ)) {

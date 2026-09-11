@@ -43,4 +43,36 @@ tcs_delivery_plan (uint32_t n, uint64_t oldest_age_ticks, uint64_t age_limit_tic
   return plan;
 }
 
+/* ---- shared ring slot policy (stage 6b, pure) ----
+ * The GPU path keeps at most 3 frames in flight in the shared texture ring:
+ * the current lease (at most 1) and the undelivered FIFO (bounded by the
+ * delivery plan above). Slot allocation and eviction follow the same
+ * latest-first rule as the FIFO. */
+
+/* Pick the first ring slot whose `used[i]` is 0. -1 = all used: the caller
+ * must evict the oldest undelivered GPU item, then retry. */
+static inline int32_t
+tcs_ring_pick_slot (const uint8_t* used, uint32_t slots)
+{
+  if (!used)
+    return -1;
+  for (uint32_t i = 0; i < slots; i++)
+    if (!used[i])
+      return (int32_t) i;
+  return -1;
+}
+
+/* Index (oldest first) of the oldest undelivered item that occupies a ring
+ * slot (item_slots[i] >= 0), or -1 when the queue has no GPU item. */
+static inline int32_t
+tcs_ring_evict_index (const int32_t* item_slots, uint32_t n)
+{
+  if (!item_slots)
+    return -1;
+  for (uint32_t i = 0; i < n; i++)
+    if (item_slots[i] >= 0)
+      return (int32_t) i;
+  return -1;
+}
+
 #endif /* TCS_DELIVERY_POLICY_H */

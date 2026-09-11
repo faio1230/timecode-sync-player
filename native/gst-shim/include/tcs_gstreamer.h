@@ -63,6 +63,7 @@ typedef struct TcsFrameInfo {
   int32_t width;
   int32_t height;
   int32_t is_gpu;        /* 1: D3D11 texture; 0: system-memory buffer */
+  int32_t slot;          /* stage 6b: shared ring slot 0..2; -1 = legacy sample lease */
 } TcsFrameInfo;
 
 typedef struct TcsStats {
@@ -107,6 +108,22 @@ TCS_GST_API int tcs_player_drain_delivery_events(TcsPlayer* player,
                                                  uint32_t* out_count);
 TCS_GST_API int tcs_player_get_delivery_stats(TcsPlayer* player,
                                               TcsDeliveryStats* out);
+
+/* ---- shared texture ring (stage 6b: separate decoder device) ----
+ * The shim creates its own ID3D11Device on the adapter LUID supplied at
+ * create() time and never touches the compositor device/context. Decoded GPU
+ * frames are copied into a 3-slot ring of NT-shared BGRA textures (same video
+ * dimensions as the negotiated caps) and published with a shared fence whose
+ * value is the frame seq (see TcsFrameInfo.seq). The compositor opens the
+ * handles once, then waits for `seq` on the GPU queue (ID3D11DeviceContext4)
+ * before drawing. acquire() reports the slot through TcsFrameInfo.slot.
+ * Handles are owned by the shim: do NOT CloseHandle them, they stay valid
+ * until tcs_player_destroy. Returns TCS_ERR_NO_FRAME before the first GPU
+ * frame (or on the CPU path) and TCS_ERR_SIZE when capacity < the ring size. */
+TCS_GST_API int tcs_player_ring_info(TcsPlayer* player, void** out_handles,
+                                     uint32_t capacity, uint32_t* out_count,
+                                     void** out_fence, uint32_t* out_width,
+                                     uint32_t* out_height);
 
 /* Create the player.
  * external_d3d11_device: ID3D11Device* to share with the compositor;

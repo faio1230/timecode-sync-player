@@ -1,12 +1,17 @@
+using Serilog;
 using TimecodeSyncPlayer.Contracts;
+using Vortice.Direct3D11;
 
 namespace TimecodeSyncPlayer.Output;
 
-/// <summary>shim のリース API のうち、ソース契約に必要な部分。</summary>
-internal readonly record struct GstLeaseFrameInfo(ulong Generation, ulong Sequence, long PtsNs, int Width, int Height, bool IsGpu);
+/// <summary>shim のリース API のうち、ソース契約に必要な部分。Slot=-1 は旧サンプル経路。</summary>
+internal readonly record struct GstLeaseFrameInfo(ulong Generation, ulong Sequence, long PtsNs, int Width, int Height, bool IsGpu, int Slot = -1);
 
 /// <summary>shim の配信トレース集計（問題 H）。replaced は latest 置換回数。</summary>
 internal readonly record struct GstDeliveryStatsInfo(ulong Arrivals, ulong LatestReplaced, ulong QosEvents, ulong DecoderOut, ulong RingDropped);
+
+/// <summary>ステージ 6b: shim の共有リング記述。ハンドルは shim 所有。</summary>
+internal readonly record struct GstRingInfo(int Width, int Height, IntPtr FenceHandle, IntPtr[] TextureHandles);
 
 internal interface IGstLeasePlayer
 {
@@ -17,6 +22,9 @@ internal interface IGstLeasePlayer
     void Release();
     string DecoderName { get; }
     GstDeliveryStatsInfo DeliveryStats { get; }
+
+    /// <summary>共有リングが準備できていればそのハンドル集合を返す（未作成は false）。</summary>
+    bool TryGetRingInfo(out GstRingInfo info);
 }
 
 /// <summary>
@@ -25,20 +33,26 @@ internal interface IGstLeasePlayer
 /// - position は受け取らず「現世代の latest 1 枚」を返すため、返却画像の pts を Stamp.PositionSeconds とする。
 /// - リース保持中の acquire は同じ画像を返すため、参照カウント付きの共有リースとして同一 Stamp を返す。
 /// - Ended は区別できない（0 = なし）ため NotReady とし、保持は合成層に任せる。
-/// デバイスは OutputEngine のものを shim に Adopt させる前提（別デバイス共有は行わない）。
+/// ステージ 6b: shim は合成デバイスを Adopt せず同一アダプター LUID の別デバイスを作る。
+/// slot >= 0 のリースは共有リング（NT ハンドル + 共有フェンス）で渡り、このクラスが
+/// 合成デバイス上に一度だけ開いて保持する。描画前のフェンス待ちは OutputEngine が GPU キューへ出す。
 /// </summary>
 internal sealed class GStreamerSource : IVideoSource
 {
     private readonly IGstLeasePlayer player;
     private readonly string gpu;
+    private readonly GpuDevice? device;
     private SharedLease? active;
+    private RingResources? ring;
+    private bool ringOpenFailedLogged;
     private long notReady, ready, generationRejected;
     private int peakLeases;
 
-    public GStreamerSource(IGstLeasePlayer player, string gpu = "")
+    public GStreamerSource(IGstLeasePlayer player, string gpu = "", GpuDevice? device = null)
     {
         this.player = player;
         this.gpu = gpu;
+        this.device = device;
     }
 
     /// <summary>shim が保持する現在世代（合成層の generation と対応付ける）。</summary>
@@ -63,12 +77,34 @@ internal sealed class GStreamerSource : IVideoSource
             return SourceStatus.Ready;
         }
         if (!player.Acquire((ulong)generation, out GstLeaseFrameInfo info)) { notReady++; return SourceStatus.NotReady; }
-        if (info.Generation != (ulong)generation || info.Width <= 0 || info.Height <= 0
-            || !player.TryGetLeasedTexture(out IntPtr texture, out _, out uint dxgiFormat) || dxgiFormat != 87)
+        if (info.Generation != (ulong)generation || info.Width <= 0 || info.Height <= 0)
         {
             player.Release();
             notReady++;
             return SourceStatus.NotReady;
+        }
+        IntPtr texture;
+        if (info.Slot >= 0)
+        {
+            // 共有リング: slot の Surface はリングとして一度だけ開いて保持する。
+            RingResources? resources = EnsureRing();
+            if (GstRingPolicy.Decide(info.Slot, resources?.Count ?? 0, resources != null) != GstRingLeasePlan.UseRing)
+            {
+                player.Release();
+                notReady++;
+                return SourceStatus.NotReady;
+            }
+            texture = resources!.Textures[info.Slot].NativePointer;
+        }
+        else
+        {
+            // 旧サンプル経路: リースごとのテクスチャを開く。
+            if (!player.TryGetLeasedTexture(out texture, out _, out uint dxgiFormat) || dxgiFormat != 87)
+            {
+                player.Release();
+                notReady++;
+                return SourceStatus.NotReady;
+            }
         }
         active = new SharedLease(this, info, texture, positionSeconds);
         ready++;
@@ -93,12 +129,115 @@ internal sealed class GStreamerSource : IVideoSource
     public void Dispose()
     {
         if (!TryDispose()) throw new InvalidOperationException("GStreamerSource: a lease is still outstanding; release it before disposing.");
+        // 共有リングのリソースは、worker 停止・GPU ドレイン後にここで解放する。
+        ring?.Dispose();
+        ring = null;
+    }
+
+    /// <summary>slot のリング Surface（SRV + テクスチャ）を返す。owner は GStreamerSource。</summary>
+    internal bool TryGetRingSurface(int slot, out ID3D11Texture2D? texture, out ID3D11ShaderResourceView? view)
+    {
+        texture = null;
+        view = null;
+        RingResources? resources = ring;
+        if (resources == null || GstRingPolicy.Decide(slot, resources.Count, true) != GstRingLeasePlan.UseRing)
+            return false;
+        texture = resources.Textures[slot];
+        view = resources.Views[slot];
+        return true;
+    }
+
+    /// <summary>描画前の GPU キュー待ち（CPU は待たない）。slot>=0 のリースでのみ使う。</summary>
+    internal void WaitRingFence(ulong value)
+    {
+        if (device == null || ring == null) return;
+        device.Context4.Wait(ring.Fence, value);
+    }
+
+    /// <summary>合成デバイス上にリングを一度だけ開く（未作成/未接続は null で毎 tick 再試行）。</summary>
+    private RingResources? EnsureRing()
+    {
+        if (ring != null) return ring;
+        if (device == null) return null;
+        if (!player.TryGetRingInfo(out GstRingInfo info)) return null;
+        try
+        {
+            ring = RingResources.Open(device, info);
+        }
+        catch (Exception ex)
+        {
+            if (!ringOpenFailedLogged)
+            {
+                ringOpenFailedLogged = true;
+                Log.Warning(ex, "GStreamerSource: 共有リングのオープンに失敗（旧経路へフォールバック、再試行は継続）");
+            }
+            return null;
+        }
+        if (ring != null)
+            Log.Information("GStreamerSource: 共有リングを開きました {W}x{H} slots={Count}", ring.Width, ring.Height, ring.Count);
+        return ring;
     }
 
     private void ReleaseShared(SharedLease shared)
     {
         if (ReferenceEquals(active, shared)) active = null;
         player.Release();
+    }
+
+    /// <summary>合成デバイスが開いたリング 3 面 + 共有フェンス。GStreamerSource が所有する。</summary>
+    private sealed class RingResources : IDisposable
+    {
+        public ID3D11Texture2D[] Textures { get; }
+        public ID3D11ShaderResourceView[] Views { get; }
+        public ID3D11Fence Fence { get; }
+        public int Width { get; }
+        public int Height { get; }
+        public int Count => Textures.Length;
+
+        private RingResources(ID3D11Texture2D[] textures, ID3D11ShaderResourceView[] views,
+            ID3D11Fence fence, int width, int height)
+        {
+            Textures = textures;
+            Views = views;
+            Fence = fence;
+            Width = width;
+            Height = height;
+        }
+
+        public static RingResources? Open(GpuDevice gpu, GstRingInfo info)
+        {
+            if (info.TextureHandles.Length == 0 || info.FenceHandle == IntPtr.Zero) return null;
+            var textures = new ID3D11Texture2D[info.TextureHandles.Length];
+            var views = new ID3D11ShaderResourceView[textures.Length];
+            ID3D11Fence? fence = null;
+            try
+            {
+                fence = gpu.Device5.OpenSharedFence<ID3D11Fence>(info.FenceHandle);
+                for (int i = 0; i < textures.Length; i++)
+                {
+                    textures[i] = gpu.Device1.OpenSharedResource1<ID3D11Texture2D>(info.TextureHandles[i]);
+                    views[i] = gpu.Device.CreateShaderResourceView(textures[i]);
+                }
+                return new RingResources(textures, views, fence, info.Width, info.Height);
+            }
+            catch
+            {
+                fence?.Dispose();
+                for (int i = 0; i < textures.Length; i++)
+                {
+                    views[i]?.Dispose();
+                    textures[i]?.Dispose();
+                }
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (ID3D11ShaderResourceView view in Views) view.Dispose();
+            foreach (ID3D11Texture2D texture in Textures) texture.Dispose();
+            Fence.Dispose();
+        }
     }
 
     /// <summary>shim の1リースを複数の利用者へ共有する参照カウント holder。最後の Dispose で shim へ返す。</summary>
@@ -150,6 +289,9 @@ internal sealed class GStreamerSource : IVideoSource
 
         internal IntPtr TexturePointer => shared.TexturePointer;
 
+        /// <summary>ステージ 6b: 共有リング slot（-1 = 旧サンプル経路）。描画前のフェンス待ちに使う。</summary>
+        internal int Slot => shared.Info.Slot;
+
         /// <summary>リース中のテクスチャを AddRef 付きの所有ラッパーとして開く（lease 保持中のみ有効）。</summary>
         public Vortice.Direct3D11.ID3D11Texture2D? OpenTexture()
             => shared.TexturePointer == IntPtr.Zero
@@ -195,7 +337,7 @@ internal sealed class GstNativeLeasePlayer(TimecodeSyncPlayer.Gst.IGstNativeApi 
             info = default;
             return false;
         }
-        info = new GstLeaseFrameInfo(frame.Generation, frame.Seq, frame.PtsNs, frame.Width, frame.Height, frame.IsGpu != 0);
+        info = new GstLeaseFrameInfo(frame.Generation, frame.Seq, frame.PtsNs, frame.Width, frame.Height, frame.IsGpu != 0, frame.Slot);
         return true;
     }
 
@@ -213,5 +355,21 @@ internal sealed class GstNativeLeasePlayer(TimecodeSyncPlayer.Gst.IGstNativeApi 
                 return default;
             return new(stats.Arrivals, stats.LatestReplaced, stats.QosEvents, stats.DecoderOut, stats.RingDropped);
         }
+    }
+
+    public bool TryGetRingInfo(out GstRingInfo info)
+    {
+        var handles = new IntPtr[4];
+        if (native.GetRingInfo(player, handles, (uint)handles.Length, out uint count,
+                out IntPtr fence, out int width, out int height) != 0
+            || count == 0 || count > handles.Length || fence == IntPtr.Zero)
+        {
+            info = default;
+            return false;
+        }
+        if (count != handles.Length)
+            Array.Resize(ref handles, (int)count);
+        info = new GstRingInfo(width, height, fence, handles);
+        return true;
     }
 }
