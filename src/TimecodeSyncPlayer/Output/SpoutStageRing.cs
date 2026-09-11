@@ -1,9 +1,10 @@
 namespace TimecodeSyncPlayer.Output;
 
 /// <summary>
-/// Spout 段階リングの純粋状態機械（段階 3）。合成スレッドが BeginStage/CompleteStage、
+/// Spout 段階リングの純粋状態機械（段階 3 / S3-2）。合成スレッドが BeginStage/CompleteStage、
 /// Spout worker が TryBeginSend/EndSend を呼ぶ。呼び出し側の lock 前提で、GPU には触れない。
 /// 送信失敗時は Ready に戻して保持画像として再送し、より新しい画像が待っていれば解放する。
+/// S3-2: 送信 worker は送信完了を待たず、スロットを再利用する合成側が送信フェンス値を待つ。
 /// </summary>
 internal sealed class SpoutStageRing
 {
@@ -11,6 +12,7 @@ internal sealed class SpoutStageRing
 
     private readonly StageState[] states;
     private readonly ImageStamp[] stamps;
+    private readonly long[] sendFences;
     private int ready = -1;
 
     public SpoutStageRing(int capacity)
@@ -18,6 +20,7 @@ internal sealed class SpoutStageRing
         if (capacity < 2) throw new ArgumentOutOfRangeException(nameof(capacity));
         states = new StageState[capacity];
         stamps = new ImageStamp[capacity];
+        sendFences = new long[capacity];
     }
 
     /// <summary>最後に SendTexture できた画像（再送判断とログ用）。</summary>
@@ -27,18 +30,23 @@ internal sealed class SpoutStageRing
     public int ReadyCount => states.Count(state => state == StageState.Ready);
     public int FreeCount => states.Count(state => state == StageState.Free);
 
-    /// <summary>書込み先を確保する。空きが無ければ古い Ready を再利用し、それも無ければ -1。</summary>
-    public int BeginStage(ImageStamp stamp)
+    /// <summary>
+    /// 書込み先を確保する。空きが無ければ古い Ready を再利用し、それも無ければ -1。
+    /// pendingSendFence はそのスロットの前回送信フェンス値（0 なら待ち不要）。書込み前に待つのは呼び出し側。
+    /// </summary>
+    public int BeginStage(ImageStamp stamp, out long pendingSendFence)
     {
         int slot = Array.IndexOf(states, StageState.Free);
         if (slot < 0)
         {
-            if (ready < 0) return -1;
+            if (ready < 0) { pendingSendFence = 0; return -1; }
             slot = ready; // 新しい画像で上書きする（送信前の古い Ready を破棄）。
             ready = -1;
         }
         states[slot] = StageState.Staging;
         stamps[slot] = stamp;
+        pendingSendFence = sendFences[slot];
+        sendFences[slot] = 0;
         return slot;
     }
 
@@ -65,12 +73,13 @@ internal sealed class SpoutStageRing
         return slot;
     }
 
-    /// <summary>送信終了。成功なら解放、失敗なら保持画像へ戻す（より新しい Ready があれば解放）。</summary>
-    public void EndSend(int slot, ImageStamp stamp, bool sent)
+    /// <summary>送信終了。成功は解放（送信フェンス値を記録）、失敗は保持画像へ戻す（より新しい Ready があれば解放）。</summary>
+    public void EndSend(int slot, ImageStamp stamp, bool sent, long sendFence)
     {
         if (sent)
         {
             Held = stamp;
+            sendFences[slot] = sendFence;
             states[slot] = StageState.Free;
             return;
         }

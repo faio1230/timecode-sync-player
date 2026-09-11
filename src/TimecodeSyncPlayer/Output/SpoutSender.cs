@@ -24,7 +24,7 @@ internal sealed class SpoutSender : IDisposable
     private readonly string worker;
     private readonly int mutexWaitMs;
     private readonly ID3D11Texture2D[] heldTextures;
-    private readonly GpuFence senderFence;
+    private readonly GpuFenceSignal signal;
     private readonly object gate = new();
     private readonly SpoutStageRing ring = new(2);
     private IntPtr self;
@@ -36,7 +36,7 @@ internal sealed class SpoutSender : IDisposable
         SpoutTextureNative.EnsureVerifiedLibrary(warnOnly: true);
         this.gpu = gpu; this.log = log; this.worker = worker; this.mutexWaitMs = mutexWaitMs;
         heldTextures = new ID3D11Texture2D[ring.Capacity];
-        senderFence = gpu.CreateFence();
+        signal = gpu.CreateFenceSignal();
         bool constructed = false;
         try
         {
@@ -53,19 +53,14 @@ internal sealed class SpoutSender : IDisposable
         }
         catch
         {
-            try { senderFence.Wait("Spout.constructor.drain"); }
-            catch (GpuDeviceLostException) { }
+            try { if (constructed) SpoutTextureNative.Dtor(self); }
             finally
             {
-                try { if (constructed) SpoutTextureNative.Dtor(self); }
-                finally
-                {
-                    if (self != IntPtr.Zero) Marshal.FreeHGlobal(self);
-                    self = IntPtr.Zero;
-                    mutex?.Dispose();
-                    foreach (var texture in heldTextures) texture?.Dispose();
-                    senderFence.Dispose();
-                }
+                if (self != IntPtr.Zero) Marshal.FreeHGlobal(self);
+                self = IntPtr.Zero;
+                mutex?.Dispose();
+                foreach (var texture in heldTextures) texture?.Dispose();
+                signal.Dispose();
             }
             throw;
         }
@@ -75,10 +70,11 @@ internal sealed class SpoutSender : IDisposable
     public void Stage(Surface source, ImageStamp stamp, long scheduled)
     {
         int slot;
+        long pendingSendFence;
         lock (gate)
         {
             if (SpoutOutputPolicy.DecideCopy(stamp.Id, ring.Held.Id) != SpoutCopyDecision.Copy) return;
-            slot = ring.BeginStage(stamp);
+            slot = ring.BeginStage(stamp, out pendingSendFence);
             if (slot < 0)
             {
                 log.Add("skip", worker, scheduled, stamp, "stage.busy", 1);
@@ -87,8 +83,19 @@ internal sealed class SpoutSender : IDisposable
         }
         try
         {
+            if (pendingSendFence > 0)
+            {
+                // このスロットの前回送信が GPU で完了するまで上書きしない（worker は待たない）。
+                long waitStarted = Stopwatch.GetTimestamp();
+                signal.WaitSend(pendingSendFence);
+                log.Add("spout.waitSend", worker, scheduled, stamp, value: (Stopwatch.GetTimestamp() - waitStarted) * 1_000_000 / Stopwatch.Frequency);
+            }
+            long started = Stopwatch.GetTimestamp();
             gpu.Context.CopyResource(heldTextures[slot], source.Texture);
-            log.Add("spout.stage", worker, scheduled, stamp, detail: "gpu", value: slot);
+            signal.SignalStage(stamp.Id); // 同一 context の順序をフェンス値でも確定する
+            gpu.Context.Flush();          // 送信 worker は Flush しないため、ここで stage を投入する
+            long us = (Stopwatch.GetTimestamp() - started) * 1_000_000 / Stopwatch.Frequency;
+            log.Add("spout.stage", worker, scheduled, stamp, detail: "gpu:" + slot, value: us);
         }
         catch
         {
@@ -113,10 +120,17 @@ internal sealed class SpoutSender : IDisposable
         log.Record(new("send.select.start", worker, Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc, Value: 0));
         log.Record(new("send.select.end", worker, Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc, "latest", Value: 0));
         bool sent = false;
+        long sendFence = 0;
         try
         {
-            // コピーは合成スレッドが同じ context に発行済み。専用フェンスの完了待ちで同一順序を確定する。
-            senderFence.Wait("spout.waitStage");
+            // コピーは合成スレッドが同じ context に発行済み。SendTexture も同じ context へ後に発行される
+            // ため GPU は必ずコピー後に読む。ここではフェンス値で完了を確認するが待たない
+            // （デコードバッチが間に入ると完了待ちが 5〜15ms になり送信 60Hz を割るため。S3-2）。
+            long waitStarted = Stopwatch.GetTimestamp();
+            bool staged = signal.IsStageComplete(stamp.Id);
+            log.Add("spout.waitStage", worker, scheduled, stamp,
+                detail: staged ? "ready" : "queued",
+                value: (Stopwatch.GetTimestamp() - waitStarted) * 1_000_000 / Stopwatch.Frequency);
             using var acquisition = SendMutexGate.Acquire(mutexWaitMs, nextScheduledQpc, Stopwatch.Frequency, cancellation,
                 Stopwatch.GetTimestamp, timeout => mutex!.WaitOne(timeout), () => mutex!.ReleaseMutex(),
                 attempt =>
@@ -143,7 +157,9 @@ internal sealed class SpoutSender : IDisposable
                 }
                 finally { log.Record(new("send.start", worker, sendStarted, scheduled, stamp.Id, stamp.GeneratedQpc)); }
                 log.Record(new("send.return", worker, sendReturned, scheduled, stamp.Id, stamp.GeneratedQpc, ok ? "true" : "false"));
-                senderFence.Wait("sender.send");
+                // 完了は待たない（worker を 1 フレーム止めない）。スロット再利用時に合成側が
+                // このフェンス値を待つ。ここでは送信コマンドの後ろに完了点を置くだけ。
+                sendFence = signal.SignalSend();
                 completed = true;
                 log.Add("send.gpuComplete", worker, scheduled, stamp);
                 if (!ok) throw new InvalidOperationException("Spout SendTexture returned false.");
@@ -153,12 +169,12 @@ internal sealed class SpoutSender : IDisposable
             }
             finally
             {
-                if (submitted && !completed) senderFence.Wait("sender.send.drain");
+                if (submitted && !completed) sendFence = signal.SignalSend();
             }
         }
         finally
         {
-            lock (gate) ring.EndSend(slot, stamp, sent);
+            lock (gate) ring.EndSend(slot, stamp, sent, sendFence);
         }
     }
 
@@ -170,7 +186,7 @@ internal sealed class SpoutSender : IDisposable
         }
         mutex?.Dispose(); mutex = null;
         foreach (var texture in heldTextures) texture?.Dispose();
-        senderFence.Dispose();
+        signal.Dispose();
     }
 }
 

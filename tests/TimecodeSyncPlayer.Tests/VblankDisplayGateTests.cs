@@ -31,7 +31,8 @@ public class VblankDisplayGateTests
         gate.ObserveScanout(100_000, 10);
         gate.Predict(100_500).Should().Be(new VblankPrediction(113_667, 116_667, 11, 16_667));
         gate.Predict(113_666).PredictedRefresh.Should().Be(11);
-        gate.Predict(113_667).PredictedRefresh.Should().Be(12);
+        // vblank - lead = 115_667 > 113_667 なので、目標(113_667)を過ぎても同じ vblank を狙う。
+        gate.Predict(113_667).PredictedRefresh.Should().Be(11);
         gate.Predict(50_000).VblankQpc.Should().Be(116_667);
         gate.Decide(0, 100_500, 116_000, 1, false).Should().Be((VblankStep.WaitTarget, 113_667L, "target"));
 
@@ -134,7 +135,11 @@ public class VblankDisplayGateTests
         gate.Presentable(gate.Predict(116_700)).Should().BeFalse();
         gate.Decide(16_667, 116_700, 133_334, 2, false).Step.Should().Be(VblankStep.Idle);
         gate.Pending.Should().BeNull();
-        gate.Decide(16_667, 118_000, 133_334, 2, false).Should().Be((VblankStep.WaitTarget, 127_000L, "target"));
+        // vblank 120_000 は直前の表示 (116_667) と半周期以内なので Idle。時間が進むと次の
+        // vblank 130_000 を狙う（周期が 10ms へ変わった直後の重複排除）。
+        gate.Decide(16_667, 118_000, 133_334, 2, false).Step.Should().Be(VblankStep.Idle);
+        gate.Pending.Should().BeNull();
+        gate.Decide(16_667, 119_100, 133_334, 2, false).Should().Be((VblankStep.WaitTarget, 127_000L, "target"));
     }
 
     [Fact]
@@ -233,9 +238,11 @@ public class VblankDisplayGateTests
         gate.Defer();
         gate.AttemptPrediction.Should().BeNull();
         gate.Pending.Should().BeNull();
+        // 目標 130_334 を 0.1ms 過ぎただけ。vblank 133_334 は lead 以上先なので即時 Present。
         var next = gate.Decide(16_667, 130_450, 133_334, 2, false);
-        next.Should().Be((VblankStep.WaitTarget, 133_334L, "compose"));
-        gate.Pending?.PredictedRefresh.Should().Be(13);
+        next.Should().Be((VblankStep.Present, 133_334L, ""));
+        gate.Pending.Should().BeNull();
+        gate.AttemptPrediction?.PredictedRefresh.Should().Be(12);
     }
 
     [Fact]
@@ -275,6 +282,24 @@ public class VblankDisplayGateTests
         gate.Decide(0, 100_500, 116_500, 1, false);
         gate.Decide(0, 116_167, 116_500, 1, false).Should().Be((VblankStep.WaitTarget, 116_500L, "compose"));
         gate.Pending?.VblankQpc.Should().Be(133_334);
+    }
+
+    [Fact]
+    public void PassedTargetWithLeadRemaining_ImmediatePresentsWithoutPending()
+    {
+        // margin 5ms / lead 1ms。目標 111_667 を 2ms 過ぎた now=113_667 でも vblank は 3ms 先。
+        var gate = new VblankDisplayGate(5, 60, Frequency);
+        gate.ObserveScanout(100_000, 10);
+        gate.Predict(113_667).VblankQpc.Should().Be(116_667);
+
+        var step = gate.Decide(0, 113_667, 133_334, 1, false);
+
+        step.Should().Be((VblankStep.Present, 116_667L, ""));
+        gate.AttemptPrediction?.VblankQpc.Should().Be(116_667);
+        gate.Pending.Should().BeNull();
+        gate.BeginAttempt(0);
+        gate.Presented(1);
+        gate.LastPresentedVblankQpc.Should().Be(116_667);
     }
 
     [Fact]
