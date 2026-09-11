@@ -407,7 +407,9 @@ internal sealed class OutputEngine : IDisposable
         int generation = effective?.Generation ?? sourceGeneration;
         if (generation >= 0) EnsureSourceGeneration(generation);
         double position = effective?.PositionSeconds ?? 0;
-        var status = mpvSource!.TryAcquire(Math.Max(generation, 0), position, out var lease);
+        // 完了したアップロードだけを公開してから取得する（未完了のコピーは合成に含めない）。
+        mpvSource!.PollUploads();
+        var status = mpvSource.TryAcquire(Math.Max(generation, 0), position, out var lease);
         ImageStamp acquiredStamp = lease != null ? new ImageStamp(lease.Stamp.Sequence, lease.Stamp.DecodedQpc) : default;
         settings.Trace.Add("source.acquire", "GPU", scheduled, acquiredStamp, status.ToString(),
             (long)Math.Round(position * 1_000_000));
@@ -475,6 +477,8 @@ internal sealed class OutputEngine : IDisposable
         if (!snapshotInput.TryTake(out var pending, out int generation, out double position) || pending == null) return;
         EnsureSourceGeneration(generation);
         mpvSource.TryUpload(pending, generation, position);
+        // 完了済みのアップロードだけをリングへ公開する（合成のフェンス待ちに含めない）。
+        mpvSource.PollUploads();
     }
 
     private void UpdateComposeLead(long durationTicks, long nowQpc)
@@ -503,7 +507,8 @@ internal sealed class OutputEngine : IDisposable
 
     // GPU worker 専用: 空き slot のテクスチャを必要サイズへ作り直してアップロードする。
     // slot はリングから外れ lease も無いときだけ渡ってくるため、作り直しは安全。
-    private void UploadToSlot(int index, byte[] pixels, int width, int height)
+    // コピー完了は専用の EVENT クエリで確認し、完了まではリングへ公開しない。
+    private IUploadCompletion UploadToSlot(int index, byte[] pixels, int width, int height)
     {
         var slot = uploadSlots[index] ??= new UploadSlot();
         if (slot.Surface == null || slot.Width != width || slot.Height != height)
@@ -513,7 +518,31 @@ internal sealed class OutputEngine : IDisposable
             slot.Width = width;
             slot.Height = height;
         }
-        gpu!.Context.UpdateSubresource<byte>(pixels.AsSpan(0, width * height * 4), slot.Surface.Texture, 0, (uint)(width * 4), 0);
+        var context = gpu!.Context;
+        context.UpdateSubresource<byte>(pixels.AsSpan(0, width * height * 4), slot.Surface.Texture, 0, (uint)(width * 4), 0);
+        var query = gpu.Device.CreateQuery(new QueryDescription(QueryType.Event));
+        context.End(query);
+        context.Flush();
+        return new UploadCompletion(context, query);
+    }
+
+    private sealed class UploadCompletion(ID3D11DeviceContext context, ID3D11Query query) : IUploadCompletion
+    {
+        private bool disposed;
+
+        public unsafe bool TryComplete()
+        {
+            int done = 0;
+            int hr = context.GetData(query, (IntPtr)(&done), 4, AsyncGetDataFlags.DoNotFlush).Code;
+            return hr == 0 && done != 0;
+        }
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            query.Dispose();
+        }
     }
 
     private sealed class UploadSlot
