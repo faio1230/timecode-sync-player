@@ -74,7 +74,7 @@ internal sealed class OutputEngine : IDisposable
     private GpuDevice? gpu;
     private ShaderPipeline? shaders;
     private readonly List<Surface> surfaces = new();
-    private SpoutSender? spoutSender;
+    private SharedFence? sharedFence;
     private SwapchainTarget? target;
     private VblankDisplayGate? vblank;
     private VblankWaitTimer? gpuLoopTimer;
@@ -234,18 +234,17 @@ internal sealed class OutputEngine : IDisposable
 
     public void SetSpoutEnabled(bool enabled) => Enqueue(() =>
     {
-        // 無効化は停止、有効化は未起動なら開始、起動中は維持（段階 3 の切替方針）。
-        switch (SpoutOutputPolicy.EvaluateWorker(enabled, spoutRunning))
+        if (enabled == spoutRunning && (enabled || spoutThread == null)) return;
+        if (enabled)
         {
-            case SpoutWorkerAction.Start:
-                spoutRunning = true;
-                spoutEverEnabled = true;
-                if (spoutThread == null) StartSpoutWorker();
-                break;
-            case SpoutWorkerAction.Stop:
-                spoutRunning = false;
-                StopSpoutWorker();
-                break;
+            spoutRunning = true;
+            spoutEverEnabled = true;
+            if (spoutThread == null) StartSpoutWorker();
+        }
+        else
+        {
+            spoutRunning = false;
+            StopSpoutWorker();
         }
     });
 
@@ -298,6 +297,7 @@ internal sealed class OutputEngine : IDisposable
             shaders = new ShaderPipeline(gpu);
             for (int i = 0; i < pool.Capacity; i++)
                 surfaces.Add(new Surface(gpu, gpu.Texture(settings.CanvasWidth, settings.CanvasHeight, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
+            sharedFence = new SharedFence(gpu);
             originQpc = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 2;
             settings.Trace.OriginQpc = originQpc;
             gpuLoopTimer = new VblankWaitTimer();
@@ -456,12 +456,11 @@ internal sealed class OutputEngine : IDisposable
         ISourceImageLease? lease = null;
         SourceStatus status = SourceStatus.NotReady;
 
-        long acquireStarted = Stopwatch.GetTimestamp();
         if (gstSource != null)
         {
             // GStreamer: shim のリーステクスチャを SRV で直接描画する（CPU/GPU コピーを挟まない）。
             SyncGStreamerGeneration();
-            var gst = AcquireGStreamer(scheduled, position);
+            var gst = AcquireGStreamer(position);
             status = gst.Status;
             lease = gst.Lease;
             acquired = gst.Image;
@@ -490,8 +489,6 @@ internal sealed class OutputEngine : IDisposable
                 else { lease.Dispose(); lease = null; }
             }
         }
-        settings.Trace.Add("compose.acquire", "GPU", scheduled, default,
-            value: (Stopwatch.GetTimestamp() - acquireStarted) * 1_000_000 / Stopwatch.Frequency);
 
         bool writing = true, inFlight = false, retained = false;
         try
@@ -500,18 +497,13 @@ internal sealed class OutputEngine : IDisposable
             long composeStartedQpc = Stopwatch.GetTimestamp();
             settings.Trace.Add("compose.start", "GPU", scheduled, stamp);
             if (lease != null) { lease.BeginGpuUse(); inFlight = true; }
-            long drawStarted = Stopwatch.GetTimestamp();
             retained = layer!.Compose(surface,
                 effective?.Gap ?? OutputGapMode.None,
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
                 stamp, originQpc, acquired);
-            long drawUs = (Stopwatch.GetTimestamp() - drawStarted) * 1_000_000 / Stopwatch.Frequency;
-            settings.Trace.Add("compose.draw", "GPU", scheduled, stamp, value: drawUs);
-            long fenceStarted = Stopwatch.GetTimestamp();
+            sharedFence!.Signal(gpu!, stamp.Id); // フェンス値＝画像 ID。Spout 側は GPU キューで待つ。
             gpu!.Fence.Wait("compose.source");
-            long fenceUs = (Stopwatch.GetTimestamp() - fenceStarted) * 1_000_000 / Stopwatch.Frequency;
-            settings.Trace.Add("compose.fence", "GPU", scheduled, stamp, value: fenceUs);
             long composeCompletedQpc = Stopwatch.GetTimestamp();
             if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
             if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; lease = null; }
@@ -521,8 +513,6 @@ internal sealed class OutputEngine : IDisposable
             pool.Publish(slot, stamp, true);
             writing = false;
             settings.Trace.Record(new("compose.visible", "GPU", Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc));
-            // Spout 有効時のみ、合成完了の測定後に同一 context で保持テクスチャへコピーする（段階 3）。
-            if (spoutRunning) Volatile.Read(ref spoutSender)?.Stage(surface, stamp, scheduled);
         }
         finally
         {
@@ -634,7 +624,7 @@ internal sealed class OutputEngine : IDisposable
     // GStreamer shim の最新リースを取得し、借用テクスチャの SRV を作って直接描画できる形で返す。
     // shim は「リース保持中は同じ画像を返す」ため、リースは compose 後に毎回返す（呼び出し側が Dispose）。
     // 描画に使うテクスチャは AddRef 付きの Surface として LayerImage が所有する。
-    private GstFrameAcquire AcquireGStreamer(long scheduled, double position)
+    private GstFrameAcquire AcquireGStreamer(double position)
     {
         int generation = gstSource!.Generation;
         var status = gstSource.TryAcquire(generation, position, out var lease);
@@ -645,11 +635,8 @@ internal sealed class OutputEngine : IDisposable
         var texture = ((GStreamerSource.Lease)lease).OpenTexture();
         if (texture == null) return new(status, lease, null, stamp);
         Surface surface;
-        long srvStarted = Stopwatch.GetTimestamp();
         try { surface = new Surface(gpu!, texture, false, SourceSharing.None); }
         catch { texture.Dispose(); throw; }
-        settings.Trace.Add("compose.srv", "GPU", scheduled, new ImageStamp(stamp.Sequence, stamp.DecodedQpc),
-            value: (Stopwatch.GetTimestamp() - srvStarted) * 1_000_000 / Stopwatch.Frequency);
         // Lease は LayerImage に持たせない（毎 tick 返す）。テクスチャ/SRV は AddRef 済みで保持される。
         var image = new LayerImage(surface.View, surface.Texture.NativePointer, lease.Width, lease.Height, null, surface);
         return new(status, lease, image, stamp);
@@ -894,18 +881,24 @@ internal sealed class OutputEngine : IDisposable
 
     private void SpoutRun(CancellationToken token, ManualResetEventSlim ready)
     {
+        GpuDevice? sendGpu = null;
         SpoutSender? sender = null;
+        SharedFenceReader? fenceReader = null;
         VblankWaitTimer? loopTimer = null;
+        var opened = new List<Surface>();
         try
         {
-            // 段階 3: 送信も合成デバイスで行う（別デバイス廃止）。コピーは合成スレッドが同じ context に発行する。
-            sender = new SpoutSender(gpu!, settings.Trace, "Spout", settings.SenderName,
-                settings.CanvasWidth, settings.CanvasHeight, MutexWaitPolicy.MaxWaitMs);
-            Volatile.Write(ref spoutSender, sender);
+            sendGpu = new GpuDevice(gpu!.Luid, Fault, fenceSync: true);
+            foreach (var surface in surfaces)
+                opened.Add(new Surface(sendGpu, sendGpu.Device1.OpenSharedResource1<ID3D11Texture2D>(surface.Handle), false, SourceSharing.None));
+            fenceReader = new SharedFenceReader(sendGpu, sharedFence!.Open(sendGpu));
+            sender = new SpoutSender(sendGpu, settings.Trace, "Spout", settings.SenderName,
+                settings.CanvasWidth, settings.CanvasHeight, MutexWaitPolicy.MaxWaitMs, fenceReader);
             loopTimer = new VblankWaitTimer();
             spoutLoopTimerHighResolution = loopTimer.HighResolution;
             ready.Set();
             if (token.IsCancellationRequested) return;
+            Surface[] reads = opened.ToArray();
             long origin = originQpc + (long)Math.Round(settings.SendPhaseMs * Stopwatch.Frequency / 1000);
             var schedule = new TickSchedule(origin, settings.Fps, Stopwatch.Frequency, scheduleOffset);
             while (!token.IsCancellationRequested)
@@ -920,6 +913,7 @@ internal sealed class OutputEngine : IDisposable
                 }
                 var tick = schedule.Take(now);
                 if (tick.Skipped > 0) settings.Trace.Add("skip", "Spout", tick.Scheduled, detail: "schedule.late", value: tick.Skipped);
+                sender.Update(reads, pool, tick.Scheduled, token);
                 sender.Send(tick.Scheduled, schedule.DueQpc, token);
             }
         }
@@ -930,9 +924,12 @@ internal sealed class OutputEngine : IDisposable
         finally
         {
             ready.Set();
-            Volatile.Write(ref spoutSender, null);
+            if (sendGpu != null) Drain(sendGpu, "Spout.shutdown");
             DisposeOwned(sender, "Spout.sender");
             DisposeOwned(loopTimer, "Spout.loopTimer");
+            foreach (var surface in opened) DisposeOwned(surface, "Spout.shared");
+            DisposeOwned(fenceReader, "Spout.fence");
+            DisposeOwned(sendGpu, "Spout.device");
             settings.Trace.Add("lifecycle", "Spout", detail: "worker.finished");
         }
     }
@@ -978,6 +975,7 @@ internal sealed class OutputEngine : IDisposable
             DisposeOwned(surface, "GPU.surface");
         }
         surfaces.Clear();
+        DisposeOwned(sharedFence, "GPU.fence"); sharedFence = null;
         DisposeOwned(shaders, "GPU.shaders"); shaders = null;
         DisposeOwned(previewTarget, "GPU.previewTarget"); previewTarget = null;
         DisposeOwned(previewTexture, "GPU.previewTexture"); previewTexture = null;

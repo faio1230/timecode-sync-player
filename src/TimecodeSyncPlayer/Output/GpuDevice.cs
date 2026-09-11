@@ -23,12 +23,10 @@ internal sealed class GpuDevice : IDisposable
     private readonly ID3D11Device1? device1;
     private readonly ID3D11Device5? device5;
     private readonly ID3D11DeviceContext4? context4;
-    private readonly Action<string> fault;
     public long Luid { get; }
 
     public GpuDevice(long? luid, Action<string> fault, bool fenceSync = false)
     {
-        this.fault = fault;
         using var build = new ConstructionScope();
         Factory = build.Add(CreateDXGIFactory1<IDXGIFactory2>());
         IDXGIAdapter1? selected = null;
@@ -40,8 +38,8 @@ internal sealed class GpuDevice : IDisposable
         if (Context != null) build.Add(Context);
         created.CheckError();
         if (Device == null || Context == null) throw new InvalidOperationException("D3D11 creation returned no device/context.");
-        // S3-2: immediate context は free-threaded ではない。合成 worker と Spout worker が
-        // 同じ context を共有するため、D3D11 の Multithread 保護をここで明示的に有効化する。
+        // S3-2.3: immediate context は free-threaded ではない。GStreamer shim は Adopt したこのデバイスを
+        // 別スレッドから使うため、Multithread 保護をここで明示的に有効化する（shim 任せにしない）。
         using (var multithread = Device.QueryInterfaceOrNull<ID3D11Multithread>())
         {
             if (multithread != null) multithread.SetMultithreadProtected(true);
@@ -63,12 +61,6 @@ internal sealed class GpuDevice : IDisposable
         }
         build.Commit();
     }
-
-    /// <summary>別スレッドが同じコンテキストで完了待ちするための Event query（query は共有できない）。</summary>
-    public GpuFence CreateFence() => new(Device, Context, fault);
-
-    /// <summary>S3-2: worker が context を触らずに待つためのフェンス値＋イベント。</summary>
-    public GpuFenceSignal CreateFenceSignal() => new(this, fault);
 
     public ID3D11Device1 Device1 => device1 ?? throw new InvalidOperationException("Device was not created for fence source sync.");
     public ID3D11Device5 Device5 => device5 ?? throw new InvalidOperationException("Device was not created for fence source sync.");
@@ -113,85 +105,6 @@ internal static class Displays
             adapter.Dispose();
         }
         throw new InvalidOperationException("Selected GPU adapter disappeared.");
-    }
-}
-
-/// <summary>
-/// S3-2: 同一デバイス内のフェンス値を待つ。合成スレッドが Stage コピー後に画像 ID で stage フェンスへ
-/// Signal し、送信 worker は SetEventOnCompletion で完了を待つ（worker から Flush/GetData を呼ばない）。
-/// 送信完了も worker が Signal した値を同じ方法で待つ。
-/// </summary>
-internal sealed class GpuFenceSignal : IDisposable
-{
-    private readonly ID3D11Device device;
-    private readonly ID3D11DeviceContext4 context4;
-    private readonly ID3D11Fence stageFence;
-    private readonly ID3D11Fence sendFence;
-    private readonly EventWaitHandle stageEvent = new(false, EventResetMode.AutoReset);
-    private readonly EventWaitHandle sendEvent = new(false, EventResetMode.AutoReset);
-    private readonly Action<string> fault;
-    private long sendValue;
-
-    public GpuFenceSignal(GpuDevice gpu, Action<string> fault)
-    {
-        this.fault = fault;
-        device = gpu.Device;
-        context4 = gpu.Context4;
-        stageFence = gpu.Device5.CreateFence(0, FenceFlags.None);
-        sendFence = gpu.Device5.CreateFence(0, FenceFlags.None);
-    }
-
-    public void SignalStage(long imageId) => context4.Signal(stageFence, (ulong)imageId);
-    public bool WaitStage(long imageId, Action<string>? probe = null) => Wait(stageFence, stageEvent, (ulong)imageId, "spout.waitStage", probe);
-
-    /// <summary>S3-2: コピー完了を待たずに確認だけする（同一 context の順序が本質の保証）。</summary>
-    public bool IsStageComplete(long imageId) => stageFence.CompletedValue >= (ulong)imageId;
-
-    public long SignalSend()
-    {
-        long value = Interlocked.Increment(ref sendValue);
-        context4.Signal(sendFence, (ulong)value);
-        return value;
-    }
-
-    public bool WaitSend(long value, Action<string>? probe = null) => Wait(sendFence, sendEvent, (ulong)value, "spout.waitSend", probe);
-
-    private bool Wait(ID3D11Fence fence, EventWaitHandle completed, ulong value, string stage, Action<string>? probe)
-    {
-        ulong atEntry = fence.CompletedValue;
-        if (atEntry >= value) return true;
-        long start = System.Diagnostics.Stopwatch.GetTimestamp();
-        bool warned = false;
-        while (true)
-        {
-            completed.Reset();
-            fence.SetEventOnCompletion(value, completed.SafeWaitHandle.DangerousGetHandle());
-            ulong afterArm = fence.CompletedValue;
-            if (afterArm >= value)
-            {
-                probe?.Invoke($"entry={atEntry} armedDone={afterArm}");
-                return true;
-            }
-            if (completed.WaitOne(100))
-            {
-                if (probe != null && System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds >= 1.5)
-                    probe($"entry={atEntry} armed={afterArm} after={fence.CompletedValue} us={System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000:F0}");
-                return true;
-            }
-            int removed = device.DeviceRemovedReason.Code;
-            if (removed < 0) throw new GpuDeviceLostException($"{stage}: device removed 0x{removed:X8}");
-            if (!warned && System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds >= 100)
-            {
-                warned = true;
-                fault($"{stage}: GPU completion pending >100ms or wait failed; new work stopped, retaining resources until completion/device loss.");
-            }
-        }
-    }
-
-    public void Dispose()
-    {
-        stageFence.Dispose(); sendFence.Dispose();
-        stageEvent.Dispose(); sendEvent.Dispose();
     }
 }
 

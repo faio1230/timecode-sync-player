@@ -11,7 +11,7 @@
                                                      合成画像 pool（3枚、lease、共有フェンス）
                                     ┌──────────────────────┬────────────────────┐
                                     ▼                      ▼                    ▼
-                          全画面（同一デバイス）      Spout worker（同一デバイス）   プレビュー（後段）
+                          全画面（同一デバイス）      Spout worker（別デバイス）   プレビュー（後段）
                           vblank 位相基準で Present    合成に対する位相 4ms で送信
 ```
 
@@ -27,15 +27,16 @@
 | 読者→書き手の安全 | CPU lease（読者0の領域にしか書かない） | 同上 |
 | 表示の時計 | DXGI フレーム統計（`GetFrameStatistics`）で次の vblank を予測し、`vblank − margin(3ms)` に最新画像を Present。1 vblank 1表示、失敗は次の vblank。目標到達済みの表示は合成より優先 | [走査計測](GPU-SCANOUT-STATS-RESULTS-2026-09-10.md)、[vblank 実証](GPU-VBLANK-PACING-RESULTS-2026-09-10.md) |
 | 合成の位相 | 主表示があれば `vblank − margin − lead(3ms)` に逐次補正（slew 0.5ms/tick）。周期は主表示の実周期に追従。表示がなければ自由走行 60Hz | [整列実証](GPU-COMPOSE-ALIGN-RESULTS-2026-09-10.md): 総遅延 5.6ms で起動非依存、表示落ち0 |
-| Spout | 専用 worker・同一デバイス（段階 3 で別デバイスから変更）。合成 worker が compose 完了の測定後に同じ context で保持テクスチャへ GPU コピーし、送信 worker は専用フェンスでコピー完了を確認してからアクセス mutex（要求 8ms・期限＝次回予定）を取得し SendTexture。失敗は保持画像の再送、資源は無効化しない | [位相](GPU-SEND-PHASE-PROBE-RESULTS-2026-09-09.md)、[8ms](GPU-MUTEX-8MS-PROBE-RESULTS-2026-09-09.md) |
+| Spout | 専用 worker・別デバイス。合成に対する位相 4ms で最新画像を送信用テクスチャへ GPU コピーし SendTexture。送信アクセス mutex は要求 8ms・期限＝次回予定。失敗は保持画像の再送、資源は無効化しない | [位相](GPU-SEND-PHASE-PROBE-RESULTS-2026-09-09.md)、[8ms](GPU-MUTEX-8MS-PROBE-RESULTS-2026-09-09.md) |
 
-### 段階 3 の設計差異（2026-09-11）
+### 同一デバイス化の試行と撤回（2026-09-11 S3-2）
 
-Spout 送信は当初「別デバイス・送信 worker が GPU コピー」だった。4K 実測で送信 worker のコピーと合成が物理 GPU を奪い合い、合成完了待ちに毎秒 1〜2 回 8〜20ms の外れ値が出て lead が 8ms に張り付いたため、次のように変更した。
+段階 3 で Spout を「同一デバイス・合成スレッドでコピー発行」へ変更したが撤回し、当初の「別デバイス＋共有フェンス」に戻した。
 
-- コピーは合成 worker が `compose.complete` の測定後に同じ context へ発行する（Spout 無効時は発行しない）。
-- 送信 worker は段階リング（保持テクスチャ 2 枚）の Ready を選び、mutex 取得と SendTexture のみを行う。コピー完了はフェンス値で確認するが待たない（S3-2: 4K ではデコードバッチが間に入ると完了待ちが 5〜15ms になり送信 60Hz を割るため。SendTexture も同じ context へ後に発行されるため GPU は必ずコピー後に読む）。スロット再利用時の前回送信完了だけを合成側が待つ。
-- immediate context は free-threaded ではなく、`ID3D11Multithread.SetMultithreadProtected(TRUE)` で直列化してスレッド間共有する（S3-2。shim 任せにせず `GpuDevice` 生成時に明示）。送信 worker の完了待ちは context の `End`/`Flush`/`GetData` ではなく、フェンス値と `SetEventOnCompletion` で行う。保持テクスチャの書込み/読取りは段階リングで排他する。読者同士（全画面・Spout）は排他しないまま。
+- 4K 実測で、毎秒のキーフレームデコードが共有 immediate context に載り、Spout 送信コピーがその直後に並ぶ位相固定が発生。合成完了待ちに毎秒 4〜8ms の外れ値が出て compose p99 が 1ms を超えた（Spout OFF 対照は p99 0.77ms で停滞なし）。
+- 送信 worker のコピー完了待ちを外す緩和で送信間隔 p95 17.1ms まで改善したが、合成フェンス待ちは残った。
+- 最終形: Spout worker は同一 LUID の別 GpuDevice を持ち、合成 pool の Surface（`SourceSharing.FenceNt`）を `OpenSharedResource1` で開く。合成側は publish 時に `SharedFence` を画像 ID で Signal し、worker は `SharedFenceReader`（`ID3D11DeviceContext4.Wait`、GPU 側待ち）の後に自分の context で保持テクスチャへ `CopyResource`、SpoutDX は送信デバイスで `OpenDirectX11` する。読み書きの安全は CPU lease（従来どおり）。
+- `ID3D11Multithread.SetMultithreadProtected(TRUE)` は `GpuDevice` 生成時に明示する（shim が Adopt する合成デバイスを別スレッドから使うため）。
 | 待ち | 高分解能 waitable timer（`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`）。起床遅れ p99 0.6ms | [整列実証](GPU-COMPOSE-ALIGN-RESULTS-2026-09-10.md) |
 | 終了 | 新規処理停止→送信 worker join→送信側の共有資源解放→合成側の解放。待機中も UI 応答、強制終了は最初から選択可 | 設計文書、試作の UI |
 | 異常 | GPU 完了の期限超過を資源解放の理由にしない。デバイス消失は一度だけ自動復旧、再発は手動 | 設計文書 |
