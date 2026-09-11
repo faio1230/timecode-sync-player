@@ -31,6 +31,45 @@ internal sealed class E2EAppRunner : IDisposable
         return ownerId == _process.Id && PostMessage(handle, 0x0010, IntPtr.Zero, IntPtr.Zero);
     }
 
+    /// <summary>
+    /// 段階 5.1: 閉じる要求は ExitDialog を経由する。ダイアログの BtnExitNormal を押して
+    /// プロセスの終了を待つ（timeout 内に終了すれば true）。既に終了済みなら何もしない。
+    /// </summary>
+    public bool ExitNormally(TimeSpan timeout)
+    {
+        if (_process.HasExited) return true;
+        if (!RequestMainWindowClose()) return false;
+        DateTime deadline = DateTime.UtcNow + timeout;
+        bool normalPressed = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                if (_process.WaitForExit(100)) return true;
+            }
+            catch (InvalidOperationException)
+            {
+                return true;
+            }
+            if (normalPressed) continue;
+            try
+            {
+                Window? dialog = FindTopLevelWindow("ExitDialog");
+                if (dialog == null) continue;
+                Button? normal = dialog.FindFirstDescendant(cf => cf.ByAutomationId("BtnExitNormal"))?.AsButton();
+                if (normal == null) continue;
+                normal.Invoke();
+                normalPressed = true;
+            }
+            catch (Exception)
+            {
+                // ダイアログが既に閉じた・UIA が一時的に失敗した場合は終了待ちを続ける。
+            }
+        }
+        try { return _process.HasExited; }
+        catch (InvalidOperationException) { return true; }
+    }
+
     public static (string ExePath, string? SkipReason) ResolvePrereqs()
     {
         string exe;

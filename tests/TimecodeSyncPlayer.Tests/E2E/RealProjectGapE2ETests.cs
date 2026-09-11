@@ -115,8 +115,7 @@ public sealed class RealProjectGapE2ETests
             }, "Playback must follow LTC after gap and mode changes");
             CaptureImage(app, report, "recovered-video", journal);
             journal.Write("recovery-passed", details: new { track = app.Text("CurrentTrackLabel"), playback = app.Text("TimeLabel"), ltc = app.Text("LtcTimecodeText") });
-            Assert.True(app.Process.CloseMainWindow());
-            Assert.True(app.Process.WaitForExit(10000));
+            Assert.True(app.ExitNormally(TimeSpan.FromSeconds(15)));
             Assert.Equal(0, app.Process.ExitCode);
             signalOwner.Stop();
             await VerifyVisibleFreeze(prerequisites.ExePath, project, report, signalOwner, journal);
@@ -204,8 +203,7 @@ public sealed class RealProjectGapE2ETests
         double afterRewind = PlaybackSeconds(app);
         Wait(app, () => PlaybackSeconds(app) > afterRewind + 0.15, "Single progresses without additional LTC seeks");
         journal.Write("single-eof-recovery-passed");
-        Assert.True(app.Process.CloseMainWindow());
-        Assert.True(app.Process.WaitForExit(10000));
+        Assert.True(app.ExitNormally(TimeSpan.FromSeconds(15)));
         Assert.Equal(0, app.Process.ExitCode);
         journal.Write("visible-freeze-passed", process: app.Process);
     }

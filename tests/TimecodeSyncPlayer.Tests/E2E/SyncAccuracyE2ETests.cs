@@ -72,8 +72,7 @@ public sealed class SyncAccuracyE2ETests
                     ticks = Stopwatch.GetTimestamp() }, MonkeyJson.Options));
                 journal.Write("phase-end", details: new { phase.Name });
             }
-            Assert.True(app.Process.CloseMainWindow(), "Could not request graceful app shutdown.");
-            Assert.True(app.Process.WaitForExit(10000), "App did not flush and exit in ten seconds.");
+            Assert.True(app.ExitNormally(TimeSpan.FromSeconds(15)), "App did not flush and exit in fifteen seconds.");
             Assert.Equal(0, app.Process.ExitCode);
             Assert.True(File.Exists(tracePath), "App produced no trace.");
             using (JsonDocument end = JsonDocument.Parse(File.ReadLines(tracePath).Last()))
@@ -96,8 +95,8 @@ public sealed class SyncAccuracyE2ETests
             // Preserve partial traces on failures too; Dispose remains the owned-PID kill fallback.
             if (!app.Process.HasExited)
             {
-                app.Process.CloseMainWindow();
-                app.Process.WaitForExit(10000);
+                try { app.ExitNormally(TimeSpan.FromSeconds(10)); }
+                catch (Exception) { /* Dispose が所有 PID を kill する */ }
             }
         }
     }
