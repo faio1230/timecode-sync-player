@@ -29,6 +29,8 @@ public class AppSettingsTests
         settings.FullscreenDisplayDeviceName.Should().BeEmpty();
         settings.IsMuted.Should().BeFalse();
         settings.Volume.Should().Be(100);
+        settings.Backend.Should().Be(PlayerBackend.Mpv);
+        settings.OutputBackend.Should().Be(OutputBackend.Cpu);
     }
 
     [Theory]
@@ -104,6 +106,26 @@ public class AppSettingsTests
 
         result.SyncMode.Should().Be(AppSettings.Default.SyncMode);
         result.GapBehavior.Should().Be(AppSettings.Default.GapBehavior);
+    }
+
+    [Fact]
+    public void ValidateSettings_RejectsInvalidOutputBackend()
+    {
+        var settings = AppSettings.Default with { OutputBackend = (OutputBackend)99 };
+
+        AppSettings result = AppSettingsManager.ValidateSettings(settings);
+
+        result.OutputBackend.Should().Be(OutputBackend.Cpu);
+    }
+
+    [Fact]
+    public void ValidateSettings_PreservesValidOutputBackend()
+    {
+        var settings = AppSettings.Default with { OutputBackend = OutputBackend.Gpu };
+
+        AppSettings result = AppSettingsManager.ValidateSettings(settings);
+
+        result.OutputBackend.Should().Be(OutputBackend.Gpu);
     }
 
     [Fact]
@@ -213,7 +235,9 @@ public class AppSettingsTests
             ShowDebugOsd = true,
             FullscreenDisplayDeviceName = @"\\.\DISPLAY2",
             IsMuted = true,
-            Volume = 42.5
+            Volume = 42.5,
+            Backend = PlayerBackend.Gstreamer,
+            OutputBackend = OutputBackend.Gpu
         };
 
         var options = new JsonSerializerOptions
@@ -244,6 +268,8 @@ public class AppSettingsTests
         deserialized.FullscreenDisplayDeviceName.Should().Be(original.FullscreenDisplayDeviceName);
         deserialized.IsMuted.Should().BeTrue();
         deserialized.Volume.Should().Be(42.5);
+        deserialized.Backend.Should().Be(PlayerBackend.Gstreamer);
+        deserialized.OutputBackend.Should().Be(OutputBackend.Gpu);
     }
 
     [Fact]
@@ -260,6 +286,8 @@ public class AppSettingsTests
         deserialized.LtcSignalResumeFrames.Should().Be(5);
         deserialized.ShowDebugOsd.Should().BeFalse();
         deserialized.FullscreenDisplayDeviceName.Should().BeEmpty();
+        deserialized.Backend.Should().Be(PlayerBackend.Mpv);
+        deserialized.OutputBackend.Should().Be(OutputBackend.Cpu);
     }
 
     [Fact]

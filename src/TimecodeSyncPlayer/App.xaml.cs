@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Gst;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -70,6 +71,7 @@ public partial class App : Application
             sp.GetRequiredService<AppSettingsManager>().Current.Backend == PlayerBackend.Gstreamer
                 ? sp.GetRequiredService<GstSpoutOutput>()
                 : (ISpoutOutput)sp.GetRequiredService<SpoutOutput>());
+        services.AddSingleton<OutputBackendState>();
 
         // MainWindow (resolved via DI)
         services.AddSingleton<MainWindow>();
@@ -133,6 +135,9 @@ public partial class App : Application
 
         var settingsManager = _services.GetRequiredService<AppSettingsManager>();
         settingsManager.LoadAsync().GetAwaiter().GetResult();
+
+        var outputBackendState = _services.GetRequiredService<OutputBackendState>();
+        outputBackendState.Initialize(settingsManager.Current.OutputBackend);
 
         var mainWindow = _services.GetRequiredService<MainWindow>();
         mainWindow.Show();

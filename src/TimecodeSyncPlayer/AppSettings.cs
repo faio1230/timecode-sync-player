@@ -17,6 +17,13 @@ public enum PlayerBackend
     Gstreamer
 }
 
+/// <summary>映像出力バックエンド。既定は Cpu（Gpu 経路は段階導入中）。</summary>
+public enum OutputBackend
+{
+    Cpu,
+    Gpu
+}
+
 /// <summary>
 /// アプリケーション設定の不変レコード。
 /// </summary>
@@ -46,6 +53,7 @@ public sealed record AppSettings
     public bool IsMuted { get; init; }
     public double Volume { get; init; } = 100;
     public PlayerBackend Backend { get; init; } = PlayerBackend.Mpv;
+    public OutputBackend OutputBackend { get; init; } = OutputBackend.Cpu;
 
     public static AppSettings Default => new();
 }
@@ -158,6 +166,8 @@ public sealed class AppSettingsManager
             settings = settings with { LtcSignalLossMode = LtcSignalLossMode.RunThrough };
         if (!Enum.IsDefined(settings.Backend))
             settings = settings with { Backend = PlayerBackend.Mpv };
+        if (!Enum.IsDefined(settings.OutputBackend))
+            settings = settings with { OutputBackend = OutputBackend.Cpu };
         settings = settings with
         {
             LtcSignalLossTimeoutMs = Math.Clamp(
