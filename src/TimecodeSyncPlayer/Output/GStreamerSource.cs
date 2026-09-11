@@ -185,6 +185,12 @@ internal sealed class GStreamerSource : IVideoSource
         device.Context4.Wait(ring.Fence, value);
     }
 
+    /// <summary>
+    /// I1/I5: リング slot のコピー完了（フェンス値＝seq）を CPU 側で確認する。
+    /// 完了前のフレームを合成の GPU フェンス待ちに含めないための専用クエリ。
+    /// </summary>
+    internal bool IsRingFenceComplete(long sequence) => ring != null && ring.Fence.CompletedValue >= (ulong)sequence;
+
     /// <summary>合成デバイス上にリングを一度だけ開く（未作成/未接続は null で毎 tick 再試行）。</summary>
     private RingResources? EnsureRing()
     {

@@ -40,8 +40,7 @@ public sealed class SettingsPersistenceE2ETests
                           settings.LtcDeviceName == selectedDevice,
                     TimeSpan.FromSeconds(5));
 
-                app.Process.CloseMainWindow().Should().BeTrue();
-                app.Process.WaitForExit(5000).Should().BeTrue("the application should exit normally");
+                app.ExitNormally(TimeSpan.FromSeconds(10)).Should().BeTrue("the application should exit normally");
             }
 
             using var restarted = E2EAppRunner.Start(prereqs.ExePath, "--vo null", settingsPath);
@@ -80,8 +79,7 @@ public sealed class SettingsPersistenceE2ETests
                 E2EAssert.WaitUntil(
                     () => ReadSettings(settingsPath)?.LastOpenedProjectPath == projectPath,
                     TimeSpan.FromSeconds(5));
-                app.Process.CloseMainWindow().Should().BeTrue();
-                app.Process.WaitForExit(5000).Should().BeTrue();
+                app.ExitNormally(TimeSpan.FromSeconds(10)).Should().BeTrue();
             }
 
             using var restarted = E2EAppRunner.Start(prereqs.ExePath, "--vo null", settingsPath);

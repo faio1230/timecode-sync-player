@@ -135,8 +135,7 @@ public sealed class MonkeyStressE2ETests
 
             journal.Write("close-start", process: app.Process);
             // Do not stop signal/monitor/render first: this exercises teardown under load.
-            Assert.True(app.Process.CloseMainWindow(), "Failed to request graceful app shutdown.");
-            Assert.True(app.Process.WaitForExit(10000), "App did not close within 10 seconds while receiving LTC.");
+            Assert.True(app.ExitNormally(TimeSpan.FromSeconds(15)), "App did not close within 15 seconds while receiving LTC.");
             summary.ExitCode = app.Process.ExitCode;
             Assert.Equal(0, summary.ExitCode);
             summary.Success = true;

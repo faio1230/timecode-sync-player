@@ -917,11 +917,17 @@ internal sealed class OutputEngine : IDisposable
         if (gstSource != null)
         {
             // GStreamer: shim のリーステクスチャを SRV で直接描画する（CPU/GPU コピーを挟まない）。
+            long acquireStartedQpc = Stopwatch.GetTimestamp();
             SyncGStreamerGeneration();
             var gst = AcquireGStreamer(position);
+            long acquireEndedQpc = Stopwatch.GetTimestamp();
             status = gst.Status;
             lease = gst.Lease;
             acquired = gst.Image;
+            if (settings.Trace.IsEnabled)
+                settings.Trace.Record(new("compose.acquire", "GPU", acquireEndedQpc, scheduled,
+                    gst.Stamp.Sequence, gst.Stamp.DecodedQpc, status.ToString(),
+                    (acquireEndedQpc - acquireStartedQpc) * 1_000_000 / Stopwatch.Frequency));
             settings.Trace.Add("source.acquire", "GPU", scheduled,
                 new ImageStamp(gst.Stamp.Sequence, gst.Stamp.DecodedQpc), status.ToString(),
                 (long)Math.Round(position * 1_000_000));
@@ -933,9 +939,15 @@ internal sealed class OutputEngine : IDisposable
         else
         {
             // mpv: 完了したアップロードだけを公開してからリングから取得する。
+            long acquireStartedQpc = Stopwatch.GetTimestamp();
             mpvSource!.PollUploads();
             status = mpvSource.TryAcquire(Math.Max(generation, 0), position, out lease);
+            long acquireEndedQpc = Stopwatch.GetTimestamp();
             ImageStamp acquiredStamp = lease != null ? new ImageStamp(lease.Stamp.Sequence, lease.Stamp.DecodedQpc) : default;
+            if (settings.Trace.IsEnabled)
+                settings.Trace.Record(new("compose.acquire", "GPU", acquireEndedQpc, scheduled,
+                    acquiredStamp.Id, acquiredStamp.GeneratedQpc, status.ToString(),
+                    (acquireEndedQpc - acquireStartedQpc) * 1_000_000 / Stopwatch.Frequency));
             settings.Trace.Add("source.acquire", "GPU", scheduled, acquiredStamp, status.ToString(),
                 (long)Math.Round(position * 1_000_000));
             if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
@@ -962,9 +974,17 @@ internal sealed class OutputEngine : IDisposable
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
                 stamp, originQpc, acquired);
+            long composeDrawQpc = Stopwatch.GetTimestamp();
             sharedFence!.Signal(gpu!, stamp.Id); // フェンス値＝画像 ID。Spout 側は GPU キューで待つ。
             gpu!.Fence.Wait("compose.source");
             long composeCompletedQpc = Stopwatch.GetTimestamp();
+            if (settings.Trace.IsEnabled)
+            {
+                settings.Trace.Record(new("compose.draw", "GPU", composeDrawQpc, scheduled, stamp.Id, stamp.GeneratedQpc,
+                    Value: (composeDrawQpc - composeStartedQpc) * 1_000_000 / Stopwatch.Frequency));
+                settings.Trace.Record(new("compose.fence", "GPU", composeCompletedQpc, scheduled, stamp.Id, stamp.GeneratedQpc,
+                    Value: (composeCompletedQpc - composeDrawQpc) * 1_000_000 / Stopwatch.Frequency));
+            }
             if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
             if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; lease = null; }
             UpdateComposeLead(composeCompletedQpc - composeStartedQpc, composeCompletedQpc);
@@ -1097,13 +1117,35 @@ internal sealed class OutputEngine : IDisposable
         if (status != SourceStatus.Ready || lease == null) return new(status, null, null, default);
         var stamp = lease.Stamp;
         if (stamp.Sequence == lastGstSequence) return new(status, lease, null, stamp);
-        lastGstSequence = stamp.Sequence;
         var gstLease = (GStreamerSource.Lease)lease;
-        if (gstLease.Slot >= 0 && gstSource.TryGetRingSurface(gstLease.Slot, out var ringTexture, out var ringView))
+        if (gstLease.Slot >= 0 && layer!.HasHeld && !gstSource.IsRingFenceComplete(stamp.Sequence))
+        {
+            // I1/I5: 共有リングのコピー完了（IDR デコード等で数 ms 遅れる）を合成 tick の GPU
+            // フェンス待ちに含めない。この tick は直前の Held を描き、完了後に最新フレームを使う。
+            return new(status, lease, null, stamp);
+        }
+        lastGstSequence = stamp.Sequence;
+        long srvStartedQpc = Stopwatch.GetTimestamp();
+        ID3D11Texture2D? ringTexture = null;
+        ID3D11ShaderResourceView? ringView = null;
+        bool useRing = gstLease.Slot >= 0
+            && gstSource.TryGetRingSurface(gstLease.Slot, out ringTexture, out ringView);
+        long srvEndedQpc = Stopwatch.GetTimestamp();
+        if (settings.Trace.IsEnabled)
+            settings.Trace.Record(new("compose.srv", "GPU", srvEndedQpc,
+                Detail: gstLease.Slot.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Value: (srvEndedQpc - srvStartedQpc) * 1_000_000 / Stopwatch.Frequency));
+        if (useRing)
         {
             if (GstRingPolicy.ShouldWaitFence(gstLease.Slot, stamp.Sequence, lastGstFenceWaited))
             {
+                long waitStartedQpc = Stopwatch.GetTimestamp();
                 gstSource.WaitRingFence((ulong)stamp.Sequence);
+                long waitEndedQpc = Stopwatch.GetTimestamp();
+                if (settings.Trace.IsEnabled)
+                    settings.Trace.Record(new("compose.ringWait", "GPU", waitEndedQpc,
+                        Detail: stamp.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        Value: (waitEndedQpc - waitStartedQpc) * 1_000_000 / Stopwatch.Frequency));
                 lastGstFenceWaited = stamp.Sequence;
             }
             // リング Surface は GStreamerSource が所有する（LayerImage は借用して渡すだけ）。
