@@ -123,47 +123,49 @@ run_stress (int argc, char** argv)
 }
 
 
-/* Problem H-2: pure delivery policy (no media, no GPU). */
+/* Problem H-3: pure delivery policy (no media, no GPU).
+ * age_limit = 21 ms in QPC ticks; the tests use 10 MHz ticks for clarity. */
 static void
 run_delivery_policy_tests ()
 {
   TcsDeliveryPlan p;
+  const uint64_t limit = 210000; /* 21 ms at 10 MHz */
 
-  p = tcs_delivery_plan (0, 0);
-  check (p.lease == 0 && p.drop_oldest == 0 && p.next_streak == 0, "policy: n=0 -> NotReady");
+  p = tcs_delivery_plan (0, 0, limit);
+  check (p.lease == 0 && p.drop_oldest == 0, "policy: n=0 -> NotReady");
 
-  p = tcs_delivery_plan (1, 5);
-  check (p.lease == 1 && p.drop_oldest == 0 && p.next_streak == 0, "policy: n=1 -> oldest, streak reset");
+  p = tcs_delivery_plan (1, 0, limit);
+  check (p.lease == 1 && p.drop_oldest == 0, "policy: n=1 -> oldest, no drop");
 
-  p = tcs_delivery_plan (2, 0);
-  check (p.lease == 1 && p.drop_oldest == 0 && p.next_streak == 1, "policy: n=2 first -> no drop, streak 1");
+  p = tcs_delivery_plan (2, 0, limit);
+  check (p.lease == 1 && p.drop_oldest == 0, "policy: n=2 fresh -> no drop");
 
-  p = tcs_delivery_plan (2, 1);
-  check (p.lease == 1 && p.drop_oldest == 0 && p.next_streak == 2, "policy: n=2 second -> streak 2");
+  p = tcs_delivery_plan (2, 1000, limit);
+  check (p.lease == 1 && p.drop_oldest == 0, "policy: n=2 1 ms old -> no drop");
 
-  p = tcs_delivery_plan (2, 28);
-  check (p.lease == 1 && p.drop_oldest == 0 && p.next_streak == 29, "policy: n=2 29th -> streak 29");
+  p = tcs_delivery_plan (2, limit - 1, limit);
+  check (p.lease == 1 && p.drop_oldest == 0, "policy: n=2 just below 21 ms -> no drop");
 
-  p = tcs_delivery_plan (2, 29);
-  check (p.lease == 1 && p.drop_oldest == 1 && p.next_streak == 0, "policy: n=2 30th consecutive -> drop one");
+  p = tcs_delivery_plan (2, limit, limit);
+  check (p.lease == 1 && p.drop_oldest == 1, "policy: n=2 at 21 ms -> drop oldest");
 
-  p = tcs_delivery_plan (2, 30);
-  check (p.lease == 1 && p.drop_oldest == 1 && p.next_streak == 0, "policy: n=2 past threshold -> drop one");
+  p = tcs_delivery_plan (2, limit * 3, limit);
+  check (p.lease == 1 && p.drop_oldest == 1, "policy: n=2 past 21 ms -> drop oldest");
 
-  p = tcs_delivery_plan (3, 4);
-  check (p.lease == 1 && p.drop_oldest == 1 && p.next_streak == 0, "policy: n=3 -> drop 1, streak reset");
+  p = tcs_delivery_plan (2, 0, 0);
+  check (p.lease == 1 && p.drop_oldest == 0, "policy: n=2 with age limit disabled -> no drop");
 
-  p = tcs_delivery_plan (4, 0);
-  check (p.lease == 1 && p.drop_oldest == 2 && p.next_streak == 0, "policy: n=4 -> drop 2");
+  p = tcs_delivery_plan (3, 0, limit);
+  check (p.lease == 1 && p.drop_oldest == 1, "policy: n=3 -> drop 1 regardless of age");
 
-  p = tcs_delivery_plan (5, 7);
-  check (p.lease == 1 && p.drop_oldest == 3 && p.next_streak == 0, "policy: n=5 -> drop 3");
+  p = tcs_delivery_plan (4, 0, limit);
+  check (p.lease == 1 && p.drop_oldest == 2, "policy: n=4 -> drop 2");
 
-  p = tcs_delivery_plan (10, 0);
-  check (p.lease == 1 && p.drop_oldest == 8 && p.next_streak == 0, "policy: n=10 -> drop 8 (leave 2)");
+  p = tcs_delivery_plan (5, 0, limit);
+  check (p.lease == 1 && p.drop_oldest == 3, "policy: n=5 -> drop 3");
 
-  p = tcs_delivery_plan (1, 29);
-  check (p.lease == 1 && p.drop_oldest == 0 && p.next_streak == 0, "policy: n=1 clears a pending streak");
+  p = tcs_delivery_plan (10, 0, limit);
+  check (p.lease == 1 && p.drop_oldest == 8, "policy: n=10 -> drop 8 (leave 2)");
 }
 
 int

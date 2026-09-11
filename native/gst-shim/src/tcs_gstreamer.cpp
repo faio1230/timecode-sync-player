@@ -106,11 +106,12 @@ struct TcsPlayer {
     uint64_t generation;
     uint64_t seq;
     uint64_t pts_ns;
+    uint64_t arrival_qpc;                 /* H-3: for the age-based backlog rule */
     bool gpu;
   };
   static const uint32_t kFrameQueueCapacity = 4;
   std::deque<FrameSlot> frames;
-  uint32_t backlog2_streak = 0;           /* consecutive acquire() calls with n==2 */
+  int64_t qpc_freq = 10000000;            /* QueryPerformanceFrequency */
   uint64_t latest_gen = 0;                /* newest arrival generation (diagnostics) */
   uint64_t latest_pts_ns = 0;
   uint64_t latest_seq = 0;
@@ -345,7 +346,7 @@ on_new_sample (GstAppSink* sink, gpointer user)
     p->latest_pts_ns = pts;
     p->latest_seq = ++p->frames_decoded;
     p->latest_gpu = gpu;
-    p->frames.push_back (TcsPlayer::FrameSlot{sample, p->generation, p->latest_seq, pts, gpu});
+    p->frames.push_back (TcsPlayer::FrameSlot{sample, p->generation, p->latest_seq, pts, (uint64_t) arrival.QuadPart, gpu});
     p->pending_update = true;
     p->delivery_arrivals++;
     p->delivery_last_qpc = (uint64_t) arrival.QuadPart;
@@ -789,7 +790,6 @@ teardown_pipeline (TcsPlayer* p)
     if (p->leased) { gst_sample_unref (p->leased); p->leased = nullptr; }
     p->pending_update = false;
     p->frames_decoded = 0;
-    p->backlog2_streak = 0;
   }
 
   if (p->pipeline) {
@@ -1076,6 +1076,9 @@ tcs_player_create (const char* sender_name, void* external_d3d11_device,
 
   TcsPlayer* p = new TcsPlayer ();
   p->sender_name = (sender_name && sender_name[0]) ? sender_name : "TimecodeSyncPlayer";
+  LARGE_INTEGER qpc_freq;
+  if (QueryPerformanceFrequency (&qpc_freq))
+    p->qpc_freq = qpc_freq.QuadPart;
 
   demote_foreign_gpu_decoders ();
   p->audioEnabled = !env_flag ("TCS_NO_AUDIO");
@@ -1181,7 +1184,6 @@ seek_locked (TcsPlayer* p, double seconds)
   for (TcsPlayer::FrameSlot& slot : p->frames)
     gst_sample_unref (slot.sample);
   p->frames.clear ();
-  p->backlog2_streak = 0;
   p->pending_update = false;
   if (p->eos) {
     p->eos = false;
@@ -1402,19 +1404,24 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
   if (p->leased)
     return 0;
 
-  /* Deliver with bounded latency (problem H-2): drop older/other
+  /* Deliver with bounded latency (problem H-2/H-3): drop older/other
    * generations, then apply the pure delivery policy to the backlog. */
   while (!p->frames.empty() && p->frames.front().generation != generation) {
     gst_sample_unref (p->frames.front().sample);
     p->frames.pop_front();
   }
-  if (p->frames.empty()) {
-    p->backlog2_streak = 0;
+  if (p->frames.empty())
     return 0;
-  }
 
-  TcsDeliveryPlan plan = tcs_delivery_plan ((uint32_t) p->frames.size (), p->backlog2_streak);
-  p->backlog2_streak = plan.next_streak;
+  /* H-3: an n==2 backlog older than 1.25 frames is steady clock drift and
+   * loses its oldest frame instead of waiting for a fixed streak. */
+  LARGE_INTEGER now_qpc;
+  QueryPerformanceCounter (&now_qpc);
+  uint64_t oldest_age = (uint64_t) now_qpc.QuadPart > p->frames.front().arrival_qpc
+      ? (uint64_t) now_qpc.QuadPart - p->frames.front().arrival_qpc : 0;
+  uint64_t age_limit = p->qpc_freq > 0
+      ? (uint64_t) ((p->qpc_freq * (int64_t) TCS_DELIVERY_AGE_LIMIT_US) / 1000000) : 0;
+  TcsDeliveryPlan plan = tcs_delivery_plan ((uint32_t) p->frames.size (), oldest_age, age_limit);
   for (uint32_t i = 0; i < plan.drop_oldest && !p->frames.empty(); i++) {
     gst_sample_unref (p->frames.front().sample);
     p->frames.pop_front();
