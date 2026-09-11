@@ -1,13 +1,16 @@
-/* Delivery policy for the source lease FIFO (problem H-2, 2026-09-11).
+/* Delivery policy for the source lease FIFO (problem H-3, 2026-09-11).
  *
  * acquire() reports the number of undelivered frames of the current
  * generation (n). The policy keeps latency bounded while absorbing the
  * "two arrivals inside one compose tick" case:
- *   n == 0            -> no lease (NotReady)
- *   n <= 2            -> lease the oldest (backlog stays <= 1)
- *   n > 2             -> discard the oldest n-2, then lease the older of the
- *                        two remaining (catch up to the newest in one tick)
- *   n == 2, 30x in a row -> discard one extra (steady-state clock drift)
+ *   n == 0 -> no lease (NotReady)
+ *   n <= 2 -> lease the oldest (backlog stays <= 1). When n == 2 and the
+ *             oldest arrival is older than 21 ms (1.25 frames at 60 fps),
+ *             discard that oldest one first, so steady clock drift does not
+ *             grow the backlog (problem H-3; replaces the former
+ *             30-consecutive-calls rule).
+ *   n > 2  -> discard the oldest n-2, then lease the older of the two
+ *             remaining (catch up to the newest in one tick)
  *
  * The plan is pure so the native shim test can fix each rule without media.
  * License: MIT (same as the shim). */
@@ -16,25 +19,23 @@
 
 #include <stdint.h>
 
+/* 1.25 frames at 60 fps. The caller converts this to QPC ticks. */
+#define TCS_DELIVERY_AGE_LIMIT_US 21000
+
 typedef struct TcsDeliveryPlan {
   uint32_t drop_oldest;  /* frames to discard (counted as replaced) */
-  uint32_t next_streak;  /* consecutive n==2 count after this call */
   int32_t lease;         /* 1 = lease the oldest remaining frame */
 } TcsDeliveryPlan;
 
 static inline TcsDeliveryPlan
-tcs_delivery_plan (uint32_t n, uint32_t streak)
+tcs_delivery_plan (uint32_t n, uint64_t oldest_age_ticks, uint64_t age_limit_ticks)
 {
-  TcsDeliveryPlan plan = { 0, 0, 0 };
+  TcsDeliveryPlan plan = { 0, 0 };
   if (n == 0)
     return plan;
   if (n == 2) {
-    if (streak + 1 >= 30) {
+    if (age_limit_ticks > 0 && oldest_age_ticks >= age_limit_ticks)
       plan.drop_oldest = 1;
-      plan.next_streak = 0;
-    } else {
-      plan.next_streak = streak + 1;
-    }
   } else if (n > 2) {
     plan.drop_oldest = n - 2;
   }
