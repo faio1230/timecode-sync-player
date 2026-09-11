@@ -3,7 +3,7 @@ using Serilog;
 namespace TimecodeSyncPlayer.Output;
 
 /// <summary>起動時に決めた出力バックエンド。</summary>
-internal readonly record struct OutputBackendDecision(
+public readonly record struct OutputBackendDecision(
     OutputBackend Requested,
     OutputBackend Effective,
     bool FallbackApplied,
@@ -30,7 +30,7 @@ internal static class OutputBackendResolver
 /// 起動時に検出した有効な出力バックエンドを保持する。設定の要求値とは独立で、
 /// フォールバック時も設定ファイルは書き換えない。
 /// </summary>
-internal sealed class OutputBackendState
+public sealed class OutputBackendState
 {
     public OutputBackendDecision Decision { get; private set; } =
         new(OutputBackend.Cpu, OutputBackend.Cpu, false, "未初期化");
