@@ -124,3 +124,41 @@ dotnet test tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj --fil
   `TIMECODE_SYNC_PLAYER_SETTINGS_PATH` で分離可能）。
 - 完全撤去する場合: `Gst*` 実装の DI 登録と csproj の DLL コピーを戻し、
   `SpoutFramePublisher` の 3 行分岐を戻せば元の mpv 専用構成に戻る（他は追加ファイル）。
+
+## 10. 統合時の照合事項（追加）
+
+### hwdec の差異
+
+- 本ブランチの基点 main (`d3bb1b0`) は `hwdec=auto-copy`
+  （`src/TimecodeSyncPlayer/MpvStartupPropertyApplier.cs:17`）。
+- refactor/session-lifecycle 側は `17c39a0` で `hwdec=no` に変更済み（読み取り確認済み）。
+- GStreamer 経路はこのプロパティを解釈しない（C# アダプタで無視し、デコードは常に
+  明示チェーンの d3d11 デコーダ）ため、**どちらの値でも GStreamer 経路の動作に影響しない**。
+- 本ブランチは同ファイルを変更していないため、マージ自体は自動で成立する。
+  統合時に **mpv 経路の既定値を auto-copy / no のどちらにするかを決定**すること。
+- 5 節の性能参考値は auto-copy（本ブランチ基点）条件での計測。決定後の値で再計測し、
+  数値を更新することを推奨。
+
+### 実施した GPU 試験の日時一覧（重なり確認用）
+
+すべて 2026-09-11 (JST)。実行は本 worktree のアプリ/検証ツールのみ。
+証跡は `artifacts/`（git 管理外）のタイムスタンプ。
+
+| 時刻（目安） | 内容 | 証跡 |
+| --- | --- | --- |
+| 02:44–02:50 | 試作 proto: GPU 経路の送受信・シーク (1080p60) | send1-3.log + recvframe_*.bmp |
+| 03:42–03:56 | shim 初期デバッグ（decodebin/context の失敗解析、GPU デコード試行） | shimtest*.log, shimdbg*.log |
+| 06:58, 07:48–08:01 | shim v3 デバッグ（preroll 停止の切り分け） | shimv3*.out / shimdbg2.log |
+| 09:00–09:21 | shim v4 機能テスト 5 連続・修正確認 | shimv4*.out, shimst1-5.out |
+| 10:06 | コンテナ/コーデック別（720p25・1080p50・HEVC） | media_*.out |
+| 10:13–11:00 | アプリ GST E2E の確立（全テスト実行＝mpv E2E 含む） | e2e-gst1-6.log, fullsuite.log |
+| 11:55–11:56 | コンテナ再検証（avi/mkv/ts）と切り替え 120 回 stress | ct2_*.out, stress120.out |
+| 12:02 | 連続再生 10 秒の秒次フレーム計測 | longplay.out |
+| 12:07 | proto 送信に対する受信側再起動の切り分け | iso3.log, iso4.log |
+| 11:59–12:15 | E2E 拡張（切替反復・再生中終了・受信再起動、受信ログ非同期化） | e2e-gst7-12.log |
+| 12:16–12:22 | 性能参考計測（mpv / GStreamer、720p60×15 秒×各 1 回） | `native/gst-shim/perf-compare.ps1` 出力（保存なし） |
+| 12:23 | 最終全テスト（GST E2E 3 本含む 1253 件） | final-full.log |
+
+他エージェントの GPU 試験（例: session-refactor 側 TestResults/gpu-source-*）との
+重なりは、上表と相手側タイムスタンプの突き合わせで判断できる。
+
