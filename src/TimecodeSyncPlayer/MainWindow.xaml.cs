@@ -57,6 +57,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly GstBackendState _gstBackendState;
     private readonly IGstNativeApi _gstNativeApi;
     private readonly bool _gstGpuCombo;
+    private readonly OutputBackend _effectiveOutputBackend;
     private WriteableBitmap? _outputPreviewBitmap;
 
     // ── LTC ───────────────────────────────────────────────────────
@@ -173,6 +174,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _gstNativeApi = services.GetRequiredService<IGstNativeApi>();
         _gstGpuCombo = settingsManager.Current.Backend == PlayerBackend.Gstreamer
             && outputBackendState.Effective == OutputBackend.Gpu;
+        _effectiveOutputBackend = outputBackendState.Effective;
         _mpvApi = mpvApi;
 
         _vm = new MainViewModel();
@@ -538,7 +540,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             allocateRenderParameters: _renderSession.AllocateParameters,
             // Gpu backend では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
             initializeSpout: () => SpoutStartupState.FromInitializationResult(
-                _outputEngine != null ? true : _spoutOutput.TryInitialize()),
+                _effectiveOutputBackend == OutputBackend.Gpu
+                || (SpoutOutputPolicy.InitializeCpuSpout(_effectiveOutputBackend) && _spoutOutput.TryInitialize())),
             applySpoutStartupState: spoutUiApplicator.Apply,
             initializeFrameRenderer: _renderSession.InitializeFrameRenderer,
             startTimer: () => _timer = StartupTimerFactory.CreateStartedTimer(TimeSpan.FromMilliseconds(TimerIntervalMs), OnTick),

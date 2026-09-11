@@ -18,11 +18,19 @@ public class ComposeLeadControllerTests
         return controller.Add(durationTicks, now, out _);
     }
 
+    // 起動後 3 秒は学習しない（段階 3）。最初の標本で起点を作り、3 秒進める。
+    private static void StartAfterWarmup(ComposeLeadController controller, ref long now)
+    {
+        _ = controller.Add(0, now, out _);
+        now += (long)(ComposeLeadController.WarmupSeconds * Frequency) + 1;
+    }
+
     [Fact]
     public void Add_RaisesImmediatelyToP99PlusMarginAndClampsAtMaximum()
     {
         var controller = new ComposeLeadController(Frequency, 2);
         long now = 0;
+        StartAfterWarmup(controller, ref now);
         // 4ms p99 + 1ms = 5ms > current 2ms: immediate raise.
         FeedWindow(controller, 4000, ref now).Should().BeTrue();
         controller.CurrentLeadMs.Should().Be(5);
@@ -38,6 +46,7 @@ public class ComposeLeadControllerTests
     {
         var controller = new ComposeLeadController(Frequency, 5);
         long now = 0;
+        StartAfterWarmup(controller, ref now);
         // Fast compose: p99+1ms = 1.01ms, at least 0.5ms below the current 5ms.
         for (int i = 0; i < 4; i++) FeedWindow(controller, 10, ref now).Should().BeFalse();
         controller.CurrentLeadMs.Should().Be(5);
@@ -55,6 +64,7 @@ public class ComposeLeadControllerTests
     {
         var controller = new ComposeLeadController(Frequency, 5);
         long now = 0;
+        StartAfterWarmup(controller, ref now);
         // Two low windows (2/5), then a window whose desired equals the current lead (5ms).
         FeedWindow(controller, 10, ref now).Should().BeFalse();
         FeedWindow(controller, 10, ref now).Should().BeFalse();
@@ -72,6 +82,7 @@ public class ComposeLeadControllerTests
     {
         var controller = new ComposeLeadController(Frequency, 2);
         long now = 0;
+        StartAfterWarmup(controller, ref now);
         // p99 = 0 -> desired = 1ms (minimum). Hysteresis: 5 windows per 0.5ms step, 2.0 -> 1.5 -> 1.0.
         for (int i = 0; i < 4; i++) FeedWindow(controller, 0, ref now).Should().BeFalse();
         FeedWindow(controller, 0, ref now).Should().BeTrue();
@@ -81,6 +92,20 @@ public class ComposeLeadControllerTests
         controller.CurrentLeadMs.Should().Be(1.0);
         FeedWindow(controller, 0, ref now).Should().BeFalse();
         controller.CurrentLeadMs.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void Add_IgnoresComposeSamplesDuringWarmup()
+    {
+        var controller = new ComposeLeadController(Frequency, 3);
+        long now = 0;
+        _ = controller.Add(20_000, now, out _);           // 起動直後の長い合成
+        now += Frequency; _ = controller.Add(20_000, now, out _);
+        now += Frequency; _ = controller.Add(20_000, now, out _);
+        controller.CurrentLeadMs.Should().Be(3);          // 3 秒間は学習しない
+        now += Frequency;
+        FeedWindow(controller, 20_000, ref now).Should().BeTrue();
+        controller.CurrentLeadMs.Should().Be(8);
     }
 
     [Fact]
