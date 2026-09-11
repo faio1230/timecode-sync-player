@@ -19,12 +19,14 @@ internal sealed class SwapchainTarget : IDisposable
     public ID3D11RenderTargetView Target { get; private set; }
     public int Width { get; private set; }
     public int Height { get; private set; }
+    public IntPtr Hwnd { get; }
     public PresentReadyGate Readiness { get; } = new();
 
     public SwapchainTarget(GpuDevice gpu, IntPtr hwnd)
     {
         using var build = new ConstructionScope();
         device = gpu.Device;
+        Hwnd = hwnd;
         if (!Native.GetClientRect(hwnd, out var r)) throw new Win32Exception();
         Width = r.Right; Height = r.Bottom;
         var description = new SwapChainDescription1

@@ -42,18 +42,20 @@ internal sealed class GStreamerSource : IVideoSource
 {
     private readonly IGstLeasePlayer player;
     private readonly string gpu;
-    private readonly GpuDevice? device;
+    private readonly Action? onRingOpened;
+    private GpuDevice? device;
     private SharedLease? active;
     private RingResources? ring;
     private bool ringOpenFailedLogged;
     private long notReady, ready, generationRejected;
     private int peakLeases;
 
-    public GStreamerSource(IGstLeasePlayer player, string gpu = "", GpuDevice? device = null)
+    public GStreamerSource(IGstLeasePlayer player, string gpu = "", GpuDevice? device = null, Action? onRingOpened = null)
     {
         this.player = player;
         this.gpu = gpu;
         this.device = device;
+        this.onRingOpened = onRingOpened;
     }
 
     /// <summary>shim が保持する現在世代（合成層の generation と対応付ける）。</summary>
@@ -129,6 +131,32 @@ internal sealed class GStreamerSource : IVideoSource
 
     public bool TryDispose() => active == null;
 
+    /// <summary>
+    /// 段階 5.2: デバイス消失後の再オープン。shim は別デバイスなので player は destroy しない。
+    /// 合成側のリング Surface・共有フェンスを新デバイスで開き直す。開き直せなければ false（player 再生成へ）。
+    /// </summary>
+    internal bool TryReopenOn(GpuDevice newDevice)
+    {
+        if (active != null) return false;
+        ring?.Dispose();
+        ring = null;
+        ringOpenFailedLogged = false;
+        device = newDevice;
+        return EnsureRing() != null;
+    }
+
+    /// <summary>復旧の第 1 段: 旧デバイス上のリング資源を手放す（player は触らない）。</summary>
+    internal void DropRingResourcesForRecovery()
+    {
+        ring?.Dispose();
+        ring = null;
+        if (active != null)
+        {
+            active = null;
+            player.Release();
+        }
+    }
+
     public void Dispose()
     {
         if (!TryDispose()) throw new InvalidOperationException("GStreamerSource: a lease is still outstanding; release it before disposing.");
@@ -177,7 +205,10 @@ internal sealed class GStreamerSource : IVideoSource
             return null;
         }
         if (ring != null)
+        {
             Log.Information("GStreamerSource: 共有リングを開きました {W}x{H} slots={Count}", ring.Width, ring.Height, ring.Count);
+            onRingOpened?.Invoke();
+        }
         return ring;
     }
 

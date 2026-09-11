@@ -14,6 +14,7 @@ internal readonly record struct PreviewFrame(byte[] Pixels, int Width, int Heigh
 internal sealed class OutputEngineSettings
 {
     public const string TestCardEnvironmentVariable = "TIMECODE_SYNC_PLAYER_TEST_CARD";
+    public const string SimulateDeviceLossEnvironmentVariable = "TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS";
     public int CanvasWidth { get; init; } = 1920;
     public int CanvasHeight { get; init; } = 1080;
     public double Fps { get; init; } = 60;
@@ -27,10 +28,39 @@ internal sealed class OutputEngineSettings
     public OutputTrace Trace { get; init; } = OutputTrace.Disabled;
     public Action<PreviewFrame>? PreviewFrameReady { get; init; }
 
+    /// <summary>試験フック: GPU worker が指定時刻（起動からの秒）に GpuDeviceLostException を投げる。</summary>
+    public IReadOnlyList<double> SimulatedDeviceLossSeconds { get; init; } = Array.Empty<double>();
+
+    /// <summary>復旧状態の UI 通知（GPU worker から呼ばれる。UI 側で Dispatcher へ投げる）。</summary>
+    public Action<GpuOutputStatus>? GpuStatusChanged { get; init; }
+
+    /// <summary>
+    /// 共有リングを開き直せないとき、新しい合成デバイスポインタを渡して player 再生成・再ロードを依頼する。
+    /// UI 側は非同期に処理し、完了後に AttachGStreamerSource を呼ぶ（GPU worker を待たせない）。
+    /// </summary>
+    public Action<IntPtr>? GStreamerRebindRequested { get; init; }
+
     public static bool TestCardRequested()
     {
         string? value = Environment.GetEnvironmentVariable(TestCardEnvironmentVariable);
         return value is not null && (value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS=&lt;秒&gt;[,&lt;秒&gt;] を起動時に 1 回だけ解析する。</summary>
+    public static double[] ParseSimulatedDeviceLossSeconds(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return [];
+        var result = new List<double>();
+        foreach (string part in value.Split(','))
+        {
+            if (double.TryParse(part.Trim(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double seconds)
+                && seconds >= 0 && double.IsFinite(seconds))
+            {
+                result.Add(seconds);
+            }
+        }
+        return [.. result];
     }
 }
 
@@ -104,6 +134,16 @@ internal sealed class OutputEngine : IDisposable
     private bool disposed;
     private TaskCompletionSource? gpuDone;
 
+    // デバイス消失復旧（段階 5.2）。
+    private readonly GpuRecoveryState recovery = new();
+    private readonly ComposeLeadSuspension leadSuspension;
+    private readonly ManualResetEventSlim recoveryRetry = new(false);
+    private readonly object recoveryGate = new();
+    private bool manualRetryRequested;
+    private long[] simulatedLossAtQpc = [];
+    private bool[] simulatedLossFired = [];
+    private IntPtr recoveryDisplayHwnd;
+
     // Spout worker（GPU worker が起動・停止を管理）。
     private Thread? spoutThread;
     private CancellationTokenSource? spoutStop;
@@ -119,10 +159,20 @@ internal sealed class OutputEngine : IDisposable
         spoutRunning = settings.SpoutEnabled;
         spoutEverEnabled = settings.SpoutEnabled;
         align = new ComposeAlignGate(settings.ComposeLeadMs, Stopwatch.Frequency);
+        leadSuspension = new ComposeLeadSuspension(Stopwatch.GetTimestamp);
     }
 
     public bool Faulted => Volatile.Read(ref faulted) != 0;
     public string? FirstFault => firstFault;
+    public GpuRecoveryPhase RecoveryPhase => recovery.Phase;
+
+    /// <summary>UI スレッド。Failed からの手動再試行（BtnGpuRetry）。</summary>
+    public void RetryGpuRecovery()
+    {
+        if (disposed || recovery.Phase != GpuRecoveryPhase.Failed) return;
+        lock (recoveryGate) manualRetryRequested = true;
+        recoveryRetry.Set();
+    }
 
     /// <summary>UI スレッド。Retain 済みの mpv スナップショットを GPU worker へ渡す（所有権も移す）。</summary>
     public void SubmitFrame(RenderedFrameSnapshot frame, int generation, double positionSeconds)
@@ -156,12 +206,15 @@ internal sealed class OutputEngine : IDisposable
             // ステージ 6b: shim は合成デバイスを Adopt せず、LUID だけを使って自前デバイスを作る。
             // 合成デバイスはリングを開いてフェンス待ちに使う（この gpu を渡す）。
             gstSource = new GStreamerSource(new GstNativeLeasePlayer(native, player),
-                gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture), gpu);
+                gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture), gpu,
+                onRingOpened: () => leadSuspension.OnSharedRingOpened());
             gstNative = native;
             gstPlayer = player;
             lastGstSequence = -1;
             lastGstFenceWaited = -1;
             lastGstGeneration = -1;
+            // L-3: ソース接続直後は位相が乱れるため lead 学習を 1 秒除外する。
+            leadSuspension.OnSourceAttached();
             settings.Trace.Add("lifecycle", "GPU", detail: "source.gstreamer");
             Log.Information("OutputEngine: GStreamerSource を接続しました");
         });
@@ -188,6 +241,7 @@ internal sealed class OutputEngine : IDisposable
         vblank = new VblankDisplayGate(settings.PresentMarginMs, 0, Stopwatch.Frequency);
         vblankTimer = new VblankWaitTimer();
         vblankTimerHighResolution = vblankTimer.HighResolution;
+        scanout.Reset(); // 接続し直した swapchain は PresentCount が 1 から始まる
         displayEverAttached = true;
         // L-2: 全画面接続直後は位相が乱れるため 1 秒間は lead 学習から除外する。
         composeLead?.SuspendLearning(Stopwatch.GetTimestamp());
@@ -288,6 +342,7 @@ internal sealed class OutputEngine : IDisposable
         foreach (var command in commands)
         {
             try { command(); }
+            catch (GpuDeviceLostException) { throw; } // 復旧経路へ（Fault で恒久停止させない）。
             catch (Exception e) { Fault("command: " + e); }
         }
     }
@@ -388,34 +443,33 @@ internal sealed class OutputEngine : IDisposable
         TimeSpan cpuStart = process.TotalProcessorTime;
         // 失敗時もトレースの原点が壊れないよう、初期化前に記録する（ループ原点は初期化後に確定する）。
         settings.Trace.OriginQpc = cpuStartQpc;
+        simulatedLossAtQpc = new long[settings.SimulatedDeviceLossSeconds.Count];
+        for (int i = 0; i < simulatedLossAtQpc.Length; i++)
+            simulatedLossAtQpc[i] = cpuStartQpc + (long)Math.Round(settings.SimulatedDeviceLossSeconds[i] * Stopwatch.Frequency);
+        simulatedLossFired = new bool[simulatedLossAtQpc.Length];
         try
         {
-            gpu = new GpuDevice(settings.AdapterLuid, Fault, fenceSync: true);
-            // GStreamer shim の Adopt 用に、デバイス確定を起動側へ知らせる。
-            Volatile.Write(ref devicePointer, gpu.Device.NativePointer);
-            deviceReady.Set();
-            shaders = new ShaderPipeline(gpu);
-            canvas = new CanvasSettings(settings.CanvasWidth, settings.CanvasHeight, CanvasSettings.Default.DefaultFitId);
-            current = new CanvasGeneration(canvas);
-            for (int i = 0; i < current.Pool.Capacity; i++)
-                current.Surfaces.Add(new Surface(gpu, gpu.Texture(canvas.Width, canvas.Height, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
-            sharedFence = new SharedFence(gpu);
-            originQpc = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 2;
-            settings.Trace.OriginQpc = originQpc;
-            gpuLoopTimer = new VblankWaitTimer();
-            gpuLoopTimerHighResolution = gpuLoopTimer.HighResolution;
-            CreatePreviewTargets(gpu);
-            var slotIndices = new List<int> { 0, 1, 2, 3 };
-            mpvSource = new MpvSnapshotSource<int>(slotIndices, UploadToSlot,
-                index => new SourceImageDescription(uploadSlots[index]?.Surface?.Texture,
-                    uploadSlots[index]?.Width ?? 0, uploadSlots[index]?.Height ?? 0, SourceImageFormat.Bgra8),
-                "mpv-bgra", gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            layer = new ComposeLayer(gpu, shaders, canvas);
-            composeLead = new ComposeLeadController(Stopwatch.Frequency, settings.ComposeLeadMs);
-            if (spoutRunning) StartSpoutWorker();
-            Log.Information("OutputEngine: 初期化完了 canvas={W}x{H} adapterLuid={Luid}",
-                canvas.Width, canvas.Height, gpu.Luid);
-            Loop();
+            InitializeGpuResources(initial: true);
+            while (!stop.IsCancellationRequested)
+            {
+                try
+                {
+                    Loop();
+                    break;
+                }
+                catch (GpuDeviceLostException e)
+                {
+                    OnDeviceLost(e);
+                }
+                if (recovery.Phase == GpuRecoveryPhase.Recovering)
+                    AttemptRecovery();
+                if (recovery.Phase == GpuRecoveryPhase.Failed && !stop.IsCancellationRequested)
+                {
+                    WaitForManualRetry();
+                    if (recovery.Phase == GpuRecoveryPhase.Recovering)
+                        AttemptRecovery();
+                }
+            }
         }
         catch (Exception e)
         {
@@ -437,6 +491,304 @@ internal sealed class OutputEngine : IDisposable
                 settings.SenderName, cpuSeconds, cpuStartQpc, cpuEndQpc, vblankTimerHighResolution, gpuLoopTimerHighResolution, spoutLoopTimerHighResolution),
                 current.Pool, scanout, TryDiagnostics());
             gpuDone?.TrySetResult();
+        }
+    }
+
+    // GPU デバイス・合成 pool・共有フェンス・プレビュー・ソースを新規作成する。復旧時は canvas を維持する。
+    private void InitializeGpuResources(bool initial)
+    {
+        gpu = new GpuDevice(settings.AdapterLuid, Fault, fenceSync: true);
+        // GStreamer shim の Adopt 用に、デバイス確定を起動側へ知らせる。
+        Volatile.Write(ref devicePointer, gpu.Device.NativePointer);
+        deviceReady.Set();
+        shaders = new ShaderPipeline(gpu);
+        if (initial)
+            canvas = new CanvasSettings(settings.CanvasWidth, settings.CanvasHeight, CanvasSettings.Default.DefaultFitId);
+        current = new CanvasGeneration(canvas);
+        for (int i = 0; i < current.Pool.Capacity; i++)
+            current.Surfaces.Add(new Surface(gpu, gpu.Texture(canvas.Width, canvas.Height, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
+        sharedFence = new SharedFence(gpu);
+        if (initial)
+        {
+            originQpc = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 2;
+            settings.Trace.OriginQpc = originQpc;
+            gpuLoopTimer = new VblankWaitTimer();
+            gpuLoopTimerHighResolution = gpuLoopTimer.HighResolution;
+        }
+        CreatePreviewTargets(gpu);
+        CreateMpvSnapshotSource();
+        layer = new ComposeLayer(gpu, shaders, canvas);
+        composeLead = new ComposeLeadController(Stopwatch.Frequency, settings.ComposeLeadMs);
+        leadSuspension.Attach(composeLead);
+        if (initial)
+        {
+            if (spoutRunning && !stop.IsCancellationRequested) StartSpoutWorker();
+            Log.Information("OutputEngine: 初期化完了 canvas={W}x{H} adapterLuid={Luid}",
+                canvas.Width, canvas.Height, gpu.Luid);
+        }
+    }
+
+    private void CreateMpvSnapshotSource()
+    {
+        var slotIndices = new List<int> { 0, 1, 2, 3 };
+        mpvSource = new MpvSnapshotSource<int>(slotIndices, UploadToSlot,
+            index => new SourceImageDescription(uploadSlots[index]?.Surface?.Texture,
+                uploadSlots[index]?.Width ?? 0, uploadSlots[index]?.Height ?? 0, SourceImageFormat.Bgra8),
+            "mpv-bgra", gpu!.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    // ── デバイス消失復旧（段階 5.2） ─────────────────────────────
+
+    private void MaybeSimulateDeviceLoss()
+    {
+        if (simulatedLossAtQpc.Length == 0) return;
+        long now = Stopwatch.GetTimestamp();
+        for (int i = 0; i < simulatedLossAtQpc.Length; i++)
+        {
+            if (simulatedLossFired[i] || now < simulatedLossAtQpc[i]) continue;
+            simulatedLossFired[i] = true;
+            Log.Warning("OutputEngine: 試験用のデバイス消失を発生させます index={Index}", i);
+            throw new GpuDeviceLostException("simulated device loss");
+        }
+    }
+
+    // GpuDeviceLostException だけが Lost の入力（I9: 期限超過 fault はこの状態機械に入れない）。
+    private void OnDeviceLost(GpuDeviceLostException e)
+    {
+        Log.Error(e, "OutputEngine: GPU デバイス消失");
+        settings.Trace.Add("error", "GPU", detail: "deviceLost:" + e.Message);
+        GpuRecoveryPhase phase = recovery.OnDeviceLost();
+        if (phase == GpuRecoveryPhase.Lost)
+        {
+            if (recovery.TryAutoRecover())
+                NotifyGpuStatus(GpuOutputStatus.Recovering);
+            else
+                NotifyGpuStatus(GpuOutputStatus.Failed);
+        }
+        else if (phase == GpuRecoveryPhase.Failed)
+        {
+            NotifyGpuStatus(GpuOutputStatus.Failed);
+        }
+    }
+
+    private void AttemptRecovery()
+    {
+        if (RecoverCore())
+        {
+            recovery.OnRecovered();
+            NotifyGpuStatus(GpuOutputStatus.Recovered);
+        }
+        else
+        {
+            recovery.OnRecoveryFailed();
+            NotifyGpuStatus(GpuOutputStatus.Failed);
+        }
+    }
+
+    private void NotifyGpuStatus(GpuOutputStatus status)
+    {
+        try { settings.GpuStatusChanged?.Invoke(status); }
+        catch (Exception e) { Log.Warning(e, "OutputEngine: GPU 状態通知に失敗"); }
+    }
+
+    // 復旧手順の順序は GpuRecoveryPlan（管理テスト対象）を使う。
+    private bool RecoverCore()
+    {
+        Log.Warning("OutputEngine: GPU 復旧を開始");
+        settings.Trace.Add("lifecycle", "GPU", detail: "gpu.recover.start");
+        foreach (GpuRecoveryStep step in GpuRecoveryPlan.Steps)
+        {
+            if (stop.IsCancellationRequested) return false;
+            try
+            {
+                RunRecoveryStep(step);
+            }
+            catch (Exception e)
+            {
+                Log.Error(e, "OutputEngine: GPU 復旧の手順 {Step} に失敗", step);
+                settings.Trace.Add("error", "GPU", detail: $"gpu.recover.fail:{step}");
+                return false;
+            }
+        }
+        Log.Information("OutputEngine: GPU 復旧が完了");
+        settings.Trace.Add("lifecycle", "GPU", detail: "gpu.recover.done");
+        return true;
+    }
+
+    private void RunRecoveryStep(GpuRecoveryStep step)
+    {
+        switch (step)
+        {
+            case GpuRecoveryStep.StopSpoutWorker:
+                StopSpoutWorker();
+                break;
+            case GpuRecoveryStep.ReleaseLeasesAndDisposeComposeResources:
+                DisposeGpuResourcesForRecovery();
+                break;
+            case GpuRecoveryStep.RecreateDevice:
+                CreateGpuDeviceForRecovery();
+                break;
+            case GpuRecoveryStep.RebuildComposeResources:
+                RebuildGpuResourcesForRecovery();
+                break;
+            case GpuRecoveryStep.RecreateFullscreenSwapchain:
+                RecreateFullscreenForRecovery();
+                break;
+            case GpuRecoveryStep.ReinitializeSpout:
+                if (spoutRunning && !stop.IsCancellationRequested) StartSpoutWorker();
+                break;
+            case GpuRecoveryStep.ReconnectSources:
+                ReconnectSourcesForRecovery();
+                break;
+        }
+    }
+
+    private void CreateGpuDeviceForRecovery()
+    {
+        GpuDevice device;
+        try
+        {
+            device = new GpuDevice(settings.AdapterLuid, Fault, fenceSync: true);
+        }
+        catch (Exception e) when (settings.AdapterLuid != null)
+        {
+            Log.Warning(e, "OutputEngine: 同じアダプターで再作成できないため既定アダプターを使います");
+            device = new GpuDevice(null, Fault, fenceSync: true);
+        }
+        gpu = device;
+        Volatile.Write(ref devicePointer, device.Device.NativePointer);
+        deviceReady.Set();
+        settings.Trace.Add("lifecycle", "GPU", detail: "gpu.device.recreated");
+    }
+
+    // 全 lease を返し、旧デバイス上の資源を破棄する（旧 gpu 自体も含む）。
+    private void DisposeGpuResourcesForRecovery()
+    {
+        recoveryDisplayHwnd = target?.Hwnd ?? IntPtr.Zero;
+        DisposeQuietly(layer); layer = null;
+        if (mpvSource != null)
+        {
+            try { mpvSource.DrainPendingForStop(); } catch (Exception e) { Log.Warning(e, "OutputEngine: 復旧時の pending 解放に失敗"); }
+            DisposeQuietly(mpvSource); mpvSource = null;
+        }
+        foreach (UploadSlot? slot in uploadSlots)
+        {
+            if (slot == null) continue;
+            DisposeQuietly(slot.Surface);
+            slot.Surface = null;
+        }
+        DisposeCanvasGenerationForRecovery(current);
+        foreach (RetiredGeneration entry in retired) DisposeCanvasGenerationForRecovery(entry.Generation);
+        retired.Clear();
+        // trace/shutdown が pool を参照しても壊れないよう、空の世代を保持する。
+        current = new CanvasGeneration(canvas);
+        DisposeQuietly(sharedFence); sharedFence = null;
+        DisposeQuietly(shaders); shaders = null;
+        DisposeQuietly(previewTarget); previewTarget = null;
+        DisposeQuietly(previewTexture); previewTexture = null;
+        DisposeQuietly(previewStaging); previewStaging = null;
+        gstSource?.DropRingResourcesForRecovery();
+        DisposeQuietly(vblankTimer); vblankTimer = null; vblankTimerHighResolution = null;
+        DisposeQuietly(target); target = null;
+        vblank = null;
+        DisposeQuietly(gpu); gpu = null;
+        Volatile.Write(ref devicePointer, IntPtr.Zero);
+        sourceGeneration = -1;
+        lastGstSequence = -1;
+        lastGstFenceWaited = -1;
+        lastGstGeneration = -1;
+        Volatile.Write(ref firstFault, null);
+        Volatile.Write(ref faulted, 0);
+    }
+
+    private void RebuildGpuResourcesForRecovery()
+    {
+        shaders = new ShaderPipeline(gpu!);
+        current = new CanvasGeneration(canvas);
+        for (int i = 0; i < current.Pool.Capacity; i++)
+            current.Surfaces.Add(new Surface(gpu!, gpu!.Texture(canvas.Width, canvas.Height, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
+        sharedFence = new SharedFence(gpu!);
+        CreatePreviewTargets(gpu!);
+        CreateMpvSnapshotSource();
+        layer = new ComposeLayer(gpu!, shaders, canvas);
+        composeLead = new ComposeLeadController(Stopwatch.Frequency, settings.ComposeLeadMs);
+        leadSuspension.Attach(composeLead);
+        composeLead.SuspendLearning(Stopwatch.GetTimestamp());
+        settings.Trace.Add("lifecycle", "GPU", detail: "gpu.resources.rebuilt");
+    }
+
+    private void RecreateFullscreenForRecovery()
+    {
+        IntPtr hwnd = recoveryDisplayHwnd;
+        recoveryDisplayHwnd = IntPtr.Zero;
+        if (hwnd == IntPtr.Zero) return;
+        target = new SwapchainTarget(gpu!, hwnd);
+        vblank = new VblankDisplayGate(settings.PresentMarginMs, 0, Stopwatch.Frequency);
+        vblankTimer = new VblankWaitTimer();
+        vblankTimerHighResolution = vblankTimer.HighResolution;
+        scanout.Reset(); // 新 swapchain は PresentCount が 1 から始まる
+        pendingDisplayTrace = true;
+        composeLead?.SuspendLearning(Stopwatch.GetTimestamp());
+        settings.Trace.Add("lifecycle", "GPU", detail: "display.recreated");
+    }
+
+    private void ReconnectSourcesForRecovery()
+    {
+        leadSuspension.OnSourceAttached();
+        if (gstSource == null) return;
+        if (gstSource.TryReopenOn(gpu!))
+        {
+            settings.Trace.Add("lifecycle", "GPU", detail: "gst.ring.reopened");
+            return;
+        }
+        // 共有リングを開き直せない場合のみ、UI に player 再生成（再ロード・位置シーク・再生状態復帰）を依頼する。
+        // player 破棄中の旧ハンドルへ触れないよう、依頼前に参照を落とす（再接続は UI 完了後の AttachGStreamerSource）。
+        Log.Warning("OutputEngine: 共有リングを開き直せないため GStreamer player の再生成を依頼します");
+        settings.Trace.Add("lifecycle", "GPU", detail: "gst.player.rebind");
+        if (gstSource.TryDispose()) gstSource.Dispose();
+        gstSource = null;
+        gstNative = null;
+        gstPlayer = IntPtr.Zero;
+        try { settings.GStreamerRebindRequested?.Invoke(gpu!.Device.NativePointer); }
+        catch (Exception e) { Log.Error(e, "OutputEngine: GStreamer player 再生成の依頼に失敗"); }
+    }
+
+    private void DisposeQuietly(IDisposable? resource)
+    {
+        try { resource?.Dispose(); }
+        catch (GpuDeviceLostException) { }
+        catch (Exception e) { Log.Warning(e, "OutputEngine: 復旧中の資源解放に失敗"); }
+    }
+
+    private void DisposeCanvasGenerationForRecovery(CanvasGeneration? generation)
+    {
+        if (generation == null) return;
+        foreach (Surface surface in generation.Surfaces)
+        {
+            try { surface.CloseSharedHandle(); } catch (Exception e) { Log.Warning(e, "OutputEngine: 復旧時の共有ハンドル解放に失敗"); }
+            DisposeQuietly(surface);
+        }
+        generation.Surfaces.Clear();
+    }
+
+    private void WaitForManualRetry()
+    {
+        Log.Warning("OutputEngine: GPU 出力停止。再試行を待ちます");
+        while (!stop.IsCancellationRequested && recovery.Phase == GpuRecoveryPhase.Failed)
+        {
+            bool requested;
+            lock (recoveryGate)
+            {
+                requested = manualRetryRequested;
+                manualRetryRequested = false;
+            }
+            if (requested && recovery.TryManualRetry())
+            {
+                NotifyGpuStatus(GpuOutputStatus.Recovering);
+                return;
+            }
+            recoveryRetry.Wait(200);
+            recoveryRetry.Reset();
         }
     }
 
@@ -482,6 +834,7 @@ internal sealed class OutputEngine : IDisposable
         while (!stop.IsCancellationRequested)
         {
             ProcessCommands();
+            MaybeSimulateDeviceLoss();
             TryDiscardRetired();
             // 長時間 run でも gst.delivery を欠落させないよう、250ms 間隔で drain する。
             DrainGstDeliveryEvents(false);
@@ -683,6 +1036,8 @@ internal sealed class OutputEngine : IDisposable
         mpvSource!.SetGeneration(generation);
         // GStreamer の世代は shim 側の値を観測して対応付ける（SyncGStreamerGeneration）。
         layer!.ClearFreeze();
+        // L-3: 世代変更（load/seek 等）の直後は位相が乱れるため lead 学習を 1 秒除外する。
+        leadSuspension.OnSourceGenerationChanged();
     }
 
     private readonly record struct GstFrameAcquire(SourceStatus Status, ISourceImageLease? Lease, LayerImage? Image, SourceImageStamp Stamp);
@@ -697,6 +1052,8 @@ internal sealed class OutputEngine : IDisposable
         lastGstGeneration = shimGeneration;
         layer?.ClearHeld();
         lastGstSequence = -1;
+        // L-3: gst.generation（load/seek）の直後は位相が乱れるため lead 学習を 1 秒除外する。
+        leadSuspension.OnSourceGenerationChanged();
         settings.Trace.Add("lifecycle", "GPU", detail: $"gst.generation:{shimGeneration}");
     }
 
@@ -1126,6 +1483,7 @@ internal sealed class OutputEngine : IDisposable
         DisposeOwned(previewTexture, "GPU.previewTexture"); previewTexture = null;
         DisposeOwned(previewStaging, "GPU.previewStaging"); previewStaging = null;
         DisposeOwned(gpu, "GPU.device"); gpu = null;
+        recoveryRetry.Dispose();
         stop.Dispose();
     }
 

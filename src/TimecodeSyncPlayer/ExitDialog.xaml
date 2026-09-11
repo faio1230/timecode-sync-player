@@ -1,0 +1,35 @@
+<Window x:Class="TimecodeSyncPlayer.ExitDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:ClassModifier="internal"
+        Title="終了"
+        Width="420" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="#1C1C1C"
+        AutomationProperties.AutomationId="ExitDialog">
+    <StackPanel Margin="16">
+        <TextBlock x:Name="DialogMessage"
+                   AutomationProperties.AutomationId="ExitDialogMessage"
+                   Text="終了しますか？（再生と出力は続いています）"
+                   Foreground="White" TextWrapping="Wrap"/>
+        <StackPanel x:Name="ProgressPanel" Visibility="Collapsed" Margin="0,10,0,0">
+            <TextBlock Text="終了しています。" Foreground="#BBBBBB" TextWrapping="Wrap"/>
+            <TextBlock x:Name="ProgressStep"
+                       AutomationProperties.AutomationId="ExitProgressStep"
+                       Foreground="#D7A24B" FontWeight="SemiBold" Margin="0,4,0,0"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="BtnExitCancel" Content="キャンセル" Width="100" Height="30"
+                    IsDefault="True" IsCancel="True" Click="BtnExitCancel_Click"
+                    AutomationProperties.AutomationId="BtnExitCancel"/>
+            <Button x:Name="BtnExitNormal" Content="終了" Width="84" Height="30"
+                    Margin="8,0,0,0" Click="BtnExitNormal_Click"
+                    AutomationProperties.AutomationId="BtnExitNormal"/>
+            <Button x:Name="BtnExitForce" Content="強制終了" Width="100" Height="30"
+                    Margin="8,0,0,0" Click="BtnExitForce_Click"
+                    AutomationProperties.AutomationId="BtnExitForce"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

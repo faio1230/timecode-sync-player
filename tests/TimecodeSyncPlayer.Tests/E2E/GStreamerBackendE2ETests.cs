@@ -183,6 +183,9 @@ public sealed class GStreamerBackendE2ETests
             Thread.Sleep(1000); // 再生が数フレーム進む
 
             runner.MainWindow.Close();
+            // 段階 5.1: × は終了確認ダイアログを経由する。通常終了で exit 0。
+            Window exitDialog = runner.WaitForTopLevelWindow("ExitDialog", TimeSpan.FromSeconds(10));
+            exitDialog.FindFirstDescendant(cf => cf.ByAutomationId("BtnExitNormal")).AsButton().Invoke();
             bool exited = runner.Process.WaitForExit(20_000);
             exited.Should().BeTrue("再生中のクローズでアプリが正常終了する");
             runner.Process.ExitCode.Should().Be(0);
