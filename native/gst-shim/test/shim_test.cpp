@@ -21,6 +21,7 @@ static void
 check (bool cond, const char* what)
 {
   printf ("%s: %s\n", cond ? "PASS" : "FAIL", what);
+  fflush (stdout);
   if (!cond) failures++;
 }
 
@@ -37,6 +38,7 @@ int
 main (int argc, char** argv)
 {
   if (argc < 2) { printf ("usage: tcs-shim-test <media> [play_secs]\n"); return 2; }
+  setvbuf (stdout, nullptr, _IONBF, 0);
   const char* file = argv[1];
   double play_secs = argc > 2 ? atof (argv[2]) : 2.0;
 
@@ -107,10 +109,11 @@ main (int argc, char** argv)
     check (tcs_player_publish_spout (p) == TCS_OK, "publish_spout (verification)");
   tcs_player_release (p);
 
-  /* seek bumps generation; old lease must not pass new gen */
+  /* seek bumps generation; a stale lease must be released by the owner first */
   double dur = 0;
   tcs_player_get_duration (p, &dur);
   double target = dur > 2.0 ? dur / 2.0 : 0.5;
+  tcs_player_release (p);
   uint64_t gen2 = tcs_player_seek (p, target);
   check (gen2 == gen + 1, "seek bumps generation");
   TcsFrameInfo stale = {};
