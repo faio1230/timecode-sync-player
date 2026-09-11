@@ -27,6 +27,7 @@
  */
 
 #include "tcs_gstreamer.h"
+#include "tcs_delivery_policy.h"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -109,6 +110,7 @@ struct TcsPlayer {
   };
   static const uint32_t kFrameQueueCapacity = 4;
   std::deque<FrameSlot> frames;
+  uint32_t backlog2_streak = 0;           /* consecutive acquire() calls with n==2 */
   uint64_t latest_gen = 0;                /* newest arrival generation (diagnostics) */
   uint64_t latest_pts_ns = 0;
   uint64_t latest_seq = 0;
@@ -787,6 +789,7 @@ teardown_pipeline (TcsPlayer* p)
     if (p->leased) { gst_sample_unref (p->leased); p->leased = nullptr; }
     p->pending_update = false;
     p->frames_decoded = 0;
+    p->backlog2_streak = 0;
   }
 
   if (p->pipeline) {
@@ -1178,6 +1181,7 @@ seek_locked (TcsPlayer* p, double seconds)
   for (TcsPlayer::FrameSlot& slot : p->frames)
     gst_sample_unref (slot.sample);
   p->frames.clear ();
+  p->backlog2_streak = 0;
   p->pending_update = false;
   if (p->eos) {
     p->eos = false;
@@ -1398,14 +1402,25 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
   if (p->leased)
     return 0;
 
-  /* Deliver in arrival order: drop older/other generations at the front,
-   * then lease the oldest matching frame (problem H fix: each decoded
-   * frame is handed over exactly once instead of overwriting a latest). */
+  /* Deliver with bounded latency (problem H-2): drop older/other
+   * generations, then apply the pure delivery policy to the backlog. */
   while (!p->frames.empty() && p->frames.front().generation != generation) {
     gst_sample_unref (p->frames.front().sample);
     p->frames.pop_front();
   }
-  if (p->frames.empty())
+  if (p->frames.empty()) {
+    p->backlog2_streak = 0;
+    return 0;
+  }
+
+  TcsDeliveryPlan plan = tcs_delivery_plan ((uint32_t) p->frames.size (), p->backlog2_streak);
+  p->backlog2_streak = plan.next_streak;
+  for (uint32_t i = 0; i < plan.drop_oldest && !p->frames.empty(); i++) {
+    gst_sample_unref (p->frames.front().sample);
+    p->frames.pop_front();
+    p->delivery_replaced++;
+  }
+  if (!plan.lease || p->frames.empty())
     return 0;
 
   TcsPlayer::FrameSlot slot = p->frames.front();
