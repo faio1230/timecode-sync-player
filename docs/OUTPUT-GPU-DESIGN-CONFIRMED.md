@@ -34,8 +34,8 @@
 Spout 送信は当初「別デバイス・送信 worker が GPU コピー」だった。4K 実測で送信 worker のコピーと合成が物理 GPU を奪い合い、合成完了待ちに毎秒 1〜2 回 8〜20ms の外れ値が出て lead が 8ms に張り付いたため、次のように変更した。
 
 - コピーは合成 worker が `compose.complete` の測定後に同じ context へ発行する（Spout 無効時は発行しない）。
-- 送信 worker は段階リング（保持テクスチャ 2 枚）の Ready を選び、専用の Event query（`GpuDevice.CreateFence`）でコピー完了を確認してから mutex 取得と SendTexture のみを行う。
-- immediate context は free-threaded 前提でスレッド間共有する。完了待ち query はスレッドごとに専有し、保持テクスチャの書込み/読取りは段階リングで排他する。読者同士（全画面・Spout）は排他しないまま。
+- 送信 worker は段階リング（保持テクスチャ 2 枚）の Ready を選び、mutex 取得と SendTexture のみを行う。コピー完了はフェンス値で確認するが待たない（S3-2: 4K ではデコードバッチが間に入ると完了待ちが 5〜15ms になり送信 60Hz を割るため。SendTexture も同じ context へ後に発行されるため GPU は必ずコピー後に読む）。スロット再利用時の前回送信完了だけを合成側が待つ。
+- immediate context は free-threaded ではなく、`ID3D11Multithread.SetMultithreadProtected(TRUE)` で直列化してスレッド間共有する（S3-2。shim 任せにせず `GpuDevice` 生成時に明示）。送信 worker の完了待ちは context の `End`/`Flush`/`GetData` ではなく、フェンス値と `SetEventOnCompletion` で行う。保持テクスチャの書込み/読取りは段階リングで排他する。読者同士（全画面・Spout）は排他しないまま。
 | 待ち | 高分解能 waitable timer（`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`）。起床遅れ p99 0.6ms | [整列実証](GPU-COMPOSE-ALIGN-RESULTS-2026-09-10.md) |
 | 終了 | 新規処理停止→送信 worker join→送信側の共有資源解放→合成側の解放。待機中も UI 応答、強制終了は最初から選択可 | 設計文書、試作の UI |
 | 異常 | GPU 完了の期限超過を資源解放の理由にしない。デバイス消失は一度だけ自動復旧、再発は手動 | 設計文書 |

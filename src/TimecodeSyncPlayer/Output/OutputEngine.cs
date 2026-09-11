@@ -456,11 +456,12 @@ internal sealed class OutputEngine : IDisposable
         ISourceImageLease? lease = null;
         SourceStatus status = SourceStatus.NotReady;
 
+        long acquireStarted = Stopwatch.GetTimestamp();
         if (gstSource != null)
         {
             // GStreamer: shim のリーステクスチャを SRV で直接描画する（CPU/GPU コピーを挟まない）。
             SyncGStreamerGeneration();
-            var gst = AcquireGStreamer(position);
+            var gst = AcquireGStreamer(scheduled, position);
             status = gst.Status;
             lease = gst.Lease;
             acquired = gst.Image;
@@ -489,6 +490,8 @@ internal sealed class OutputEngine : IDisposable
                 else { lease.Dispose(); lease = null; }
             }
         }
+        settings.Trace.Add("compose.acquire", "GPU", scheduled, default,
+            value: (Stopwatch.GetTimestamp() - acquireStarted) * 1_000_000 / Stopwatch.Frequency);
 
         bool writing = true, inFlight = false, retained = false;
         try
@@ -497,12 +500,18 @@ internal sealed class OutputEngine : IDisposable
             long composeStartedQpc = Stopwatch.GetTimestamp();
             settings.Trace.Add("compose.start", "GPU", scheduled, stamp);
             if (lease != null) { lease.BeginGpuUse(); inFlight = true; }
+            long drawStarted = Stopwatch.GetTimestamp();
             retained = layer!.Compose(surface,
                 effective?.Gap ?? OutputGapMode.None,
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
                 stamp, originQpc, acquired);
+            long drawUs = (Stopwatch.GetTimestamp() - drawStarted) * 1_000_000 / Stopwatch.Frequency;
+            settings.Trace.Add("compose.draw", "GPU", scheduled, stamp, value: drawUs);
+            long fenceStarted = Stopwatch.GetTimestamp();
             gpu!.Fence.Wait("compose.source");
+            long fenceUs = (Stopwatch.GetTimestamp() - fenceStarted) * 1_000_000 / Stopwatch.Frequency;
+            settings.Trace.Add("compose.fence", "GPU", scheduled, stamp, value: fenceUs);
             long composeCompletedQpc = Stopwatch.GetTimestamp();
             if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
             if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; lease = null; }
@@ -625,7 +634,7 @@ internal sealed class OutputEngine : IDisposable
     // GStreamer shim の最新リースを取得し、借用テクスチャの SRV を作って直接描画できる形で返す。
     // shim は「リース保持中は同じ画像を返す」ため、リースは compose 後に毎回返す（呼び出し側が Dispose）。
     // 描画に使うテクスチャは AddRef 付きの Surface として LayerImage が所有する。
-    private GstFrameAcquire AcquireGStreamer(double position)
+    private GstFrameAcquire AcquireGStreamer(long scheduled, double position)
     {
         int generation = gstSource!.Generation;
         var status = gstSource.TryAcquire(generation, position, out var lease);
@@ -636,8 +645,11 @@ internal sealed class OutputEngine : IDisposable
         var texture = ((GStreamerSource.Lease)lease).OpenTexture();
         if (texture == null) return new(status, lease, null, stamp);
         Surface surface;
+        long srvStarted = Stopwatch.GetTimestamp();
         try { surface = new Surface(gpu!, texture, false, SourceSharing.None); }
         catch { texture.Dispose(); throw; }
+        settings.Trace.Add("compose.srv", "GPU", scheduled, new ImageStamp(stamp.Sequence, stamp.DecodedQpc),
+            value: (Stopwatch.GetTimestamp() - srvStarted) * 1_000_000 / Stopwatch.Frequency);
         // Lease は LayerImage に持たせない（毎 tick 返す）。テクスチャ/SRV は AddRef 済みで保持される。
         var image = new LayerImage(surface.View, surface.Texture.NativePointer, lease.Width, lease.Height, null, surface);
         return new(status, lease, image, stamp);

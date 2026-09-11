@@ -59,11 +59,12 @@ internal sealed class VblankDisplayGate
         lastSyncQpc = syncQpc; lastSyncRefresh = syncRefresh; HasScanout = true;
     }
 
-    // lastSyncQpc + k*period - margin > now を満たす最小の k。過去の vblank は予測しない。
+    // lastSyncQpc + k*period - lead > now を満たす最小の k。表示に lead 分の余裕を残して
+    // 間に合う直近の vblank を予測する（目標 margin を過ぎていても、まだ lead 以上先なら候補にする）。
     public VblankPrediction Predict(long now)
     {
         if (!HasScanout) throw new InvalidOperationException("No scanout statistics yet.");
-        long delta = now + marginTicks - lastSyncQpc;
+        long delta = now + leadTicks - lastSyncQpc;
         long k = delta < 0 ? 1 : delta / PeriodTicks + 1;
         long vblank = lastSyncQpc + k * PeriodTicks;
         return new(vblank - marginTicks, vblank, lastSyncRefresh + k, PeriodTicks);
@@ -93,6 +94,13 @@ internal sealed class VblankDisplayGate
         if (!HasScanout) { attempt = null; armed = true; return (VblankStep.Bootstrap, 0, ""); }
         var next = Predict(now);
         if (!Presentable(next)) return (VblankStep.Idle, 0, "");
+        // 目標を過ぎていても vblank が lead 以上先なら即時 Present（pending の有無に依らない）。
+        // 合成完了から判定までの遅れで目標を跨いでも、この vblank の画像を表示できる。
+        if (now > next.TargetQpc && now <= next.VblankQpc - leadTicks)
+        {
+            attempt = next; armed = true;
+            return (VblankStep.Present, next.VblankQpc, "");
+        }
         pending = next;
         return next.TargetQpc < composeDue ? (VblankStep.WaitTarget, next.TargetQpc, "target") : (VblankStep.WaitTarget, composeDue, "compose");
     }
