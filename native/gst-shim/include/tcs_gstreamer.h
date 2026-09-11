@@ -78,6 +78,36 @@ typedef struct TcsStats {
   uint64_t generation;
 } TcsStats;
 
+/* ---- delivery trace (problem H instrumentation) ----
+ * Every on_new_sample arrival appends one event. qpc is the same
+ * QueryPerformanceCounter clock the compositor uses, so the owner can
+ * merge these with its events.jsonl timeline. The ring keeps the newest
+ * events; the owner drains it periodically and never blocks the stream. */
+typedef struct TcsDeliveryEvent {
+  uint64_t qpc;          /* QPC at on_new_sample entry */
+  uint64_t seq;          /* shim frame sequence */
+  int64_t  pts_ns;
+  int64_t  running_ns;   /* segment running time at pts */
+  uint32_t callback_us;  /* frame-notify callback duration */
+  uint32_t flags;        /* 1=replaced previous latest, 2=callback, 4=gpu */
+} TcsDeliveryEvent;
+
+typedef struct TcsDeliveryStats {
+  uint64_t arrivals;
+  uint64_t latest_replaced;
+  uint64_t qos_events;    /* QoS events seen on the appsink sink pad */
+  uint64_t decoder_out;   /* buffers leaving the video decoder */
+  uint64_t ring_dropped;  /* delivery events evicted before the owner drained */
+  uint64_t last_qpc;
+} TcsDeliveryStats;
+
+TCS_GST_API int tcs_player_drain_delivery_events(TcsPlayer* player,
+                                                 TcsDeliveryEvent* out,
+                                                 uint32_t capacity,
+                                                 uint32_t* out_count);
+TCS_GST_API int tcs_player_get_delivery_stats(TcsPlayer* player,
+                                              TcsDeliveryStats* out);
+
 /* Create the player.
  * external_d3d11_device: ID3D11Device* to share with the compositor;
  *   must have been created with D3D11_CREATE_DEVICE_VIDEO_SUPPORT |

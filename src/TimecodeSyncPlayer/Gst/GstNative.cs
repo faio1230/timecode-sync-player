@@ -25,6 +25,28 @@ internal static class GstNative
         public int IsGpu;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TcsDeliveryEvent
+    {
+        public ulong Qpc;
+        public ulong Seq;
+        public long PtsNs;
+        public long RunningNs;
+        public uint CallbackUs;
+        public uint Flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TcsDeliveryStats
+    {
+        public ulong Arrivals;
+        public ulong LatestReplaced;
+        public ulong QosEvents;
+        public ulong DecoderOut;
+        public ulong RingDropped;
+        public ulong LastQpc;
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void TcsFrameNotifyDelegate(IntPtr userData, ulong generation, ulong seq);
 
@@ -119,6 +141,14 @@ internal static class GstNative
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_spout_ready(IntPtr player);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_drain_delivery_events(
+            IntPtr player, [Out] TcsDeliveryEvent[] outEvents, uint capacity, out uint outCount);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_get_delivery_stats(
+            IntPtr player, out TcsDeliveryStats outStats);
     }
 }
 

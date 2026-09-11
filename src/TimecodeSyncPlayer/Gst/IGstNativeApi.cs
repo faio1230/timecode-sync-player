@@ -42,4 +42,8 @@ internal interface IGstNativeApi
     int SendImage(IntPtr player, IntPtr bgra, int width, int height, int pitch);
     string DecoderName(IntPtr player);
     bool SpoutReady(IntPtr player);
+
+    /// <summary>配信トレース（問題 H の計測）。qpc は QPC 時計で events.jsonl と同じ基準。</summary>
+    int DrainDeliveryEvents(IntPtr player, GstNative.TcsDeliveryEvent[] buffer, uint capacity, out uint count);
+    int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats);
 }

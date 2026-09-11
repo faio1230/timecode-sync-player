@@ -32,6 +32,7 @@ public class GStreamerSourceTests
         }
         public void Release() { Releases++; NextSequence++; }
         public string DecoderName => "d3d11h264dec";
+        public GstDeliveryStatsInfo DeliveryStats { get; set; }
     }
 
     [Fact]
@@ -105,6 +106,18 @@ public class GStreamerSourceTests
         source.Diagnostics.Decoder.Should().Be("d3d11h264dec");
         source.Diagnostics.Format.Should().Be("BGRA8_UNORM");
         source.TryDispose().Should().BeTrue();
+    }
+
+    [Fact]
+    public void Diagnostics_MirrorsShimReplacementCount()
+    {
+        var player = new FakeLeasePlayer { DeliveryStats = new GstDeliveryStatsInfo(2400, 7, 3, 0, 0) };
+        var source = new GStreamerSource(player);
+
+        SourceDiagnostics diagnostics = source.Diagnostics;
+
+        diagnostics.Replaced.Should().Be(7);
+        diagnostics.Decoder.Should().Be("d3d11h264dec");
     }
 
     [Fact]
