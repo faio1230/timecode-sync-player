@@ -9,6 +9,12 @@ namespace TimecodeSyncPlayer.Gst;
 internal interface IGstNativeApi
 {
     IntPtr PlayerCreate(string senderName, out string error);
+
+    /// <summary>
+    /// 合成層の ID3D11Device を shim に Adopt させてプレイヤーを生成する（outputBackend=Gpu 時）。
+    /// externalDevice が IntPtr.Zero の場合は shim 所有デバイスになる。
+    /// </summary>
+    IntPtr PlayerCreate(string senderName, IntPtr externalDevice, out string error);
     void PlayerDestroy(IntPtr player);
     int Load(IntPtr player, string path, double startSeconds, bool paused, out string error);
     int Stop(IntPtr player);

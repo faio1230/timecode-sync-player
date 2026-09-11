@@ -10,9 +10,12 @@ internal sealed class GstNativeApi : IGstNativeApi
     private const int PathBufSize = 4096;
 
     public IntPtr PlayerCreate(string senderName, out string error)
+        => PlayerCreate(senderName, IntPtr.Zero, out error);
+
+    public IntPtr PlayerCreate(string senderName, IntPtr externalDevice, out string error)
     {
         var err = new byte[ErrBufSize];
-        IntPtr p = GstNative.Imports.tcs_player_create(senderName, IntPtr.Zero, err, (UIntPtr)err.Length);
+        IntPtr p = GstNative.Imports.tcs_player_create(senderName, externalDevice, err, (UIntPtr)err.Length);
         error = DecodeUtf8Z(err);
         return p;
     }

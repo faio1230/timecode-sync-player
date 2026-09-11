@@ -5,8 +5,10 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Gst;
 using TimecodeSyncPlayer.Output;
 using TimecodeSyncPlayer.ViewModels;
 
@@ -52,6 +54,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // ── GPU 出力（OutputBackend=Gpu 時のみ） ───────────────────────
     private readonly OutputEngine? _outputEngine;
+    private readonly GstBackendState _gstBackendState;
+    private readonly IGstNativeApi _gstNativeApi;
+    private readonly bool _gstGpuCombo;
     private WriteableBitmap? _outputPreviewBitmap;
 
     // ── LTC ───────────────────────────────────────────────────────
@@ -141,6 +146,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         OsdUpdateState osdUpdateState,
         PlaybackPerformanceStats playbackPerformanceStats,
         OutputBackendState outputBackendState,
+        IServiceProvider services,
         IMpvApi mpvApi,
         IMpvRenderApi mpvRenderApi)
     {
@@ -162,6 +168,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _seekState = seekState;
         _osdUpdateState = osdUpdateState;
         _playbackPerformanceStats = playbackPerformanceStats;
+        // GStreamer 内部型は公開せず、DI 経由で取得する（Gpu 出力時のみ使用）。
+        _gstBackendState = services.GetRequiredService<GstBackendState>();
+        _gstNativeApi = services.GetRequiredService<IGstNativeApi>();
+        _gstGpuCombo = settingsManager.Current.Backend == PlayerBackend.Gstreamer
+            && outputBackendState.Effective == OutputBackend.Gpu;
         _mpvApi = mpvApi;
 
         _vm = new MainViewModel();
@@ -187,10 +198,24 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 Trace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable)),
                 PreviewFrameReady = OnOutputPreviewFrame,
             });
-            _renderSession.GpuFrameSink = (frame, generation, position) => _outputEngine?.SubmitFrame(frame, generation, position);
-            _renderSession.PositionSecondsProvider = ReadMpvTimePos;
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
+            if (_gstGpuCombo)
+            {
+                // GStreamerGpu: shim がエンジンのデバイスを Adopt し、リースを直接ソースにする。
+                // CPU の LeasedCpuCopy 経路は使わない（RenderSession の snapshot コピーを抑制）。
+                if (_outputEngine.WaitForDevice(TimeSpan.FromSeconds(5)))
+                    _gstBackendState.SetExternalDevice(_outputEngine.DevicePointer);
+                else
+                    Log.Error("OutputEngine: デバイス初期化がタイムアウトし、GStreamer shim へ Adopt できません");
+                _renderSession.SuppressFrameSnapshots = true;
+            }
+            else
+            {
+                // mpv 経路: mpv 専用スレッドで Retain したスナップショットを受け取る。
+                _renderSession.GpuFrameSink = (frame, generation, position) => _outputEngine?.SubmitFrame(frame, generation, position);
+                _renderSession.PositionSecondsProvider = ReadMpvTimePos;
+            }
         }
         else
         {
@@ -522,7 +547,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             showError: ShowWindowLoadedSessionInitializationError);
         bool initialized = sessionInitializer.Initialize();
         if (initialized)
+        {
+            // GStreamerGpu: プレイヤー生成後にエンジンへソースを接続する。
+            if (_gstGpuCombo)
+                _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi);
             RefreshDisplaySelection(_settingsManager.Current.FullscreenDisplayDeviceName);
+        }
         return initialized;
     }
 

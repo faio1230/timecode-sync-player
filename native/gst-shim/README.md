@@ -138,10 +138,21 @@ shim と契約の差はアダプター側で次のように吸収する（契約
 - **Ended**: shim の 0（=なし）から Ended を区別できないため `NotReady` とする。保持は合成層の責務。
 - **形式**: `dxgi_format != 87`（BGRA 以外）は `NotReady` として拒否する。
 
-未配線: `OutputEngine` の D3D11 デバイスを shim へ Adopt させる経路
-（`tcs_player_create(sender, external_device, ...)`）はアダプター
-`GstNativeLeasePlayer` として用意したが、本体の `GstBackendState` のプレイヤー作成へ
-接続する作業は段階 2 では未実施。既定の mpv 経路と既存 GStreamer 互換経路は変更していない。
+本体配線（段階 6、2026-09-11）:
+
+- `PlayerBackend=Gstreamer` かつ `OutputBackend=Gpu` のとき、`OutputEngine` の起動直後に
+  `GstBackendState.SetExternalDevice()` でデバイスポインタを渡し、
+  `tcs_player_create` が外部デバイスを Adopt する。`GstMpvRenderApiAdapter` の
+  `LeasedCpuCopy` と `GstSpoutOutput` の直接送信はこの組み合わせでは使わない
+  （`RenderSession.SuppressFrameSnapshots`）。既定の mpv 経路と GStreamerCpu 経路は不変。
+- ソースは `GStreamerSource` のリースを SRV（AddRef 付き所有ラップ）で直接描画し、
+  CPU/GPU コピーを挟まない。shim は「リース保持中は同じ画像を返す」ため、リースは
+  毎合成 tick 返却し、描画中のテクスチャは AddRef した自前参照で保持する。
+- 世代は shim 側の値を観測して対応付ける（load/seek の自動 +1 をトレース
+  `gst.generation:` に記録）。リース保持中は新フレームが返らない仕様を吸収している。
+- immediate context は合成層の GPU worker だけが操作する。shim 内部（GStreamer の
+  ストリーミングスレッド）も同一デバイス/コンテキストを使うが、D3D11 の
+  マルチスレッド保護（作成時に SINGLETHREADED を付けない既定）で直列化される。
 
 ## コーデック分岐（命令 4 対応）
 

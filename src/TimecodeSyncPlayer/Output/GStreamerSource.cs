@@ -37,6 +37,9 @@ internal sealed class GStreamerSource : IVideoSource
         this.gpu = gpu;
     }
 
+    /// <summary>shim が保持する現在世代（合成層の generation と対応付ける）。</summary>
+    public int Generation => (int)player.Generation;
+
     public void SetGeneration(int generation)
     {
         if ((int)player.Generation == generation) return;
@@ -130,8 +133,16 @@ internal sealed class GStreamerSource : IVideoSource
             shared.Info.PtsNs >= 0 ? shared.Info.PtsNs / 1_000_000_000.0 : shared.FallbackPositionSeconds,
             shared.Info.PtsNs >= 0 ? shared.Info.PtsNs / 100 : 0);
 
-        public Vortice.Direct3D11.ID3D11Texture2D? Texture =>
-            shared.TexturePointer == IntPtr.Zero ? null : new Vortice.Direct3D11.ID3D11Texture2D(shared.TexturePointer);
+        // AddRef して所有権を取ったラッパーを返す（呼び出し側が Dispose する）。
+        public Vortice.Direct3D11.ID3D11Texture2D? Texture => OpenTexture();
+
+        internal IntPtr TexturePointer => shared.TexturePointer;
+
+        /// <summary>リース中のテクスチャを AddRef 付きの所有ラッパーとして開く（lease 保持中のみ有効）。</summary>
+        public Vortice.Direct3D11.ID3D11Texture2D? OpenTexture()
+            => shared.TexturePointer == IntPtr.Zero
+                ? null
+                : NativeTextureOps.OpenOwned(shared.TexturePointer, pointer => new Vortice.Direct3D11.ID3D11Texture2D(pointer));
 
         public int Width => shared.Info.Width;
         public int Height => shared.Info.Height;

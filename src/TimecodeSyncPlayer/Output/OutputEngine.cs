@@ -56,6 +56,13 @@ internal sealed class OutputEngine : IDisposable
     private ComposeLeadController? composeLead;
     private TimelineOutputState? lastTimelineState;
     private int sourceGeneration = -1;
+    private GStreamerSource? gstSource;
+    private long lastGstSequence = -1;
+    private int lastGstGeneration = -1;
+
+    // GStreamer shim へのデバイス Adopt 用（GPU worker が初期化時に確定する）。
+    private readonly ManualResetEventSlim deviceReady = new(false);
+    private IntPtr devicePointer;
 
     // GPU worker のみが触る状態。
     private GpuDevice? gpu;
@@ -114,6 +121,31 @@ internal sealed class OutputEngine : IDisposable
     /// <summary>UI スレッド。タイムライン状態（ギャップ・カード・世代・位置）を GPU worker へ渡す。</summary>
     public void SubmitTimelineState(TimelineOutputState state)
         => timelineInput.Publish(state);
+
+    /// <summary>GStreamer shim に Adopt させる ID3D11Device が確定するまで待つ（起動時のみ）。</summary>
+    public bool WaitForDevice(TimeSpan timeout) => deviceReady.Wait(timeout);
+
+    /// <summary>Adopt 済みデバイスポインタ（未初期化なら IntPtr.Zero）。</summary>
+    public IntPtr DevicePointer => Volatile.Read(ref devicePointer);
+
+    /// <summary>
+    /// UI スレッド。GStreamer プレイヤーをソースとして接続する（PlayerBackend=Gstreamer かつ Gpu 出力時）。
+    /// 以降、合成 tick は CPU アップロードではなく shim のリースを取得してエンジン slot へ GPU コピーする。
+    /// </summary>
+    public void AttachGStreamerSource(IntPtr player, TimecodeSyncPlayer.Gst.IGstNativeApi native)
+        => Enqueue(() =>
+        {
+            if (player == IntPtr.Zero || gpu == null)
+            {
+                Fault("OutputEngine: GStreamer プレイヤーハンドルがありません");
+                return;
+            }
+            gstSource?.Dispose();
+            gstSource = new GStreamerSource(new GstNativeLeasePlayer(native, player), gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            lastGstSequence = -1;
+            settings.Trace.Add("lifecycle", "GPU", detail: "source.gstreamer");
+            Log.Information("OutputEngine: GStreamerSource を接続しました");
+        });
 
     public void Start()
     {
@@ -250,6 +282,9 @@ internal sealed class OutputEngine : IDisposable
         try
         {
             gpu = new GpuDevice(settings.AdapterLuid, Fault, fenceSync: true);
+            // GStreamer shim の Adopt 用に、デバイス確定を起動側へ知らせる。
+            Volatile.Write(ref devicePointer, gpu.Device.NativePointer);
+            deviceReady.Set();
             shaders = new ShaderPipeline(gpu);
             for (int i = 0; i < pool.Capacity; i++)
                 surfaces.Add(new Surface(gpu, gpu.Texture(settings.CanvasWidth, settings.CanvasHeight, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
@@ -407,23 +442,42 @@ internal sealed class OutputEngine : IDisposable
         int generation = effective?.Generation ?? sourceGeneration;
         if (generation >= 0) EnsureSourceGeneration(generation);
         double position = effective?.PositionSeconds ?? 0;
-        // 完了したアップロードだけを公開してから取得する（未完了のコピーは合成に含めない）。
-        mpvSource!.PollUploads();
-        var status = mpvSource.TryAcquire(Math.Max(generation, 0), position, out var lease);
-        ImageStamp acquiredStamp = lease != null ? new ImageStamp(lease.Stamp.Sequence, lease.Stamp.DecodedQpc) : default;
-        settings.Trace.Add("source.acquire", "GPU", scheduled, acquiredStamp, status.ToString(),
-            (long)Math.Round(position * 1_000_000));
-        if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
-            settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceNotReady", value: 1);
+        LayerImage? acquired = null;
+        ISourceImageLease? lease = null;
+        SourceStatus status = SourceStatus.NotReady;
 
-        Surface? acquired = null;
-        int acquiredWidth = 0, acquiredHeight = 0;
-        if (lease != null)
+        if (gstSource != null)
         {
-            var uploadSlot = uploadSlots[mpvSource.SlotOf(lease)];
-            acquired = uploadSlot?.Surface;
-            acquiredWidth = uploadSlot?.Width ?? lease.Width;
-            acquiredHeight = uploadSlot?.Height ?? lease.Height;
+            // GStreamer: shim のリーステクスチャを SRV で直接描画する（CPU/GPU コピーを挟まない）。
+            SyncGStreamerGeneration();
+            var gst = AcquireGStreamer(position);
+            status = gst.Status;
+            lease = gst.Lease;
+            acquired = gst.Image;
+            settings.Trace.Add("source.acquire", "GPU", scheduled,
+                new ImageStamp(gst.Stamp.Sequence, gst.Stamp.DecodedQpc), status.ToString(),
+                (long)Math.Round(position * 1_000_000));
+            if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
+                settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceNotReady", value: 1);
+        }
+        else
+        {
+            // mpv: 完了したアップロードだけを公開してからリングから取得する。
+            mpvSource!.PollUploads();
+            status = mpvSource.TryAcquire(Math.Max(generation, 0), position, out lease);
+            ImageStamp acquiredStamp = lease != null ? new ImageStamp(lease.Stamp.Sequence, lease.Stamp.DecodedQpc) : default;
+            settings.Trace.Add("source.acquire", "GPU", scheduled, acquiredStamp, status.ToString(),
+                (long)Math.Round(position * 1_000_000));
+            if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
+                settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceNotReady", value: 1);
+            if (lease != null)
+            {
+                var uploadSlot = uploadSlots[mpvSource.SlotOf(lease)];
+                if (uploadSlot?.Surface != null)
+                    acquired = new LayerImage(uploadSlot.Surface.View, uploadSlot.Surface.Texture.NativePointer,
+                        uploadSlot.Width, uploadSlot.Height, lease, null);
+                else { lease.Dispose(); lease = null; }
+            }
         }
 
         bool writing = true, inFlight = false, retained = false;
@@ -432,17 +486,17 @@ internal sealed class OutputEngine : IDisposable
             var stamp = new ImageStamp(++nextImageId, Stopwatch.GetTimestamp());
             long composeStartedQpc = Stopwatch.GetTimestamp();
             settings.Trace.Add("compose.start", "GPU", scheduled, stamp);
-            if (acquired != null) { lease!.BeginGpuUse(); inFlight = true; }
+            if (lease != null) { lease.BeginGpuUse(); inFlight = true; }
             retained = layer!.Compose(surface,
                 effective?.Gap ?? OutputGapMode.None,
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
-                stamp, originQpc, lease, acquired, acquiredWidth, acquiredHeight);
+                stamp, originQpc, acquired);
             sharedFence!.Signal(gpu!, stamp.Id); // フェンス値＝画像 ID。Spout 側は GPU キューで待つ。
             gpu!.Fence.Wait("compose.source");
             long composeCompletedQpc = Stopwatch.GetTimestamp();
             if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
-            if (!retained && lease != null) { lease.Dispose(); lease = null; }
+            if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; lease = null; }
             UpdateComposeLead(composeCompletedQpc - composeStartedQpc, composeCompletedQpc);
             settings.Trace.Add("compose.complete", "GPU", scheduled, stamp);
             settings.Trace.Add("compose.publish", "GPU", scheduled, stamp);
@@ -453,7 +507,9 @@ internal sealed class OutputEngine : IDisposable
         finally
         {
             if (inFlight) lease!.CompleteGpuUse();
-            if (!retained && lease != null) lease.Dispose();
+            if (!retained && acquired != null) acquired.Value.Release();
+            // GStreamer のリースは shim が最新へ進めるよう毎 tick 返す（描画テクスチャは AddRef 済み）。
+            if (gstSource != null) lease?.Dispose();
             if (writing) { try { gpu!.Fence.Wait("compose.drain"); } finally { pool.AbortWrite(slot, true); } }
         }
 
@@ -493,7 +549,12 @@ internal sealed class OutputEngine : IDisposable
 
     private SourceDiagnostics? TryDiagnostics()
     {
-        try { return mpvSource?.Diagnostics; }
+        try
+        {
+            // GStreamer 接続時は shim 側のデコーダ・世代排除・ready 数をトレースへ出す。
+            if (gstSource != null) return gstSource.Diagnostics;
+            return mpvSource?.Diagnostics;
+        }
         catch (Exception) { return null; }
     }
 
@@ -502,7 +563,44 @@ internal sealed class OutputEngine : IDisposable
         if (generation < 0 || generation == sourceGeneration) return;
         sourceGeneration = generation;
         mpvSource!.SetGeneration(generation);
+        // GStreamer の世代は shim 側の値を観測して対応付ける（SyncGStreamerGeneration）。
         layer!.ClearFreeze();
+    }
+
+    private readonly record struct GstFrameAcquire(SourceStatus Status, ISourceImageLease? Lease, LayerImage? Image, SourceImageStamp Stamp);
+
+    // GStreamer の世代は shim 側の値（load/seek で進む）を観測して対応付ける。
+    // 世代が変わったら Held を手放し、古い世代の画像を返さない。
+    private void SyncGStreamerGeneration()
+    {
+        if (gstSource == null) return;
+        int shimGeneration = gstSource.Generation;
+        if (shimGeneration == lastGstGeneration) return;
+        lastGstGeneration = shimGeneration;
+        layer?.ClearHeld();
+        lastGstSequence = -1;
+        settings.Trace.Add("lifecycle", "GPU", detail: $"gst.generation:{shimGeneration}");
+    }
+
+    // GStreamer shim の最新リースを取得し、借用テクスチャの SRV を作って直接描画できる形で返す。
+    // shim は「リース保持中は同じ画像を返す」ため、リースは compose 後に毎回返す（呼び出し側が Dispose）。
+    // 描画に使うテクスチャは AddRef 付きの Surface として LayerImage が所有する。
+    private GstFrameAcquire AcquireGStreamer(double position)
+    {
+        int generation = gstSource!.Generation;
+        var status = gstSource.TryAcquire(generation, position, out var lease);
+        if (status != SourceStatus.Ready || lease == null) return new(status, null, null, default);
+        var stamp = lease.Stamp;
+        if (stamp.Sequence == lastGstSequence) return new(status, lease, null, stamp);
+        lastGstSequence = stamp.Sequence;
+        var texture = ((GStreamerSource.Lease)lease).OpenTexture();
+        if (texture == null) return new(status, lease, null, stamp);
+        Surface surface;
+        try { surface = new Surface(gpu!, texture, false, SourceSharing.None); }
+        catch { texture.Dispose(); throw; }
+        // Lease は LayerImage に持たせない（毎 tick 返す）。テクスチャ/SRV は AddRef 済みで保持される。
+        var image = new LayerImage(surface.View, surface.Texture.NativePointer, lease.Width, lease.Height, null, surface);
+        return new(status, lease, image, stamp);
     }
 
     // GPU worker 専用: 空き slot のテクスチャを必要サイズへ作り直してアップロードする。
@@ -797,13 +895,26 @@ internal sealed class OutputEngine : IDisposable
         }
     }
 
-    /// <summary>合成停止→Spout worker join→表示停止→GPU 完了待ち。呼び出し元をブロックする。</summary>
+    /// <summary>
+    /// 合成停止→Spout worker join→表示停止→GPU 完了待ち→ソース lease 全返却。呼び出し元をブロックする。
+    /// GStreamer の shim player destroy より先に全 lease を返す順序をここで保証する。
+    /// </summary>
     public void Stop()
     {
         if (!started) return;
         stop.Cancel();
         gpuDone?.Task.Wait();
         StopSpoutWorker();
+        ReleaseSourceLeases();
+    }
+
+    /// <summary>GPU ドレイン後にソース lease を返す（ComposeLayer の held と GStreamer の pending を解放）。</summary>
+    private void ReleaseSourceLeases()
+    {
+        DisposeOwned(layer, "GPU.composeLayer"); layer = null;
+        mpvSource?.DrainPendingForStop();
+        if (gstSource != null && !gstSource.TryDispose())
+            Log.Warning("OutputEngine: GStreamerSource の lease が停止時に残っています");
     }
 
     public void Dispose()
@@ -812,6 +923,8 @@ internal sealed class OutputEngine : IDisposable
         disposed = true;
         Stop();
         DisposeOwned(layer, "GPU.composeLayer"); layer = null;
+        DisposeOwned(gstSource, "GPU.gstreamerSource"); gstSource = null;
+        Volatile.Write(ref devicePointer, IntPtr.Zero);
         try { mpvSource?.TryDispose(); } catch (Exception e) { Fault("GPU.source: " + e); }
         DisposeOwned(mpvSource, "GPU.source"); mpvSource = null;
         foreach (var slot in uploadSlots)

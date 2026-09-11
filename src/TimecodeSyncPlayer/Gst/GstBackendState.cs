@@ -19,6 +19,7 @@ internal sealed class GstBackendState : IDisposable
     private readonly IGstNativeApi _native;
     private readonly object _gate = new();
     private IntPtr _player;
+    private IntPtr _externalDevice;
     private bool _playerDisposed;
     private GstNative.TcsFrameNotifyDelegate? _thunk;      // ネイティブへ渡すdelegateの寿命保持
     private MpvRenderNative.MpvRenderUpdateFn? _renderCallback;
@@ -40,6 +41,19 @@ internal sealed class GstBackendState : IDisposable
     /// <summary>pause プロパティの最新値ミラー（loadfile の初期状態に使う）。</summary>
     public volatile bool IsPaused = true;
 
+    /// <summary>
+    /// outputBackend=Gpu のとき、合成層の ID3D11Device を shim に Adopt させる。
+    /// プレイヤー生成前にだけ有効（生成後の変更は無視する）。
+    /// </summary>
+    public void SetExternalDevice(IntPtr device)
+    {
+        lock (_gate)
+        {
+            if (_player != IntPtr.Zero || _playerDisposed) return;
+            _externalDevice = device;
+        }
+    }
+
     public bool EnsurePlayer()
     {
         lock (_gate)
@@ -47,7 +61,7 @@ internal sealed class GstBackendState : IDisposable
             if (_playerDisposed) return false;
             if (_player != IntPtr.Zero) return true;
 
-            _player = _native.PlayerCreate(SenderName, out string error);
+            _player = _native.PlayerCreate(SenderName, _externalDevice, out string error);
             LastError = error;
             if (_player == IntPtr.Zero)
                 Log.Error("GstBackendState: プレイヤー生成失敗 {Error}", error);
