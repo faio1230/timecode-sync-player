@@ -118,6 +118,12 @@ internal sealed class RenderSession : IDisposable
 
     /// <summary>スナップショット公開時点の再生位置（秒）。取得できなければ null。</summary>
     internal Func<double?>? PositionSecondsProvider { get; set; }
+
+    /// <summary>
+    /// Gpu 合成層がソース（GStreamer リース等）を直接所有する場合に true。
+    /// CPU へのフレームコピー（snapshot 生成）を行わず、UI の順序・ギャップ状態機械だけを回す。
+    /// </summary>
+    internal bool SuppressFrameSnapshots { get; set; }
     // The fullscreen window must start from this full-resolution image, even paused.
     public WriteableBitmap? CurrentExternalBitmap => _renderer?.CurrentBitmap;
     public void SetFullscreenActive(bool active)
@@ -265,6 +271,8 @@ internal sealed class RenderSession : IDisposable
     private RenderedFrameSnapshot? RenderNativeSnapshot(int generation)
     {
         if (_stopped || _context == IntPtr.Zero || _parameters == null) return null;
+        // Gpu 合成層がソースを所有する構成では、GPU/CPU コピーを行わず UI 更新だけを駆動する。
+        if (SuppressFrameSnapshots) return null;
         var size = RenderFrameSizePolicy.Decide(Width, Height, 16);
         if (!size.ShouldRender)
             size = new RenderFrameSizeDecision(16, 16, HasDisplayableVideoSize: false);
@@ -476,6 +484,12 @@ internal sealed class RenderSession : IDisposable
         await _gate.RunAsync(async () =>
         {
             if (!IsCurrent(generation) || !isAttemptCurrent() || _context == IntPtr.Zero) return;
+            if (SuppressFrameSnapshots)
+            {
+                // 合成層がフリーズ画像をソースから直接保存するため、CPU コピーは不要。
+                copied = true;
+                return;
+            }
             using var frame = await _thread.InvokeAsync(() => RenderNativeSnapshot(generation));
             if (frame == null) return;
             if (!IsCurrent(generation) || !isAttemptCurrent()) { TraceFrame(frame, "discard", "stale-gap-capture"); return; }

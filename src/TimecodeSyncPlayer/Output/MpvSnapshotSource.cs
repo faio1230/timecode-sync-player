@@ -173,6 +173,18 @@ internal sealed class MpvSnapshotSource<TSlot> : IVideoSource
         }
     }
 
+    /// <summary>
+    /// 停止時（GPU ドレイン後）。完了待ちのクエリと保持中のリースを解放する。
+    /// GStreamerSource の全 lease を shim player destroy より先に返すために使う。
+    /// </summary>
+    public void DrainPendingForStop()
+    {
+        lock (pending)
+        {
+            while (pending.Count > 0) pending.Dequeue().Completion?.Dispose();
+        }
+    }
+
     public void SetGeneration(int generation) => ring.SetGeneration(generation);
     public SourceStatus TryAcquire(int generation, double positionSeconds, out ISourceImageLease? lease)
         => ring.TryAcquire(generation, positionSeconds, out lease);

@@ -346,6 +346,22 @@ public class GstBackendStateTests
     }
 
     [Fact]
+    public void SetExternalDevice_IsAdoptedOnPlayerCreate()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(0x11) };
+        var state = new GstBackendState(native);
+        var engineDevice = new IntPtr(0x1234_5678);
+
+        state.SetExternalDevice(engineDevice);
+        var api = new GstMpvApiAdapter(state);
+        IntPtr ctx = api.Create();
+
+        ctx.Should().Be(new IntPtr(0x11));
+        native.PlayerCreateCalls.Should().Be(1);
+        native.LastExternalDevice.Should().Be(engineDevice);
+    }
+
+    [Fact]
     public void DisposePlayer_IsIdempotentAndBlocksEnsure()
     {
         var native = new FakeGstNative { PlayerCreateResult = new IntPtr(5) };
@@ -393,10 +409,18 @@ file sealed class FakeGstNative : IGstNativeApi
     public bool ReleaseBeforeAcquireOrder => _lastReleaseOp > 0 && _lastReleaseOp < _lastAcquireOp;
 
     public IntPtr PlayerCreate(string senderName, out string error)
+        => PlayerCreate(senderName, IntPtr.Zero, out error);
+
+    public IntPtr PlayerCreate(string senderName, IntPtr externalDevice, out string error)
     {
         error = CreateError;
+        LastExternalDevice = externalDevice;
+        PlayerCreateCalls++;
         return PlayerCreateResult;
     }
+
+    public IntPtr LastExternalDevice { get; private set; }
+    public int PlayerCreateCalls { get; private set; }
 
     public void PlayerDestroy(IntPtr player) { }
 

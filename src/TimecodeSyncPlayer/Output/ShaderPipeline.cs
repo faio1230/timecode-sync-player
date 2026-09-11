@@ -115,13 +115,25 @@ internal sealed class ShaderPipeline : IDisposable
         Blit(source, canvas, canvasWidth, canvasHeight, (float)d.X, (float)d.Y, (float)d.Width, (float)d.Height, uv);
     }
 
+    /// <summary>借用テクスチャから作った SRV をキャンバスへ配置する（GStreamer リースの直接描画用）。</summary>
+    public void PlaceView(ID3D11ShaderResourceView source, int sourceWidth, int sourceHeight, ID3D11RenderTargetView canvas,
+        int canvasWidth, int canvasHeight, Placement placement)
+    {
+        var d = placement.Destination; var c = placement.SourceCrop;
+        var uv = new UvRect { OffsetX = (float)(c.X / sourceWidth), OffsetY = (float)(c.Y / sourceHeight), ScaleX = (float)(c.Width / sourceWidth), ScaleY = (float)(c.Height / sourceHeight) };
+        Blit(source, canvas, canvasWidth, canvasHeight, (float)d.X, (float)d.Y, (float)d.Width, (float)d.Height, uv);
+    }
+
     private void Blit(Surface source, ID3D11RenderTargetView target, int width, int height, float x, float y, float w, float h, UvRect uv)
+        => Blit(source.View, target, width, height, x, y, w, h, uv);
+
+    private void Blit(ID3D11ShaderResourceView source, ID3D11RenderTargetView target, int width, int height, float x, float y, float w, float h, UvRect uv)
     {
         Begin(target, width, height, display);
         gpu.Context.ClearRenderTargetView(target, new Color4(0, 0, 0, 1));
         gpu.Context.RSSetViewport(x, y, w, h);
         gpu.Context.UpdateSubresource(in uv, uvConstants); gpu.Context.PSSetConstantBuffer(1, uvConstants);
-        gpu.Context.PSSetShaderResource(0, source.View); gpu.Context.PSSetSampler(0, sampler); gpu.Context.Draw(3, 0);
+        gpu.Context.PSSetShaderResource(0, source); gpu.Context.PSSetSampler(0, sampler); gpu.Context.Draw(3, 0);
         gpu.Context.PSSetShaderResource(0, null!); gpu.Context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
     }
 
