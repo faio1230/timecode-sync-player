@@ -52,7 +52,8 @@ audioconvert + autoaudiosink。
 ## ビルド・検証
 
 ```powershell
-# vendor/Spout2 (tag 2.007.017) が必要（proto/PROTO.md 参照・git 管理外）
+# vendor/Spout2 (tag 2.007.017 / commit 固定) を取得（git 管理外）
+powershell -File native/gst-shim/get-spout.ps1
 powershell -File native/gst-shim/build-shim.ps1 -Config Debug
 # 出力: build-debug/tcs_gstreamer.dll, build-debug/tcs-shim-test.exe
 
@@ -68,9 +69,39 @@ step、再ロード、stop 後のクリーン状態、Spout 検証 publish（GPU
 Spout 受信側の目視検証は proto の recv モード
 （`native/gst-shim/proto/build-debug/tcs-gst-proto.exe recv <sender>`）が使える。
 
-## 検証状況
+## 検証状況（2026-09-11 実測）
 
-（この節はテスト実施後に更新する。未実施 = 空。）
+機材: RTX 3070 / GStreamer 1.28.2 (MSVC x64) / Spout2 2.007.017 / Windows / Debug ビルド。
+
+| 検証 | 結果 |
+| --- | --- |
+| tcs-shim-test (mp4 1080p60) | failures=0 を連続 5 回 |
+| コンテナ/コーデック | mp4(h264) / mkv / avi / ts / hevc(mp4) すべて GPU 経路 (d3d11h264dec / d3d11h265dec) で failures=0 |
+| 外部デバイス Adopt | リーステクスチャの `GetDevice()` が呼び出し側 `ID3D11Device*` と一致 |
+| 切り替え反復 (--stress, 4 素材×120 回) | load 失敗 0 / フレーム 363。作業セットは warmup 後 ~160MB で飽和（非有界増加なし） |
+| アプリ E2E (backend=Gstreamer) | ① 1080p60 GPU 経路の実フレームを別プロセス Spout 受信で確認（受信側の終了→再起動後も接続・フレームイベント継続、アプリは描画継続） ② 4 コンテナの next/prev 反復 7 ロード全成功・クラッシュなし ③ 再生中クローズで終了コード 0 |
+| 既存単体テスト | 非 E2E 1200 件合格（mpv 既定経路の退行なし。E2E 含め全件は 1242 件） |
+| 性能参考値 (720p60, 15s, Spout OFF) | mpv: CPU 73.1% (1コア換算) / WS 平均 251.5MB → GStreamer: 46.7% / 230.2MB。GPU util は 10–16% で同等（他プロセスの GPU 使用あり・参考値） |
+
+未検証/制約:
+
+- 長時間連続再生（数時間）と、受信側を殺した瞬間の送信継続の厳密な保証は未検証。
+- Spout 受信の 2 個目プロセスは SDK のフレーム同期の都合でコピー画像が更新されない
+  ことがある（proto 送信では再起動後の内容更新を実測済み。製品側は合成層が受信を担う）。
+- WPF プレビューは暫定的に毎フレーム全解像度 CPU コピー（合成層接続までの制約）。
+- video/x-hap は専用分岐の実装まで意図的に拒否。TCS_ALLOW_UNKNOWN=1 の decodebin
+  フォールバックはデバッグ専用。
+
+## 配布とセットアップ
+
+- **GStreamer は同梱しない**。利用者側で公式 MSVC x64 ランタイム 1.28.2 を導入する
+  （`GSTREAMER_1_0_ROOT_MSVC_X86_64` か既定 `C:\Program Files\gstreamer\1.0\msvc_x86_64`）。
+- 配布物に含めるのは `tcs_gstreamer.dll`（自作 MIT + Spout2 BSD-2 を静的組み込み）のみ。
+  ライセンス表記はリポジトリ直下の `THIRD-PARTY-NOTICES.md` を参照。
+- 再現ビルド: `native/gst-shim/get-spout.ps1`（Spout2 をタグ 2.007.017 / コミット固定で取得）
+  → `native/gst-shim/build-shim.ps1`。GStreamer SDK は上記ランタイムに同梱の SDK を使用。
+- アプリの GStreamer バックエンドは設定 `"backend": 1`
+  (`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`)。既定は 0 = mpv。
 
 ## mpv 互換アダプタとの関係
 
