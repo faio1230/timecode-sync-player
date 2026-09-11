@@ -7,6 +7,8 @@ mpv連携やLTC同期の実装上の要点をまとめる。
 
 ## 1. データフロー
 
+### CPU 出力経路（OutputBackend=Cpu、既定）
+
 ```
 [マイク/ライン入力] → NAudio WASAPI → LtcAudioMonitor
                                              ↓
@@ -42,10 +44,70 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
 ソフトウェアレンダリングAPIは専用レンダースレッドで実行し、描画結果をUIスレッド上で
 `WriteableBitmap`へ転送する。同じUIスレッド上の直列公開処理からSpout2出力にも渡す。
 
+### GPU 出力経路（OutputBackend=Gpu）
+
+`OutputBackend=Gpu`では、mpvのSW描画スレッドが作ったスナップショットをGPU workerへ渡し、
+D3D11上で固定キャンバスへ合成してから全画面・Spout・プレビューへ配る。UIはタイムライン状態
+（世代・Gap・テストカード・キャンバス・配置・位置）を不変レコードのmailboxで渡し、
+出力側はクリップやシークの判断を持たない。
+
+```text
+mpv描画スレッド ─ RenderedFrameSnapshot ─▶ MpvSnapshotSource（4 slot、GPUアップロード、3枚リング）
+                                                          │
+GStreamer shim（自前デバイス）─ NT共有3枚＋共有フェンス（値=seq）─▶ GStreamerSource
+                                                          │
+UIスレッド ─ TimelineOutputState mailbox ───────────────▶ GPU worker（OutputEngine.GPU）
+UIスレッド ─ コマンド（全画面HWND、キャンバス、カード、世代）─▶   │
+                                                                  ▼
+                                        ComposeLayer（配置・Held/Freeze/Black/GapFreeze・カード）
+                                                                  │
+                                                合成pool 3枚（lease、共有フェンス）
+                                        ┌─────────────┬───────────────┐
+                                        ▼             ▼               ▼
+                                全画面swapchain   Spout worker    プレビュー
+                                vblank−marginに   （別デバイス）   960×540へ縮小
+                                Present            位相4msで送信   GPU読み戻し
+```
+
+- **ソース**: `IVideoSource`契約（世代排除・最新優先・準備不可はNotReady・有限lease・非ブロッキング）。
+  mpvはCPU画素をGPUへアップロードし、完了クエリでGPUコピー完了を確認してからリングへ公開する。
+  GStreamerはshimが別デバイスでデコードし、3枚の共有リングへコピーして`seq`を共有フェンスで
+  Signalする。合成側は描画前に`Context4::Wait(fence, seq)`をGPUキューへ積むだけでCPUは待たない。
+- **合成**: 合成画像は常に3枚のpool。読者0の面に書き、GPU完了後に最新として公開する。
+  読者はleaseを取り、GPU使用完了まで返さない（読者→書き手の安全）。
+- **表示**: DXGIフレーム統計から次のvblankを予測し、`vblank − margin(3ms)`を目標にPresentする。
+  届くvblankは飛ばさず、期限の来た合成より表示を優先する。合成tickは`vblank − margin − lead`へ
+  slew 0.5ms/tickで整列し、leadは合成時間の実測p99＋1msを基本に上げ急・下げ緩で学習する
+  （起動直後3秒、全画面接続/切断・Spout切替・世代変更・ソース接続の直後1秒は学習を除外）。
+- **Spout**: 専用workerが同一アダプターLUIDの別`GpuDevice`を持つ。合成poolのNT共有サーフェスを
+  `OpenSharedResource1`で開き、共有フェンスをGPUキューで待ってから保持テクスチャへコピーし、
+  アクセスmutexを要求8ms（期限＝次回予定）で取得して`SendTexture`する。取得失敗は保持画像の再送で、
+  資源は無効化しない。
+- **プレビュー**: 960×540へ縮小したstagingをGPU workerが読み戻し、UIへ配列を渡す
+  （全画面中10Hz、それ以外30Hz）。
+- **終了**: 全画面用の子HWNDの破棄より先にswapchainを切断する。
+
+`OutputBackend=Cpu`の経路は設定で選択でき、従来どおり残す。
+
 ## 2. スレッドモデル
 
+`OutputBackend=Gpu`時のスレッド間の受け渡しは次のとおり。各workerは互いを同期待ちせず、
+不変レコードのmailbox・有限queue・共有フェンスだけで受け渡す。
+
+```text
+UIスレッド ─ TimelineOutputState（mailbox）／コマンド（有限queue）─▶ GPU worker
+    ▲                                                                  │
+    │ プレビュー配列・GPU状態通知（Dispatcher.BeginInvoke、待たない）     │
+    └──────────────────────────────────────────────────────────────────┘
+mpv描画スレッド ─ スナップショット（mailbox）─────────────────────▶ GPU worker
+GPU worker ─ 合成pool（NT共有＋共有フェンス）───────────────────▶ Spout worker（別デバイス）
+GStreamerストリーミングスレッド ─ 共有リング＋共有フェンス（別デバイス）─▶ GPU worker
+```
+
 - **UIスレッド（WPFメインスレッド）**: シークコマンドの発行、`WriteableBitmap`への描画更新、
-  ユーザー操作（プレイリスト編集・再生制御）の処理を担う。
+  ユーザー操作（プレイリスト編集・再生制御）の処理を担う。GPU経路ではさらに、タイムライン状態の
+  mailbox公開、全画面HWND・キャンバス・カード・世代のコマンド発行、GPU状態通知とプレビュー画像の
+  反映を担う。
 - **専用レンダースレッド**: mpvレンダーコンテキストの作成・更新・描画・解放を直列に実行する。
   ターゲット時刻まで待機するmpv描画処理をUIスレッドから分離し、再生中もユーザー操作と
   UI Automation要求へ応答できるようにする。
@@ -56,6 +118,16 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
   コールバックは専用レンダースレッドへ直接処理を予約する。UIの位置取得や操作完了を待たず、
   FRAME要求ごとに描画する。画像をコピーしてからUIへ公開を予約する。1つの予約で1回だけ描画し、
   連続する更新が明示的な再描画・Freeze取得・終了処理を待たせ続けないようにする。
+- **GPU worker（`OutputEngine.GPU`、`OutputBackend=Gpu`時のみ）**: 合成pool・合成・全画面
+  swapchain・Present・vblank統計・プレビュー読み戻し・ソースleaseを所有する。D3D11のimmediate
+  contextはこのスレッドのもので、他スレッドが触る資源は共有フェンスで同期する。UIからは
+  コマンドqueueと不変レコードのmailboxで受け取り、UIを同期待ちしない。
+- **Spout worker（`OutputEngine.Spout`）**: 同じアダプターLUIDの別`GpuDevice`・別immediate
+  contextを持つ。合成poolの画像を開いた共有サーフェスから保持テクスチャへGPUコピーし、Spoutの
+  アクセスmutexを短時間待って送信する。合成workerとは別スレッドで、互いを待たない。
+- **GStreamerのストリーミングスレッド**: shimが作った自前デバイスのcontextを使う。合成デバイス
+  とは別で、受け渡しは共有リングと共有フェンスのみ。合成側の`TimelineOutputState`やGPU workerの
+  contextには触れない。
 
 ## 3. 主要コンポーネント
 
@@ -81,6 +153,18 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
 | `ViewModels/PlaylistViewModel.cs` | プレイリスト操作コマンドとプレイリストの表示状態を管理 |
 | `ViewModels/SyncViewModel.cs` | LTC開始/停止、同期トグル、同期状態の管理 |
 | `ViewModels/PlayerViewModel.cs` | 再生状態（再生/一時停止など）と再生系コマンドの管理 |
+| `Contracts/IVideoSource.cs` | 出力側の映像ソース契約。世代排除・最新優先・有限lease・非ブロッキングを定める |
+| `Output/OutputEngine.cs` | GPU出力層。GPU workerとSpout workerを所有し、pool・全画面swapchain・合成・プレビュー・デバイス消失復旧・終了を管理する |
+| `Output/ComposeLayer.cs` | 固定キャンバスへの合成。Held（最後に確定した画像）・Freeze・Black・GapFreeze・テストカードと、配置の選択規則（`ComposeLayerPolicy`）を持つ |
+| `Output/MpvSnapshotSource.cs` | mpvのスナップショット（BGRA配列）をGPU workerでアップロードし、3枚リングで合成層へ供給する`IVideoSource` |
+| `Output/GStreamerSource.cs` | tcs_gstreamer.dllのリースAPIを`IVideoSource`へ適合する。共有リング3枚＋共有フェンスを合成デバイス上で一度だけ開く |
+| `Output/SpoutSender.cs` | Spout送信workerの送信機。別デバイスで保持テクスチャへコピーし、アクセスmutexを要求8msで取得して送信する |
+| `Output/TimelineOutputState.cs` | UIがmailboxでGPU workerへ渡すタイムライン状態（世代・Gap・テストカード・キャンバス・配置・位置） |
+| `Output/VblankDisplayGate.cs`, `Output/SwapchainTarget.cs` | DXGI統計からのvblank予測・表示判断と、子HWNDへのswapchain Present |
+| `Output/ComposeLeadController.cs`, `Output/ComposeAlignGate.cs` | 合成leadの学習と、合成tickの位相をvblankへ整列する補正 |
+| `Output/GpuRecoveryState.cs`, `Output/GpuRecoveryPlan.cs` | デバイス消失の状態機械（自動復旧は1回）と復旧手順の順序 |
+| `ExitCoordinator.cs`, `ExitTransitions.cs` | 終了確認ダイアログの状態機械（Running→Confirming→ShuttingDown→Exited、Confirming/ShuttingDownからForcing） |
+| `MainWindowResourceDisposer.cs` | 終了手順を定められた順序で段階実行し、例外を集約する |
 
 ## 4. mpv SW render の要点
 
@@ -153,14 +237,30 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
 - **E2Eテスト（FlaUI）**: FlaUIを用いて実際にアプリケーションを起動し、UI操作を通じて
   エンドツーエンドの挙動を検証する。実行には`scripts/get-mpv.ps1`で導入する
   `libmpv-2.dll`（または互換用`mpv-2.dll`）などのネイティブDLLと実機環境が必要。
+- **GPU出力の管理テスト**: 合成poolの読み書き規則、vblank判断、lead学習、キャンバス世代の
+  破棄規則、GStreamerリングのリース規則、復旧手順、終了状態遷移はGPU非依存の純粋規則として
+  xUnitで固定する。実動画のスループット・Spout受信・デバイス消失は実機で確認する
+  （[verification-checklist.md](verification-checklist.md)）。
 
 ## 7. 終了時の所有権と失敗処理
 
 Windowが終了順序を管理し、`RenderSession`が描画資源を所有する。Spout・LTC入力はWindowの
 終了処理で解放し、sessionはSpoutを借用して公開する。バッファや描画helperをDIへ別登録しない。
+`OutputBackend=Gpu`ではさらに`OutputEngine`がD3D11デバイス・合成pool・全画面swapchain・
+Spout worker・ソースleaseを所有する。
+
+終了は`ExitCoordinator`（状態機械は`ExitTransitions`）が制御する。×／Alt+F4では確認
+ダイアログを表示し、その間も再生・LTC・出力は継続する。キャンセルでRunningへ戻り、通常終了は
+`MainWindowResourceDisposer`の5段階（新規受付停止 → mpv／GStreamer停止 → 出力停止 →
+全画面終了 → 資源解放）を定められた順序で1つずつ実行する。50ms以上ブロックし得る段階はUIスレッド外で
+実行し、ダイアログの進捗表示を更新する。強制終了は確認なしで`Environment.Exit(2)`を呼び、
+2秒の番人スレッドでプロセスをKillする。
 
 通常は描画停止 → Fullscreen終了 → timer停止 → render context解放 → mpv終了 → LTC終了 →
-Spout終了 → timeline終了 → sessionのバッファ・スレッド解放の順に処理する。
+Spout終了 → timeline終了 → sessionのバッファ・スレッド解放の順に処理する。Gpu経路では
+同じ順序（新規受付停止 → `RenderSession.Stop` → `OutputEngine.Stop`（Spout worker join・
+全lease返却）→ 全画面閉 → mpv／GStreamer終了 → `OutputEngine.Dispose` → CPU Spout →
+バッファ）で、leaseはGStreamer shimのdestroyより先に返す。
 停止ではnative workerの完了だけを待つ。UIへ戻る非同期パイプラインをUIスレッド上で待たず、
 後着の公開処理は停止フラグで無効化する。
 
@@ -171,3 +271,9 @@ Spout終了 → timeline終了 → sessionのバッファ・スレッド解放�
 安全に解放できない資源はプロセス終了まで残るため、終了エラーのログを確認すること。
 LTC通知はDispatcherへ渡す前と実行時の両方で終了状態を確認し、終了後のtimer tickも無視する。
 native worker自体が戻らない場合は終了待ちが続く。タイムアウトで使用中の資源を解放する動作は行わない。
+
+GPUデバイス消失（`GpuRecoveryState`）は`GpuDeviceLostException`だけを入力とする。プロセス
+寿命で自動復旧を1回だけ試し、失敗または再発時は手動再試行（`BtnGpuRetry`）を待つ。復旧手順は
+`GpuRecoveryPlan`の順序（Spout worker停止 → lease返却・合成資源破棄 → デバイス再作成 →
+合成資源再構築 → 全画面swapchain再作成 → Spout再初期化 → ソース再接続）で実行する。
+GPU完了待ちの期限超過はfaultとして新規処理を止めるが、使用中資源の解放理由にはしない。
