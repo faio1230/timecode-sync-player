@@ -7,6 +7,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Output;
 using TimecodeSyncPlayer.ViewModels;
 
 namespace TimecodeSyncPlayer;
@@ -48,6 +49,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // ── Spout ─────────────────────────────────────────────────────
     private readonly ISpoutOutput _spoutOutput;
+
+    // ── GPU 出力（OutputBackend=Gpu 時のみ） ───────────────────────
+    private readonly OutputEngine? _outputEngine;
+    private WriteableBitmap? _outputPreviewBitmap;
 
     // ── LTC ───────────────────────────────────────────────────────
     private readonly LtcSyncController _ltcSyncController;
@@ -135,6 +140,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         ISeekBarUpdateState seekState,
         OsdUpdateState osdUpdateState,
         PlaybackPerformanceStats playbackPerformanceStats,
+        OutputBackendState outputBackendState,
         IMpvApi mpvApi,
         IMpvRenderApi mpvRenderApi)
     {
@@ -168,7 +174,26 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action),
             isGapFreezeConfirmed: () => _gapFreezeHandler.CachedTrackId.HasValue);
         _renderSession.FrameUpdate = ProcessRenderFrameUpdateAsync;
-        _renderSession.PreviewBitmapChanged += bitmap => VideoImage.Source = bitmap;
+        if (outputBackendState.Effective == OutputBackend.Gpu)
+        {
+            // Gpu backend: プレビューは OutputEngine の読み戻しで更新し、CPU 経路のプレビューは接続しない。
+            _outputEngine = new OutputEngine(new OutputEngineSettings
+            {
+                CanvasWidth = CanvasSettings.Default.Width,
+                CanvasHeight = CanvasSettings.Default.Height,
+                SenderName = ResolveOutputSenderName(),
+                AdapterLuid = OutputDisplays.FindAdapterLuid(settingsManager.Current.FullscreenDisplayDeviceName),
+                TestCardEnabled = OutputEngineSettings.TestCardRequested(),
+                Trace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable)),
+                PreviewFrameReady = OnOutputPreviewFrame,
+            });
+            Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
+            _outputEngine.Start();
+        }
+        else
+        {
+            _renderSession.PreviewBitmapChanged += bitmap => VideoImage.Source = bitmap;
+        }
         _ltcSyncController = new LtcSyncController(
             _playlist, _gapFreezeHandler, _syncService, ltcFrameProcessor,
             settingsManager.Current.LtcSignalLossTimeoutMs, settingsManager.Current.LtcSignalResumeFrames,
@@ -405,6 +430,44 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         uiInitializer.Initialize();
     }
 
+    private static string ResolveOutputSenderName()
+    {
+        string? fromEnv = Environment.GetEnvironmentVariable(SpoutSender.SenderNameEnvironmentVariable);
+        return string.IsNullOrWhiteSpace(fromEnv) ? SpoutOutput.DefaultSenderName : fromEnv;
+    }
+
+    // OutputEngine の GPU worker から呼ばれる。UI は Dispatcher に投げるだけで待たない。
+    private void OnOutputPreviewFrame(PreviewFrame frame)
+    {
+        try
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
+            {
+                try
+                {
+                    if (_disposed) return;
+                    if (_outputPreviewBitmap == null
+                        || _outputPreviewBitmap.PixelWidth != frame.Width
+                        || _outputPreviewBitmap.PixelHeight != frame.Height)
+                    {
+                        _outputPreviewBitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Bgr32, null);
+                    }
+                    _outputPreviewBitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), frame.Pixels, frame.Width * 4, 0);
+                    VideoImage.Source = _outputPreviewBitmap;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "OutputEngine: プレビュー更新に失敗");
+                }
+                finally { frame.Release(); }
+            });
+        }
+        catch (Exception)
+        {
+            frame.Release();
+        }
+    }
+
     private bool InitializeWindowLoadedSession()
     {
         var spoutUiApplicator = new SpoutStartupUiApplicator(
@@ -416,7 +479,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             applyAudioSettings: _audioControlCoordinator.ApplyStartup,
             createRenderContext: () => _renderSession.Create(_mpv),
             allocateRenderParameters: _renderSession.AllocateParameters,
-            initializeSpout: () => SpoutStartupState.FromInitializationResult(_spoutOutput.TryInitialize()),
+            initializeSpout: () => SpoutStartupState.FromInitializationResult(
+                _outputEngine != null || _spoutOutput.TryInitialize()),
             applySpoutStartupState: spoutUiApplicator.Apply,
             initializeFrameRenderer: _renderSession.InitializeFrameRenderer,
             startTimer: () => _timer = StartupTimerFactory.CreateStartedTimer(TimeSpan.FromMilliseconds(TimerIntervalMs), OnTick),
@@ -1104,6 +1168,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void BtnSpout_Click(object sender, RoutedEventArgs e)
     {
         _spoutOutput.IsEnabled = !_spoutOutput.IsEnabled;
+        _outputEngine?.SetSpoutEnabled(_spoutOutput.IsEnabled);
         _vm.Sync.SpoutToggleLabel = ToggleLabelFormatter.Format(_spoutOutput.IsEnabled, SpoutOnLabel, SpoutOffLabel);
         Log.Information("Spout 出力: {State}", _spoutOutput.IsEnabled ? "ON" : "OFF");
     }
@@ -1137,7 +1202,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         var window = CreateFullscreenOutputWindow(target);
         window.Closed += FullscreenWindow_Closed;
-        _renderSession.BitmapChanged += FullscreenFrameRenderer_BitmapChanged;
+        if (_outputEngine == null)
+            _renderSession.BitmapChanged += FullscreenFrameRenderer_BitmapChanged;
         _fullscreenWindow = window;
 
         try
@@ -1154,7 +1220,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
         catch
         {
-            _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
+            if (_outputEngine == null)
+                _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
             window.Closed -= FullscreenWindow_Closed;
             _fullscreenWindow = null;
             _renderSession.SetFullscreenActive(false);
@@ -1164,14 +1231,19 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // Kept independent of VideoImage.Source: that image is a reduced, delayed preview.
     private FullscreenOutputWindow CreateFullscreenOutputWindow(DisplayTarget target) =>
-        new(target, _displayCatalog, _renderSession.CurrentExternalBitmap);
+        _outputEngine != null
+            ? new FullscreenOutputWindow(target, _displayCatalog, null, _outputEngine)
+            : new FullscreenOutputWindow(target, _displayCatalog, _renderSession.CurrentExternalBitmap);
 
     private void FullscreenFrameRenderer_BitmapChanged(WriteableBitmap bitmap) =>
         _fullscreenWindow?.UpdateBitmap(bitmap);
 
     private void FullscreenWindow_Closed(object? sender, EventArgs e)
     {
-        _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
+        if (_outputEngine == null)
+            _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
+        else
+            _outputEngine.DetachFullscreen();
         if (sender is FullscreenOutputWindow window)
             window.Closed -= FullscreenWindow_Closed;
         _fullscreenWindow = null;
@@ -1578,7 +1650,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             },
             disposeBuffer: _renderSession.Dispose,
             stopRender: _renderSession.Stop,
-            closeFullscreen: CloseFullscreenOutput);
+            closeFullscreen: CloseFullscreenOutput,
+            stopOutput: () => _outputEngine?.Stop(),
+            disposeOutput: () => _outputEngine?.Dispose());
         disposer.DisposeAll();
     }
 

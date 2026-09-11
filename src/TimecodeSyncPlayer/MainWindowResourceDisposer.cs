@@ -10,6 +10,8 @@ public sealed class MainWindowResourceDisposer
     private readonly Action _disposeTimeline;
     private readonly Action _disposeBuffer;
     private readonly Action? _stopRender;
+    private readonly Action? _stopOutput;
+    private readonly Action? _disposeOutput;
     private readonly Action? _closeFullscreen;
     private bool _attempted;
 
@@ -22,7 +24,9 @@ public sealed class MainWindowResourceDisposer
         Action disposeTimeline,
         Action disposeBuffer,
         Action? stopRender = null,
-        Action? closeFullscreen = null)
+        Action? closeFullscreen = null,
+        Action? stopOutput = null,
+        Action? disposeOutput = null)
     {
         _disposeTimer = disposeTimer;
         _disposeRenderContext = disposeRenderContext;
@@ -33,6 +37,8 @@ public sealed class MainWindowResourceDisposer
         _disposeBuffer = disposeBuffer;
         _stopRender = stopRender;
         _closeFullscreen = closeFullscreen;
+        _stopOutput = stopOutput;
+        _disposeOutput = disposeOutput;
     }
 
     public void DisposeAll()
@@ -43,11 +49,15 @@ public sealed class MainWindowResourceDisposer
         _attempted = true;
         var errors = new List<Exception>();
         bool stopped = TryCleanup(_stopRender, errors);
+        // 出力層は UI の新規受付停止と RenderSession.Stop の後に停止する（mpv より先）。
+        bool outputStopped = TryCleanup(_stopOutput, errors);
         TryCleanup(_closeFullscreen, errors);
         TryCleanup(_disposeTimer, errors);
         bool contextFreed = stopped && TryCleanup(_disposeRenderContext, errors);
         if (contextFreed) TryCleanup(_disposeMpv, errors);
         TryCleanup(_disposeLtc, errors);
+        // Dispose 順: Spout 側→合成側→デバイス（OutputEngine.Dispose）、その後 RenderSession.Dispose、SpoutOutput.Dispose。
+        if (outputStopped || _stopOutput == null) TryCleanup(_disposeOutput, errors);
         if (stopped) TryCleanup(_disposeSpout, errors);
         TryCleanup(_disposeTimeline, errors);
         // Context, callback, buffers and mpv must stay alive together if native free fails.
