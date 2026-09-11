@@ -59,6 +59,7 @@ internal sealed class OutputEngine : IDisposable
     private int sourceGeneration = -1;
     private GStreamerSource? gstSource;
     private long lastGstSequence = -1;
+    private long lastGstFenceWaited = -1;
     private int lastGstGeneration = -1;
     // 配信トレース（問題 H）。shim の QPC イベントを events.jsonl へ写す。
     private IGstNativeApi? gstNative;
@@ -146,11 +147,17 @@ internal sealed class OutputEngine : IDisposable
                 Fault("OutputEngine: GStreamer プレイヤーハンドルがありません");
                 return;
             }
+            // 旧ソースのリング Surface を Held が参照している可能性があるため先に手放す。
+            layer?.ClearHeld();
             gstSource?.Dispose();
-            gstSource = new GStreamerSource(new GstNativeLeasePlayer(native, player), gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            // ステージ 6b: shim は合成デバイスを Adopt せず、LUID だけを使って自前デバイスを作る。
+            // 合成デバイスはリングを開いてフェンス待ちに使う（この gpu を渡す）。
+            gstSource = new GStreamerSource(new GstNativeLeasePlayer(native, player),
+                gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture), gpu);
             gstNative = native;
             gstPlayer = player;
             lastGstSequence = -1;
+            lastGstFenceWaited = -1;
             lastGstGeneration = -1;
             settings.Trace.Add("lifecycle", "GPU", detail: "source.gstreamer");
             Log.Information("OutputEngine: GStreamerSource を接続しました");
@@ -621,9 +628,10 @@ internal sealed class OutputEngine : IDisposable
         }
     }
 
-    // GStreamer shim の最新リースを取得し、借用テクスチャの SRV を作って直接描画できる形で返す。
+    // GStreamer shim の最新リースを取得し、直接描画できる形で返す。
     // shim は「リース保持中は同じ画像を返す」ため、リースは compose 後に毎回返す（呼び出し側が Dispose）。
-    // 描画に使うテクスチャは AddRef 付きの Surface として LayerImage が所有する。
+    // ステージ 6b: slot>=0 のリースは共有リング Surface を使い、描画前に共有フェンスを GPU キューで待つ
+    // （CPU は待たない）。旧サンプル経路は従来どおり per-lease Surface（AddRef 所有）を作る。
     private GstFrameAcquire AcquireGStreamer(double position)
     {
         int generation = gstSource!.Generation;
@@ -632,7 +640,19 @@ internal sealed class OutputEngine : IDisposable
         var stamp = lease.Stamp;
         if (stamp.Sequence == lastGstSequence) return new(status, lease, null, stamp);
         lastGstSequence = stamp.Sequence;
-        var texture = ((GStreamerSource.Lease)lease).OpenTexture();
+        var gstLease = (GStreamerSource.Lease)lease;
+        if (gstLease.Slot >= 0 && gstSource.TryGetRingSurface(gstLease.Slot, out var ringTexture, out var ringView))
+        {
+            if (GstRingPolicy.ShouldWaitFence(gstLease.Slot, stamp.Sequence, lastGstFenceWaited))
+            {
+                gstSource.WaitRingFence((ulong)stamp.Sequence);
+                lastGstFenceWaited = stamp.Sequence;
+            }
+            // リング Surface は GStreamerSource が所有する（LayerImage は借用して渡すだけ）。
+            var ringImage = new LayerImage(ringView!, ringTexture!.NativePointer, lease.Width, lease.Height, null, null);
+            return new(status, lease, ringImage, stamp);
+        }
+        var texture = gstLease.OpenTexture();
         if (texture == null) return new(status, lease, null, stamp);
         Surface surface;
         try { surface = new Surface(gpu!, texture, false, SourceSharing.None); }

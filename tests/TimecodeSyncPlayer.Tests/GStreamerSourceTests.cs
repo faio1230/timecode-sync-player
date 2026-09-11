@@ -11,6 +11,9 @@ public class GStreamerSourceTests
         public ulong Gen = 1;
         public bool HasFrame = true;
         public ulong NextSequence = 1;
+        public int NextSlot = -1;
+        public bool HasRing;
+        public GstRingInfo RingInfo = new(1920, 1080, new IntPtr(9), [new IntPtr(1), new IntPtr(2), new IntPtr(3)]);
         public int Releases;
         public int Acquires;
 
@@ -19,7 +22,7 @@ public class GStreamerSourceTests
         public bool Acquire(ulong generation, out GstLeaseFrameInfo info)
         {
             if (!HasFrame || generation != Gen) { info = default; return false; }
-            info = new GstLeaseFrameInfo(Gen, NextSequence, (long)((NextSequence - 1) * 0.04 * 1_000_000_000), 1920, 1080, true);
+            info = new GstLeaseFrameInfo(Gen, NextSequence, (long)((NextSequence - 1) * 0.04 * 1_000_000_000), 1920, 1080, true, NextSlot);
             Acquires++;
             return true;
         }
@@ -29,6 +32,11 @@ public class GStreamerSourceTests
             subresource = 0;
             dxgiFormat = 87;
             return true;
+        }
+        public bool TryGetRingInfo(out GstRingInfo info)
+        {
+            info = RingInfo;
+            return HasRing;
         }
         public void Release() { Releases++; NextSequence++; }
         public string DecoderName => "d3d11h264dec";
@@ -134,6 +142,30 @@ public class GStreamerSourceTests
         lease.Dispose();
         lease.Dispose();
         player.Releases.Should().Be(1);
+        source.TryDispose().Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryAcquire_RingSlotWithoutComposeDevice_ReturnsNotReadyAndReleasesTheLease()
+    {
+        // slot >= 0 は共有リングが必須。合成デバイスが無ければ開けないので拒否し、
+        // リースは shim へ返す（リークさせない）。
+        var player = new FakeLeasePlayer { HasRing = true, NextSlot = 0 };
+        var source = new GStreamerSource(player);
+        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.NotReady);
+        lease.Should().BeNull();
+        player.Releases.Should().Be(1);
+        source.TryDispose().Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryAcquire_LegacyLeaseExposesSlotMinusOne()
+    {
+        var player = new FakeLeasePlayer();
+        var source = new GStreamerSource(player);
+        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ready);
+        ((GStreamerSource.Lease)lease!).Slot.Should().Be(-1);
+        lease!.Dispose();
         source.TryDispose().Should().BeTrue();
     }
 }

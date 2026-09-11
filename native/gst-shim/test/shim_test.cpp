@@ -166,6 +166,26 @@ run_delivery_policy_tests ()
 
   p = tcs_delivery_plan (10, 0, limit);
   check (p.lease == 1 && p.drop_oldest == 8, "policy: n=10 -> drop 8 (leave 2)");
+
+  /* Stage 6b: shared ring slot allocation / eviction (pure). */
+  uint8_t used[3] = { 0, 0, 0 };
+  check (tcs_ring_pick_slot (used, 3) == 0, "ring: all free -> slot 0");
+  used[0] = 1;
+  check (tcs_ring_pick_slot (used, 3) == 1, "ring: slot0 busy -> slot 1");
+  used[1] = 1;
+  check (tcs_ring_pick_slot (used, 3) == 2, "ring: slot0,1 busy -> slot 2");
+  used[2] = 1;
+  check (tcs_ring_pick_slot (used, 3) == -1, "ring: all busy -> evict oldest");
+  check (tcs_ring_pick_slot (used, 0) == -1, "ring: zero slots -> -1");
+  check (tcs_ring_pick_slot (nullptr, 3) == -1, "ring: null usage -> -1");
+
+  const int32_t no_gpu[3] = { -1, -1, -1 };
+  check (tcs_ring_evict_index (no_gpu, 3) == -1, "ring evict: no GPU item -> -1");
+  const int32_t mixed[3] = { -1, 1, 2 };
+  check (tcs_ring_evict_index (mixed, 3) == 1, "ring evict: oldest GPU item index");
+  const int32_t single[1] = { 0 };
+  check (tcs_ring_evict_index (single, 1) == 0, "ring evict: first item");
+  check (tcs_ring_evict_index (single, 0) == -1, "ring evict: empty -> -1");
 }
 
 int
@@ -208,6 +228,22 @@ main (int argc, char** argv)
   check (got == 1, "acquire current-gen frame");
   check (info.is_gpu == 1, "leased frame is GPU (D3D11Memory)");
   check (info.generation == gen, "lease generation matches");
+  check (info.slot >= 0 && info.slot < 3, "lease comes from the shared ring (slot 0..2)");
+
+  /* Stage 6b: the ring must be exposed with 3 NT handles + a shared fence. */
+  {
+    void* handles[3] = { nullptr, nullptr, nullptr };
+    void* ring_fence = nullptr;
+    uint32_t count = 0, rw = 0, rh = 0;
+    int rrc = tcs_player_ring_info (p, handles, 3, &count, &ring_fence, &rw, &rh);
+    check (rrc == TCS_OK && count == 3 && ring_fence != nullptr,
+        "ring_info returns 3 handles + fence");
+    check (handles[0] && handles[1] && handles[2], "ring handles non-null");
+    check (rw == (uint32_t) st.width && rh == (uint32_t) st.height, "ring size matches media");
+    void* one[1] = { nullptr };
+    check (tcs_player_ring_info (p, one, 1, &count, &ring_fence, &rw, &rh) == TCS_ERR_SIZE,
+        "ring_info capacity too small -> TCS_ERR_SIZE");
+  }
 
   void* tex = nullptr; uint32_t sub = 0, fmt = 0;
   rc = tcs_player_leased_texture (p, &tex, &sub, &fmt);
@@ -329,15 +365,43 @@ main (int argc, char** argv)
         uint64_t g2 = tcs_player_get_generation (p2);
         TcsFrameInfo i2 = {};
         if (tcs_player_acquire (p2, g2, &i2) == 1) {
+          /* Stage 6b: the shim creates its OWN device on the caller's adapter
+           * LUID; the lease never lives on the caller device. */
+          check (i2.slot >= 0 && i2.slot < 3, "external-LUID lease uses the ring slot");
           void* tex2 = nullptr; uint32_t s2 = 0, f2 = 0;
           r2 = tcs_player_leased_texture (p2, &tex2, &s2, &f2);
           if (r2 == TCS_OK && tex2) {
             ID3D11Device* tdev = nullptr;
             ((ID3D11Texture2D*) tex2)->GetDevice (&tdev);
-            check (tdev == dev, "leased texture is on the caller device");
-            if (tdev) tdev->Release ();
+            check (tdev != dev, "leased texture is on a separate shim device");
+            bool same_adapter = false;
+            if (tdev) {
+              IDXGIDevice* tdxgi = nullptr;
+              if (SUCCEEDED (tdev->QueryInterface (__uuidof(IDXGIDevice), (void**) &tdxgi)) && tdxgi) {
+                IDXGIAdapter* ta = nullptr;
+                if (SUCCEEDED (tdxgi->GetAdapter (&ta)) && ta) {
+                  DXGI_ADAPTER_DESC td = {};
+                  ta->GetDesc (&td);
+                  IDXGIDevice* cdxgi = nullptr;
+                  if (SUCCEEDED (dev->QueryInterface (__uuidof(IDXGIDevice), (void**) &cdxgi)) && cdxgi) {
+                    IDXGIAdapter* ca = nullptr;
+                    if (SUCCEEDED (cdxgi->GetAdapter (&ca)) && ca) {
+                      DXGI_ADAPTER_DESC cd = {};
+                      ca->GetDesc (&cd);
+                      same_adapter = memcmp (&td.AdapterLuid, &cd.AdapterLuid, sizeof (LUID)) == 0;
+                      ca->Release ();
+                    }
+                    cdxgi->Release ();
+                  }
+                  ta->Release ();
+                }
+                tdxgi->Release ();
+              }
+              tdev->Release ();
+            }
+            check (same_adapter, "shim device uses the caller adapter LUID");
           } else {
-            check (false, "leased texture on external device");
+            check (false, "leased texture on shim device");
           }
           tcs_player_release (p2);
         } else {

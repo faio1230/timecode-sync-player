@@ -11,8 +11,9 @@ internal interface IGstNativeApi
     IntPtr PlayerCreate(string senderName, out string error);
 
     /// <summary>
-    /// 合成層の ID3D11Device を shim に Adopt させてプレイヤーを生成する（outputBackend=Gpu 時）。
-    /// externalDevice が IntPtr.Zero の場合は shim 所有デバイスになる。
+    /// outputBackend=Gpu 時は合成層の ID3D11Device を渡す。shim はこれを Adopt せず、
+    /// アダプター LUID の読み取りにのみ使い、同じ LUID 上に自前のデバイスを作る（ステージ 6b）。
+    /// externalDevice が IntPtr.Zero の場合は既定アダプターの shim 所有デバイスになる。
     /// </summary>
     IntPtr PlayerCreate(string senderName, IntPtr externalDevice, out string error);
     void PlayerDestroy(IntPtr player);
@@ -46,4 +47,11 @@ internal interface IGstNativeApi
     /// <summary>配信トレース（問題 H の計測）。qpc は QPC 時計で events.jsonl と同じ基準。</summary>
     int DrainDeliveryEvents(IntPtr player, GstNative.TcsDeliveryEvent[] buffer, uint capacity, out uint count);
     int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats);
+
+    /// <summary>
+    /// ステージ 6b: 共有リングの NT ハンドル・共有フェンス・寸法を取得する。
+    /// リング未作成（load 前/CPU 経路）は TCS_ERR_NO_FRAME。ハンドルは shim 所有。
+    /// </summary>
+    int GetRingInfo(IntPtr player, IntPtr[] handles, uint capacity, out uint count,
+        out IntPtr fence, out int width, out int height);
 }

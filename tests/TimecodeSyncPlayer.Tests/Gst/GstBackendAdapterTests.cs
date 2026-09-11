@@ -477,6 +477,7 @@ file sealed class FakeGstNative : IGstNativeApi
             Width = FrameWidth,
             Height = FrameHeight,
             IsGpu = 1,
+            Slot = -1,
         };
         return AcquireResult;
     }
@@ -514,5 +515,15 @@ file sealed class FakeGstNative : IGstNativeApi
     {
         stats = default;
         return 0;
+    }
+
+    public int GetRingInfo(IntPtr player, IntPtr[] handles, uint capacity, out uint count,
+        out IntPtr fence, out int width, out int height)
+    {
+        count = 0;
+        fence = IntPtr.Zero;
+        width = 0;
+        height = 0;
+        return -3; // TCS_ERR_NO_FRAME: ring not created.
     }
 }

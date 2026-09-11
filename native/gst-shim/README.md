@@ -12,11 +12,14 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
   全画面・Spout・プレビューは合成後の画像を合成層が各出力へ配る。
 - `tcs_player_publish_spout()` / `tcs_player_send_image()` /
   proto の Spout 経路は **検証専用**（受信箱の実在確認用）。
-- **同一デバイス前提**: `tcs_player_create(sender, external_device, ...)` は
-  呼び出し側（合成層）の `ID3D11Device` を Adopt して `GstD3D11Device` に
-  ラップし、d3d11 デコーダ・変換・出力をすべてそのデバイス上で動かす。
-  同一デバイス内なので共有ハンドルや keyed mutex は不要。
-  （別デバイス化が必要な場合の理由と同期方法は未採用。採用時は報告。）
+- **別デバイス + 共有リング（段階 6b）**: `tcs_player_create(sender,
+  external_device, ...)` は external device を **Adopt しない**。`IDXGIDevice`
+  からアダプター LUID を読むだけで、同じ LUID 上に **shim 自身の
+  `ID3D11Device` + immediate context** を作り、d3d11 デコーダ・変換・
+  `GstD3D11Device` はすべてその自前デバイスで動かす。合成側の device/context
+  には一切触れない。external=NULL のときは既定アダプターに自前デバイスを作る。
+  受け渡しは **NT 共有ハンドルのリング（BGRA・3 枚）+ 共有フェンス**で行い、
+  同一 LUID・同一解像度なので追加のコピー無しで合成側が開ける。
 
 ## ソース契約（命令 3 対応）
 
@@ -51,17 +54,37 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 - **非ブロッキング**。デコードを待たない（内部 `frame_lock` を短時間取るだけ）。
 - リース保持中の再呼び出し: 同じ世代なら同じリースを返す（新フレームは渡さない）。
   別世代を要求した場合は 0 で、新しいフレームを取るには先に `release` が必要。
-- `info` = generation / seq / pts_ns / width / height / is_gpu。seq は shim 内の
-  単調増加番号（プロセス内識別用）、pts_ns はサンプル PTS（無ければセグメント位置）。
+- `info` = generation / seq / pts_ns / width / height / is_gpu / **slot**。seq は
+  shim 内の単調増加番号（プロセス内識別用）、pts_ns はサンプル PTS（無ければ
+  セグメント位置）。slot は **0..2 = 共有リングの面**、**-1 = 旧サンプルリース
+  経路**（CPU 経路・解像度不一致など）。slot >= 0 のフレームは到着時に
+  `CopyResource` 済みで、共有フェンスに `seq` が Signal されている。
 
 ### `tcs_player_leased_texture(player, out texture, out subresource, out dxgi_format)` → 0 = 成功
 
-- リース保持中のみ有効。`ID3D11Texture2D*` を返す（player のデバイス上）。
+- リース保持中のみ有効。`ID3D11Texture2D*` を返す（**shim のデバイス上**。
+  段階 6b 以降、合成側デバイスとは別）。
 - `dxgi_format` は **87 = B8G8R8A8_UNORM (BGRA)**。NV12 は現状返さない（相違点参照）。
 - `subresource` は **0**。デコーダ配列テクスチャ等は shim 所有の単一サブリソース
   テクスチャへ平坦化してから返す（pool 由来テクスチャのポインタはリース中のみ有効、
   平坦化テクスチャは player と同時に破棄）。
-- 返したポインタは **release まで有効**。release 後・destroy 後に使用してはならない。
+- 返したポインタは **借用**（AddRef しない）。release 後・destroy 後に使用してはならない。
+- 共有リング経路の合成側はこの API を使わず `tcs_player_ring_info` の NT ハンドルを
+  `OpenSharedResource1` する（per-frame の Surface を作らない）。
+
+### `tcs_player_ring_info(player, out_handles, capacity, out_count, out_fence, out_width, out_height)` → 0 = 成功
+
+- 段階 6b の共有リング。最初の GPU sample 到着時に一度だけ作成される。
+- `out_handles` は BGRA テクスチャ 3 枚の **NT 共有ハンドル**、`out_fence` は
+  共有フェンスの NT ハンドル。**すべて shim 所有**で `CloseHandle` 禁止。
+  `tcs_player_destroy` まで有効。
+- 合成側は `ID3D11Device1::OpenSharedResource1` と
+  `ID3D11Device5::OpenSharedFence` で一度だけ開き、acquire の `seq` を
+  `ID3D11DeviceContext4::Wait(fence, seq)` で **GPU キュー待ち**してから描く
+  （CPU はポーリングしない）。
+- リング未作成（load 前・CPU 経路）は `TCS_ERR_NO_FRAME`、`capacity < 3` は
+  `TCS_ERR_SIZE`。解像度がリングと一致しない GPU フレームは旧サンプル経路
+  （slot=-1）へ落ちる。
 
 ### `tcs_player_leased_cpu_copy(player, dst, dst_stride)` → 0 = 成功
 
@@ -91,25 +114,31 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 
 ### 保持枚数と破棄規則
 
-- shim が参照を保持するサンプルは **最大 5 枚**: 未配信 FIFO（4、問題 H 修正後）と
-  `leased`（リース中）。加えて appsink 内部キューが最大 4（`max-buffers=4, drop=FALSE`）。
-- 新フレーム到着時は FIFO へ追加し、**満杯のときだけ最古の未配信を捨てる**
-  （`latest_replaced`）。`leased` は決して置換・上書きしない。
+- 未配信 FIFO は **最大 4**（問題 H 修正後）。加えて appsink 内部キューが最大 4
+  (`max-buffers=4, drop=FALSE`)。
+- GPU 経路は未配信 FIFO の各アイテムがリング slot（3 枚のいずれか）を占有する。
+  新フレーム到着時に空き slot が無ければ **最古の未配信 GPU アイテムを追い出して**
+  その slot を使う（`latest_replaced`、配信トレース flags bit0）。`leased` の slot は
+  決して置換・上書きしない。
 - リース中に新フレームが来ても acquire は 0（release 後に未配信 FIFO の先頭へ進む）。
 - プール実体は GStreamer のデコーダ/コンバータのバッファプール（有限・可変）。
   リースを長時間保持した場合はプール拡張 → appsink キュー → バックプレッシャの順で
   対応し、acquire 自体はブロックしない。
 
-### デバイスと同期
+### デバイスと同期（段階 6b）
 
-- **外部 `ID3D11Device` を Adopt した場合**: デコード・色変換・リーステクスチャ・Spout
-  送信はすべてそのデバイス上。同一デバイスの読者（合成層）はそのまま読める。
-  **共有フェンス等の追加同期は不要** — 同一 immediate context への投入順で書き込み
-  順序が保たれる（MultithreadProtected は shim が有効化）。
-- **external_device=NULL（shim 所有デバイス）の場合**: リーステクスチャはアプリから
-  直接読めない。`leased_cpu_copy`（CPU コピー）か shim 内の Spout 送信を使う。
-  別デバイス/別プロセスへテクスチャを直接渡すことは**未対応**（共有 NT ハンドル＋
-  フェンス/keyed mutex が必要。Spout 経路は spoutDX の共有で別途検証済み）。
+- shim は external device を Adopt せず、同じアダプター LUID に自前の
+  `ID3D11Device` + immediate context を作る（MultithreadProtected を明示）。
+- GPU フレームは到着時に shim の context でリングへ `CopyResource`（配列テクスチャは
+  box copy）し、続けて共有フェンスへ `seq` を Signal、`Flush` で投入する。
+  完了待ちはしない（I5）。
+- 合成側はリング slot の surface を一度だけ開き、描画前に
+  `Context4::Wait(fence, seq)` を GPU キューへ積む（CPU は待たない）。slot は
+  CPU lease で保護され、合成が release するまで shim はその slot へ書かない。
+- `leased_cpu_copy` / 検証 Spout 送信はリング経路でも動く（shim デバイス上のリング
+  テクスチャを読み戻し/送信する）。外部プロセスへは Spout（spoutDX の共有）を使う。
+- D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が無い環境ではリングを作らず、
+  GPU フレームは従来のサンプルリース経路（slot=-1）へフォールバックする。
 
 ### 契約仕様（規則 1〜7）との対応と相違
 
@@ -118,14 +147,14 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 | 規則1 世代排除 | 一致 | seek/load/step で未配信 FIFO を破棄。acquire(gen) は一致時のみ |
 | 規則2 位置に基づく最新優先 | **部分一致** | position は受け取らず「現世代の未配信を、滞留 n≤2 は最古・n>2 は n−2 破棄して残り 2 枚の古い方」。位置選択は合成層（pts_ns 参照）。n=2 で最古の到着から 21ms 経過したら 1 枚破棄（H-3） |
 | 規則3 なしを返す | 一致 | 0 / TCS_ERR_NO_FRAME。黒・前画像なし |
-| 規則4 lease 寿命 | **部分一致** | プールは GStreamer 側（有限・可変）。shim 保持は最大 5（未配信 FIFO 4＋leased）で破棄は未配信のみ。Begin/CompleteGpuUse 相当は無く release のみ（冪等） |
-| 規則5 デバイス | 一致（同一デバイス前提） | 外部デバイス Adopt 対応。別デバイス実装は未対応（フェンス未実装） |
+| 規則4 lease 寿命 | **部分一致** | プールは GStreamer 側（有限・可変）。未配信 FIFO は最大 4、GPU 経路はリング slot 3 枚を FIFO が占有。Begin/CompleteGpuUse 相当は無く release のみ（冪等） |
+| 規則5 デバイス | 一致（別デバイス + 共有リング） | 合成デバイスは LUID のみ参照。NT 共有ハンドル 3 枚 + 共有フェンス（値=seq）で受け渡し |
 | 規則6 非ブロッキング | 一致 | acquire/set_generation は短いロックのみ。デコードを待たない |
 | 規則7 診断 | **部分一致** | decoder/gpu_path/frames/generation はあり。世代排除・NotReady・置換・最大同時 lease のカウンタは未実装 |
 | 条件: NV12 テクスチャ | **相違** | 現状 BGRA のみ（d3d11colorconvert）。NV12 直出しは converter 差し替えで可能だが未実装 |
 | 条件: HAP/BC テクスチャ | 未実装 | 専用分岐まで意図的に拒否 |
 | 条件: 時計 | 一致 | pts_ns を返すのみで GStreamer の running time は露出しない。世代は set_generation/seek で合成層が制御 |
-| リング容量 3 以上のプール | 未実装 | 合成層接続時に再検討（現段階は mpv 互換経路で実用上十分） |
+| リング容量 3 以上のプール | 一致 | BGRA 3 スロット + 共有フェンス。寸法不一致時のみ旧経路へフォールバック |
 
 相違はいずれも「最小 ABI で現段階の接続（mpv 互換経路）を成立させる」ための
 スコープ判断であり、合成層接続時に規則 2/4/7 と NV12/リングを再検討する。
@@ -148,21 +177,26 @@ shim と契約の差はアダプター側で次のように吸収する（契約
 - **Ended**: shim の 0（=なし）から Ended を区別できないため `NotReady` とする。保持は合成層の責務。
 - **形式**: `dxgi_format != 87`（BGRA 以外）は `NotReady` として拒否する。
 
-本体配線（段階 6、2026-09-11）:
+本体配線（段階 6 / 6b、2026-09-11）:
 
 - `PlayerBackend=Gstreamer` かつ `OutputBackend=Gpu` のとき、`OutputEngine` の起動直後に
-  `GstBackendState.SetExternalDevice()` でデバイスポインタを渡し、
-  `tcs_player_create` が外部デバイスを Adopt する。`GstMpvRenderApiAdapter` の
+  `GstBackendState.SetExternalDevice()` で合成デバイスのポインタを渡す。
+  **段階 6b 以降 `tcs_player_create` はこれを Adopt せず、アダプター LUID の読み取りに
+  のみ使う**（合成デバイス/context は shim から触らない）。`GstMpvRenderApiAdapter` の
   `LeasedCpuCopy` と `GstSpoutOutput` の直接送信はこの組み合わせでは使わない
   （`RenderSession.SuppressFrameSnapshots`）。既定の mpv 経路と GStreamerCpu 経路は不変。
-- ソースは `GStreamerSource` のリースを SRV（AddRef 付き所有ラップ）で直接描画し、
-  CPU/GPU コピーを挟まない。shim は「リース保持中は同じ画像を返す」ため、リースは
-  毎合成 tick 返却し、描画中のテクスチャは AddRef した自前参照で保持する。
+- `GStreamerSource` は slot >= 0 のリースで `tcs_player_ring_info` の 3 枚を
+  `OpenSharedResource1` / 共有フェンスを `OpenSharedFence` で一度だけ開いて保持し、
+  `OutputEngine` が描画前に `Context4.Wait(fence, seq)` を 1 回だけ発行する。
+  per-frame の Surface は作らない。slot < 0（旧サンプル経路）は従来どおり
+  AddRef 付き per-lease Surface を使う。
+- shim は「リース保持中は同じ画像を返す」ため、リースは毎合成 tick 返却する。
+  リング slot は CPU lease が保護する（release まで shim は書かない）。
 - 世代は shim 側の値を観測して対応付ける（load/seek の自動 +1 をトレース
   `gst.generation:` に記録）。リース保持中は新フレームが返らない仕様を吸収している。
-- immediate context は合成層の GPU worker だけが操作する。shim 内部（GStreamer の
-  ストリーミングスレッド）も同一デバイス/コンテキストを使うが、D3D11 の
-  マルチスレッド保護（作成時に SINGLETHREADED を付けない既定）で直列化される。
+- shim の immediate context（自前デバイス）は GStreamer のストリーミングスレッドが
+  使い、合成側 GPU worker は自前デバイスの context だけを操作する。両者はデバイスが
+  別なので共有しない。リング上の受け渡しは共有フェンスで同期する。
 
 ## コーデック分岐（命令 4 対応）
 
@@ -199,9 +233,14 @@ native\gst-shim\build-debug\tcs-shim-test.exe artifacts\media\test_1080p60.mp4 2
 ```
 
 tcs-shim-test は C ABI のみで以下を検証する:
-外部デバイス Adopt（リーステクスチャの GetDevice==呼び出し側デバイス）、
-load/pause/再生進行/lease/返却、世代不一致 acquire==0、seek 世代 +1、
-step、再ロード、stop 後のクリーン状態、Spout 検証 publish（GPU テクスチャ）。
+別デバイス生成（リーステクスチャの `GetDevice()!=呼び出し側デバイス` かつ
+アダプター LUID が一致）、リング（`acquire` の slot 0..2、`ring_info` が
+ハンドル 3 枚 + フェンス + 寸法を返す）、load/pause/再生進行/lease/返却、
+世代不一致 acquire==0、seek 世代 +1、step、再ロード、stop 後のクリーン状態、
+Spout 検証 publish（GPU テクスチャ）。
+
+`--policy-only` はメディア無しで配信規則（H-3、12 ケース）とリング slot 割当・
+追い出し規則（10 ケース）だけを固定する。
 
 Spout 受信側の目視検証は proto の recv モード
 （`native/gst-shim/proto/build-debug/tcs-gst-proto.exe recv <sender>`）が使える。
@@ -214,7 +253,7 @@ Spout 受信側の目視検証は proto の recv モード
 | --- | --- |
 | tcs-shim-test (mp4 1080p60) | failures=0 を連続 5 回 |
 | コンテナ/コーデック | mp4(h264) / mkv / avi / ts / hevc(mp4) すべて GPU 経路 (d3d11h264dec / d3d11h265dec) で failures=0 |
-| 外部デバイス Adopt | リーステクスチャの `GetDevice()` が呼び出し側 `ID3D11Device*` と一致 |
+| 外部デバイス Adopt（段階 6 時点の記録） | リーステクスチャの `GetDevice()` が呼び出し側 `ID3D11Device*` と一致。**段階 6b で別デバイス + 共有リングへ変更**（同 LUID の別デバイスになる） |
 | 切り替え反復 (--stress, 4 素材×120 回) | load 失敗 0 / フレーム 363。作業セットは warmup 後 ~160MB で飽和（非有界増加なし） |
 | アプリ E2E (backend=Gstreamer) | ① 1080p60 GPU 経路の実フレームを別プロセス Spout 受信で確認（受信側の終了→再起動後も接続・フレームイベント継続、アプリは描画継続） ② 4 コンテナの next/prev 反復 7 ロード全成功・クラッシュなし ③ 再生中クローズで終了コード 0 |
 | 既存単体テスト | 非 E2E 1200 件合格（mpv 既定経路の退行なし。E2E 含め全件は 1242 件） |

@@ -204,7 +204,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _outputEngine.Start();
             if (_gstGpuCombo)
             {
-                // GStreamerGpu: shim がエンジンのデバイスを Adopt し、リースを直接ソースにする。
+                // GStreamerGpu: shim は合成デバイスのアダプター LUID だけを使い、自前デバイス +
+                // 共有テクスチャリング（NT ハンドル + 共有フェンス）でリースを直接ソースにする。
+                // 合成デバイスの context は shim から触らない。
                 // CPU の LeasedCpuCopy 経路は使わない（RenderSession の snapshot コピーを抑制）。
                 if (_outputEngine.WaitForDevice(TimeSpan.FromSeconds(5)))
                     _gstBackendState.SetExternalDevice(_outputEngine.DevicePointer);

@@ -23,6 +23,8 @@ internal static class GstNative
         public int Width;
         public int Height;
         public int IsGpu;
+        /// <summary>ステージ 6b: 共有リング slot (0..2)。-1 = 旧サンプルリース経路。</summary>
+        public int Slot;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -149,6 +151,13 @@ internal static class GstNative
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_delivery_stats(
             IntPtr player, out TcsDeliveryStats outStats);
+
+        // ステージ 6b: 共有テクスチャリングの NT ハンドル + 共有フェンス。
+        // ハンドルは shim 所有（CloseHandle 禁止）。
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_ring_info(
+            IntPtr player, [Out] IntPtr[] outHandles, uint capacity, out uint outCount,
+            out IntPtr outFence, out int outWidth, out int outHeight);
     }
 }
 
