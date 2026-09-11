@@ -12,15 +12,23 @@ internal sealed class ComposeAlignGate
 {
     public const double SlewMs = 0.5;
     private readonly long frequency;
-    public long LeadTicks { get; }
+    private long leadTicks;
+    public long LeadTicks => Volatile.Read(ref leadTicks);
     public long SlewTicks { get; }
 
     public ComposeAlignGate(double leadMs, long frequency)
     {
         if (frequency <= 0 || !double.IsFinite(leadMs) || leadMs <= 0) throw new ArgumentOutOfRangeException();
         this.frequency = frequency;
-        LeadTicks = Math.Max(1, (long)Math.Round(leadMs * frequency / 1000));
+        leadTicks = Math.Max(1, (long)Math.Round(leadMs * frequency / 1000));
         SlewTicks = Math.Max(1, (long)Math.Round(SlewMs * frequency / 1000));
+    }
+
+    /// <summary>合成時間の実測に応じて lead を更新する（GPU worker のみが呼ぶ）。</summary>
+    public void SetLeadMilliseconds(double leadMs)
+    {
+        if (!double.IsFinite(leadMs) || leadMs <= 0) throw new ArgumentOutOfRangeException(nameof(leadMs));
+        Volatile.Write(ref leadTicks, Math.Max(1, (long)Math.Round(leadMs * frequency / 1000)));
     }
 
     public long Microseconds(long ticks) => ticks * 1_000_000 / frequency;

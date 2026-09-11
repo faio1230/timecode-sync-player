@@ -48,8 +48,9 @@ internal static class SendMutexGate
             catch (AbandonedMutexException) { acquired = true; abandoned = true; }
             finally { end = timestamp(); }
 
+            // 受信機の強制終了などで abandoned になっても所有権は移っており取得できている。
+            // 送信を止めず、outcome=abandoned として記録だけ残す。
             record(new(start, end, deadline, timeout, abandoned ? "abandoned" : acquired ? "acquired" : "busy"));
-            if (abandoned) throw new InvalidOperationException("Spout access mutex abandoned.");
 
             reason = MutexWaitPolicy.SkipReason(end, deadline, cancellation.IsCancellationRequested);
             if (reason != null) { skip(reason); return null; }

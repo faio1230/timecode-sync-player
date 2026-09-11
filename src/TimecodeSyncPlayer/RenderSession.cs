@@ -218,7 +218,15 @@ internal sealed class RenderSession : IDisposable
                     PreparedFrame update = ReadNativeUpdate();
                     if (IsCurrent(update.Generation))
                     {
-                        if (update.Snapshot != null) _mailbox.Publish(update.Snapshot);
+                        if (update.Snapshot != null)
+                        {
+                            _mailbox.Publish(update.Snapshot);
+                            // Gpu backend: UI を経由せず mpv 専用スレッドから GPU worker へ直接渡す。
+                            // 位置はここ（snapshot 生成側）で読み、UI での再読取はしない。
+                            var sink = GpuFrameSink;
+                            if (sink != null)
+                                sink(update.Snapshot.Retain(), update.Snapshot.Generation, PositionSecondsProvider?.Invoke() ?? 0);
+                        }
                         if (update.HasFrame) Interlocked.Exchange(ref _pendingHasFrame, 1);
                         if (_scheduler.RequestDispatch()) _scheduleUpdate(OnRenderUpdate);
                     }
@@ -408,25 +416,10 @@ internal sealed class RenderSession : IDisposable
 
         if (GpuFrameSink != null)
         {
-            // Gpu backend: CPU の表示・Spout・Freeze コピーは行わず、Retain したフレームを出力層へ渡す。
-            long gpuStarted = _trace.IsEnabled ? Stopwatch.GetTimestamp() : 0;
-            bool handed = false;
-            try
-            {
-                if (decision == GapRenderFrameDecision.None)
-                {
-                    GpuFrameSink(frame.Retain(), frame.Generation, PositionSecondsProvider?.Invoke() ?? 0);
-                    handed = true;
-                }
+            // Gpu backend: 画像は mpv 専用スレッド側で GPU worker へ渡済み。ここでは既存の
+            // 世代・sequence 逆行防止と afterFrameProcessed だけを維持し、CPU の表示・Spout・Freeze コピーは行わない。
+            if (decision != GapRenderFrameDecision.Hold)
                 afterFrameProcessed?.Invoke();
-            }
-            finally
-            {
-                if (_trace.IsEnabled)
-                    _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "gpu-submit",
-                        handed ? "published" : decision == GapRenderFrameDecision.None ? "exception" : "capture-only",
-                        gpuStarted, Stopwatch.GetTimestamp(), frame.Width, frame.Height);
-            }
             return;
         }
 

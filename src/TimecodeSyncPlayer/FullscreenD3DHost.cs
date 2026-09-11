@@ -14,6 +14,18 @@ internal sealed class FullscreenD3DHost : HwndHost
 
     public event Action<IntPtr>? ChildHwndReady;
 
+    public IntPtr ChildHandle { get; private set; }
+
+    public bool TryGetClientSize(out int width, out int height)
+    {
+        width = height = 0;
+        if (ChildHandle == IntPtr.Zero) return false;
+        if (!GetClientRect(ChildHandle, out Rect rect)) return false;
+        width = rect.Right;
+        height = rect.Bottom;
+        return width > 0 && height > 0;
+    }
+
     protected override HandleRef BuildWindowCore(HandleRef hwndParent)
     {
         IntPtr hwnd = CreateWindowEx(
@@ -23,6 +35,7 @@ internal sealed class FullscreenD3DHost : HwndHost
             hwndParent.Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
         if (hwnd == IntPtr.Zero)
             throw new InvalidOperationException("全画面の子 HWND を作成できませんでした。");
+        ChildHandle = hwnd;
         ChildHwndReady?.Invoke(hwnd);
         return new HandleRef(this, hwnd);
     }
@@ -31,7 +44,15 @@ internal sealed class FullscreenD3DHost : HwndHost
     {
         if (hwnd.Handle != IntPtr.Zero)
             DestroyWindow(hwnd.Handle);
+        ChildHandle = IntPtr.Zero;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetClientRect(IntPtr hwnd, out Rect rect);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr CreateWindowEx(

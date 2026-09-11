@@ -103,25 +103,36 @@ public class SendMutexGateTests
     }
 
     [Fact]
-    public void Acquire_AbandonedAndExceptionalOwnershipReleaseOnce()
+    public void Acquire_AbandonedContinuesWithOwnershipAndExceptionalOwnershipReleasesOnce()
     {
-        int releases = 0; MutexAttempt? attempt = null;
-        FluentActions.Invoking(() => SendMutexGate.Acquire(1, 1000, 1_000_000, default, () => 0,
-            _ => throw new AbandonedMutexException(), () => releases++, x => attempt = x,
-            _ => throw new InvalidOperationException("Abandonment must fault, not skip."))).Should().Throw<InvalidOperationException>();
-        releases.Should().Be(1);
+        // 受信機の強制終了などで abandoned でも所有権は移っており、送信を続ける（outcome だけ abandoned）。
+        int releases = 0; MutexAttempt? attempt = null; string? skip = null;
+        var lease = SendMutexGate.Acquire(1, 10_000, 1_000_000, default, () => 0,
+            _ => throw new AbandonedMutexException(), () => releases++, x => attempt = x, s => skip = s);
+        lease.Should().NotBeNull();
+        skip.Should().BeNull();
         attempt!.Value.Outcome.Should().Be("abandoned");
-
-        releases = 0;
-        FluentActions.Invoking(() => SendMutexGate.Acquire(1, 1000, 1_000_000, default, () => 0,
-            _ => true, () => releases++, _ => throw new ApplicationException("Logging callback failed"), _ => { }))
-            .Should().Throw<ApplicationException>();
+        lease!.Dispose();
+        lease.Dispose();
         releases.Should().Be(1);
+
+        // 期限超過後の abandoned も所有権として解放される（送信自体は期限で見送る）。
+        int releasesAfterDeadline = 0; long lateNow = 0;
+        var late = SendMutexGate.Acquire(1, 1000, 1_000_000, default, () => lateNow,
+            _ => { lateNow = 2000; throw new AbandonedMutexException(); }, () => releasesAfterDeadline++, _ => { }, _ => { });
+        late.Should().BeNull();
+        releasesAfterDeadline.Should().Be(1);
+
+        int loggingReleases = 0;
+        FluentActions.Invoking(() => SendMutexGate.Acquire(1, 1000, 1_000_000, default, () => 0,
+            _ => true, () => loggingReleases++, _ => throw new ApplicationException("Logging callback failed"), _ => { }))
+            .Should().Throw<ApplicationException>();
+        loggingReleases.Should().Be(1);
 
         int calls = 0;
-        var lease = new SendMutexLease(() => { calls++; throw new ApplicationException("Release failed"); });
-        FluentActions.Invoking(() => lease.Dispose()).Should().Throw<ApplicationException>();
-        lease.Dispose();
+        var failingLease = new SendMutexLease(() => { calls++; throw new ApplicationException("Release failed"); });
+        FluentActions.Invoking(() => failingLease.Dispose()).Should().Throw<ApplicationException>();
+        failingLease.Dispose();
         calls.Should().Be(1);
     }
 }

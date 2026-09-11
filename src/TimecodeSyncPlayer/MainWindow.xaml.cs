@@ -432,10 +432,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         uiInitializer.Initialize();
     }
 
+    // mpv 専用スレッド（RenderSession の snapshot 生成側）からも呼ばれる。
     private double? ReadMpvTimePos()
     {
-        if (_mpv == IntPtr.Zero) return null;
-        return _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double pos) == 0 && double.IsFinite(pos)
+        IntPtr mpv = Volatile.Read(ref _mpv);
+        if (mpv == IntPtr.Zero) return null;
+        return _mpvApi.GetProperty(mpv, "time-pos", _mpvApi.FormatDouble, out double pos) == 0 && double.IsFinite(pos)
             ? pos
             : null;
     }
@@ -509,8 +511,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             applyAudioSettings: _audioControlCoordinator.ApplyStartup,
             createRenderContext: () => _renderSession.Create(_mpv),
             allocateRenderParameters: _renderSession.AllocateParameters,
+            // Gpu backend では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
             initializeSpout: () => SpoutStartupState.FromInitializationResult(
-                _outputEngine != null || _spoutOutput.TryInitialize()),
+                _outputEngine != null ? true : _spoutOutput.TryInitialize()),
             applySpoutStartupState: spoutUiApplicator.Apply,
             initializeFrameRenderer: _renderSession.InitializeFrameRenderer,
             startTimer: () => _timer = StartupTimerFactory.CreateStartedTimer(TimeSpan.FromMilliseconds(TimerIntervalMs), OnTick),

@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
@@ -18,6 +19,8 @@ internal partial class FullscreenOutputWindow : Window
     private readonly IDisplayCatalog _displayCatalog;
     private readonly OutputEngine? _outputEngine;
     private HwndSource? _source;
+    private IntPtr _childHwnd;
+    private bool _attached;
 
     public FullscreenOutputWindow(
         DisplayTarget target,
@@ -34,7 +37,8 @@ internal partial class FullscreenOutputWindow : Window
             FullscreenImage.Source = null;
             FullscreenImage.Visibility = Visibility.Collapsed;
             D3DHost.Visibility = Visibility.Visible;
-            D3DHost.ChildHwndReady += hwnd => _outputEngine.AttachFullscreen(hwnd);
+            D3DHost.ChildHwndReady += hwnd => { _childHwnd = hwnd; if (IsLoaded) TryAttachOutput(); };
+            D3DHost.SizeChanged += (_, _) => NotifyOutputSize();
         }
         else
         {
@@ -59,7 +63,11 @@ internal partial class FullscreenOutputWindow : Window
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         // 子 HWND 破棄より先に swapchain を切断する。
-        _outputEngine?.DetachFullscreen();
+        if (_attached)
+        {
+            _attached = false;
+            _outputEngine?.DetachFullscreen();
+        }
         base.OnClosing(e);
     }
 
@@ -71,7 +79,33 @@ internal partial class FullscreenOutputWindow : Window
         base.OnClosed(e);
     }
 
-    private void Window_Loaded(object sender, RoutedEventArgs e) => PositionOnTargetDisplay();
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        // 最終配置の後に接続する（初期 16x16 のまま swapchain を作らない）。
+        PositionOnTargetDisplay();
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, TryAttachOutput);
+    }
+
+    private void TryAttachOutput()
+    {
+        if (_outputEngine == null || _attached || _childHwnd == IntPtr.Zero) return;
+        _attached = true;
+        _outputEngine.AttachFullscreen(_childHwnd);
+        NotifyOutputSize();
+    }
+
+    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    {
+        base.OnRenderSizeChanged(sizeInfo);
+        NotifyOutputSize();
+    }
+
+    // 子 HWND のクライアント寸法を GPU worker へ伝える（実際に変わったときだけ ResizeBuffers する）。
+    private void NotifyOutputSize()
+    {
+        if (_outputEngine == null || !D3DHost.TryGetClientSize(out int width, out int height)) return;
+        _outputEngine.ResizeFullscreen(width, height);
+    }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {

@@ -11,10 +11,14 @@ namespace TimecodeSyncPlayer.Output;
 internal sealed class SnapshotInputMailbox : IDisposable
 {
     private readonly object gate = new();
+    private readonly AutoResetEvent ready = new(false);
     private RenderedFrameSnapshot? latest;
     private double positionSeconds;
     private int generation;
     private bool disposed;
+
+    /// <summary>GPU worker の空き時間待ちで使う到着通知。Publish ごとに Set する。</summary>
+    public WaitHandle ReadyHandle => ready;
 
     public void Publish(RenderedFrameSnapshot frame, int generation, double positionSeconds)
     {
@@ -31,6 +35,7 @@ internal sealed class SnapshotInputMailbox : IDisposable
             }
         }
         replaced?.Dispose();
+        if (!disposed) ready.Set();
     }
 
     public bool TryTake(out RenderedFrameSnapshot? frame, out int generation, out double positionSeconds)
@@ -55,6 +60,7 @@ internal sealed class SnapshotInputMailbox : IDisposable
             latest = null;
         }
         pending?.Dispose();
+        ready.Dispose();
     }
 }
 

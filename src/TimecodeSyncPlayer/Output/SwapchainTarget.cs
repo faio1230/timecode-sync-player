@@ -15,14 +15,16 @@ internal sealed class SwapchainTarget : IDisposable
 {
     private readonly IDXGISwapChain2 swap;
     private readonly IntPtr ready;
-    public ID3D11RenderTargetView Target { get; }
-    public int Width { get; }
-    public int Height { get; }
+    private readonly ID3D11Device device;
+    public ID3D11RenderTargetView Target { get; private set; }
+    public int Width { get; private set; }
+    public int Height { get; private set; }
     public PresentReadyGate Readiness { get; } = new();
 
     public SwapchainTarget(GpuDevice gpu, IntPtr hwnd)
     {
         using var build = new ConstructionScope();
+        device = gpu.Device;
         if (!Native.GetClientRect(hwnd, out var r)) throw new Win32Exception();
         Width = r.Right; Height = r.Bottom;
         var description = new SwapChainDescription1
@@ -47,6 +49,21 @@ internal sealed class SwapchainTarget : IDisposable
         Target = build.Add(gpu.Device.CreateRenderTargetView(buffer));
         gpu.Factory.MakeWindowAssociation(hwnd, WindowAssociationFlags.IgnoreAltEnter).CheckError();
         build.Commit();
+    }
+
+    /// <summary>
+    /// 子 HWND の最終寸法へ swapchain を追従させる。GPU worker が lease を持たないタイミングで呼ぶ。
+    /// flip-discard のフラグは作成時と同じものを渡す。
+    /// </summary>
+    public void Resize(int width, int height)
+    {
+        if (width <= 0 || height <= 0 || (width == Width && height == Height)) return;
+        Target.Dispose();
+        swap.ResizeBuffers(0, (uint)width, (uint)height, Format.Unknown, SwapChainFlags.FrameLatencyWaitableObject).CheckError();
+        Width = width;
+        Height = height;
+        using var buffer = swap.GetBuffer<ID3D11Texture2D>(0);
+        Target = device.CreateRenderTargetView(buffer);
     }
 
     public bool WaitReady(int timeoutMs)
