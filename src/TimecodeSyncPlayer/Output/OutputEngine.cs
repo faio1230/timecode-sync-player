@@ -53,6 +53,7 @@ internal sealed class OutputEngine : IDisposable
     private readonly UploadSlot?[] uploadSlots = new UploadSlot?[4];
     private MpvSnapshotSource<int>? mpvSource;
     private ComposeLayer? layer;
+    private ComposeLeadController? composeLead;
     private TimelineOutputState? lastTimelineState;
     private int sourceGeneration = -1;
 
@@ -75,6 +76,7 @@ internal sealed class OutputEngine : IDisposable
     private bool testCard;
     private bool spoutRunning;
     private bool displayEverAttached;
+    private bool pendingDisplayTrace;
     private bool spoutEverEnabled;
     private bool? vblankTimerHighResolution;
     private bool gpuLoopTimerHighResolution;
@@ -136,8 +138,30 @@ internal sealed class OutputEngine : IDisposable
         vblankTimer = new VblankWaitTimer();
         vblankTimerHighResolution = vblankTimer.HighResolution;
         displayEverAttached = true;
+        // 初期寸法は途中経過のことがあるため、最初の Present/Resize 時の最終寸法で記録する。
+        pendingDisplayTrace = true;
         Log.Information("OutputEngine: 全画面 swapchain を接続 {W}x{H}", target.Width, target.Height);
-        settings.Trace.Add("lifecycle", "GPU", detail: $"display.attach:{target.Width}x{target.Height}");
+    });
+
+    /// <summary>子 HWND の最終寸法へ swapchain を追従させる。GPU worker が lease を持たないコマンド処理で行う。</summary>
+    public void ResizeFullscreen(int width, int height) => Enqueue(() =>
+    {
+        if (target == null) return;
+        int w = Math.Max(16, width), h = Math.Max(16, height);
+        if (target.Width == w && target.Height == h) return;
+        target.Resize(w, h);
+        // リサイズ後は統計位相が途切れるため、vblank 予測を初期化する。
+        vblank = new VblankDisplayGate(settings.PresentMarginMs, 0, Stopwatch.Frequency);
+        if (pendingDisplayTrace)
+        {
+            pendingDisplayTrace = false;
+            settings.Trace.Add("lifecycle", "GPU", detail: $"display.attach:{w}x{h}");
+        }
+        else
+        {
+            settings.Trace.Add("lifecycle", "GPU", detail: $"display.resize:{w}x{h}");
+        }
+        Log.Information("OutputEngine: 全画面 swapchain をリサイズ {W}x{H}", w, h);
     });
 
     /// <summary>子 HWND の破棄より先に swapchain を切断する。最大 500ms だけ GPU worker の完了を確認する。</summary>
@@ -241,6 +265,7 @@ internal sealed class OutputEngine : IDisposable
                     uploadSlots[index]?.Width ?? 0, uploadSlots[index]?.Height ?? 0, SourceImageFormat.Bgra8),
                 "mpv-bgra", gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
             layer = new ComposeLayer(gpu, shaders, CanvasSettings.Default);
+            composeLead = new ComposeLeadController(Stopwatch.Frequency, settings.ComposeLeadMs);
             if (spoutRunning) StartSpoutWorker();
             Log.Information("OutputEngine: 初期化完了 canvas={W}x{H} adapterLuid={Luid}",
                 settings.CanvasWidth, settings.CanvasHeight, gpu.Luid);
@@ -315,8 +340,15 @@ internal sealed class OutputEngine : IDisposable
             if (vblank != null && VblankIdle(lastScheduled, now, due)) continue;
             if (now < due)
             {
-                if (LoopIdleWait.UseTimer(now, due, frequency)) gpuLoopTimer!.WaitUntilOrStop(stop.Token.WaitHandle, now, due, frequency);
-                else Thread.Yield();
+                // 空き時間にリングへアップロードする（合成 tick は取得だけにする）。
+                UploadPendingSnapshot();
+                now = Stopwatch.GetTimestamp();
+                if (now < due)
+                {
+                    if (LoopIdleWait.UseTimer(now, due, frequency))
+                        gpuLoopTimer!.WaitUntilOrStopOrSignal(stop.Token.WaitHandle, snapshotInput.ReadyHandle, now, due, frequency);
+                    else Thread.Yield();
+                }
                 continue;
             }
             var tick = schedule.Take(now);
@@ -367,15 +399,11 @@ internal sealed class OutputEngine : IDisposable
         if (slot < 0) { settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.noFreeSlot", value: 1); return; }
         var surface = surfaces[slot];
 
-        // タイムライン状態と最新スナップショットを取り込む（どちらも最新1件、UI は待たない）。
+        // タイムライン状態を取り込む（最新1件、UI は待たない）。
+        // スナップショットのアップロードは Loop の空き時間で完了済みで、ここでは取得だけを行う。
         var state = timelineInput.Take();
         if (state != null) lastTimelineState = state;
         var effective = state ?? lastTimelineState;
-        if (snapshotInput.TryTake(out var pending, out int frameGeneration, out double framePosition) && pending != null)
-        {
-            EnsureSourceGeneration(frameGeneration);
-            mpvSource!.TryUpload(pending, frameGeneration, framePosition);
-        }
         int generation = effective?.Generation ?? sourceGeneration;
         if (generation >= 0) EnsureSourceGeneration(generation);
         double position = effective?.PositionSeconds ?? 0;
@@ -400,6 +428,7 @@ internal sealed class OutputEngine : IDisposable
         try
         {
             var stamp = new ImageStamp(++nextImageId, Stopwatch.GetTimestamp());
+            long composeStartedQpc = Stopwatch.GetTimestamp();
             settings.Trace.Add("compose.start", "GPU", scheduled, stamp);
             if (acquired != null) { lease!.BeginGpuUse(); inFlight = true; }
             retained = layer!.Compose(surface,
@@ -409,8 +438,10 @@ internal sealed class OutputEngine : IDisposable
                 stamp, originQpc, lease, acquired, acquiredWidth, acquiredHeight);
             sharedFence!.Signal(gpu!, stamp.Id); // フェンス値＝画像 ID。Spout 側は GPU キューで待つ。
             gpu!.Fence.Wait("compose.source");
+            long composeCompletedQpc = Stopwatch.GetTimestamp();
             if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
             if (!retained && lease != null) { lease.Dispose(); lease = null; }
+            UpdateComposeLead(composeCompletedQpc - composeStartedQpc, composeCompletedQpc);
             settings.Trace.Add("compose.complete", "GPU", scheduled, stamp);
             settings.Trace.Add("compose.publish", "GPU", scheduled, stamp);
             pool.Publish(slot, stamp, true);
@@ -436,6 +467,24 @@ internal sealed class OutputEngine : IDisposable
         }
         if (target != null) ObserveScanout();
         UpdatePreview(Stopwatch.GetTimestamp());
+    }
+
+    private void UploadPendingSnapshot()
+    {
+        if (mpvSource == null) return;
+        if (!snapshotInput.TryTake(out var pending, out int generation, out double position) || pending == null) return;
+        EnsureSourceGeneration(generation);
+        mpvSource.TryUpload(pending, generation, position);
+    }
+
+    private void UpdateComposeLead(long durationTicks, long nowQpc)
+    {
+        if (composeLead == null || align == null) return;
+        if (!composeLead.Add(durationTicks, nowQpc, out double newLeadMs)) return;
+        align.SetLeadMilliseconds(newLeadMs);
+        settings.Trace.Add("lifecycle", "GPU",
+            detail: "composeLeadMs:" + newLeadMs.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+        Log.Information("OutputEngine: compose lead を {Lead:F2}ms へ更新", newLeadMs);
     }
 
     private SourceDiagnostics? TryDiagnostics()
@@ -579,6 +628,11 @@ internal sealed class OutputEngine : IDisposable
         vblank?.Presented(displayed.Id);
         if (result == 0)
         {
+            if (pendingDisplayTrace)
+            {
+                pendingDisplayTrace = false;
+                settings.Trace.Add("lifecycle", "GPU", detail: $"display.attach:{target!.Width}x{target.Height}");
+            }
             uint presentCount = target!.GetLastPresentCount();
             settings.Trace.Record(new("present.return", "GPU", presentReturned, scheduled, displayed.Id, displayed.GeneratedQpc, Value: presentCount));
             scanout.Record(presentCount, displayed.Id, displayed.GeneratedQpc, presentStarted);
