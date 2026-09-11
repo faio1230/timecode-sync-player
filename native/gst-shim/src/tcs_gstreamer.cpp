@@ -145,7 +145,7 @@ struct TcsPlayer {
 
   /* delivery trace (frame_lock). problem H: record each arrival so the
    * owner can compare decoding cadence, callback cost and replacements. */
-  static const uint32_t kDeliveryCapacity = 4096;
+  static const uint32_t kDeliveryCapacity = 16384;
   TcsDeliveryEvent delivery_ring[kDeliveryCapacity] = {};
   uint32_t delivery_read = 0;
   uint32_t delivery_write = 0;
@@ -1679,7 +1679,7 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
     p->frames.pop_front();
   }
   if (p->frames.empty())
-    return 0;
+    return p->eos ? TCS_ERR_ENDED : 0;
 
   /* H-3: an n==2 backlog older than 1.25 frames is steady clock drift and
    * loses its oldest frame instead of waiting for a fixed streak. */
@@ -1696,7 +1696,7 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
     p->delivery_replaced++;
   }
   if (!plan.lease || p->frames.empty())
-    return 0;
+    return p->eos ? TCS_ERR_ENDED : 0;
 
   TcsPlayer::FrameSlot slot = p->frames.front();
   p->frames.pop_front();

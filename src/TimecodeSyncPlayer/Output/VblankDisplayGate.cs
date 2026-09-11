@@ -134,6 +134,13 @@ internal sealed class VblankDisplayGate
 
     public string? SkipReason(long imageId) => imageId > LastPresentedId ? null : "display.vblank.noNewerImage";
 
+    /// <summary>D-2: vblank−lead までの待ち時間（ms、最大 maxMs）。既に過ぎていれば 0。</summary>
+    public static int TimeoutUntilMs(long nowQpc, long untilQpc, long frequency, int maxMs)
+    {
+        if (frequency <= 0 || maxMs <= 0) return 0;
+        return (int)Math.Clamp(Math.Floor((untilQpc - nowQpc) * 1000.0 / frequency), 0, maxMs);
+    }
+
     public void Presented(long imageId)
     {
         if (imageId <= LastPresentedId) throw new InvalidOperationException("Presented image ids must strictly increase.");

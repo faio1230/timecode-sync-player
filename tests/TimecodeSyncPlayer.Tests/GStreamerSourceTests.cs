@@ -19,12 +19,14 @@ public class GStreamerSourceTests
 
         public ulong Generation => Gen;
         public void SetGeneration(ulong generation) { Gen = generation; HasFrame = false; }
-        public bool Acquire(ulong generation, out GstLeaseFrameInfo info)
+        public bool Ended;
+        public int Acquire(ulong generation, out GstLeaseFrameInfo info)
         {
-            if (!HasFrame || generation != Gen) { info = default; return false; }
+            if (Ended) { info = default; return -6; }
+            if (!HasFrame || generation != Gen) { info = default; return 0; }
             info = new GstLeaseFrameInfo(Gen, NextSequence, (long)((NextSequence - 1) * 0.04 * 1_000_000_000), 1920, 1080, true, NextSlot);
             Acquires++;
-            return true;
+            return 1;
         }
         public bool TryGetLeasedTexture(out IntPtr texture, out uint subresource, out uint dxgiFormat)
         {
@@ -41,6 +43,15 @@ public class GStreamerSourceTests
         public void Release() { Releases++; NextSequence++; }
         public string DecoderName => "d3d11h264dec";
         public GstDeliveryStatsInfo DeliveryStats { get; set; }
+    }
+
+    [Fact]
+    public void TryAcquire_MapsShimEndedToEndedStatus()
+    {
+        var player = new FakeLeasePlayer { HasFrame = false, Ended = true };
+        var source = new GStreamerSource(player, "gpu");
+        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ended);
+        lease.Should().BeNull();
     }
 
     [Fact]

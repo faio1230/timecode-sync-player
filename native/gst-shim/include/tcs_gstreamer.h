@@ -48,6 +48,7 @@ typedef struct TcsPlayer TcsPlayer;
 #define TCS_ERR_NO_FRAME -3
 #define TCS_ERR_SPOUT -4
 #define TCS_ERR_SIZE -5
+#define TCS_ERR_ENDED -6   /* acquire: end of stream, nothing left to hand over */
 
 /* Frame notification; called from a GStreamer streaming thread.
  * Mirrors mpv_render_update_fn's "wakeup, go look" semantics while

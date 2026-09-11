@@ -303,6 +303,27 @@ public class VblankDisplayGateTests
     }
 
     [Fact]
+    public void TimeoutUntilMs_ClampsToTheVblankLeadWindow()
+    {
+        VblankDisplayGate.TimeoutUntilMs(100_000, 102_500, Frequency, 4).Should().Be(2);
+        VblankDisplayGate.TimeoutUntilMs(100_000, 100_000, Frequency, 4).Should().Be(0);
+        VblankDisplayGate.TimeoutUntilMs(100_000, 99_000, Frequency, 4).Should().Be(0);
+        VblankDisplayGate.TimeoutUntilMs(100_000, 1_000_000, Frequency, 4).Should().Be(4);
+        VblankDisplayGate.TimeoutUntilMs(100_000, 1_000_000, Frequency, 0).Should().Be(0);
+    }
+
+    [Fact]
+    public void NotReadyGate_RecordsAtMostOncePerComposeTick()
+    {
+        var gate = new VblankNotReadyGate();
+        gate.ShouldRecord(10).Should().BeTrue();
+        gate.ShouldRecord(10).Should().BeFalse();
+        gate.ShouldRecord(10).Should().BeFalse();
+        gate.ShouldRecord(16_667).Should().BeTrue();
+        gate.ShouldRecord(16_667).Should().BeFalse();
+    }
+
+    [Fact]
     public void WaitableTimer_ReachesDeadlineAndStopWins()
     {
         using var timer = new VblankWaitTimer();

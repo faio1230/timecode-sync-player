@@ -10,6 +10,7 @@ namespace TimecodeSyncPlayer.Gst;
 internal static class GstNative
 {
     internal const string Lib = "tcs_gstreamer.dll";
+    internal const int TcsErrEnded = -6;
 
     internal static bool IsGstLibrary(string libraryName) =>
         string.Equals(libraryName, Lib, StringComparison.OrdinalIgnoreCase);

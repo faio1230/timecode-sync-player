@@ -17,7 +17,8 @@ internal interface IGstLeasePlayer
 {
     ulong Generation { get; }
     void SetGeneration(ulong generation);
-    bool Acquire(ulong generation, out GstLeaseFrameInfo info);
+    /// <summary>1 = frame, 0 = none, -6 = Ended, その他負 = error。</summary>
+    int Acquire(ulong generation, out GstLeaseFrameInfo info);
     bool TryGetLeasedTexture(out IntPtr texture, out uint subresource, out uint dxgiFormat);
     void Release();
     string DecoderName { get; }
@@ -32,7 +33,7 @@ internal interface IGstLeasePlayer
 /// shim の差を吸収する:
 /// - position は受け取らず「現世代の latest 1 枚」を返すため、返却画像の pts を Stamp.PositionSeconds とする。
 /// - リース保持中の acquire は同じ画像を返すため、参照カウント付きの共有リースとして同一 Stamp を返す。
-/// - Ended は区別できない（0 = なし）ため NotReady とし、保持は合成層に任せる。
+/// - Ended は shim の TCS_ERR_ENDED を SourceStatus.Ended として返し、保持は合成層に任せる。
 /// ステージ 6b: shim は合成デバイスを Adopt せず同一アダプター LUID の別デバイスを作る。
 /// slot >= 0 のリースは共有リング（NT ハンドル + 共有フェンス）で渡り、このクラスが
 /// 合成デバイス上に一度だけ開いて保持する。描画前のフェンス待ちは OutputEngine が GPU キューへ出す。
@@ -76,7 +77,9 @@ internal sealed class GStreamerSource : IVideoSource
             lease = active.Retain();
             return SourceStatus.Ready;
         }
-        if (!player.Acquire((ulong)generation, out GstLeaseFrameInfo info)) { notReady++; return SourceStatus.NotReady; }
+        int acquired = player.Acquire((ulong)generation, out GstLeaseFrameInfo info);
+        if (acquired == TimecodeSyncPlayer.Gst.GstNative.TcsErrEnded) return SourceStatus.Ended;
+        if (acquired != 1) { notReady++; return SourceStatus.NotReady; }
         if (info.Generation != (ulong)generation || info.Width <= 0 || info.Height <= 0)
         {
             player.Release();
@@ -330,15 +333,16 @@ internal sealed class GstNativeLeasePlayer(TimecodeSyncPlayer.Gst.IGstNativeApi 
     public ulong Generation => native.GetGeneration(player);
     public void SetGeneration(ulong generation) => native.SetGeneration(player, generation);
 
-    public bool Acquire(ulong generation, out GstLeaseFrameInfo info)
+    public int Acquire(ulong generation, out GstLeaseFrameInfo info)
     {
-        if (!native.Acquire(player, generation, out TimecodeSyncPlayer.Gst.GstNative.TcsFrameInfo frame))
+        int code = native.Acquire(player, generation, out TimecodeSyncPlayer.Gst.GstNative.TcsFrameInfo frame);
+        if (code != 1)
         {
             info = default;
-            return false;
+            return code;
         }
         info = new GstLeaseFrameInfo(frame.Generation, frame.Seq, frame.PtsNs, frame.Width, frame.Height, frame.IsGpu != 0, frame.Slot);
-        return true;
+        return 1;
     }
 
     public bool TryGetLeasedTexture(out IntPtr texture, out uint subresource, out uint dxgiFormat)

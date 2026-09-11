@@ -466,7 +466,7 @@ file sealed class FakeGstNative : IGstNativeApi
     public void SetFrameCallback(IntPtr player, GstNative.TcsFrameNotifyDelegate? callback) { }
     public int ConsumeUpdate(IntPtr player) { ConsumeUpdateCalls++; return ConsumeUpdateResult; }
 
-    public bool Acquire(IntPtr player, ulong generation, out GstNative.TcsFrameInfo info)
+    public int Acquire(IntPtr player, ulong generation, out GstNative.TcsFrameInfo info)
     {
         _lastAcquireOp = ++_opSeq;
         info = new GstNative.TcsFrameInfo
@@ -479,7 +479,7 @@ file sealed class FakeGstNative : IGstNativeApi
             IsGpu = 1,
             Slot = -1,
         };
-        return AcquireResult;
+        return AcquireResult ? 1 : 0;
     }
 
     public bool TryGetLeasedTexture(IntPtr player, out IntPtr texture, out uint subresource, out uint dxgiFormat)

@@ -16,22 +16,39 @@ internal sealed class ComposeLeadController(long frequency, double initialLeadMs
     public const double DecreaseStepMs = 0.5;
     public const int DecreaseConfirmations = 5;
     public const double WarmupSeconds = 3.0;
+    /// <summary>display.attach/detach と Spout ON/OFF の直後の学習除外時間（L-2）。</summary>
+    public const double EventSuspendSeconds = 1.0;
     private const int MinimumSamples = 10;
     private const double ChangeEpsilonMs = 0.05;
 
     private readonly List<long> samples = new();
     private long windowStartQpc;
     private long firstSampleQpc;
+    private long suspendUntilQpc;
     private bool warmupStarted;
     private bool windowStarted;
     private int belowWindows;
     public double CurrentLeadMs { get; private set; } = Math.Clamp(initialLeadMs, MinimumLeadMs, MaximumLeadMs);
+
+    /// <summary>
+    /// display.attach/detach と Spout ON/OFF の直後は位相が乱れるため、指定秒数の間は学習しない（L-2）。
+    /// 進行中の窓は破棄し、除外明けの最初の標本から新しい窓を始める（起動後 3 秒除外と同じ扱い）。
+    /// </summary>
+    public void SuspendLearning(long nowQpc, double seconds = EventSuspendSeconds)
+    {
+        long until = nowQpc + (long)Math.Round(Math.Max(0.0, seconds) * frequency);
+        if (until > suspendUntilQpc) suspendUntilQpc = until;
+        samples.Clear();
+        windowStarted = false;
+        belowWindows = 0;
+    }
 
     /// <summary>合成時間のサンプルを追加し、1 秒経過していれば次 lead を返す（変更なしなら false）。</summary>
     public bool Add(long durationTicks, long nowQpc, out double newLeadMs)
     {
         newLeadMs = CurrentLeadMs;
         if (durationTicks < 0 || frequency <= 0) return false;
+        if (nowQpc < suspendUntilQpc) return false;
         // 起動直後はデコーダ起動・シェーダ初期化で合成が長く、lead を過大に学習する。
         // 最初の 3 秒は標本に入れない（段階 3）。
         if (!warmupStarted) { warmupStarted = true; firstSampleQpc = nowQpc; return false; }

@@ -79,8 +79,8 @@ internal sealed class GstNativeApi : IGstNativeApi
 
     public int ConsumeUpdate(IntPtr player) => GstNative.Imports.tcs_player_consume_update(player);
 
-    public bool Acquire(IntPtr player, ulong generation, out GstNative.TcsFrameInfo info) =>
-        GstNative.Imports.tcs_player_acquire(player, generation, out info) == 1;
+    public int Acquire(IntPtr player, ulong generation, out GstNative.TcsFrameInfo info) =>
+        GstNative.Imports.tcs_player_acquire(player, generation, out info);
 
     public bool TryGetLeasedTexture(IntPtr player, out IntPtr texture, out uint subresource, out uint dxgiFormat) =>
         GstNative.Imports.tcs_player_leased_texture(player, out texture, out subresource, out dxgiFormat) == 0;
