@@ -10,6 +10,13 @@ public enum LtcSignalLossMode
     Stop
 }
 
+/// <summary>再生バックエンド。既定は mpv（GStreamer 経路は検証用）。</summary>
+public enum PlayerBackend
+{
+    Mpv,
+    Gstreamer
+}
+
 /// <summary>
 /// アプリケーション設定の不変レコード。
 /// </summary>
@@ -38,6 +45,7 @@ public sealed record AppSettings
     public string FullscreenDisplayDeviceName { get; init; } = "";
     public bool IsMuted { get; init; }
     public double Volume { get; init; } = 100;
+    public PlayerBackend Backend { get; init; } = PlayerBackend.Mpv;
 
     public static AppSettings Default => new();
 }
@@ -148,6 +156,8 @@ public sealed class AppSettingsManager
             settings = settings with { GapBehavior = AppSettings.Default.GapBehavior };
         if (!Enum.IsDefined(settings.LtcSignalLossMode))
             settings = settings with { LtcSignalLossMode = LtcSignalLossMode.RunThrough };
+        if (!Enum.IsDefined(settings.Backend))
+            settings = settings with { Backend = PlayerBackend.Mpv };
         settings = settings with
         {
             LtcSignalLossTimeoutMs = Math.Clamp(

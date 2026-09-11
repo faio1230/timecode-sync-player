@@ -18,9 +18,42 @@ installation script and instructions for obtaining a separate upstream Windows b
 Users who install libmpv are responsible for retaining the notices and complying with the terms
 provided by that binary's distributor, including the terms of bundled FFmpeg and other libraries.
 
+## GStreamer 1.28.2 (optional GStreamer playback backend)
+
+The GStreamer runtime is **not included** in the TimecodeSyncPlayer release zip. The optional
+GStreamer backend loads the official runtime installed separately by the user
+(`GSTREAMER_1_0_ROOT_MSVC_X86_64`, default `C:\Program Files\gstreamer\1.0\msvc_x86_64`).
+
+- Project: [GStreamer](https://gstreamer.freedesktop.org/)
+- License: GNU Lesser General Public License, version 2.1 or later (LGPL-2.1-or-later) for the core
+  libraries and the plugins used by this application. TimecodeSyncPlayer links to the GStreamer
+  shared libraries dynamically and does not modify them; no GStreamer source or binaries are
+  redistributed by this project.
+- License text: [LGPL-2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html)
+- Source code: [gstreamer.freedesktop.org/src](https://gstreamer.freedesktop.org/src/) (or the
+  source offer included with the user's GStreamer installation)
+
+Plugins/elements used by the optional backend and their license families (as shipped by the
+official MSVC runtime):
+
+| Component (plugin set) | Used for | License |
+| --- | --- | --- |
+| gstreamer core, gst-plugins-base (`videoconvert`, `audioconvert`, `volume`, `decodebin`, `typefind`) | pipeline core, software conversion, audio tail | LGPL-2.1-or-later |
+| gst-plugins-good (`qtdemux`, `matroskademux`, `avidemux`, `tsdemux`, `mxfdemux`, `h264parse`, `h265parse`, `autoaudiosink`/`wasapi2`) | demux/parse/audio output | LGPL-2.1-or-later |
+| gst-plugins-bad (`d3d11h264dec`, `d3d11h265dec`, `d3d11vp9dec`, `d3d11av1dec`, `d3d11colorconvert`, `d3d11*` device libs, `dav1ddec`) | D3D11 GPU decode / color conversion | LGPL-2.1-or-later (dav1ddec links dav1d: BSD-2-Clause) |
+| gst-libav (`avdec_h264`, `avdec_h265`, ...) | CPU decoder fallback | LGPL-2.1-or-later (built against LGPL FFmpeg in the official runtime) |
+| nvcodec (`nvh264dec`, ...) | not used (rank-demoted; kept out of autoplug) | LGPL-2.1-or-later |
+
+The runtime may contain additional optional plugins with other licenses (e.g., GPL components such
+as x264-based encoders). TimecodeSyncPlayer does not use them; users are bound by the terms of the
+runtime they install.
+
 ## SpoutDX / Spout2
 
-`SpoutDX.dll` is included in the TimecodeSyncPlayer release zip.
+`SpoutDX.dll` is included in the TimecodeSyncPlayer release zip. When the optional GStreamer backend
+is enabled, `tcs_gstreamer.dll` additionally contains the Spout2 SDK DirectX sources
+(`spoutDX`, compiled in from the pinned upstream tag 2.007.017); the same BSD-2-Clause notice below
+applies to that binary as well.
 
 - Project: [Spout2](https://github.com/leadedge/Spout2)
 - License: Simplified BSD License (SPDX: BSD-2-Clause)

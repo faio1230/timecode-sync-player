@@ -23,6 +23,10 @@ internal static class MpvNativeLibraryResolver
         Assembly assembly,
         DllImportSearchPath? searchPath)
     {
+        if (TimecodeSyncPlayer.Gst.GstNative.IsGstLibrary(libraryName))
+            return TimecodeSyncPlayer.Gst.GstNativeLibraryResolver.ResolveLibrary(
+                libraryName, assembly, searchPath);
+
         foreach (string candidate in MpvLibraryNameResolver.GetCandidates(libraryName))
         {
             if (NativeLibrary.TryLoad(candidate, assembly, searchPath, out IntPtr handle))

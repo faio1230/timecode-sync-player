@@ -37,6 +37,15 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>SpoutDX.dll</Link>
     </Content>
+    <Content Include="..\..\native\tcs_gstreamer.dll" Condition="Exists('..\..\native\tcs_gstreamer.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>tcs_gstreamer.dll</Link>
+    </Content>
+    <Content Include="..\..\native\gst-shim\build-debug\tcs_gstreamer.dll"
+             Condition="!Exists('..\..\native\tcs_gstreamer.dll') And Exists('..\..\native\gst-shim\build-debug\tcs_gstreamer.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>tcs_gstreamer.dll</Link>
+    </Content>
   </ItemGroup>
 
 </Project>
