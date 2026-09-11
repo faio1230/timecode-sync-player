@@ -61,6 +61,84 @@
 
 ---
 
+## GPU経路（OutputBackend=Gpu）の実機確認
+
+GPU経路はrunner（親worktree `TestResults\gpu-mutex-retry-session-20260910T0752Z\Invoke-AppGpuTrial.ps1`）で
+1プロセスずつ実行する。オプションの意味・結果ディレクトリの構成・集計スクリプトは
+[HANDOVER-GPU-OUTPUT-2026-09-12.md](HANDOVER-GPU-OUTPUT-2026-09-12.md) を参照。
+
+### 事前準備（GPU）
+
+- [ ] `settings.json`に`"outputBackend": 1`（GStreamer経路は`"backend": 1`も）
+- [ ] GStreamer経路はGStreamer 1.28.2と`native\tcs_gstreamer.dll`を配置（[SETUP.md](SETUP.md)）
+- [ ] Spout確認は`native\SpoutDX.dll`と公式WinSpoutDXreceiverを用意
+- [ ] consoleセッション（`query session`で`>console`）で、他にTimecodeSyncPlayer／WinSpoutDXreceiver／
+      GpuOutputProbe／gst-launch-1.0／tcs-shim-testが動いていないこと
+- [ ] 4K確認は4K表示先（例: `\\.\DISPLAY2`）をrunnerの`-DisplayDeviceName`へ指定
+
+### ケース G1: 1080p・60秒（mpv×Gpu、Spout受信機あり）
+
+- [ ] runner: `-MediaPath <1080p60素材> -Label app-1080p -Seconds 60 -PlayerBackend Mpv`
+- [ ] `app\events.jsonl`の`compose.publish` / `present.return` / `send.publish`が60Hz相当で継続
+- [ ] `app\summary.json`の`validPerformanceResult`が`true`、`errors`0、`present.status`失敗0
+- [ ] 受信側（WinSpoutDXreceiver）でフレーム更新が途切れない
+
+### ケース G2: 4K・32秒（mpv×Gpu）と受信機断
+
+- [ ] runner: `-MediaPath <4K素材> -Label app-4k -Seconds 32 -PlayerBackend Mpv`
+- [ ] 合成・表示・Spoutが60Hz、表示落ち・画像飛び0
+- [ ] `-KillReceiverAfterSeconds 10`で受信機を強制終了しても、アプリが故障せず送信を継続し、
+      保持画像の再送で復帰する（`send.acquire.end`の`abandoned`は正常扱い）
+
+### ケース G3: GStreamer×Gpu（1080p／4K）
+
+- [ ] runner: `-PlayerBackend Gstreamer`、素材は`artifacts\media`のH.264 1080p60／HEVC 4K
+- [ ] `source.acquire`が`Ready`で、世代変更（`gst.generation`）後に古い画像が返らない
+- [ ] `gst_delivery_check.py`でdistinct/secが概ね素材fps、NotReadyが定常的に続かない
+- [ ] `gst.delivery`の到着間隔と`arrival→acquire age`が破綻していない
+- [ ] `-KillReceiverAfterSeconds`で受信機断後も継続する
+
+### ケース G4: キャンバス配置（スクリーンショット）
+
+- [ ] `-ScreenshotAtSeconds`で1920×1080／3840×2160キャンバスの全画面を撮影
+- [ ] 縦横比維持・はみ出しの切り落とし・黒余白・中央配置が仕様どおり
+- [ ] クリップのFit（高さ合わせ／幅合わせ）が次の確定画像から反映される
+
+### ケース G5: テストカード
+
+- [ ] `-TestCardOnAtSeconds 10 -TestCardOffAtSeconds 20`でON/OFF
+- [ ] カードON/OFFで再生・LTC同期が停止／再開しない（再生中は進み続ける）
+- [ ] カードは全画面・Spout・プレビューで同時に表示・解除される
+
+### ケース G6: 終了ダイアログ3経路
+
+- [ ] `-ExitDialog None`: ×／Alt+F4で確認ダイアログが表示され、再生・LTC・出力が継続する。
+      runnerは無操作のため60秒後に未終了をerrorとして記録する（想定内）。確認後は手動で終了する
+- [ ] `-ExitDialog Normal`: `BtnExitNormal`で5手順（新規受付停止→mpv／GStreamer停止→出力停止→
+      全画面終了→資源解放）が進み、終了コード0でプロセスが残らない
+- [ ] `-ExitDialog Force`: `BtnExitForce`で追加確認なしに終了する（終了コード2）。プロセスが残らない
+
+### ケース G7: デバイス消失
+
+- [ ] `-SimulateDeviceLoss 10`: 1回目の消失で自動復旧し、画面が戻る（ログに`gpu.recover`）
+- [ ] `-SimulateDeviceLoss 10,20 -GpuRetryAtSeconds 25`: 復旧後の再発で「GPU 出力停止。再試行」が
+      表示され、`BtnGpuRetry`の手動再試行で復帰する
+- [ ] 実デバイス消失（デバイス無効化・ドライバー再起動）は未検証。可能な環境では結果を記録する
+
+### 結果記録（GPU）
+
+| 項目 | 結果 | メモ |
+|---|---|---|
+| G1 1080p 60秒 | ⬜ OK / ⬜ NG | |
+| G2 4K 32秒・受信機断 | ⬜ OK / ⬜ NG | |
+| G3 GStreamer×Gpu | ⬜ OK / ⬜ NG / ⬜ 未実施 | |
+| G4 キャンバス配置 | ⬜ OK / ⬜ NG | |
+| G5 テストカード | ⬜ OK / ⬜ NG | |
+| G6 終了ダイアログ3経路 | ⬜ OK / ⬜ NG | |
+| G7 デバイス消失 | ⬜ OK / ⬜ NG / ⬜ 未実施 | |
+
+---
+
 ## 事後確認
 
 - [ ] ログ全体に `ERR` / `FTL` / `Exception` / `success=false` が**0件**であること

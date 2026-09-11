@@ -64,8 +64,38 @@ powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1
 |---------|---------|---------|
 | `native/libmpv-2.dll` | **必須** | 推奨は`scripts/get-mpv.ps1`。手動時も上流名のまま配置します。**x64版**であることを確認してください。 |
 | `native/SpoutDX.dll` | 任意 | [Spout2](https://github.com/leadedge/Spout2)のSDK内SpoutDXプロジェクトをビルドして配置します。配布zip／インストーラーには同梱済みです。 |
+| `native/tcs_gstreamer.dll` | 任意 | `PlayerBackend=Gstreamer`を使う場合のみ。下記「GStreamerバックエンド」を参照して`native/gst-shim`からビルドします。 |
 
 詳細は [native/README.md](../native/README.md) を参照してください。
+
+### GStreamer 1.28.2（PlayerBackend=Gstreamer を使う場合）
+
+GStreamerバックエンドで再生する場合は、公式の**MSVC x64ランタイム 1.28.2**を別途導入します
+（本リポジトリには同梱しません）。[GStreamer公式ダウンロード](https://gstreamer.freedesktop.org/download/)から
+MSVC x64用の1.28.2ランタイムをインストールし、`bin`に`gstreamer-1.0-0.dll`（または
+`gstreamer-1.0.dll`）があることを確認します。
+
+- 既定の探索先: `C:\Program Files\gstreamer\1.0\msvc_x86_64`
+- 別の場所へインストールした場合: 環境変数`GSTREAMER_1_0_ROOT_MSVC_X86_64`にルート
+  （`bin`の親ディレクトリ）を設定します。
+
+#### native/gst-shim のビルド
+
+`native/gst-shim`は、GStreamerのデコード結果をD3D11テクスチャのリースAPIとして
+合成層へ公開するshimです。`tcs_gstreamer.dll`は配布物に含めません。次の手順でビルドします。
+
+```powershell
+# Spout2 (tag 2.007.017) を vendor/Spout2 へ取得（git管理外）
+powershell -File native\gst-shim\get-spout.ps1
+# Debugビルド（Visual Studio Build Tools + CMake + Ninja が必要）
+powershell -File native\gst-shim\build-shim.ps1 -Config Debug
+# 出力: native\gst-shim\build-debug\tcs_gstreamer.dll
+```
+
+`tcs_gstreamer.dll`は`native\tcs_gstreamer.dll`へ置くか、`build-debug`に出力したままにすると、
+本体のビルド時に`src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\`へ自動コピーされます
+（`native\tcs_gstreamer.dll`が優先）。GStreamerランタイムのパスが通っていないとDLLを
+ロードできないため、先にランタイムを導入してください。
 
 ---
 
@@ -155,10 +185,52 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD
 
 ---
 
-## 8. トラブルシューティング
+## 8. バックエンド設定と環境変数
+
+### PlayerBackend / OutputBackend
+
+設定は`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`（`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`で
+上書き可）の次のキーで選びます。変更後はアプリを再起動してください。
+
+| JSONキー | 値 | 既定 | 内容 |
+|---|---|---|---|
+| `backend` | `0` = Mpv / `1` = Gstreamer | `0` | 再生バックエンド。Gstreamerは`tcs_gstreamer.dll`とGStreamerランタイムが必要です |
+| `outputBackend` | `0` = Cpu / `1` = Gpu | `0` | 映像出力バックエンド。Cpuは従来の`OutputFrame`→`WriteableBitmap`→`SendImage`経路です |
+
+例（GStreamer + GPU出力）:
+
+```json
+{
+  "backend": 1,
+  "outputBackend": 1
+}
+```
+
+- `outputBackend=1`でも、D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では
+  起動時にCpuへフォールバックし、ログに理由を出力します（設定ファイルは書き換えません）。
+- `backend=1`は`tcs_gstreamer.dll`とGStreamerランタイムが見つからない場合、再生開始に失敗します。
+  ログのエラーを確認し、前節のセットアップを行ってください。
+- 組み合わせの違い: `backend=0`＋`outputBackend=1`はmpvのスナップショットをGPU合成へ渡します。
+  `backend=1`＋`outputBackend=1`はshimの共有リングを直接ソースにします。
+  `backend=1`＋`outputBackend=0`は互換アダプター（CPU読み戻し）経路です。
+
+### 環境変数
+
+| 変数 | 用途 |
+|---|---|
+| `TIMECODE_SYNC_PLAYER_SETTINGS_PATH` | `settings.json`の場所を上書き（自動テストの隔離用） |
+| `TIMECODE_SYNC_PLAYER_SPOUT_NAME` | Spout送信者名の上書き。未設定は既定名 |
+| `TIMECODE_SYNC_PLAYER_OUTPUT_TRACE` | 出力トレース（`manifest.json` / `events.jsonl` / `summary.json`）の出力ディレクトリ。未設定は無効。停止時にまとめて書き出すため、強制終了では残りません |
+| `TIMECODE_SYNC_PLAYER_TEST_CARD` | `1`または`true`で起動時にテストカードをON（動作確認用） |
+| `TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS` | `<秒>[,<秒>...]`。指定時刻に疑似デバイス消失を発生させ、復旧経路を確認する検証用 |
+| `GSTREAMER_1_0_ROOT_MSVC_X86_64` | GStreamerランタイムのルート。既定は`C:\Program Files\gstreamer\1.0\msvc_x86_64` |
+
+## 9. トラブルシューティング
 
 | 症状 | 原因・対処 |
 |---|---|
 | 起動直後に `mpv_create` 失敗、または映像が表示されない | `native/libmpv-2.dll`（または互換用`mpv-2.dll`）が未配置、もしくはx86/x64の不一致です。`get-mpv.ps1`でx64版を導入してください。 |
 | Spout出力ボタンが押せない（無効化されている） | `native/SpoutDX.dll` が無いだけです。Spout出力を使わないなら正常な動作であり、修正不要です。 |
+| `outputBackend=1`にしたが映像が出ない | D3D11.4が使えずCpuへフォールバックした可能性があります。ログの`OutputBackend: Gpu を指定されましたが利用できないため Cpu へフォールバックします`を確認してください。 |
+| `backend=1`で再生開始に失敗する | GStreamerランタイム未導入、または`tcs_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
 | コンソール出力やログの日本語が文字化けする | PowerShellのコンソールエンコーディングをUTF-8に設定してください。<br>`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` |
