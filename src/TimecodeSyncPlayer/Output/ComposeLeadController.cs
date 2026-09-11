@@ -15,11 +15,14 @@ internal sealed class ComposeLeadController(long frequency, double initialLeadMs
     public const double DecreaseThresholdMs = 0.5;
     public const double DecreaseStepMs = 0.5;
     public const int DecreaseConfirmations = 5;
+    public const double WarmupSeconds = 3.0;
     private const int MinimumSamples = 10;
     private const double ChangeEpsilonMs = 0.05;
 
     private readonly List<long> samples = new();
     private long windowStartQpc;
+    private long firstSampleQpc;
+    private bool warmupStarted;
     private bool windowStarted;
     private int belowWindows;
     public double CurrentLeadMs { get; private set; } = Math.Clamp(initialLeadMs, MinimumLeadMs, MaximumLeadMs);
@@ -29,6 +32,10 @@ internal sealed class ComposeLeadController(long frequency, double initialLeadMs
     {
         newLeadMs = CurrentLeadMs;
         if (durationTicks < 0 || frequency <= 0) return false;
+        // 起動直後はデコーダ起動・シェーダ初期化で合成が長く、lead を過大に学習する。
+        // 最初の 3 秒は標本に入れない（段階 3）。
+        if (!warmupStarted) { warmupStarted = true; firstSampleQpc = nowQpc; return false; }
+        if (nowQpc - firstSampleQpc < (long)Math.Round(WarmupSeconds * frequency)) return false;
         samples.Add(durationTicks);
         if (!windowStarted) { windowStarted = true; windowStartQpc = nowQpc; return false; }
         if (nowQpc - windowStartQpc < frequency) return false;

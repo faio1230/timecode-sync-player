@@ -23,10 +23,12 @@ internal sealed class GpuDevice : IDisposable
     private readonly ID3D11Device1? device1;
     private readonly ID3D11Device5? device5;
     private readonly ID3D11DeviceContext4? context4;
+    private readonly Action<string> fault;
     public long Luid { get; }
 
     public GpuDevice(long? luid, Action<string> fault, bool fenceSync = false)
     {
+        this.fault = fault;
         using var build = new ConstructionScope();
         Factory = build.Add(CreateDXGIFactory1<IDXGIFactory2>());
         IDXGIAdapter1? selected = null;
@@ -55,6 +57,9 @@ internal sealed class GpuDevice : IDisposable
         }
         build.Commit();
     }
+
+    /// <summary>別スレッドが同じコンテキストで完了待ちするための Event query（query は共有できない）。</summary>
+    public GpuFence CreateFence() => new(Device, Context, fault);
 
     public ID3D11Device1 Device1 => device1 ?? throw new InvalidOperationException("Device was not created for fence source sync.");
     public ID3D11Device5 Device5 => device5 ?? throw new InvalidOperationException("Device was not created for fence source sync.");

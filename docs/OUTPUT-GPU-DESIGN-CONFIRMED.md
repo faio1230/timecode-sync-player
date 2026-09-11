@@ -11,7 +11,7 @@
                                                      合成画像 pool（3枚、lease、共有フェンス）
                                     ┌──────────────────────┬────────────────────┐
                                     ▼                      ▼                    ▼
-                          全画面（同一デバイス）      Spout worker（別デバイス）   プレビュー（後段）
+                          全画面（同一デバイス）      Spout worker（同一デバイス）   プレビュー（後段）
                           vblank 位相基準で Present    合成に対する位相 4ms で送信
 ```
 
@@ -27,7 +27,15 @@
 | 読者→書き手の安全 | CPU lease（読者0の領域にしか書かない） | 同上 |
 | 表示の時計 | DXGI フレーム統計（`GetFrameStatistics`）で次の vblank を予測し、`vblank − margin(3ms)` に最新画像を Present。1 vblank 1表示、失敗は次の vblank。目標到達済みの表示は合成より優先 | [走査計測](GPU-SCANOUT-STATS-RESULTS-2026-09-10.md)、[vblank 実証](GPU-VBLANK-PACING-RESULTS-2026-09-10.md) |
 | 合成の位相 | 主表示があれば `vblank − margin − lead(3ms)` に逐次補正（slew 0.5ms/tick）。周期は主表示の実周期に追従。表示がなければ自由走行 60Hz | [整列実証](GPU-COMPOSE-ALIGN-RESULTS-2026-09-10.md): 総遅延 5.6ms で起動非依存、表示落ち0 |
-| Spout | 専用 worker・別デバイス。合成に対する位相 4ms で最新画像を送信用テクスチャへ GPU コピーし SendTexture。送信アクセス mutex は要求 8ms・期限＝次回予定。失敗は保持画像の再送、資源は無効化しない | [位相](GPU-SEND-PHASE-PROBE-RESULTS-2026-09-09.md)、[8ms](GPU-MUTEX-8MS-PROBE-RESULTS-2026-09-09.md) |
+| Spout | 専用 worker・同一デバイス（段階 3 で別デバイスから変更）。合成 worker が compose 完了の測定後に同じ context で保持テクスチャへ GPU コピーし、送信 worker は専用フェンスでコピー完了を確認してからアクセス mutex（要求 8ms・期限＝次回予定）を取得し SendTexture。失敗は保持画像の再送、資源は無効化しない | [位相](GPU-SEND-PHASE-PROBE-RESULTS-2026-09-09.md)、[8ms](GPU-MUTEX-8MS-PROBE-RESULTS-2026-09-09.md) |
+
+### 段階 3 の設計差異（2026-09-11）
+
+Spout 送信は当初「別デバイス・送信 worker が GPU コピー」だった。4K 実測で送信 worker のコピーと合成が物理 GPU を奪い合い、合成完了待ちに毎秒 1〜2 回 8〜20ms の外れ値が出て lead が 8ms に張り付いたため、次のように変更した。
+
+- コピーは合成 worker が `compose.complete` の測定後に同じ context へ発行する（Spout 無効時は発行しない）。
+- 送信 worker は段階リング（保持テクスチャ 2 枚）の Ready を選び、専用の Event query（`GpuDevice.CreateFence`）でコピー完了を確認してから mutex 取得と SendTexture のみを行う。
+- immediate context は free-threaded 前提でスレッド間共有する。完了待ち query はスレッドごとに専有し、保持テクスチャの書込み/読取りは段階リングで排他する。読者同士（全画面・Spout）は排他しないまま。
 | 待ち | 高分解能 waitable timer（`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`）。起床遅れ p99 0.6ms | [整列実証](GPU-COMPOSE-ALIGN-RESULTS-2026-09-10.md) |
 | 終了 | 新規処理停止→送信 worker join→送信側の共有資源解放→合成側の解放。待機中も UI 応答、強制終了は最初から選択可 | 設計文書、試作の UI |
 | 異常 | GPU 完了の期限超過を資源解放の理由にしない。デバイス消失は一度だけ自動復旧、再発は手動 | 設計文書 |

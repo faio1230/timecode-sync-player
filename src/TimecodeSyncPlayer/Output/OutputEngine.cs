@@ -74,7 +74,7 @@ internal sealed class OutputEngine : IDisposable
     private GpuDevice? gpu;
     private ShaderPipeline? shaders;
     private readonly List<Surface> surfaces = new();
-    private SharedFence? sharedFence;
+    private SpoutSender? spoutSender;
     private SwapchainTarget? target;
     private VblankDisplayGate? vblank;
     private VblankWaitTimer? gpuLoopTimer;
@@ -234,17 +234,18 @@ internal sealed class OutputEngine : IDisposable
 
     public void SetSpoutEnabled(bool enabled) => Enqueue(() =>
     {
-        if (enabled == spoutRunning && (enabled || spoutThread == null)) return;
-        if (enabled)
+        // 無効化は停止、有効化は未起動なら開始、起動中は維持（段階 3 の切替方針）。
+        switch (SpoutOutputPolicy.EvaluateWorker(enabled, spoutRunning))
         {
-            spoutRunning = true;
-            spoutEverEnabled = true;
-            if (spoutThread == null) StartSpoutWorker();
-        }
-        else
-        {
-            spoutRunning = false;
-            StopSpoutWorker();
+            case SpoutWorkerAction.Start:
+                spoutRunning = true;
+                spoutEverEnabled = true;
+                if (spoutThread == null) StartSpoutWorker();
+                break;
+            case SpoutWorkerAction.Stop:
+                spoutRunning = false;
+                StopSpoutWorker();
+                break;
         }
     });
 
@@ -297,7 +298,6 @@ internal sealed class OutputEngine : IDisposable
             shaders = new ShaderPipeline(gpu);
             for (int i = 0; i < pool.Capacity; i++)
                 surfaces.Add(new Surface(gpu, gpu.Texture(settings.CanvasWidth, settings.CanvasHeight, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
-            sharedFence = new SharedFence(gpu);
             originQpc = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 2;
             settings.Trace.OriginQpc = originQpc;
             gpuLoopTimer = new VblankWaitTimer();
@@ -502,7 +502,6 @@ internal sealed class OutputEngine : IDisposable
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
                 stamp, originQpc, acquired);
-            sharedFence!.Signal(gpu!, stamp.Id); // フェンス値＝画像 ID。Spout 側は GPU キューで待つ。
             gpu!.Fence.Wait("compose.source");
             long composeCompletedQpc = Stopwatch.GetTimestamp();
             if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
@@ -513,6 +512,8 @@ internal sealed class OutputEngine : IDisposable
             pool.Publish(slot, stamp, true);
             writing = false;
             settings.Trace.Record(new("compose.visible", "GPU", Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc));
+            // Spout 有効時のみ、合成完了の測定後に同一 context で保持テクスチャへコピーする（段階 3）。
+            if (spoutRunning) Volatile.Read(ref spoutSender)?.Stage(surface, stamp, scheduled);
         }
         finally
         {
@@ -881,24 +882,18 @@ internal sealed class OutputEngine : IDisposable
 
     private void SpoutRun(CancellationToken token, ManualResetEventSlim ready)
     {
-        GpuDevice? sendGpu = null;
         SpoutSender? sender = null;
-        SharedFenceReader? fenceReader = null;
         VblankWaitTimer? loopTimer = null;
-        var opened = new List<Surface>();
         try
         {
-            sendGpu = new GpuDevice(gpu!.Luid, Fault, fenceSync: true);
-            foreach (var surface in surfaces)
-                opened.Add(new Surface(sendGpu, sendGpu.Device1.OpenSharedResource1<ID3D11Texture2D>(surface.Handle), false, SourceSharing.None));
-            fenceReader = new SharedFenceReader(sendGpu, sharedFence!.Open(sendGpu));
-            sender = new SpoutSender(sendGpu, settings.Trace, "Spout", settings.SenderName,
-                settings.CanvasWidth, settings.CanvasHeight, MutexWaitPolicy.MaxWaitMs, fenceReader);
+            // 段階 3: 送信も合成デバイスで行う（別デバイス廃止）。コピーは合成スレッドが同じ context に発行する。
+            sender = new SpoutSender(gpu!, settings.Trace, "Spout", settings.SenderName,
+                settings.CanvasWidth, settings.CanvasHeight, MutexWaitPolicy.MaxWaitMs);
+            Volatile.Write(ref spoutSender, sender);
             loopTimer = new VblankWaitTimer();
             spoutLoopTimerHighResolution = loopTimer.HighResolution;
             ready.Set();
             if (token.IsCancellationRequested) return;
-            Surface[] reads = opened.ToArray();
             long origin = originQpc + (long)Math.Round(settings.SendPhaseMs * Stopwatch.Frequency / 1000);
             var schedule = new TickSchedule(origin, settings.Fps, Stopwatch.Frequency, scheduleOffset);
             while (!token.IsCancellationRequested)
@@ -913,7 +908,6 @@ internal sealed class OutputEngine : IDisposable
                 }
                 var tick = schedule.Take(now);
                 if (tick.Skipped > 0) settings.Trace.Add("skip", "Spout", tick.Scheduled, detail: "schedule.late", value: tick.Skipped);
-                sender.Update(reads, pool, tick.Scheduled, token);
                 sender.Send(tick.Scheduled, schedule.DueQpc, token);
             }
         }
@@ -924,12 +918,9 @@ internal sealed class OutputEngine : IDisposable
         finally
         {
             ready.Set();
-            if (sendGpu != null) Drain(sendGpu, "Spout.shutdown");
+            Volatile.Write(ref spoutSender, null);
             DisposeOwned(sender, "Spout.sender");
             DisposeOwned(loopTimer, "Spout.loopTimer");
-            foreach (var surface in opened) DisposeOwned(surface, "Spout.shared");
-            DisposeOwned(fenceReader, "Spout.fence");
-            DisposeOwned(sendGpu, "Spout.device");
             settings.Trace.Add("lifecycle", "Spout", detail: "worker.finished");
         }
     }
@@ -975,7 +966,6 @@ internal sealed class OutputEngine : IDisposable
             DisposeOwned(surface, "GPU.surface");
         }
         surfaces.Clear();
-        DisposeOwned(sharedFence, "GPU.fence"); sharedFence = null;
         DisposeOwned(shaders, "GPU.shaders"); shaders = null;
         DisposeOwned(previewTarget, "GPU.previewTarget"); previewTarget = null;
         DisposeOwned(previewTexture, "GPU.previewTexture"); previewTexture = null;

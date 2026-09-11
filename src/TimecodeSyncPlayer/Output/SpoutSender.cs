@@ -8,9 +8,9 @@ using Vortice.Direct3D11;
 namespace TimecodeSyncPlayer.Output;
 
 /// <summary>
-/// Spout 送信 worker 側の送信機。別デバイスの共有テクスチャを保持画像へ GPU コピーし、外側アクセス mutex を
-/// 要求 8ms（期限＝次回予定）で取得して SendTexture する。取得失敗は保持画像の再送で、資源は無効化しない。
-/// 試作 scripts/GpuOutputProbe の SpoutSender を移植（copy-retry は確認済み設計に含めない）。
+/// Spout 送信機（段階 3 で同一デバイス合成スレッド発行へ変更）。合成スレッドが compose.complete 直後に
+/// 同じ context で保持テクスチャへ CopyResource し、Spout worker は専用フェンスでコピー完了を確認してから
+/// mutex 取得と SendTexture だけを行う。送信失敗時は保持画像を Ready に戻し、次 tick に再送する。
 /// </summary>
 internal sealed class SpoutSender : IDisposable
 {
@@ -23,21 +23,24 @@ internal sealed class SpoutSender : IDisposable
     private readonly OutputTrace log;
     private readonly string worker;
     private readonly int mutexWaitMs;
-    private readonly SharedFenceReader? fence;
-    private readonly ID3D11Texture2D heldTexture;
+    private readonly ID3D11Texture2D[] heldTextures;
+    private readonly GpuFence senderFence;
+    private readonly object gate = new();
+    private readonly SpoutStageRing ring = new(2);
     private IntPtr self;
     private Mutex? mutex;
-    private ImageStamp held;
     public string ActualName { get; }
 
-    public SpoutSender(GpuDevice gpu, OutputTrace log, string worker, string senderName, int width, int height, int mutexWaitMs = MutexWaitPolicy.MaxWaitMs, SharedFenceReader? fence = null)
+    public SpoutSender(GpuDevice gpu, OutputTrace log, string worker, string senderName, int width, int height, int mutexWaitMs = MutexWaitPolicy.MaxWaitMs)
     {
         SpoutTextureNative.EnsureVerifiedLibrary(warnOnly: true);
-        this.gpu = gpu; this.log = log; this.worker = worker; this.mutexWaitMs = mutexWaitMs; this.fence = fence;
-        heldTexture = gpu.Texture(width, height, SourceSharing.None);
+        this.gpu = gpu; this.log = log; this.worker = worker; this.mutexWaitMs = mutexWaitMs;
+        heldTextures = new ID3D11Texture2D[ring.Capacity];
+        senderFence = gpu.CreateFence();
         bool constructed = false;
         try
         {
+            for (int i = 0; i < heldTextures.Length; i++) heldTextures[i] = gpu.Texture(width, height, SourceSharing.None);
             self = Marshal.AllocHGlobal(AllocationBytes);
             unsafe { new Span<byte>((void*)self, AllocationBytes).Clear(); }
             SpoutTextureNative.Ctor(self); constructed = true;
@@ -50,113 +53,112 @@ internal sealed class SpoutSender : IDisposable
         }
         catch
         {
-            try { gpu.Fence.Wait("Spout.constructor.drain"); }
+            try { senderFence.Wait("Spout.constructor.drain"); }
             catch (GpuDeviceLostException) { }
             finally
             {
                 try { if (constructed) SpoutTextureNative.Dtor(self); }
-                finally { if (self != IntPtr.Zero) Marshal.FreeHGlobal(self); self = IntPtr.Zero; mutex?.Dispose(); heldTexture.Dispose(); }
+                finally
+                {
+                    if (self != IntPtr.Zero) Marshal.FreeHGlobal(self);
+                    self = IntPtr.Zero;
+                    mutex?.Dispose();
+                    foreach (var texture in heldTextures) texture?.Dispose();
+                    senderFence.Dispose();
+                }
             }
             throw;
         }
     }
 
-    private enum CopyOutcome { Copied, SameHeld, NoLease, Busy }
-
-    public void Update(Surface[] sources, LatestPool pool, long scheduled, CancellationToken stop)
-        => _ = CopyOnce(sources, pool, scheduled, "first", out _);
-
-    private CopyOutcome CopyOnce(Surface[] sources, LatestPool pool, long scheduled, string kind, out ImageStamp attempted)
+    /// <summary>合成スレッド。compose.complete の後に同一 context でコピーを発行する（Spout 無効時は呼ばない）。</summary>
+    public void Stage(Surface source, ImageStamp stamp, long scheduled)
     {
-        long selectStarted = Stopwatch.GetTimestamp();
-        using var lease = pool.AcquireLatest();
-        long selectEnded = Stopwatch.GetTimestamp();
-        ImageStamp selected = lease?.Stamp ?? default;
-        attempted = selected;
-        string selection = lease == null ? "none" : selected.Id == held.Id ? "retained" : "latest";
-        long attempt = kind == "first" ? 0 : 1;
-        log.Record(new("send.select.start", worker, selectStarted, scheduled, selected.Id, selected.GeneratedQpc, Value: attempt));
-        log.Record(new("send.select.end", worker, selectEnded, scheduled, selected.Id, selected.GeneratedQpc, selection, Value: attempt));
-        if (lease == null) return CopyOutcome.NoLease;
-        if (lease.Stamp.Id == held.Id) return CopyOutcome.SameHeld;
-        var source = sources[lease.Slot];
-        if (fence != null)
+        int slot;
+        lock (gate)
         {
-            // 合成完了を GPU キューで待つ（フェンス値＝画像 ID）。CPU では何も保持しない。
-            fence.Wait(lease.Stamp.Id);
-            log.Record(new("copy.fence.wait", worker, Stopwatch.GetTimestamp(), scheduled, lease.Stamp.Id, lease.Stamp.GeneratedQpc, Detail: kind + ":" + lease.Slot, Value: lease.Stamp.Id));
-        }
-        else
-        {
-            if (!source.Acquire()) { log.Add("skip", worker, scheduled, lease.Stamp, kind == "first" ? "copy.keyedMutexBusy" : "copy.keyedMutexBusy.retry", 1); return CopyOutcome.Busy; }
-            log.Record(new("copy.mutex.acquire", worker, Stopwatch.GetTimestamp(), scheduled, lease.Stamp.Id, lease.Stamp.GeneratedQpc, Detail: kind + ":" + lease.Slot));
-        }
-        bool started = false;
-        try
-        {
-            lease.BeginGpuUse(); started = true;
-            log.Add("copy.start", worker, scheduled, lease.Stamp);
-            gpu.Context.CopyResource(heldTexture, source.Texture);
-            gpu.Fence.Wait("sender.copy");
-            lease.CompleteGpuUse(); started = false;
-            held = lease.Stamp;
-            log.Add("copy.complete", worker, scheduled, held);
-        }
-        finally
-        {
-            try { if (started) gpu.Fence.Wait("sender.copy.drain"); }
-            finally
+            if (SpoutOutputPolicy.DecideCopy(stamp.Id, ring.Held.Id) != SpoutCopyDecision.Copy) return;
+            slot = ring.BeginStage(stamp);
+            if (slot < 0)
             {
-                if (started) lease.CompleteGpuUse();
-                if (fence == null)
-                {
-                    source.Release();
-                    log.Record(new("copy.mutex.release", worker, Stopwatch.GetTimestamp(), scheduled, lease.Stamp.Id, lease.Stamp.GeneratedQpc, Detail: kind + ":" + lease.Slot));
-                }
+                log.Add("skip", worker, scheduled, stamp, "stage.busy", 1);
+                return;
             }
         }
-        return CopyOutcome.Copied;
+        try
+        {
+            gpu.Context.CopyResource(heldTextures[slot], source.Texture);
+            log.Add("spout.stage", worker, scheduled, stamp, detail: "gpu", value: slot);
+        }
+        catch
+        {
+            lock (gate) ring.AbortStage(slot);
+            throw;
+        }
+        lock (gate) ring.CompleteStage(slot, stamp);
     }
 
+    /// <summary>Spout worker。段階リングの Ready を mutex 取得して SendTexture するだけ。</summary>
     public void Send(long scheduled, long nextScheduledQpc, CancellationToken cancellation)
     {
-        if (held.Id == 0) { log.Add("skip", worker, scheduled, detail: "send.noImage", value: 1); return; }
-        using var acquisition = SendMutexGate.Acquire(mutexWaitMs, nextScheduledQpc, Stopwatch.Frequency, cancellation,
-            Stopwatch.GetTimestamp, timeout => mutex!.WaitOne(timeout), () => mutex!.ReleaseMutex(),
-            attempt =>
-            {
-                log.Record(new("send.acquire.start", worker, attempt.StartQpc, scheduled, held.Id, held.GeneratedQpc, Value: attempt.TimeoutMs, DeadlineQpc: attempt.DeadlineQpc));
-                log.Record(new("send.acquire.end", worker, attempt.EndQpc, scheduled, held.Id, held.GeneratedQpc, attempt.Outcome, DeadlineQpc: attempt.DeadlineQpc));
-            }, reason => log.Add("skip", worker, scheduled, held, reason, 1));
-        if (acquisition == null) return;
-        string? skipReason = MutexWaitPolicy.SkipReason(Stopwatch.GetTimestamp(), nextScheduledQpc, cancellation.IsCancellationRequested);
-        if (skipReason != null) { log.Add("skip", worker, scheduled, held, skipReason, 1); return; }
-        bool submitted = false, completed = false;
+        int slot;
+        ImageStamp stamp;
+        lock (gate) slot = ring.TryBeginSend(out stamp);
+        if (slot < 0)
+        {
+            log.Add("skip", worker, scheduled, ring.Held, detail: ring.Held.Id == 0 ? "send.noImage" : "send.noStage", 1);
+            return;
+        }
+        // 段階リングからの選択を解析ツール互換の対で記録する（attempt 0 = 初回）。
+        log.Record(new("send.select.start", worker, Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc, Value: 0));
+        log.Record(new("send.select.end", worker, Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc, "latest", Value: 0));
+        bool sent = false;
         try
         {
-            bool sent;
-            long sendStarted = Stopwatch.GetTimestamp(), sendReturned;
-            skipReason = MutexWaitPolicy.SkipReason(sendStarted, nextScheduledQpc, cancellation.IsCancellationRequested);
-            if (skipReason != null) { log.Add("skip", worker, scheduled, held, skipReason, 1); return; }
+            // コピーは合成スレッドが同じ context に発行済み。専用フェンスの完了待ちで同一順序を確定する。
+            senderFence.Wait("spout.waitStage");
+            using var acquisition = SendMutexGate.Acquire(mutexWaitMs, nextScheduledQpc, Stopwatch.Frequency, cancellation,
+                Stopwatch.GetTimestamp, timeout => mutex!.WaitOne(timeout), () => mutex!.ReleaseMutex(),
+                attempt =>
+                {
+                    log.Record(new("send.acquire.start", worker, attempt.StartQpc, scheduled, stamp.Id, stamp.GeneratedQpc, Value: attempt.TimeoutMs, DeadlineQpc: attempt.DeadlineQpc));
+                    log.Record(new("send.acquire.end", worker, attempt.EndQpc, scheduled, stamp.Id, stamp.GeneratedQpc, attempt.Outcome, DeadlineQpc: attempt.DeadlineQpc));
+                }, reason => log.Add("skip", worker, scheduled, stamp, reason, 1));
+            if (acquisition == null) return;
+            string? skipReason = MutexWaitPolicy.SkipReason(Stopwatch.GetTimestamp(), nextScheduledQpc, cancellation.IsCancellationRequested);
+            if (skipReason != null) { log.Add("skip", worker, scheduled, stamp, skipReason, 1); return; }
+            bool submitted = false, completed = false;
             try
             {
-                // 最終期限確認とネイティブ呼び出しの間に記録処理を挟まない。
-                submitted = true;
-                sent = SpoutTextureNative.SendTexture(self, heldTexture.NativePointer);
-                sendReturned = Stopwatch.GetTimestamp();
+                bool ok;
+                long sendStarted = Stopwatch.GetTimestamp(), sendReturned;
+                skipReason = MutexWaitPolicy.SkipReason(sendStarted, nextScheduledQpc, cancellation.IsCancellationRequested);
+                if (skipReason != null) { log.Add("skip", worker, scheduled, stamp, skipReason, 1); return; }
+                try
+                {
+                    // 最終期限確認とネイティブ呼び出しの間に記録処理を挟まない。
+                    submitted = true;
+                    ok = SpoutTextureNative.SendTexture(self, heldTextures[slot].NativePointer);
+                    sendReturned = Stopwatch.GetTimestamp();
+                }
+                finally { log.Record(new("send.start", worker, sendStarted, scheduled, stamp.Id, stamp.GeneratedQpc)); }
+                log.Record(new("send.return", worker, sendReturned, scheduled, stamp.Id, stamp.GeneratedQpc, ok ? "true" : "false"));
+                senderFence.Wait("sender.send");
+                completed = true;
+                log.Add("send.gpuComplete", worker, scheduled, stamp);
+                if (!ok) throw new InvalidOperationException("Spout SendTexture returned false.");
+                acquisition.Dispose();
+                sent = true;
+                log.Add("send.publish", worker, scheduled, stamp);
             }
-            finally { log.Record(new("send.start", worker, sendStarted, scheduled, held.Id, held.GeneratedQpc)); }
-            log.Record(new("send.return", worker, sendReturned, scheduled, held.Id, held.GeneratedQpc, sent ? "true" : "false"));
-            gpu.Fence.Wait("sender.send");
-            completed = true;
-            log.Add("send.gpuComplete", worker, scheduled, held);
-            if (!sent) throw new InvalidOperationException("Spout SendTexture returned false.");
-            acquisition.Dispose();
-            log.Add("send.publish", worker, scheduled, held);
+            finally
+            {
+                if (submitted && !completed) senderFence.Wait("sender.send.drain");
+            }
         }
         finally
         {
-            if (submitted && !completed) gpu.Fence.Wait("sender.send.drain");
+            lock (gate) ring.EndSend(slot, stamp, sent);
         }
     }
 
@@ -166,7 +168,9 @@ internal sealed class SpoutSender : IDisposable
         {
             SpoutTextureNative.ReleaseSender(self); SpoutTextureNative.Dtor(self); Marshal.FreeHGlobal(self); self = IntPtr.Zero;
         }
-        mutex?.Dispose(); mutex = null; heldTexture.Dispose();
+        mutex?.Dispose(); mutex = null;
+        foreach (var texture in heldTextures) texture?.Dispose();
+        senderFence.Dispose();
     }
 }
 
