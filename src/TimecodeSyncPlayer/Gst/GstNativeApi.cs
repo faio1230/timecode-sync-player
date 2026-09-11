@@ -105,6 +105,12 @@ internal sealed class GstNativeApi : IGstNativeApi
 
     public bool SpoutReady(IntPtr player) => GstNative.Imports.tcs_player_spout_ready(player) == 1;
 
+    public int DrainDeliveryEvents(IntPtr player, GstNative.TcsDeliveryEvent[] buffer, uint capacity, out uint count)
+        => GstNative.Imports.tcs_player_drain_delivery_events(player, buffer, capacity, out count);
+
+    public int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats)
+        => GstNative.Imports.tcs_player_get_delivery_stats(player, out stats);
+
     private static string DecodeUtf8Z(byte[] buf)
     {
         int len = Array.IndexOf(buf, (byte)0);

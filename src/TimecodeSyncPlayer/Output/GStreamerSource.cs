@@ -5,6 +5,9 @@ namespace TimecodeSyncPlayer.Output;
 /// <summary>shim のリース API のうち、ソース契約に必要な部分。</summary>
 internal readonly record struct GstLeaseFrameInfo(ulong Generation, ulong Sequence, long PtsNs, int Width, int Height, bool IsGpu);
 
+/// <summary>shim の配信トレース集計（問題 H）。replaced は latest 置換回数。</summary>
+internal readonly record struct GstDeliveryStatsInfo(ulong Arrivals, ulong LatestReplaced, ulong QosEvents, ulong DecoderOut, ulong RingDropped);
+
 internal interface IGstLeasePlayer
 {
     ulong Generation { get; }
@@ -13,6 +16,7 @@ internal interface IGstLeasePlayer
     bool TryGetLeasedTexture(out IntPtr texture, out uint subresource, out uint dxgiFormat);
     void Release();
     string DecoderName { get; }
+    GstDeliveryStatsInfo DeliveryStats { get; }
 }
 
 /// <summary>
@@ -73,8 +77,16 @@ internal sealed class GStreamerSource : IVideoSource
         return SourceStatus.Ready;
     }
 
-    public SourceDiagnostics Diagnostics => new(
-        player.DecoderName, gpu, "BGRA8_UNORM", generationRejected, notReady, 0, 0, peakLeases, ready + notReady, ready, 0);
+    public SourceDiagnostics Diagnostics
+    {
+        get
+        {
+            GstDeliveryStatsInfo stats = player.DeliveryStats;
+            // Replaced は shim の latest 置換回数（問題 H の計測）。
+            return new(player.DecoderName, gpu, "BGRA8_UNORM", generationRejected, notReady,
+                (long)stats.LatestReplaced, 0, peakLeases, ready + notReady, ready, 0);
+        }
+    }
 
     public bool TryDispose() => active == null;
 
@@ -192,4 +204,14 @@ internal sealed class GstNativeLeasePlayer(TimecodeSyncPlayer.Gst.IGstNativeApi 
 
     public void Release() => native.Release(player);
     public string DecoderName => native.DecoderName(player);
+
+    public GstDeliveryStatsInfo DeliveryStats
+    {
+        get
+        {
+            if (native.GetDeliveryStats(player, out TimecodeSyncPlayer.Gst.GstNative.TcsDeliveryStats stats) != 0)
+                return default;
+            return new(stats.Arrivals, stats.LatestReplaced, stats.QosEvents, stats.DecoderOut, stats.RingDropped);
+        }
+    }
 }

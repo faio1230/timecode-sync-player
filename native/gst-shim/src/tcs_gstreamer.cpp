@@ -45,6 +45,7 @@
 #include <string>
 #include <atomic>
 #include <thread>
+#include <deque>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -96,8 +97,19 @@ struct TcsPlayer {
 
   /* frame slots (frame_lock) */
   std::mutex frame_lock;
-  GstSample* latest = nullptr;            /* newest sample, unreleased yet */
-  uint64_t latest_gen = 0;
+  /* Small FIFO of undelivered samples: acquire() pops the oldest of the
+   * requested generation. Kept small (problem H: a single "latest" slot
+   * lost a frame whenever two arrivals landed inside one compose tick). */
+  struct FrameSlot {
+    GstSample* sample;
+    uint64_t generation;
+    uint64_t seq;
+    uint64_t pts_ns;
+    bool gpu;
+  };
+  static const uint32_t kFrameQueueCapacity = 4;
+  std::deque<FrameSlot> frames;
+  uint64_t latest_gen = 0;                /* newest arrival generation (diagnostics) */
   uint64_t latest_pts_ns = 0;
   uint64_t latest_seq = 0;
   bool latest_gpu = false;
@@ -107,6 +119,19 @@ struct TcsPlayer {
   uint64_t generation = 1;                /* bumped by owner on load/seek */
   guint64 frames_decoded = 0;
   guint64 spout_sends = 0;
+
+  /* delivery trace (frame_lock). problem H: record each arrival so the
+   * owner can compare decoding cadence, callback cost and replacements. */
+  static const uint32_t kDeliveryCapacity = 4096;
+  TcsDeliveryEvent delivery_ring[kDeliveryCapacity] = {};
+  uint32_t delivery_read = 0;
+  uint32_t delivery_write = 0;
+  uint64_t delivery_arrivals = 0;
+  uint64_t delivery_replaced = 0;
+  std::atomic<uint64_t> delivery_qos{0};         /* pad probes must not take frame_lock */
+  std::atomic<uint64_t> delivery_decoder_out{0}; /* (preroll waits on the streaming thread) */
+  uint64_t delivery_ring_dropped = 0;
+  uint64_t delivery_last_qpc = 0;
 
   /* callback */
   tcs_frame_notify_fn notify = nullptr;
@@ -252,10 +277,23 @@ give_device_context (TcsPlayer* p, GstElement* el)
 
 /* ---------------- frame delivery ---------------- */
 
+/* QoS events (upstream) and decoder output buffers are counted so the
+ * delivery trace can distinguish source-side drops from scheduling. */
+static GstPadProbeReturn
+on_qos_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  if (GST_EVENT_TYPE (GST_PAD_PROBE_INFO_EVENT (info)) == GST_EVENT_QOS)
+    p->delivery_qos.fetch_add (1, std::memory_order_relaxed);
+  return GST_PAD_PROBE_OK;
+}
+
 static GstFlowReturn
 on_new_sample (GstAppSink* sink, gpointer user)
 {
   TcsPlayer* p = (TcsPlayer*) user;
+  LARGE_INTEGER arrival;
+  QueryPerformanceCounter (&arrival);
   GstSample* sample = gst_app_sink_try_pull_sample (sink, 0);
   if (!sample)
     return GST_FLOW_OK;
@@ -267,6 +305,12 @@ on_new_sample (GstAppSink* sink, gpointer user)
   guint64 pts = buf && GST_BUFFER_PTS (buf) != GST_CLOCK_TIME_NONE
       ? GST_BUFFER_PTS (buf)
       : (seg ? (guint64) seg->position : 0);
+  int64_t running_ns = -1;
+  if (seg && pts != GST_CLOCK_TIME_NONE) {
+    guint64 rt = gst_segment_to_running_time (seg, GST_FORMAT_TIME, pts);
+    if (rt != GST_CLOCK_TIME_NONE)
+      running_ns = (int64_t) rt;
+  }
 
   /* demux pads (e.g. mpegts) may expose stream caps without width/height;
    * the negotiated sample caps always carry the real geometry. */
@@ -282,26 +326,59 @@ on_new_sample (GstAppSink* sink, gpointer user)
   tcs_frame_notify_fn cb = nullptr;
   void* cb_user = nullptr;
   uint64_t cb_gen = 0, cb_seq = 0;
+  bool replaced = false;
+  uint32_t event_slot = 0;
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
     if (cw > 0) p->width = cw;
     if (ch > 0) p->height = ch;
     if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
-    if (p->latest)
-      gst_sample_unref (p->latest);
-    p->latest = sample;
+    if (p->frames.size() >= TcsPlayer::kFrameQueueCapacity) {
+      gst_sample_unref (p->frames.front().sample);
+      p->frames.pop_front();
+      replaced = true;
+      p->delivery_replaced++;
+    }
     p->latest_gen = p->generation;
     p->latest_pts_ns = pts;
     p->latest_seq = ++p->frames_decoded;
     p->latest_gpu = gpu;
+    p->frames.push_back (TcsPlayer::FrameSlot{sample, p->generation, p->latest_seq, pts, gpu});
     p->pending_update = true;
+    p->delivery_arrivals++;
+    p->delivery_last_qpc = (uint64_t) arrival.QuadPart;
     cb = p->notify;
     cb_user = p->notify_user;
     cb_gen = p->latest_gen;
     cb_seq = p->latest_seq;
+    /* Record the arrival before invoking the owner's callback: the callback
+     * may block, but the event must not wait for it. callback_us is filled
+     * in place afterwards (single writer; the ring cannot wrap within one
+     * callback at ring_size >> frame rate). */
+    event_slot = p->delivery_write % TcsPlayer::kDeliveryCapacity;
+    TcsDeliveryEvent& e = p->delivery_ring[event_slot];
+    e.qpc = (uint64_t) arrival.QuadPart;
+    e.seq = p->latest_seq;
+    e.pts_ns = (int64_t) pts;
+    e.running_ns = running_ns;
+    e.callback_us = 0;
+    e.flags = (replaced ? 1u : 0u) | (cb ? 2u : 0u) | (gpu ? 4u : 0u);
+    p->delivery_write++;
+    if (p->delivery_write - p->delivery_read > TcsPlayer::kDeliveryCapacity) {
+      p->delivery_read = p->delivery_write - TcsPlayer::kDeliveryCapacity;
+      p->delivery_ring_dropped++;
+    }
   }
-  if (cb)
+
+  if (cb) {
+    LARGE_INTEGER c0, c1, qfreq;
+    QueryPerformanceCounter (&c0);
     cb (cb_user, cb_gen, cb_seq);
+    QueryPerformanceCounter (&c1);
+    QueryPerformanceFrequency (&qfreq);
+    p->delivery_ring[event_slot].callback_us = (uint32_t) (((c1.QuadPart - c0.QuadPart) * 1000000) /
+        (qfreq.QuadPart ? qfreq.QuadPart : 1));
+  }
   return GST_FLOW_OK;
 }
 
@@ -482,6 +559,13 @@ create_appsink_tail (TcsPlayer* p, gboolean d3d)
   gst_app_sink_set_callbacks (GST_APP_SINK (p->appsink), &cbs, p, nullptr);
   g_object_set (p->appsink, "emit-signals", TRUE, "sync", sync_pacing, "drop", FALSE,
       "max-buffers", 4, nullptr);
+  GstPad* sinkpad = gst_element_get_static_pad (p->appsink, "sink");
+  if (sinkpad) {
+    gst_pad_add_probe (sinkpad,
+        (GstPadProbeType) (GST_PAD_PROBE_TYPE_EVENT_UPSTREAM | GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM),
+        on_qos_probe, p, nullptr);
+    gst_object_unref (sinkpad);
+  }
   p->use_d3d11_caps = d3d;
 }
 
@@ -697,7 +781,9 @@ teardown_pipeline (TcsPlayer* p)
 
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
-    if (p->latest) { gst_sample_unref (p->latest); p->latest = nullptr; }
+    for (TcsPlayer::FrameSlot& slot : p->frames)
+      gst_sample_unref (slot.sample);
+    p->frames.clear ();
     if (p->leased) { gst_sample_unref (p->leased); p->leased = nullptr; }
     p->pending_update = false;
     p->frames_decoded = 0;
@@ -1089,10 +1175,9 @@ seek_locked (TcsPlayer* p, double seconds)
     return p->generation;
   p->generation++;
   /* frames of the previous generation must never reach the compositor */
-  if (p->latest) {
-    gst_sample_unref (p->latest);
-    p->latest = nullptr;
-  }
+  for (TcsPlayer::FrameSlot& slot : p->frames)
+    gst_sample_unref (slot.sample);
+  p->frames.clear ();
   p->pending_update = false;
   if (p->eos) {
     p->eos = false;
@@ -1313,18 +1398,26 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
   if (p->leased)
     return 0;
 
-  if (!p->latest || p->latest_gen != generation)
+  /* Deliver in arrival order: drop older/other generations at the front,
+   * then lease the oldest matching frame (problem H fix: each decoded
+   * frame is handed over exactly once instead of overwriting a latest). */
+  while (!p->frames.empty() && p->frames.front().generation != generation) {
+    gst_sample_unref (p->frames.front().sample);
+    p->frames.pop_front();
+  }
+  if (p->frames.empty())
     return 0;
 
-  p->leased = p->latest;   /* take ownership; pool texture now pinned */
-  p->latest = nullptr;
+  TcsPlayer::FrameSlot slot = p->frames.front();
+  p->frames.pop_front();
+  p->leased = slot.sample;   /* take ownership; pool texture now pinned */
   memset (&p->lease_info, 0, sizeof (p->lease_info));
-  p->lease_info.generation = p->latest_gen;
-  p->lease_info.seq = p->latest_seq;
-  p->lease_info.pts_ns = (int64_t) p->latest_pts_ns;
+  p->lease_info.generation = slot.generation;
+  p->lease_info.seq = slot.seq;
+  p->lease_info.pts_ns = (int64_t) slot.pts_ns;
   p->lease_info.width = p->width;
   p->lease_info.height = p->height;
-  p->lease_info.is_gpu = p->latest_gpu ? 1 : 0;
+  p->lease_info.is_gpu = slot.gpu ? 1 : 0;
   *out_info = p->lease_info;
   return 1;
 }
@@ -1431,7 +1524,8 @@ tcs_player_publish_spout (TcsPlayer* player)
   if (!player) return TCS_ERR_GENERIC;
   if (!player->spout_ready) return TCS_ERR_SPOUT;
   std::lock_guard<std::mutex> g (player->frame_lock);
-  GstSample* sample = player->leased ? player->leased : player->latest;
+  GstSample* sample = player->leased ? player->leased
+      : (player->frames.empty() ? nullptr : player->frames.back().sample);
   if (!sample) return TCS_ERR_NO_FRAME;
   GstBuffer* buf = gst_sample_get_buffer (sample);
   GstMemory* mem = buf ? gst_buffer_peek_memory (buf, 0) : nullptr;
@@ -1491,6 +1585,36 @@ tcs_player_get_stats (TcsPlayer* player, TcsStats* out)
   out->frames_decoded = player->frames_decoded;
   out->spout_sends = player->spout_sends;
   out->generation = player->generation;
+  return TCS_OK;
+}
+
+TCS_GST_API int
+tcs_player_drain_delivery_events (TcsPlayer* player, TcsDeliveryEvent* out,
+                                  uint32_t capacity, uint32_t* out_count)
+{
+  if (!player || !out || !out_count) return TCS_ERR_GENERIC;
+  std::lock_guard<std::mutex> g (player->frame_lock);
+  uint32_t n = 0;
+  while (n < capacity && player->delivery_read != player->delivery_write) {
+    out[n++] = player->delivery_ring[player->delivery_read % TcsPlayer::kDeliveryCapacity];
+    player->delivery_read++;
+  }
+  *out_count = n;
+  return TCS_OK;
+}
+
+TCS_GST_API int
+tcs_player_get_delivery_stats (TcsPlayer* player, TcsDeliveryStats* out)
+{
+  if (!player || !out) return TCS_ERR_GENERIC;
+  memset (out, 0, sizeof (*out));
+  std::lock_guard<std::mutex> g (player->frame_lock);
+  out->arrivals = player->delivery_arrivals;
+  out->latest_replaced = player->delivery_replaced;
+  out->qos_events = player->delivery_qos.load (std::memory_order_relaxed);
+  out->decoder_out = player->delivery_decoder_out.load (std::memory_order_relaxed);
+  out->ring_dropped = player->delivery_ring_dropped;
+  out->last_qpc = player->delivery_last_qpc;
   return TCS_OK;
 }
 

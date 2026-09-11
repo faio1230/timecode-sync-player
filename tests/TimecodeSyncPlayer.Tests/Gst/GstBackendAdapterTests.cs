@@ -503,4 +503,16 @@ file sealed class FakeGstNative : IGstNativeApi
     public int SendImage(IntPtr player, IntPtr bgra, int width, int height, int pitch) => 0;
     public string DecoderName(IntPtr player) => Decoder;
     public bool SpoutReady(IntPtr player) => SpoutReadyValue;
+
+    public int DrainDeliveryEvents(IntPtr player, GstNative.TcsDeliveryEvent[] buffer, uint capacity, out uint count)
+    {
+        count = 0;
+        return 0;
+    }
+
+    public int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats)
+    {
+        stats = default;
+        return 0;
+    }
 }

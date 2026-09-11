@@ -35,9 +35,13 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 
 ### `tcs_player_acquire(player, generation, out info)` → 1 = リース成立 / 0 = なし
 
-- **現在世代のフレームだけ**を返す。`latest` の世代が `generation` と一致しない場合は 0。
-  load / seek / step は世代を進め、seek は `latest` を破棄するため、旧世代の
-  デコード済みフレームは返らない。
+- **現在世代のフレームだけ**を返す。先頭が `generation` と一致しないフレームは破棄し、
+  一致するものが無ければ 0。load / seek / step は世代を進め、seek はキューを破棄するため、
+  旧世代のデコード済みフレームは返らない。
+- **到着順に 1 回ずつ**返す（問題 H 修正、2026-09-11）: 未配信サンプルの小さな FIFO
+  （4 枚）を持ち、`acquire` は要求世代の最も古い未配信を返す。単一 `latest` の置換で
+  「2 到着が 1 合成 tick 間に入ると 1 枚失われる」事象を防ぐ。FIFO が満杯のときだけ
+  最古を破棄し、`TcsDeliveryStats.latest_replaced` と配信トレースの flags bit0 に記録する。
 - 準備できないときは 0（=なし）を返す。**黒・前フレーム・エラー画像で代用しない**
   （保持は合成層の責務）。
 - **非ブロッキング**。デコードを待たない（内部 `frame_lock` を短時間取るだけ）。
@@ -83,11 +87,11 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 
 ### 保持枚数と破棄規則
 
-- shim が参照を保持するサンプルは **最大 2 枚**: `latest`（未リースの最新）と
+- shim が参照を保持するサンプルは **最大 5 枚**: 未配信 FIFO（4、問題 H 修正後）と
   `leased`（リース中）。加えて appsink 内部キューが最大 4（`max-buffers=4, drop=FALSE`）。
-- 新フレーム到着時は `latest` を置換し、**置換前の latest（未リースの旧フレーム）を
-  捨てる**。`leased` は決して置換・上書きしない。
-- リース中に新フレームが来ても acquire は 0（release 後に最新へ進む）。
+- 新フレーム到着時は FIFO へ追加し、**満杯のときだけ最古の未配信を捨てる**
+  （`latest_replaced`）。`leased` は決して置換・上書きしない。
+- リース中に新フレームが来ても acquire は 0（release 後に未配信 FIFO の先頭へ進む）。
 - プール実体は GStreamer のデコーダ/コンバータのバッファプール（有限・可変）。
   リースを長時間保持した場合はプール拡張 → appsink キュー → バックプレッシャの順で
   対応し、acquire 自体はブロックしない。
@@ -107,10 +111,10 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 
 | 仕様 | shim | 備考 |
 | --- | --- | --- |
-| 規則1 世代排除 | 一致 | seek/load/step で latest 破棄。acquire(gen) は一致時のみ |
-| 規則2 位置に基づく最新優先 | **部分一致** | position は受け取らず「現世代の最新 1 枚」。位置選択は合成層（pts_ns 参照）。過去行列は持たない |
+| 規則1 世代排除 | 一致 | seek/load/step で未配信 FIFO を破棄。acquire(gen) は一致時のみ |
+| 規則2 位置に基づく最新優先 | **部分一致** | position は受け取らず「現世代の未配信を到着順に 1 枚」。位置選択は合成層（pts_ns 参照）。小 FIFO(4) を超えた古い分だけ破棄 |
 | 規則3 なしを返す | 一致 | 0 / TCS_ERR_NO_FRAME。黒・前画像なし |
-| 規則4 lease 寿命 | **部分一致** | プールは GStreamer 側（有限・可変）。shim 保持は最大 2（latest+leased）で置換は未リースのみ。Begin/CompleteGpuUse 相当は無く release のみ（冪等） |
+| 規則4 lease 寿命 | **部分一致** | プールは GStreamer 側（有限・可変）。shim 保持は最大 5（未配信 FIFO 4＋leased）で破棄は未配信のみ。Begin/CompleteGpuUse 相当は無く release のみ（冪等） |
 | 規則5 デバイス | 一致（同一デバイス前提） | 外部デバイス Adopt 対応。別デバイス実装は未対応（フェンス未実装） |
 | 規則6 非ブロッキング | 一致 | acquire/set_generation は短いロックのみ。デコードを待たない |
 | 規則7 診断 | **部分一致** | decoder/gpu_path/frames/generation はあり。世代排除・NotReady・置換・最大同時 lease のカウンタは未実装 |
@@ -131,8 +135,9 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 
 shim と契約の差はアダプター側で次のように吸収する（契約テストで固定）:
 
-- **位置選択**: shim は position を受け取らず現世代の latest 1 枚を返すため、
-  返却画像の `pts_ns` を `SourceImageStamp.PositionSeconds` として扱う。過去行列は持たない。
+- **位置選択**: shim は position を受け取らず現世代の未配信を到着順に 1 枚返すため、
+  返却画像の `pts_ns` を `SourceImageStamp.PositionSeconds` として扱う。過去行列は持たない
+  （問題 H 修正後は小 FIFO(4) により到着の取りこぼしを防ぐ）。
 - **リース**: shim は「リース保持中の acquire は同じ画像を返す」ため、参照カウント付きの
   共有リースとして同一 Stamp を返す。最後の参照が返ると `release` を 1 回だけ呼ぶ。
 - **Ended**: shim の 0（=なし）から Ended を区別できないため `NotReady` とする。保持は合成層の責務。

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Gst;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 
@@ -59,6 +60,11 @@ internal sealed class OutputEngine : IDisposable
     private GStreamerSource? gstSource;
     private long lastGstSequence = -1;
     private int lastGstGeneration = -1;
+    // 配信トレース（問題 H）。shim の QPC イベントを events.jsonl へ写す。
+    private IGstNativeApi? gstNative;
+    private IntPtr gstPlayer;
+    private long gstDeliveryDrainQpc;
+    private GstNative.TcsDeliveryEvent[]? gstDeliveryBuffer;
 
     // GStreamer shim へのデバイス Adopt 用（GPU worker が初期化時に確定する）。
     private readonly ManualResetEventSlim deviceReady = new(false);
@@ -142,7 +148,10 @@ internal sealed class OutputEngine : IDisposable
             }
             gstSource?.Dispose();
             gstSource = new GStreamerSource(new GstNativeLeasePlayer(native, player), gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            gstNative = native;
+            gstPlayer = player;
             lastGstSequence = -1;
+            lastGstGeneration = -1;
             settings.Trace.Add("lifecycle", "GPU", detail: "source.gstreamer");
             Log.Information("OutputEngine: GStreamerSource を接続しました");
         });
@@ -320,6 +329,7 @@ internal sealed class OutputEngine : IDisposable
             string outcome = Faulted ? "faulted" : "completed";
             double cpuSeconds = (process.TotalProcessorTime - cpuStart).TotalSeconds;
             long cpuEndQpc = Stopwatch.GetTimestamp();
+            DrainGstDeliveryEvents(true);
             settings.Trace.Save(new OutputTraceRunSummary(outcome, displayEverAttached, spoutEverEnabled,
                 settings.CanvasWidth, settings.CanvasHeight, settings.PresentMarginMs, settings.ComposeLeadMs,
                 settings.SenderName, cpuSeconds, cpuStartQpc, cpuEndQpc, vblankTimerHighResolution, gpuLoopTimerHighResolution, spoutLoopTimerHighResolution),
@@ -580,6 +590,35 @@ internal sealed class OutputEngine : IDisposable
         layer?.ClearHeld();
         lastGstSequence = -1;
         settings.Trace.Add("lifecycle", "GPU", detail: $"gst.generation:{shimGeneration}");
+    }
+
+    // shim の配信イベント（on_new_sample 到着 QPC、callback 所要、置換など）を events.jsonl へ写す。
+    // qpc は shim 側の QueryPerformanceCounter で、events.jsonl と同じ時計。
+    private void DrainGstDeliveryEvents(bool force)
+    {
+        if (gstNative == null || gstPlayer == IntPtr.Zero) return;
+        long now = Stopwatch.GetTimestamp();
+        if (!force && now - gstDeliveryDrainQpc < Stopwatch.Frequency / 4) return;
+        gstDeliveryDrainQpc = now;
+        try
+        {
+            GstNative.TcsDeliveryEvent[] buffer = gstDeliveryBuffer ??= new GstNative.TcsDeliveryEvent[256];
+            while (true)
+            {
+                if (gstNative.DrainDeliveryEvents(gstPlayer, buffer, (uint)buffer.Length, out uint count) != 0 || count == 0) return;
+                for (int i = 0; i < count; i++)
+                {
+                    GstNative.TcsDeliveryEvent e = buffer[i];
+                    settings.Trace.Record(new("gst.delivery", "GST", (long)e.Qpc, ImageId: (long)e.Seq,
+                        Detail: $"{e.PtsNs}:{e.RunningNs}:{e.Flags}", Value: e.CallbackUs));
+                }
+                if (count < buffer.Length) return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "OutputEngine: 配信トレースの取得に失敗");
+        }
     }
 
     // GStreamer shim の最新リースを取得し、借用テクスチャの SRV を作って直接描画できる形で返す。
