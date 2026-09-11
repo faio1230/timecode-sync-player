@@ -37,7 +37,8 @@ internal static class AccuracyVideoFixture
                 TimeSpan.Zero, (double)clip.FpsNumerator / clip.FpsDenominator, true));
         }
         string projectPath = Path.Combine(directory, "accuracy.tsp");
-        await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Continue, GapBehavior.Black);
+        await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Continue, GapBehavior.Black,
+            new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
         await File.WriteAllTextAsync(Path.Combine(directory, "fixture.json"),
             JsonSerializer.Serialize(new { schema = 1, ltcFps = 25, clips }, MonkeyJson.Options), new UTF8Encoding(false));
         return new AccuracyFixture(projectPath, clips);

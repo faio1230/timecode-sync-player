@@ -66,7 +66,8 @@ public sealed class SettingsPersistenceE2ETests
         string videoPath = TestVideoFactory.GetOrCreate();
         var playlist = new PlaylistState();
         playlist.AddFiles([videoPath]);
-        await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Continue, GapBehavior.Freeze);
+        await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Continue, GapBehavior.Freeze,
+            new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
 
         try
         {

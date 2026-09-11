@@ -48,6 +48,9 @@ internal sealed class LatestPool(int count)
 
     public long LatestId { get { lock (gate) return latest < 0 ? 0 : stamps[latest].Id; } }
 
+    /// <summary>現在保持されている lease 数（キャンバス変更時の旧世代破棄判断に使う）。</summary>
+    public int ActiveReaders { get { lock (gate) return readers.Sum(); } }
+
     public Lease? AcquireLatest()
     {
         lock (gate)

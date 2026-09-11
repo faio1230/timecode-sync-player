@@ -18,6 +18,17 @@ internal static class ComposeLayerPolicy
         OutputGapMode.GapFreeze => hasFrozen ? LayerAction.DrawFrozen : hasHeld ? LayerAction.DrawHeld : LayerAction.DrawBlack,
         _ => hasAcquired ? LayerAction.DrawAcquired : hasHeld ? LayerAction.DrawHeld : LayerAction.DrawBlack
     };
+
+    /// <summary>
+    /// 描画に使う配置。新画像は現在クリップの配置、Held／Freeze は画像を確定した時点の配置を使う
+    /// （クリップ切替で Held を再配置しない、段階 4.2）。
+    /// </summary>
+    public static ClipPlacement SelectPlacement(LayerAction action, ClipPlacement current, ClipPlacement held, ClipPlacement frozen) => action switch
+    {
+        LayerAction.DrawHeld => held,
+        LayerAction.DrawFrozen => frozen,
+        _ => current
+    };
 }
 
 /// <summary>
@@ -51,11 +62,13 @@ internal sealed class ComposeLayer : IDisposable
 {
     private readonly GpuDevice gpu;
     private readonly ShaderPipeline shaders;
-    private readonly CanvasSettings canvas;
+    private CanvasSettings canvas;
     private readonly FitRegistry fits = FitRegistry.CreateDefault();
 
     private LayerImage? held;
+    private ClipPlacement heldClip = new(null);
     private Surface? frozen;
+    private ClipPlacement frozenClip = new(null);
     private int frozenWidth, frozenHeight;
 
     public ComposeLayer(GpuDevice gpu, ShaderPipeline shaders, CanvasSettings canvas)
@@ -68,11 +81,22 @@ internal sealed class ComposeLayer : IDisposable
     public bool HasHeld => held != null;
     public bool HasFreeze => frozen != null;
 
+    /// <summary>
+    /// キャンバス寸法を差し替える（段階 4.2 SetCanvas）。Held は保持し、Freeze 用テクスチャは
+    /// 破棄して次回必要時に作り直す（黒を挟まない）。placement は描画時に新しい寸法で計算される。
+    /// </summary>
+    public void SetCanvas(CanvasSettings value)
+    {
+        canvas = value;
+        ClearFreeze();
+    }
+
     /// <summary>Freeze 画像だけを破棄する（世代切替時）。Held は保持を続ける。</summary>
     public void ClearFreeze()
     {
         frozen?.Dispose();
         frozen = null;
+        frozenClip = new(null);
         frozenWidth = frozenHeight = 0;
     }
 
@@ -92,24 +116,26 @@ internal sealed class ComposeLayer : IDisposable
     {
         if (gap == OutputGapMode.GapFreeze && frozen == null)
         {
-            if (acquired != null) KeepHeld(acquired.Value);
+            if (acquired != null) KeepHeld(acquired.Value, clip);
             SaveFreeze();
         }
         else if (gap != OutputGapMode.Black && acquired != null)
         {
-            KeepHeld(acquired.Value);
+            KeepHeld(acquired.Value, clip);
         }
 
-        switch (ComposeLayerPolicy.Decide(gap, acquired != null, held != null, frozen != null))
+        LayerAction action = ComposeLayerPolicy.Decide(gap, acquired != null, held != null, frozen != null);
+        ClipPlacement placement = ComposeLayerPolicy.SelectPlacement(action, clip, heldClip, frozenClip);
+        switch (action)
         {
             case LayerAction.DrawAcquired:
-                Draw(target, acquired!.Value, clip);
+                Draw(target, acquired!.Value, placement);
                 break;
             case LayerAction.DrawHeld:
-                Draw(target, held!.Value, clip);
+                Draw(target, held!.Value, placement);
                 break;
             case LayerAction.DrawFrozen:
-                Draw(target, FrozenImage(), clip);
+                Draw(target, FrozenImage(), placement);
                 break;
             default:
                 shaders.Clear(target.Target!);
@@ -128,14 +154,16 @@ internal sealed class ComposeLayer : IDisposable
         return new LayerImage(frozen!.View, frozen.Texture.NativePointer, frozenWidth, frozenHeight, null, null);
     }
 
-    private void KeepHeld(LayerImage source)
+    private void KeepHeld(LayerImage source, ClipPlacement clip)
     {
         if (held is { } previous && (previous.Lease != null || previous.Owner != null))
         {
+            // 同じ画像が続くときは直前の配置を維持する（Held を再配置しない）。
             if (ReferenceEquals(previous.Lease, source.Lease) && ReferenceEquals(previous.Owner, source.Owner)) return;
             previous.Release();
         }
         held = source;
+        heldClip = clip;
     }
 
     private void SaveFreeze()
@@ -149,6 +177,7 @@ internal sealed class ComposeLayer : IDisposable
             frozenHeight = image.Height;
         }
         NativeTextureOps.CopyResource(gpu.Context, frozen.Texture.NativePointer, image.RawTexture);
+        frozenClip = heldClip;
     }
 
     private void Draw(Surface target, LayerImage image, ClipPlacement clip)

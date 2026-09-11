@@ -138,7 +138,8 @@ public sealed class VolumeControlE2ETests
         playlist.Tracks.Add(CreateTrack(video, "volume-track-1", timelineOffsetSeconds: 0));
         playlist.Tracks.Add(CreateTrack(video, "volume-track-2", timelineOffsetSeconds: 8));
         playlist.Select(0);
-        await ProjectSerializer.SaveAsync(path, playlist, SyncMode.Continue, GapBehavior.Black);
+        await ProjectSerializer.SaveAsync(path, playlist, SyncMode.Continue, GapBehavior.Black,
+            new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
     }
 
     private static PlaylistTrack CreateTrack(string path, string name, double timelineOffsetSeconds) => new(
