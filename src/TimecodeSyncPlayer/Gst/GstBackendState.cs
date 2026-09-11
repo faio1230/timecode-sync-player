@@ -134,8 +134,8 @@ internal sealed class GstBackendState : IDisposable
         try
         {
             _native.Release(player);
-            if (!_native.Acquire(player, _native.GetGeneration(player), out GstNative.TcsFrameInfo info))
-                return -3; // none
+            if (_native.Acquire(player, _native.GetGeneration(player), out GstNative.TcsFrameInfo info) != 1)
+                return -3; // none / ended
             if (info.Width != width || info.Height != height)
                 return -5; // app renders at decoded size
             return _native.LeasedCpuCopy(player, dst, dstStride);

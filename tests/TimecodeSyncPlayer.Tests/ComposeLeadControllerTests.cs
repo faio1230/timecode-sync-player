@@ -95,6 +95,27 @@ public class ComposeLeadControllerTests
     }
 
     [Fact]
+    public void SuspendLearning_IgnoresSamplesForOneSecondAfterEvents()
+    {
+        var controller = new ComposeLeadController(Frequency, 5);
+        long now = 0;
+        StartAfterWarmup(controller, ref now);
+        long suspendAt = now;
+        controller.SuspendLearning(suspendAt);
+
+        // 除外中（1 秒以内）の遅い標本は学習しない
+        for (int i = 0; i < 6; i++)
+            _ = controller.Add(50_000, suspendAt + i * 80_000, out _);
+        controller.CurrentLeadMs.Should().Be(5);
+
+        // 除外明けは遅い窓で即時上げる
+        now = suspendAt + Frequency;
+        for (int i = 0; i < 3 && controller.CurrentLeadMs < 8; i++)
+            FeedWindow(controller, 50_000, ref now);
+        controller.CurrentLeadMs.Should().Be(8);
+    }
+
+    [Fact]
     public void Add_IgnoresComposeSamplesDuringWarmup()
     {
         var controller = new ComposeLeadController(Frequency, 3);

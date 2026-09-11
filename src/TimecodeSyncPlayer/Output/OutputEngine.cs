@@ -65,6 +65,7 @@ internal sealed class OutputEngine : IDisposable
     private IGstNativeApi? gstNative;
     private IntPtr gstPlayer;
     private long gstDeliveryDrainQpc;
+    private readonly VblankNotReadyGate notReadyGate = new();
     private GstNative.TcsDeliveryEvent[]? gstDeliveryBuffer;
 
     // GStreamer shim へのデバイス Adopt 用（GPU worker が初期化時に確定する）。
@@ -186,6 +187,8 @@ internal sealed class OutputEngine : IDisposable
         vblankTimer = new VblankWaitTimer();
         vblankTimerHighResolution = vblankTimer.HighResolution;
         displayEverAttached = true;
+        // L-2: 全画面接続直後は位相が乱れるため 1 秒間は lead 学習から除外する。
+        composeLead?.SuspendLearning(Stopwatch.GetTimestamp());
         // 初期寸法は途中経過のことがあるため、最初の Present/Resize 時の最終寸法で記録する。
         pendingDisplayTrace = true;
         Log.Information("OutputEngine: 全画面 swapchain を接続 {W}x{H}", target.Width, target.Height);
@@ -223,6 +226,8 @@ internal sealed class OutputEngine : IDisposable
             {
                 if (target == null) return;
                 settings.Trace.Add("lifecycle", "GPU", detail: "display.detach");
+                // L-2: 全画面切断直後は位相が乱れるため 1 秒間は lead 学習から除外する。
+                composeLead?.SuspendLearning(Stopwatch.GetTimestamp());
                 DisposeDisplay();
                 Log.Information("OutputEngine: 全画面 swapchain を切断");
             }
@@ -253,6 +258,8 @@ internal sealed class OutputEngine : IDisposable
             spoutRunning = false;
             StopSpoutWorker();
         }
+        // L-2: 切替直後は合成位相が乱れるため 1 秒間は lead 学習から除外する。
+        composeLead?.SuspendLearning(Stopwatch.GetTimestamp());
     });
 
     private void Enqueue(Action command)
@@ -387,6 +394,8 @@ internal sealed class OutputEngine : IDisposable
         while (!stop.IsCancellationRequested)
         {
             ProcessCommands();
+            // 長時間 run でも gst.delivery を欠落させないよう、250ms 間隔で drain する。
+            DrainGstDeliveryEvents(false);
             long now = Stopwatch.GetTimestamp();
             long due = schedule.DueQpc;
             if (vblank != null && VblankIdle(lastScheduled, now, due)) continue;
@@ -435,7 +444,7 @@ internal sealed class OutputEngine : IDisposable
             settings.Trace.Record(new("display.vblank.predict", "GPU", Stopwatch.GetTimestamp(), slot, latestId,
                 Detail: (prediction.PeriodTicks * 1_000_000 / Stopwatch.Frequency).ToString(System.Globalization.CultureInfo.InvariantCulture),
                 Value: prediction.PredictedRefresh, DeadlineQpc: prediction.VblankQpc));
-            if (HoldVblankReadiness(target, slot))
+            if (HoldVblankReadiness(target, slot, prediction.VblankQpc - vblank.LeadTicks))
             {
                 Present(slot, due);
             }
@@ -474,7 +483,9 @@ internal sealed class OutputEngine : IDisposable
             settings.Trace.Add("source.acquire", "GPU", scheduled,
                 new ImageStamp(gst.Stamp.Sequence, gst.Stamp.DecodedQpc), status.ToString(),
                 (long)Math.Round(position * 1_000_000));
-            if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
+            if (status == SourceStatus.Ended)
+                settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceEnded", value: 1);
+            else if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
                 settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceNotReady", value: 1);
         }
         else
@@ -763,11 +774,19 @@ internal sealed class OutputEngine : IDisposable
         finally { if (!handedOff) previewHandoff.Release(pixels); }
     }
 
-    private bool HoldVblankReadiness(SwapchainTarget swapchain, long slot)
+    private const int MaxVblankReadyWaitMs = 4;
+
+    // D-2: 即時 Present では latency waitable を vblank−lead までタイムアウト付きで待つ。
+    // それでも未シグナルなら予測を捨て、notReady の記録は 1 tick 最大 1 回にする。
+    private bool HoldVblankReadiness(SwapchainTarget swapchain, long slot, long waitUntilQpc = 0)
     {
         if (swapchain.Readiness.PermissionHeld) return true;
-        if (swapchain.WaitReady(0)) { swapchain.Readiness.GrantFromNotification(); return true; }
-        settings.Trace.Add("skip", "GPU", slot, detail: "display.vblank.notReady", value: 1);
+        int timeoutMs = waitUntilQpc > 0
+            ? VblankDisplayGate.TimeoutUntilMs(Stopwatch.GetTimestamp(), waitUntilQpc, Stopwatch.Frequency, MaxVblankReadyWaitMs)
+            : 0;
+        if (swapchain.WaitReady(timeoutMs)) { swapchain.Readiness.GrantFromNotification(); return true; }
+        if (notReadyGate.ShouldRecord(slot))
+            settings.Trace.Add("skip", "GPU", slot, detail: "display.vblank.notReady", value: 1);
         vblank!.Defer();
         return false;
     }
