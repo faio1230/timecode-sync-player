@@ -10,7 +10,8 @@ public sealed record PlaylistTrack(
     TimeSpan MediaDuration,
     TimeSpan SyncOffset,
     double? FrameRate,
-    bool IsEnabled)
+    bool IsEnabled,
+    string? Fit = null)
 {
     /// <summary>
     /// トラックの実効再生時間を取得する。

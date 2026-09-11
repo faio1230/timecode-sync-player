@@ -1,0 +1,58 @@
+<Window x:Class="TimecodeSyncPlayer.CanvasSelectDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:ClassModifier="internal"
+        Title="キャンバスサイズ"
+        Width="400" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="#1C1C1C"
+        AutomationProperties.AutomationId="CanvasSelectDialog">
+    <StackPanel Margin="16">
+        <TextBlock Text="プロジェクトのキャンバスサイズを選択してください。"
+                   Foreground="White" TextWrapping="Wrap" Margin="0,0,0,10"/>
+        <Grid Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="プリセット:" Foreground="#BBBBBB"
+                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox x:Name="CanvasDialogPresetCombo" Grid.Column="1" Height="26"
+                      AutomationProperties.AutomationId="CanvasDialogPresetCombo"
+                      SelectionChanged="CanvasDialogPresetCombo_SelectionChanged">
+                <ComboBoxItem Content="1920×1080" Tag="1920x1080"/>
+                <ComboBoxItem Content="3840×2160" Tag="3840x2160"/>
+                <ComboBoxItem Content="1080×1920（縦）" Tag="1080x1920"/>
+                <ComboBoxItem Content="カスタム" Tag="custom"/>
+            </ComboBox>
+        </Grid>
+        <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="幅:" Foreground="#BBBBBB"
+                       VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <TextBox x:Name="CanvasDialogWidthBox" Grid.Column="1" Height="26"
+                     AutomationProperties.AutomationId="CanvasDialogWidthBox"
+                     Text="1920"/>
+            <TextBlock Text="高さ:" Grid.Column="2" Foreground="#BBBBBB"
+                       VerticalAlignment="Center" Margin="10,0,4,0"/>
+            <TextBox x:Name="CanvasDialogHeightBox" Grid.Column="3" Height="26"
+                     AutomationProperties.AutomationId="CanvasDialogHeightBox"
+                     Text="1080"/>
+        </Grid>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="CanvasDialogOk" Content="OK" Width="84" Height="30"
+                    IsDefault="True" Click="CanvasDialogOk_Click"
+                    AutomationProperties.AutomationId="CanvasDialogOk"/>
+            <Button x:Name="CanvasDialogCancel" Content="キャンセル" Width="100" Height="30"
+                    Margin="8,0,0,0" IsCancel="True"
+                    AutomationProperties.AutomationId="CanvasDialogCancel"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

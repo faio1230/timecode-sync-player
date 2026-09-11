@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.IO;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -9,6 +11,8 @@ namespace TimecodeSyncPlayer;
 internal static class ProjectSerializer
 {
     private const int CurrentVersion = 1;
+    private const int MinimumCanvasDimension = 16;
+    private const int MaximumCanvasDimension = 16384;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -16,17 +20,28 @@ internal static class ProjectSerializer
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
+    private static readonly FitRegistry FitIds = FitRegistry.CreateDefault();
+
     /// <summary>
     /// 現在読み込み中のプロジェクトファイルのパス。
     /// 相対パスの解決に使用される。
     /// </summary>
     public static string? ProjectPath { get; private set; }
 
+    public static Task SaveAsync(
+        string filePath,
+        PlaylistState playlist,
+        SyncMode syncMode,
+        GapBehavior gapBehavior,
+        IAtomicFileOperations? fileOperations = null)
+        => SaveAsync(filePath, playlist, syncMode, gapBehavior, canvas: null, fileOperations);
+
     public static async Task SaveAsync(
         string filePath,
         PlaylistState playlist,
         SyncMode syncMode,
         GapBehavior gapBehavior,
+        CanvasData? canvas,
         IAtomicFileOperations? fileOperations = null)
     {
         string projectDirectory = Path.GetDirectoryName(filePath) ?? "";
@@ -36,6 +51,7 @@ internal static class ProjectSerializer
             Version = CurrentVersion,
             SyncMode = syncMode,
             GapBehavior = gapBehavior,
+            Canvas = canvas,
             Tracks = playlist.Tracks.Select(t => new TrackData
             {
                 Id = t.Id,
@@ -47,7 +63,8 @@ internal static class ProjectSerializer
                 MediaDuration = t.MediaDuration,
                 SyncOffset = t.SyncOffset,
                 FrameRate = t.FrameRate,
-                IsEnabled = t.IsEnabled
+                IsEnabled = t.IsEnabled,
+                Fit = t.Fit
             }).ToList()
         };
 
@@ -84,6 +101,8 @@ internal static class ProjectSerializer
             Serilog.Log.Warning("プロジェクトファイルのバージョン({Version})が古いです。", project.Version);
         }
 
+        project = NormalizeProject(project);
+
         var resolvedTracks = new List<TrackData>();
         foreach (var track in project.Tracks)
         {
@@ -92,6 +111,48 @@ internal static class ProjectSerializer
         project = project with { Tracks = resolvedTracks };
 
         return project;
+    }
+
+    /// <summary>
+    /// 読み込んだキャンバス・配置設定を正規化する（段階 4.1）。未知の Fit ID は警告して
+    /// 継承（トラックは null、プロジェクト既定は fit-height）へ、範囲外の寸法は警告して
+    /// 1920x1080 へ倒す。書き戻すときはこの正規化後の値が保存される。
+    /// </summary>
+    private static ProjectData NormalizeProject(ProjectData project)
+    {
+        var tracks = new List<TrackData>();
+        foreach (TrackData track in project.Tracks ?? [])
+            tracks.Add(track with { Fit = NormalizeFitId(track.Fit, fallback: null, describeFallback: "プロジェクト既定（継承）") });
+        return project with { Canvas = NormalizeCanvas(project.Canvas), Tracks = tracks };
+    }
+
+    private static CanvasData? NormalizeCanvas(CanvasData? canvas)
+    {
+        if (canvas is null) return null;
+        string defaultFit = NormalizeFitId(canvas.DefaultFit, fallback: FitHeight.FitId, describeFallback: FitHeight.FitId)!;
+        if (IsValidCanvasDimension(canvas.Width) && IsValidCanvasDimension(canvas.Height))
+            return canvas with { DefaultFit = defaultFit };
+
+        Serilog.Log.Warning(
+            "プロジェクトのキャンバス寸法が範囲外です（{Width}x{Height}）。1920x1080 に置換します。",
+            canvas.Width, canvas.Height);
+        return new CanvasData
+        {
+            Width = CanvasSettings.Default.Width,
+            Height = CanvasSettings.Default.Height,
+            DefaultFit = defaultFit
+        };
+    }
+
+    private static bool IsValidCanvasDimension(int value)
+        => value is >= MinimumCanvasDimension and <= MaximumCanvasDimension;
+
+    private static string? NormalizeFitId(string? fit, string? fallback, string describeFallback)
+    {
+        if (fit is null) return fallback;
+        if (FitIds.TryGet(fit, out _)) return fit;
+        Serilog.Log.Warning("未知の配置設定です: {Fit}。{Fallback} として扱います。", fit, describeFallback);
+        return fallback;
     }
 
     private static string MigrateTimelineInToTimelineOffset(string json)
@@ -189,7 +250,8 @@ internal static class ProjectSerializer
                 MediaDuration: trackData.MediaDuration,
                 SyncOffset: trackData.SyncOffset,
                 FrameRate: trackData.FrameRate,
-                IsEnabled: trackData.IsEnabled
+                IsEnabled: trackData.IsEnabled,
+                Fit: trackData.Fit
             ));
         }
 
@@ -286,7 +348,20 @@ internal sealed record ProjectData
     public int Version { get; init; }
     public SyncMode SyncMode { get; init; }
     public GapBehavior GapBehavior { get; init; }
+
+    /// <summary>null は未設定（旧プロジェクト）。読み込み時にサイズ選択を促す。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CanvasData? Canvas { get; init; }
+
     public List<TrackData> Tracks { get; init; } = [];
+}
+
+/// <summary>プロジェクトの固定キャンバス設定（保存形式、段階 4.1）。</summary>
+internal sealed record CanvasData
+{
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public string? DefaultFit { get; init; }
 }
 
 internal sealed record TrackData
@@ -301,4 +376,8 @@ internal sealed record TrackData
     public TimeSpan SyncOffset { get; init; }
     public double? FrameRate { get; init; }
     public bool IsEnabled { get; init; }
+
+    /// <summary>null はプロジェクト既定を継承。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Fit { get; init; }
 }

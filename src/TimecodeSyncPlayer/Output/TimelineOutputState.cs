@@ -17,6 +17,9 @@ internal sealed record TimelineOutputState(
 {
     public static readonly TimelineOutputState Default = new(
         0, OutputGapMode.None, false, CanvasSettings.Default, new ClipPlacement(null), 0);
+
+    /// <summary>現在クリップの配置。トラックの Fit（null はプロジェクト既定の継承）を写す。</summary>
+    public static ClipPlacement PlacementFor(PlaylistTrack? track) => new(track?.Fit);
 }
 
 /// <summary>最新1件だけを保持する TimelineOutputState の mailbox。UI が書き、GPU worker が読む。</summary>

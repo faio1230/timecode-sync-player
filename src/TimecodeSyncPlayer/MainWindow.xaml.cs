@@ -60,6 +60,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly OutputBackend _effectiveOutputBackend;
     private WriteableBitmap? _outputPreviewBitmap;
 
+    // ── キャンバス設定（段階 4、UI スレッド所有） ──────────────────
+    private readonly ProjectCanvasState _projectCanvasState = new();
+    private Guid? _contextMenuTrackId;
+    private (bool CanChange, string? Tip, bool Gpu)? _canvasUiCache;
+    private bool _isLoadingCanvasInputs;
+    private const string CanvasGpuOnlyTooltip = "GPU 出力でのみ有効";
+
     // ── LTC ───────────────────────────────────────────────────────
     private readonly LtcSyncController _ltcSyncController;
     private readonly ILtcMonitor _ltcMonitor;
@@ -165,7 +172,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _mpvStartupPropertyApplier = mpvStartupPropertyApplier;
         _mpvSessionInitializer = mpvSessionInitializer;
         _projectLoadApplicator = projectLoadApplicator;
-        _projectSaveExecutor = new ProjectSaveExecutor((path, syncMode, gapBehavior) => ProjectSerializer.SaveAsync(path, _playlist, syncMode, gapBehavior));
+        _projectSaveExecutor = new ProjectSaveExecutor(SaveProjectAsync);
         _seekState = seekState;
         _osdUpdateState = osdUpdateState;
         _playbackPerformanceStats = playbackPerformanceStats;
@@ -181,6 +188,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Player   = new PlayerViewModel(this);
         _vm.Playlist = new PlaylistViewModel(_playlist, _mediaDurationReader);
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
+        _vm.Output   = new OutputControlViewModel();
+        _vm.Output.InitializeTestCard(OutputEngineSettings.TestCardRequested());
         _renderSession = new RenderSession(mpvRenderApi, _spoutOutput, _playbackPerformanceStats,
             () => _gapFreezeHandler.CurrentState,
             () => _vm.Sync.GapBehavior,
@@ -196,7 +205,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 CanvasHeight = CanvasSettings.Default.Height,
                 SenderName = ResolveOutputSenderName(),
                 AdapterLuid = OutputDisplays.FindAdapterLuid(settingsManager.Current.FullscreenDisplayDeviceName),
-                TestCardEnabled = OutputEngineSettings.TestCardRequested(),
+                TestCardEnabled = _vm.Output.TestCardEnabled,
                 Trace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable)),
                 PreviewFrameReady = OnOutputPreviewFrame,
             });
@@ -429,6 +438,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         InitializeComponent();
         Title = ApplicationVersion.WindowTitle;
+        LoadCanvasInputsFromState();
+        UpdateCanvasUiState();
+    }
+
+    private async Task SaveProjectAsync(string path, SyncMode syncMode, GapBehavior gapBehavior)
+    {
+        await ProjectSerializer.SaveAsync(path, _playlist, syncMode, gapBehavior, _projectCanvasState.ToData());
+        _projectCanvasState.MarkSaved();
     }
 
     internal MainViewModel ViewModel => _vm;
@@ -485,9 +502,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _outputEngine.SubmitTimelineState(new TimelineOutputState(
             _renderSession.CaptureGeneration(),
             gap,
-            OutputEngineSettings.TestCardRequested(),
-            CanvasSettings.Default,
-            new ClipPlacement(null),
+            _vm.Output.TestCardEnabled,
+            _projectCanvasState.Current,
+            TimelineOutputState.PlacementFor(_playlist.Current),
             ReadMpvTimePos() ?? 0));
     }
 
@@ -613,6 +630,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _projectRestorePauseState.Clear();
         StopPlayback();
         ApplyLoadedProject(project);
+        ApplyProjectCanvas(project.Canvas);
 
         SyncPlaylistSelection();
         UpdatePlaylistTimelineDisplay();
@@ -1241,6 +1259,178 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         Log.Information("Spout 出力: {State}", _spoutOutput.IsEnabled ? "ON" : "OFF");
     }
 
+    // ── キャンバス設定・テストカード（段階 4） ────────────────────
+
+    private void BtnTestCard_Click(object sender, RoutedEventArgs e)
+    {
+        if (_effectiveOutputBackend != OutputBackend.Gpu) return;
+        _vm.Output.ToggleTestCard();
+        _outputEngine?.SetTestCardEnabled(_vm.Output.TestCardEnabled);
+        SubmitOutputState();
+        Log.Information("テストカード: {State}", _vm.Output.TestCardEnabled ? "ON" : "OFF");
+    }
+
+    private void CanvasPresetCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_isLoadingCanvasInputs) return;
+        if (CanvasPresetCombo.SelectedItem is not System.Windows.Controls.ComboBoxItem item) return;
+        if (item.Tag is not string preset || preset == "custom") return;
+        string[] parts = preset.Split('x');
+        CanvasWidthBox.Text = parts[0];
+        CanvasHeightBox.Text = parts[1];
+    }
+
+    private void BtnApplyCanvas_Click(object sender, RoutedEventArgs e)
+    {
+        if (_effectiveOutputBackend != OutputBackend.Gpu) return;
+        if (!CanvasChangeGate.CanChange(IsPlaying(), IsLtcFollowing(), IsRenderingFrozenOnly()))
+        {
+            UpdateCanvasUiState();
+            return;
+        }
+        if (!TryReadCanvasInputs(out int width, out int height))
+        {
+            Log.Warning("キャンバス寸法が不正です: width='{Width}' height='{Height}'", CanvasWidthBox.Text, CanvasHeightBox.Text);
+            MessageBox.Show("キャンバス寸法は 16〜16384 の整数で入力してください。", "キャンバス設定",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var settings = new CanvasSettings(width, height, GetSelectedFitId());
+        if (settings == _projectCanvasState.Current) return;
+        _projectCanvasState.Select(settings);
+        ApplyCanvasToEngine();
+        UpdateCanvasUiState();
+    }
+
+    private void ApplyProjectCanvas(CanvasData? canvas)
+    {
+        _projectCanvasState.OnProjectLoaded(canvas);
+        if (canvas == null)
+        {
+            var dialog = new CanvasSelectDialog(
+                _projectCanvasState.Current.Width,
+                _projectCanvasState.Current.Height,
+                _projectCanvasState.Current.DefaultFitId)
+            {
+                Owner = this
+            };
+            bool? result = dialog.ShowDialog();
+            if (result == true && dialog.Selection is { } selection)
+                _projectCanvasState.Select(selection);
+            Log.Information("キャンバス未設定プロジェクト: 選択={Selection}",
+                dialog.Selection is { } chosen ? $"{chosen.Width}x{chosen.Height}" : "キャンセル(1920x1080)");
+        }
+        LoadCanvasInputsFromState();
+        ApplyCanvasToEngine();
+        UpdateCanvasUiState();
+    }
+
+    private void ApplyCanvasToEngine()
+    {
+        CanvasSettings current = _projectCanvasState.Current;
+        _outputEngine?.SetCanvas(current);
+        Log.Information("キャンバス設定: canvas={Width}x{Height} defaultFit={Fit} unset={Unset} dirty={Dirty}",
+            current.Width, current.Height, current.DefaultFitId, _projectCanvasState.IsUnsetInProject, _projectCanvasState.IsDirty);
+    }
+
+    private void LoadCanvasInputsFromState()
+    {
+        CanvasSettings current = _projectCanvasState.Current;
+        _isLoadingCanvasInputs = true;
+        try
+        {
+            CanvasWidthBox.Text = current.Width.ToString(CultureInfo.InvariantCulture);
+            CanvasHeightBox.Text = current.Height.ToString(CultureInfo.InvariantCulture);
+            CanvasFitCombo.SelectedIndex = current.DefaultFitId == FitWidth.FitId ? 1 : 0;
+            CanvasPresetCombo.SelectedIndex = (current.Width, current.Height) switch
+            {
+                (1920, 1080) => 0,
+                (3840, 2160) => 1,
+                (1080, 1920) => 2,
+                _ => 3,
+            };
+        }
+        finally
+        {
+            _isLoadingCanvasInputs = false;
+        }
+    }
+
+    private bool TryReadCanvasInputs(out int width, out int height)
+    {
+        width = height = 0;
+        if (!int.TryParse(CanvasWidthBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out width) ||
+            !int.TryParse(CanvasHeightBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out height))
+            return false;
+        return width is >= 16 and <= 16384 && height is >= 16 and <= 16384;
+    }
+
+    private string GetSelectedFitId()
+        => (CanvasFitCombo.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? FitHeight.FitId;
+
+    private bool IsPlaying() => _mpv != IntPtr.Zero && !_playbackControl.IsPaused;
+
+    private bool IsLtcFollowing() => _vm.Sync.SyncEnabled;
+
+    private bool IsRenderingFrozenOnly() => !_gapFreezeHandler.IsInactive || _projectRestorePauseState.IsPending;
+
+    // 変更可否・GPU バックエンドの状態を UI に反映する。不可のときは入力と適用ボタンを無効化し理由をツールチップに出す。
+    private void UpdateCanvasUiState()
+    {
+        if (_disposed) return;
+        bool gpu = _effectiveOutputBackend == OutputBackend.Gpu;
+        bool isPlaying = IsPlaying();
+        bool isLtcFollowing = IsLtcFollowing();
+        bool isFrozenOnly = IsRenderingFrozenOnly();
+        bool canChange = gpu && CanvasChangeGate.CanChange(isPlaying, isLtcFollowing, isFrozenOnly);
+        string? tip = gpu
+            ? CanvasChangeGate.DescribeReason(isPlaying, isLtcFollowing, isFrozenOnly)
+            : CanvasGpuOnlyTooltip;
+
+        var state = (canChange, tip, gpu);
+        if (_canvasUiCache == state) return;
+        _canvasUiCache = state;
+
+        CanvasPresetCombo.IsEnabled = canChange;
+        CanvasWidthBox.IsEnabled = canChange;
+        CanvasHeightBox.IsEnabled = canChange;
+        CanvasFitCombo.IsEnabled = canChange;
+        BtnApplyCanvas.IsEnabled = canChange;
+        BtnTestCard.IsEnabled = gpu;
+        System.Windows.Controls.ToolTipService.SetToolTip(CanvasGroup, tip);
+        System.Windows.Controls.ToolTipService.SetToolTip(BtnTestCard, gpu ? null : CanvasGpuOnlyTooltip);
+    }
+
+    // ── クリップ配置（右クリックメニュー） ────────────────────────
+
+    private void PlaylistList_ContextMenuOpening(object sender, System.Windows.Controls.ContextMenuEventArgs e)
+    {
+        int index = ListBoxItemHitTester.GetItemIndexAt(PlaylistList, System.Windows.Input.Mouse.GetPosition(PlaylistList));
+        if (index < 0)
+        {
+            e.Handled = true;
+            return;
+        }
+        _playlist.Select(index);
+        SyncPlaylistSelection();
+        _contextMenuTrackId = _playlist.Tracks[index].Id;
+    }
+
+    private void TrackFitMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.MenuItem item || _contextMenuTrackId is not { } trackId)
+            return;
+        int index = _playlist.FindIndexById(trackId);
+        if (index < 0) return;
+        string? fitId = item.Tag as string;
+        PlaylistTrack track = _playlist.Tracks[index];
+        _playlist.Tracks[index] = track with { Fit = fitId };
+        SubmitOutputState();
+        Log.Information("クリップ配置: track={Track} fit={Fit}",
+            track.Name, fitId ?? "project-default");
+    }
+
     private void DisplayCombo_SelectionChanged(
         object sender,
         System.Windows.Controls.SelectionChangedEventArgs e)
@@ -1423,6 +1613,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_disposed || _mpv == IntPtr.Zero) return;
 
         SubmitOutputState();
+        UpdateCanvasUiState();
         _ltcSyncController.Tick(Environment.TickCount64);
 
         int durationRc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double dur);

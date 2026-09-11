@@ -163,7 +163,8 @@ public sealed class RealProjectGapE2ETests
             TimeSpan.Zero, TimeSpan.FromSeconds(10), TimeSpan.Zero,
             media.MediaDuration, TimeSpan.Zero, media.FrameRate, true));
         string fixturePath = Path.Combine(report, "visible-freeze.tsp");
-        await ProjectSerializer.SaveAsync(fixturePath, playlist, SyncMode.Continue, GapBehavior.Black);
+        await ProjectSerializer.SaveAsync(fixturePath, playlist, SyncMode.Continue, GapBehavior.Black,
+            new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
         using var app = E2EAppRunner.Start(exe, $"--load-project \"{fixturePath}\"");
         MonkeyJson.WriteAppProcessMarker(Path.Combine(report, "app-process.json"), app.Process);
         journal.Write("visible-freeze-start", process: app.Process);

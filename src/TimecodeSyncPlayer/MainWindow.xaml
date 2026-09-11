@@ -168,6 +168,9 @@
                          Margin="10,0,0,0" Click="BtnSpout_Click"
                          IsEnabled="False"
                          AutomationProperties.AutomationId="BtnSpout"/>
+            <Button x:Name="BtnTestCard" Content="{Binding Output.TestCardToggleLabel}" Width="88" Height="34"
+                         Margin="10,0,0,0" Click="BtnTestCard_Click"
+                         AutomationProperties.AutomationId="BtnTestCard"/>
                  <Button x:Name="BtnTimeline" Content="{Binding Sync.TimelineToggleLabel}" Width="96" Height="34"
                          Margin="10,0,0,0" Click="BtnTimeline_Click"
                          AutomationProperties.AutomationId="BtnTimeline"/>
@@ -191,6 +194,8 @@
                     <RowDefinition Height="Auto"/>  <!-- Sync Mode + Gap Behavior -->
                     <RowDefinition Height="Auto"/>  <!-- START/STOP/Sync -->
                     <RowDefinition Height="Auto"/>  <!-- タイムコード表示 -->
+                    <RowDefinition Height="Auto"/>  <!-- 出力タイトル -->
+                    <RowDefinition Height="Auto"/>  <!-- 出力設定 -->
                     <RowDefinition Height="Auto"/>  <!-- Playlistタイトル -->
                     <RowDefinition Height="Auto"/>  <!-- 自動オフセットチェックボックス -->
                     <RowDefinition Height="Auto"/>  <!-- Playlistボタン -->
@@ -323,6 +328,69 @@
                 </StackPanel>
 
                 <TextBlock Grid.Row="6"
+                           Text="出力"
+                           Foreground="White"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,6"/>
+
+                <StackPanel Grid.Row="7" x:Name="CanvasGroup" Margin="0,0,0,10"
+                            ToolTipService.ShowOnDisabled="True">
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="キャンバス:" Foreground="#BBBBBB" FontSize="11"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="CanvasPresetCombo" Grid.Column="1" Height="26"
+                                  AutomationProperties.AutomationId="CanvasPresetCombo"
+                                  SelectionChanged="CanvasPresetCombo_SelectionChanged">
+                            <ComboBoxItem Content="1920×1080" Tag="1920x1080"/>
+                            <ComboBoxItem Content="3840×2160" Tag="3840x2160"/>
+                            <ComboBoxItem Content="1080×1920（縦）" Tag="1080x1920"/>
+                            <ComboBoxItem Content="カスタム" Tag="custom"/>
+                        </ComboBox>
+                    </Grid>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="幅:" Foreground="#BBBBBB" FontSize="11"
+                                   VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox x:Name="CanvasWidthBox" Grid.Column="1" Height="24" Width="72"
+                                 HorizontalAlignment="Left"
+                                 AutomationProperties.AutomationId="CanvasWidthBox"
+                                 Text="1920"/>
+                        <TextBlock Text="高さ:" Grid.Column="2" Foreground="#BBBBBB" FontSize="11"
+                                   VerticalAlignment="Center" Margin="10,0,4,0"/>
+                        <TextBox x:Name="CanvasHeightBox" Grid.Column="3" Height="24" Width="72"
+                                 HorizontalAlignment="Left"
+                                 AutomationProperties.AutomationId="CanvasHeightBox"
+                                 Text="1080"/>
+                    </Grid>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="配置:" Foreground="#BBBBBB" FontSize="11"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="CanvasFitCombo" Grid.Column="1" Height="26"
+                                  AutomationProperties.AutomationId="CanvasFitCombo">
+                            <ComboBoxItem Content="高さ合わせ" Tag="fit-height"/>
+                            <ComboBoxItem Content="幅合わせ" Tag="fit-width"/>
+                        </ComboBox>
+                    </Grid>
+                    <Button x:Name="BtnApplyCanvas" Content="キャンバスを適用" Height="28"
+                            Click="BtnApplyCanvas_Click"
+                            AutomationProperties.AutomationId="BtnApplyCanvas"/>
+                </StackPanel>
+
+                <TextBlock Grid.Row="8"
                            Text="Playlist"
                            Foreground="White"
                            FontSize="14"
@@ -330,7 +398,7 @@
                            Margin="0,0,0,6"/>
 
                 <CheckBox x:Name="AutoOffsetCheckBox"
-                          Grid.Row="7"
+                          Grid.Row="9"
                           Content="自動オフセット（追加時に後ろに配置）"
                           Foreground="#BBBBBB"
                           FontSize="11"
@@ -340,7 +408,7 @@
                           Unchecked="AutoOffsetCheckBox_Changed"
                           AutomationProperties.AutomationId="AutoOffsetCheckBox"/>
 
-                <UniformGrid Grid.Row="8" Columns="3" Margin="-3,0,-3,6">
+                <UniformGrid Grid.Row="10" Columns="3" Margin="-3,0,-3,6">
                     <Button Content="追加" Height="28"
                             Margin="3" Click="BtnAddToPlaylist_Click"
                             AutomationProperties.AutomationId="BtnAddToPlaylist"/>
@@ -358,7 +426,7 @@
                             AutomationProperties.AutomationId="BtnMoveTrackDown"/>
                 </UniformGrid>
 
-                <UniformGrid Grid.Row="9" Columns="2" Margin="-3,0,-3,6">
+                <UniformGrid Grid.Row="11" Columns="2" Margin="-3,0,-3,6">
                     <Button Content="保存" Height="28"
                             Margin="3" Click="BtnSaveProject_Click"
                             AutomationProperties.AutomationId="BtnSaveProject"/>
@@ -368,7 +436,7 @@
                 </UniformGrid>
 
                 <ListBox x:Name="PlaylistList"
-                         Grid.Row="10"
+                         Grid.Row="12"
                          AutomationProperties.AutomationId="PlaylistList"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          AllowDrop="True"
@@ -380,7 +448,17 @@
                          DragOver="PlaylistList_DragOver"
                          Drop="PlaylistList_Drop"
                          SelectionChanged="PlaylistList_SelectionChanged"
-                         MouseDoubleClick="PlaylistList_MouseDoubleClick">
+                         MouseDoubleClick="PlaylistList_MouseDoubleClick"
+                         ContextMenuOpening="PlaylistList_ContextMenuOpening">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="配置" AutomationProperties.AutomationId="TrackFitMenu">
+                                <MenuItem Header="プロジェクト既定" Click="TrackFitMenuItem_Click"/>
+                                <MenuItem Header="高さ合わせ" Tag="fit-height" Click="TrackFitMenuItem_Click"/>
+                                <MenuItem Header="幅合わせ" Tag="fit-width" Click="TrackFitMenuItem_Click"/>
+                            </MenuItem>
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Margin="4,3">
@@ -441,7 +519,7 @@
                 </ListBox>
 
                 <TextBlock x:Name="CurrentTrackLabel"
-                           Grid.Row="11"
+                           Grid.Row="13"
                            AutomationProperties.AutomationId="CurrentTrackLabel"
                            Foreground="#BBBBBB"
                             Text="{Binding Playlist.CurrentTrackLabel}"

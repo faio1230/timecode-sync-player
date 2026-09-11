@@ -43,7 +43,8 @@ public sealed class MonkeyStressE2ETests
             playlist.Tracks.Add(CreateTrack(first, "monkey-a", 0));
             playlist.Tracks.Add(CreateTrack(second, "monkey-b", 25));
             playlist.Select(0);
-            await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Single, GapBehavior.Black);
+            await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Single, GapBehavior.Black,
+                new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
             journal.Write("app-start", details: new { prerequisites.ExePath, first, second, signal!.SampleRate, signal.Channels });
             app = E2EAppRunner.Start(prerequisites.ExePath, $"--load-project \"{projectPath}\"");
             summary.ProcessId = app.Process.Id;

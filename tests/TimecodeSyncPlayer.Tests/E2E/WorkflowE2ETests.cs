@@ -124,7 +124,8 @@ public sealed class WorkflowE2ETests
         if (tracks.Length > 0)
             playlist.Select(0);
 
-        await ProjectSerializer.SaveAsync(path, playlist, syncMode, gapBehavior);
+        await ProjectSerializer.SaveAsync(path, playlist, syncMode, gapBehavior,
+            new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
     }
 
     private static PlaylistTrack CreateTrack(string path, string name, double timelineOffsetSeconds, double durationSeconds)

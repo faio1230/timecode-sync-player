@@ -45,7 +45,10 @@ internal sealed class OutputEngine : IDisposable
     private readonly CancellationTokenSource stop = new();
     private readonly object commandGate = new();
     private readonly Queue<Action> pendingCommands = new();
-    private readonly LatestPool pool = new(3);
+    // 現在のキャンバス世代（合成 pool 3 枚 + 共有サーフェス）。GPU worker が所有する。
+    private CanvasSettings canvas = CanvasSettings.Default;
+    private CanvasGeneration current = null!;
+    private readonly List<RetiredGeneration> retired = new();
     private readonly ScanoutTracker scanout = new(16);
     private readonly ScheduleOffset scheduleOffset = new();
     private readonly ComposeAlignGate align;
@@ -75,7 +78,6 @@ internal sealed class OutputEngine : IDisposable
     // GPU worker のみが触る状態。
     private GpuDevice? gpu;
     private ShaderPipeline? shaders;
-    private readonly List<Surface> surfaces = new();
     private SharedFence? sharedFence;
     private SwapchainTarget? target;
     private VblankDisplayGate? vblank;
@@ -244,6 +246,12 @@ internal sealed class OutputEngine : IDisposable
         settings.Trace.Add("lifecycle", "GPU", detail: "testCard:" + (enabled ? "on" : "off"));
     });
 
+    /// <summary>
+    /// UI スレッド。キャンバス寸法を変更する（段階 4.2）。GPU worker が合成 pool 3 枚と
+    /// 共有サーフェスを新寸法で作り直し、次の合成から反映する。旧世代は lease が返るまで保持する。
+    /// </summary>
+    public void SetCanvas(CanvasSettings value) => Enqueue(() => ApplyCanvas(value));
+
     public void SetSpoutEnabled(bool enabled) => Enqueue(() =>
     {
         if (enabled == spoutRunning && (enabled || spoutThread == null)) return;
@@ -295,8 +303,86 @@ internal sealed class OutputEngine : IDisposable
         stop.Cancel();
     }
 
+    // ── キャンバス変更（段階 4.2） ─────────────────────────────────
+
+    // GPU worker。新しい世代の pool／サーフェスを作り、旧世代は lease が返るまで保持する。
+    // Spout worker は共有ハンドルを開き直す必要があるため、旧世代と新世代を混ぜないよう先に停止する。
+    private void ApplyCanvas(CanvasSettings value)
+    {
+        if (gpu == null || value == canvas) return;
+        bool restartSpout = spoutRunning && spoutThread != null;
+        if (restartSpout) StopSpoutWorker();
+        var next = new CanvasGeneration(value);
+        for (int i = 0; i < next.Pool.Capacity; i++)
+            next.Surfaces.Add(new Surface(gpu, gpu.Texture(value.Width, value.Height, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
+        var entry = new RetiredGeneration(current);
+        entry.Plan.Request();
+        retired.Add(entry);
+        current = next;
+        canvas = value;
+        layer!.SetCanvas(value);
+        settings.Trace.Add("lifecycle", "GPU", detail: $"canvas:{value.Width}x{value.Height}");
+        Log.Information("OutputEngine: canvas を {W}x{H} へ変更", value.Width, value.Height);
+        if (restartSpout) StartSpoutWorker();
+    }
+
+    // 旧世代の画像は、新世代の最初の合成画像が公開され、かつ lease が全て返るまで表示に使う。
+    private (LatestPool.Lease? Lease, CanvasGeneration? Generation) AcquireLatestImage()
+    {
+        var lease = current.Pool.AcquireLatest();
+        if (lease != null) return (lease, current);
+        for (int i = retired.Count - 1; i >= 0; i--)
+        {
+            lease = retired[i].Generation.Pool.AcquireLatest();
+            if (lease != null) return (lease, retired[i].Generation);
+        }
+        return (null, null);
+    }
+
+    private long LatestVisibleId()
+    {
+        long id = current.Pool.LatestId;
+        if (id != 0) return id;
+        for (int i = retired.Count - 1; i >= 0; i--)
+        {
+            id = retired[i].Generation.Pool.LatestId;
+            if (id != 0) return id;
+        }
+        return 0;
+    }
+
+    private void OnComposePublished()
+    {
+        foreach (var entry in retired) entry.Plan.NewImagePublished();
+    }
+
+    private void TryDiscardRetired()
+    {
+        for (int i = retired.Count - 1; i >= 0; i--)
+        {
+            var entry = retired[i];
+            if (!entry.Plan.CanDiscardOld(entry.Generation.Pool.ActiveReaders)) continue;
+            DisposeCanvasGeneration(entry.Generation);
+            entry.Plan.Discarded();
+            retired.RemoveAt(i);
+            settings.Trace.Add("lifecycle", "GPU", detail: "canvas.retired");
+        }
+    }
+
+    private void DisposeCanvasGeneration(CanvasGeneration? generation)
+    {
+        if (generation == null) return;
+        foreach (var surface in generation.Surfaces)
+        {
+            try { surface.CloseSharedHandle(); } catch (Exception e) { Fault("GPU.surfaceHandle: " + e); }
+            DisposeOwned(surface, "GPU.surface");
+        }
+        generation.Surfaces.Clear();
+    }
+
     private void Run()
     {
+        current = new CanvasGeneration(canvas);
         using var process = Process.GetCurrentProcess();
         long cpuStartQpc = Stopwatch.GetTimestamp();
         TimeSpan cpuStart = process.TotalProcessorTime;
@@ -309,8 +395,10 @@ internal sealed class OutputEngine : IDisposable
             Volatile.Write(ref devicePointer, gpu.Device.NativePointer);
             deviceReady.Set();
             shaders = new ShaderPipeline(gpu);
-            for (int i = 0; i < pool.Capacity; i++)
-                surfaces.Add(new Surface(gpu, gpu.Texture(settings.CanvasWidth, settings.CanvasHeight, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
+            canvas = new CanvasSettings(settings.CanvasWidth, settings.CanvasHeight, CanvasSettings.Default.DefaultFitId);
+            current = new CanvasGeneration(canvas);
+            for (int i = 0; i < current.Pool.Capacity; i++)
+                current.Surfaces.Add(new Surface(gpu, gpu.Texture(canvas.Width, canvas.Height, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
             sharedFence = new SharedFence(gpu);
             originQpc = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 2;
             settings.Trace.OriginQpc = originQpc;
@@ -322,11 +410,11 @@ internal sealed class OutputEngine : IDisposable
                 index => new SourceImageDescription(uploadSlots[index]?.Surface?.Texture,
                     uploadSlots[index]?.Width ?? 0, uploadSlots[index]?.Height ?? 0, SourceImageFormat.Bgra8),
                 "mpv-bgra", gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            layer = new ComposeLayer(gpu, shaders, CanvasSettings.Default);
+            layer = new ComposeLayer(gpu, shaders, canvas);
             composeLead = new ComposeLeadController(Stopwatch.Frequency, settings.ComposeLeadMs);
             if (spoutRunning) StartSpoutWorker();
             Log.Information("OutputEngine: 初期化完了 canvas={W}x{H} adapterLuid={Luid}",
-                settings.CanvasWidth, settings.CanvasHeight, gpu.Luid);
+                canvas.Width, canvas.Height, gpu.Luid);
             Loop();
         }
         catch (Exception e)
@@ -345,9 +433,9 @@ internal sealed class OutputEngine : IDisposable
             long cpuEndQpc = Stopwatch.GetTimestamp();
             DrainGstDeliveryEvents(true);
             settings.Trace.Save(new OutputTraceRunSummary(outcome, displayEverAttached, spoutEverEnabled,
-                settings.CanvasWidth, settings.CanvasHeight, settings.PresentMarginMs, settings.ComposeLeadMs,
+                canvas.Width, canvas.Height, settings.PresentMarginMs, settings.ComposeLeadMs,
                 settings.SenderName, cpuSeconds, cpuStartQpc, cpuEndQpc, vblankTimerHighResolution, gpuLoopTimerHighResolution, spoutLoopTimerHighResolution),
-                pool, scanout, TryDiagnostics());
+                current.Pool, scanout, TryDiagnostics());
             gpuDone?.TrySetResult();
         }
     }
@@ -394,6 +482,7 @@ internal sealed class OutputEngine : IDisposable
         while (!stop.IsCancellationRequested)
         {
             ProcessCommands();
+            TryDiscardRetired();
             // 長時間 run でも gst.delivery を欠落させないよう、250ms 間隔で drain する。
             DrainGstDeliveryEvents(false);
             long now = Stopwatch.GetTimestamp();
@@ -423,7 +512,7 @@ internal sealed class OutputEngine : IDisposable
     private bool VblankIdle(long slot, long now, long due)
     {
         if (vblank == null || target == null) return false;
-        long latestId = pool.LatestId;
+        long latestId = LatestVisibleId();
         var (step, deadline, kind) = vblank.Decide(slot, now, due, latestId, stop.IsCancellationRequested);
         if (step == VblankStep.Idle && vblank.Pending is { } pending && now < pending.TargetQpc && pending.TargetQpc < due)
             (step, deadline, kind) = (VblankStep.WaitTarget, pending.TargetQpc, "target");
@@ -456,9 +545,9 @@ internal sealed class OutputEngine : IDisposable
 
     private void ComposeTick(long scheduled, long nextScheduled)
     {
-        int slot = pool.TryBeginWrite();
+        int slot = current.Pool.TryBeginWrite();
         if (slot < 0) { settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.noFreeSlot", value: 1); return; }
-        var surface = surfaces[slot];
+        var surface = current.Surfaces[slot];
 
         // タイムライン状態を取り込む（最新1件、UI は待たない）。
         // スナップショットのアップロードは Loop の空き時間で完了済みで、ここでは取得だけを行う。
@@ -528,7 +617,8 @@ internal sealed class OutputEngine : IDisposable
             UpdateComposeLead(composeCompletedQpc - composeStartedQpc, composeCompletedQpc);
             settings.Trace.Add("compose.complete", "GPU", scheduled, stamp);
             settings.Trace.Add("compose.publish", "GPU", scheduled, stamp);
-            pool.Publish(slot, stamp, true);
+            current.Pool.Publish(slot, stamp, true);
+            OnComposePublished();
             writing = false;
             settings.Trace.Record(new("compose.visible", "GPU", Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc));
         }
@@ -538,14 +628,14 @@ internal sealed class OutputEngine : IDisposable
             if (!retained && acquired != null) acquired.Value.Release();
             // GStreamer のリースは shim が最新へ進めるよう毎 tick 返す（描画テクスチャは AddRef 済み）。
             if (gstSource != null) lease?.Dispose();
-            if (writing) { try { gpu!.Fence.Wait("compose.drain"); } finally { pool.AbortWrite(slot, true); } }
+            if (writing) { try { gpu!.Fence.Wait("compose.drain"); } finally { current.Pool.AbortWrite(slot, true); } }
         }
 
         if (stop.IsCancellationRequested) return;
         if (target != null && vblank != null && !vblank.HasScanout)
         {
             long now = Stopwatch.GetTimestamp();
-            if (vblank.Decide(scheduled, now, nextScheduled, pool.LatestId, stop.IsCancellationRequested).Step == VblankStep.Bootstrap)
+            if (vblank.Decide(scheduled, now, nextScheduled, LatestVisibleId(), stop.IsCancellationRequested).Step == VblankStep.Bootstrap)
             {
                 settings.Trace.Add("display.vblank.bootstrap", "GPU", scheduled, value: 1);
                 if (HoldVblankReadiness(target, scheduled)) Present(scheduled, nextScheduled);
@@ -720,6 +810,21 @@ internal sealed class OutputEngine : IDisposable
         public int Height;
     }
 
+    /// <summary>キャンバス 1 世代分の合成 pool と共有サーフェス。</summary>
+    private sealed class CanvasGeneration(CanvasSettings canvas)
+    {
+        public CanvasSettings Canvas { get; } = canvas;
+        public LatestPool Pool { get; } = new(3);
+        public List<Surface> Surfaces { get; } = new();
+    }
+
+    /// <summary>旧世代と、その破棄可否を判断する plan。</summary>
+    private sealed class RetiredGeneration(CanvasGeneration generation)
+    {
+        public CanvasGeneration Generation { get; } = generation;
+        public CanvasSwapPlan Plan { get; } = new();
+    }
+
     private void UpdatePreview(long now)
     {
         long period = Stopwatch.Frequency / (target != null ? 10 : 30);
@@ -729,15 +834,15 @@ internal sealed class OutputEngine : IDisposable
         bool handedOff = false;
         try
         {
-            var lease = pool.AcquireLatest();
-            if (lease == null) return;
+            var (lease, generation) = AcquireLatestImage();
+            if (lease == null || generation == null) return;
             try
             {
                 lease.BeginGpuUse();
                 bool inFlight = true;
                 try
                 {
-                    shaders!.Display(surfaces[lease.Slot], previewTarget!, 960, 540, settings.CanvasWidth, settings.CanvasHeight);
+                    shaders!.Display(generation.Surfaces[lease.Slot], previewTarget!, 960, 540, generation.Canvas.Width, generation.Canvas.Height);
                     gpu!.Fence.Wait("preview.draw");
                     lease.CompleteGpuUse(); inFlight = false;
                 }
@@ -796,24 +901,26 @@ internal sealed class OutputEngine : IDisposable
         long deadline = vblank?.PresentDeadline(nextScheduled, long.MaxValue) ?? nextScheduled;
         vblank?.BeginAttempt(scheduled);
         long selectStarted = Stopwatch.GetTimestamp();
-        using var lease = pool.AcquireLatest();
+        var acquired = AcquireLatestImage();
+        using var lease = acquired.Lease;
+        CanvasGeneration? generation = acquired.Generation;
         long selectEnded = Stopwatch.GetTimestamp();
         settings.Trace.Record(new("display.select.start", "GPU", selectStarted, scheduled, lease?.Stamp.Id ?? 0, lease?.Stamp.GeneratedQpc ?? 0, DeadlineQpc: deadline));
         ImageStamp selected = lease?.Stamp ?? default;
         settings.Trace.Record(new("display.select.end", "GPU", selectEnded, scheduled, selected.Id, selected.GeneratedQpc,
             lease == null ? "none" : "latest", DeadlineQpc: deadline));
-        if (lease == null) return;
+        if (lease == null || generation == null) return;
         string? stale = vblank?.SkipReason(lease.Stamp.Id);
         if (stale != null) { settings.Trace.Add("skip", "GPU", scheduled, lease.Stamp, stale, 1); return; }
         settings.Trace.Record(new("display.fence.wait", "GPU", Stopwatch.GetTimestamp(), scheduled, lease.Stamp.Id, lease.Stamp.GeneratedQpc,
             Detail: lease.Slot.ToString(), Value: lease.Stamp.Id));
-        Surface source = surfaces[lease.Slot];
+        Surface source = generation.Surfaces[lease.Slot];
         bool inFlight = false;
         try
         {
             long drawStarted = Stopwatch.GetTimestamp();
             lease.BeginGpuUse(); inFlight = true;
-            try { shaders!.Display(source, target!.Target, target.Width, target.Height, settings.CanvasWidth, settings.CanvasHeight); }
+            try { shaders!.Display(source, target!.Target, target.Width, target.Height, generation!.Canvas.Width, generation.Canvas.Height); }
             finally { settings.Trace.Record(new("display.draw.start", "GPU", drawStarted, scheduled, lease.Stamp.Id, lease.Stamp.GeneratedQpc)); }
             gpu!.Fence.Wait("display.draw");
             lease.CompleteGpuUse(); inFlight = false;
@@ -927,12 +1034,14 @@ internal sealed class OutputEngine : IDisposable
         var opened = new List<Surface>();
         try
         {
+            // キャンバス変更時は worker ごと作り直すため、開始時点の世代を捕捉する。
+            CanvasGeneration generation = current;
             sendGpu = new GpuDevice(gpu!.Luid, Fault, fenceSync: true);
-            foreach (var surface in surfaces)
+            foreach (var surface in generation.Surfaces)
                 opened.Add(new Surface(sendGpu, sendGpu.Device1.OpenSharedResource1<ID3D11Texture2D>(surface.Handle), false, SourceSharing.None));
             fenceReader = new SharedFenceReader(sendGpu, sharedFence!.Open(sendGpu));
             sender = new SpoutSender(sendGpu, settings.Trace, "Spout", settings.SenderName,
-                settings.CanvasWidth, settings.CanvasHeight, MutexWaitPolicy.MaxWaitMs, fenceReader);
+                generation.Canvas.Width, generation.Canvas.Height, MutexWaitPolicy.MaxWaitMs, fenceReader);
             loopTimer = new VblankWaitTimer();
             spoutLoopTimerHighResolution = loopTimer.HighResolution;
             ready.Set();
@@ -952,7 +1061,7 @@ internal sealed class OutputEngine : IDisposable
                 }
                 var tick = schedule.Take(now);
                 if (tick.Skipped > 0) settings.Trace.Add("skip", "Spout", tick.Scheduled, detail: "schedule.late", value: tick.Skipped);
-                sender.Update(reads, pool, tick.Scheduled, token);
+                sender.Update(reads, generation.Pool, tick.Scheduled, token);
                 sender.Send(tick.Scheduled, schedule.DueQpc, token);
             }
         }
@@ -1008,12 +1117,9 @@ internal sealed class OutputEngine : IDisposable
         foreach (var slot in uploadSlots)
             DisposeOwned(slot?.Surface, "GPU.uploadSlot");
         snapshotInput.Dispose();
-        foreach (var surface in surfaces)
-        {
-            try { surface.CloseSharedHandle(); } catch (Exception e) { Fault("GPU.surfaceHandle: " + e); }
-            DisposeOwned(surface, "GPU.surface");
-        }
-        surfaces.Clear();
+        DisposeCanvasGeneration(current);
+        foreach (var entry in retired) DisposeCanvasGeneration(entry.Generation);
+        retired.Clear();
         DisposeOwned(sharedFence, "GPU.fence"); sharedFence = null;
         DisposeOwned(shaders, "GPU.shaders"); shaders = null;
         DisposeOwned(previewTarget, "GPU.previewTarget"); previewTarget = null;
