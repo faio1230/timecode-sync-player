@@ -147,7 +147,8 @@ internal static class GstNativeLibraryResolver
 
         static bool IsGstRoot(string? dir) =>
             !string.IsNullOrEmpty(dir) &&
-            System.IO.File.Exists(System.IO.Path.Combine(dir!, "bin", "gstreamer-1.0.dll"));
+            (System.IO.File.Exists(System.IO.Path.Combine(dir!, "bin", "gstreamer-1.0-0.dll"))
+             || System.IO.File.Exists(System.IO.Path.Combine(dir!, "bin", "gstreamer-1.0.dll")));
     }
 
     /// <summary>共有 resolver からの呼び出し。該当 DLL でなければ IntPtr.Zero。</summary>
