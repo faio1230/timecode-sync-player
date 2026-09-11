@@ -49,4 +49,18 @@ internal sealed class ScanoutTracker(int capacity = 16)
 
     // 最初の disjoint 報告だけ true を返し、呼び出し側は1回だけ記録する。
     public bool NoteDisjoint() { if (Disjoint) return false; Disjoint = true; return true; }
+
+    /// <summary>
+    /// swapchain の作り直しで PresentCount が 1 に戻るため、追跡状態を捨てる。
+    /// 全画面の接続・デバイス復旧後の再作成で呼ぶ。
+    /// </summary>
+    public void Reset()
+    {
+        entries.Clear();
+        LastRecordedPresentCount = 0;
+        LastObservedPresentCount = 0;
+        Recorded = 0;
+        Observed = 0;
+        Disjoint = false;
+    }
 }

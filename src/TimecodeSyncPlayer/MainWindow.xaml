@@ -388,6 +388,16 @@
                     <Button x:Name="BtnApplyCanvas" Content="キャンバスを適用" Height="28"
                             Click="BtnApplyCanvas_Click"
                             AutomationProperties.AutomationId="BtnApplyCanvas"/>
+                    <TextBlock x:Name="GpuStatusText"
+                               AutomationProperties.AutomationId="GpuStatusText"
+                               Foreground="#D7A24B" FontSize="11"
+                               TextWrapping="Wrap"
+                               Margin="0,6,0,0"/>
+                    <Button x:Name="BtnGpuRetry" Content="再試行" Height="28"
+                            Visibility="Collapsed"
+                            Margin="0,4,0,0"
+                            Click="BtnGpuRetry_Click"
+                            AutomationProperties.AutomationId="BtnGpuRetry"/>
                 </StackPanel>
 
                 <TextBlock Grid.Row="8"

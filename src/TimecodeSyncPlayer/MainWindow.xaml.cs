@@ -60,6 +60,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly OutputBackend _effectiveOutputBackend;
     private WriteableBitmap? _outputPreviewBitmap;
 
+    // ── 終了（段階 5.1） ──────────────────────────────────────────
+    private ExitDialogHost? _exitDialogHost;
+    private ExitCoordinator? _exitCoordinator;
+    private MainWindowResourceDisposer? _resourceDisposer;
+    private DispatcherTimer? _gpuStatusResetTimer;
+
     // ── キャンバス設定（段階 4、UI スレッド所有） ──────────────────
     private readonly ProjectCanvasState _projectCanvasState = new();
     private Guid? _contextMenuTrackId;
@@ -208,6 +214,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 TestCardEnabled = _vm.Output.TestCardEnabled,
                 Trace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable)),
                 PreviewFrameReady = OnOutputPreviewFrame,
+                SimulatedDeviceLossSeconds = OutputEngineSettings.ParseSimulatedDeviceLossSeconds(
+                    Environment.GetEnvironmentVariable(OutputEngineSettings.SimulateDeviceLossEnvironmentVariable)),
+                GpuStatusChanged = OnGpuStatusChanged,
+                GStreamerRebindRequested = OnGStreamerRebindRequested,
             });
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
@@ -544,6 +554,93 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             frame.Release();
         }
+    }
+
+    // GPU worker から呼ばれる。UI は Dispatcher に投げるだけで待たない。
+    private void OnGpuStatusChanged(GpuOutputStatus status)
+    {
+        try
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+            {
+                if (_disposed) return;
+                switch (status)
+                {
+                    case GpuOutputStatus.Recovering:
+                        UpdateGpuStatus("GPU デバイス消失、復旧中", retryVisible: false, resetAfter: null);
+                        // 復旧中は最後の合成画像が失われるため黒を表示する。
+                        VideoImage.Source = null;
+                        break;
+                    case GpuOutputStatus.Recovered:
+                        UpdateGpuStatus("復旧", retryVisible: false, resetAfter: TimeSpan.FromSeconds(5));
+                        break;
+                    case GpuOutputStatus.Failed:
+                        UpdateGpuStatus("GPU 出力停止。再試行", retryVisible: true, resetAfter: null);
+                        break;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "GPU 状態通知の受信に失敗");
+        }
+    }
+
+    private void UpdateGpuStatus(string text, bool retryVisible, TimeSpan? resetAfter)
+    {
+        GpuStatusText.Text = text;
+        BtnGpuRetry.Visibility = retryVisible ? Visibility.Visible : Visibility.Collapsed;
+        _gpuStatusResetTimer?.Stop();
+        if (resetAfter is not { } delay) return;
+        _gpuStatusResetTimer ??= CreateGpuStatusResetTimer();
+        _gpuStatusResetTimer.Interval = delay;
+        _gpuStatusResetTimer.Start();
+    }
+
+    private DispatcherTimer CreateGpuStatusResetTimer()
+    {
+        var timer = new DispatcherTimer();
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            GpuStatusText.Text = "";
+        };
+        return timer;
+    }
+
+    private void BtnGpuRetry_Click(object sender, RoutedEventArgs e)
+    {
+        BtnGpuRetry.Visibility = Visibility.Collapsed;
+        GpuStatusText.Text = "GPU デバイス消失、復旧中";
+        _outputEngine?.RetryGpuRecovery();
+    }
+
+    // GPU worker（復旧）から呼ばれる。共有リングを開き直せない場合のみ player を再生成し、
+    // 現在ファイルの再ロード＋直前位置シーク＋再生状態復帰を行ってからソースを再接続する。
+    private void OnGStreamerRebindRequested(IntPtr devicePointer)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+        {
+            try
+            {
+                if (_disposed || _outputEngine == null) return;
+                double position = ReadMpvTimePos() ?? 0;
+                if (!_gstBackendState.RecreatePlayer(devicePointer))
+                {
+                    Log.Error("GPU 復旧: GStreamer player の再生成に失敗");
+                    return;
+                }
+                _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi);
+                PlaylistTrack? track = _playlist.Current;
+                if (track != null)
+                    LoadFile(track.FilePath, position);
+                Log.Information("GPU 復旧: GStreamer player を再生成し位置 {Position:F3}s へ復帰", position);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "GPU 復旧: GStreamer の再接続に失敗");
+            }
+        });
     }
 
     private bool InitializeWindowLoadedSession()
@@ -1877,51 +1974,87 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_disposed) return;
         _disposed = true;
+        GetResourceDisposer().DisposeAll();
+    }
 
-        var disposer = new MainWindowResourceDisposer(
-            disposeTimer: () =>
+    private MainWindowResourceDisposer GetResourceDisposer() => _resourceDisposer ??= new MainWindowResourceDisposer(
+        disposeTimer: () =>
+        {
+            if (_timer != null)
             {
-                if (_timer != null)
-                {
-                    _timer.Stop();
-                    _timer.Tick -= OnTick;
-                }
-            },
-            disposeRenderContext: _renderSession.FreeContext,
-            disposeMpv: () =>
+                _timer.Stop();
+                _timer.Tick -= OnTick;
+            }
+        },
+        disposeRenderContext: _renderSession.FreeContext,
+        disposeMpv: () =>
+        {
+            if (_mpv != IntPtr.Zero)
             {
-                if (_mpv != IntPtr.Zero)
-                {
-                    _mpvApi.TerminateDestroy(_mpv);
-                    _mpv = IntPtr.Zero;
-                }
-            },
-            disposeLtc: () =>
-            {
-                _ltcMonitor.FrameReceived -= LtcMonitor_FrameReceived;
-                _ltcMonitor.Stopped -= LtcMonitor_Stopped;
-                _ltcMonitor.Dispose();
-            },
-            disposeSpout: () => _spoutOutput.Dispose(),
-            disposeTimeline: () =>
-            {
-                if (_timelinePanel != null)
-                    _timelinePanel.TimelineSeekRequested -= TimelinePanel_TimelineSeekRequested;
-                _timelinePanel?.Dispose();
-            },
-            disposeBuffer: _renderSession.Dispose,
-            stopRender: _renderSession.Stop,
-            closeFullscreen: CloseFullscreenOutput,
-            stopOutput: () => _outputEngine?.Stop(),
-            disposeOutput: () => _outputEngine?.Dispose());
-        disposer.DisposeAll();
+                _mpvApi.TerminateDestroy(_mpv);
+                _mpv = IntPtr.Zero;
+            }
+        },
+        disposeLtc: () =>
+        {
+            _ltcMonitor.FrameReceived -= LtcMonitor_FrameReceived;
+            _ltcMonitor.Stopped -= LtcMonitor_Stopped;
+            _ltcMonitor.Dispose();
+        },
+        disposeSpout: () => _spoutOutput.Dispose(),
+        disposeTimeline: () =>
+        {
+            if (_timelinePanel != null)
+                _timelinePanel.TimelineSeekRequested -= TimelinePanel_TimelineSeekRequested;
+            _timelinePanel?.Dispose();
+        },
+        disposeBuffer: _renderSession.Dispose,
+        stopRender: _renderSession.Stop,
+        closeFullscreen: CloseFullscreenOutput,
+        stopOutput: () => _outputEngine?.Stop(),
+        disposeOutput: () => _outputEngine?.Dispose(),
+        stopAcceptingNewWork: () => _disposed = true);
+
+    private ExitCoordinator GetExitCoordinator()
+    {
+        if (_exitCoordinator != null) return _exitCoordinator;
+        _exitDialogHost = new ExitDialogHost(this);
+        _exitCoordinator = new ExitCoordinator(
+            _exitDialogHost,
+            GetResourceDisposer(),
+            runOffUiThread: action => Task.Run(action),
+            forceExit: ForceExitProcess,
+            shutdownCompleted: () => Dispatcher.BeginInvoke(new Action(Close)));
+        _exitDialogHost.CancelRequested += _exitCoordinator.CancelRequested;
+        _exitDialogHost.NormalExitRequested += _exitCoordinator.NormalExitRequested;
+        _exitDialogHost.ForceExitRequested += _exitCoordinator.ForceRequested;
+        return _exitCoordinator;
+    }
+
+    // 強制終了: 追加確認なし。ログ 1 行、Environment.Exit(2)、2 秒の番人で Kill。
+    private static void ForceExitProcess()
+    {
+        Log.Information("強制終了");
+        var watchdog = new Thread(() =>
+        {
+            Thread.Sleep(2000);
+            try { Process.GetCurrentProcess().Kill(); } catch { }
+        })
+        {
+            IsBackground = true,
+            Name = "ExitCoordinator.Watchdog",
+        };
+        watchdog.Start();
+        Environment.Exit(2);
     }
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
         try
         {
-            Dispose();
+            // Dispose() 済み（テスト含む）と Application.Shutdown 中はそのまま閉じる。通常は ExitCoordinator 経由。
+            if (_disposed || (Application.Current?.Dispatcher.HasShutdownStarted ?? false)) return;
+            e.Cancel = GetExitCoordinator().OnClosingRequested();
         }
         catch (Exception ex)
         {

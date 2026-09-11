@@ -93,6 +93,26 @@ internal sealed class GstBackendState : IDisposable
         }
     }
 
+    /// <summary>
+    /// 段階 5.2: 共有リングを開き直せなかった場合のみ使う。UI スレッドで player を破棄し、
+    /// 新しい合成デバイス（ポインタ）で同じ名前の player を再生成する。呼び出し側が再ロード・シークする。
+    /// </summary>
+    public bool RecreatePlayer(IntPtr externalDevice)
+    {
+        lock (_gate)
+        {
+            if (_player != IntPtr.Zero)
+            {
+                DetachRenderCallbackLocked();
+                _native.PlayerDestroy(_player);
+                _player = IntPtr.Zero;
+            }
+            _playerDisposed = false;
+            _externalDevice = externalDevice;
+        }
+        return EnsurePlayer();
+    }
+
     public void AttachRenderCallback(MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx)
     {
         lock (_gate)

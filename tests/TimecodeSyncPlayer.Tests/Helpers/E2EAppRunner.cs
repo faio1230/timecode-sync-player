@@ -177,6 +177,23 @@ internal sealed class E2EAppRunner : IDisposable
     public Button Button(string automationId)
         => MainWindow.FindFirstDescendant(cf => cf.ByAutomationId(automationId)).AsButton();
 
+    /// <summary>デスクトップ上のトップレベルウィンドウを AutomationId で探す（ExitDialog 等）。</summary>
+    public Window? FindTopLevelWindow(string automationId)
+        => _automation.GetDesktop()
+            .FindFirstDescendant(cf => cf.ByAutomationId(automationId))
+            ?.AsWindow();
+
+    public Window WaitForTopLevelWindow(string automationId, TimeSpan timeout)
+    {
+        Window? found = null;
+        E2EAssert.WaitUntil(() =>
+        {
+            found = FindTopLevelWindow(automationId);
+            return found != null;
+        }, timeout);
+        return found!;
+    }
+
     public ComboBox Combo(string automationId)
         => MainWindow.FindFirstDescendant(cf => cf.ByAutomationId(automationId)).AsComboBox();
 

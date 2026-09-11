@@ -6,6 +6,20 @@ namespace TimecodeSyncPlayer.Tests;
 public class ScanoutTrackerTests
 {
     [Fact]
+    public void Reset_ClearsCountsForARecreatedSwapchain()
+    {
+        var tracker = new ScanoutTracker(4);
+        tracker.Record(412, 1, 2, 3);
+        tracker.Reset();
+        tracker.LastRecordedPresentCount.Should().Be(0);
+        tracker.LastObservedPresentCount.Should().Be(0);
+        tracker.Recorded.Should().Be(0);
+        tracker.PendingCount.Should().Be(0);
+        tracker.Record(1, 4, 5, 6); // 新 swapchain の PresentCount=1 を受け入れる
+        tracker.LastRecordedPresentCount.Should().Be(1);
+    }
+
+    [Fact]
     public void Observe_AdvancesOncePerPresentCountAndSuppressesDuplicates()
     {
         var tracker = new ScanoutTracker(16);
