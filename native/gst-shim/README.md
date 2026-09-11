@@ -122,6 +122,27 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 相違はいずれも「最小 ABI で現段階の接続（mpv 互換経路）を成立させる」ための
 スコープ判断であり、合成層接続時に規則 2/4/7 と NV12/リングを再検討する。
 
+## 本体 OutputEngine の GStreamerSource（段階 2、2026-09-11）
+
+本体側 `src/TimecodeSyncPlayer/Output/GStreamerSource.cs` は
+`tcs_player_acquire` / `tcs_player_leased_texture` / `tcs_player_release` を
+`IVideoSource`（docs/GPU-SOURCE-CONTRACT-SPEC.md）へ適合させる薄いアダプター。
+管理テスト（`tests/TimecodeSyncPlayer.Tests/GStreamerSourceTests.cs`）は fake で契約規則を検証する。
+
+shim と契約の差はアダプター側で次のように吸収する（契約テストで固定）:
+
+- **位置選択**: shim は position を受け取らず現世代の latest 1 枚を返すため、
+  返却画像の `pts_ns` を `SourceImageStamp.PositionSeconds` として扱う。過去行列は持たない。
+- **リース**: shim は「リース保持中の acquire は同じ画像を返す」ため、参照カウント付きの
+  共有リースとして同一 Stamp を返す。最後の参照が返ると `release` を 1 回だけ呼ぶ。
+- **Ended**: shim の 0（=なし）から Ended を区別できないため `NotReady` とする。保持は合成層の責務。
+- **形式**: `dxgi_format != 87`（BGRA 以外）は `NotReady` として拒否する。
+
+未配線: `OutputEngine` の D3D11 デバイスを shim へ Adopt させる経路
+（`tcs_player_create(sender, external_device, ...)`）はアダプター
+`GstNativeLeasePlayer` として用意したが、本体の `GstBackendState` のプレイヤー作成へ
+接続する作業は段階 2 では未実施。既定の mpv 経路と既存 GStreamer 互換経路は変更していない。
+
 ## コーデック分岐（命令 4 対応）
 
 decodebin に映像を任せない（decodebin は d3d11 pad を sysmem へ
