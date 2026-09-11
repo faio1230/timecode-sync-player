@@ -8,14 +8,12 @@ using Serilog;
 namespace TimecodeSyncPlayer;
 
 /// <summary>
-/// WriteableBitmap を保持し、各種レンダリングポリシーを実行する。
+/// 確定済み画像を WriteableBitmap へコピーする。画像選択や外部送信は担当しない。
 /// BitmapChanged は全解像度の外部表示面を通知する。主画面プレビューは別経路。
 /// UIスレッド上でのみ呼び出すこと。
 /// </summary>
 internal sealed class FrameRenderer
 {
-    private readonly PixelBufferManager _bufferManager;
-    private readonly ISpoutOutput _spoutOutput;
     private readonly SyncAccuracyTrace _accuracyTrace;
     private readonly Action<WriteableBitmap, string>? _queuePreview;
     private readonly Action? _cancelPreview;
@@ -25,13 +23,11 @@ internal sealed class FrameRenderer
     private WriteableBitmap? _bitmap;
     private const double DefaultDpi = 96;
 
-    public FrameRenderer(PixelBufferManager bufferManager, ISpoutOutput spoutOutput, SyncAccuracyTrace? accuracyTrace = null,
+    public FrameRenderer(SyncAccuracyTrace? accuracyTrace = null,
         Action<WriteableBitmap, string>? queuePreview = null, Action? cancelPreview = null,
         Action<WriteableBitmap>? unlockCombinedBitmap = null,
         Func<WriteableBitmap, bool>? tryLockCombinedBitmap = null)
     {
-        _bufferManager = bufferManager;
-        _spoutOutput   = spoutOutput;
         _accuracyTrace = accuracyTrace ?? SyncAccuracyTrace.Current;
         _queuePreview = queuePreview;
         _cancelPreview = cancelPreview;
@@ -62,15 +58,11 @@ internal sealed class FrameRenderer
         }
     }
 
-    /// <summary>_bufferManager.PixelBuffer の内容を WriteableBitmap に書き込む（RenderFrame 用）。</summary>
-    public void UpdateFromPixelBuffer(int w, int h)
-        => UpdateFromPixelBuffer(w, h, "normal");
+    public void Update(OutputFrame frame) => UpdateFromPixels(frame.PixelArray, frame.Width, frame.Height,
+        frame.DiagnosticKind, useBitmapStageTrace: frame.Kind is OutputFrameKind.Normal or OutputFrameKind.Black);
 
-    private void UpdateFromPixelBuffer(int w, int h, string kind)
-    {
-        ThrowIfCombinedPublicationActive();
-        if (_bufferManager.PixelBuffer is { } pixels) UpdateFromPixels(pixels, w, h, kind);
-    }
+    public (double BitmapMs, double SpoutMs) UpdateCombined(OutputFrame frame, Func<double> send)
+        => UpdateFromPixelsWithSpout(frame.PixelArray, frame.Width, frame.Height, send);
 
     /// <summary>Copies a caller-owned snapshot directly to the bitmap during its UI lease.</summary>
     public void UpdateFromPixels(byte[] pixels, int w, int h) => UpdateFromPixels(pixels, w, h, "normal");
@@ -90,12 +82,6 @@ internal sealed class FrameRenderer
             try { Log.Warning(ex, "Preview cancellation failed after external frame failure"); }
             catch (Exception) { }
         }
-    }
-
-    private void SendFrameWithPreviewCancellation(IntPtr pixels, int width, int height)
-    {
-        try { _spoutOutput.SendFrame(pixels, width, height); }
-        catch { CancelPendingPreview(); throw; }
     }
 
     private void UpdateFromPixelsCore(byte[] pixels, int w, int h, string kind, bool useBitmapStageTrace)
@@ -243,73 +229,6 @@ internal sealed class FrameRenderer
     {
         if (_combinedPublicationActive)
             throw new InvalidOperationException("A combined bitmap/send callback must not reenter the same FrameRenderer.");
-    }
-
-    /// <summary>黒フレームを描画して Spout 送信する。</summary>
-    public void RenderBlack(int videoWidth, int videoHeight)
-    {
-        ThrowIfCombinedPublicationActive();
-        (int w, int h) = BlackFrameRenderPolicy.ResolveSize(videoWidth, videoHeight);
-        _bufferManager.EnsurePixelBuffer(w, h);
-        _bufferManager.ClearPixelBuffer();
-        UpdateFromPixelBuffer(w, h, "black");
-        SendFrameWithPreviewCancellation(_bufferManager.PixelPtr, w, h);
-        QueuePreviewFromCurrentBitmap("black");
-    }
-
-    /// <summary>FrozenFrameBuffer の内容を描画する。利用不可なら黒フレームにフォールバック。</summary>
-    public void RenderFrozen(int videoWidth, int videoHeight)
-    {
-        ThrowIfCombinedPublicationActive();
-        if (_bufferManager.FrozenFrameBuffer == null || videoWidth <= 0 || videoHeight <= 0)
-        {
-            Log.Debug("Continue mode: frozen frame unavailable, rendering black frame");
-            RenderBlack(videoWidth, videoHeight);
-            return;
-        }
-        int w = videoWidth;
-        int h = videoHeight;
-        if (!FrameBufferSize.TryGetRequiredByteCount(w, h, out int frameNeeded)) return;
-        if (_bufferManager.FrozenFrameBuffer!.Length < frameNeeded)
-        {
-            RenderBlack(videoWidth, videoHeight);
-            return;
-        }
-        // The legacy frozen/buffered routes never consumed normal-publication attribution.
-        UpdateFromPixels(_bufferManager.FrozenFrameBuffer, w, h, "frozen", useBitmapStageTrace: false);
-        SendFrameWithPreviewCancellation(_bufferManager.FrozenFramePtr, w, h);
-        QueuePreviewFromCurrentBitmap("frozen");
-    }
-
-    /// <summary>CachedGapFreezeFrame があれば描画、なければ FrozenFrame にフォールバック。</summary>
-    public void RenderGapFreeze(int videoWidth, int videoHeight)
-    {
-        ThrowIfCombinedPublicationActive();
-        if (_bufferManager.CachedGapFreezeFrameBuffer != null &&
-            _bufferManager.CachedGapFreezeFrameWidth > 0 &&
-            _bufferManager.CachedGapFreezeFrameHeight > 0)
-        {
-            RenderBuffered(
-                _bufferManager.CachedGapFreezeFrameBuffer,
-                _bufferManager.CachedGapFreezeFramePtr,
-                _bufferManager.CachedGapFreezeFrameWidth,
-                _bufferManager.CachedGapFreezeFrameHeight);
-            return;
-        }
-        RenderFrozen(videoWidth, videoHeight);
-    }
-
-    /// <summary>任意のバイト配列を描画して Spout 送信する。</summary>
-    public void RenderBuffered(byte[] buffer, IntPtr handle, int width, int height)
-    {
-        ThrowIfCombinedPublicationActive();
-        if (!FrameBufferSize.TryGetRequiredByteCount(width, height, out int frameNeeded)) return;
-        if (buffer.Length < frameNeeded)
-            return;
-        UpdateFromPixels(buffer, width, height, "buffered", useBitmapStageTrace: false);
-        if (handle != IntPtr.Zero)
-            SendFrameWithPreviewCancellation(handle, width, height);
-        QueuePreviewFromCurrentBitmap("buffered");
     }
 
     private void RecordPublication(string kind)

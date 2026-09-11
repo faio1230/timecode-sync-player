@@ -38,6 +38,7 @@ internal sealed class RenderSession : IDisposable
     private readonly RenderFrameDisplayUpdater _displayUpdater;
     private readonly RenderedFrameFreezeBufferCopier _freezeCopier;
     private readonly RenderFramePublishPipeline _publishPipeline;
+    private readonly OutputFrameFactory _outputFrames;
     private readonly RenderFrameWorker _worker;
     private FrameRenderer _renderer = null!;
     private PreviewFramePresenter? _preview;
@@ -78,18 +79,25 @@ internal sealed class RenderSession : IDisposable
         _mailbox = new LatestRenderedFrameMailbox(_trace.IsEnabled
             ? (frame, reason) => TraceFrame(frame, "discard", reason) : null);
         _freezeCopier = new RenderedFrameFreezeBufferCopier(_buffers);
+        _outputFrames = new OutputFrameFactory(_buffers);
         var spoutPublisher = new SpoutFramePublisher(spoutOutput);
         var performanceRecorder = new RenderFramePerformanceRecorder(stats);
         _displayUpdater = new RenderFrameDisplayUpdater(
             (pixels, width, height) => _renderer.UpdateFromPixels(pixels, width, height),
             (width, height) => Log.Information("RenderFrame: first frame displayed {W}x{H}", width, height));
         _publishPipeline = new RenderFramePublishPipeline(
-            (pixels, width, height) => _displayUpdater.Update(pixels, width, height),
+            frame =>
+            {
+                if (frame.Kind == OutputFrameKind.Normal)
+                    return _displayUpdater.Update(frame.PixelArray, frame.Width, frame.Height);
+                _renderer.Update(frame);
+                return 0;
+            },
             (pixels, width, height) => spoutPublisher.Publish(pixels, width, height),
             performanceRecorder.Record,
             (pixels, state, width, height) => _freezeCopier.CopyIfNeeded(pixels, state, width, height),
-            () => _renderer.QueuePreviewFromCurrentBitmap("normal"), () => _preview?.ResetPending(),
-            (pixels, width, height, send) => _displayUpdater.UpdateCombined(pixels, width, height, send, _renderer.UpdateFromPixelsWithSpout));
+            kind => _renderer.QueuePreviewFromCurrentBitmap(kind), () => _preview?.ResetPending(),
+            (frame, send) => _displayUpdater.UpdateCombined(frame.PixelArray, frame.Width, frame.Height, send, _renderer.UpdateFromPixelsWithSpout));
         var executor = new MpvRenderFrameExecutor(RenderNativeFrame);
         _worker = new RenderFrameWorker(
             ensurePixelBuffer: (width, height) => _nativeBuffers.EnsurePixelBuffer(width, height),
@@ -177,7 +185,7 @@ internal sealed class RenderSession : IDisposable
         _preview = _createPreview(_trace);
         _preview.SetMaximumFramesPerSecond(_fullscreenActive ? 10 : 30);
         _preview.BitmapChanged += bitmap => PreviewBitmapChanged?.Invoke(bitmap);
-        _renderer = new FrameRenderer(_buffers, _spoutOutput, _trace,
+        _renderer = new FrameRenderer(_trace,
             (bitmap, kind) =>
             {
                 if (!_stopped) _preview.QueueFrame(bitmap, kind);
@@ -384,7 +392,7 @@ internal sealed class RenderSession : IDisposable
         if (decision == GapRenderFrameDecision.Hold) { TraceFrame(frame, "discard", "gap-hold"); return; }
         if (!IsCurrent(frame.Generation)) { TraceFrame(frame, "discard", "stale-before-ui-source"); return; }
         if (frame.Sequence < _lastAppliedSequence) { TraceFrame(frame, "discard", "older-than-applied"); return; }
-        byte[] pixels = BorrowSnapshotPixels(frame);
+        BorrowSnapshotPixels(frame); // Preserve source-borrow diagnostics before output selection.
         _lastAppliedSequence = frame.Sequence;
         _lastFrameWidth = frame.Width;
         _lastFrameHeight = frame.Height;
@@ -397,8 +405,11 @@ internal sealed class RenderSession : IDisposable
         {
             RenderFramePublicationDispatcher.Execute(
                 decision,
-                publishNormalFrame: () => _publishPipeline.Publish(pixels, frame.Width, frame.Height,
-                    frame.RenderMs, spoutEnabled, state, _trace, _traceSessionId, frame.Generation, frame.Sequence, combineBitmapAndSpout),
+                publishNormalFrame: () =>
+                {
+                    using var output = OutputFrame.FromSnapshot(frame);
+                    _publishPipeline.Publish(output, spoutEnabled, state, _trace, _traceSessionId, combineBitmapAndSpout);
+                },
                 captureWithoutPublishing: () => CopyFreezeWithTrace(frame, state),
                 afterFrameProcessed);
             succeeded = true;
@@ -472,8 +483,13 @@ internal sealed class RenderSession : IDisposable
     {
         var deferred = new DeferredGapFrameOperation(expectedDecision, GetGapRenderDecision, () =>
         {
-            if (expectedDecision == GapRenderFrameDecision.Black) _renderer.RenderBlack(Width, Height);
-            else if (expectedDecision == GapRenderFrameDecision.GapFreeze) _renderer.RenderGapFreeze(Width, Height);
+            using var output = expectedDecision switch
+            {
+                GapRenderFrameDecision.Black => _outputFrames.Black(Width, Height),
+                GapRenderFrameDecision.GapFreeze => _outputFrames.GapFreeze(Width, Height),
+                _ => null
+            };
+            if (output != null) _publishPipeline.Publish(output, _spoutOutput.IsEnabled);
         });
         return _gate.RunAsync(() =>
         {

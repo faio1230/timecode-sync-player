@@ -17,17 +17,18 @@ public class FrameRendererAccuracyTests
                 using var buffers = new PixelBufferManager();
                 buffers.EnsurePixelBuffer(1920, 1080);
                 AccuracyFrameMarkerTests.GoldenPixels().CopyTo(buffers.PixelBuffer!, 0);
-                var renderer = new FrameRenderer(buffers, new NullSpout(), trace);
-                renderer.UpdateFromPixelBuffer(1920, 1080);
+                var renderer = new OutputFrameTestHarness(buffers, new NullSpout(), trace);
+                renderer.UpdateSourceBitmap(1920, 1080);
                 buffers.EnsureFrozenFrameBuffer(1920, 1080);
                 buffers.CopyToFrozenFrame(1920, 1080);
-                renderer.RenderFrozen(1920, 1080);
+                renderer.PublishFrozen(1920, 1080);
                 buffers.CopyFrozenToGapFreezeFrame(1920, 1080);
-                renderer.RenderGapFreeze(1920, 1080);
-                renderer.RenderBlack(1920, 1080);
-                // A 'normal' publication containing black must also be recognized as black.
-                renderer.UpdateFromPixelBuffer(1920, 1080);
-                renderer.RenderBuffered(new byte[1], IntPtr.Zero, 1920, 1080);
+                renderer.PublishGapFreeze(1920, 1080);
+                renderer.PublishBlack(1920, 1080);
+                // Black selection does not modify source storage. Supply black for the next normal image.
+                buffers.ClearPixelBuffer();
+                renderer.UpdateSourceBitmap(1920, 1080);
+                renderer.PublishBuffered(new byte[1], 1920, 1080, sendSpout: false);
             });
             var frames = SyncAccuracyTraceTests.Read(path).Where(x => x.GetProperty("type").GetString() == "frame").ToArray();
             Assert.Equal(new[] { "normal", "frozen", "buffered", "black", "normal" }, frames.Select(x => x.GetProperty("kind").GetString()));

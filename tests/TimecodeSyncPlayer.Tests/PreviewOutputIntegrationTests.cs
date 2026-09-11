@@ -18,10 +18,10 @@ public class PreviewOutputIntegrationTests
                 using var trace = SyncAccuracyTrace.Create(path);
                 using var buffers = new PixelBufferManager();
                 buffers.EnsureFrozenFrameBuffer(2, 2);
-                var renderer = new FrameRenderer(buffers, new FakeSpout(), trace);
+                var renderer = new OutputFrameTestHarness(buffers, new FakeSpout(), trace);
                 using var scope = new BitmapRenderTraceScope(trace, 1, 0, 1, 2, 2);
-                renderer.RenderFrozen(2, 2);
-                renderer.RenderBuffered(new byte[16], IntPtr.Zero, 2, 2);
+                renderer.PublishFrozen(2, 2);
+                renderer.PublishBuffered(new byte[16], 2, 2, sendSpout: false);
                 Assert.Same(scope, BitmapRenderTraceScope.Take(trace, 2, 2));
             });
             Assert.DoesNotContain(SyncAccuracyTraceTests.Read(path), r => r.GetProperty("type").GetString() == "render-stage");
@@ -43,12 +43,12 @@ public class PreviewOutputIntegrationTests
             using (var trace = SyncAccuracyTrace.Create(tracing ? path : null))
             {
                 var pipeline = new RenderFramePublishPipeline(
-                    (_, _, _) => { calls.Add("bitmap"); return 1; },
+                    _ => { calls.Add("bitmap"); return 1; },
                     (pixels, _, _) => { Assert.Equal(73, Marshal.ReadByte(pixels)); calls.Add("spout"); return 2; },
                     _ => calls.Add("perf"),
                     (_, _, _, _) => { calls.Add("freeze"); return true; },
-                    () => { calls.Add("preview"); if (failPreview) throw new InvalidOperationException("preview only"); });
-                pipeline.Publish([73, 0, 0, 0], 1, 1, 3, true, GapState.Inactive, trace, 1, 2, 3);
+                    _ => { calls.Add("preview"); if (failPreview) throw new InvalidOperationException("preview only"); });
+                pipeline.PublishNormal([73, 0, 0, 0], 1, 1, 3, true, GapState.Inactive, trace, 1, 2, 3);
                 Assert.Equal(new[] { "bitmap", "spout", "perf", "freeze", "preview" }, calls);
             }
             if (tracing)
@@ -73,16 +73,16 @@ public class PreviewOutputIntegrationTests
             long now = 0;
             using var presenter = new PreviewFramePresenter(SyncAccuracyTrace.Disabled, timer, () => now, 1_000_000);
             var spout = new FakeSpout();
-            var renderer = new FrameRenderer(buffers, spout, SyncAccuracyTrace.Disabled, presenter.QueueFrame);
+            var renderer = new OutputFrameTestHarness(buffers, spout, SyncAccuracyTrace.Disabled, presenter.QueueFrame);
             WriteableBitmap? preview = null;
             presenter.BitmapChanged += bitmap => preview = bitmap;
             var source = new byte[1920 * 1080 * 4];
             Array.Fill(source, (byte)73);
             var pipeline = new RenderFramePublishPipeline(
-                (pixels, w, h) => { renderer.UpdateFromPixels(pixels, w, h); return 0; },
+                frame => { renderer.Renderer.Update(frame); return 0; },
                 (pixels, w, h) => { spout.SendFrame(pixels, w, h); return 0; },
-                _ => { }, (_, _, _, _) => false, () => renderer.QueuePreviewFromCurrentBitmap("normal"));
-            pipeline.Publish(source, 1920, 1080, 0, false, GapState.Inactive);
+                _ => { }, (_, _, _, _) => false, renderer.QueuePreviewFromCurrentBitmap);
+            pipeline.PublishNormal(source, 1920, 1080, 0, false, GapState.Inactive);
             Assert.Null(preview);
             Assert.True(timer.IsEnabled);
             Assert.Equal((1920, 1080, (byte)73), Assert.Single(spout.Frames));
@@ -111,20 +111,20 @@ public class PreviewOutputIntegrationTests
             using var buffers = new PixelBufferManager();
             var spout = new FakeSpout();
             var observations = new List<(string Kind, byte Pixel, int Sends)>();
-            var renderer = new FrameRenderer(buffers, spout, SyncAccuracyTrace.Disabled,
+            var renderer = new OutputFrameTestHarness(buffers, spout, SyncAccuracyTrace.Disabled,
                 (bitmap, kind) =>
                 {
                     observations.Add((kind, Marshal.ReadByte(bitmap.BackBuffer), spout.Frames.Count));
                     throw new InvalidOperationException("preview only");
                 });
-            renderer.RenderBlack(2, 2);
-            renderer.RenderFrozen(2, 2); // Missing frozen data falls back to Black, once.
+            renderer.PublishBlack(2, 2);
+            renderer.PublishFrozen(2, 2); // Missing frozen data falls back to Black, once.
             buffers.EnsureFrozenFrameBuffer(2, 2);
             Array.Fill(buffers.FrozenFrameBuffer!, (byte)31);
-            renderer.RenderFrozen(2, 2);
+            renderer.PublishFrozen(2, 2);
             buffers.CopyFrozenToGapFreezeFrame(2, 2);
-            renderer.RenderGapFreeze(9, 9);
-            renderer.RenderBuffered([47, 0, 0, 0], IntPtr.Zero, 1, 1); // Preview still updates without a Spout pointer.
+            renderer.PublishGapFreeze(9, 9);
+            renderer.PublishBuffered([47, 0, 0, 0], 1, 1, sendSpout: false); // Preview still updates without a Spout pointer.
             Assert.Equal(new[] { ("black", (byte)0, 1), ("black", (byte)0, 2), ("frozen", (byte)31, 3),
                 ("buffered", (byte)31, 4), ("buffered", (byte)47, 4) }, observations);
             Assert.Equal((1, 1), (renderer.CurrentBitmap!.PixelWidth, renderer.CurrentBitmap.PixelHeight));
@@ -138,7 +138,7 @@ public class PreviewOutputIntegrationTests
         {
             using var buffers = new PixelBufferManager();
             byte[]? observed = null;
-            var renderer = new FrameRenderer(buffers, new FakeSpout(), SyncAccuracyTrace.Disabled,
+            var renderer = new OutputFrameTestHarness(buffers, new FakeSpout(), SyncAccuracyTrace.Disabled,
                 (bitmap, _) => { observed = new byte[bitmap.BackBufferStride * bitmap.PixelHeight]; Marshal.Copy(bitmap.BackBuffer, observed, 0, observed.Length); });
             renderer.UpdateFromPixels([17, 17, 17, 17, 31, 31, 31, 31], 2, 1);
             renderer.UpdateFromPixels([47, 47, 47, 47], 2, 1);
@@ -162,7 +162,7 @@ public class PreviewOutputIntegrationTests
                 var timer = new ManualPreviewTimer();
                 long now = 0;
                 using var presenter = new PreviewFramePresenter(trace, timer, () => now, 1_000_000);
-                var renderer = new FrameRenderer(buffers, new FakeSpout(), trace, presenter.QueueFrame, presenter.ResetPending);
+                var renderer = new OutputFrameTestHarness(buffers, new FakeSpout(), trace, presenter.QueueFrame, presenter.ResetPending);
                 int previews = 0;
                 presenter.BitmapChanged += _ => previews++;
                 renderer.UpdateFromPixels([17, 17, 17, 17, 31, 31, 31, 31], 2, 1);
@@ -170,12 +170,12 @@ public class PreviewOutputIntegrationTests
                 Assert.True(timer.IsEnabled);
                 var failure = new InvalidOperationException("failure after part of the bitmap changed");
                 var pipeline = new RenderFramePublishPipeline(
-                    (_, _, _) => { renderer.UpdateFromPixels([47, 47, 47, 47], 2, 1); throw failure; },
+                    _ => { renderer.UpdateFromPixels([47, 47, 47, 47], 2, 1); throw failure; },
                     (_, _, _) => throw new InvalidOperationException("Spout must not run"),
                     _ => throw new InvalidOperationException("perf must not run"),
-                    (_, _, _, _) => false, () => renderer.QueuePreviewFromCurrentBitmap("normal"), presenter.ResetPending);
+                    (_, _, _, _) => false, renderer.QueuePreviewFromCurrentBitmap, presenter.ResetPending);
                 Assert.Same(failure, Assert.Throws<InvalidOperationException>(() =>
-                    pipeline.Publish([47, 47, 47, 47], 2, 1, 0, false, GapState.Inactive, trace, 1, 0, 1)));
+                    pipeline.PublishNormal([47, 47, 47, 47, 0, 0, 0, 0], 2, 1, 0, false, GapState.Inactive, trace, 1, 0, 1)));
                 now = 40_000; timer.Fire();
                 Assert.Equal(0, previews);
                 Assert.False(timer.IsEnabled);
@@ -199,7 +199,7 @@ public class PreviewOutputIntegrationTests
             long now = 0;
             using var presenter = new PreviewFramePresenter(SyncAccuracyTrace.Disabled, timer, () => now, 1_000_000);
             var spout = new FakeSpout();
-            var renderer = new FrameRenderer(buffers, spout, SyncAccuracyTrace.Disabled, presenter.QueueFrame, presenter.ResetPending);
+            var renderer = new OutputFrameTestHarness(buffers, spout, SyncAccuracyTrace.Disabled, presenter.QueueFrame, presenter.ResetPending);
             int previews = 0;
             presenter.BitmapChanged += _ => previews++;
             renderer.UpdateFromPixels([17, 17, 17, 17], 1, 1);
@@ -211,10 +211,10 @@ public class PreviewOutputIntegrationTests
             Action action = operation switch
             {
                 "copy" => () => renderer.UpdateFromPixels(null!, 1, 1),
-                "black" => () => renderer.RenderBlack(1, 1),
-                "frozen" => () => renderer.RenderFrozen(1, 1),
-                "gap" => () => renderer.RenderGapFreeze(1, 1),
-                _ => () => renderer.RenderBuffered([47, 47, 47, 47], new IntPtr(1), 1, 1)
+                "black" => () => renderer.PublishBlack(1, 1),
+                "frozen" => () => renderer.PublishFrozen(1, 1),
+                "gap" => () => renderer.PublishGapFreeze(1, 1),
+                _ => () => renderer.PublishBuffered([47, 47, 47, 47], 1, 1)
             };
             if (operation == "copy") Assert.Throws<NullReferenceException>(action);
             else Assert.Same(spout.Failure, Assert.Throws<InvalidOperationException>(action));

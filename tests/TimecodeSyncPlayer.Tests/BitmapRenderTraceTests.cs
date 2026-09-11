@@ -19,9 +19,9 @@ public class BitmapRenderTraceTests
                 using var outerBuffers = new PixelBufferManager();
                 using var innerBuffers = new PixelBufferManager();
                 using var directBuffers = new PixelBufferManager();
-                var outer = new FrameRenderer(outerBuffers, new NullSpout(), trace);
-                var inner = new FrameRenderer(innerBuffers, new NullSpout(), trace);
-                var direct = new FrameRenderer(directBuffers, new NullSpout(), trace);
+                var outer = new FrameRenderer(trace);
+                var inner = new FrameRenderer(trace);
+                var direct = new FrameRenderer(trace);
                 var innerPipeline = Pipeline(inner);
                 outer.BitmapChanged += _ =>
                 {
@@ -67,12 +67,16 @@ public class BitmapRenderTraceTests
             {
                 using var trace = SyncAccuracyTrace.Create(path);
                 using var buffers = new PixelBufferManager();
-                var renderer = new FrameRenderer(buffers, new NullSpout(), trace);
+                var renderer = new FrameRenderer(trace);
                 WriteableBitmap? bitmap = null;
                 renderer.BitmapChanged += value => bitmap = value;
-                var pipeline = Pipeline(renderer);
-                Assert.Throws<NullReferenceException>(() => pipeline.Publish(null!, 2, 2, 0, false,
+                bool failCopy = true;
+                var pipeline = new RenderFramePublishPipeline(
+                    frame => { renderer.UpdateFromPixels(failCopy ? null! : frame.PixelArray, frame.Width, frame.Height); return 0; },
+                    (_, _, _) => 0, _ => { }, (_, _, _, _) => false);
+                Assert.Throws<NullReferenceException>(() => pipeline.PublishNormal(new byte[16], 2, 2, 0, false,
                     GapState.Inactive, trace, 11, 4, 101));
+                failCopy = false;
                 Assert.NotNull(bitmap);
                 Assert.True(bitmap.CanFreeze, "A bitmap still locked after the failed copy cannot freeze.");
                 // Neither this direct call nor its marker event should get failed publication metadata.
@@ -100,7 +104,7 @@ public class BitmapRenderTraceTests
             {
                 using var trace = SyncAccuracyTrace.Create(path);
                 using var buffers = new PixelBufferManager();
-                var renderer = new FrameRenderer(buffers, new NullSpout(), trace);
+                var renderer = new FrameRenderer(trace);
                 renderer.BitmapChanged += bitmap => bitmap.Freeze();
                 Assert.Throws<InvalidOperationException>(() => Publish(Pipeline(renderer), trace, 11, 4, 101));
             });
@@ -138,10 +142,10 @@ public class BitmapRenderTraceTests
             x.GetProperty("stage").GetString() is "bitmap-lock" or "bitmap-copy-dirty" or "bitmap-unlock")
         .ToArray();
     private static RenderFramePublishPipeline Pipeline(FrameRenderer renderer) => new(
-        (pixels, width, height) => { renderer.UpdateFromPixels(pixels, width, height); return 0; },
+        frame => { renderer.Update(frame); return 0; },
         (_, _, _) => 0, _ => { }, (_, _, _, _) => false);
     private static void Publish(RenderFramePublishPipeline pipeline, SyncAccuracyTrace trace,
-        long session, int generation, long sequence) => pipeline.Publish(new byte[16], 2, 2, 0,
+        long session, int generation, long sequence) => pipeline.PublishNormal(new byte[16], 2, 2, 0,
             false, GapState.Inactive, trace, session, generation, sequence);
 
     private static void RunOnSta(Action action)
