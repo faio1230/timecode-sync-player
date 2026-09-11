@@ -12,8 +12,39 @@ public class MpvSnapshotSourceTests
     private static MpvSnapshotSource<int> CreateSource()
         => new(
             [0, 1, 2, 3],
-            (slot, pixels, width, height) => { },
+            (slot, pixels, width, height) => null,
             slot => new SourceImageDescription(null, 4, 4, SourceImageFormat.Bgra8));
+
+    private sealed class FakeCompletion : IUploadCompletion
+    {
+        public bool Complete;
+        public bool Disposed;
+        public bool TryComplete() => Complete;
+        public void Dispose() => Disposed = true;
+    }
+
+    [Fact]
+    public void TryUpload_KeepsTheImageInvisibleUntilTheGpuCopyCompletes()
+    {
+        var completions = new Queue<FakeCompletion>();
+        var source = new MpvSnapshotSource<int>(
+            [0, 1, 2, 3],
+            (slot, pixels, width, height) => { var completion = new FakeCompletion(); completions.Enqueue(completion); return completion; },
+            slot => new SourceImageDescription(null, 4, 4, SourceImageFormat.Bgra8));
+        source.SetGeneration(1);
+        source.TryUpload(Frame(4, 4, 1, 1), 1, 0).Should().BeTrue();
+        source.PendingUploads.Should().Be(1);
+        source.TryAcquire(1, 0, out _).Should().Be(SourceStatus.NotReady);
+
+        completions.Peek().Complete = true;
+        source.PollUploads();
+        source.PendingUploads.Should().Be(0);
+        completions.Peek().Disposed.Should().BeTrue();
+        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ready);
+        lease!.Stamp.Sequence.Should().Be(1);
+        lease.Dispose();
+        source.TryDispose().Should().BeTrue();
+    }
 
     [Fact]
     public void TryUpload_OffersOnlyTheCurrentGenerationAndReleasesTheFrameLease()
@@ -72,8 +103,10 @@ public class MpvSnapshotSourceTests
         source.TryAcquire(1, 1, out var b).Should().Be(SourceStatus.Ready);
         source.TryAcquire(1, 0, out var c).Should().Be(SourceStatus.Ready);
 
+        // アップロード自体は受け付けるが、全画像 lease 中のためリングへの公開は破棄される。
         var blocked = Frame(4, 4, 1, 4);
-        source.TryUpload(blocked, 1, 3).Should().BeFalse();
+        source.TryUpload(blocked, 1, 3).Should().BeTrue();
+        source.PendingUploads.Should().Be(0);
         source.Uploaded.Should().Be(3);
         source.DroppedUploads.Should().Be(1);
         FluentActions.Invoking(() => _ = blocked.Pixels).Should().Throw<ObjectDisposedException>();
