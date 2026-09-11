@@ -4,6 +4,7 @@
  */
 #include "tcs_gstreamer.h"
 #include <d3d11.h>
+#include <psapi.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +12,8 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+
+
 
 static int failures = 0;
 static std::atomic<unsigned> g_frame_notifies{0};
@@ -33,12 +36,99 @@ on_frame (void* user, uint64_t generation, uint64_t seq)
   g_last_gen = generation;
   g_last_seq = seq;
 }
+static size_t
+working_set_kb ()
+{
+  PROCESS_MEMORY_COUNTERS pmc = {};
+  if (K32GetProcessMemoryInfo (GetCurrentProcess (), &pmc, sizeof (pmc)))
+    return pmc.WorkingSetSize / 1024;
+  return 0;
+}
+
+/* --stress <file...> <iters>: alternate track switches and watch memory.
+ * Exercised path is exactly what the app uses for track switching
+ * (tcs_player_load tears the old pipeline down and rebuilds). */
+static int
+run_stress (int argc, char** argv)
+{
+  int iters = atoi (argv[argc - 1]);
+  int nfiles = argc - 3;
+  if (nfiles < 1 || iters < 2) {
+    printf ("usage: tcs-shim-test --stress <file...> <iters>\n");
+    return 2;
+  }
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimStress", nullptr, err, sizeof (err));
+  check (p != nullptr, "create");
+  if (!p) return 1;
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+
+  size_t ws_min = SIZE_MAX, ws_max = 0;
+  size_t ws_after_warmup = 0;
+  uint64_t frames_total = 0;
+  int load_failures = 0;
+
+  for (int i = 0; i < iters; i++) {
+    const char* f = argv[2 + (i % nfiles)];
+    int rc = tcs_player_load (p, f, -1.0, 0, err, sizeof (err));
+    if (rc != TCS_OK) {
+      load_failures++;
+      printf ("  iter %d: load failed: %s\n", i, err);
+      continue;
+    }
+
+    uint64_t before;
+    TcsStats st = {};
+    tcs_player_get_stats (p, &st);
+    before = st.frames_decoded;
+    for (int w = 0; w < 100; w++) {
+      tcs_player_get_stats (p, &st);
+      if (st.frames_decoded >= before + 3) break;
+      std::this_thread::sleep_for (std::chrono::milliseconds (20));
+    }
+    if (st.frames_decoded < before + 3) {
+      load_failures++;
+      printf ("  iter %d: no frames after load (decoder=%s)\n", i, st.decoder);
+    }
+    frames_total += st.frames_decoded - before;
+
+    /* exercise the lease like the compositor would */
+    TcsFrameInfo info = {};
+    if (tcs_player_acquire (p, tcs_player_get_generation (p), &info) == 1)
+      tcs_player_release (p);
+
+    size_t ws = working_set_kb ();
+    if (i == 1) ws_after_warmup = ws;
+    if (ws < ws_min) ws_min = ws;
+    if (ws > ws_max) ws_max = ws;
+    if (i % 5 == 0 || i == iters - 1)
+      printf ("  iter %3d ws=%zuKB\n", i, ws);
+  }
+
+  long long delta = (long long) ws_max - (long long) (ws_after_warmup ? ws_after_warmup : ws_min);
+  printf ("STRESS iters=%d files=%d frames_total=%llu load_failures=%d ws_min=%zuKB ws_max=%zuKB ws_after_warmup=%zuKB delta_after_warmup=%lldKB\n",
+      iters, nfiles, (unsigned long long) frames_total, load_failures,
+      ws_min, ws_max, ws_after_warmup, delta);
+
+  check (load_failures == 0, "all stress loads produced frames");
+  check (frames_total >= (uint64_t) (iters * 3), "frames during stress");
+  /* 100MB 繧定ｶ・∴繧句｢怜刈縺ｯ貍上∴縺・・逍代＞ (1080p 謨ｰ譫壹・繝励・繝ｫ蠅怜刈縺ｯ謨ｰ10MB莉･蜀・ */
+  bool bounded = ws_after_warmup == 0 || delta < 100 * 1024;
+  check (bounded, "working set growth bounded after warmup");
+
+  tcs_player_destroy (p);
+  return failures ? 1 : 0;
+}
+
 
 int
 main (int argc, char** argv)
 {
   if (argc < 2) { printf ("usage: tcs-shim-test <media> [play_secs]\n"); return 2; }
   setvbuf (stdout, nullptr, _IONBF, 0);
+  if (strcmp (argv[1], "--stress") == 0)
+    return run_stress (argc, argv);
   const char* file = argv[1];
   double play_secs = argc > 2 ? atof (argv[2]) : 2.0;
 
@@ -94,7 +184,13 @@ main (int argc, char** argv)
   tcs_player_set_paused (p, 0);
   uint64_t f1 = st.frames_decoded;
   unsigned notifs1 = g_frame_notifies.load ();
-  std::this_thread::sleep_for (std::chrono::milliseconds ((int) (play_secs * 1000)));
+  for (int s = 0; s < (int) play_secs; s++) {
+    std::this_thread::sleep_for (std::chrono::seconds (1));
+    TcsStats ps = {};
+    tcs_player_get_stats (p, &ps);
+    printf ("  t=%ds frames=%llu notifies=%u\n", s + 1,
+        (unsigned long long) ps.frames_decoded, g_frame_notifies.load ());
+  }
   tcs_player_get_stats (p, &st);
   check (st.frames_decoded > f1 + 5, "frames advance while playing");
   check (g_frame_notifies.load () > notifs1, "frame callback notifications");
