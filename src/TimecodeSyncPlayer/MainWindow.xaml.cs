@@ -187,6 +187,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 Trace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable)),
                 PreviewFrameReady = OnOutputPreviewFrame,
             });
+            _renderSession.GpuFrameSink = (frame, generation, position) => _outputEngine?.SubmitFrame(frame, generation, position);
+            _renderSession.PositionSecondsProvider = ReadMpvTimePos;
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
         }
@@ -428,6 +430,34 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             refreshLtcDevices: RefreshLtcDevices,
             applyAutoOffset: () => AutoOffsetCheckBox.IsChecked = _settingsManager.Current.AutoOffsetOnAdd);
         uiInitializer.Initialize();
+    }
+
+    private double? ReadMpvTimePos()
+    {
+        if (_mpv == IntPtr.Zero) return null;
+        return _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double pos) == 0 && double.IsFinite(pos)
+            ? pos
+            : null;
+    }
+
+    // Gpu backend: ギャップ・カード・世代・位置を GPU worker の mailbox へ渡す（最新1件）。
+    private void SubmitOutputState()
+    {
+        if (_outputEngine == null || _disposed) return;
+        OutputGapMode gap = _renderSession.GetGapRenderDecision() switch
+        {
+            GapRenderFrameDecision.Black => OutputGapMode.Black,
+            GapRenderFrameDecision.GapFreeze => OutputGapMode.GapFreeze,
+            GapRenderFrameDecision.Hold => OutputGapMode.Hold,
+            _ => OutputGapMode.None,
+        };
+        _outputEngine.SubmitTimelineState(new TimelineOutputState(
+            _renderSession.CaptureGeneration(),
+            gap,
+            OutputEngineSettings.TestCardRequested(),
+            CanvasSettings.Default,
+            new ClipPlacement(null),
+            ReadMpvTimePos() ?? 0));
     }
 
     private static string ResolveOutputSenderName()
@@ -1354,6 +1384,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_disposed || _mpv == IntPtr.Zero) return;
 
+        SubmitOutputState();
         _ltcSyncController.Tick(Environment.TickCount64);
 
         int durationRc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double dur);
@@ -1459,6 +1490,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         await TryCompleteGapFreezeAsync(renderGeneration, hasFrame);
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
+        SubmitOutputState();
         if (hasFrame && _gapFreezeHandler.IsInactive)
         {
             await _renderSession.RenderFrameAsync(renderGeneration);

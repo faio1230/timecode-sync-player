@@ -109,6 +109,15 @@ internal sealed class RenderSession : IDisposable
 
     public event Action<WriteableBitmap>? BitmapChanged;
     public event Action<WriteableBitmap>? PreviewBitmapChanged;
+
+    /// <summary>
+    /// Gpu backend 時のみ設定する。通常フレームを Retain して GPU 出力層へ渡す（所有権も移す）。
+    /// CPU 側の表示・Spout 公開は行わない。Gap 中のフレームは TimelineOutputState 側で解釈する。
+    /// </summary>
+    internal Action<RenderedFrameSnapshot, int, double>? GpuFrameSink { get; set; }
+
+    /// <summary>スナップショット公開時点の再生位置（秒）。取得できなければ null。</summary>
+    internal Func<double?>? PositionSecondsProvider { get; set; }
     // The fullscreen window must start from this full-resolution image, even paused.
     public WriteableBitmap? CurrentExternalBitmap => _renderer?.CurrentBitmap;
     public void SetFullscreenActive(bool active)
@@ -396,6 +405,31 @@ internal sealed class RenderSession : IDisposable
         _lastAppliedSequence = frame.Sequence;
         _lastFrameWidth = frame.Width;
         _lastFrameHeight = frame.Height;
+
+        if (GpuFrameSink != null)
+        {
+            // Gpu backend: CPU の表示・Spout・Freeze コピーは行わず、Retain したフレームを出力層へ渡す。
+            long gpuStarted = _trace.IsEnabled ? Stopwatch.GetTimestamp() : 0;
+            bool handed = false;
+            try
+            {
+                if (decision == GapRenderFrameDecision.None)
+                {
+                    GpuFrameSink(frame.Retain(), frame.Generation, PositionSecondsProvider?.Invoke() ?? 0);
+                    handed = true;
+                }
+                afterFrameProcessed?.Invoke();
+            }
+            finally
+            {
+                if (_trace.IsEnabled)
+                    _trace.RecordRenderStage(_traceSessionId, null, frame.Generation, frame.Sequence, "gpu-submit",
+                        handed ? "published" : decision == GapRenderFrameDecision.None ? "exception" : "capture-only",
+                        gpuStarted, Stopwatch.GetTimestamp(), frame.Width, frame.Height);
+            }
+            return;
+        }
+
         GapState state = _getGapState();
         bool spoutEnabled = _spoutOutput.IsEnabled;
         bool combineBitmapAndSpout = _fullscreenActive && spoutEnabled;

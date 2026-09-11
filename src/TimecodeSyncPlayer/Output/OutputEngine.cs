@@ -2,6 +2,7 @@
 using System.Runtime.InteropServices;
 using System.Threading;
 using Serilog;
+using TimecodeSyncPlayer.Contracts;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 
@@ -47,6 +48,13 @@ internal sealed class OutputEngine : IDisposable
     private readonly ScanoutTracker scanout = new(16);
     private readonly ScheduleOffset scheduleOffset = new();
     private readonly ComposeAlignGate align;
+    private readonly SnapshotInputMailbox snapshotInput = new();
+    private readonly TimelineOutputMailbox timelineInput = new();
+    private readonly UploadSlot?[] uploadSlots = new UploadSlot?[4];
+    private MpvSnapshotSource<int>? mpvSource;
+    private ComposeLayer? layer;
+    private TimelineOutputState? lastTimelineState;
+    private int sourceGeneration = -1;
 
     // GPU worker のみが触る状態。
     private GpuDevice? gpu;
@@ -96,6 +104,14 @@ internal sealed class OutputEngine : IDisposable
 
     public bool Faulted => Volatile.Read(ref faulted) != 0;
     public string? FirstFault => firstFault;
+
+    /// <summary>UI スレッド。Retain 済みの mpv スナップショットを GPU worker へ渡す（所有権も移す）。</summary>
+    public void SubmitFrame(RenderedFrameSnapshot frame, int generation, double positionSeconds)
+        => snapshotInput.Publish(frame, generation, positionSeconds);
+
+    /// <summary>UI スレッド。タイムライン状態（ギャップ・カード・世代・位置）を GPU worker へ渡す。</summary>
+    public void SubmitTimelineState(TimelineOutputState state)
+        => timelineInput.Publish(state);
 
     public void Start()
     {
@@ -219,6 +235,12 @@ internal sealed class OutputEngine : IDisposable
             gpuLoopTimer = new VblankWaitTimer();
             gpuLoopTimerHighResolution = gpuLoopTimer.HighResolution;
             CreatePreviewTargets(gpu);
+            var slotIndices = new List<int> { 0, 1, 2, 3 };
+            mpvSource = new MpvSnapshotSource<int>(slotIndices, UploadToSlot,
+                index => new SourceImageDescription(uploadSlots[index]?.Surface?.Texture,
+                    uploadSlots[index]?.Width ?? 0, uploadSlots[index]?.Height ?? 0, SourceImageFormat.Bgra8),
+                "mpv-bgra", gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            layer = new ComposeLayer(gpu, shaders, CanvasSettings.Default);
             if (spoutRunning) StartSpoutWorker();
             Log.Information("OutputEngine: 初期化完了 canvas={W}x{H} adapterLuid={Luid}",
                 settings.CanvasWidth, settings.CanvasHeight, gpu.Luid);
@@ -240,7 +262,8 @@ internal sealed class OutputEngine : IDisposable
             long cpuEndQpc = Stopwatch.GetTimestamp();
             settings.Trace.Save(new OutputTraceRunSummary(outcome, displayEverAttached, spoutEverEnabled,
                 settings.CanvasWidth, settings.CanvasHeight, settings.PresentMarginMs, settings.ComposeLeadMs,
-                settings.SenderName, cpuSeconds, cpuStartQpc, cpuEndQpc, vblankTimerHighResolution, gpuLoopTimerHighResolution, spoutLoopTimerHighResolution), pool, scanout);
+                settings.SenderName, cpuSeconds, cpuStartQpc, cpuEndQpc, vblankTimerHighResolution, gpuLoopTimerHighResolution, spoutLoopTimerHighResolution),
+                pool, scanout, TryDiagnostics());
             gpuDone?.TrySetResult();
         }
     }
@@ -343,15 +366,51 @@ internal sealed class OutputEngine : IDisposable
         int slot = pool.TryBeginWrite();
         if (slot < 0) { settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.noFreeSlot", value: 1); return; }
         var surface = surfaces[slot];
-        bool writing = true;
+
+        // タイムライン状態と最新スナップショットを取り込む（どちらも最新1件、UI は待たない）。
+        var state = timelineInput.Take();
+        if (state != null) lastTimelineState = state;
+        var effective = state ?? lastTimelineState;
+        if (snapshotInput.TryTake(out var pending, out int frameGeneration, out double framePosition) && pending != null)
+        {
+            EnsureSourceGeneration(frameGeneration);
+            mpvSource!.TryUpload(pending, frameGeneration, framePosition);
+        }
+        int generation = effective?.Generation ?? sourceGeneration;
+        if (generation >= 0) EnsureSourceGeneration(generation);
+        double position = effective?.PositionSeconds ?? 0;
+        var status = mpvSource!.TryAcquire(Math.Max(generation, 0), position, out var lease);
+        ImageStamp acquiredStamp = lease != null ? new ImageStamp(lease.Stamp.Sequence, lease.Stamp.DecodedQpc) : default;
+        settings.Trace.Add("source.acquire", "GPU", scheduled, acquiredStamp, status.ToString(),
+            (long)Math.Round(position * 1_000_000));
+        if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
+            settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceNotReady", value: 1);
+
+        Surface? acquired = null;
+        int acquiredWidth = 0, acquiredHeight = 0;
+        if (lease != null)
+        {
+            var uploadSlot = uploadSlots[mpvSource.SlotOf(lease)];
+            acquired = uploadSlot?.Surface;
+            acquiredWidth = uploadSlot?.Width ?? lease.Width;
+            acquiredHeight = uploadSlot?.Height ?? lease.Height;
+        }
+
+        bool writing = true, inFlight = false, retained = false;
         try
         {
             var stamp = new ImageStamp(++nextImageId, Stopwatch.GetTimestamp());
             settings.Trace.Add("compose.start", "GPU", scheduled, stamp);
-            if (testCard) shaders!.Compose(surface, settings.CanvasWidth, settings.CanvasHeight, stamp, originQpc);
-            else shaders!.Clear(surface.Target!);
+            if (acquired != null) { lease!.BeginGpuUse(); inFlight = true; }
+            retained = layer!.Compose(surface,
+                effective?.Gap ?? OutputGapMode.None,
+                effective?.Clip ?? new ClipPlacement(null),
+                effective?.TestCardEnabled ?? testCard,
+                stamp, originQpc, lease, acquired, acquiredWidth, acquiredHeight);
             sharedFence!.Signal(gpu!, stamp.Id); // フェンス値＝画像 ID。Spout 側は GPU キューで待つ。
-            gpu!.Fence.Wait("compose");
+            gpu!.Fence.Wait("compose.source");
+            if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
+            if (!retained && lease != null) { lease.Dispose(); lease = null; }
             settings.Trace.Add("compose.complete", "GPU", scheduled, stamp);
             settings.Trace.Add("compose.publish", "GPU", scheduled, stamp);
             pool.Publish(slot, stamp, true);
@@ -360,6 +419,8 @@ internal sealed class OutputEngine : IDisposable
         }
         finally
         {
+            if (inFlight) lease!.CompleteGpuUse();
+            if (!retained && lease != null) lease.Dispose();
             if (writing) { try { gpu!.Fence.Wait("compose.drain"); } finally { pool.AbortWrite(slot, true); } }
         }
 
@@ -375,6 +436,42 @@ internal sealed class OutputEngine : IDisposable
         }
         if (target != null) ObserveScanout();
         UpdatePreview(Stopwatch.GetTimestamp());
+    }
+
+    private SourceDiagnostics? TryDiagnostics()
+    {
+        try { return mpvSource?.Diagnostics; }
+        catch (Exception) { return null; }
+    }
+
+    private void EnsureSourceGeneration(int generation)
+    {
+        if (generation < 0 || generation == sourceGeneration) return;
+        sourceGeneration = generation;
+        mpvSource!.SetGeneration(generation);
+        layer!.ClearFreeze();
+    }
+
+    // GPU worker 専用: 空き slot のテクスチャを必要サイズへ作り直してアップロードする。
+    // slot はリングから外れ lease も無いときだけ渡ってくるため、作り直しは安全。
+    private void UploadToSlot(int index, byte[] pixels, int width, int height)
+    {
+        var slot = uploadSlots[index] ??= new UploadSlot();
+        if (slot.Surface == null || slot.Width != width || slot.Height != height)
+        {
+            slot.Surface?.Dispose();
+            slot.Surface = new Surface(gpu!, gpu!.Texture(width, height, SourceSharing.None), false, SourceSharing.None);
+            slot.Width = width;
+            slot.Height = height;
+        }
+        gpu!.Context.UpdateSubresource<byte>(pixels.AsSpan(0, width * height * 4), slot.Surface.Texture, 0, (uint)(width * 4), 0);
+    }
+
+    private sealed class UploadSlot
+    {
+        public Surface? Surface;
+        public int Width;
+        public int Height;
     }
 
     private void UpdatePreview(long now)
@@ -631,6 +728,12 @@ internal sealed class OutputEngine : IDisposable
         if (disposed) return;
         disposed = true;
         Stop();
+        DisposeOwned(layer, "GPU.composeLayer"); layer = null;
+        try { mpvSource?.TryDispose(); } catch (Exception e) { Fault("GPU.source: " + e); }
+        DisposeOwned(mpvSource, "GPU.source"); mpvSource = null;
+        foreach (var slot in uploadSlots)
+            DisposeOwned(slot?.Surface, "GPU.uploadSlot");
+        snapshotInput.Dispose();
         foreach (var surface in surfaces)
         {
             try { surface.CloseSharedHandle(); } catch (Exception e) { Fault("GPU.surfaceHandle: " + e); }
