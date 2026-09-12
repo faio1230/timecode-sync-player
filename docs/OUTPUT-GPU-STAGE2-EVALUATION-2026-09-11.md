@@ -370,3 +370,63 @@ V1 コーデック行列の不合格 2 件（S1 音声付き MP4、S2 ProRes）�
 - **S3（既存事象・新規記録）: MPEG-TS のシーク後にフレームが期限内に来ない**。`tcs-shim-test v1_h264_1080p60.ts` で `new-gen frame available after seek` と `stepped frame leased` が失敗する。**基点 DLL でも同じ 2 件**が出るため d347673 の回帰ではないが、LTC 同期シーク（V3）とトラック切替（V5）に関わるため独立項目として追跡する。MP4／MOV では発生しない。
 - **GStreamer の E2E は依然スキップ**: `GStreamerBackendE2ETests` が要求する `artifacts/media/test_720p25.mkv`・`test_720p25.avi`・`test_720p50.ts` と recv ツールが worktree に無い。shim の E2E 被覆は現状ゼロで、`tcs-shim-test` と実機 run が唯一の確認手段。素材整備を V2 以降の作業に含める。
 - **ProRes の 60 秒素材を作り直す**: 現行は 30 秒のため V6（長時間）には使えない。
+
+## 追記: S3 修正 `6aa2264`（→ main `57ba70b`）の親評価（2026-09-12 21:33〜21:53 JST）
+
+MPEG-TS のシーク後にフレームが期限内に来ない件（S3）の修正。変更は shim とその単体テストのみで、C# と C ABI は不変。
+親の指示は `docs/prompts/2026-09-12-S3-answer.md`（方式 5: KEY_UNIT|SNAP_BEFORE＋目標未満を破棄）と
+`docs/prompts/2026-09-12-S3-answer2.md`（方式 2: catch-up 区間を実時間でなぞらないよう再基準化）。
+
+| 確認 | 結果 |
+| --- | --- |
+| ビルド・shim 再ビルド | 成功 |
+| 非E2E | 1712 件成功・0 失敗 |
+| 全 E2E | 55 成功・0 失敗・7 スキップ（基点と同数） |
+| `tcs-shim-test` 13 素材 | **すべて failures=0**。TS 3 本（mpegtsmux／ffmpeg remux／SPS-PPS 正規化）が初めて通った |
+| 着地誤差 | TS +14／+3／+3ms、MP4・MOV・MXF 0ms（1 フレーム未満） |
+
+実機（GStreamer×Gpu、Spout ON、DISPLAY2 全画面、`TestResults/s3-verify`。DISPLAY1 は 4K のまま）:
+
+| run | 実フレーム/秒 | Spout | 合成 p99 | error | exit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MPEG-TS 50 秒 | 60 | 60 | 0.96ms | 0 | 0 |
+| H.264＋AAC 50 秒 | 60 | 60 | 0.93ms | 0 | 0 |
+| ProRes 422 50 秒（窓 8〜28 秒） | 60 | 60 | 0.95ms | 0 | 0 |
+| HEVC 4K60 50 秒 | 60 | 60 | 0.92ms | 0 | 0 |
+
+### クロック方式の変更（最重要の設計差異）の評価
+
+実装側は、フラッシュシーク後に wasapi2 のリングバッファが止まって**音声シンクが提供するクロックが凍結し、
+目標が約 10 秒届かない**事象（TS・MP4 の両方）を踏み、**パイプラインクロックをシステムクロックに固定**した
+（`gst_pipeline_use_clock` ＋ 音声は `GstAudioBaseSink` 既定の skew slaving）。全パイプラインに無条件で効く変更で、
+実装側は「長時間再生の安定性は親評価を」と未検証に挙げた。
+
+親は **1080p60＋1kHz サイン音（−20dBFS）の 5 分素材**を作り、`scripts/AudioLoopbackProbe` で既定の再生デバイスを
+ループバック録音しながら 270 秒の実機 run を実施（`TestResults/s3-verify/long-audio-rms.csv`、
+run `20260912T124721Z-s3-long-audio`）。
+
+| 指標 | 実測 | 判定 |
+| --- | --- | --- |
+| 音声の途切れ | RMS < −60dBFS の窓は **6/2795**。その位置は t=0〜200ms（再生開始前）と t=279.2〜279.4 秒（停止後）**のみ**で、走行中はゼロ | 途切れなし |
+| 音量の安定 | 2795 窓で floor −41.08dBFS／loud −41.07dBFS、**span 0.01dB** | 完全に一定 |
+| クロックのずれ | 音声時刻と実時間の差が 250 秒で 2896→2926ms＝**+30ms（120ppm）**。単調でジャンプなし | skew slaving が吸収できている |
+| 映像 | 実フレーム 59〜61/秒（255 秒間）、Spout 最小 59、NotReady 0、合成 p99 0.94ms・最大 2.24ms、late present 6/15299、lead 2.0〜3.1ms、error 0、abandoned 0 | 合格 |
+
+**判断: S3 合格。main へ rebase して ff 統合（`57ba70b`、native ツリーは検証した `6aa2264` と同一）。**
+
+### V6（長時間 60 分）へ持ち越す具体的な予測
+
+上の 120ppm は音声デバイスの水晶とシステムクロックの差で、**60 分では約 430ms** を音声シンクが skew で
+吸収し続けることになる。4.6 分では無害だったが、**V6 ではこの累積が可聴な補正（クリック・ピッチ揺れ）に
+ならないかを必ず確認する**こと。確認方法は同じループバック録音で、`quiet_windows` と `max_lag_ms` の
+伸び方を見る（今回の値が基準: 250 秒で +30ms、途切れ 0）。
+
+### 今回見つかった環境側の事実
+
+- **この環境の ffmpeg では `h264_nvenc` が使えない**。プリセットは旧命名（`default`／`medium`／`hq`…）で
+  `p1`〜`p7` を解さず、`medium` でも `Cannot get the preset configuration: unsupported param (12)` で失敗する。
+  V1 素材は GStreamer 経由の NVENC で作られていたため露見していなかった。**素材生成は libx264 で行う**
+  （`scripts/make-e2e-media.ps1` もそうする）。
+- **WASAPI ループバックは、再生中の音が何も無いとバッファを 1 つも返さない**。窓 0 件は異常ではなく無音を意味する。
+  また音が途切れるとイベント自体が来ないため、窓番号ではなく**実時間（`wall_ms`）を併記**しないと途切れが見えない。
+  `AudioLoopbackProbe` は両方を反映済み。
