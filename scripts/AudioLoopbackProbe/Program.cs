@@ -3,8 +3,14 @@
 //
 //   AudioLoopbackProbe <seconds> <out.csv> [windowMs=100]
 //
-// 出力: t_ms,rms_dbfs,peak_dbfs（t_ms は録音開始からの窓の先頭）
-// 終了時に標準出力へ要約（無音床・最大・窓数）を出す。
+// 出力: t_ms,wall_ms,rms_dbfs,peak_dbfs
+//   t_ms    = 音声サンプル数から数えた時刻（窓の先頭）
+//   wall_ms = その窓が閉じた時点の実時間
+// 両者の差（wall_ms - t_ms）が広がっていく区間は音が途切れている（バッファが届いていない）。
+// 終了時に標準出力へ要約（窓数・無音床・再生水準・最大の遅れ）を出す。
+//
+// 注意: WASAPI ループバックは、再生している音が何も無いとバッファを 1 つも返さない。
+// 窓が 0 件なら「システムが無音」を意味する（要約に no-audio と出して終了コード 0 で返す）。
 // システム全体のミックスを拾うので、計測中は他の音を鳴らさないこと。
 using System.Globalization;
 using System.Text;
@@ -48,7 +54,8 @@ using (var capture = new WasapiLoopbackCapture(device))
 
     // 窓ごとの集計。1 窓 = windowMs 分のフレーム数。
     int framesPerWindow = Math.Max(1, sampleRate * windowMs / 1000);
-    var rows = new List<(long TMs, double Rms, double Peak)>();
+    var rows = new List<(long TMs, long WallMs, double Rms, double Peak)>();
+    var clock = System.Diagnostics.Stopwatch.StartNew();
     double sumSq = 0;
     double peak = 0;
     int framesInWindow = 0;
@@ -88,7 +95,7 @@ using (var capture = new WasapiLoopbackCapture(device))
                 if (framesInWindow >= framesPerWindow)
                 {
                     double rms = Math.Sqrt(sumSq / framesInWindow);
-                    rows.Add((windowIndex * windowMs, ToDbfs(rms), ToDbfs(peak)));
+                    rows.Add((windowIndex * windowMs, clock.ElapsedMilliseconds, ToDbfs(rms), ToDbfs(peak)));
                     windowIndex++;
                     sumSq = 0;
                     peak = 0;
@@ -110,12 +117,12 @@ using (var capture = new WasapiLoopbackCapture(device))
     capture.StopRecording();
     await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-    (long TMs, double Rms, double Peak)[] snapshot;
+    (long TMs, long WallMs, double Rms, double Peak)[] snapshot;
     lock (gate) snapshot = rows.ToArray();
 
-    var sb = new StringBuilder("t_ms,rms_dbfs,peak_dbfs\n");
-    foreach ((long t, double rms, double pk) in snapshot)
-        sb.Append(t).Append(',')
+    var sb = new StringBuilder("t_ms,wall_ms,rms_dbfs,peak_dbfs\n");
+    foreach ((long t, long wall, double rms, double pk) in snapshot)
+        sb.Append(t).Append(',').Append(wall).Append(',')
           .Append(rms.ToString("F2", CultureInfo.InvariantCulture)).Append(',')
           .Append(pk.ToString("F2", CultureInfo.InvariantCulture)).Append('\n');
 
@@ -125,15 +132,22 @@ using (var capture = new WasapiLoopbackCapture(device))
 
     if (snapshot.Length == 0)
     {
-        Console.Error.WriteLine("窓が 1 つも取れなかった（録音が始まっていない可能性）");
-        return 4;
+        // ループバックは再生中の音が無いとバッファを返さない。これは異常ではなく無音。
+        Console.WriteLine("windows=0 no-audio (ループバックにバッファが来なかった＝システムが無音)");
+        Console.WriteLine($"csv={Path.GetFullPath(outPath)}");
+        return 0;
     }
 
     double[] sorted = snapshot.Select(r => r.Rms).OrderBy(v => v).ToArray();
     // 無音床は下位 5% の中央値、再生水準は上位 5% の中央値で見る。
     double floorDb = Median(sorted.Take(Math.Max(1, sorted.Length / 20)).ToArray());
     double loudDb = Median(sorted.Skip(sorted.Length - Math.Max(1, sorted.Length / 20)).ToArray());
+    // 音が途切れるとバッファが届かず、実時間だけが進んで音声時刻との差が開く。
+    long firstLag = snapshot[0].WallMs - snapshot[0].TMs;
+    long maxLag = snapshot.Max(r => r.WallMs - r.TMs) - firstLag;
+    int quiet = snapshot.Count(r => r.Rms < -60.0);
     Console.WriteLine($"windows={snapshot.Length} floor_dbfs={floorDb:F2} loud_dbfs={loudDb:F2} span_db={loudDb - floorDb:F2}");
+    Console.WriteLine($"max_lag_ms={maxLag} quiet_windows={quiet} (rms<-60dBFS)");
     Console.WriteLine($"csv={Path.GetFullPath(outPath)}");
 }
 
