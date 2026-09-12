@@ -57,6 +57,22 @@
 
 static std::once_flag g_gst_once;
 
+/* S4 load-latency instrumentation: one QPC clock for every phase. */
+static uint64_t
+qpc_now (void)
+{
+  LARGE_INTEGER v;
+  QueryPerformanceCounter (&v);
+  return (uint64_t) v.QuadPart;
+}
+
+static double
+qpc_diff_ms (uint64_t from, uint64_t to, int64_t freq)
+{
+  double f = freq > 0 ? (double) freq : 10000000.0;
+  return (double) (to - from) * 1000.0 / f;
+}
+
 static bool
 env_flag (const char* name)
 {
@@ -1626,6 +1642,7 @@ seek_locked (TcsPlayer* p, double seconds, double rate)
 static int
 build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int paused)
 {
+  const uint64_t t_load = qpc_now ();
   const char* demux_name = select_demux_for_path (utf8_path);
   gboolean ext_is_decodebin = demux_is_decodebin (demux_name);
 
@@ -1644,7 +1661,31 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     int idx = order[attempt];
     const char* container = (idx == PROFILE_INDEX_FALLBACK) ? "decodebin" : demux_name;
 
+    /* S4 phase timing (QPC). Anchors are set as the load advances so a failed
+     * attempt still reports where it stopped. */
+    const uint64_t t_attempt0 = qpc_now ();
+    uint64_t t_anchor = t_attempt0;
+    double teardown_ms = 0, build_ms = 0, set_state_ms = 0, preroll_ms = 0;
+    double first_frame_ms = 0, audio_prime_ms = 0, pause_ms = 0, seek_ms = 0;
+    double duration_ms = 0;
+    int64_t frames_at_frame = -1;
+    auto log_attempt = [&] (const char* result) {
+      uint64_t now = qpc_now ();
+      LOG ("load.attempt path=%s paused=%d attempt=%d profile=%s result=%s "
+          "teardown_ms=%.1f build_ms=%.1f set_state_ms=%.1f preroll_ms=%.1f "
+          "first_frame_ms=%.1f audio_prime_ms=%.1f pause_ms=%.1f seek_ms=%.1f "
+          "duration_ms=%.1f total_ms=%.1f frames=%lld",
+          utf8_path, paused ? 1 : 0, attempt,
+          idx >= 0 ? g_profiles[idx].name : "decodebin-fallback", result,
+          teardown_ms, build_ms, set_state_ms, preroll_ms, first_frame_ms,
+          audio_prime_ms, pause_ms, seek_ms, duration_ms,
+          qpc_diff_ms (t_attempt0, now, p->qpc_freq),
+          (long long) frames_at_frame);
+    };
+
     teardown_pipeline (p);
+    teardown_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
+    t_anchor = qpc_now ();
     /* Method 5 applies to the tsdemux container only (other demuxers keep
      * the accurate seek). */
     p->mpegts = g_strcmp0 (container, "tsdemux") == 0;
@@ -1680,11 +1721,13 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     if (!p->pipeline || !src || !p->demux) {
       if (p->pipeline) { gst_object_unref (p->pipeline); p->pipeline = nullptr; }
       set_error (p, "element factory failed (demux %s)", container);
+      log_attempt ("factory-fail");
       return TCS_ERR_GENERIC;
     }
     g_object_set (src, "location", utf8_path, nullptr);
 
     if (!build_video_chain_static (p, idx)) {
+      log_attempt ("chain-fail");
       teardown_pipeline (p);
       continue;
     }
@@ -1694,6 +1737,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
 
     gst_bin_add_many (GST_BIN (p->pipeline), src, p->demux, nullptr);
     if (!gst_element_link (src, p->demux)) {
+      log_attempt ("src-demux-link-fail");
       teardown_pipeline (p);
       set_error (p, "src->demux link failed");
       return TCS_ERR_GENERIC;
@@ -1705,6 +1749,8 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       gst_bus_set_sync_handler (pbus, sync_bus_handler, p, nullptr);
       gst_object_unref (pbus);
     }
+    build_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
+    t_anchor = qpc_now ();
 
     /* A paused load primes the audio sink silently and only drops to PAUSED
      * after its first buffer: stopping wasapi2 mid-initialization leaves it
@@ -1713,7 +1759,10 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     p->audio_sink_buffers.store (0, std::memory_order_relaxed);
 
     GstStateChangeReturn scr = gst_element_set_state (p->pipeline, GST_STATE_PLAYING);
+    set_state_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
+    t_anchor = qpc_now ();
     if (scr == GST_STATE_CHANGE_FAILURE) {
+      log_attempt ("set-state-fail");
       teardown_pipeline (p);
       continue;
     }
@@ -1728,6 +1777,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
 
     if (scr == GST_STATE_CHANGE_ASYNC)
       gst_element_get_state (p->pipeline, nullptr, nullptr, 3 * GST_SECOND);
+    preroll_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
 
     bool done = false;
     int wait_iters = env_flag ("TCS_ONE_ATTEMPT") ? 60 : 300;
@@ -1735,16 +1785,20 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       {
         std::lock_guard<std::mutex> g (p->frame_lock);
         done = p->frames_decoded > 0 || p->failed || p->capsMismatch || p->rejected;
+        if (p->frames_decoded > 0)
+          frames_at_frame = (int64_t) p->frames_decoded;
       }
       if (done)
         break;
       Sleep (50);
     }
+    first_frame_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     {
       std::lock_guard<std::mutex> g (p->frame_lock);
       done = p->frames_decoded > 0 && !p->failed && !p->rejected;
     }
     if (p->rejected) {
+      log_attempt ("rejected");
       teardown_pipeline (p);
       set_error (p, "unsupported stream by policy: video/x-hap needs the reserved compressed-texture branch");
       return TCS_ERR_NOT_LOADED;
@@ -1775,6 +1829,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
         std::lock_guard<std::mutex> g (p->frame_lock);
         err = p->last_error;
       }
+      log_attempt ("preroll-timeout");
       teardown_pipeline (p);
       LOG ("attempt %s/%s failed: %s", container,
           idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
@@ -1783,6 +1838,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       continue;
     }
 
+    t_anchor = qpc_now ();
     if (start_sec > 0.0) {
       std::lock_guard<std::mutex> g (p->frame_lock);
       p->eos = false;
@@ -1790,6 +1846,8 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
        * always starts at normal rate like before */
       seek_locked (p, start_sec, 1.0);
     }
+    seek_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
+    t_anchor = qpc_now ();
 
     p->path = utf8_path;
     p->paused = paused != 0;
@@ -1810,10 +1868,14 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
           Sleep (50);
         }
       }
+      audio_prime_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
+      t_anchor = qpc_now ();
       {
         std::lock_guard<std::mutex> g (p->frame_lock);
         gst_element_set_state (p->pipeline, GST_STATE_PAUSED);
       }
+      pause_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
+      t_anchor = qpc_now ();
       p->load_priming = false;
       if (p->avolume)
         g_object_set (p->avolume, "volume",
@@ -1825,10 +1887,16 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     gint64 q = 0;
     if (gst_element_query_duration (p->pipeline, GST_FORMAT_TIME, &q) && q > 0)
       p->duration = (double) q / GST_SECOND;
+    duration_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
 
+    log_attempt ("ok");
     LOG ("loaded (%s / profile %d) %s decoder=%s %dx%d@%.3f mem=%s", container, idx,
         utf8_path, p->decoder_name.empty () ? "?" : p->decoder_name.c_str (),
         p->width, p->height, p->fps, p->use_d3d11_caps ? "d3d11" : "sysmem");
+    LOG ("load.summary path=%s paused=%d total_ms=%.1f attempt=%d profile=%s",
+        utf8_path, paused ? 1 : 0,
+        qpc_diff_ms (t_load, qpc_now (), p->qpc_freq), attempt,
+        idx >= 0 ? g_profiles[idx].name : "decodebin-fallback");
     return TCS_OK;
   }
 

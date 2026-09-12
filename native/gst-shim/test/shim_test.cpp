@@ -124,6 +124,78 @@ run_stress (int argc, char** argv)
 }
 
 
+/* --load-bench <file...>: time tcs_player_load for track switching (S4).
+ * Loads each file in round-robin order, mirroring the app's next/prev path
+ * (tcs_player_load tears the old pipeline down and rebuilds). The shim's own
+ * [tcs-gst] load.attempt lines carry the per-phase breakdown; this mode adds
+ * the caller-visible wall time and a min/median/max summary. */
+static int
+run_load_bench (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --load-bench <file...> [iters] [paused]\n");
+    return 2;
+  }
+  int iters = 1;
+  int paused = 0;
+  int nfiles = argc - 2;
+  if (nfiles > 1 && atoi (argv[argc - 1]) > 0) {
+    iters = atoi (argv[argc - 1]);
+    nfiles--;
+  }
+  if (nfiles > 1 && (strcmp (argv[argc - 1], "paused") == 0)) {
+    paused = 1;
+    nfiles--;
+  }
+  if (nfiles < 1) {
+    printf ("usage: tcs-shim-test --load-bench <file...> [iters] [paused]\n");
+    return 2;
+  }
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimLoadBench", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+
+  std::vector<double> wall_ms;
+  int load_failures = 0;
+  for (int round = 0; round < iters; round++) {
+    for (int f = 0; f < nfiles; f++) {
+      const char* file = argv[2 + f];
+      tcs_player_release (p);
+      auto t0 = std::chrono::steady_clock::now ();
+      int rc = tcs_player_load (p, file, -1.0, paused, err, sizeof (err));
+      double ms = std::chrono::duration<double, std::milli> (
+          std::chrono::steady_clock::now () - t0).count ();
+      TcsStats st = {};
+      tcs_player_get_stats (p, &st);
+      if (rc != TCS_OK) {
+        load_failures++;
+        printf ("LOAD round=%d file=%s result=FAIL err=%s\n", round, file, err);
+        fflush (stdout);
+        continue;
+      }
+      wall_ms.push_back (ms);
+      printf ("LOAD round=%d file=%s paused=%d wall_ms=%.1f frames=%llu decoder=%s\n",
+          round, file, paused, ms, (unsigned long long) st.frames_decoded, st.decoder);
+      fflush (stdout);
+    }
+  }
+  if (!wall_ms.empty ()) {
+    std::vector<double> sorted = wall_ms;
+    std::sort (sorted.begin (), sorted.end ());
+    double sum = 0;
+    for (double v : sorted) sum += v;
+    double median = sorted[sorted.size () / 2];
+    printf ("LOAD-BENCH loads=%zu failures=%d min=%.1f median=%.1f mean=%.1f max=%.1f\n",
+        sorted.size (), load_failures, sorted.front (), median,
+        sum / (double) sorted.size (), sorted.back ());
+  }
+  check (load_failures == 0, "all bench loads succeeded");
+  tcs_player_destroy (p);
+  return failures ? 1 : 0;
+}
+
 /* Problem H-3: pure delivery policy (no media, no GPU).
  * age_limit = 21 ms in QPC ticks; the tests use 10 MHz ticks for clarity. */
 static void
@@ -292,6 +364,11 @@ main (int argc, char** argv)
   run_delivery_policy_tests ();
   if (strcmp (argv[1], "--stress") == 0)
     return run_stress (argc, argv);
+  if (strcmp (argv[1], "--load-bench") == 0) {
+    int rc = run_load_bench (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
   if (strcmp (argv[1], "--seek-loop") == 0) {
     int rc = run_seek_loop (argc, argv);
     printf ("RESULT failures=%d\n", failures);
