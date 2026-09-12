@@ -25,6 +25,20 @@
 
 V1〜V10 が合格し、GStreamer で読めない素材が現場の一覧に無いこと。切替後も `Mpv`／`Cpu` は設定で戻せる状態を 1 リリース残す。
 
+### 最終目標: mpv の完全撤去（利用者の指示、2026-09-12）
+
+利用者の方針は **「mpv から GStreamer に完全移行する」**。したがって上の「1 リリース残す」は撤去までの猶予期間であり、
+到達点は mpv 経路の削除である。これは検証の重みを変える:
+
+- **「その素材は mpv で再生する」という退避は取れない**。GStreamer で読めない素材は欠陥として直す（S1／S2／S3 はこの方針で処理した）。
+- V1 のコーデック表は「GPU デコード可／不可」の記録ではなく、**mpv が読めて GStreamer が読めない素材をゼロにする**ための
+  チェックリストとして扱う。現場素材の一覧を利用者から受け取り、表に加える。
+- V3（LTC 同期シーク精度）と V7（mpv×Gpu×Spout）は「mpv と同等以下」が基準だが、撤去後は比較対象が消える。
+  **撤去前に mpv の基準値を測って記録に残す**こと。
+- 撤去時に消えるもの（見積もりのため列挙）: `Mpv.cs`、`MpvRenderNative.cs`、`FrameRenderer` の mpv 経路、
+  `PlayerBackend` 設定と UI、`libmpv-2.dll` の同梱と `scripts/get-mpv.ps1`、mpv 用 E2E とドキュメント。
+- 撤去の実施時期は既定切替の 1 リリース後。撤去は別計画として起こす。
+
 ## V1 の結果（2026-09-12 13:07〜13:19 JST、`TestResults/v1`、生成素材 `artifacts/media/v1`）
 
 素材は GStreamer で生成（`videotestsrc pattern=ball motion=wavy`＋`timeoverlay`、NVENC／`avenc_prores_ks`、GOP 1 秒、60 秒）。実素材ではないのでデコード負荷は軽め。run は 50 秒、解析窓 8〜48 秒、GStreamer×Gpu、Spout ON、DISPLAY2 全画面。集計 `scripts/GpuOutputProbeHarness/v1_matrix_summary.py`。
