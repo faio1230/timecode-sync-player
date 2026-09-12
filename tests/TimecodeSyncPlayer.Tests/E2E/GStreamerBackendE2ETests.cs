@@ -130,7 +130,8 @@ public sealed class GStreamerBackendE2ETests
             string args = $"--open \"{files[0]}\" --playlist \"{files[1]}\" \"{files[2]}\" \"{files[3]}\"";
             runner = E2EAppRunner.Start(exePath, args, settingsPath, pausePlaybackIfNeeded: false);
 
-            int loadsBefore = CountInLog(exePath, "LoadFile path=");
+            // ログは run をまたいで追記されるため、この run の開始時刻以降の行だけを見る（過去 run を拾わない）。
+            DateTime runStartedLocal = runner.Process.StartTime;
             int failuresBefore = CountInLog(exePath, "loadfile 失敗");
 
             Button next = Button(runner, "BtnNextTrack");
@@ -146,12 +147,20 @@ public sealed class GStreamerBackendE2ETests
                 Thread.Sleep(700);
             }
 
-            E2EAssert.WaitUntil(
-                () => CountInLog(exePath, "LoadFile path=") >= loadsBefore + 7,
-                TimeSpan.FromSeconds(20));
+            // 判定は決定的に: 切替で読まれたトラックの並び 1,2,3,2,1,0 をこの run のログ行だけで確認する。
+            // 先頭の 0（初回ロード）は開始状態なので期待に含めない。
+            int[] expectedIndices = [1, 2, 3, 2, 1, 0];
+            List<int> actualIndices = LoadedTrackIndices(exePath, runStartedLocal);
+            DateTime sequenceDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+            while (!ContainsInOrder(actualIndices, expectedIndices) && DateTime.UtcNow < sequenceDeadline)
+            {
+                Thread.Sleep(200);
+                actualIndices = LoadedTrackIndices(exePath, runStartedLocal);
+            }
 
             runner.Process.HasExited.Should().BeFalse("切り替え反復後もアプリは動作継続している");
-            CountInLog(exePath, "LoadFile path=").Should().BeGreaterThanOrEqualTo(loadsBefore + 7);
+            ContainsInOrder(actualIndices, expectedIndices).Should().BeTrue(
+                $"期待するロード順 [{string.Join(",", expectedIndices)}] に対して実際は [{string.Join(",", actualIndices)}]");
             CountInLog(exePath, "loadfile 失敗").Should().Be(failuresBefore,
                 "全トラックのロードが成功している");
         }
@@ -286,6 +295,41 @@ public sealed class GStreamerBackendE2ETests
         string exeDir = Path.GetDirectoryName(exePath)!;
         string text = ReadNewestLog(exeDir);
         return Regex.Matches(text, Regex.Escape(needle)).Count;
+    }
+
+    /// <summary>
+    /// sinceLocal 以降のログ行だけから「Playlist track loaded index=」の並び（読み込み順）を取る。
+    /// ログは run をまたいで追記されるため、過去 run の並びを判定に使わない。
+    /// </summary>
+    private static List<int> LoadedTrackIndices(string exePath, DateTime sinceLocal)
+    {
+        string text = ReadNewestLog(Path.GetDirectoryName(exePath)!);
+        var indices = new List<int>();
+        foreach (string line in text.Split('\n'))
+        {
+            if (!line.Contains("Playlist track loaded index=", StringComparison.Ordinal)) continue;
+            Match t = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+            if (!t.Success ||
+                !DateTime.TryParse(t.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime at) ||
+                at < sinceLocal)
+                continue;
+            Match m = Regex.Match(line, @"Playlist track loaded index=(\d+)");
+            if (m.Success) indices.Add(int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture));
+        }
+        return indices;
+    }
+
+    /// <summary>expected が actual に順序どおり（隣接は問わない）現れるか。</summary>
+    private static bool ContainsInOrder(List<int> actual, int[] expected)
+    {
+        int searchFrom = 0;
+        foreach (int value in expected)
+        {
+            int found = actual.IndexOf(value, searchFrom);
+            if (found < 0) return false;
+            searchFrom = found + 1;
+        }
+        return true;
     }
 
     private static string ReadNewestLog(string exeDir)
