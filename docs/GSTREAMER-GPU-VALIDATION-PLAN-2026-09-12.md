@@ -133,5 +133,6 @@ S1／S2 の修正 `d347673` を検証し、main へ rebase して ff 統合（`f
 ### V1 で判明した追跡項目
 
 - ~~**S3: MPEG-TS のシーク後にフレームが期限内に来ない**~~ **解決**（`57ba70b`、2026-09-12 21:53）。KEY_UNIT|SNAP_BEFORE で飛んで目標未満を破棄し、シーク後の SEGMENT を各 sink で書き換えて catch-up を実時間でなぞらないようにした。到達 TS 184〜230ms・着地 1 フレーム未満。副作用としてパイプラインクロックをシステムクロックに固定しており、**V6 で 60 分の skew 累積（約 430ms の見込み）を確認する**。
-- **GStreamer の E2E はスキップのまま**（`test_720p25.mkv`・`test_720p25.avi`・`test_720p50.ts` と recv ツールが無い）。shim の E2E 被覆はゼロ。素材整備を V2 以降に含める。
+- ~~**GStreamer の E2E はスキップのまま**~~ **解消**（2026-09-13）。`scripts/make-e2e-media.ps1` で素材 5 本を生成し、`native/gst-shim/proto/build-proto.ps1` で受信ツールを用意すれば 3 件が動く。E2E は 58 件が実行対象になり、残るスキップは環境変数で有効化する 4 件（MonkeyStress／RealProjectGap／SyncAccuracy／SpoutDecodeComparison）のみ。**mkv（matroskademux）・avi（avidemux）・ts（tsdemux）がいずれも GStreamer 経路で読め、切替も成功することを確認**した。
+- **E2（軽微）: 起動時に同じファイルを 2 回ロードしている**。`--open` による初回ロードの約 2.6 秒後に、プレイリスト初期化でもう一度同じ index=0 を読む（親のログで確認、2026-09-12 23:27）。GStreamer はロードごとにパイプラインを組み直すため 1〜2 秒の無駄になる。製品動作としては誤りではないので既定切替の阻害要因にはしないが、V9（起動・終了・復旧）で起動時間を測る際にあわせて直すか判断する。
 
