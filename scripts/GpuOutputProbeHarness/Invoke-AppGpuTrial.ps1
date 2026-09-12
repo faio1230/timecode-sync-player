@@ -27,6 +27,15 @@ param(
     [string]$SpeedAtSeconds = '',
     # Record the default render endpoint with WASAPI loopback for the whole run
     # and write audio-rms.csv / audio-probe.txt into the run directory.
+    # V5/V6: build a playlist (--open MediaPath --playlist p1 p2 ...) and drive it.
+    # NextTrackAtSeconds / PrevTrackAtSeconds take a comma list of seconds.
+    # SeekAtSeconds takes "seconds:position" pairs where position is the SeekBar value.
+    [string[]]$PlaylistPaths = @(),
+    [string]$NextTrackAtSeconds = '',
+    [string]$PrevTrackAtSeconds = '',
+    [string]$SeekAtSeconds = '',
+    # V10: a project without Canvas opens CanvasSelectDialog before the main window is usable.
+    [ValidateSet('', 'Ok', 'Cancel')][string]$CanvasDialog = '',
     [switch]$AudioProbe,
     [string]$AudioProbeExe = 'C:\Users\codea\Documents\timecode-sync-player\scripts\AudioLoopbackProbe\bin\Debug\net8.0-windows\AudioLoopbackProbe.exe'
 )
@@ -100,7 +109,13 @@ try {
     }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $AppExe
-    if ($ProjectPath) { $psi.Arguments = '--load-project "' + $ProjectPath + '"' } else { $psi.Arguments = '--open "' + $MediaPath + '"' }
+    if ($ProjectPath) {
+        $psi.Arguments = '--load-project "' + $ProjectPath + '"'
+    } elseif ($PlaylistPaths.Count -gt 0) {
+        $psi.Arguments = '--open "' + $MediaPath + '" --playlist ' + (($PlaylistPaths | ForEach-Object { '"' + $_ + '"' }) -join ' ')
+    } else {
+        $psi.Arguments = '--open "' + $MediaPath + '"'
+    }
     $psi.WorkingDirectory = Split-Path $AppExe; $psi.UseShellExecute = $false
     $psi.Environment['TIMECODE_SYNC_PLAYER_SETTINGS_PATH'] = $settings
     $psi.Environment['TIMECODE_SYNC_PLAYER_SPOUT_NAME'] = $sender
@@ -110,6 +125,13 @@ try {
     $null = $app.Handle
     $result.app = [ordered]@{ pid=$app.Id; startUtc=$app.StartTime.ToUniversalTime().ToString('o'); exe=$AppExe }
     $t0 = Get-Date
+    if ($CanvasDialog) {
+        # The dialog is modal and blocks the main window, so answer it first.
+        $dlgId = if ($CanvasDialog -eq 'Ok') { 'CanvasDialogOk' } else { 'CanvasDialogCancel' }
+        $dlg = Find-Button $app.Id $dlgId 40
+        Invoke-Button $dlg
+        $result.steps += "$dlgId invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+    }
     $spout = Find-Button $app.Id 'BtnSpout' 40
     $result.steps += "window+spout button ready after $([int]((Get-Date)-$t0).TotalMilliseconds) ms"
     Start-Sleep -Seconds 2
@@ -145,6 +167,15 @@ try {
         if ($TestCardOffAtSeconds -gt 0) { $marks += @{ at=$TestCardOffAtSeconds; kind='cardOff' } }
         if ($GpuRetryAtSeconds -gt 0) { $marks += @{ at=$GpuRetryAtSeconds; kind='gpuRetry' } }
         foreach ($tok in ($MuteAtSeconds -split ',')) { if ($tok.Trim()) { $marks += @{ at=[int]$tok.Trim(); kind='mute' } } }
+        foreach ($tok in ($NextTrackAtSeconds -split ',')) { if ($tok.Trim()) { $marks += @{ at=[int]$tok.Trim(); kind='nextTrack' } } }
+        foreach ($tok in ($PrevTrackAtSeconds -split ',')) { if ($tok.Trim()) { $marks += @{ at=[int]$tok.Trim(); kind='prevTrack' } } }
+        foreach ($tok in ($SeekAtSeconds -split ',')) {
+            if ($tok.Trim()) {
+                $pair = $tok.Trim() -split ':'
+                if ($pair.Count -ne 2) { throw "SeekAtSeconds wants 'seconds:position' pairs, got '$tok'" }
+                $marks += @{ at=[int]$pair[0]; kind='seek'; value=[double]$pair[1] }
+            }
+        }
         foreach ($tok in ($SpeedAtSeconds -split ',')) { if ($tok.Trim()) { $marks += @{ at=[int]$tok.Trim(); kind='speed' } } }
         foreach ($tok in ($VolumeAtSeconds -split ',')) {
             if ($tok.Trim()) {
@@ -171,6 +202,15 @@ try {
             } elseif ($m.kind -eq 'mute') {
                 $mute = Find-Button $app.Id 'BtnMute' 10; Invoke-Button $mute
                 $result.steps += "BtnMute invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+            } elseif ($m.kind -eq 'nextTrack') {
+                $nt = Find-Button $app.Id 'BtnNextTrack' 10; Invoke-Button $nt
+                $result.steps += "BtnNextTrack invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+            } elseif ($m.kind -eq 'prevTrack') {
+                $pt = Find-Button $app.Id 'BtnPreviousTrack' 10; Invoke-Button $pt
+                $result.steps += "BtnPreviousTrack invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+            } elseif ($m.kind -eq 'seek') {
+                $sb = Find-Button $app.Id 'SeekBar' 10; Set-Slider $sb $m.value
+                $result.steps += "SeekBar set to $($m.value) at $((Get-Date).ToString('HH:mm:ss.fff'))"
             } elseif ($m.kind -eq 'speed') {
                 $spd = Find-Button $app.Id 'BtnSpeed' 10; Invoke-Button $spd
                 $result.steps += "BtnSpeed invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
