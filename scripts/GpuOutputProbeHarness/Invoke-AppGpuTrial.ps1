@@ -97,6 +97,12 @@ function Find-Button([int]$processId, [string]$automationId, [int]$timeoutSec) {
     throw "UI element not found or disabled: $automationId"
 }
 function Invoke-Button($found) { ($found.Button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+# Stamp UI actions with the same QPC clock events.jsonl uses, so a step can be located
+# in the trace exactly instead of guessing from wall-clock text.
+$script:actionStamps = @()
+function Add-ActionStamp([string]$name) {
+    $script:actionStamps += [ordered]@{ action = $name; qpc = [AppTrialNative]::Qpc(); at = (Get-Date).ToString('HH:mm:ss.fff') }
+}
 # analyze_probe.py refuses a run unless the owned receiver is observed alive across the
 # whole analysis window, so record QPC-stamped liveness samples next to the trace.
 $script:receiverSamples = @()
@@ -222,9 +228,11 @@ try {
                 $result.steps += "BtnMute invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
             } elseif ($m.kind -eq 'nextTrack') {
                 $nt = Find-Button $app.Id 'BtnNextTrack' 10; Invoke-Button $nt
+                Add-ActionStamp 'BtnNextTrack'
                 $result.steps += "BtnNextTrack invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
             } elseif ($m.kind -eq 'prevTrack') {
                 $pt = Find-Button $app.Id 'BtnPreviousTrack' 10; Invoke-Button $pt
+                Add-ActionStamp 'BtnPreviousTrack'
                 $result.steps += "BtnPreviousTrack invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
             } elseif ($m.kind -eq 'seek') {
                 $sb = Find-Button $app.Id 'SeekBar' 10; Set-Slider $sb $m.value
@@ -286,6 +294,8 @@ finally {
     # "control run without a receiver" from "metadata missing".
     ConvertTo-Json -InputObject @($script:receiverSamples) -Depth 4 |
         Set-Content (Join-Path $run 'receiver-samples.json') -Encoding UTF8
+    ConvertTo-Json -InputObject @($script:actionStamps) -Depth 4 |
+        Set-Content (Join-Path $run 'action-stamps.json') -Encoding UTF8
     $result.completedNormally = ($null -eq $result.error) -and ($null -ne $result.appExit)
     $result.endedUtc = [DateTime]::UtcNow.ToString('o')
     $logDir = Join-Path (Split-Path $AppExe) 'logs'
