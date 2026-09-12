@@ -107,3 +107,11 @@ powershell -File $runner -MediaPath "D:\media\test_1080p60.mp4" -Label app-loss 
 4. mpv×Gpu×Spout の実機確認（受信機あり・実素材）。
 5. L-4 の lead 跳び対策（単発スパイクの除外または平滑化）。
 6. GStreamer E2E の素材整備と CI 手順化。
+
+## 統合後の所在（2026-09-12 追記）
+
+- 本ブランチは main へ統合済み（統合ブランチ `integrate/gpu-output-20260912`）。既定値は `PlayerBackend=Mpv`、`OutputBackend=Cpu` のまま。
+- runner・集計は追跡対象へ移した: `scripts/GpuOutputProbeHarness/Invoke-AppGpuTrial.ps1`、`app_run_summary.py`、`gst_delivery_check.py`、`evaluate_runs.py`。`analyze_probe.py` は親側の更新（即時 Present・abandoned 取得の許容）を含む版に統一。
+- 親の評価記録: `docs/OUTPUT-GPU-STAGE2-EVALUATION-2026-09-11.md`（全段階）、`docs/GPU-VERIFICATION-TIMELINE-2026-09-10-12.md`、不変条件 `docs/OUTPUT-GPU-INVARIANTS.md`、段階 4・5 仕様 `docs/OUTPUT-GPU-STAGE4-5-SPEC.md`。
+- 次の検証: `docs/GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md`（既定切替の前提 V1〜V10）。
+- 生の run（TestResults/gpu-app-20260911）は gitignore 対象で、親の worktree にのみ残る。
