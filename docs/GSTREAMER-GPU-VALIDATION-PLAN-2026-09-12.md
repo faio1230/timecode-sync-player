@@ -24,3 +24,28 @@
 ## 既定切替の条件
 
 V1〜V10 が合格し、GStreamer で読めない素材が現場の一覧に無いこと。切替後も `Mpv`／`Cpu` は設定で戻せる状態を 1 リリース残す。
+
+## V1 の結果（2026-09-12 13:07〜13:19 JST、`TestResults/v1`、生成素材 `artifacts/media/v1`）
+
+素材は GStreamer で生成（`videotestsrc pattern=ball motion=wavy`＋`timeoverlay`、NVENC／`avenc_prores_ks`、GOP 1 秒、60 秒）。実素材ではないのでデコード負荷は軽め。run は 50 秒、解析窓 8〜48 秒、GStreamer×Gpu、Spout ON、DISPLAY2 全画面。集計 `scripts/GpuOutputProbeHarness/v1_matrix_summary.py`。
+
+| 素材 | デコーダ | 実フレーム/秒（期待） | 表示 最小/秒 | Spout | 合成 p99 | 判定 |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| H.264 1080p 23.976 | d3d11h264dec | 23〜24（24） | 59 | 60.0 | 0.92ms | 合格 |
+| H.264 1080p 25 | d3d11h264dec | 25（25） | 59 | 60.0 | 0.98ms | 合格 |
+| H.264 1080p 29.97 | d3d11h264dec | 29〜30（30） | 59 | 60.0 | 0.98ms | 合格 |
+| H.264 1080p 59.94 | d3d11h264dec | 59〜60（60） | 59 | 60.0 | 0.90ms | 合格 |
+| H.264 1080p60 MPEG-TS | d3d11h264dec | 59〜60（60） | 59 | 60.0 | 0.89ms | 合格 |
+| H.264 1080p60 MXF（10 秒素材、8 秒 run） | d3d11h264dec | 起動後 60 | 48（起動含む） | 59.2 | 0.92ms | 読める（長尺で再確認） |
+| HEVC 8bit 1080p60 | d3d11h265dec | 59〜61（60） | 59 | 60.0 | 0.91ms | 合格 |
+| HEVC 10bit 1080p60 | d3d11h265dec | 60（60） | 59 | 60.0 | 0.89ms | 合格 |
+| HEVC 4K60 | d3d11h265dec | 59〜60（60） | 59 | 60.0 | 0.96ms | 合格 |
+| **H.264 1080p60＋AAC 音声** | — | 0 | 54 | 59.9 | — | **不合格: 読み込み失敗** |
+| **ProRes 422 1080p60（.mov）** | — | 0 | 59 | 60.0 | — | **不合格: 読み込み失敗** |
+
+不合格 2 件の原因（shim の `tcs-shim-test` で再現）:
+- 音声付き: qtdemux の `audio_0` パッドが接続されず `Internal data stream error`（not-linked）で読み込み全体が失敗する。実素材はほぼ音声付きなので致命的。
+- ProRes: shim の明示プロファイルが `h264-gpu` 等の GPU デコーダのみで、CPU デコード（`avdec_prores`）への退避が無い。同様に DNxHD／MJPEG／その他 CPU コーデック全般が読めない。
+
+→ 実装側へ差し戻し（S1: 音声パッドの接続、S2: CPU デコーダ退避プロファイル＋d3d11upload でリング経路を維持）。修正後に音声付き・ProRes を再実行し、V2（音声出力・ミュート・音量・速度）へ進む。
+
