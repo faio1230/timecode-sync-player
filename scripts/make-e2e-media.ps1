@@ -26,7 +26,8 @@ New-Item -ItemType Directory -Force $OutDir | Out-Null
 $encoders = & ffmpeg -hide_banner -encoders 2>&1
 $useNvenc = ($encoders | Select-String -SimpleMatch 'h264_nvenc').Count -gt 0
 if ($useNvenc) {
-    $venc = @('-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', '12M')
+    # このマシンの ffmpeg の h264_nvenc は p1〜p7 を解さない（default/slow/medium/... の旧命名）。
+    $venc = @('-c:v', 'h264_nvenc', '-preset', 'medium', '-rc', 'vbr', '-b:v', '12M')
 } else {
     $venc = @('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20')
 }
