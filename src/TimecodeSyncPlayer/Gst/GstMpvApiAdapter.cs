@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
@@ -125,7 +126,14 @@ internal sealed class GstMpvApiAdapter : IMpvApi
             switch (op)
             {
                 case GstLoadFileOperation load:
+                    long loadStarted = Stopwatch.GetTimestamp();
                     int rc = _state.Native.Load(ctx, load.Path, load.StartSeconds ?? -1.0, _state.IsPaused, out string error);
+                    // S4 計測: shim 呼び出し 1 回の実時間。shim 側 [tcs-gst] load.attempt の
+                    // フェーズ内訳（preroll / first frame 等）と突き合わせて支配側を判定する。
+                    Log.Information(
+                        "Gst loadfile path={Path} start={Start} paused={Paused} rc={Rc} elapsedMs={ElapsedMs:F1}",
+                        load.Path, load.StartSeconds, _state.IsPaused, rc,
+                        (Stopwatch.GetTimestamp() - loadStarted) * 1000.0 / Stopwatch.Frequency);
                     if (rc != 0)
                         Log.Warning("GstMpvApiAdapter: loadfile 失敗 path={Path} err={Error}", load.Path, error);
                     return rc;
