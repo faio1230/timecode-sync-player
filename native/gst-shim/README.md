@@ -59,8 +59,9 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 - `info` = generation / seq / pts_ns / width / height / is_gpu / **slot**。seq は
   shim 内の単調増加番号（プロセス内識別用）、pts_ns はサンプル PTS（無ければ
   セグメント位置）。slot は **0..2 = 共有リングの面**、**-1 = 旧サンプルリース
-  経路**（CPU 経路・解像度/形式不一致など）。slot >= 0 のフレームは到着時に
-  `CopyResource` 済みで、共有フェンスに `seq` が Signal されている。
+  経路**（解像度/形式不一致など。CPU デコードも `d3d11upload` を通すため通常は
+  slot >= 0）。slot >= 0 のフレームは到着時に `CopyResource` 済みで、共有フェンスに
+  `seq` が Signal されている。
 
 ### `tcs_player_leased_texture(player, out texture, out subresource, out dxgi_format)` → 0 = 成功
 
@@ -84,7 +85,7 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
   `ID3D11Device5::OpenSharedFence` で一度だけ開き、acquire の `seq` を
   `ID3D11DeviceContext4::Wait(fence, seq)` で **GPU キュー待ち**してから描く
   （CPU はポーリングしない）。
-- リング未作成（load 前・CPU 経路）は `TCS_ERR_NO_FRAME`、`capacity < 3` は
+- リング未作成（load 前）は `TCS_ERR_NO_FRAME`、`capacity < 3` は
   `TCS_ERR_SIZE`。解像度**または形式**がリングと一致しない GPU フレームは旧サンプル
   経路（slot=-1）へ落ちる。
 
@@ -208,21 +209,33 @@ decodebin に映像を任せない（decodebin は d3d11 pad を sysmem へ
 ダウンロードしてから公開するため、GPU 経路が成立しない）。
 `typefind → 既定 demux 表 → pad caps で分類 → 明示チェーン`。
 
+CPU フォールバックの最後は全プロファイル共通で `d3d11upload` を通し、
+BGRA(D3D11Memory) として共有リング（slot 0..2）へコピーする。合成側は
+CPU デコード素材も GPU 素材と同じリース経路で受け取る（変更不要）。
+
 | stream caps | GPU チェーン | CPU フォールバック |
 | --- | --- | --- |
-| video/x-h264 | h264parse ! d3d11h264dec ! d3d11colorconvert ! BGRA(d3d11mem) | avdec_h264 ! videoconvert ! BGRA |
-| video/x-h265 / x-hevc | hevcparse ! d3d11h265dec ! ... | avdec_h265 |
-| video/x-vp9 | vp9parse ! d3d11vp9dec ! ... | avdec_vp9 |
-| video/x-av1 | av1parse ! d3d11av1dec ! ... | dav1ddec |
-| video/x-raw | videoconvert ! BGRA | 同左 |
+| video/x-h264 | h264parse ! d3d11h264dec ! d3d11colorconvert ! BGRA(d3d11mem) | avdec_h264 ! videoconvert ! d3d11upload ! BGRA(d3d11mem) |
+| video/x-h265 / x-hevc | hevcparse ! d3d11h265dec ! ... | avdec_h265 ! （同上） |
+| video/x-vp9 | vp9parse ! d3d11vp9dec ! ... | avdec_vp9 ! （同上） |
+| video/x-av1 | av1parse ! d3d11av1dec ! ... | dav1ddec ! （同上） |
+| video/x-prores | —（GPU デコーダなし） | avdec_prores ! videoconvert ! d3d11upload ! BGRA(d3d11mem) |
+| video/x-raw | videoconvert ! d3d11upload ! BGRA(d3d11mem) | 同左 |
 | **video/x-hap** | **拒否**（圧縮テクスチャ直受けの専用分岐を追加する予定。avdec_hap による自動展開をさせない。HAP 自体は今回の範囲外） | — |
-| 未知 | 拒否（`TCS_ALLOW_UNKNOWN=1` のときだけ decodebin 照合用フォールバック） | — |
+| 一致しない video/* | — | 最終退避 `decodebin(sysmem)` → videoconvert ! d3d11upload（CPU デコード） |
 
 コンテナ: mp4/mov/m4v/3gp→qtdemux、mkv→matroskademux、ts→tsdemux、
-mxf→mxfdemux、avi→avidemux、raw ES→直接チェーン、他→未知扱い（同上）。
+mxf→mxfdemux、avi→avidemux、raw ES→直接チェーン、他→decodebin。
 
-音声は decodebin（CPU、この経路に GPU 要件なし）+ volume +
-audioconvert + autoaudiosink。
+音声（CPU、GPU 要件なし）は初回 audio pad で
+`decodebin → audioconvert → queue → volume → audioconvert → autoaudiosink` を
+構築して即リンクする。先頭の audioconvert はデコーダ出力の
+non-interleaved F32LE（volume が拒否する）を受け止めるためのもので、
+欠けると qtdemux が not-negotiated で全体を失敗させる（S1）。
+autoaudiosink がデバイスを開けない環境では `fakesink sync=true` へ退避する
+（`TCS_FAKE_AUDIO=1` で強制）。paused ロードでは音声シンクが最初のバッファを
+消費するまで待ってから PAUSED へ落とす（初期化途中の停止で wasapi2 が
+復帰しなくなるため）。
 
 ## ビルド・検証
 
@@ -261,6 +274,7 @@ Spout 受信側の目視検証は proto の recv モード
 | 切り替え反復 (--stress, 4 素材×120 回) | load 失敗 0 / フレーム 363。作業セットは warmup 後 ~160MB で飽和（非有界増加なし） |
 | アプリ E2E (backend=Gstreamer) | ① 1080p60 GPU 経路の実フレームを別プロセス Spout 受信で確認（受信側の終了→再起動後も接続・フレームイベント継続、アプリは描画継続） ② 4 コンテナの next/prev 反復 7 ロード全成功・クラッシュなし ③ 再生中クローズで終了コード 0 |
 | 既存単体テスト | 非 E2E 1200 件合格（mpv 既定経路の退行なし。E2E 含め全件は 1242 件） |
+| S1/S2 追試（2026-09-12、V1 素材） | H.264+AAC（`v1_h264_1080p60_aac.mp4`）: decoder=d3d11h264dec・60/秒・failures=0（autoaudiosink／`TCS_FAKE_AUDIO=1` の両方）。ProRes 422（`v1_prores422_1080p60.mov`）: decoder=avdec_prores・60/秒・failures=0。回帰 8 素材は decoder と配信レートが既存値のまま（TS の seek/step 2 件はベースラインでも失敗する既知項目） |
 | 性能参考値 (720p60, 15s, Spout OFF) | mpv: CPU 73.1% (1コア換算) / WS 平均 251.5MB → GStreamer: 46.7% / 230.2MB。GPU util は 10–16% で同等（他プロセスの GPU 使用あり・参考値） |
 
 未検証/制約:
@@ -268,8 +282,9 @@ Spout 受信側の目視検証は proto の recv モード
 - 長時間連続再生（数時間）と、受信側を殺した瞬間の送信継続の厳密な保証は未検証。
 - Spout 受信の 2 個目プロセスは SDK のフレーム同期の都合でコピー画像が更新されない
   ことがある（proto 送信では再起動後の内容更新を実測済み。製品側は合成層が受信を担う）。
-- video/x-hap は専用分岐の実装まで意図的に拒否。TCS_ALLOW_UNKNOWN=1 の decodebin
-  フォールバックはデバッグ専用。
+- video/x-hap は専用分岐の実装まで意図的に拒否。一致しない video/* は
+  `decodebin(sysmem)` → `d3d11upload` の最終退避で CPU デコードする
+  （`.mov` の HAP はプロファイル照合時の caps 検査で拒否）。
 - `OutputBackend=Cpu` の GStreamer 経路のプレビュー/表示は互換アダプタの
   `LeasedCpuCopy`（全解像度の CPU コピー）を使う。Gpu 出力では合成層の 960×540
   読み戻しになる。

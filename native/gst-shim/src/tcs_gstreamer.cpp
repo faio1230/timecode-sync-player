@@ -2,9 +2,11 @@
  *
  * Role: GPU frame SOURCE for the compositing layer.
  *   filesrc ! typefind ! demux ! <explicit per-codec chain> ! appsink
- * - decodebin is NOT used for video (it downloads d3d11 pads to sysmem and
- *   would auto-pick CPU decoders). Codecs are classified explicitly; unknown
- *   codecs are refused unless TCS_ALLOW_UNKNOWN=1 (debug). video/x-hap is
+ * - decodebin is NOT used for video as a decoder (it would auto-pick CPU
+ *   decoders and hand raw pads). Codecs are classified explicitly with GPU
+ *   profiles first and CPU fallbacks; CPU decodes are uploaded with
+ *   d3d11upload so every lease still goes through the shared ring. Unmatched
+ *   video/* falls back to decodebin(sysmem) + d3d11upload. video/x-hap is
  *   refused by design: it must get a dedicated compressed-texture branch
  *   later and must never be auto-decoded by avdec_hap.
  * - The D3D11 device can be supplied by the caller (compositing layer) so
@@ -88,18 +90,21 @@ struct TcsPlayer {
   GstElement* vparse = nullptr;
   GstElement* vdec = nullptr;
   GstElement* vconvert = nullptr;
+  GstElement* vupload = nullptr;          /* CPU decode: sysmem BGRA -> D3D11 */
   bool vchain_built = false;
   bool capsMismatch = false;
   bool rejected = false;
   int vProfile = 0;
   int lastGoodProfile = 0;
+  GstElement* aconvert = nullptr;         /* first: accepts non-interleaved decoder output */
   GstElement* aqueue = nullptr;
   GstElement* avolume = nullptr;
-  GstElement* aconvert = nullptr;
+  GstElement* aconvert2 = nullptr;        /* second: sink format negotiation */
   GstElement* asink = nullptr;
   GstElement* adecodebin = nullptr;
   gboolean use_d3d11_caps = FALSE;
   bool audioEnabled = true;
+  bool use_fakesink = false;              /* autoaudiosink unusable -> fakesink sync=true */
   gboolean needAudioDecode = TRUE;
 
   /* frame slots (frame_lock) */
@@ -160,6 +165,11 @@ struct TcsPlayer {
   tcs_frame_notify_fn notify = nullptr;
   void* notify_user = nullptr;
 
+  /* audio priming: a paused load must not yank the audio sink down while it
+   * is still initializing (wasapi2 stopped mid-init never recovers). */
+  std::atomic<uint64_t> audio_sink_buffers{0};
+  bool load_priming = false;
+
   /* stream info (frame_lock) */
   std::string path;
   std::string decoder_name;
@@ -202,9 +212,9 @@ set_error (TcsPlayer* p, const char* fmt, ...)
 static void
 demote_foreign_gpu_decoders (void)
 {
-  /* decodebin is only reachable for audio and debug fallbacks; keep CUDA /
-   * D3D12 decoders out of its choices (their buffers do not share our
-   * D3D11 device). */
+  /* decodebin is only reachable for audio and the unmatched-video fallback;
+   * keep CUDA / D3D12 decoders out of its choices (their buffers do not share
+   * our D3D11 device). */
   GstRegistry* reg = gst_registry_get ();
   const char* plugins[] = { "nvcodec", "d3d12", "va", "v4l2m2m", nullptr };
   for (int i = 0; plugins[i]; i++) {
@@ -216,6 +226,53 @@ demote_foreign_gpu_decoders (void)
     }
     g_list_free (feats);
   }
+}
+
+/* One-shot probe: can autoaudiosink actually open an output device?
+ * On device-less sessions autoaudiosink fails/errors; the audio branch then
+ * uses fakesink sync=true so video preroll/playback is unaffected. */
+static bool
+run_audio_probe (void)
+{
+  GstElement* src = gst_element_factory_make ("audiotestsrc", nullptr);
+  GstElement* sink = gst_element_factory_make ("autoaudiosink", nullptr);
+  GstElement* probe = gst_pipeline_new ("tcs-audio-probe");
+  bool ok = false;
+  if (!probe) {
+    if (src) gst_object_unref (src);
+    if (sink) gst_object_unref (sink);
+    return false;
+  }
+  if (!src || !sink) {
+    if (src) gst_object_unref (src);
+    if (sink) gst_object_unref (sink);
+    gst_object_unref (probe);
+    return false;
+  }
+  g_object_set (src, "num-buffers", 1, "volume", 0.0, nullptr);
+  gst_bin_add_many (GST_BIN (probe), src, sink, nullptr);
+  if (gst_element_link (src, sink)) {
+    gst_element_set_state (probe, GST_STATE_PLAYING);
+    GstBus* bus = gst_element_get_bus (probe);
+    GstMessage* msg = gst_bus_timed_pop_filtered (bus, 2 * GST_SECOND,
+        (GstMessageType) (GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
+    ok = msg && GST_MESSAGE_TYPE (msg) == GST_MESSAGE_EOS;
+    if (msg)
+      gst_message_unref (msg);
+    gst_object_unref (bus);
+    gst_element_set_state (probe, GST_STATE_NULL);
+  }
+  gst_object_unref (probe);
+  return ok;
+}
+
+static bool
+audio_sink_usable (void)
+{
+  static std::once_flag probe_once;
+  static bool probe_ok = false;
+  std::call_once (probe_once, [] { probe_ok = run_audio_probe (); });
+  return probe_ok;
 }
 
 static IDXGIAdapter*
@@ -506,6 +563,14 @@ on_qos_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
   return GST_PAD_PROBE_OK;
 }
 
+static GstPadProbeReturn
+on_audio_sink_probe (GstPad*, GstPadProbeInfo*, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  p->audio_sink_buffers.fetch_add (1, std::memory_order_relaxed);
+  return GST_PAD_PROBE_OK;
+}
+
 static GstFlowReturn
 on_new_sample (GstAppSink* sink, gpointer user)
 {
@@ -519,6 +584,15 @@ on_new_sample (GstAppSink* sink, gpointer user)
   GstBuffer* buf = gst_sample_get_buffer (sample);
   GstMemory* mem = buf ? gst_buffer_peek_memory (buf, 0) : nullptr;
   bool gpu = mem && gst_is_d3d11_memory (mem);
+  /* Map with GST_MAP_D3D11 for the whole arrival: this flushes a pending
+   * sysmem->texture upload (d3d11upload writes to a staging texture and only
+   * issues the CopySubresourceRegion on the next D3D11 map; reading the
+   * texture without it yields black frames). Harmless for decoder memory. */
+  GstMapInfo d3d_map = {};
+  bool d3d_mapped = false;
+  if (gpu)
+    d3d_mapped = gst_memory_map (mem, &d3d_map,
+        (GstMapFlags) (GST_MAP_READ | GST_MAP_D3D11));
   /* Stage 6b: extract the decoded texture now so the ring copy can run under
    * frame_lock (the sample ref keeps the pool texture alive until release). */
   ID3D11Texture2D* src_tex = nullptr;
@@ -624,6 +698,9 @@ on_new_sample (GstAppSink* sink, gpointer user)
     }
   }
 
+  if (d3d_mapped)
+    gst_memory_unmap (mem, &d3d_map);
+
   if (cb) {
     LARGE_INTEGER c0, c1, qfreq;
     QueryPerformanceCounter (&c0);
@@ -684,8 +761,8 @@ struct VideoProfile {
   const char* conv;       /* color converter element name */
 };
 
-/* GPU profiles first; CPU versions are generated by falling back from a
- * failed GPU attempt to the same-list profiles with dec set to software. */
+/* GPU profiles first, then explicit CPU decoders (uploaded to the ring). An
+ * unmatched video pad retries with the decodebin fallback (PROFILE_INDEX_FALLBACK). */
 static const VideoProfile g_profiles[] = {
   { "h264-gpu", "video/x-h264", nullptr, "h264parse", "d3d11h264dec", "d3d11colorconvert" },
   { "h265-gpu", "video/x-h265", "video/x-hevc", "h265parse", "d3d11h265dec", "d3d11colorconvert" },
@@ -695,6 +772,7 @@ static const VideoProfile g_profiles[] = {
   { "h265-cpu", "video/x-h265", "video/x-hevc", "h265parse", "avdec_h265", "videoconvert" },
   { "vp9-cpu",  "video/x-vp9",  nullptr, "vp9parse", "avdec_vp9", "videoconvert" },
   { "av1-cpu",  "video/x-av1",  nullptr, "av1parse", "dav1ddec", "videoconvert" },
+  { "prores-cpu", "video/x-prores", nullptr, nullptr, "avdec_prores", "videoconvert" },
 };
 static const int kProfileCount = (int) (sizeof (g_profiles) / sizeof (g_profiles[0]));
 #define PROFILE_INDEX_FALLBACK (-1)
@@ -738,22 +816,27 @@ build_video_chain_static (TcsPlayer* p, int idx)
   p->vProfile = idx;
 
   if (idx == PROFILE_INDEX_FALLBACK) {
-    p->vhead = gst_element_factory_make ("decodebin", nullptr);
-    p->vconvert = gst_element_factory_make ("videoconvert", nullptr);
-    create_appsink_tail (p, FALSE);
-    if (!p->vhead || !p->vconvert) {
+    /* Last resort for unmatched video/*: the container is decodebin, so its
+     * src pad is already decoded raw video. videoconvert -> d3d11upload keeps
+     * the shared-ring delivery contract (CPU decode, GPU lease). */
+    p->vhead = gst_element_factory_make ("videoconvert", nullptr);
+    p->vupload = gst_element_factory_make ("d3d11upload", nullptr);
+    create_appsink_tail (p, TRUE);
+    if (!p->vhead || !p->vupload || !p->vcaps || !p->appsink) {
       set_error (p, "fallback chain factory failed");
       return FALSE;
     }
-    gst_bin_add_many (GST_BIN (p->pipeline), p->vhead, p->vconvert,
+    gst_bin_add_many (GST_BIN (p->pipeline), p->vhead, p->vupload,
         p->vcaps, p->appsink, nullptr);
+    give_device_context (p, p->vhead);
+    give_device_context (p, p->vupload);
     give_device_context (p, p->pipeline);
-    if (!gst_element_link_many (p->vhead, p->vconvert, p->vcaps, p->appsink, nullptr)) {
+    if (!gst_element_link_many (p->vhead, p->vupload, p->vcaps, p->appsink, nullptr)) {
       set_error (p, "fallback chain link failed");
       return FALSE;
     }
     std::lock_guard<std::mutex> g (p->frame_lock);
-    p->decoder_name = "decodebin(sysmem-fallback)";
+    p->decoder_name = "decodebin(sysmem)";
     return TRUE;
   }
 
@@ -764,9 +847,13 @@ build_video_chain_static (TcsPlayer* p, int idx)
   p->vparse = prof->parse ? gst_element_factory_make (prof->parse, nullptr) : nullptr;
   p->vdec = prof->dec ? gst_element_factory_make (prof->dec, nullptr) : nullptr;
   p->vconvert = gst_element_factory_make (prof->conv, nullptr);
-  create_appsink_tail (p, d3d);
+  /* CPU profiles decode to sysmem BGRA; d3d11upload moves it to the shim
+   * device so every lease goes through the shared ring (slot >= 0). */
+  p->vupload = d3d ? nullptr : gst_element_factory_make ("d3d11upload", nullptr);
+  create_appsink_tail (p, TRUE);
   if (!p->vconvert || !p->vcaps || !p->appsink ||
-      (prof->parse && !p->vparse) || (prof->dec && !p->vdec)) {
+      (prof->parse && !p->vparse) || (prof->dec && !p->vdec) ||
+      (!d3d && !p->vupload)) {
     set_error (p, "chain factory failed for profile %s", prof->name);
     return FALSE;
   }
@@ -776,21 +863,27 @@ build_video_chain_static (TcsPlayer* p, int idx)
   if (p->vparse) gst_bin_add (GST_BIN (p->pipeline), p->vparse);
   if (p->vdec) gst_bin_add (GST_BIN (p->pipeline), p->vdec);
   gst_bin_add (GST_BIN (p->pipeline), p->vconvert);
+  if (p->vupload) gst_bin_add (GST_BIN (p->pipeline), p->vupload);
   gst_bin_add (GST_BIN (p->pipeline), p->vcaps);
   gst_bin_add (GST_BIN (p->pipeline), p->appsink);
 
   if (p->vparse) give_device_context (p, p->vparse);
   if (p->vdec) give_device_context (p, p->vdec);
   give_device_context (p, p->vconvert);
+  if (p->vupload) give_device_context (p, p->vupload);
   give_device_context (p, p->pipeline);
 
-  GstElement* chain[] = { p->vparse, p->vdec, p->vconvert, p->vcaps, p->appsink, nullptr };
-  for (int i = 0; i < 5; i++) {
+  GstElement* chain[] = { p->vparse, p->vdec, p->vconvert, p->vupload,
+      p->vcaps, p->appsink, nullptr };
+  int nChain = (int) (sizeof (chain) / sizeof (chain[0])) - 1;
+  GstElement* prev = nullptr;
+  for (int i = 0; i < nChain; i++) {
     if (!chain[i]) continue;
-    if (chain[i + 1] && !gst_element_link (chain[i], chain[i + 1])) {
-      set_error (p, "static chain link failed at %s", GST_OBJECT_NAME (chain[i]));
+    if (prev && !gst_element_link (prev, chain[i])) {
+      set_error (p, "static chain link failed at %s", GST_OBJECT_NAME (prev));
       return FALSE;
     }
+    prev = chain[i];
   }
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
@@ -873,9 +966,9 @@ static void
 on_audio_bin_pad_added (GstElement* /*dbin*/, GstPad* pad, gpointer user)
 {
   TcsPlayer* p = (TcsPlayer*) user;
-  if (!p->aqueue)
+  if (!p->aconvert)
     return;
-  GstPad* sink = gst_element_get_static_pad (p->aqueue, "sink");
+  GstPad* sink = gst_element_get_static_pad (p->aconvert, "sink");
   if (sink) {
     gst_pad_link_full (pad, sink, GST_PAD_LINK_CHECK_NOTHING);
     gst_object_unref (sink);
@@ -885,36 +978,59 @@ on_audio_bin_pad_added (GstElement* /*dbin*/, GstPad* pad, gpointer user)
 static gboolean
 build_audio_chain (TcsPlayer* p, gboolean need_audio_decode)
 {
-  /* static audio tail; the audio pad links to p->ahead in on_demux_pad_added.
-   * With a plain demux the head is a decodebin (audio is still encoded);
-   * with the decodebin container fallback the head pad is already raw. */
+  /* Audio tail built on the first audio pad (a statically placed empty
+   * decodebin never completes the bin PAUSED transition and stalls video
+   * preroll). The decoder output can be non-interleaved F32LE, which volume
+   * rejects: the first audioconvert accepts it (S1 fix), the second
+   * negotiates the sink format. When autoaudiosink is unusable the sink is
+   * fakesink sync=true so video playback is unaffected. */
+  p->aconvert = gst_element_factory_make ("audioconvert", nullptr);
   p->aqueue = gst_element_factory_make ("queue", nullptr);
   p->avolume = gst_element_factory_make ("volume", nullptr);
-  p->aconvert = gst_element_factory_make ("audioconvert", nullptr);
-  p->asink = gst_element_factory_make ("autoaudiosink", nullptr);
-  if (!p->aqueue || !p->avolume || !p->aconvert || !p->asink)
+  p->aconvert2 = gst_element_factory_make ("audioconvert", nullptr);
+  bool is_fake = p->use_fakesink;
+  GstElement* sink = nullptr;
+  if (!is_fake)
+    sink = gst_element_factory_make ("autoaudiosink", nullptr);
+  if (!sink) {
+    sink = gst_element_factory_make ("fakesink", nullptr);
+    is_fake = true;
+  }
+  p->asink = sink;
+  if (!p->aconvert || !p->aqueue || !p->avolume || !p->aconvert2 || !p->asink)
     return FALSE;
+  if (is_fake)
+    g_object_set (p->asink, "sync", TRUE, nullptr);
+  GstElement* ahead = nullptr;
   if (need_audio_decode) {
     p->adecodebin = gst_element_factory_make ("decodebin", nullptr);
     if (!p->adecodebin)
       return FALSE;
-    p->ahead = p->adecodebin;
+    ahead = p->adecodebin;
   } else {
     p->adecodebin = nullptr;
-    p->ahead = p->aqueue;
+    ahead = p->aconvert;
   }
-  g_object_set (p->avolume, "volume", p->muted ? 0.0 : p->volume_value / 100.0, nullptr);
+  g_object_set (p->avolume, "volume",
+      (p->muted || p->load_priming) ? 0.0 : p->volume_value / 100.0, nullptr);
   if (p->adecodebin) {
     gst_bin_add (GST_BIN (p->pipeline), p->adecodebin);
     g_signal_connect (p->adecodebin, "pad-added",
         G_CALLBACK (on_audio_bin_pad_added), p);
   }
-  gst_bin_add_many (GST_BIN (p->pipeline), p->aqueue, p->avolume,
-      p->aconvert, p->asink, nullptr);
-  if (!gst_element_link_many (p->aqueue, p->avolume, p->aconvert,
-        p->asink, nullptr)) {
+  gst_bin_add_many (GST_BIN (p->pipeline), p->aconvert, p->aqueue, p->avolume,
+      p->aconvert2, p->asink, nullptr);
+  if (!gst_element_link_many (p->aconvert, p->aqueue, p->avolume,
+        p->aconvert2, p->asink, nullptr)) {
     set_error (p, "audio tail link failed");
     return FALSE;
+  }
+  p->ahead = ahead;
+  GstPad* asinkpad = gst_element_get_static_pad (p->asink, "sink");
+  if (asinkpad) {
+    gst_pad_add_probe (asinkpad, GST_PAD_PROBE_TYPE_BUFFER,
+        on_audio_sink_probe, p, nullptr);
+    gst_object_unref (asinkpad);
   }
   return TRUE;
 }
@@ -958,22 +1074,43 @@ on_demux_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user)
   if (is_video)
     on_video_pad (p, pad, caps);
   else if (is_audio && p->audioEnabled) {
-    if (!p->aqueue) {
-      /* first audio pad: build the audio tail now and sync it to the
-       * current pipeline state (static placement stalls video preroll) */
-      if (!build_audio_chain (p, p->needAudioDecode))
-        return;
+    if (!p->ahead) {
+      /* first audio pad: build the audio chain now and sync it to the
+       * current pipeline state (a statically placed empty decodebin never
+       * completes the bin PAUSED transition and stalls video preroll) */
+      if (!build_audio_chain (p, p->needAudioDecode)) {
+        LOG ("audio chain build failed; falling back to a bare fakesink");
+        if (!p->asink) {
+          p->asink = gst_element_factory_make ("fakesink", nullptr);
+          if (p->asink) {
+            g_object_set (p->asink, "sync", TRUE, nullptr);
+            gst_bin_add (GST_BIN (p->pipeline), p->asink);
+            gst_element_sync_state_with_parent (p->asink);
+          }
+        }
+        p->ahead = p->asink;
+      }
       if (p->adecodebin)
         gst_element_sync_state_with_parent (p->adecodebin);
-      gst_element_sync_state_with_parent (p->aqueue);
-      gst_element_sync_state_with_parent (p->avolume);
-      gst_element_sync_state_with_parent (p->aconvert);
-      gst_element_sync_state_with_parent (p->asink);
+      if (p->aconvert)
+        gst_element_sync_state_with_parent (p->aconvert);
+      if (p->aqueue)
+        gst_element_sync_state_with_parent (p->aqueue);
+      if (p->avolume)
+        gst_element_sync_state_with_parent (p->avolume);
+      if (p->aconvert2)
+        gst_element_sync_state_with_parent (p->aconvert2);
+      if (p->asink)
+        gst_element_sync_state_with_parent (p->asink);
     }
-    GstPad* sink = gst_element_get_static_pad (p->ahead, "sink");
-    if (sink) {
-      gst_pad_link_full (pad, sink, GST_PAD_LINK_CHECK_NOTHING);
-      gst_object_unref (sink);
+    if (p->ahead) {
+      GstPad* sink = gst_element_get_static_pad (p->ahead, "sink");
+      if (sink) {
+        GstPadLinkReturn lr = gst_pad_link_full (pad, sink, GST_PAD_LINK_CHECK_NOTHING);
+        if (lr != GST_PAD_LINK_OK)
+          LOG ("audio pad -> head link failed (%d)", lr);
+        gst_object_unref (sink);
+      }
     }
   }
   if (caps)
@@ -1058,13 +1195,15 @@ teardown_pipeline (TcsPlayer* p)
   p->vhead = nullptr;
   p->vparse = nullptr;
   p->vdec = nullptr;
+  p->vconvert = nullptr;
+  p->vupload = nullptr;
   p->vchain_built = false;
   p->capsMismatch = false;
   p->aqueue = nullptr;
   p->avolume = nullptr;
   p->aconvert = nullptr;
+  p->aconvert2 = nullptr;
   p->asink = nullptr;
-  p->adecodebin = nullptr;
   p->adecodebin = nullptr;
 }
 
@@ -1136,6 +1275,12 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       gst_object_unref (pbus);
     }
 
+    /* A paused load primes the audio sink silently and only drops to PAUSED
+     * after its first buffer: stopping wasapi2 mid-initialization leaves it
+     * broken for the following PLAYING (frame clock never advances). */
+    p->load_priming = (paused != 0) && p->audioEnabled;
+    p->audio_sink_buffers.store (0, std::memory_order_relaxed);
+
     GstStateChangeReturn scr = gst_element_set_state (p->pipeline, GST_STATE_PLAYING);
     if (scr == GST_STATE_CHANGE_FAILURE) {
       teardown_pipeline (p);
@@ -1178,9 +1323,11 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
         GstState cs2, ps2;
         gst_element_get_state (p->pipeline, &cs2, &ps2, 0);
         LOG ("diag: pipe cur=%d pending=%d", (int) cs2, (int) ps2);
-        GstElement* els[] = { p->vparse, p->vdec, p->vconvert, p->appsink, nullptr };
-        const char* nms[] = { "vparse", "vdec", "vconv", "vsink" };
-        for (int ei = 0; els[ei]; ei++) {
+        GstElement* els[] = { p->vparse, p->vdec, p->vconvert, p->vupload, p->appsink };
+        const char* nms[] = { "vparse", "vdec", "vconv", "vupload", "vsink" };
+        for (int ei = 0; ei < 5; ei++) {
+          if (!els[ei])
+            continue;
           GstState s3 = GST_STATE_VOID_PENDING;
           gst_element_get_state (els[ei], &s3, nullptr, 0);
           GstPad* spd = gst_element_get_static_pad (els[ei], "src");
@@ -1219,8 +1366,30 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     p->lastGoodProfile = idx;
 
     if (paused) {
-      std::lock_guard<std::mutex> g (p->frame_lock);
-      gst_element_set_state (p->pipeline, GST_STATE_PAUSED);
+      /* wait (bounded) for the audio sink to consume its first buffer before
+       * pausing; otherwise the sink never recovers on the next PLAYING. */
+      if (p->asink) {
+        for (int i = 0; i < 40; i++) {
+          bool failed;
+          {
+            std::lock_guard<std::mutex> g (p->frame_lock);
+            failed = p->failed;
+          }
+          if (failed || p->audio_sink_buffers.load (std::memory_order_relaxed) > 0)
+            break;
+          Sleep (50);
+        }
+      }
+      {
+        std::lock_guard<std::mutex> g (p->frame_lock);
+        gst_element_set_state (p->pipeline, GST_STATE_PAUSED);
+      }
+      p->load_priming = false;
+      if (p->avolume)
+        g_object_set (p->avolume, "volume",
+            p->muted ? 0.0 : p->volume_value / 100.0, nullptr);
+    } else {
+      p->load_priming = false;
     }
 
     gint64 q = 0;
@@ -1343,6 +1512,10 @@ tcs_player_create (const char* sender_name, void* external_d3d11_device,
 
   demote_foreign_gpu_decoders ();
   p->audioEnabled = !env_flag ("TCS_NO_AUDIO");
+  p->use_fakesink = p->audioEnabled &&
+      (env_flag ("TCS_FAKE_AUDIO") || !audio_sink_usable ());
+  LOG ("audio: %s", !p->audioEnabled ? "disabled (TCS_NO_AUDIO)"
+      : (p->use_fakesink ? "autoaudiosink unusable -> fakesink sync=true" : "autoaudiosink"));
 
   if (!create_or_adopt_device (p, (ID3D11Device*) external_d3d11_device)) {
     if (errbuf && errbuf_len)
