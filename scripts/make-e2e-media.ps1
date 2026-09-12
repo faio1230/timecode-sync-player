@@ -23,15 +23,12 @@ if (-not $ffmpeg) { throw "ffmpeg が PATH に無い（-FfmpegDir で指定す�
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
-$encoders = & ffmpeg -hide_banner -encoders 2>&1
-$useNvenc = ($encoders | Select-String -SimpleMatch 'h264_nvenc').Count -gt 0
-if ($useNvenc) {
-    # このマシンの ffmpeg の h264_nvenc は p1〜p7 を解さない（default/slow/medium/... の旧命名）。
-    $venc = @('-c:v', 'h264_nvenc', '-preset', 'medium', '-rc', 'vbr', '-b:v', '12M')
-} else {
-    $venc = @('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20')
-}
-Write-Output ("encoder: {0}" -f $(if ($useNvenc) { 'h264_nvenc' } else { 'libx264' }))
+# エンコーダは libx264 に固定する。この環境の ffmpeg の h264_nvenc はプリセットが旧命名
+# （default/slow/medium/hq…）で p1〜p7 を解さず、medium を渡しても
+# "Cannot get the preset configuration: unsupported param" で初期化に失敗する
+# （2026-09-12 確認）。素材はテスト用で画質要件が無いので libx264 で十分。
+$venc = @('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20')
+Write-Output 'encoder: libx264'
 
 # name, width, height, fps, seconds, extra args
 # GOP は 1 秒（-g = fps）。TS は IDR ごとに SPS/PPS を入れる（放送 TS に合わせる）。
