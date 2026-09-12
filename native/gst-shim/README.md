@@ -235,7 +235,78 @@ non-interleaved F32LE（volume が拒否する）を受け止めるためのも�
 autoaudiosink がデバイスを開けない環境では `fakesink sync=true` へ退避する
 （`TCS_FAKE_AUDIO=1` で強制）。paused ロードでは音声シンクが最初のバッファを
 消費するまで待ってから PAUSED へ落とす（初期化途中の停止で wasapi2 が
-復帰しなくなるため）。
+復帰しなくなるため）。パイプラインのクロックは常に GstSystemClock を強制し、
+音声シンクをスレーブさせる（理由は下記「システムクロックの強制」）。
+
+## MPEG-TS のシーク（方式 2: シーク後のクロック再基準化、2026-09-12 実装・計測）
+
+`tsdemux` の `GST_SEEK_FLAG_ACCURATE` は、IDR ごとに SPS/PPS を持たない
+H.264 でキーフレーム NAL を特定できず、シークに 1〜4 秒かかる（親計測:
+`v1_h264_1080p60.ts` target=5.016 で 363ms、30.016 で 2138ms、45.016 で
+3210ms）。そこで **tsdemux のみ** 次の 2 段構えで目標位置へ即着地させる
+（MP4/MOV などは従来どおり `FLUSH | ACCURATE` で、着地は 1ms 台）:
+
+1. `seek_locked()` は `FLUSH | KEY_UNIT | SNAP_BEFORE` で目標以前の最寄り
+   キーフレームへ飛ぶ（load の `start_sec`、`step` の目標も同じ経路を通る）。
+   シークイベントには `gst_util_seqnum_next()` の seqnum を付ける。
+2. シーク後に流れてくる **SEGMENT を各 sink で書き換える**
+   （`on_sink_segment_rewrite`: `start = time = position = target`,
+   `base = offset = 0`）。これは qtdemux の ACCURATE シークが内部でやっている
+   ことと同じ意味論で、tsdemux がスナップしたキーフレーム S ではなく
+   目標 T を「今」にする。書き換えは seqnum が一致する SEGMENT だけを対象に
+   し、元イベントは DROP して `gst_pad_send_event()` で差し替える（probe を
+   再入しない）。対象は映像の appsink と、実音声シンク（autoaudiosink の
+   子 wasapi2sink 等）の両方。同じ SEGMENT を共有するので A/V は同じ基準。
+3. 書き換え後の sink は T より前のバッファを **out-of-segment として preroll
+   前に捨てる**（basesink の `drop-out-of-segment`、既定 TRUE）。パイプラインは
+   目標フレームのデコード完了を待って preroll し、base_time が T を「今」に
+   合わせる。以降は通常ペース。音声も T から始まり、映像と同時に鳴る。
+4. `on_new_sample` のゲート（`pts < target` を捨てる）は保険として残す。
+   `gst_element_seek` が FALSE を返したときは `last_error` に記録しログする。
+   世代を上げるのはシークの 1 回だけ（ゲート解除では上げ直さない）。
+
+### システムクロックの強制（A/V 同期の前提）
+
+flushing seek は wasapi2 の ringbuffer を停止させる。この環境では再開が
+遅れ、音声シンクが提供するクロックが凍結した（`RbufCtx::Stop:
+AUDCLNT_E_NOT_INITIALIZED`）。そのクロックを待つ全 sink が停止し、音声付き
+素材では T のフレームが ~10 秒届かなかった（方式 5 でも同一。TS/MP4 両方）。
+このためパイプラインは **GstSystemClock を強制**（`gst_pipeline_use_clock`）
+し、音声シンクはシステムクロックにスレーブさせる（GstAudioBaseSink 既定の
+skew slaving）。実測で A/V ずれは最大 1.4ms（下記）。
+
+### 計測用ログ（stderr）
+
+```
+seek: ts keyframe-snap target_ns=... gate armed seq=...
+seek: ts snap seg_start=... target=... r_start=... r_target=... snap_ms=... rate=...
+seek: ts segment rewritten sink=... old_start=... target=... rate=... sent=...
+seek: ts gate opened target_ns=... snap_pts_ns=... first_pts_ns=... dropped=N first_ms=... open_ms=...
+av: qpc=... video_pts=... target=... audio_pos=... diff_ms=... aok=...
+seek: diag stalled ... （3 秒以上ゲートが開かないときの状態ダンプ）
+```
+
+`TCS_SEEK_DIAG=1` でゲート開後 15 秒間の A/V サンプル（15 フレーム毎）を
+追加出力する。`TCS_NO_SEGMENT_REWRITE=1` は方式 5 へ戻すデバッグ用の
+エスケープハッチ、`TCS_FRAME_LOG=1` は全配信フレームの pts/qpc を出す。
+
+### 実測（2026-09-12、Debug、GStreamer 1.28.2、RTX 3070）
+
+| 項目 | TS（`v1_h264_1080p60.ts`） | 音声付き TS | 音声付き MP4 |
+| --- | --- | --- | --- |
+| シーク発行 → 新世代フレーム | 183〜227ms | 188ms | 5〜21ms |
+| 着地誤差（最初に届いたフレーム） | +5〜+14ms（<1 フレーム） | +11.6ms | 0.0ms |
+| A/V ずれ（映像 pts − 音声位置） | — | 最大 1.4ms | 最大 1.3ms |
+| 10 連続シーク | 183ms → 176ms（悪化なし） | 170ms → 171ms | 26ms → 32ms |
+
+ゲートが捨てるフレームは 1 枚（目標をまたぐフレームのみ）。通常再生の
+ペーシングは配信トレースの中央値 16.6ms / 60fps のまま。5 秒 GOP の TS
+（`long_gop_5s.ts`、前回作成）でも到達 149ms・着地 +4.5ms だった。
+
+**既知の注意**: `short\v1_h264_ffmpegmux.ts` と `short\v1_h264_ts_dumpextra.ts`
+は同一 PTS の連続フレーム（32 枚）を含む。これは素材側のタイムスタンプに
+起因し、`tcs-shim-test` の再生レート表示（fps 換算）が一時的に 100fps 台に
+見えるが、配信ペーシング（中央値）は 16ms で正常。シーク着地には影響しない。
 
 ## ビルド・検証
 
@@ -253,11 +324,15 @@ tcs-shim-test は C ABI のみで以下を検証する:
 別デバイス生成（リーステクスチャの `GetDevice()!=呼び出し側デバイス` かつ
 アダプター LUID が一致）、リング（`acquire` の slot 0..2、`ring_info` が
 ハンドル 3 枚 + フェンス + 寸法を返す）、load/pause/再生進行/lease/返却、
-世代不一致 acquire==0、seek 世代 +1、step、再ロード、stop 後のクリーン状態、
-Spout 検証 publish（GPU テクスチャ）。
+世代不一致 acquire==0、seek 世代 +1（到達時間 <500ms・着地 1 フレーム以内、
+`first-delivered` と `post-seek lease` を併記）、step（到達 <500ms）、
+再ロード、stop 後のクリーン状態、Spout 検証 publish（GPU テクスチャ）。
+通常再生は配信トレースの中央値で 60fps ペーシングを確認する。
 
 `--policy-only` はメディア無しで配信規則（H-3、12 ケース）とリング slot 割当・
-追い出し規則（10 ケース）だけを固定する。
+追い出し規則（10 ケース）だけを固定する。`--seek-loop <file> [n]` は
+n 回連続シーク（既定 10）の到達時間・着地誤差を測り、後半が前半より
+悪化しないことを確認する（V5）。
 
 Spout 受信側の目視検証は proto の recv モード
 （`native/gst-shim/proto/build-debug/tcs-gst-proto.exe recv <sender>`）が使える。
