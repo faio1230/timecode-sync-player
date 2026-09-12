@@ -11,23 +11,45 @@ internal sealed record OutputTraceEvent(string Stage, string Worker, long Qpc, l
 /// <summary>
 /// 出力トレース（試作 GpuOutputProbe の manifest.json / events.jsonl / summary.json と同スキーマ）。
 /// 環境変数 TIMECODE_SYNC_PLAYER_OUTPUT_TRACE にディレクトリを指定したときだけ有効。
+/// イベント上限は TIMECODE_SYNC_PLAYER_OUTPUT_TRACE_CAPACITY で変更できる（既定 1,000,000、不正値は既定）。
 /// 試作と同じくイベントはメモリに溜め、停止時にまとめて書く（強制終了時は残らない）。
+/// メモリの目安: 1,000,000 件で約 170MB、60 分 60Hz 相当（約 730 万件）で約 1.2GB（実測）。
+/// 上限到達時は最初の 1 件で警告を 1 回出し、summary.json の droppedEvents / capacity で確認できる。
 /// </summary>
 internal sealed class OutputTrace
 {
     public const string EnvironmentVariable = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
-    private const int Capacity = 1_000_000;
+    public const string CapacityEnvironmentVariable = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE_CAPACITY";
+    public const int DefaultCapacity = 1_000_000;
     private readonly ConcurrentQueue<OutputTraceEvent> events = new();
-    private int count, dropped;
+    private readonly int capacity;
+    private int count, dropped, dropWarned;
     public long OriginQpc { get; set; }
     public string? Directory { get; }
     public bool IsEnabled => Directory != null;
+    /// <summary>イベント上限（環境変数で変更可、既定 1,000,000）。</summary>
+    public int Capacity => capacity;
+    /// <summary>上限超過で破棄したイベント数（summary.json の droppedEvents と同じ）。</summary>
+    internal int Dropped => Volatile.Read(ref dropped);
+    /// <summary>記録したイベント数（破棄を除く）。</summary>
+    internal int Recorded => Volatile.Read(ref count) - Dropped;
 
     internal static OutputTrace Disabled { get; } = new();
 
-    private OutputTrace() { }
+    private OutputTrace() { capacity = DefaultCapacity; }
 
-    private OutputTrace(string directory) { Directory = directory; }
+    internal OutputTrace(string directory, int capacity)
+    {
+        Directory = directory;
+        this.capacity = capacity > 0 ? capacity : DefaultCapacity;
+    }
+
+    /// <summary>環境変数値を解釈する。未設定・不正・0 以下は既定値。</summary>
+    internal static int ParseCapacity(string? value)
+        => int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out int parsed) && parsed > 0
+            ? parsed
+            : DefaultCapacity;
 
     public static OutputTrace Create(string? directory)
     {
@@ -36,7 +58,7 @@ internal sealed class OutputTrace
         {
             string full = Path.GetFullPath(directory);
             System.IO.Directory.CreateDirectory(full);
-            return new OutputTrace(full);
+            return new OutputTrace(full, ParseCapacity(Environment.GetEnvironmentVariable(CapacityEnvironmentVariable)));
         }
         catch (Exception ex)
         {
@@ -51,8 +73,13 @@ internal sealed class OutputTrace
     public void Record(OutputTraceEvent item)
     {
         if (!IsEnabled) return;
-        if (Interlocked.Increment(ref count) <= Capacity) events.Enqueue(item);
-        else Interlocked.Increment(ref dropped);
+        if (Interlocked.Increment(ref count) <= capacity) events.Enqueue(item);
+        else
+        {
+            Interlocked.Increment(ref dropped);
+            if (Interlocked.Exchange(ref dropWarned, 1) == 0)
+                Log.Warning("出力トレースが上限 {Capacity} に達しました。以降のイベントは記録されません", capacity);
+        }
     }
 
     public void Save(OutputTraceRunSummary run, LatestPool pool, ScanoutTracker? scanout, TimecodeSyncPlayer.Contracts.SourceDiagnostics? sourceDiagnostics = null)
@@ -140,6 +167,7 @@ internal sealed class OutputTrace
                 appCpuScope = "whole-run: engine startup through native cleanup; excludes log serialization",
                 validPerformanceResult = valid,
                 droppedEvents = dropped,
+                capacity = capacity,
                 eventCount = all.Length,
                 analysisStartSeconds = 0.0,
                 analysisEndSeconds = end,
