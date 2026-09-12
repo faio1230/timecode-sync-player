@@ -18,7 +18,17 @@ param(
     [switch]$ClickPlay,
     [ValidateSet('None','Normal','Force')][string]$ExitDialog = 'Normal',
     [string]$SimulateDeviceLoss = '',
-    [int]$GpuRetryAtSeconds = 0
+    [int]$GpuRetryAtSeconds = 0,
+    # V2 (audio). MuteAtSeconds/SpeedAtSeconds take a comma list of seconds; both
+    # controls are toggles, so "10,20" mutes at 10 s and unmutes at 20 s.
+    # VolumeAtSeconds takes "seconds:value" pairs, e.g. "12:50,20:100" (0..100).
+    [string]$MuteAtSeconds = '',
+    [string]$VolumeAtSeconds = '',
+    [string]$SpeedAtSeconds = '',
+    # Record the default render endpoint with WASAPI loopback for the whole run
+    # and write audio-rms.csv / audio-probe.txt into the run directory.
+    [switch]$AudioProbe,
+    [string]$AudioProbeExe = 'C:\Users\<user>\Documents\timecode-sync-player\scripts\AudioLoopbackProbe\bin\Debug\net8.0-windows\AudioLoopbackProbe.exe'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -56,7 +66,7 @@ $json = '{"outputBackend":1,"backend":' + $backendValue + ',"fullscreenDisplayDe
 $hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'TimecodeSyncPlayer.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'tcs_gstreamer.dll'), $receiverExe, $MediaPath) |
     Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { Get-FileHash $_ -Algorithm SHA256 | Select-Object Path, Hash }
 $hashes | ConvertTo-Json | Set-Content (Join-Path $run 'inputs.json') -Encoding UTF8
-$result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; steps=@() }
+$result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; audioProbe=$null; steps=@() }
 $app = $null; $recv = $null
 function Find-Button([int]$processId, [string]$automationId, [int]$timeoutSec) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
@@ -74,7 +84,20 @@ function Find-Button([int]$processId, [string]$automationId, [int]$timeoutSec) {
     throw "UI element not found or disabled: $automationId"
 }
 function Invoke-Button($found) { ($found.Button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+# VolumeSlider is a Slider, not a Button; Find-Button locates any element by AutomationId.
+function Set-Slider($found, [double]$value) {
+    ($found.Button.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern)).SetValue($value)
+}
+$audio = $null
 try {
+    if ($AudioProbe) {
+        if (-not (Test-Path $AudioProbeExe)) { throw "AudioLoopbackProbe not built: $AudioProbeExe" }
+        $audioCsv = Join-Path $run 'audio-rms.csv'
+        $audioTxt = Join-Path $run 'audio-probe.txt'
+        # Cover startup, the measured window and shutdown.
+        $audio = Start-Process -FilePath $AudioProbeExe -ArgumentList @([string]($Seconds + 40), ('"' + $audioCsv + '"')) -PassThru -NoNewWindow -RedirectStandardOutput $audioTxt
+        $result.steps += "AudioLoopbackProbe started at $((Get-Date).ToString('HH:mm:ss.fff'))"
+    }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $AppExe
     if ($ProjectPath) { $psi.Arguments = '--load-project "' + $ProjectPath + '"' } else { $psi.Arguments = '--open "' + $MediaPath + '"' }
@@ -121,6 +144,15 @@ try {
         if ($TestCardOnAtSeconds -gt 0) { $marks += @{ at=$TestCardOnAtSeconds; kind='cardOn' } }
         if ($TestCardOffAtSeconds -gt 0) { $marks += @{ at=$TestCardOffAtSeconds; kind='cardOff' } }
         if ($GpuRetryAtSeconds -gt 0) { $marks += @{ at=$GpuRetryAtSeconds; kind='gpuRetry' } }
+        foreach ($tok in ($MuteAtSeconds -split ',')) { if ($tok.Trim()) { $marks += @{ at=[int]$tok.Trim(); kind='mute' } } }
+        foreach ($tok in ($SpeedAtSeconds -split ',')) { if ($tok.Trim()) { $marks += @{ at=[int]$tok.Trim(); kind='speed' } } }
+        foreach ($tok in ($VolumeAtSeconds -split ',')) {
+            if ($tok.Trim()) {
+                $pair = $tok.Trim() -split ':'
+                if ($pair.Count -ne 2) { throw "VolumeAtSeconds wants 'seconds:value' pairs, got '$tok'" }
+                $marks += @{ at=[int]$pair[0]; kind='volume'; value=[double]$pair[1] }
+            }
+        }
         foreach ($m in ($marks | Sort-Object { $_.at })) {
             if ($m.at -le $elapsed -or $m.at -ge $Seconds) { continue }
             Start-Sleep -Seconds ($m.at - $elapsed); $elapsed = $m.at
@@ -136,6 +168,15 @@ try {
             } elseif ($m.kind -eq 'gpuRetry') {
                 try { $retry = Find-Button $app.Id 'BtnGpuRetry' 10; Invoke-Button $retry; $result.steps += "BtnGpuRetry invoked at $((Get-Date).ToString('HH:mm:ss.fff'))" }
                 catch { $result.steps += "BtnGpuRetry not available: $($_.Exception.Message)" }
+            } elseif ($m.kind -eq 'mute') {
+                $mute = Find-Button $app.Id 'BtnMute' 10; Invoke-Button $mute
+                $result.steps += "BtnMute invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+            } elseif ($m.kind -eq 'speed') {
+                $spd = Find-Button $app.Id 'BtnSpeed' 10; Invoke-Button $spd
+                $result.steps += "BtnSpeed invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+            } elseif ($m.kind -eq 'volume') {
+                $vol = Find-Button $app.Id 'VolumeSlider' 10; Set-Slider $vol $m.value
+                $result.steps += "VolumeSlider set to $($m.value) at $((Get-Date).ToString('HH:mm:ss.fff'))"
             } elseif ($m.kind -eq 'cardOn' -or $m.kind -eq 'cardOff') {
                 $card = Find-Button $app.Id 'BtnTestCard' 10; Invoke-Button $card; $result.steps += "BtnTestCard ($($m.kind)) invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
             }
@@ -174,6 +215,13 @@ finally {
             }
             if ($recv.HasExited) { $result.receiverExit = $recv.ExitCode }
         } catch { $result.error = "$($result.error) receiver cleanup: $($_.Exception.Message)" }
+    }
+    if ($audio) {
+        try {
+            if (-not $audio.WaitForExit(60000)) { $audio.Kill(); $audio.WaitForExit(5000) | Out-Null }
+            $txt = Get-Content (Join-Path $run 'audio-probe.txt') -ErrorAction SilentlyContinue
+            if ($txt) { $result.audioProbe = ($txt -join ' | ') }
+        } catch { $result.error = "$($result.error) audio probe: $($_.Exception.Message)" }
     }
     $result.endedUtc = [DateTime]::UtcNow.ToString('o')
     $logDir = Join-Path (Split-Path $AppExe) 'logs'
