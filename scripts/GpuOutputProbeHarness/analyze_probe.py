@@ -162,7 +162,8 @@ def acquisition_report(events, start, end, frequency, options, image_sources):
         if outcome not in outcomes:
             errors.append("Unknown acquisition outcome")
             continue
-        if outcome != "acquired" and key in sends:
+        # Design rule: "abandoned" (receiver died while holding the mutex) counts as acquired; sending continues.
+        if outcome not in ("acquired", "abandoned") and key in sends:
             errors.append("SendTexture started without successful mutex acquisition")
         first_deadline, last_deadline = first.get("deadlineQpc") or 0, last.get("deadlineQpc") or 0
         if isinstance(first_deadline, bool) or isinstance(last_deadline, bool) or not isinstance(first_deadline, int) or not isinstance(last_deadline, int) or first_deadline <= 0 or last_deadline <= 0:
@@ -212,7 +213,8 @@ def acquisition_report(events, start, end, frequency, options, image_sources):
                 errors.append("SendTexture start requires exactly one matching acquisition pair")
                 continue
             completed, sent = right[0], send_events[0]
-            if completed.get("detail") != "acquired":
+            # Design rule: an abandoned mutex (receiver died while holding it) counts as acquired and sending continues.
+            if completed.get("detail") not in ("acquired", "abandoned"):
                 errors.append("SendTexture started without successful mutex acquisition")
             if completed["qpc"] > sent["qpc"]:
                 errors.append("SendTexture started before mutex acquisition returned")
@@ -424,7 +426,13 @@ def display_wait_report(events, start, end, frequency, origin, options, command,
                     if waited is None or waited[1]["qpc"] > first["qpc"] or waited[1].get("value") != 1 or waited[1].get("detail") not in ("ready", "retained"):
                         errors.append("Display selection requires a usable earlier same-slot wait")
                 if pacing in ("ready", "vsync", "vblank"):
-                    if first["qpc"] >= deadline:
+                    # vblank pacing may present immediately after the wake target passed as long as the
+                    # vblank is still >= 1ms away (design rule I3): allow selection up to vblank - 1ms.
+                    limit = deadline
+                    margin_ms = options.get("presentMarginMs")
+                    if pacing == "vblank" and isinstance(margin_ms, (int, float)) and not isinstance(margin_ms, bool):
+                        limit = deadline + int(round((float(margin_ms) - 1.0) * frequency / 1000))
+                    if first["qpc"] >= limit:
                         errors.append("Display selection started after its deadline")
     if "displayPacing" in options:
         for event in events:

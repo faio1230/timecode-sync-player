@@ -2,6 +2,8 @@
 
 状態: 2026-09-11、親が設計。実装は未着手。出力側の確定設計は [確定版](OUTPUT-GPU-DESIGN-CONFIRMED.md)、製品動作の合意は [OUTPUT-PIPELINE-DESIGN.md](OUTPUT-PIPELINE-DESIGN.md)、ソース契約は [GPU-SOURCE-CONTRACT-SPEC.md](GPU-SOURCE-CONTRACT-SPEC.md)、配置は [CANVAS-PLACEMENT-SPEC.md](CANVAS-PLACEMENT-SPEC.md)。別 worktree で進行中の GStreamer 移行（`codex/gstreamer-migration-20260911-0141`）との接続点も定める。
 
+追記 2026-09-11: 全段階共通の不変条件は [OUTPUT-GPU-INVARIANTS.md](OUTPUT-GPU-INVARIANTS.md)、段階 4・5 の詳細仕様は [OUTPUT-GPU-STAGE4-5-SPEC.md](OUTPUT-GPU-STAGE4-5-SPEC.md)。
+
 ## 1. 現行本体（事実）
 
 - mpv の SW 描画は専用スレッド（`RenderThreadExecutor`）で行い、`RenderedFrameSnapshot`（pool 配列の所有コピー）を `LatestRenderedFrameMailbox` に最新1枚で置く。

@@ -1,0 +1,185 @@
+# Parent-run trial of the main app with OutputBackend=Gpu. One explicitly requested run; serial; owned processes only.
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string]$MediaPath,
+    [Parameter(Mandatory)][string]$Label,
+    [int]$Seconds = 32,
+    [string]$DisplayDeviceName = '\\.\DISPLAY2',
+    [string]$AppExe = 'C:\Users\<user>\Documents\timecode-sync-player-wt-verify-oe-20260911-1344\src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe',
+    [string]$LogRoot = 'C:\Users\<user>\Documents\timecode-sync-player\.superpowers\worktrees\session-refactor\TestResults\gpu-app-20260911',
+    [switch]$NoFullscreen,
+    [int]$KillReceiverAfterSeconds = 0,
+    [ValidateSet('Mpv','Gstreamer')][string]$PlayerBackend = 'Mpv',
+    [switch]$NoSpout,
+    [string]$ProjectPath = '',
+    [int]$ScreenshotAtSeconds = 0,
+    [int]$TestCardOnAtSeconds = 0,
+    [int]$TestCardOffAtSeconds = 0,
+    [switch]$ClickPlay,
+    [ValidateSet('None','Normal','Force')][string]$ExitDialog = 'Normal',
+    [string]$SimulateDeviceLoss = '',
+    [int]$GpuRetryAtSeconds = 0
+)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+if (-not ('AppTrialNative' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class AppTrialNative {
+    private delegate bool EnumProc(IntPtr hwnd, IntPtr param);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc callback, IntPtr param);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
+    public static int CloseOwned(uint pid) {
+        int count = 0;
+        EnumWindows((hwnd, param) => { uint actual; GetWindowThreadProcessId(hwnd, out actual); if (actual == pid && PostMessage(hwnd, 0x10, IntPtr.Zero, IntPtr.Zero)) count++; return true; }, IntPtr.Zero);
+        return count;
+    }
+}
+'@
+}
+$receiverExe = 'C:\Users\<user>\Downloads\Spout-SDK-examples_2-007-017\Spout-SDK-examples\Examples_2-007-017\SpoutDX\WinSpoutDXreceiver.exe'
+$session = (query session 2>$null | Select-String '>console') -ne $null
+if (-not $session) { throw 'Not a console session; refusing to run a display test.' }
+$busy = Get-Process | Where-Object { $_.ProcessName -match '^(TimecodeSyncPlayer|GpuOutputProbe|WinSpoutDXreceiver|gst-launch-1.0|tcs-shim-test)$' }
+if ($busy) { throw "GPU test process already running: $($busy.ProcessName -join ',')" }
+$run = Join-Path $LogRoot ('{0}-{1}' -f [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'), $Label)
+New-Item -ItemType Directory -Path $run | Out-Null
+$trace = Join-Path $run 'app'
+$settings = Join-Path $run 'settings.json'
+$sender = 'TCSParent-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
+$escapedDevice = $DisplayDeviceName.Replace('\', '\\')  # JSON: one backslash -> two
+$backendValue = if ($PlayerBackend -eq 'Gstreamer') { 1 } else { 0 }  # PlayerBackend enum: Mpv=0, Gstreamer=1
+$json = '{"outputBackend":1,"backend":' + $backendValue + ',"fullscreenDisplayDeviceName":"' + $escapedDevice + '"}'
+[IO.File]::WriteAllText($settings, $json, [Text.UTF8Encoding]::new($false))
+$hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'TimecodeSyncPlayer.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'tcs_gstreamer.dll'), $receiverExe, $MediaPath) |
+    Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { Get-FileHash $_ -Algorithm SHA256 | Select-Object Path, Hash }
+$hashes | ConvertTo-Json | Set-Content (Join-Path $run 'inputs.json') -Encoding UTF8
+$result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; steps=@() }
+$app = $null; $recv = $null
+function Find-Button([int]$processId, [string]$automationId, [int]$timeoutSec) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $processId)
+        # The process owns several top-level windows once fullscreen is open; search each for the button.
+        $wins = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)
+        foreach ($win in $wins) {
+            $bc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
+            $btn = $win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $bc)
+            if ($btn -and $btn.Current.IsEnabled) { return @{ Window=$win; Button=$btn } }
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    throw "UI element not found or disabled: $automationId"
+}
+function Invoke-Button($found) { ($found.Button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $AppExe
+    if ($ProjectPath) { $psi.Arguments = '--load-project "' + $ProjectPath + '"' } else { $psi.Arguments = '--open "' + $MediaPath + '"' }
+    $psi.WorkingDirectory = Split-Path $AppExe; $psi.UseShellExecute = $false
+    $psi.Environment['TIMECODE_SYNC_PLAYER_SETTINGS_PATH'] = $settings
+    $psi.Environment['TIMECODE_SYNC_PLAYER_SPOUT_NAME'] = $sender
+    $psi.Environment['TIMECODE_SYNC_PLAYER_OUTPUT_TRACE'] = $trace
+    if ($SimulateDeviceLoss) { $psi.Environment['TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS'] = $SimulateDeviceLoss }
+    $app = [System.Diagnostics.Process]::Start($psi)
+    $null = $app.Handle
+    $result.app = [ordered]@{ pid=$app.Id; startUtc=$app.StartTime.ToUniversalTime().ToString('o'); exe=$AppExe }
+    $t0 = Get-Date
+    $spout = Find-Button $app.Id 'BtnSpout' 40
+    $result.steps += "window+spout button ready after $([int]((Get-Date)-$t0).TotalMilliseconds) ms"
+    Start-Sleep -Seconds 2
+    if ($NoSpout) {
+        $result.steps += "Spout left OFF (-NoSpout); no receiver started"
+        Start-Sleep -Seconds 3
+    } else {
+        Invoke-Button $spout; $result.steps += "BtnSpout invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+        Start-Sleep -Seconds 1
+        $recv = Start-Process -FilePath $receiverExe -WorkingDirectory $run -WindowStyle Hidden -PassThru
+        $null = $recv.Handle
+        $result.receiver = [ordered]@{ pid=$recv.Id; startUtc=$recv.StartTime.ToUniversalTime().ToString('o') }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $NoFullscreen) {
+        $fs = Find-Button $app.Id 'BtnFullscreen' 10
+        Invoke-Button $fs; $result.steps += "BtnFullscreen invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+    }
+    if ($KillReceiverAfterSeconds -gt 0 -and $KillReceiverAfterSeconds -lt $Seconds) {
+        Start-Sleep -Seconds $KillReceiverAfterSeconds
+        # Deliberate receiver crash (owned PID + start time verified) to exercise the abandoned-mutex path.
+        $check = Get-Process -Id $recv.Id -ErrorAction SilentlyContinue
+        if ($check -and $check.StartTime.ToUniversalTime().ToString('o') -eq $result.receiver.startUtc) { $recv.Kill(); $recv.WaitForExit(5000) | Out-Null }
+        $result.steps += "receiver killed deliberately at $((Get-Date).ToString('HH:mm:ss.fff'))"
+        $result.receiverKilledDeliberately = $true
+        Start-Sleep -Seconds ($Seconds - $KillReceiverAfterSeconds)
+    } else {
+        if ($ClickPlay) { $play = Find-Button $app.Id 'BtnPlay' 10; Invoke-Button $play; $result.steps += "BtnPlay invoked at $((Get-Date).ToString('HH:mm:ss.fff'))" }
+        $elapsed = 0
+        $marks = @()
+        if ($ScreenshotAtSeconds -gt 0) { $marks += @{ at=$ScreenshotAtSeconds; kind='shot' } }
+        if ($TestCardOnAtSeconds -gt 0) { $marks += @{ at=$TestCardOnAtSeconds; kind='cardOn' } }
+        if ($TestCardOffAtSeconds -gt 0) { $marks += @{ at=$TestCardOffAtSeconds; kind='cardOff' } }
+        if ($GpuRetryAtSeconds -gt 0) { $marks += @{ at=$GpuRetryAtSeconds; kind='gpuRetry' } }
+        foreach ($m in ($marks | Sort-Object { $_.at })) {
+            if ($m.at -le $elapsed -or $m.at -ge $Seconds) { continue }
+            Start-Sleep -Seconds ($m.at - $elapsed); $elapsed = $m.at
+            if ($m.kind -eq 'shot') {
+                Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+                $scr = [System.Windows.Forms.Screen]::AllScreens | Where-Object { $_.DeviceName -eq $DisplayDeviceName } | Select-Object -First 1
+                if ($scr) {
+                    $bmp = New-Object System.Drawing.Bitmap $scr.Bounds.Width, $scr.Bounds.Height
+                    $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($scr.Bounds.Location, [System.Drawing.Point]::Empty, $scr.Bounds.Size); $g.Dispose()
+                    $bmp.Save((Join-Path $run ('display-{0}s.png' -f $m.at)), [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+                    $result.steps += "screenshot of $DisplayDeviceName at $((Get-Date).ToString('HH:mm:ss.fff'))"
+                } else { $result.steps += "screenshot skipped: display not found" }
+            } elseif ($m.kind -eq 'gpuRetry') {
+                try { $retry = Find-Button $app.Id 'BtnGpuRetry' 10; Invoke-Button $retry; $result.steps += "BtnGpuRetry invoked at $((Get-Date).ToString('HH:mm:ss.fff'))" }
+                catch { $result.steps += "BtnGpuRetry not available: $($_.Exception.Message)" }
+            } elseif ($m.kind -eq 'cardOn' -or $m.kind -eq 'cardOff') {
+                $card = Find-Button $app.Id 'BtnTestCard' 10; Invoke-Button $card; $result.steps += "BtnTestCard ($($m.kind)) invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+            }
+        }
+        Start-Sleep -Seconds ($Seconds - $elapsed)
+    }
+    if ($app.HasExited) { throw "App exited early with code $($app.ExitCode)" }
+    if (-not $NoFullscreen) {
+        $fs2 = Find-Button $app.Id 'BtnFullscreen' 10
+        Invoke-Button $fs2; $result.steps += "BtnFullscreen (exit) invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+        Start-Sleep -Seconds 2
+    }
+    $result.cpuSeconds = [math]::Round($app.TotalProcessorTime.TotalSeconds, 3)
+    $mainFound = Find-Button $app.Id 'BtnSpout' 10
+    $hwnd = [IntPtr]$mainFound.Window.Current.NativeWindowHandle
+    [void][AppTrialNative]::PostMessage($hwnd, 0x10, [IntPtr]::Zero, [IntPtr]::Zero)
+    $result.steps += "WM_CLOSE posted at $((Get-Date).ToString('HH:mm:ss.fff'))"
+    if ($ExitDialog -ne 'None') {
+        # Stage 5: closing shows ExitDialog (cancel is default). Choose normal or forced exit via UIA.
+        $btnId = if ($ExitDialog -eq 'Force') { 'BtnExitForce' } else { 'BtnExitNormal' }
+        try { $exitBtn = Find-Button $app.Id $btnId 10; Invoke-Button $exitBtn; $result.steps += "$btnId invoked at $((Get-Date).ToString('HH:mm:ss.fff'))" }
+        catch { $result.steps += "exit dialog button not found: $($_.Exception.Message)" }
+    }
+    if (-not $app.WaitForExit(60000)) { $result.error = 'App did not exit within 60 s after WM_CLOSE (not killed).' }
+    else { $result.appExit = $app.ExitCode; $result.steps += "app exited code $($app.ExitCode) at $((Get-Date).ToString('HH:mm:ss.fff'))" }
+} catch { $result.error = $_.Exception.Message }
+finally {
+    if ($recv) {
+        try {
+            if (-not $recv.HasExited) {
+                $check = Get-Process -Id $recv.Id -ErrorAction SilentlyContinue
+                if ($check -and $check.StartTime.ToUniversalTime().ToString('o') -eq $result.receiver.startUtc) {
+                    [void][AppTrialNative]::CloseOwned([uint32]$recv.Id)
+                    if (-not $recv.WaitForExit(5000)) { $result.receiverForced = $true; $recv.Kill(); $recv.WaitForExit(5000) | Out-Null }
+                }
+            }
+            if ($recv.HasExited) { $result.receiverExit = $recv.ExitCode }
+        } catch { $result.error = "$($result.error) receiver cleanup: $($_.Exception.Message)" }
+    }
+    $result.endedUtc = [DateTime]::UtcNow.ToString('o')
+    $logDir = Join-Path (Split-Path $AppExe) 'logs'
+    $latest = Get-ChildItem $logDir -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+    if ($latest) { Get-Content $latest.FullName -Tail 400 | Set-Content (Join-Path $run 'app-log-tail.txt') -Encoding UTF8 }
+    $result | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $run 'runner-result.json') -Encoding UTF8
+}
+Write-Output ("RUN " + $run)
+$result | ConvertTo-Json -Depth 6
