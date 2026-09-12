@@ -221,6 +221,7 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD
 | `TIMECODE_SYNC_PLAYER_SETTINGS_PATH` | `settings.json`の場所を上書き（自動テストの隔離用） |
 | `TIMECODE_SYNC_PLAYER_SPOUT_NAME` | Spout送信者名の上書き。未設定は既定名 |
 | `TIMECODE_SYNC_PLAYER_OUTPUT_TRACE` | 出力トレース（`manifest.json` / `events.jsonl` / `summary.json`）の出力ディレクトリ。未設定は無効。停止時にまとめて書き出すため、強制終了では残りません |
+| `TIMECODE_SYNC_PLAYER_OUTPUT_TRACE_CAPACITY` | 出力トレースのイベント上限（正の整数）。未設定・不正値は既定 `1000000`（60Hz で約 8.3 分）。上限到達で以降は破棄され、最初の 1 件で警告ログ、`summary.json` の `droppedEvents` と `capacity` に記録されます。イベントはメモリに溜めるため、上限を上げると常駐が増えます（実測: 1,000,000 件で約 170MB、60 分 60Hz 相当の約 730 万件で約 1.2GB） |
 | `TIMECODE_SYNC_PLAYER_TEST_CARD` | `1`または`true`で起動時にテストカードをON（動作確認用） |
 | `TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS` | `<秒>[,<秒>...]`。指定時刻に疑似デバイス消失を発生させ、復旧経路を確認する検証用 |
 | `GSTREAMER_1_0_ROOT_MSVC_X86_64` | GStreamerランタイムのルート。既定は`C:\Program Files\gstreamer\1.0\msvc_x86_64` |
