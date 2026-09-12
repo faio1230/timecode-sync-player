@@ -30,7 +30,9 @@ param(
     # V5/V6: build a playlist (--open MediaPath --playlist p1 p2 ...) and drive it.
     # NextTrackAtSeconds / PrevTrackAtSeconds take a comma list of seconds.
     # SeekAtSeconds takes "seconds:position" pairs where position is the SeekBar value.
-    [string[]]$PlaylistPaths = @(),
+    # Semicolon separated, NOT an array: array parameters do not survive
+    # "powershell -File" invocation (same trap as Run-V1Matrix's -Only).
+    [string]$PlaylistPaths = '',
     [string]$NextTrackAtSeconds = '',
     [string]$PrevTrackAtSeconds = '',
     [string]$SeekAtSeconds = '',
@@ -50,6 +52,8 @@ public static class AppTrialNative {
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc callback, IntPtr param);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
+    [DllImport("kernel32.dll")] private static extern bool QueryPerformanceCounter(out long value);
+    public static long Qpc() { long v; QueryPerformanceCounter(out v); return v; }
     public static int CloseOwned(uint pid) {
         int count = 0;
         EnumWindows((hwnd, param) => { uint actual; GetWindowThreadProcessId(hwnd, out actual); if (actual == pid && PostMessage(hwnd, 0x10, IntPtr.Zero, IntPtr.Zero)) count++; return true; }, IntPtr.Zero);
@@ -75,7 +79,7 @@ $json = '{"outputBackend":1,"backend":' + $backendValue + ',"fullscreenDisplayDe
 $hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'TimecodeSyncPlayer.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'tcs_gstreamer.dll'), $receiverExe, $MediaPath) |
     Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { Get-FileHash $_ -Algorithm SHA256 | Select-Object Path, Hash }
 $hashes | ConvertTo-Json | Set-Content (Join-Path $run 'inputs.json') -Encoding UTF8
-$result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; audioProbe=$null; steps=@() }
+$result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; audioProbe=$null; completedNormally=$false; receiverMode=$(if ($NoSpout) { 'none' } else { 'official' }); steps=@() }
 $app = $null; $recv = $null
 function Find-Button([int]$processId, [string]$automationId, [int]$timeoutSec) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
@@ -93,6 +97,17 @@ function Find-Button([int]$processId, [string]$automationId, [int]$timeoutSec) {
     throw "UI element not found or disabled: $automationId"
 }
 function Invoke-Button($found) { ($found.Button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+# analyze_probe.py refuses a run unless the owned receiver is observed alive across the
+# whole analysis window, so record QPC-stamped liveness samples next to the trace.
+$script:receiverSamples = @()
+function Add-ReceiverSample($proc, $startedUtc) {
+    if (-not $proc) { return $null }
+    $qpc = [AppTrialNative]::Qpc()
+    $live = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+    $alive = [bool]($live -and $live.StartTime.ToUniversalTime().ToString('o') -eq $startedUtc)
+    $script:receiverSamples += [ordered]@{ qpc = $qpc; alive = $alive }
+    return $qpc
+}
 # VolumeSlider is a Slider, not a Button; Find-Button locates any element by AutomationId.
 function Set-Slider($found, [double]$value) {
     ($found.Button.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern)).SetValue($value)
@@ -111,8 +126,9 @@ try {
     $psi.FileName = $AppExe
     if ($ProjectPath) {
         $psi.Arguments = '--load-project "' + $ProjectPath + '"'
-    } elseif ($PlaylistPaths.Count -gt 0) {
-        $psi.Arguments = '--open "' + $MediaPath + '" --playlist ' + (($PlaylistPaths | ForEach-Object { '"' + $_ + '"' }) -join ' ')
+    } elseif ($PlaylistPaths) {
+        $list = @($PlaylistPaths -split ';' | Where-Object { $_.Trim() } | ForEach-Object { '"' + $_.Trim() + '"' })
+        $psi.Arguments = '--open "' + $MediaPath + '" --playlist ' + ($list -join ' ')
     } else {
         $psi.Arguments = '--open "' + $MediaPath + '"'
     }
@@ -145,6 +161,7 @@ try {
         $null = $recv.Handle
         $result.receiver = [ordered]@{ pid=$recv.Id; startUtc=$recv.StartTime.ToUniversalTime().ToString('o') }
         Start-Sleep -Seconds 2
+        $result.receiver.observedAliveQpc = Add-ReceiverSample $recv $result.receiver.startUtc
     }
     if (-not $NoFullscreen) {
         $fs = Find-Button $app.Id 'BtnFullscreen' 10
@@ -187,6 +204,7 @@ try {
         foreach ($m in ($marks | Sort-Object { $_.at })) {
             if ($m.at -le $elapsed -or $m.at -ge $Seconds) { continue }
             Start-Sleep -Seconds ($m.at - $elapsed); $elapsed = $m.at
+            if ($recv) { [void](Add-ReceiverSample $recv $result.receiver.startUtc) }
             if ($m.kind -eq 'shot') {
                 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
                 $scr = [System.Windows.Forms.Screen]::AllScreens | Where-Object { $_.DeviceName -eq $DisplayDeviceName } | Select-Object -First 1
@@ -223,6 +241,7 @@ try {
         }
         Start-Sleep -Seconds ($Seconds - $elapsed)
     }
+    if ($recv) { [void](Add-ReceiverSample $recv $result.receiver.startUtc) }
     if ($app.HasExited) { throw "App exited early with code $($app.ExitCode)" }
     if (-not $NoFullscreen) {
         $fs2 = Find-Button $app.Id 'BtnFullscreen' 10
@@ -263,6 +282,11 @@ finally {
             if ($txt) { $result.audioProbe = ($txt -join ' | ') }
         } catch { $result.error = "$($result.error) audio probe: $($_.Exception.Message)" }
     }
+    # ReceiverMode none must still leave an (empty) array so the analyzer can tell
+    # "control run without a receiver" from "metadata missing".
+    ConvertTo-Json -InputObject @($script:receiverSamples) -Depth 4 |
+        Set-Content (Join-Path $run 'receiver-samples.json') -Encoding UTF8
+    $result.completedNormally = ($null -eq $result.error) -and ($null -ne $result.appExit)
     $result.endedUtc = [DateTime]::UtcNow.ToString('o')
     $logDir = Join-Path (Split-Path $AppExe) 'logs'
     $latest = Get-ChildItem $logDir -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
