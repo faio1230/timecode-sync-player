@@ -11,9 +11,9 @@
 
 ## 2. 現在地
 
-- **main は `58ef4a5`**（origin/main と一致）。GPU 出力層の全段階（0〜2、6、6b、3、4、5、7）を統合済み。既定値は `PlayerBackend=Mpv`、`OutputBackend=Cpu` のまま（切替は下記 V1〜V10 合格後）。
-- **進行中: 実運用検証 V1〜V10**（`docs/GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md`）。V1（コーデック行列）は 11 本中 9 本合格、音声付き MP4 と ProRes が shim の読み込み失敗（S1／S2）。
-- **未検証の報告あり**: OpenCode が S1／S2 の修正を `d347673`（branch `codex/gst-validation-20260912`、main 58ef4a5 起点）としてコミット済み。**後任の最初の仕事はこの検証**（下記 5 の手順。素材は `artifacts/media/v1`、確認は `tcs-shim-test` 11 本＋アプリで音声付き・ProRes 各 50 秒＋既合格 9 本の回帰）。合格なら main へ ff 統合し、V2 へ。
+- **main は `fa77d0b`**。GPU 出力層の全段階（0〜2、6、6b、3、4、5、7）に加え、S1／S2 の shim 修正を統合済み。既定値は `PlayerBackend=Mpv`、`OutputBackend=Cpu` のまま（切替は下記 V1〜V10 合格後）。
+- **進行中: 実運用検証 V1〜V10**（`docs/GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md`）。**V1（コーデック行列）は 11 本すべて合格**（2026-09-12 19:10 JST）。S1（音声付き MP4）・S2（ProRes）の修正 `d347673` を検証のうえ main へ rebase して ff 統合した（`fa77d0b`、native ツリーは検証 SHA と同一）。評価は `docs/OUTPUT-GPU-STAGE2-EVALUATION-2026-09-11.md` の「追記: S1・S2 修正 `d347673`」。
+- **次は V2**（音声出力・ミュート・音量・速度）。V1 で新たに 2 件の追跡項目が出た（S3: MPEG-TS のシーク後にフレームが来ない〔基点でも同一の既存事象〕、GStreamer E2E が素材不足でスキップのまま）。
 - 利用者は作業のため DISPLAY1（主画面）を 4K→HD に変更する予定。変更時刻を聞いて `docs/GPU-VERIFICATION-TIMELINE-2026-09-10-12.md` に記録する。DISPLAY2（1920×1080／60Hz、試験の表示先）は変えない。
 
 ## 3. worktree と用途
@@ -22,7 +22,7 @@
 | --- | --- | --- |
 | `C:\Users\codea\Documents\timecode-sync-player` | `main` 58ef4a5 | 正。利用者の承認を得て統合済み。以後も統合は ff のみ |
 | `...-wt-integrate-20260912` | `integrate/gpu-output-20260912`（= main） | 親の作業場。native DLL・shim・素材（`artifacts/media`、`artifacts/media/v1`）配置済み、ビルド済み。`TestResults/v1` に V1 の run |
-| `...-wt-verify-oe-20260911-1344` | detached `a9b9349` | 親の検証ビルド用（報告 SHA へ checkout して使う）。`vendor/Spout2` あり（shim ビルドに必要） |
+| `...-wt-verify-oe-20260911-1344` | `integrate/s1s2-20260912`（= main `fa77d0b`） | 親の検証ビルド用（報告 SHA へ `checkout --detach` して使う）。`vendor/Spout2` あり（shim ビルドに必要） |
 | `...-wt-output-engine-20260911-1247` | `codex/gst-validation-20260912` d347673 | OpenCode の作業場。**親は書き込まない** |
 | `.superpowers/worktrees/session-refactor` | `refactor/session-lifecycle` 46bd759 | 旧作業場。`TestResults/gpu-app-20260911`（段階 0〜5 の生 run、gitignore）と `TestResults/gpu-mutex-retry-session-20260910T0752Z/environment.md`（タイムライン原本）が残る |
 | `...-wt-gstreamer-20260911-0141` | 5eb7e62 | 旧 GStreamer 移行ブランチ。参照のみ |
@@ -69,10 +69,10 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 ## 7. 未完了と次の順
 
-1. S1／S2（d347673）の検証 → 合格なら main へ ff 統合し push（push は `git -c credential.helper= -c "credential.helper=!gh auth git-credential" push origin main`）。
+1. ~~S1／S2（d347673）の検証 → main へ ff 統合~~ 完了（`fa77d0b`、2026-09-12 19:10 JST）。push は `git -c credential.helper= -c "credential.helper=!gh auth git-credential" push origin main`。
 2. V2 音声（ミュート・音量・速度）→ V3 LTC 同期シーク精度（ケーブルループ E2E を GStreamer で。RDP のリモートオーディオに注意）→ V4 ギャップ 3 種 → V5 切替連打 → V6 長時間 60 分 → V7 mpv×Gpu×Spout → V8 表示先の違い → V9 起動終了復旧 → V10 旧プロジェクト読込。
 3. 全合格で既定を `Gstreamer`＋`Cpu→Gpu` に切替（mpv／Cpu は退避経路として 1 リリース残す）→ HAP（`video/x-hap`、調査は `docs/HAP-GSTREAMER-INVESTIGATION-2026-09-11.md`）。
-4. 積み残し（軽微）: L-4（lead が単発スパイクで 8ms に跳ぶ。p99＝60 標本の最大値）、4K 長尺での H-3 閾値（21ms）挙動、120Hz／複数画面、実デバイス消失。
+4. 積み残し: S3（MPEG-TS のシーク後にフレームが来ない。V3／V5 の前に原因を押さえる）、GStreamer E2E の素材整備（`test_720p25.mkv`・`test_720p25.avi`・`test_720p50.ts`・recv ツール）、ProRes の 60 秒素材の作り直し。軽微: L-4（lead が単発スパイクで 8ms に跳ぶ。p99＝60 標本の最大値）、4K 長尺での H-3 閾値（21ms）挙動、120Hz／複数画面、実デバイス消失。
 
 ## 8. 主要文書
 
