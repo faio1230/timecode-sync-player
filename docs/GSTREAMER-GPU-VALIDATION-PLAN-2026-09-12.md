@@ -55,6 +55,39 @@ V1〜V10 が合格し、GStreamer で読めない素材が現場の一覧に無�
 - 撤去時に消えるもの（v0.5 の見積もり用）: `Mpv.cs`、`MpvRenderNative.cs`、`FrameRenderer` の mpv 経路、
   `PlayerBackend` 設定と UI、`libmpv-2.dll` の同梱と `scripts/get-mpv.ps1`、mpv 用 E2E とドキュメント。
 
+## V2 の検証方法（親の設計、2026-09-12）
+
+V2 は「音声出力あり」を口頭ではなく**数値で**判定する。理由は再現性で、mpv 撤去の判断材料として記録に残す必要があるため。
+
+### 測り方
+
+既定の再生デバイスを **WASAPI ループバックで録音**し、100ms ごとの RMS（dBFS）を出す。
+そのために `scripts/AudioLoopbackProbe`（NAudio 2.2.1 の `WasapiLoopbackCapture` を使う小さな .NET コンソール）を親が用意し、
+`Invoke-AppGpuTrial.ps1` から run と同時に走らせて `audio-rms.csv` を run ディレクトリへ残す。
+システム全体のミックスを拾うので、**試験中は他の音を鳴らさない**（run 開始前に他プロセスの再生が無いことを確認する）。
+
+操作は UIA で行う。runner に次を足す:
+
+| 追加パラメータ | 操作 |
+| --- | --- |
+| `-MuteAtSeconds` / `-UnmuteAtSeconds` | `BtnMute` を Invoke |
+| `-VolumeAtSeconds "12:50,20:100"` | `VolumeSlider`（0〜100）を RangeValue パターンで設定 |
+| `-SpeedAtSeconds` | `BtnSpeed` を Invoke（速度は循環） |
+
+### 合格条件
+
+| 項目 | 条件 |
+| --- | --- |
+| 音声が出ている | 再生中の RMS が無音床（run 冒頭の無再生区間の RMS）より **20dB 以上**高い |
+| ミュート | Invoke から **200ms 以内**に無音床まで下がり、解除で元の水準へ戻る |
+| 音量 100→50 | RMS が **−6dB（±1.5dB）** 変化する（`volume` 要素は振幅線形なので 0.5 倍＝−6.02dB） |
+| 再生速度 | 速度変更後も音声が途切れず、error 0。映像位置が指定倍で進む。**音程が変わる**のは現行実装の既知の挙動として記録する（`pitch` 要素は入れない） |
+| 映像指標 | 共通条件（実フレーム＝素材 fps、表示 59.9Hz 以上、合成 p99 1ms 以下、Spout 60Hz、error 0、exit 0） |
+
+### 素材
+
+`artifacts/media/v1/v1_h264_1080p60_aac.mp4`（H.264＋AAC）。TS に音声を載せた素材は S3 の A/V 同期確認で作るので、それも V2 の対象に加える。
+
 ## V1 の結果（2026-09-12 13:07〜13:19 JST、`TestResults/v1`、生成素材 `artifacts/media/v1`）
 
 素材は GStreamer で生成（`videotestsrc pattern=ball motion=wavy`＋`timeoverlay`、NVENC／`avenc_prores_ks`、GOP 1 秒、60 秒）。実素材ではないのでデコード負荷は軽め。run は 50 秒、解析窓 8〜48 秒、GStreamer×Gpu、Spout ON、DISPLAY2 全画面。集計 `scripts/GpuOutputProbeHarness/v1_matrix_summary.py`。
