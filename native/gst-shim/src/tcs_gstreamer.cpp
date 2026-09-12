@@ -64,6 +64,9 @@ env_flag (const char* name)
   return GetEnvironmentVariableA (name, buf, sizeof (buf)) > 0;
 }
 
+/* diagnostics: dump every delivered sample (pacing analysis) */
+static bool frame_log = env_flag ("TCS_FRAME_LOG");
+
 struct TcsPlayer {
   /* D3D11 + Spout.
    * Stage 6b: the device is ALWAYS owned by the shim. The compositor pointer
@@ -145,8 +148,49 @@ struct TcsPlayer {
   ID3D11Fence* ring_fence = nullptr;
   HANDLE ring_fence_handle = nullptr;
   uint64_t generation = 1;                /* bumped by owner on load/seek */
+  /* MPEG-TS precise seek (method 5, guarded by frame_lock): tsdemux's
+   * ACCURATE scan loses H.264 NALs when IDRs carry no SPS/PPS, so a TS seek
+   * snaps to the keyframe before the target with KEY_UNIT|SNAP_BEFORE and the
+   * frames decoded before the target are dropped until the first one at or
+   * after it. gate_target_ns is in the same media-time space as the requested
+   * seconds; gate_dropped counts the frames dropped for the last seek. */
+  bool mpegts = false;                    /* current demux is tsdemux */
+  bool gate_active = false;               /* drop samples with pts < target */
+  uint64_t gate_target_ns = 0;
+  uint64_t gate_dropped = 0;
+  uint64_t gate_armed_qpc = 0;            /* diagnostics: arm/first/open times */
+  uint64_t gate_first_qpc = 0;
+  uint64_t gate_first_pts_ns = 0;
   guint64 frames_decoded = 0;
   guint64 spout_sends = 0;
+
+  /* Method 2 (clock rebase, TS only): the flushing seek restarts the tsdemux
+   * segment at the snapped keyframe and rebases base_time so that keyframe is
+   * "now"; the target frame would then be waited out in real time. The shim
+   * rewrites the post-seek SEGMENT at the sinks (start = target, like
+   * qtdemux's accurate seek) so pre-target buffers are dropped before
+   * preroll, the pipeline anchors base_time on the target, and audio starts
+   * at the target too. MP4/MOV keep the accurate seek and no rewrite. */
+  bool rebase_armed = false;              /* waiting for the post-seek segment */
+  guint32 rebase_seek_seqnum = 0;         /* seqnum of the last TS seek event */
+  bool video_rewrite_installed = false;
+  GstElement* audio_rewrite_sink = nullptr; /* probe target (pipeline-owned) */
+  uint64_t rebase_count = 0;
+  /* TS seek diagnostics: buffers arriving at the audio sink since the last
+   * rewritten segment, and a one-shot stall report. */
+  std::atomic<uint64_t> au_probe_buffers{0};
+  std::atomic<int64_t> au_probe_first_pts{-1};
+  std::atomic<int64_t> au_probe_last_pts{-1};
+  std::atomic<uint64_t> vp_probe_buffers{0};
+  std::atomic<int64_t> vp_probe_first_pts{-1};
+  std::atomic<int64_t> vp_probe_last_pts{-1};
+  bool gate_diag_done = false;
+  uint32_t seg_diag_left = 0;
+  /* A/V diagnostics: after each rebase, log the audio sink position next to
+   * the delivered video pts for the first few frames, then every Nth. */
+  uint32_t av_log_left = 0;
+  uint32_t av_log_stride = 0;
+  uint64_t av_log_seq = 0;
 
   /* delivery trace (frame_lock). problem H: record each arrival so the
    * owner can compare decoding cadence, callback cost and replacements. */
@@ -571,6 +615,196 @@ on_audio_sink_probe (GstPad*, GstPadProbeInfo*, gpointer user)
   return GST_PAD_PROBE_OK;
 }
 
+/* Method 2 (clock rebase) helper: the real basesink inside the audio chain
+ * (autoaudiosink is a bin; its child is wasapi2sink/directsoundsink/...). */
+static GstElement*
+find_audio_sink_element (TcsPlayer* p)
+{
+  if (!p->asink)
+    return nullptr;
+  if (g_object_class_find_property (G_OBJECT_GET_CLASS (p->asink), "ts-offset"))
+    return p->asink;
+  if (GST_IS_BIN (p->asink)) {
+    GstElement* found = nullptr;
+    GstIterator* it = gst_bin_iterate_recurse (GST_BIN (p->asink));
+    GValue v = G_VALUE_INIT;
+    while (!found && gst_iterator_next (it, &v) == GST_ITERATOR_OK) {
+      GstElement* child = GST_ELEMENT (g_value_get_object (&v));
+      if (g_object_class_find_property (G_OBJECT_GET_CLASS (child), "ts-offset"))
+        found = child;
+      g_value_reset (&v);
+    }
+    gst_iterator_free (it);
+    return found;
+  }
+  return nullptr;
+}
+
+/* Method 2: rewrite the post-seek SEGMENT at each sink so the snap distance
+ * collapses to zero, exactly like qtdemux's accurate seek does internally
+ * (segment.start = target). The sink then drops every pre-target buffer as
+ * out-of-segment *before* preroll, so the pipeline waits only for the target
+ * frame to be decoded and then anchors base_time on it: target = "now",
+ * later frames pace normally, and audio (same rewritten segment) starts at
+ * the target. The original event is dropped and replaced via gst_pad_send_event
+ * (which does not re-enter probes), so downstream sees exactly one segment. */
+static GstPadProbeReturn
+on_sink_segment_rewrite (GstPad* pad, GstPadProbeInfo* info, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  GstEvent* ev = GST_PAD_PROBE_INFO_EVENT (info);
+  if (!ev || GST_EVENT_TYPE (ev) != GST_EVENT_SEGMENT || !p->mpegts)
+    return GST_PAD_PROBE_OK;
+  guint64 target = 0;
+  guint32 seek_seq = 0;
+  {
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    target = p->gate_target_ns;
+    seek_seq = p->rebase_seek_seqnum;
+  }
+  if (target == 0 || seek_seq == 0 || gst_event_get_seqnum (ev) != seek_seq)
+    return GST_PAD_PROBE_OK;
+  const GstSegment* seg = nullptr;
+  gst_event_parse_segment (ev, &seg);
+  if (!seg || seg->format != GST_FORMAT_TIME || seg->rate <= 0.0 ||
+      seg->start >= target)
+    return GST_PAD_PROBE_OK;
+  GstSegment ns = *seg;
+  ns.start = target;
+  if (ns.time < target)
+    ns.time = target;
+  ns.position = target;
+  ns.offset = 0;
+  ns.base = 0;
+  if (p->audio_rewrite_sink &&
+      (gpointer) GST_PAD_PARENT (pad) == (gpointer) p->audio_rewrite_sink) {
+    p->au_probe_buffers.store (0, std::memory_order_relaxed);
+    p->au_probe_first_pts.store (-1, std::memory_order_relaxed);
+    p->au_probe_last_pts.store (-1, std::memory_order_relaxed);
+  } else if (p->appsink &&
+      (gpointer) GST_PAD_PARENT (pad) == (gpointer) p->appsink) {
+    p->vp_probe_buffers.store (0, std::memory_order_relaxed);
+    p->vp_probe_first_pts.store (-1, std::memory_order_relaxed);
+    p->vp_probe_last_pts.store (-1, std::memory_order_relaxed);
+  }
+  GstEvent* newev = gst_event_new_segment (&ns);
+  gst_event_set_seqnum (newev, seek_seq);
+  gboolean sent = gst_pad_send_event (pad, newev);
+  LOG ("seek: ts segment rewritten sink=%s old_start=%" GST_TIME_FORMAT
+      " target=%" GST_TIME_FORMAT " rate=%.3f sent=%d",
+      GST_PAD_PARENT (pad) ? GST_ELEMENT_NAME (GST_PAD_PARENT (pad)) : "?",
+      GST_TIME_ARGS (seg->start), GST_TIME_ARGS (target), seg->rate, sent);
+  return GST_PAD_PROBE_DROP;
+}
+
+/* Diagnostic: remember the first/last pts reaching the audio sink after a
+ * rewritten segment (a seek that never opens the gate can be told apart from
+ * "no audio buffer ever arrived"). */
+static GstPadProbeReturn
+on_audio_buffer_diag (GstPad*, GstPadProbeInfo* info, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  GstBuffer* b = GST_PAD_PROBE_INFO_BUFFER (info);
+  if (!b)
+    return GST_PAD_PROBE_OK;
+  guint64 pts = GST_BUFFER_PTS (b);
+  if (pts == GST_CLOCK_TIME_NONE)
+    return GST_PAD_PROBE_OK;
+  uint64_t prev = p->au_probe_buffers.fetch_add (1, std::memory_order_relaxed);
+  if (prev == 0)
+    p->au_probe_first_pts.store ((int64_t) pts, std::memory_order_relaxed);
+  p->au_probe_last_pts.store ((int64_t) pts, std::memory_order_relaxed);
+  return GST_PAD_PROBE_OK;
+}
+
+/* Diagnostic: count the buffers actually reaching the video appsink pad after
+ * a TS seek (before the sink's segment clipping). */
+static GstPadProbeReturn
+on_video_buffer_diag (GstPad*, GstPadProbeInfo* info, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  GstBuffer* b = GST_PAD_PROBE_INFO_BUFFER (info);
+  if (!b)
+    return GST_PAD_PROBE_OK;
+  guint64 pts = GST_BUFFER_PTS (b);
+  if (pts == GST_CLOCK_TIME_NONE)
+    return GST_PAD_PROBE_OK;
+  uint64_t prev = p->vp_probe_buffers.fetch_add (1, std::memory_order_relaxed);
+  if (prev == 0)
+    p->vp_probe_first_pts.store ((int64_t) pts, std::memory_order_relaxed);
+  p->vp_probe_last_pts.store ((int64_t) pts, std::memory_order_relaxed);
+  return GST_PAD_PROBE_OK;
+}
+
+/* Install the rewrite probes once per pipeline: on the video appsink and on
+ * the real audio sink. Called on the first TS seek (the autoaudiosink child
+ * only exists after the chain has been built). */
+static void
+ensure_sink_segment_rewrites (TcsPlayer* p)
+{
+  if (!p->video_rewrite_installed && p->appsink) {
+    GstPad* pad = gst_element_get_static_pad (p->appsink, "sink");
+    if (pad) {
+      gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+          on_sink_segment_rewrite, p, nullptr);
+      gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_BUFFER, on_video_buffer_diag, p, nullptr);
+      p->video_rewrite_installed = true;
+      gst_object_unref (pad);
+    }
+  }
+  if (p->asink) {
+    GstElement* sink = find_audio_sink_element (p);
+    if (sink && sink != p->audio_rewrite_sink) {
+      GstPad* pad = gst_element_get_static_pad (sink, "sink");
+      if (pad) {
+        gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+            on_sink_segment_rewrite, p, nullptr);
+        gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_BUFFER, on_audio_buffer_diag, p, nullptr);
+        p->audio_rewrite_sink = sink;
+        gst_object_unref (pad);
+      }
+    }
+  }
+}
+
+/* First downstream SEGMENT after a TS seek: diagnostics only (the actual
+ * rewrite happens at the sinks, see on_sink_segment_rewrite). */
+static GstPadProbeReturn
+on_demux_segment_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  GstEvent* ev = GST_PAD_PROBE_INFO_EVENT (info);
+  if (!ev || GST_EVENT_TYPE (ev) != GST_EVENT_SEGMENT)
+    return GST_PAD_PROBE_OK;
+  uint64_t target = 0;
+  {
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    if (!p->rebase_armed)
+      return GST_PAD_PROBE_OK;
+    p->rebase_armed = false;
+    target = p->gate_target_ns;
+    p->rebase_count++;
+    p->av_log_seq = p->frames_decoded;
+  }
+  const GstSegment* seg = nullptr;
+  gst_event_parse_segment (ev, &seg);
+  if (!seg || seg->format != GST_FORMAT_TIME || seg->rate <= 0.0) {
+    LOG ("seek: ts rebase diagnostics skipped (format/rate)");
+    return GST_PAD_PROBE_OK;
+  }
+  guint64 r_start = gst_segment_to_running_time ((GstSegment*) seg,
+      GST_FORMAT_TIME, seg->start);
+  guint64 r_target = gst_segment_to_running_time ((GstSegment*) seg,
+      GST_FORMAT_TIME, (guint64) target);
+  LOG ("seek: ts snap seg_start=%" GST_TIME_FORMAT " target=%" GST_TIME_FORMAT
+      " r_start=%" GST_TIME_FORMAT " r_target=%" GST_TIME_FORMAT
+      " snap_ms=%.1f rate=%.3f",
+      GST_TIME_ARGS (seg->start), GST_TIME_ARGS (target),
+      GST_TIME_ARGS (r_start), GST_TIME_ARGS (r_target),
+      (double) (target - seg->start) / 1e6, seg->rate);
+  return GST_PAD_PROBE_OK;
+}
+
 static GstFlowReturn
 on_new_sample (GstAppSink* sink, gpointer user)
 {
@@ -634,72 +868,164 @@ on_new_sample (GstAppSink* sink, gpointer user)
   uint64_t cb_gen = 0, cb_seq = 0;
   bool replaced = false;
   uint32_t event_slot = 0;
+  bool gated = false;
+  bool log_av = false;
+  uint64_t log_av_seq = 0, log_av_gen = 0, log_av_target_ns = 0;
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
-    if (cw > 0) p->width = cw;
-    if (ch > 0) p->height = ch;
-    if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
-    p->latest_gen = p->generation;
-    p->latest_pts_ns = pts;
-    p->latest_seq = ++p->frames_decoded;
-    p->latest_gpu = gpu;
+    if (p->seg_diag_left > 0) {
+      p->seg_diag_left--;
+      LOG ("seek: diag vsample pts_ms=%.1f seg_start_ms=%.1f seg_base_ms=%.1f "
+          "seg_time_ms=%.1f seg_rate=%.3f running_ms=%.1f gated=%d",
+          (double) pts / 1e6, seg ? (double) seg->start / 1e6 : -1.0,
+          seg ? (double) seg->base / 1e6 : -1.0,
+          seg ? (double) seg->time / 1e6 : -1.0, seg ? seg->rate : 0.0,
+          (double) running_ns / 1e6, p->gate_active ? 1 : 0);
+    }
+    /* Method 5 gate: after a TS keyframe-snap seek, every decoded frame whose
+     * pts is before the target is dropped here (decode keeps running). The
+     * compositor keeps drawing Held while acquire() reports none; the gate
+     * opening must NOT bump the generation again (the seek did that once). */
+    bool gate_opened = false;
+    if (p->gate_active) {
+      if (p->gate_first_qpc == 0) {
+        p->gate_first_qpc = (uint64_t) arrival.QuadPart;
+        p->gate_first_pts_ns = pts;
+      }
+      if (pts < p->gate_target_ns) {
+        p->gate_dropped++;
+        gated = true;
+      } else {
+        p->gate_active = false;
+        gate_opened = true;
+        double ms_per_tick = p->qpc_freq > 0 ? 1000.0 / (double) p->qpc_freq : 0.0;
+        LOG ("seek: ts gate opened target_ns=%llu snap_pts_ns=%llu first_pts_ns=%llu "
+            "dropped=%llu first_ms=%.1f open_ms=%.1f",
+            (unsigned long long) p->gate_target_ns,
+            (unsigned long long) p->gate_first_pts_ns, (unsigned long long) pts,
+            (unsigned long long) p->gate_dropped,
+            (double) (p->gate_first_qpc - p->gate_armed_qpc) * ms_per_tick,
+            (double) ((uint64_t) arrival.QuadPart - p->gate_armed_qpc) * ms_per_tick);
+      }
+    }
+    if (!gated) {
+      if (cw > 0) p->width = cw;
+      if (ch > 0) p->height = ch;
+      if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
+      p->latest_gen = p->generation;
+      p->latest_pts_ns = pts;
+      p->latest_seq = ++p->frames_decoded;
+      p->latest_gpu = gpu;
+      /* Method 2 diagnostics: sample the audio sink position next to the
+       * delivered video pts (gate-open frame plus a decimated window). */
+      if (gate_opened ||
+          (p->av_log_left > 0 &&
+           (p->av_log_stride == 0 || (p->latest_seq % p->av_log_stride) == 0))) {
+        log_av = true;
+        log_av_seq = p->latest_seq;
+        log_av_gen = p->latest_gen;
+        log_av_target_ns = p->gate_target_ns;
+      }
+      if (p->av_log_left > 0)
+        p->av_log_left--;
 
-    /* Stage 6b: GPU samples go through the shared ring. If every slot is
-     * busy, evict the oldest undelivered frame first (latest-first catch-up,
-     * counted as replaced / flags bit0). */
-    int32_t ring_slot = -1;
-    if (gpu && src_tex && cw > 0 && ch > 0 && ensure_ring_locked (p, cw, ch) &&
-        (int) src_desc.Width == p->ring_width && (int) src_desc.Height == p->ring_height &&
-        src_desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
-      int32_t slot = pick_free_ring_slot_locked (p);
-      if (slot < 0 && evict_oldest_ring_item_locked (p)) {
+      /* Stage 6b: GPU samples go through the shared ring. If every slot is
+       * busy, evict the oldest undelivered frame first (latest-first catch-up,
+       * counted as replaced / flags bit0). */
+      int32_t ring_slot = -1;
+      if (gpu && src_tex && cw > 0 && ch > 0 && ensure_ring_locked (p, cw, ch) &&
+          (int) src_desc.Width == p->ring_width && (int) src_desc.Height == p->ring_height &&
+          src_desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+        int32_t slot = pick_free_ring_slot_locked (p);
+        if (slot < 0 && evict_oldest_ring_item_locked (p)) {
+          replaced = true;
+          p->delivery_replaced++;
+          slot = pick_free_ring_slot_locked (p);
+        }
+        if (slot >= 0) {
+          copy_ring_locked (p, slot, src_tex, src_sub, src_desc);
+          p->context4->Signal (p->ring_fence, p->latest_seq);
+          p->context->Flush ();  /* submit copy+signal (no wait here) */
+          ring_slot = slot;
+        }
+      }
+      if (ring_slot < 0 && p->frames.size() >= TcsPlayer::kFrameQueueCapacity) {
+        gst_sample_unref (p->frames.front().sample);
+        p->frames.pop_front();
         replaced = true;
         p->delivery_replaced++;
-        slot = pick_free_ring_slot_locked (p);
       }
-      if (slot >= 0) {
-        copy_ring_locked (p, slot, src_tex, src_sub, src_desc);
-        p->context4->Signal (p->ring_fence, p->latest_seq);
-        p->context->Flush ();  /* submit copy+signal (no wait here) */
-        ring_slot = slot;
+      p->frames.push_back (TcsPlayer::FrameSlot{sample, p->generation, p->latest_seq, pts,
+          (uint64_t) arrival.QuadPart, gpu, ring_slot});
+      p->pending_update = true;
+      p->delivery_arrivals++;
+      p->delivery_last_qpc = (uint64_t) arrival.QuadPart;
+      cb = p->notify;
+      cb_user = p->notify_user;
+      cb_gen = p->latest_gen;
+      cb_seq = p->latest_seq;
+      /* Record the arrival before invoking the owner's callback: the callback
+       * may block, but the event must not wait for it. callback_us is filled
+       * in place afterwards (single writer; the ring cannot wrap within one
+       * callback at ring_size >> frame rate). */
+      event_slot = p->delivery_write % TcsPlayer::kDeliveryCapacity;
+      TcsDeliveryEvent& e = p->delivery_ring[event_slot];
+      e.qpc = (uint64_t) arrival.QuadPart;
+      e.seq = p->latest_seq;
+      e.pts_ns = (int64_t) pts;
+      e.running_ns = running_ns;
+      e.callback_us = 0;
+      e.flags = (replaced ? 1u : 0u) | (cb ? 2u : 0u) | (gpu ? 4u : 0u);
+      p->delivery_write++;
+      if (p->delivery_write - p->delivery_read > TcsPlayer::kDeliveryCapacity) {
+        p->delivery_read = p->delivery_write - TcsPlayer::kDeliveryCapacity;
+        p->delivery_ring_dropped++;
       }
-    }
-    if (ring_slot < 0 && p->frames.size() >= TcsPlayer::kFrameQueueCapacity) {
-      gst_sample_unref (p->frames.front().sample);
-      p->frames.pop_front();
-      replaced = true;
-      p->delivery_replaced++;
-    }
-    p->frames.push_back (TcsPlayer::FrameSlot{sample, p->generation, p->latest_seq, pts,
-        (uint64_t) arrival.QuadPart, gpu, ring_slot});
-    p->pending_update = true;
-    p->delivery_arrivals++;
-    p->delivery_last_qpc = (uint64_t) arrival.QuadPart;
-    cb = p->notify;
-    cb_user = p->notify_user;
-    cb_gen = p->latest_gen;
-    cb_seq = p->latest_seq;
-    /* Record the arrival before invoking the owner's callback: the callback
-     * may block, but the event must not wait for it. callback_us is filled
-     * in place afterwards (single writer; the ring cannot wrap within one
-     * callback at ring_size >> frame rate). */
-    event_slot = p->delivery_write % TcsPlayer::kDeliveryCapacity;
-    TcsDeliveryEvent& e = p->delivery_ring[event_slot];
-    e.qpc = (uint64_t) arrival.QuadPart;
-    e.seq = p->latest_seq;
-    e.pts_ns = (int64_t) pts;
-    e.running_ns = running_ns;
-    e.callback_us = 0;
-    e.flags = (replaced ? 1u : 0u) | (cb ? 2u : 0u) | (gpu ? 4u : 0u);
-    p->delivery_write++;
-    if (p->delivery_write - p->delivery_read > TcsPlayer::kDeliveryCapacity) {
-      p->delivery_read = p->delivery_write - TcsPlayer::kDeliveryCapacity;
-      p->delivery_ring_dropped++;
     }
   }
 
   if (d3d_mapped)
     gst_memory_unmap (mem, &d3d_map);
+
+  if (frame_log && !gated)
+    LOG ("frame: qpc=%llu pts_ms=%.2f dts_ms=%.2f dur_ms=%.2f pts_valid=%d "
+        "seq=%llu",
+        (unsigned long long) arrival.QuadPart, (double) pts / 1e6,
+        buf && GST_BUFFER_DTS (buf) != GST_CLOCK_TIME_NONE
+            ? (double) GST_BUFFER_DTS (buf) / 1e6 : -1.0,
+        buf && GST_BUFFER_DURATION (buf) != GST_CLOCK_TIME_NONE
+            ? (double) GST_BUFFER_DURATION (buf) / 1e6 : -1.0,
+        buf && GST_BUFFER_PTS (buf) != GST_CLOCK_TIME_NONE ? 1 : 0,
+        (unsigned long long) cb_seq);
+
+  if (gated) {
+    if (src_tex)
+      src_tex->Release ();
+    gst_sample_unref (sample);
+    return GST_FLOW_OK;
+  }
+
+  if (log_av) {
+    gint64 apos = -1;
+    gboolean aok = FALSE;
+    if (p->asink) {
+      GstElement* asink = find_audio_sink_element (p);
+      if (asink) {
+        aok = gst_element_query_position (asink, GST_FORMAT_TIME, &apos);
+        if (!aok)
+          LOG ("av: diag audio sink=%s query failed", GST_ELEMENT_NAME (asink));
+      } else {
+        LOG ("av: diag no ts-offset sink found under %s", GST_ELEMENT_NAME (p->asink));
+      }
+    }
+    LOG ("av: qpc=%llu gen=%llu seq=%llu video_pts=%.3f target=%.3f "
+        "audio_pos=%.3f diff_ms=%.1f aok=%d",
+        (unsigned long long) arrival.QuadPart,
+        (unsigned long long) log_av_gen, (unsigned long long) log_av_seq,
+        (double) pts / GST_SECOND, (double) log_av_target_ns / GST_SECOND,
+        aok ? (double) apos / GST_SECOND : -1.0,
+        aok ? (double) ((gint64) pts - apos) / 1e6 : 0.0, aok);
+  }
 
   if (cb) {
     LARGE_INTEGER c0, c1, qfreq;
@@ -1064,6 +1390,10 @@ static void
 on_demux_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user)
 {
   TcsPlayer* p = (TcsPlayer*) user;
+  /* method 2: the first SEGMENT pushed after a TS seek carries the snapped
+   * start used for the clock rebase */
+  gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+      on_demux_segment_probe, p, nullptr);
   GstCaps* caps = gst_pad_get_current_caps (pad);
   if (!caps)
     caps = gst_pad_query_caps (pad, nullptr);
@@ -1181,6 +1511,11 @@ teardown_pipeline (TcsPlayer* p)
     p->leased_slot = -1;
     p->pending_update = false;
     p->frames_decoded = 0;
+    p->gate_active = false;
+    p->gate_dropped = 0;
+    p->rebase_armed = false;
+    p->rebase_seek_seqnum = 0;
+    p->av_log_left = 0;
   }
 
   if (p->pipeline) {
@@ -1205,6 +1540,87 @@ teardown_pipeline (TcsPlayer* p)
   p->aconvert2 = nullptr;
   p->asink = nullptr;
   p->adecodebin = nullptr;
+  p->video_rewrite_installed = false;
+  p->audio_rewrite_sink = nullptr;
+}
+
+/* Seek implementation (manual seek, step and load-with-start all go through
+ * this): opens a new generation, discards undelivered frames and arms the TS
+ * delivery gate. Caller holds frame_lock. */
+static uint64_t
+seek_locked (TcsPlayer* p, double seconds, double rate)
+{
+  if (!p->pipeline)
+    return p->generation;
+  p->generation++;
+  /* frames of the previous generation must never reach the compositor */
+  for (TcsPlayer::FrameSlot& slot : p->frames)
+    gst_sample_unref (slot.sample);
+  p->frames.clear ();
+  p->pending_update = false;
+  p->gate_target_ns = (uint64_t) (seconds * (double) GST_SECOND);
+  /* A/V diagnostics window (TCS_SEEK_DIAG=1): the gate-open frame is always
+   * logged, the decimated window follows the seek for both TS and MP4. */
+  p->av_log_left = env_flag ("TCS_SEEK_DIAG") ? 900 : 0;
+  p->av_log_stride = 15;
+  p->av_log_seq = p->frames_decoded;
+  if (p->eos) {
+    p->eos = false;
+    if (!p->paused)
+      gst_element_set_state (p->pipeline, GST_STATE_PLAYING);
+  }
+  /* MPEG-TS: tsdemux's ACCURATE seek scans each PES for a keyframe NAL and
+   * loses track on H.264 whose IDRs carry no SPS/PPS, so instead snap to the
+   * keyframe before the target (KEY_UNIT|SNAP_BEFORE) and let the sinks drop
+   * the pre-target samples (method 2 segment rewrite; the delivery gate is
+   * the fallback). MP4/MOV and the rest keep the accurate seek (their landing
+   * error is already one frame at most). */
+  GstSeekFlags flags = p->mpegts
+      ? (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT |
+          GST_SEEK_FLAG_SNAP_BEFORE)
+      : (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE);
+  gboolean ok;
+  if (p->mpegts) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter (&now);
+    p->gate_active = true;
+    p->gate_target_ns = (uint64_t) (seconds * (double) GST_SECOND);
+    p->gate_dropped = 0;
+    p->gate_armed_qpc = (uint64_t) now.QuadPart;
+    p->gate_first_qpc = 0;
+    p->gate_first_pts_ns = 0;
+    /* method 2: the sinks rewrite the next segment (start = target) so the
+     * pipeline prerolls on the target; the seek seqnum identifies it. */
+    p->rebase_armed = true;
+    ensure_sink_segment_rewrites (p);
+    p->seg_diag_left = env_flag ("TCS_SEEK_DIAG") ? 5 : 0;
+    p->gate_diag_done = false;
+    guint32 seq = gst_util_seqnum_next ();
+    GstEvent* sev = gst_event_new_seek (rate > 0.0 ? rate : 1.0,
+        GST_FORMAT_TIME, flags, GST_SEEK_TYPE_SET,
+        (gint64) (seconds * GST_SECOND), GST_SEEK_TYPE_NONE, -1);
+    gst_event_set_seqnum (sev, seq);
+    /* TCS_NO_SEGMENT_REWRITE=1 is a debug escape hatch back to method 5 */
+    p->rebase_seek_seqnum = env_flag ("TCS_NO_SEGMENT_REWRITE") ? 0 : seq;
+    ok = gst_element_send_event (p->pipeline, sev);
+    LOG ("seek: ts keyframe-snap target_ns=%llu gate armed seq=%u",
+        (unsigned long long) p->gate_target_ns, seq);
+  } else {
+    p->rebase_armed = false;
+    p->rebase_seek_seqnum = 0;
+    ok = gst_element_seek (p->pipeline, rate > 0.0 ? rate : 1.0,
+        GST_FORMAT_TIME, flags, GST_SEEK_TYPE_SET,
+        (gint64) (seconds * GST_SECOND), GST_SEEK_TYPE_NONE, -1);
+  }
+  if (!ok) {
+    char msg[256];
+    snprintf (msg, sizeof (msg),
+        "seek failed (gst_element_seek FALSE, %s, target=%.3f)",
+        p->mpegts ? "ts keyunit/snap-before" : "accurate", seconds);
+    p->last_error = msg;
+    LOG ("%s", msg);
+  }
+  return p->generation;
 }
 
 static int
@@ -1229,6 +1645,9 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     const char* container = (idx == PROFILE_INDEX_FALLBACK) ? "decodebin" : demux_name;
 
     teardown_pipeline (p);
+    /* Method 5 applies to the tsdemux container only (other demuxers keep
+     * the accurate seek). */
+    p->mpegts = g_strcmp0 (container, "tsdemux") == 0;
 
     p->failed = false;
     p->eos = false;
@@ -1244,6 +1663,18 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     }
 
     p->pipeline = gst_pipeline_new ("tcs_play");
+    /* Method 2 support: a flushing seek stops the wasapi2 ringbuffer and on
+     * some systems it does not restart promptly, which freezes the clock the
+     * audio sink provides. Every sink waiting on that clock then stalls (the
+     * target frame never arrives) until the device recovers ~10s later.
+     * Forcing the system clock keeps the pipeline clock alive; the audio sink
+     * slaves to it instead (GstAudioBaseSink default skew slaving), so A/V
+     * sync is kept. Measured: seek-to-lease 185ms, A/V offset ~-1ms. */
+    {
+      GstClock* sysclock = gst_system_clock_obtain ();
+      gst_pipeline_use_clock (GST_PIPELINE (p->pipeline), sysclock);
+      gst_object_unref (sysclock);
+    }
     GstElement* src = gst_element_factory_make ("filesrc", nullptr);
     p->demux = gst_element_factory_make (container, nullptr);
     if (!p->pipeline || !src || !p->demux) {
@@ -1355,10 +1786,9 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     if (start_sec > 0.0) {
       std::lock_guard<std::mutex> g (p->frame_lock);
       p->eos = false;
-      p->generation++;
-      gst_element_seek (p->pipeline, 1.0, GST_FORMAT_TIME,
-          (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-          GST_SEEK_TYPE_SET, (gint64) (start_sec * GST_SECOND), GST_SEEK_TYPE_NONE, -1);
+      /* same seek semantics (and TS gate) as a manual seek; a load seek
+       * always starts at normal rate like before */
+      seek_locked (p, start_sec, 1.0);
     }
 
     p->path = utf8_path;
@@ -1601,10 +2031,17 @@ TCS_GST_API int
 tcs_player_set_paused (TcsPlayer* player, int paused)
 {
   if (!player) return TCS_ERR_GENERIC;
-  std::lock_guard<std::mutex> g (player->frame_lock);
-  player->paused = paused != 0;
-  if (player->pipeline)
-    gst_element_set_state (player->pipeline,
+  /* Do not hold frame_lock across the state change: the streaming thread may
+   * be inside on_new_sample waiting for frame_lock while holding the sink's
+   * stream lock, and the state change needs that stream lock (deadlock). */
+  GstElement* pipeline;
+  {
+    std::lock_guard<std::mutex> g (player->frame_lock);
+    player->paused = paused != 0;
+    pipeline = player->pipeline;
+  }
+  if (pipeline)
+    gst_element_set_state (pipeline,
         paused ? GST_STATE_PAUSED : GST_STATE_PLAYING);
   return TCS_OK;
 }
@@ -1615,34 +2052,12 @@ tcs_player_get_paused (TcsPlayer* player)
   return player ? (player->paused ? 1 : 0) : -1;
 }
 
-static uint64_t
-seek_locked (TcsPlayer* p, double seconds)
-{
-  if (!p->pipeline)
-    return p->generation;
-  p->generation++;
-  /* frames of the previous generation must never reach the compositor */
-  for (TcsPlayer::FrameSlot& slot : p->frames)
-    gst_sample_unref (slot.sample);
-  p->frames.clear ();
-  p->pending_update = false;
-  if (p->eos) {
-    p->eos = false;
-    if (!p->paused)
-      gst_element_set_state (p->pipeline, GST_STATE_PLAYING);
-  }
-  gst_element_seek (p->pipeline, p->rate, GST_FORMAT_TIME,
-      (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE),
-      GST_SEEK_TYPE_SET, (gint64) (seconds * GST_SECOND), GST_SEEK_TYPE_NONE, -1);
-  return p->generation;
-}
-
 TCS_GST_API uint64_t
 tcs_player_seek (TcsPlayer* player, double seconds)
 {
   if (!player) return 0;
   std::lock_guard<std::mutex> g (player->frame_lock);
-  return seek_locked (player, seconds);
+  return seek_locked (player, seconds, player->rate);
 }
 
 TCS_GST_API uint64_t
@@ -1652,6 +2067,7 @@ tcs_player_step_frame (TcsPlayer* player)
   guint64 before;
   bool wasPaused;
   uint64_t gen;
+  GstElement* pipeline;
   {
     std::lock_guard<std::mutex> g (player->frame_lock);
     if (!player->pipeline) return player->generation;
@@ -1660,14 +2076,15 @@ tcs_player_step_frame (TcsPlayer* player)
     double step = player->fps > 0.0 ? 1.0 / player->fps : 0.04;
     before = player->frames_decoded;
     wasPaused = player->paused;
-    gen = seek_locked (player, (double) pos / GST_SECOND + step);
-    if (wasPaused) {
-      /* PAUSED sinks do not re-preroll after a flush seek: run briefly and
-       * stop again once the stepped frame has been delivered. */
-      gst_element_set_state (player->pipeline, GST_STATE_PLAYING);
-    }
+    /* the step target goes through the same TS gate as a manual seek */
+    gen = seek_locked (player, (double) pos / GST_SECOND + step, player->rate);
+    pipeline = player->pipeline;
   }
   if (wasPaused) {
+    /* PAUSED sinks do not re-preroll after a flush seek: run briefly and
+     * stop again once the stepped frame has been delivered. The state changes
+     * are outside frame_lock (see tcs_player_set_paused). */
+    gst_element_set_state (pipeline, GST_STATE_PLAYING);
     ULONGLONG t0 = GetTickCount64 ();
     while (GetTickCount64 () - t0 < 500) {
       bool arrived;
@@ -1679,8 +2096,7 @@ tcs_player_step_frame (TcsPlayer* player)
         break;
       Sleep (10);
     }
-    std::lock_guard<std::mutex> g (player->frame_lock);
-    gst_element_set_state (player->pipeline, GST_STATE_PAUSED);
+    gst_element_set_state (pipeline, GST_STATE_PAUSED);
   }
   return gen;
 }
@@ -1709,6 +2125,9 @@ tcs_player_set_speed (TcsPlayer* player, double rate)
   std::lock_guard<std::mutex> g (player->frame_lock);
   player->rate = rate > 0.0 ? rate : 1.0;
   if (!player->pipeline) return TCS_OK;
+  /* a rate change re-seeks; the TS segment rewrite does not apply to it */
+  player->rebase_armed = false;
+  player->rebase_seek_seqnum = 0;
   gint64 pos = 0;
   gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos);
   gst_element_seek (player->pipeline, player->rate, GST_FORMAT_TIME,
@@ -1834,6 +2253,40 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
   if (!player || !out_info) return 0;
   std::lock_guard<std::mutex> g (player->frame_lock);
   TcsPlayer* p = player;
+
+  /* TS seek stall diagnostics: if the gate has been waiting for seconds,
+   * report the pipeline/sink states and the audio-side buffer flow once. */
+  if (p->gate_active && !p->gate_diag_done && p->gate_armed_qpc && p->pipeline) {
+    LARGE_INTEGER now2;
+    QueryPerformanceCounter (&now2);
+    double ms = p->qpc_freq > 0
+        ? (double) (now2.QuadPart - (long long) p->gate_armed_qpc) * 1000.0 /
+            (double) p->qpc_freq
+        : 0.0;
+    if (ms > 3000.0) {
+      p->gate_diag_done = true;
+      GstState c = GST_STATE_VOID_PENDING, pend = GST_STATE_VOID_PENDING;
+      gst_element_get_state (p->pipeline, &c, &pend, 0);
+      GstState av = GST_STATE_VOID_PENDING, ap = GST_STATE_VOID_PENDING;
+      if (p->appsink) gst_element_get_state (p->appsink, &av, &ap, 0);
+      GstElement* as = find_audio_sink_element (p);
+      GstState sv = GST_STATE_VOID_PENDING, sp = GST_STATE_VOID_PENDING;
+      if (as) gst_element_get_state (as, &sv, &sp, 0);
+      LOG ("seek: diag stalled %.0fms pipe=%d/%d vsink=%d/%d asink=%s=%d/%d "
+          "au_bufs=%llu au_first=%lld au_last=%lld "
+          "vp_bufs=%llu vp_first=%lld vp_last=%lld vframes=%llu dropped=%llu",
+          ms, (int) c, (int) pend, (int) av, (int) ap,
+          as ? GST_ELEMENT_NAME (as) : "?", (int) sv, (int) sp,
+          (unsigned long long) p->au_probe_buffers.load (),
+          (long long) p->au_probe_first_pts.load (),
+          (long long) p->au_probe_last_pts.load (),
+          (unsigned long long) p->vp_probe_buffers.load (),
+          (long long) p->vp_probe_first_pts.load (),
+          (long long) p->vp_probe_last_pts.load (),
+          (unsigned long long) p->frames_decoded,
+          (unsigned long long) p->gate_dropped);
+    }
+  }
 
   /* Already leased frame of this generation and not stale: keep it. */
   if ((p->leased || p->leased_slot >= 0) && p->lease_info.generation == generation) {

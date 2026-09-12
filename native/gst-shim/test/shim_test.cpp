@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <algorithm>
 
 
 
@@ -188,6 +189,96 @@ run_delivery_policy_tests ()
   check (tcs_ring_evict_index (single, 0) == -1, "ring evict: empty -> -1");
 }
 
+/* --seek-loop <file> [iters]: consecutive seeks (V5). Every target must land
+ * within one frame and within the 500ms budget, and the last three seeks must
+ * not be worse than the first three (no accumulated correction). */
+static int
+run_seek_loop (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --seek-loop <file> [iters]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+  int iters = argc > 3 ? atoi (argv[3]) : 10;
+  if (iters < 2)
+    iters = 2;
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimSeekLoop", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) return 1;
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  {
+    TcsStats st = {};
+    for (int w = 0; w < 100; w++) {
+      tcs_player_get_stats (p, &st);
+      if (st.frames_decoded >= 3) break;
+      std::this_thread::sleep_for (std::chrono::milliseconds (20));
+    }
+  }
+  double dur = 0, fps = 0;
+  tcs_player_get_duration (p, &dur);
+  tcs_player_get_fps (p, &fps);
+  double frame_s = fps > 0.0 ? 1.0 / fps : 0.040;
+  printf ("  media duration=%.3fs fps=%.3f frame=%.1fms\n", dur, fps, frame_s * 1000.0);
+
+  std::vector<double> arrivals, deltas;
+  int bad_landing = 0, slow = 0, no_frame = 0;
+  for (int i = 0; i < iters; i++) {
+    double target = dur > 2.0
+        ? dur * (0.08 + 0.84 * ((double) ((i * 37) % 100) / 99.0))
+        : 0.5;
+    tcs_player_release (p);
+    auto t0 = std::chrono::steady_clock::now ();
+    uint64_t gen = tcs_player_seek (p, target);
+    TcsFrameInfo info = {};
+    int got = 0;
+    for (int k = 0; k < 500 && !got; k++) {
+      got = tcs_player_acquire (p, gen, &info);
+      if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+    double ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - t0).count ();
+    if (!got) {
+      no_frame++;
+      printf ("  seek %2d target=%.3f NO FRAME (%.1fms)\n", i, target, ms);
+      continue;
+    }
+    double pts = info.pts_ns / 1e9;
+    double delta_ms = (pts - target) * 1000.0;
+    arrivals.push_back (ms);
+    deltas.push_back (delta_ms);
+    if (pts < target - 0.001 || pts > target + frame_s + 0.001)
+      bad_landing++;
+    if (ms >= 500.0)
+      slow++;
+    printf ("  seek %2d target=%.3f lease=%.3f delta=%+.1fms arrival=%.1fms\n",
+        i, target, pts, delta_ms, ms);
+    tcs_player_release (p);
+    std::this_thread::sleep_for (std::chrono::milliseconds (50));
+  }
+  tcs_player_destroy (p);
+
+  check (no_frame == 0, "every consecutive seek produced a frame");
+  check (bad_landing == 0, "every consecutive seek landed within one frame");
+  check (slow == 0, "every consecutive seek arrived within 500ms");
+  if (arrivals.size () >= 6) {
+    double first = 0, last = 0;
+    for (size_t i = 0; i < 3; i++) {
+      first += arrivals[i];
+      last += arrivals[arrivals.size () - 3 + i];
+    }
+    printf ("  arrival first3=%.1fms last3=%.1fms\n", first / 3.0, last / 3.0);
+    check (last / 3.0 <= (first / 3.0) * 1.5 + 50.0,
+        "arrival does not degrade over consecutive seeks");
+  }
+  return failures;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -201,6 +292,11 @@ main (int argc, char** argv)
   run_delivery_policy_tests ();
   if (strcmp (argv[1], "--stress") == 0)
     return run_stress (argc, argv);
+  if (strcmp (argv[1], "--seek-loop") == 0) {
+    int rc = run_seek_loop (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
   const char* file = argv[1];
   double play_secs = argc > 2 ? atof (argv[2]) : 2.0;
 
@@ -272,6 +368,7 @@ main (int argc, char** argv)
   tcs_player_set_paused (p, 0);
   uint64_t f1 = st.frames_decoded;
   unsigned notifs1 = g_frame_notifies.load ();
+  auto play_t0 = std::chrono::steady_clock::now ();
   for (int s = 0; s < (int) play_secs; s++) {
     std::this_thread::sleep_for (std::chrono::seconds (1));
     TcsStats ps = {};
@@ -279,9 +376,39 @@ main (int argc, char** argv)
     printf ("  t=%ds frames=%llu notifies=%u\n", s + 1,
         (unsigned long long) ps.frames_decoded, g_frame_notifies.load ());
   }
+  auto play_t1 = std::chrono::steady_clock::now ();
   tcs_player_get_stats (p, &st);
   check (st.frames_decoded > f1 + 5, "frames advance while playing");
   check (g_frame_notifies.load () > notifs1, "frame callback notifications");
+  {
+    double secs = std::chrono::duration<double> (play_t1 - play_t0).count ();
+    double rate = secs > 0.0 ? (double) (st.frames_decoded - f1) / secs : 0.0;
+    double media_fps = 0.0;
+    tcs_player_get_fps (p, &media_fps);
+    printf ("  playback-rate=%.2f fps media-fps=%.2f\n", rate, media_fps);
+    /* The rate count can spike when the source carries duplicate PTS frames
+     * (some remuxed TS files do); verify the *pacing* with the delivery trace
+     * instead: the median inter-arrival must match the media frame period. */
+    LARGE_INTEGER qfreq;
+    QueryPerformanceFrequency (&qfreq);
+    std::vector<TcsDeliveryEvent> evs (4096);
+    uint32_t n = 0;
+    tcs_player_drain_delivery_events (p, evs.data (), (uint32_t) evs.size (), &n);
+    std::vector<double> deltas;
+    for (uint32_t i = 1; i < n; i++)
+      if (evs[i].qpc > evs[i - 1].qpc)
+        deltas.push_back ((double) (evs[i].qpc - evs[i - 1].qpc) /
+            (double) (qfreq.QuadPart ? qfreq.QuadPart : 1));
+    if (!deltas.empty ()) {
+      std::sort (deltas.begin (), deltas.end ());
+      double median = deltas[deltas.size () / 2];
+      double frame_s = media_fps > 0.0 ? 1.0 / media_fps : 0.0167;
+      printf ("  pacing-median=%.2fms frame=%.2fms samples=%u\n",
+          median * 1000.0, frame_s * 1000.0, n);
+      check (median > frame_s * 0.7 && median < frame_s * 1.3,
+          "normal playback pacing matches media frame period");
+    }
+  }
 
   double pos = 0;
   check (tcs_player_get_time_pos (p, &pos) == TCS_OK && pos > 0.05, "time-pos advances");
@@ -298,35 +425,79 @@ main (int argc, char** argv)
   tcs_player_get_duration (p, &dur);
   double target = dur > 2.0 ? dur / 2.0 : 0.5;
   tcs_player_release (p);
+  auto t_seek = std::chrono::steady_clock::now ();
   uint64_t gen2 = tcs_player_seek (p, target);
   check (gen2 == gen + 1, "seek bumps generation");
   TcsFrameInfo stale = {};
   check (tcs_player_acquire (p, gen, &stale) == 0, "old-gen acquire = none after seek");
 
-  std::this_thread::sleep_for (std::chrono::milliseconds (250));
   gen = gen2;
   got = 0;
-  for (int i = 0; i < 20 && !got; i++) {
+  int acquire_misses = 0;
+  for (int i = 0; i < 2000 && !got; i++) {
     got = tcs_player_acquire (p, gen, &info);
-    if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (50));
+    if (!got) {
+      acquire_misses++;
+      std::this_thread::sleep_for (std::chrono::milliseconds (5));
+    }
   }
+  double seek_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t_seek).count ();
+  printf ("  seek-to-lease=%.1fms acquire_misses=%d\n", seek_ms, acquire_misses);
   check (got == 1, "new-gen frame available after seek");
+  check (seek_ms < 500.0, "seek-to-lease within 500ms");
+  {
+    /* first frame actually delivered after the seek (delivery trace), which
+     * is independent of the acquire catch-up policy */
+    std::vector<TcsDeliveryEvent> devs (512);
+    uint32_t dn = 0;
+    tcs_player_drain_delivery_events (p, devs.data (), (uint32_t) devs.size (), &dn);
+    if (dn > 0) {
+      double first_pts = devs[0].pts_ns / 1e9;
+      printf ("  first-delivered pts=%.3f delta_ms=%.1f\n",
+          first_pts, (first_pts - target) * 1000.0);
+    }
+  }
   if (got) {
     double pts_s = info.pts_ns / 1e9;
-    printf ("  post-seek lease pts=%.3f target=%.3f seq=%llu\n", pts_s, target,
+    double media_fps = 0.0;
+    tcs_player_get_fps (p, &media_fps);
+    double frame_s = media_fps > 0.0 ? 1.0 / media_fps : 0.040;
+    printf ("  post-seek lease pts=%.3f target=%.3f delta_ms=%.1f frame_ms=%.1f seq=%llu\n",
+        pts_s, target, (pts_s - target) * 1000.0, frame_s * 1000.0,
         (unsigned long long) info.seq);
-    check (pts_s > target - 0.6 && pts_s < target + 1.6, "lease pts near seek target");
+    check (pts_s >= target - 0.001 && pts_s <= target + frame_s + 0.001,
+        "lease pts within one frame of the seek target");
   }
   tcs_player_release (p);
+
+  /* hold playback after the seek (compositor-like acquire/release) so the
+   * A/V diagnostics window (TCS_SEEK_DIAG=1) can sample both streams */
+  for (int h = 0; h < 200; h++) {
+    TcsFrameInfo fi = {};
+    if (tcs_player_acquire (p, gen, &fi) == 1)
+      tcs_player_release (p);
+    std::this_thread::sleep_for (std::chrono::milliseconds (10));
+  }
 
   /* pause + step: generation bump per step */
   tcs_player_set_paused (p, 1);
   std::this_thread::sleep_for (std::chrono::milliseconds (100));
+  auto t_step = std::chrono::steady_clock::now ();
   uint64_t gen3 = tcs_player_step_frame (p);
+  double step_call_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t_step).count ();
   check (gen3 == gen2 + 1, "step bumps generation");
-  std::this_thread::sleep_for (std::chrono::milliseconds (150));
-  got = tcs_player_acquire (p, gen3, &info);
+  got = 0;
+  for (int i = 0; i < 200 && !got; i++) {
+    got = tcs_player_acquire (p, gen3, &info);
+    if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (5));
+  }
+  double step_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t_step).count ();
+  printf ("  step-call=%.1fms step-to-lease=%.1fms\n", step_call_ms, step_ms);
   check (got == 1, "stepped frame leased");
+  check (step_ms < 500.0, "step-to-lease within 500ms");
   tcs_player_release (p);
 
   /* reload (track switch) -> generation bump, new frames */
