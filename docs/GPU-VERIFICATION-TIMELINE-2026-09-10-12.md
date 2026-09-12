@@ -1,0 +1,45 @@
+# セッション開始時の環境記録（2026-09-10 JST）
+
+- worktree: .superpowers/worktrees/session-refactor / branch refactor/session-lifecycle / HEAD b66d12b7fd2a5dad39b814ab10065fc65d27b2c3
+- baseline-git-status.txt / baseline-tracked.diff / baseline-hashes-1652JST.sha256: 16:52 JST 時点の追跡済み変更・未追跡ファイルのSHA256
+- 別セッション調査（TestResults/gpu-out-inv-20260909T180637Z, 03:06–03:33 JST）の03:06 baseline と比較し、以下が同調査で変更・追加されていた（findings.md には「未実施」と記載のまま）:
+  - 変更: scripts/GpuOutputProbe/{ManagedSelfTests.cs, Model.cs, ProbeEngine.cs, Program.cs, README.md, Spout.cs}, scripts/GpuOutputProbeHarness/Run-GpuOutputProbe.ps1
+  - 追加: scripts/GpuOutputProbe/{CopyRetryGate.cs, CopyRetrySelfTests.cs}, scripts/GpuOutputProbeHarness/Analyze-MutexHolds.py
+- 16:5x JST: 再ビルド（Debug）で警告0・エラー0。生成物SHA256は 03:33 のバイナリと一致（GpuOutputProbe.dll AD59F9F4…, .exe 72DAB2B2…）。--self-test 41件成功、--validate-shaders 成功。解析器 unittest 63件成功。
+- 16:52 JST: セッションは RDP-Tcp#0（Remote Display Adapter 1056×2052/32Hz の1面のみ）。物理表示はコンソール側。→ 実機比較不可のため保留。
+- 17:0x JST: 利用者がRDPを切断し、セッション1が console/Active へ移行。--list-displays: index0 DISPLAY1 1920×1080/60Hz, index1 DISPLAY2 1920×1080/60Hz（RTX 3070, LUID 72428）。
+  - 過去run（gpu-ready-pump-20260910）の manifest では DISPLAY1 は 3840×2160/60Hz だった。今回は DISPLAY1 が 1080p。比較対象の index1/DISPLAY2 1080p/60Hz は同一。表示設定は変更しない。
+- 受信機: WinSpoutDXreceiver.exe SHA256 AEAC163C…（過去runの inputs.json と一致）
+- 17:1x JST: 利用者がDISPLAY2を4Kへ変更 → 3840×2160@17Hz しか対応せず（EnumDisplaySettings）。1920×1080@60 へ戻してもらった。DISPLAY1は1080p@60のまま（4K60対応だが未変更）。全9runの manifest.displays は同一（両画面1920×1080/60Hz）。
+- pwsh（PowerShell 7）が本PCに存在せず（昨日のpreflightは7.6.5）。runnerのAdd-Type内C#の `out uint x`／`out Rect x` 宣言（C#7構文）が Windows PowerShell 5.1 でコンパイル失敗したため、5.1/7両対応の宣言へ修正。失敗時に作られた空のrunディレクトリ2つ（ファイルなし）は削除した。
+- 実機run: TestResults/gpu-mutex-retry-20260910/ に9run（1080p確認1、4K負荷条件4、4K通常条件4）。集計: evaluation-final/summary.{json,md}。
+- 17:4x JST: 利用者がDISPLAY1を3840×2160@60へ戻した（過去runと同一構成）。追加6run（通常off/signal、ready off→signal→signal→off）。集計 evaluation-4kdisplay1/。
+- 18:5x〜19:05 JST: フェンス・vsync 実証（TestResults/gpu-fence-vsync-20260910/、9run）。新バイナリ DLL 77A61244…。集計 eval-fv-{smoke,A,B}/。解析器の vsync timeout 規則を +1ms 許容へ修正（テスト追加、94件成功）。
+- 19:5x〜20:01 JST: 走査時刻計測（TestResults/gpu-scanout-20260910/、5run）。新バイナリ DLL 07B220DE…。集計 eval-scanout/。
+- 22:39〜22:43 JST: vblank 第1回（TestResults/gpu-vblank-20260910/、1080p全画面1＋4K tick→vblank→vblank→tick）。DLL 43E9A782…。集計 eval-vblank/。
+  - 判明した欠陥: (1) vblank モードでも表示期限が次の合成 tick のままで、目標が合成期限直前の起動で present.deadline 322件（vblank 2、表示40Hz）。(2) 予測 refresh 番号による重複防止が統計の番号と1ずれ、次の vblank を飛ばす（1080p で2件）。修正をサブエージェントへ依頼。
+  - 有効な観測: vblank 1 は予測誤差 0.002ms、Present→走査 2.4ms、起床遅れ p99 0.63ms（高分解能タイマー）、refresh 連続差すべて1。tick は起動位相で生成→走査が 14.8ms（tick 1）／2.1ms（tick 2）と大きく変わることを走査基準で確認。
+- 22:56〜22:59 JST: vblank 第2回（TestResults/gpu-vblank2-20260910/、DLL 2C730025…、1080p全画面1＋4K vblank×2＋tick×1）。集計 eval-vblank2/。
+  - vblank 2: 1320表示・連続差すべて1・生成→走査 6.27ms・Present→走査 2.46ms・起床遅れ p99 0.56ms・CPU 6.5秒（tick 8.9秒）。
+  - vblank 1: 44.8Hz、連続差2が334件。原因: 目標時刻の直後に合成期限が来る起動位相で、起床遅れ中に合成が先に走り、表示が新しすぎる画像を選ぶ（画像N飛ばし・N+1重複）。「合成期限優先」を、目標到達済み・vblank到達可能なら表示優先へ変える修正を依頼。
+  - tick 対照: 生成→走査 3.9ms（起動位相が良い回）。
+- 23:10〜23:13 JST: vblank 第3回（TestResults/gpu-vblank3-20260910/、DLL 64DE9A60…、1080p全画面1＋4K vblank×2＋tick×1）。全run 60Hz・表示落ち0。集計 eval-vblank3/。結果文書 docs/GPU-VBLANK-PACING-RESULTS-2026-09-10.md。
+- 23:36〜23:40 JST: 合成位相整列 第1回（TestResults/gpu-align-20260910/、DLL C1F3E8F1…、1080p全画面 align 1＋4K off→align→align→off）。集計 eval-align/。
+  - align: 生成→走査 4.37／4.40ms（2run 一致、設計値 4.5）、位相誤差 p99 0.001ms、合成周期は表示周期に追従（差 0.5µs）。off: 4.6／11.5ms（起動依存）。
+  - 残る欠陥: 各 run 1〜2件の画像飛び。原因は Loop の合成待ち（WaitOne(ms−1)）の起床遅れ 2〜4ms（合成開始遅れ最大 3〜4ms）で、lead 1.5ms を超えると次の vblank に回り前画像が保持される。合成待ちも高分解能タイマーへ変更する修正を依頼。
+- 09-10 23:45〜09-11 03:40 JST: 整列 第2回（gpu-align2-20260910/、DLL BBA96618…、Loop 高分解能タイマー）・第3回（gpu-align3-20260910/、lead 3ms）。第3回で合格。集計 eval-align2/、eval-align3/。利用者から別 worktree で GStreamer 置き換え実装が並行中との連絡あり。run 前に重い並行プロセスなしを確認（CPU 15%）。
+- 09-11 04:1x JST: ソース契約実装（DLL 73BEB928…）。runner／Invoke-Trial に -Source を追加。1080p 全画面 contract-fake 確認（TestResults/gpu-source-20260911/）成功。隣ペイン（Herdr w5:p3、OpenCode/Qwen3.8 Flash）は GStreamer shim v3 をコミット済みで CPU 作業中。
+- 09-11 04:2x JST: 配置計算実装（DLL 182A8B39…）。runner／Invoke-Trial に -SourceSize 追加。1080p 全画面で 1440×1080・2560×1080 を確認（TestResults/gpu-placement-20260911/）。
+- 09-11 12:47〜13:24 JST: OpenCode（DeepSeek V4.1 Flash）が codex/output-engine-20260911-1247 で段階 0〜2 を実装（tip bdfa34f）。
+- 09-11 13:44〜13:58 JST: 親の独立検証。verify worktree C:\Users\codea\Documents\timecode-sync-player-wt-verify-oe-20260911-1344（detached bdfa34f）。非E2E 1613 件成功。実機 4 run（TestResults/gpu-app-20260911/）。評価文書 docs/OUTPUT-GPU-STAGE2-EVALUATION-2026-09-11.md。要修正 A〜D（abandoned mutex、tick 内アップロード、UI 経由のフレーム落ち、swapchain 寸法）。
+- 09-11 15:30〜15:32 JST: 修正 6c8669b の親再評価（4K fix: 表示 55.1Hz、lead 毎秒再計算で周期的な落ち＝問題 F。recvkill: 送信継続、abandoned は未発生）。verify worktree は 6c8669b。
+- 09-11 15:48〜15:49 JST: 1ece106 の親再評価（4K fix2: 表示 59.5Hz、ID 飛び 0.24%、位相誤差 p99 0.001ms、mpv 実フレーム 59.3fps）。段階 0〜2 合格。verify worktree は 1ece106。
+- 09-11 16:30〜16:48 JST: 段階 6（8ed1943）の親評価。verify worktree を 8ed1943 へ。shim DLL を検証 worktree で再ビルド（6172470…、vendor/Spout2 は gst worktree から複製）、runner に -PlayerBackend 追加。GStreamer×Gpu 5 run（1080p 14s、4K 32s、recvkill 24s、control 34s、recvkill2 34s。TestResults/gpu-app-20260911/20260911T07*）。4K 実フレーム 60/秒・CPU 12.4 秒/40.7 秒（mpv 120 秒）。問題 H: 1080p で数秒の配信欠落が run により異なる時刻に発生（原因は配信側、shim トレースが必要）。評価文書 docs/OUTPUT-GPU-STAGE2-EVALUATION-2026-09-11.md に追記。
+- 09-11 18:10〜18:14 JST: 問題 H 修正 cd25d46 の親評価。verify worktree を cd25d46 へ、shim 再ビルド（F8BF0427…）。1080p 20 秒 1 run（20260911T091229Z-app-1080p-gst-h1）。原因特定（到着揺れ±2ms×位相ドリフト、単一 latest の取りこぼし）は妥当。FIFO(4) 方式は到着→取得の遅れが Spout ON で 18→51ms、全画面で 56ms に固定化し不採用。H-2（最新優先＋揺れ吸収 1 枚）を指示。4K・長時間 run は H-2 後。
+- 09-11 19:18〜19:31 JST: H-2 c12e214＋段階 3 112a9fd の親評価。verify worktree 112a9fd、shim 7A931390…。runner に -NoSpout 追加。1080p 60s（101915Z）、4K 32s 受信機断（102652Z）、4K Spout OFF 対照（102936Z）。H-2 は良好だが境界で連続回数規則が揺れる（H-3 指示）。段階 3 不合格: vblank ゲートが目標通過後に次 vblank へ飛ぶ（表示 59.0〜59.1Hz）、4K Spout ON で毎秒 1 回 7〜10ms の合成停滞（Spout OFF では無し）、immediate context の free-threaded 前提は誤り（Multithread 保護が必要）。指示 S3-2。
+- 09-12 01:45〜01:55 JST: 4c9028b（H-3＋S3-2＋Spout 別デバイス復帰）の親評価。verify worktree 4c9028b、shim 9EED00E0…。1080p 60 秒（165111Z）・4K 32 秒受信機断（165314Z）。H-3・ゲート・Spout 合格、abandoned 経路が初発動。欠陥 D-2（notReady 空回り）、L-2（attach 後の lead 跳び）。次は 6b（デコーダ別デバイス化）→ 段階 4 → 5。analyze_probe.py を即時 Present と abandoned 取得に対応。
+- 09-12 02:28〜02:34 JST: 段階 6b 31c99f9 の親評価。verify worktree 31c99f9、shim 32A7793D…。1080p 36s（172859Z）、4K 32s 受信機断（173010Z）、1080p 112s 120 秒素材（173124Z）。全て合格（4K 合成 p99 0.93、生成→走査 5.5ms）。残欠陥 D-2・L-2・Ended・配信トレース初期欠落。次は段階 4（docs/OUTPUT-GPU-STAGE4-5-SPEC.md）。
+- 09-12 03:08〜03:16 JST（自律）: A 21b08a0＋段階 4 7b662c7 の親評価。verify 7b662c7、shim E13B08A4…。runner に -ProjectPath/-ClickPlay/-ScreenshotAtSeconds/-TestCard*。プロジェクトは artifacts/media/*.tsp。1080p canvasA2（181147Z）・4K canvasB（181311Z）・E2E 2 件。全て合格、スクリーンショット幾何一致。L-3（世代/接続後の lead 除外）を段階 5 と同時に。
+- 09-12 03:46〜04:00 JST（自律）: 段階 5 3d5c4cf の親評価。runner に -ExitDialog/-SimulateDeviceLoss/-GpuRetryAtSeconds。消失シミュレーション 4 run（1080p gst、2 回消失＋手動再試行、mpv、4K）は復旧 80〜100ms で合格。全 E2E 62 件中 2 失敗（P-1、終了ダイアログ未対応のテスト）。R-1: 3d5c4cf で 4K 合成が毎秒 7〜12ms 停滞、7b662c7 再ビルドの同 run では出ない（185700Z vs 185832Z）。差し戻し送付。verify worktree は 7b662c7。
+- 09-12 04:55〜05:03 JST（自律）: a9b9349（R-1/P-1）の親評価。4K plain 合成 p99 1.00・生成→走査 4.4ms、1080p 0.99ms、4K 消失後も停滞なし、全 E2E 55/0/7。段階 5 合格。段階 7（文書）の指示を送付。
+- 09-12 05:03〜05:15 JST（自律）: 段階 7 2bcdd1e（docs のみ、src/native/tests 差分なしを git diff で確認）。引き継ぎ文書 HANDOVER-GPU-OUTPUT-2026-09-12.md を親が確認。自律運転の作業はここで終了、以後は利用者の判断待ち。
