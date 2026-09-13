@@ -247,6 +247,33 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
+    public void TryMarkFileLoaded_GpuCompositing_OpensOnPublishedFrames_WithoutWaitingForCpuBitmaps()
+    {
+        // GPU 合成相当: WriteableBitmap の描画数（cpu）は 0 のまま、表示経路（OutputEngine）の
+        // 公開数だけが進む。修正前は CPU の数だけを見ていたため、この条件では 5 秒開かなかった。
+        long cpuRenderedFrames = 0;
+        long publishedFrames = 0;
+        var counter = new RenderedFrameCounter(
+            gpuCompositing: true,
+            cpuRenderedFrames: () => cpuRenderedFrames,
+            gpuPublishedFrames: () => publishedFrames);
+
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 14, 12, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 5.0, renderedFrameCount: counter.Read());
+
+        publishedFrames += 2;                              // 表示経路へ 2 フレーム公開
+        clock.Advance(TimeSpan.FromMilliseconds(120));     // 5 秒のタイムアウトには達しない
+
+        bool result = service.TryMarkFileLoaded(playbackSeconds: 5.12, renderedFrameCount: counter.Read());
+
+        result.Should().BeTrue();
+        service.IsLoadingFile.Should().BeFalse();
+    }
+
+    [Fact]
     public void TryMarkFileLoaded_UpdatesDebounceTimestamp_WhenStable()
     {
         var engine = new MockSyncDecisionEngine();

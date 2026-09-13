@@ -58,6 +58,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly IGstNativeApi _gstNativeApi;
     private readonly bool _gstGpuCombo;
     private readonly OutputBackend _effectiveOutputBackend;
+    // D4: ロード安定ゲートが数える「表示経路に到達したフレーム数」の供給元。
+    private readonly RenderedFrameCounter _syncGateRenderedFrames;
     private WriteableBitmap? _outputPreviewBitmap;
 
     // ── 終了（段階 5.1） ──────────────────────────────────────────
@@ -247,6 +249,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             _renderSession.PreviewBitmapChanged += bitmap => VideoImage.Source = bitmap;
         }
+        // D4: CPU 合成は WriteableBitmap の描画数（現行）、GPU 合成は OutputEngine の公開数。
+        // GPU 合成ではビットマップを描かないため、CPU の数だけを見るとゲートが 5 秒開かない。
+        _syncGateRenderedFrames = new RenderedFrameCounter(
+            gpuCompositing: _effectiveOutputBackend == OutputBackend.Gpu,
+            cpuRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames,
+            gpuPublishedFrames: () => _outputEngine?.PublishedFrameCount ?? 0);
         _ltcSyncController = new LtcSyncController(
             _playlist, _gapFreezeHandler, _syncService, ltcFrameProcessor,
             settingsManager.Current.LtcSignalLossTimeoutMs, settingsManager.Current.LtcSignalResumeFrames,
@@ -892,7 +900,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     VideoFps: _fps,
                     TimecodeFps: _ltcSyncController.LastTimecodeFps),
                 SeekTo: target => SeekTo(target),
-                GetTotalRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames,
+                GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
                 IsNativeSeeking: IsNativeSeeking));
 
     private ContinueOnTrackCoordinator CreateContinueOnTrackCoordinator() =>
@@ -917,7 +925,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GetLoadedTrackId: () => _loadedTrackId,
                 SetLoadedTrackId: id => SetLoadedTrack(id),
                 LoadFile: (path, start) => LoadFile(path, startPosition: start),
-                GetTotalRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames,
+                GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
                 GetTimePos: () =>
                 {
                     int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
