@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""V3 シーク時系列: events.jsonl + phases.jsonl から 1 シーク = 1 行の表を作る。
+"""V3 時系列: events.jsonl + phases.jsonl から 1 操作 = 1 行の表を作る。
 
 行の列はすべて同じ QPC 時計:
-  a  seek.decide   (SyncDecisionEngine が Seek を決めた時刻。同値 decide の先頭)
-  b  seek.issue / seek.return (プレイヤーへの seek 発行と呼び出し復帰)
+  a  seek.decide   (SyncDecisionEngine が Seek を決めた時刻。同値 decide の先頭。load 行は無し)
+  b  seek.issue / seek.return  または load.issue / load.return
   c  gst.delivery / mpv.frame (新位置の最初のフレーム到着。gst は pts も)
   d  compose.publish
-  e  present.scanout
+  e  present.scanout (このハーネスは全画面表示を開かないため 0 件)
 
 使い方:
   python scripts/analyze-v3-seek-breakdown.py --player gst --run DIR [--run DIR ...] --out DIR
@@ -19,7 +19,7 @@ import math
 import statistics
 from pathlib import Path
 
-PHASE_ORDER = ("black-sweep", "freeze-sweep", "seek-a", "seek-b", "seek-c", "seek-back")
+KNOWN_PHASES = ("black-sweep", "freeze-sweep", "seek-a", "seek-b", "seek-c", "seek-back")
 SEEK_PHASES = ("seek-a", "seek-b", "seek-c", "seek-back")
 GAP_PHASES = ("black-sweep", "freeze-sweep")
 DELTA_KEYS = (
@@ -36,6 +36,11 @@ PAIR_KEYS = (
     ("publish", "scanout", "publish_scanout"),
     ("decide_first", "scanout", "decide_scanout"),
 )
+ROW_KEYS = (
+    "player", "run", "phase", "kind", "target_s", "frame_pts_s",
+    "decide_first_ms", "decide_last_ms", "issue_ms", "return_ms", "frame_ms",
+    "publish_ms", "scanout_ms",
+) + tuple("d_" + key + "_ms" for key in DELTA_KEYS)
 
 
 def load_jsonl(path):
@@ -68,20 +73,8 @@ def load_phases(path):
     return phases, frequency
 
 
-def detail_value(event, key):
-    text = event.get("detail") or ""
-    for part in text.split():
-        if part.startswith(key + "="):
-            try:
-                return float(part.split("=", 1)[1])
-            except ValueError:
-                return None
-    return None
-
-
 def gst_pts_seconds(event):
-    text = event.get("detail") or ""
-    head = text.split(":", 1)[0]
+    head = (event.get("detail") or "").split(":", 1)[0]
     try:
         return int(head) / 1e9
     except ValueError:
@@ -89,7 +82,7 @@ def gst_pts_seconds(event):
 
 
 def match_decide(decides, issues, issue):
-    """issue に対応する decide エピソード（先頭と直前）を返す。値（target µs）一致で追う。"""
+    """seek.issue に対応する decide エピソード（先頭と直前）を返す。値（target µs）一致で追う。"""
     target = issue.get("value")
     previous_issue_qpc = max((i["qpc"] for i in issues if i["qpc"] < issue["qpc"]), default=None)
     candidates = [d for d in decides
@@ -109,26 +102,41 @@ def first_after(events, stage, qpc, predicate=None):
     return None
 
 
+def phase_lookup(phases):
+    def find(qpc):
+        for phase in phases:
+            if (phase["start"] is not None and phase["end"] is not None
+                    and phase["start"] <= qpc <= phase["end"]):
+                return phase
+        return None
+    return find
+
+
 def build_rows(player, run_name, phases, frequency, events):
     decides = sorted([e for e in events if e["stage"] == "seek.decide"], key=lambda e: e["qpc"])
-    issues = sorted([e for e in events if e["stage"] == "seek.issue"], key=lambda e: e["qpc"])
-    returns = sorted([e for e in events if e["stage"] == "seek.return"], key=lambda e: e["qpc"])
+    seeks = sorted([e for e in events if e["stage"] == "seek.issue"], key=lambda e: e["qpc"])
+    loads = sorted([e for e in events if e["stage"] == "load.issue"], key=lambda e: e["qpc"])
+    returns = sorted([e for e in events if e["stage"] in ("seek.return", "load.return")], key=lambda e: e["qpc"])
     deliveries = sorted([e for e in events if e["stage"] == "gst.delivery"], key=lambda e: e["qpc"])
     mpv_frames = sorted([e for e in events if e["stage"] == "mpv.frame"], key=lambda e: e["qpc"])
     publishes = sorted([e for e in events if e["stage"] == "compose.publish"], key=lambda e: e["qpc"])
     scanouts = sorted([e for e in events if e["stage"] == "present.scanout"], key=lambda e: e["qpc"])
 
+    find_phase = phase_lookup(phases)
+    operations = [("seek", e) for e in seeks] + [("load", e) for e in loads]
+    operations.sort(key=lambda item: item[1]["qpc"])
     rows = []
-    for issue in issues:
-        phase = next((p for p in phases
-                      if p["start"] is not None and p["end"] is not None
-                      and p["start"] <= issue["qpc"] <= p["end"]), None)
+
+    for kind, issue in operations:
+        phase = find_phase(issue["qpc"])
         phase_name = phase["name"] if phase else "(outside)"
         qpc_ref = phase["start"] if phase else issue["qpc"]
 
-        decide_first, decide_last = match_decide(decides, issues, issue)
+        decide_first = decide_last = None
+        if kind == "seek":
+            decide_first, decide_last = match_decide(decides, seeks, issue)
         target_us = issue.get("value")
-        target_s = target_us / 1e6 if target_us is not None else None
+        target_s = target_us / 1e6 if target_us is not None and target_us >= 0 else None
 
         returning = next((r for r in returns if r["qpc"] >= issue["qpc"]), None)
 
@@ -139,7 +147,7 @@ def build_rows(player, run_name, phases, frequency, events):
             if frame is not None:
                 frame_pts_s = gst_pts_seconds(frame)
         else:
-            if target_us is not None:
+            if target_us is not None and target_us >= 0:
                 frame = first_after(mpv_frames, "mpv.frame", issue["qpc"],
                                     lambda e: e.get("value") is not None and e["value"] >= target_us - 50_000)
             if frame is None:
@@ -161,6 +169,7 @@ def build_rows(player, run_name, phases, frequency, events):
             "player": player,
             "run": run_name,
             "phase": phase_name,
+            "kind": kind,
             "target_s": round(target_s, 6) if target_s is not None else None,
             "frame_pts_s": round(frame_pts_s, 6) if frame_pts_s is not None else None,
         }
@@ -182,11 +191,10 @@ def percentile(values, fraction):
     return ordered[max(0, math.ceil(len(ordered) * fraction) - 1)]
 
 
-def aggregate(rows, predicate):
-    selected = [r for r in rows if predicate(r)]
-    result = {"count": len(selected)}
+def aggregate(rows):
+    result = {"count": len(rows)}
     for key in DELTA_KEYS:
-        values = [r["d_" + key + "_ms"] for r in selected if r["d_" + key + "_ms"] is not None]
+        values = [r["d_" + key + "_ms"] for r in rows if r["d_" + key + "_ms"] is not None]
         result[key] = {
             "n": len(values),
             "mean": statistics.fmean(values) if values else None,
@@ -201,28 +209,55 @@ def format_ms(value):
     return "-" if value is None else f"{value:.1f}"
 
 
-def markdown_table(rows, aggregates):
-    lines = []
-    lines.append("| # | phase | target s | frame pts s | a first | a last | b issue | b return | c frame | d publish | e scanout | a→b | a→b(last) | b→b' | b'→c | b→c | c→d | d→e | a→e |")
-    lines.append("| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    for index, row in enumerate(rows, start=1):
-        cells = [
-            str(index), row["phase"],
-            "-" if row["target_s"] is None else f"{row['target_s']:.3f}",
-            "-" if row["frame_pts_s"] is None else f"{row['frame_pts_s']:.3f}",
-            format_ms(row["decide_first_ms"]), format_ms(row["decide_last_ms"]),
-            format_ms(row["issue_ms"]), format_ms(row["return_ms"]), format_ms(row["frame_ms"]),
-            format_ms(row["publish_ms"]), format_ms(row["scanout_ms"]),
-            format_ms(row["d_decide_issue_ms"]), format_ms(row["d_decideLast_issue_ms"]),
-            format_ms(row["d_issue_return_ms"]), format_ms(row["d_return_frame_ms"]),
-            format_ms(row["d_issue_frame_ms"]), format_ms(row["d_frame_publish_ms"]),
-            format_ms(row["d_publish_scanout_ms"]), format_ms(row["d_decide_scanout_ms"]),
-        ]
-        lines.append("| " + " | ".join(cells) + " |")
+def aggregate_cell(stats, key):
+    value = stats[key]["p95"]
+    median = stats[key]["median"]
+    return "-" if value is None else f"{format_ms(median)} / {format_ms(value)}"
+
+
+def ordered_phase_names(all_rows):
+    names = {row["phase"] for row in all_rows}
+    ordered = [name for name in KNOWN_PHASES if name in names]
+    for row in all_rows:
+        if row["phase"] not in ordered:
+            ordered.append(row["phase"])
+    return ordered
+
+
+def seeking_evidence(events, frequency):
+    samples = [e for e in events if e["stage"] == "player.seeking"]
+    if not samples:
+        return "player.seeking: 0 件（IsNativeSeeking が一度も呼ばれていない）\n"
+    lines = ["| raw | result | count | first qpc | last qpc |", "| --- | --- | ---: | ---: | ---: |"]
+    groups = {}
+    for event in samples:
+        raw = (event.get("detail") or "").replace("raw=", "", 1)
+        result = bool(event.get("value"))
+        key = (raw, result)
+        group = groups.setdefault(key, {"count": 0, "first": event["qpc"], "last": event["qpc"]})
+        group["count"] += 1
+        group["last"] = event["qpc"]
+    for (raw, result), group in sorted(groups.items(), key=lambda item: -item[1]["count"]):
+        lines.append(f"| `{raw}` | {result} | {group['count']} | {group['first']} | {group['last']} |")
     lines.append("")
-    lines.append("timestamp 列はフェーズ開始からの QPC ms。差分は QPC の差。")
+    lines.append("変化点（先頭 20 件）:")
     lines.append("")
-    return lines, aggregates
+    lines.append("| qpc | raw | result |")
+    lines.append("| ---: | --- | --- |")
+    previous = None
+    shown = 0
+    for event in samples:
+        raw = (event.get("detail") or "").replace("raw=", "", 1)
+        result = bool(event.get("value"))
+        if (raw, result) == previous:
+            continue
+        previous = (raw, result)
+        lines.append(f"| {event['qpc']} | `{raw}` | {result} |")
+        shown += 1
+        if shown >= 20:
+            break
+    lines.append("")
+    return "\n".join(lines)
 
 
 def main():
@@ -237,6 +272,7 @@ def main():
 
     all_rows = []
     run_sections = []
+    all_seeking = []
     for run in args.run:
         run_dir = Path(run)
         phases, frequency = load_phases(run_dir / "phases.jsonl")
@@ -245,45 +281,76 @@ def main():
             frequency = 10_000_000
         rows = build_rows(args.player, run_dir.name, phases, frequency, events)
         all_rows.extend(rows)
-        run_sections.append((run_dir.name, rows, phases, frequency))
+        all_seeking.extend(e for e in events if e["stage"] == "player.seeking")
+        run_sections.append((run_dir.name, rows))
 
         csv_path = out_dir / f"seek-rows-{run_dir.name}.csv"
         with csv_path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()) if rows else
-                                    ["player", "run", "phase", "target_s"])
+            writer = csv.DictWriter(handle, fieldnames=list(ROW_KEYS))
             writer.writeheader()
             writer.writerows(rows)
 
-    aggregate_rows = []
-    for phase in PHASE_ORDER:
-        aggregate_rows.append((phase, aggregate(all_rows, lambda r, p=phase: r["phase"] == p)))
-    aggregate_rows.append(("ALL seeks", aggregate(all_rows, lambda r: r["phase"] in SEEK_PHASES)))
-    aggregate_rows.append(("ALL gaps", aggregate(all_rows, lambda r: r["phase"] in GAP_PHASES)))
-
-    lines = [f"# V3 シーク時系列 ({args.player})", ""]
+    lines = [f"# V3 時系列 ({args.player})", ""]
     lines.append("## 区間ごとの差（ms）")
     lines.append("")
-    lines.append("| phase | n | a→b | a→b(last) | b→b' | b'→c | b→c | c→d | d→e | a→e |")
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    for name, stats in aggregate_rows:
-        def cell(key):
-            value = stats[key]["p95"]
-            median = stats[key]["median"]
-            return "-" if value is None else f"{format_ms(median)} / {format_ms(value)}"
+    lines.append("| phase | kind | n | a→b | a→b(last) | b→b' | b'→c | b→c | c→d | d→e | a→e |")
+    lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for phase in ordered_phase_names(all_rows):
+        for kind in ("seek", "load"):
+            subset = [r for r in all_rows if r["phase"] == phase and r["kind"] == kind]
+            if not subset:
+                continue
+            stats = aggregate(subset)
+            lines.append(
+                f"| {phase} | {kind} | {stats['count']} | {aggregate_cell(stats, 'decide_issue')} | "
+                f"{aggregate_cell(stats, 'decideLast_issue')} | {aggregate_cell(stats, 'issue_return')} | "
+                f"{aggregate_cell(stats, 'return_frame')} | {aggregate_cell(stats, 'issue_frame')} | "
+                f"{aggregate_cell(stats, 'frame_publish')} | {aggregate_cell(stats, 'publish_scanout')} | "
+                f"{aggregate_cell(stats, 'decide_scanout')} |")
+    for label, predicate in (("ALL seeks", lambda r: r["kind"] == "seek"),
+                             ("ALL loads", lambda r: r["kind"] == "load"),
+                             ("seek phases only", lambda r: r["kind"] == "seek" and r["phase"] in SEEK_PHASES),
+                             ("gap phases only", lambda r: r["kind"] == "seek" and r["phase"] in GAP_PHASES)):
+        subset = [r for r in all_rows if predicate(r)]
+        if not subset:
+            continue
+        stats = aggregate(subset)
         lines.append(
-            f"| {name} | {stats['count']} | {cell('decide_issue')} | {cell('decideLast_issue')} | "
-            f"{cell('issue_return')} | {cell('return_frame')} | {cell('issue_frame')} | "
-            f"{cell('frame_publish')} | {cell('publish_scanout')} | {cell('decide_scanout')} |")
+            f"| {label} | - | {stats['count']} | {aggregate_cell(stats, 'decide_issue')} | "
+            f"{aggregate_cell(stats, 'decideLast_issue')} | {aggregate_cell(stats, 'issue_return')} | "
+            f"{aggregate_cell(stats, 'return_frame')} | {aggregate_cell(stats, 'issue_frame')} | "
+            f"{aggregate_cell(stats, 'frame_publish')} | {aggregate_cell(stats, 'publish_scanout')} | "
+            f"{aggregate_cell(stats, 'decide_scanout')} |")
     lines.append("")
     lines.append("各セルは中央値 / p95。a→b は同値 decide の先頭、a→b(last) は issue 直前の decide。")
+    lines.append("present.scanout（e）は全画面表示を開かない計測のため 0 件。")
     lines.append("")
-    for name, rows, phases, frequency in run_sections:
+    lines.append("## player.seeking 証跡（IsNativeSeeking の戻り値と生値）")
+    lines.append("")
+    lines.append(seeking_evidence(all_seeking, None))
+    for name, rows in run_sections:
         lines.append(f"## run {name}")
         lines.append("")
-        table, _ = markdown_table(rows, None)
-        lines.extend(table)
+        lines.append("| # | kind | phase | target s | frame pts s | a first | a last | b issue | b return | c frame | d publish | a→b | a→b(last) | b→b' | b'→c | b→c | c→d | d→e | a→e |")
+        lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for index, row in enumerate(rows, start=1):
+            cells = [
+                str(index), row["kind"], row["phase"],
+                "-" if row["target_s"] is None else f"{row['target_s']:.3f}",
+                "-" if row["frame_pts_s"] is None else f"{row['frame_pts_s']:.3f}",
+                format_ms(row["decide_first_ms"]), format_ms(row["decide_last_ms"]),
+                format_ms(row["issue_ms"]), format_ms(row["return_ms"]), format_ms(row["frame_ms"]),
+                format_ms(row["publish_ms"]), format_ms(row["d_decide_issue_ms"]),
+                format_ms(row["d_decideLast_issue_ms"]), format_ms(row["d_issue_return_ms"]),
+                format_ms(row["d_return_frame_ms"]), format_ms(row["d_issue_frame_ms"]),
+                format_ms(row["d_frame_publish_ms"]), format_ms(row["d_publish_scanout_ms"]),
+                format_ms(row["d_decide_scanout_ms"]),
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+    lines.append("timestamp 列はフェーズ開始からの QPC ms。差分は QPC の差。")
     (out_dir / f"seek-breakdown-{args.player}.md").write_text("\n".join(lines), encoding="utf-8")
-    print(f"{args.player}: runs={len(run_sections)} seeks={len(all_rows)} out={out_dir}")
+    print(f"{args.player}: runs={len(run_sections)} operations={len(all_rows)} out={out_dir}")
 
 
 if __name__ == "__main__":
