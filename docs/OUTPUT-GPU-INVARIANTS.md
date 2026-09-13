@@ -18,6 +18,35 @@
 | I10 | **lead は上げ急・下げ緩**: p99＋1ms で即時に上げ、下げは 5 秒連続で 0.5ms 刻み。起動後 3 秒は学習しない。 | F、段階 3 |
 | I11 | **計測は同じ時計**: 新しい経路は `events.jsonl` に同じ QPC で記録し、`analyze_probe.py`／`gst_delivery_check.py` で親が読める形にする。公開頻度だけで合否を判断しない。 | 全段階 |
 | I12 | **Cpu backend は不変**: `OutputBackend=Cpu` の経路（OutputFrame→Bitmap→SendImage）に手を入れない。 | 計画 |
+| I13 | **GStreamer の状態変更・シークをロック保持中に呼ばない**: `gst_element_set_state` / `gst_element_seek` / `gst_element_send_event` を `frame_lock` や `state_mutex` を保持したまま呼ばない。これらはストリーミングスレッドを必要とし、そのスレッドは `on_new_sample` で `frame_lock` を待ちながらシンクのストリームロックを持っているためデッドロックする。**ロックは「何をするか」の決定だけを守り、GStreamer の呼び出しはロックの外で行う。** | D2（2026-09-13、TS で約 6% のハング） |
+
+### I13 の補足（同じ罠を 3 回踏んだ経緯）
+
+この規則は 2026-09-12 の時点で `tcs_player_set_paused` のコメントに書かれていた:
+
+```
+/* Do not hold frame_lock across the state change: the streaming thread may
+ * be inside on_new_sample waiting for frame_lock while holding the sink's
+ * stream lock, and the state change needs that stream lock (deadlock). */
+```
+
+**それでも新しいコードを書くたびに破られた。**
+
+| 箇所 | 保持していたロック | 呼んでいた GStreamer API |
+| --- | --- | --- |
+| `pump_arm` / `pump_preroll_tick` / `tcs_player_set_paused`（D2 で新設） | `state_mutex` | `gst_element_set_state` |
+| `build_pipeline`（paused load） | `frame_lock` | `gst_element_set_state(PAUSED)` |
+| `seek_locked`（EOS 再開、シーク発行） | `frame_lock` | `gst_element_set_state(PLAYING)` / `gst_element_seek` / `gst_element_send_event` |
+
+症状は TS 素材で約 6%（31 回中 2 回）のハング。全スレッド待機（37 本、Wait/UserRequest 33、
+Wait/Unknown 3、Wait/EventPairLow 1）で CPU を消費せず、5 例中 4 例が完全に同じ構成だった。
+
+**教訓 1: コメントに書いた規則は新しいロックには引き継がれない。** `frame_lock` については回避していたのに、
+新設した `state_mutex` で同じことをした。**規則は不変条件として一箇所に書き、変更のたびに照合する。**
+
+**教訓 2: 確率的なハングは決定的に再現させてから直す。** `TCS_TEST_HOLD_FRAME_LOCK_MS`（`frame_lock` を
+意図的に保持するテストフック）を入れたことで、6% の事象が 100% 再現するようになり、
+修正前 2/2 ハング・修正後 2/2 完走という明確な証拠が取れた。**自然実行の反復だけでは因果を示せない。**
 
 ## 実装側が単独で決めてはいけないこと（必ず質問）
 
