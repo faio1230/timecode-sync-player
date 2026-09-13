@@ -6,6 +6,9 @@ using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer.Tests;
 
+// 共有静的 OutputTrace.Current を差し替えるテスト（gap.enter の記録確認）があるため、
+// OutputTrace コレクションで並列実行を止める。
+[Collection("OutputTrace")]
 public class GapEnterCoordinatorTests
 {
     private static PlaylistTrack CreateTrack(Guid id, string name = "track", string path = "C:/clip.mp4") =>

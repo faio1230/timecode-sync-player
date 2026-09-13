@@ -9,7 +9,9 @@ namespace TimecodeSyncPlayer.Tests;
 /// <summary>
 /// V3 計測イベント（seek.decide / seek.issue / seek.return）が events.jsonl に載ることを確認する。
 /// 共有参照 OutputTrace.Current を使うため、対象イベントだけを値で絞って検証する。
+/// このクラスは OutputTrace コレクションに属し、同じ静的を差し替えるテストと並列に走らない。
 /// </summary>
+[Collection("OutputTrace")]
 public class SeekTraceEventsTests
 {
     private static List<JsonElement> Capture(Action action)
