@@ -958,7 +958,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             GetFps: () => _fps,
             SetFps: f => _fps = f,
             GetGapBehavior: () => _vm.Sync.GapBehavior,
-            UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel()));
+            UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel()),
+        GapPlayerModePolicy.Current);
 
     private void RefreshCurrentVideoFrame()
     {

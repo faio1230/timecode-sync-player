@@ -1,4 +1,8 @@
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
 using FluentAssertions;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -58,12 +62,12 @@ public class GapEnterCoordinatorTests
     }
 
     private static (GapEnterCoordinator coord, GapFreezeHandler handler, Recorder rec) Build(
-        Action<Recorder>? configure = null)
+        Action<Recorder>? configure = null, GapPlayerMode mode = GapPlayerMode.Pause)
     {
         var handler = new GapFreezeHandler();
         var rec = new Recorder();
         configure?.Invoke(rec);
-        var coord = new GapEnterCoordinator(handler, rec.Build());
+        var coord = new GapEnterCoordinator(handler, rec.Build(), mode);
         return (coord, handler, rec);
     }
 
@@ -85,6 +89,59 @@ public class GapEnterCoordinatorTests
             "ApplyPauseState(True)",
             "RenderBlack");
         rec.EndAdvanceTriggered.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EnterBlackGap_ComposeBlack_DoesNotPausePlayer_ButKeepsGapStateAndRendersBlack()
+    {
+        var (coord, _, rec) = Build(mode: GapPlayerMode.ComposeBlack);
+
+        coord.EnterBlackGap();
+
+        // C1(a): compose-black は PauseForGap を呼ばない。UI のギャップ状態と黒描画は現状どおり。
+        rec.Calls.Should().Equal(
+            "ResetEndAdvanceTriggered",
+            "ApplyPauseState(True)",
+            "RenderBlack");
+        rec.EndAdvanceTriggered.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(0, "mode=pause")]
+    [InlineData(1, "mode=compose-black")]
+    public void EnterBlackGap_RecordsGapEnterTraceEventWithMode(int modeValue, string expected)
+    {
+        GapPlayerMode mode = (GapPlayerMode)modeValue;
+        string dir = Path.Combine(Path.GetTempPath(), "tcs-gap-trace", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var trace = new OutputTrace(dir, capacity: 100) { OriginQpc = Stopwatch.GetTimestamp() };
+            OutputTrace.Current = trace;
+            try
+            {
+                var (coord, _, _) = Build(mode: mode);
+                coord.EnterBlackGap();
+            }
+            finally
+            {
+                OutputTrace.Current = OutputTrace.Disabled;
+            }
+
+            trace.Save(
+                new OutputTraceRunSummary("completed", false, false, 16, 16, 3, 3, "test", 0, 0, 0, null, false, null),
+                new LatestPool(3),
+                null);
+            var events = File.ReadAllLines(Path.Combine(dir, "events.jsonl"))
+                .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+                .ToList();
+            events.Where(e => e.GetProperty("stage").GetString() == "gap.enter")
+                .Should().Contain(e => e.GetProperty("detail").GetString() == expected);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* 一時ディレクトリ */ }
+        }
     }
 
     // ---- EnterForceBlack ----

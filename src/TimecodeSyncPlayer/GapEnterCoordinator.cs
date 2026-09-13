@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Serilog;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -15,11 +17,16 @@ internal sealed class GapEnterCoordinator
 {
     private readonly GapFreezeHandler _gapFreezeHandler;
     private readonly GapEnterEffects _effects;
+    private readonly GapPlayerMode _playerMode;
 
-    public GapEnterCoordinator(GapFreezeHandler gapFreezeHandler, GapEnterEffects effects)
+    public GapEnterCoordinator(
+        GapFreezeHandler gapFreezeHandler,
+        GapEnterEffects effects,
+        GapPlayerMode playerMode = GapPlayerMode.Pause)
     {
         _gapFreezeHandler = gapFreezeHandler;
         _effects = effects;
+        _playerMode = playerMode;
     }
 
     public void EnterBlackGap()
@@ -158,7 +165,13 @@ internal sealed class GapEnterCoordinator
     private void ApplyGapPause()
     {
         _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
-        _effects.PauseForGap();
+        // C1(a) 計測用: compose-black ではプレイヤーを止めない（黒は合成側が出す）。
+        // 既定の pause は現状どおり PauseForGap を呼ぶ。
+        if (_playerMode == GapPlayerMode.Pause)
+            _effects.PauseForGap();
+        if (OutputTrace.Current.IsEnabled)
+            OutputTrace.Current.Record(new("gap.enter", "GAP", Stopwatch.GetTimestamp(),
+                Detail: "mode=" + GapPlayerModePolicy.Describe(_playerMode)));
         _effects.ApplyPauseState(true);
     }
 }
