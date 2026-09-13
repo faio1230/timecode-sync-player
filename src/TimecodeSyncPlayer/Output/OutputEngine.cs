@@ -156,6 +156,15 @@ internal sealed class OutputEngine : IDisposable
 
     private readonly PreviewHandoff previewHandoff = new(3);
 
+    // D5 決定再現用: 環境変数 TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH=1 のときだけ、世代切替
+    // （ClearHeld）からその世代の最初のフレーム取得までギャップを Black に固定する。
+    // 未設定なら forceGapBlackOnSwitch=false で、切替ごとの分岐 1 回のみ（既定経路は不変）。
+    internal const string ForceGapBlackOnSwitchEnvironmentVariable = "TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH";
+    private static readonly bool forceGapBlackOnSwitch =
+        Environment.GetEnvironmentVariable(ForceGapBlackOnSwitchEnvironmentVariable) == "1";
+    private bool anyFrameAcquired;
+    private bool armedForceGapBlack;
+
     public OutputEngine(OutputEngineSettings settings)
     {
         this.settings = settings;
@@ -980,11 +989,19 @@ internal sealed class OutputEngine : IDisposable
             long composeStartedQpc = Stopwatch.GetTimestamp();
             settings.Trace.Add("compose.start", "GPU", scheduled, stamp);
             if (lease != null) { lease.BeginGpuUse(); inFlight = true; }
+            // D5 決定再現: フック有効時は切替後の最初のフレームまで Black を強制する（既定は上書きなし）。
+            OutputGapMode gapMode = effective?.Gap ?? OutputGapMode.None;
+            if (armedForceGapBlack) gapMode = OutputGapMode.Black;
             retained = layer!.Compose(surface,
-                effective?.Gap ?? OutputGapMode.None,
+                gapMode,
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
                 stamp, originQpc, acquired);
+            if (forceGapBlackOnSwitch && acquired != null)
+            {
+                anyFrameAcquired = true;
+                armedForceGapBlack = false;
+            }
             long composeDrawQpc = Stopwatch.GetTimestamp();
             sharedFence!.Signal(gpu!, stamp.Id); // フェンス値＝画像 ID。Spout 側は GPU キューで待つ。
             gpu!.Fence.Wait("compose.source");
@@ -1136,6 +1153,9 @@ internal sealed class OutputEngine : IDisposable
         lastGstGeneration = shimGeneration;
         layer?.ClearHeld();
         lastGstSequence = -1;
+        // D5 決定再現: 再生開始後に世代が変わったら、その世代の最初のフレームまで Black を強制する。
+        if (forceGapBlackOnSwitch && anyFrameAcquired)
+            armedForceGapBlack = true;
         // L-3: gst.generation（load/seek）の直後は位相が乱れるため lead 学習を 1 秒除外する。
         leadSuspension.OnSourceGenerationChanged();
         settings.Trace.Add("lifecycle", "GPU", detail: $"gst.generation:{shimGeneration}");
