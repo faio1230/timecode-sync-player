@@ -116,6 +116,9 @@ internal sealed class OutputEngine : IDisposable
     private ID3D11Texture2D? previewTexture;
     private ID3D11RenderTargetView? previewTarget;
     private ID3D11Texture2D? previewStaging;
+    // A1: 計測有効時のみ使う読み戻し用ステージング（既定経路では null のまま）。
+    private ID3D11Texture2D? accuracyStaging;
+    private int accuracyStagingWidth, accuracyStagingHeight;
     private TickSchedule? composeSchedule;
     private long originQpc;
     private long nextImageId;
@@ -986,14 +989,23 @@ internal sealed class OutputEngine : IDisposable
                     Value: (composeCompletedQpc - composeDrawQpc) * 1_000_000 / Stopwatch.Frequency));
             }
             if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
-            if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; lease = null; }
             UpdateComposeLead(composeCompletedQpc - composeStartedQpc, composeCompletedQpc);
             settings.Trace.Add("compose.complete", "GPU", scheduled, stamp);
+            long publishedTicks = Stopwatch.GetTimestamp();
             settings.Trace.Add("compose.publish", "GPU", scheduled, stamp);
             current.Pool.Publish(slot, stamp, true);
             OnComposePublished();
             writing = false;
             settings.Trace.Record(new("compose.visible", "GPU", Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc));
+            // A1: 計測有効時のみ、公開したフレームの画素マーカーを読み戻して記録する（既定経路は IsEnabled 読みだけ）。
+            // 新規ソースがあればソースを、Held/黒/カードの tick は合成キャンバス（レンダラが公開した画素）を読む。
+            if (acquired != null)
+                RecordGpuAccuracyFrame(acquired.Value.RawTexture, acquired.Value.Width, acquired.Value.Height,
+                    publishedTicks, "gpu");
+            else if (SyncAccuracyTrace.Current.IsEnabled)
+                RecordGpuAccuracyFrame(surface.Texture.NativePointer, canvas.Width, canvas.Height,
+                    publishedTicks, "gpu-canvas");
+            if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; lease = null; }
         }
         finally
         {
@@ -1016,6 +1028,50 @@ internal sealed class OutputEngine : IDisposable
         }
         if (target != null) ObserveScanout();
         UpdatePreview(Stopwatch.GetTimestamp());
+    }
+
+    // A1: 計測有効時のみ動く GPU 経路の精度プローブ。公開したソーステクスチャの画素を読み戻し、
+    // CPU 経路と同一の AccuracyFrameMarker でフレームを同定して精度トレースへ記録する。
+    // 既定経路（IsEnabled=false）ではここへ入らず、ステージングも読み戻しも発生しない。
+    private void RecordGpuAccuracyFrame(IntPtr rawTexture, int width, int height, long publishedTicks, string kind)
+    {
+        var trace = SyncAccuracyTrace.Current;
+        if (!trace.IsEnabled || rawTexture == IntPtr.Zero || width <= 0 || height <= 0) return;
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            if (accuracyStaging == null || accuracyStagingWidth != width || accuracyStagingHeight != height)
+            {
+                accuracyStaging?.Dispose();
+                var description = new Texture2DDescription
+                {
+                    Width = (uint)width,
+                    Height = (uint)height,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = Format.B8G8R8A8_UNorm,
+                    SampleDescription = new(1, 0),
+                    Usage = ResourceUsage.Staging,
+                    BindFlags = BindFlags.None,
+                    CPUAccessFlags = CpuAccessFlags.Read
+                };
+                accuracyStaging = gpu!.Device.CreateTexture2D(description);
+                accuracyStagingWidth = width;
+                accuracyStagingHeight = height;
+            }
+            using var source = NativeTextureOps.OpenOwned(rawTexture, pointer => new ID3D11Texture2D(pointer));
+            gpu!.Context.CopyResource(accuracyStaging, source);
+            var mapped = gpu.Context.Map(accuracyStaging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+            AccuracyFrameProbe probe;
+            try { probe = AccuracyFrameMarker.Probe(mapped.DataPointer, width, height, (int)mapped.RowPitch); }
+            finally { gpu.Context.Unmap(accuracyStaging, 0); }
+            trace.RecordGpuFrame(kind, width, height, probe, publishedTicks,
+                Stopwatch.GetTimestamp() - started);
+        }
+        catch (Exception e)
+        {
+            Log.Warning(e, "OutputEngine: 精度プローブの読み戻しに失敗");
+        }
     }
 
     private void UploadPendingSnapshot()
@@ -1524,6 +1580,7 @@ internal sealed class OutputEngine : IDisposable
         DisposeOwned(previewTarget, "GPU.previewTarget"); previewTarget = null;
         DisposeOwned(previewTexture, "GPU.previewTexture"); previewTexture = null;
         DisposeOwned(previewStaging, "GPU.previewStaging"); previewStaging = null;
+        DisposeOwned(accuracyStaging, "GPU.accuracyStaging"); accuracyStaging = null;
         DisposeOwned(gpu, "GPU.device"); gpu = null;
         recoveryRetry.Dispose();
         stop.Dispose();

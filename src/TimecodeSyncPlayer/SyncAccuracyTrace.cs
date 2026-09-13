@@ -92,6 +92,18 @@ internal sealed class SyncAccuracyTrace : IDisposable
     public void RecordFrame(string kind, IntPtr pixels, int width, int height, int stride, long publishedTicks)
         => RecordPixelFrame("frame", kind, pixels, width, height, stride, publishedTicks);
 
+    /// <summary>
+    /// A1: GPU 経路の計測。GPU worker が公開直後にソース画素を読み戻して得た Probe をそのまま記録する
+    /// （CPU の bitmap-publication と同じ境界・同じマーカー判定。計測有効時のみ呼ばれる）。
+    /// </summary>
+    public void RecordGpuFrame(string kind, int width, int height, AccuracyFrameProbe probe,
+        long publishedTicks, long probeTicks)
+    {
+        if (!IsEnabled) return;
+        Enqueue(new FrameEvent("frame", publishedTicks, kind, width, height,
+            probe.ClipId, probe.FrameIndex, probe.IsBlack, probe.MarkerValid, probeTicks));
+    }
+
     public void RecordPreviewFrame(string kind, IntPtr pixels, int width, int height, int stride, long publishedTicks)
         => RecordPixelFrame("preview-frame", kind, pixels, width, height, stride, publishedTicks);
 
