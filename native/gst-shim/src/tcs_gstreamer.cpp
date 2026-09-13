@@ -110,6 +110,42 @@ static std::atomic<int> test_hold_budget{test_hold_frame_lock_ms > 0 ? 40 : 0};
 static int test_hold_seek_lock_ms = env_int ("TCS_TEST_HOLD_SEEK_LOCK_MS", 0);
 static std::atomic<int> test_seek_hold_budget{test_hold_seek_lock_ms > 0 ? 8 : 0};
 
+/* C1(b) measurement switch: seek method. auto keeps the container default
+ * (tsdemux -> KEY_UNIT|SNAP_BEFORE, others -> ACCURATE). accurate/keyunit
+ * force one method for the comparison. Unknown values fall back to auto with
+ * a one-time warning. The delivery gate and the method-2 segment rewrite are
+ * armed only for the keyunit method (any container), so forcing accurate on
+ * TS leaves neither armed. */
+enum {
+  kSeekMethodAuto = 0,
+  kSeekMethodAccurate = 1,
+  kSeekMethodKeyUnit = 2,
+};
+
+static int
+resolve_seek_method (void)
+{
+  char buf[32];
+  DWORD n = GetEnvironmentVariableA ("TCS_SEEK_METHOD", buf, sizeof (buf));
+  int method = kSeekMethodAuto;
+  if (n > 0 && n < sizeof (buf)) {
+    if (_stricmp (buf, "accurate") == 0)
+      method = kSeekMethodAccurate;
+    else if (_stricmp (buf, "keyunit") == 0)
+      method = kSeekMethodKeyUnit;
+    else if (_stricmp (buf, "auto") != 0)
+      LOG ("seek-method: unknown value '%s' -> auto", buf);
+  } else if (n >= sizeof (buf)) {
+    LOG ("seek-method: value too long -> auto");
+  }
+  LOG ("seek-method: %s",
+      method == kSeekMethodAccurate ? "accurate" :
+      method == kSeekMethodKeyUnit ? "keyunit" : "auto");
+  return method;
+}
+
+static int seek_method = resolve_seek_method ();
+
 struct TcsPlayer {
   /* D3D11 + Spout.
    * Stage 6b: the device is ALWAYS owned by the shim. The compositor pointer
@@ -753,8 +789,10 @@ on_sink_segment_rewrite (GstPad* pad, GstPadProbeInfo* info, gpointer user)
 {
   TcsPlayer* p = (TcsPlayer*) user;
   GstEvent* ev = GST_PAD_PROBE_INFO_EVENT (info);
-  if (!ev || GST_EVENT_TYPE (ev) != GST_EVENT_SEGMENT || !p->mpegts)
+  if (!ev || GST_EVENT_TYPE (ev) != GST_EVENT_SEGMENT)
     return GST_PAD_PROBE_OK;
+  /* Method-linked: rebase_seek_seqnum is non-zero only for keyunit seeks
+   * (any container). Forced accurate on TS leaves it 0 and no rewrite runs. */
   guint64 target = 0;
   guint32 seek_seq = 0;
   {
@@ -790,8 +828,9 @@ on_sink_segment_rewrite (GstPad* pad, GstPadProbeInfo* info, gpointer user)
   GstEvent* newev = gst_event_new_segment (&ns);
   gst_event_set_seqnum (newev, seek_seq);
   gboolean sent = gst_pad_send_event (pad, newev);
-  LOG ("seek: ts segment rewritten sink=%s old_start=%" GST_TIME_FORMAT
+  LOG ("seek: %s segment rewritten sink=%s old_start=%" GST_TIME_FORMAT
       " target=%" GST_TIME_FORMAT " rate=%.3f sent=%d",
+      p->mpegts ? "ts" : "keyunit",
       GST_PAD_PARENT (pad) ? GST_ELEMENT_NAME (GST_PAD_PARENT (pad)) : "?",
       GST_TIME_ARGS (seg->start), GST_TIME_ARGS (target), seg->rate, sent);
   return GST_PAD_PROBE_DROP;
@@ -889,16 +928,17 @@ on_demux_segment_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
   const GstSegment* seg = nullptr;
   gst_event_parse_segment (ev, &seg);
   if (!seg || seg->format != GST_FORMAT_TIME || seg->rate <= 0.0) {
-    LOG ("seek: ts rebase diagnostics skipped (format/rate)");
+    LOG ("seek: %s rebase diagnostics skipped (format/rate)", p->mpegts ? "ts" : "keyunit");
     return GST_PAD_PROBE_OK;
   }
   guint64 r_start = gst_segment_to_running_time ((GstSegment*) seg,
       GST_FORMAT_TIME, seg->start);
   guint64 r_target = gst_segment_to_running_time ((GstSegment*) seg,
       GST_FORMAT_TIME, (guint64) target);
-  LOG ("seek: ts snap seg_start=%" GST_TIME_FORMAT " target=%" GST_TIME_FORMAT
+  LOG ("seek: %s snap seg_start=%" GST_TIME_FORMAT " target=%" GST_TIME_FORMAT
       " r_start=%" GST_TIME_FORMAT " r_target=%" GST_TIME_FORMAT
       " snap_ms=%.1f rate=%.3f",
+      p->mpegts ? "ts" : "keyunit",
       GST_TIME_ARGS (seg->start), GST_TIME_ARGS (target),
       GST_TIME_ARGS (r_start), GST_TIME_ARGS (r_target),
       (double) (target - seg->start) / 1e6, seg->rate);
@@ -1782,14 +1822,15 @@ teardown_pipeline (TcsPlayer* p)
  * tcs_player_set_paused). Holding frame_lock across the send deadlocks. */
 struct SeekRequest {
   bool valid = false;
-  bool ts = false;
+  bool keyunit = false;        /* keyunit method: gate + segment rewrite + event */
+  bool mpegts = false;         /* container (diagnostic text only) */
   GstElement* pipeline = nullptr;
   double seconds = 0.0;
   double rate = 1.0;
   gint64 target_ns = 0;
   GstSeekFlags flags = (GstSeekFlags) 0;
   guint32 seq = 0;
-  GstEvent* event = nullptr;   /* ts only: created under frame_lock, sent after */
+  GstEvent* event = nullptr;   /* keyunit: created under frame_lock, sent after */
 };
 
 /* Seek preparation (manual seek, step and load-with-start all go through
@@ -1821,17 +1862,24 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
   }
   if (test_hold_seek_lock_ms > 0 && test_seek_hold_budget.fetch_sub (1) > 0)
     Sleep ((DWORD) test_hold_seek_lock_ms);
-  /* MPEG-TS: tsdemux's ACCURATE seek scans each PES for a keyframe NAL and
-   * loses track on H.264 whose IDRs carry no SPS/PPS, so instead snap to the
-   * keyframe before the target (KEY_UNIT|SNAP_BEFORE) and let the sinks drop
-   * the pre-target samples (method 2 segment rewrite; the delivery gate is
-   * the fallback). MP4/MOV and the rest keep the accurate seek (their landing
-   * error is already one frame at most). */
-  GstSeekFlags flags = p->mpegts
+  /* C1(b): the seek method is a measurement switch. auto keeps the container
+   * default: tsdemux's ACCURATE seek scans each PES for a keyframe NAL and
+   * loses track on H.264 whose IDRs carry no SPS/PPS, so TS snaps to the
+   * keyframe before the target (KEY_UNIT|SNAP_BEFORE) and the sinks drop the
+   * pre-target samples (method 2 segment rewrite; the delivery gate is the
+   * fallback). MP4/MOV and the rest keep the accurate seek (their landing
+   * error is already one frame at most). accurate/keyunit force one method
+   * for both containers; the gate and the segment rewrite are armed only for
+   * keyunit, so a forced accurate seek on TS leaves neither armed. */
+  bool keyunit = seek_method == kSeekMethodKeyUnit ||
+      (seek_method == kSeekMethodAuto && p->mpegts);
+  GstSeekFlags flags = keyunit
       ? (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT |
           GST_SEEK_FLAG_SNAP_BEFORE)
       : (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE);
-  if (p->mpegts) {
+  out->keyunit = keyunit;
+  out->mpegts = p->mpegts;
+  if (keyunit) {
     LARGE_INTEGER now;
     QueryPerformanceCounter (&now);
     p->gate_active = true;
@@ -1855,11 +1903,12 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
     p->rebase_seek_seqnum = env_flag ("TCS_NO_SEGMENT_REWRITE") ? 0 : seq;
     out->event = sev;
     out->seq = seq;
-    out->ts = true;
   } else {
+    /* The gate and the rewrite must not stay armed for an accurate seek
+     * (forcing accurate on TS would otherwise corrupt the measurement). */
+    p->gate_active = false;
     p->rebase_armed = false;
     p->rebase_seek_seqnum = 0;
-    out->ts = false;
   }
   out->valid = true;
   out->pipeline = p->pipeline;
@@ -1877,25 +1926,25 @@ seek_send (TcsPlayer* p, const SeekRequest& req)
   if (!req.valid || !req.pipeline)
     return;
   gboolean ok;
-  if (req.ts) {
-    LOG ("seek: send begin (ts) target_ns=%llu seq=%u",
-        (unsigned long long) req.target_ns, req.seq);
+  if (req.keyunit) {
+    LOG ("seek: send begin (ts) method=keyunit container=%s target_ns=%llu seq=%u",
+        req.mpegts ? "ts" : "other", (unsigned long long) req.target_ns, req.seq);
     ok = gst_element_send_event (req.pipeline, req.event);
-    LOG ("seek: send end (ts) ok=%d", ok ? 1 : 0);
-    LOG ("seek: ts keyframe-snap target_ns=%llu gate armed seq=%u",
-        (unsigned long long) req.target_ns, req.seq);
+    LOG ("seek: send end (ts) method=keyunit ok=%d", ok ? 1 : 0);
+    LOG ("seek: %s keyframe-snap target_ns=%llu gate armed seq=%u",
+        req.mpegts ? "ts" : "keyunit", (unsigned long long) req.target_ns, req.seq);
   } else {
-    LOG ("seek: send begin (accurate) target_ns=%llu",
-        (unsigned long long) req.target_ns);
+    LOG ("seek: send begin (accurate) method=accurate container=%s target_ns=%llu",
+        req.mpegts ? "ts" : "other", (unsigned long long) req.target_ns);
     ok = gst_element_seek (req.pipeline, req.rate, GST_FORMAT_TIME, req.flags,
         GST_SEEK_TYPE_SET, req.target_ns, GST_SEEK_TYPE_NONE, -1);
-    LOG ("seek: send end (accurate) ok=%d", ok ? 1 : 0);
+    LOG ("seek: send end (accurate) method=accurate ok=%d", ok ? 1 : 0);
   }
   if (!ok) {
     char msg[256];
     snprintf (msg, sizeof (msg),
         "seek failed (gst_element_seek FALSE, %s, target=%.3f)",
-        req.ts ? "ts keyunit/snap-before" : "accurate", req.seconds);
+        req.keyunit ? "keyunit/snap-before" : "accurate", req.seconds);
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->last_error = msg;
     LOG ("%s", msg);

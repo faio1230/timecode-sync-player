@@ -532,6 +532,91 @@ run_paused_seek (int argc, char** argv)
   return failures ? 1 : 0;
 }
 
+/* --seek-method-check <file> [seeks]: C1(b) verification. The process runs
+ * with TCS_SEEK_METHOD from the environment (the shim reads it once at load),
+ * so this mode is executed once per value. Every seek must produce a frame
+ * that lands on the first frame at/after the target (the keyunit gate drops
+ * the pre-target snap frames; accurate lands within one frame). */
+static int
+run_seek_method_check (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --seek-method-check <file> [seeks]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+  int seeks = argc > 3 ? atoi (argv[3]) : 5;
+  if (seeks < 1)
+    seeks = 1;
+  const char* method_env = getenv ("TCS_SEEK_METHOD");
+  printf ("  TCS_SEEK_METHOD=%s\n", method_env ? method_env : "(unset)");
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimSeekMethod", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  {
+    TcsStats st = {};
+    for (int w = 0; w < 200; w++) {
+      tcs_player_get_stats (p, &st);
+      if (st.frames_decoded >= 3) break;
+      std::this_thread::sleep_for (std::chrono::milliseconds (10));
+    }
+  }
+  double dur = 0, fps = 0;
+  tcs_player_get_duration (p, &dur);
+  tcs_player_get_fps (p, &fps);
+  double frame_s = fps > 0.0 ? 1.0 / fps : 0.04;
+
+  int no_frame = 0, before_target = 0, slow = 0;
+  for (int i = 0; i < seeks; i++) {
+    double target = dur > 2.0
+        ? dur * (0.12 + 0.76 * ((double) ((i * 41) % 100) / 99.0))
+        : 0.5;
+    tcs_player_release (p);
+    auto t0 = std::chrono::steady_clock::now ();
+    uint64_t gen = tcs_player_seek (p, target);
+    TcsFrameInfo info = {};
+    int got = 0;
+    for (int k = 0; k < 2500 && !got; k++) {
+      got = tcs_player_acquire (p, gen, &info);
+      if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+    double ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - t0).count ();
+    if (!got) {
+      no_frame++;
+      printf ("  seek %2d target=%.3f NO FRAME (%.1fms)\n", i, target, ms);
+      continue;
+    }
+    double pts = info.pts_ns / 1e9;
+    double delta_ms = (pts - target) * 1000.0;
+    /* The invariant every method must keep: never hand over a frame from
+     * before the target. The exact landing distance is method/container
+     * specific and is printed for the comparison (frame_s=%.1fms). */
+    bool at_or_after = pts >= target - 0.001;
+    if (!at_or_after)
+      before_target++;
+    if (ms >= 5000.0)
+      slow++;
+    printf ("  seek %2d target=%.3f lease=%.3f delta=%+.1fms arrival=%.1fms at_or_after=%d\n",
+        i, target, pts, delta_ms, ms, at_or_after ? 1 : 0);
+    tcs_player_release (p);
+    std::this_thread::sleep_for (std::chrono::milliseconds (50));
+  }
+  tcs_player_destroy (p);
+
+  check (no_frame == 0, "every seek produced a frame");
+  check (before_target == 0, "no seek handed over a frame before the target");
+  check (slow == 0, "every seek arrived within 5000ms");
+  printf ("  (frame period is %.1fms; delta is informational)\n", frame_s * 1000.0);
+  return failures;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -557,6 +642,11 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--paused-seek") == 0) {
     run_paused_seek (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--seek-method-check") == 0) {
+    run_seek_method_check (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
