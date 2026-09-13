@@ -392,6 +392,33 @@ mpv 本来の構成（`backend=0` + `outputBackend=0`）での steady 統計:
 `seek.issue`→`seek.return` は 0.1〜0.2ms で戻るが、**目標位置のフレームが 1 件も配信されない**まま
 次の操作（中央値 1981.7ms 後）を迎える。**18 件中 18 件で再現**。D1 とは独立した問題で、shim 側の可能性がある。
 
+### D2 の修正と検証結果（main `fdbf543`、2026-09-13 19:27〜19:58 親検証）— **合格・統合済み**
+
+OpenCode の 3 コミット（`ea7917f` → `71aaf44` → `fdbf543`）。差分は shim の 2 ファイルのみ
+（`tcs_gstreamer.cpp` +421、`shim_test.cpp` +195）。
+
+**修正の要点**: `seek_locked` を `seek_prepare_locked`（`frame_lock` 保持中に世代を開き、
+未配信フレームを捨て、TS ゲートを張るところまで）と `seek_send`（ロックを一切持たずに
+`gst_element_send_event` / `gst_element_seek` を発行）に**分割**した。
+フラッシュシークはストリーミングスレッドの進行を必要とするため、これを `frame_lock` の内側で
+呼ぶと `on_new_sample` が同じロックを待って循環が閉じる。`build_pipeline` の paused load と
+速度変更の再シークも同じ形に直してある。
+
+| 検証 | 結果 |
+| --- | --- |
+| 差分の範囲（shim 以外に触れていないか） | shim 2 ファイルのみ |
+| 非 E2E 単体・結合 | **1729 合格 / 0 失敗** |
+| 決定的フック `TCS_TEST_HOLD_FRAME_LOCK_MS=50` | **4/4 完走・failures=0**（修正前は 2/2 ハング） |
+| shim 単体 13 素材 × 2 巡 | **26/26 完走、ハング 0・失敗 0** |
+| 全 E2E | **合格 58 / 失敗 0 / スキップ 5**（空き容量を確保して再実行） |
+| I13 静的監査 `scripts/check-shim-lock-rule.py` | **PASS**（`frame_lock` 保持中の状態変更は 0 件） |
+
+**注意**: 最初の E2E は 6 件失敗したが、原因は**ディスク枯渇**であり D2 の回帰ではなかった。
+経緯は「E2E 6 件失敗の真因」の節を参照。
+
+統合は `integrate/d2-20260913` を main へ rebase → `--ff-only`。
+rebase 後の shim ソースが検証した `ccb3bad` とバイト単位で一致することを確認してから統合した。
+
 ### 併せて判明した計測上の事実
 
 - 標準ハーネスの「シーク位相」で起きていた操作は**すべて `load`（トラック切替）**で、`seek.issue` は両経路とも 0。

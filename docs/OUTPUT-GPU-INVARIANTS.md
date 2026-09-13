@@ -18,7 +18,28 @@
 | I10 | **lead は上げ急・下げ緩**: p99＋1ms で即時に上げ、下げは 5 秒連続で 0.5ms 刻み。起動後 3 秒は学習しない。 | F、段階 3 |
 | I11 | **計測は同じ時計**: 新しい経路は `events.jsonl` に同じ QPC で記録し、`analyze_probe.py`／`gst_delivery_check.py` で親が読める形にする。公開頻度だけで合否を判断しない。 | 全段階 |
 | I12 | **Cpu backend は不変**: `OutputBackend=Cpu` の経路（OutputFrame→Bitmap→SendImage）に手を入れない。 | 計画 |
-| I13 | **GStreamer の状態変更・シークをロック保持中に呼ばない**: `gst_element_set_state` / `gst_element_seek` / `gst_element_send_event` を `frame_lock` や `state_mutex` を保持したまま呼ばない。これらはストリーミングスレッドを必要とし、そのスレッドは `on_new_sample` で `frame_lock` を待ちながらシンクのストリームロックを持っているためデッドロックする。**ロックは「何をするか」の決定だけを守り、GStreamer の呼び出しはロックの外で行う。** | D2（2026-09-13、TS で約 6% のハング） |
+| I13 | **GStreamer の状態変更・シークを、ストリーミングスレッドが要求しうるロックの保持中に呼ばない**: `gst_element_set_state` / `gst_element_seek` / `gst_element_send_event` を `frame_lock` を保持したまま呼ばない。これらはストリーミングスレッドの進行を必要とし、そのスレッドは `on_new_sample` で `frame_lock` を待ちながらシンクのストリームロックを持っているためデッドロックする。**ロックは「何をするか」の決定だけを守り、GStreamer の呼び出しはロックの外で行う。** 検査: `python scripts/check-shim-lock-rule.py` | D2（2026-09-13、TS で約 6% のハング） |
+
+### I13 で `state_mutex` を例外扱いする根拠（2026-09-13 の静的監査）
+
+D2 修正後（`fdbf543`）の shim には、**`state_mutex` を保持したまま `gst_element_set_state` を呼ぶ箇所が
+3 つ残っている**（`pump_arm` 1591、`pump_preroll_tick` 1645、`tcs_player_set_paused` 2408）。
+これは消し忘れではなく、意図的に残してよいと判断した。根拠は次のとおり。
+
+**デッドロックが成立する条件は「状態変更を待つ側が持つロックを、ストリーミングスレッドが要求すること」**。
+`frame_lock` は `on_new_sample` が取るので条件を満たす。`state_mutex` は満たさない:
+
+- `state_mutex` を取るのは上記 3 関数だけ。`pump_arm` と `tcs_player_set_paused` は API（UI）スレッド、
+  `pump_preroll_tick` は `bus_loop` の**専用バススレッド**（`gst_bus_timed_pop_filtered`）から呼ばれる。
+- 投稿スレッド上で走る `sync_bus_handler` は `NEED_CONTEXT` を処理するだけで**ロックを一切取らない**。
+- `tcs_player_seek` は `pump_arm` を `frame_lock` の**外**で呼ぶ。ここが内側だと
+  「UI が frame_lock 保持 → state_mutex 待ち／バススレッドが state_mutex 保持 → set_state がストリーミング
+  スレッド待ち／ストリーミングスレッドが frame_lock 待ち」の循環が閉じる。**この 1 点は今後も崩してはならない。**
+
+つまり安全性は**ミューテックスの性質ではなくコードの性質**であり、`state_mutex` を取る関数が増えた瞬間に
+前提が崩れる。そこで `scripts/check-shim-lock-rule.py` に `state_mutex` を取る関数の集合を固定し、
+**増えたら検査を失敗させて人間に再検討を強制する**ようにした。
+負の対照として、D2 修正前の main に対しては既知の 2 箇所を検出して FAIL することを確認済み。
 
 ### I13 の補足（同じ罠を 3 回踏んだ経緯）
 
