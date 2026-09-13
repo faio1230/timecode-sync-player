@@ -18,7 +18,9 @@ PHASES = {"black-sweep": (0, 35), "freeze-sweep": (0, 35),
 THRESHOLDS = (20, 40, 80, 250)
 EPS = 1e-7
 TRACE_DATA_TYPES = ("ltc", "frame", "render-stage")
-TRACE_TYPES = ("meta", "end") + TRACE_DATA_TYPES
+# A1: reduced-preview events share the writer/footer but are not full-resolution evidence.
+TRACE_EXTENSION_TYPES = ("preview-frame",)
+TRACE_TYPES = ("meta", "end") + TRACE_DATA_TYPES + TRACE_EXTENSION_TYPES
 
 
 def number(value):
@@ -155,6 +157,10 @@ def analyze(events, fixture, journal):
         if event.get("type") == "render-stage" and not valid_render_stage(event):
             reasons.append("invalid-render-stage-event")
             continue
+        if event.get("type") == "preview-frame" and (
+                not integer(meta.get("previewFrameSchema")) or meta["previewFrameSchema"] != 1):
+            reasons.append("unsupported-preview-frame-schema")
+            continue
         if event.get("type") == "ltc" and (not number(event.get("seconds")) or event.get("fps") != 25):
             reasons.append("invalid-ltc-event")
             continue
@@ -178,9 +184,9 @@ def analyze(events, fixture, journal):
                 reasons.append("trace-dropped-events")
             if end["errors"]:
                 reasons.append("trace-write-errors")
-            if end["events"] != sum(e["type"] in TRACE_DATA_TYPES for e in events):
+            if end["events"] != sum(e["type"] in TRACE_DATA_TYPES + TRACE_EXTENSION_TYPES for e in events):
                 reasons.append("trace-event-count-mismatch")
-        if any(e["type"] in TRACE_DATA_TYPES and e["ticks"] > end["ticks"] for e in events):
+        if any(e["type"] in TRACE_DATA_TYPES + TRACE_EXTENSION_TYPES and e["ticks"] > end["ticks"] for e in events):
             reasons.append("trace-events-after-end")
 
     phases = []
