@@ -892,6 +892,54 @@ V3 の「定常誤差」で本来見たかったのはこの区間であり、�
 **60fps クリップで GStreamer は 254.9ms かかり、mpv より 112ms 遅い。**
 この 112ms は、定常オフセットの差（-274.1 対 -147.5 = 127ms）とほぼ一致する。
 
+### 同期エンジンはこのずれを見ていない（2026-09-14、親）
+
+`spread/gst` の `seek-c` フェーズ（5 秒間）に記録された制御イベントは**これだけ**だった。
+
+```
+  232ms load.issue     value=3080000  start
+  240ms load.return
+  283ms player.seeking raw=no
+ 2311ms player.seeking raw=no
+ 4322ms player.seeking raw=no
+```
+
+**`seek.decide` が 1 件も無い。** このイベントは `SyncDecisionEngine.Decide` の中で
+`Math.Abs(delta) <= toleranceSeconds` を抜けた**後**・抑止判定より**前**に記録される。
+つまり**エンジンは 5 秒間、一度も「ずれている」と判断していない**。
+
+許容は `ToleranceFrames = 6.0`、`max(videoFrameSeconds, timecodeFrameSeconds) * 6` なので
+25fps LTC では **240〜250ms**。表示は -274ms ずれており、**本来なら超えているはず**である。
+
+**mpv でも同じ**（seek-c で `seek.decide` 0 件、-147.5ms のまま）。
+
+### コードから確実に言えること
+
+`MainWindow.xaml.cs` の 2 箇所（`SingleModeSyncCoordinator` と継続モード側）で
+`SyncPlaybackState` を作っている。どちらも:
+
+```csharp
+GetTimePos: () => { int rc = _mpvApi.GetProperty(_mpv, "time-pos", ...); return (rc, playbackSeconds); }
+BuildPlaybackState: playbackSeconds => new SyncPlaybackState(
+    ...
+    IsSeeking: _seekBarInteraction.IsSeeking,
+    PlaybackSeconds: playbackSeconds,
+    ...)
+```
+
+1. **`PlaybackSeconds` は `time-pos`**、すなわち**プレイヤーの自己申告位置**であって、
+   **実際に画面へ出ているフレームの位置ではない。** 両者はパイプラインの表示遅延の分だけずれる。
+2. **`state.IsSeeking` は `_seekBarInteraction.IsSeeking`**（利用者がシークバーを掴んでいるか）であり、
+   `IsNativeSeeking()` ではない。`IsNativeSeeking` は別引数で渡され、**抑止側にしか使われない**。
+   ハーネスでは誰もシークバーを操作しないので、**この値は常に false のはず**である。
+
+**2 により、仮説 (b)（`IsSeeking` が真で `Decide` が冒頭で返っている）は成立しにくい。**
+残るのは仮説 (a)、すなわち**エンジンの `delta` が許容内**という筋である。
+
+**これはバックエンド固有ではなく、同期の設計そのものの盲点**にあたる。
+mpv でも同じ挙動が出ていることと整合する。**V3-B（`docs/prompts/2026-09-14-V3-B-engine-blindness.md`）で
+`delta` と表示誤差を同時に記録して確定させる。**
+
 ### 確定した連鎖
 
 1. 60fps クリップへシークすると、最初のフレームが出るまで **254.9ms** かかる
