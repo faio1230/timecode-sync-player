@@ -98,6 +98,23 @@ public class SeekTraceEventsTests
     }
 
     [Fact]
+    public void LoadFile_RecordsIssueAndReturnWithStartMicroseconds()
+    {
+        var commands = new List<string>();
+        List<JsonElement> events = Capture(() =>
+        {
+            var coordinator = new PlaybackOperationsCoordinator(
+                new PlaybackControlState(),
+                Effects(command => { commands.Add(command); return 0; }));
+            coordinator.LoadFile("C:\\media\\clip.mp4", 12.5).Should().BeTrue();
+        });
+
+        commands.Should().ContainSingle().Which.Should().Contain("loadfile");
+        Events(events, "load.issue").Should().Contain(e => e.GetProperty("value").GetInt64() == 12_500_000);
+        Events(events, "load.return").Should().NotBeEmpty();
+    }
+
+    [Fact]
     public void SeekTo_WhenCommandThrows_StillRecordsReturn()
     {
         List<JsonElement> events = Capture(() =>

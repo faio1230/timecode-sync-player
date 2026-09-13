@@ -58,15 +58,16 @@ internal sealed class PlaybackOperationsCoordinator
         bool success;
         if (startPosition.HasValue)
         {
-            int loadRc = _effects.CommandString(
-                MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition));
+            int loadRc = TracedLoad(
+                MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition),
+                (long)Math.Round(startPosition.Value * 1_000_000.0));
             success = loadRc == 0;
             Log.Information("LoadFile path={Path} start={Start:F3} loadRc={LoadRc}",
                 path, startPosition.Value, loadRc);
         }
         else
         {
-            int loadRc = _effects.CommandString(
+            int loadRc = TracedLoad(
                 MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition: null));
             int pauseRc = _effects.SetPropertyString("pause", MpvValueNo);
             success = loadRc == 0;
@@ -94,8 +95,7 @@ internal sealed class PlaybackOperationsCoordinator
     {
         if (!_effects.IsMpvReady()) return false;
 
-        int loadRc = _effects.CommandString(
-            MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition: null));
+        int loadRc = TracedLoad(MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition: null));
         int pauseRc = _effects.SetPropertyString("pause", MpvValueYes);
         bool success = loadRc == 0;
         Log.Information("LoadFile path={Path} start=none loadRc={LoadRc} pauseRc={PauseRc}",
@@ -159,6 +159,29 @@ internal sealed class PlaybackOperationsCoordinator
     {
         PlaybackPauseChange change = _playbackControl.SetPaused(paused);
         _effects.SetPlayPauseIcon(change.PlayPauseIcon);
+    }
+
+    /// <summary>
+    /// 計測専用（出力トレース有効時のみ）。loadfile 発行〜復帰を同じ QPC で残す。
+    /// startMicros は新しい開始位置（未指定は -1）。
+    /// </summary>
+    private int TracedLoad(string command, long startMicros = -1)
+    {
+        bool trace = OutputTrace.Current.IsEnabled;
+        if (trace)
+        {
+            OutputTrace.Current.Record(new("load.issue", "PLAYER", Stopwatch.GetTimestamp(),
+                Value: startMicros, Detail: startMicros < 0 ? "none" : "start"));
+        }
+        try
+        {
+            return _effects.CommandString(command);
+        }
+        finally
+        {
+            if (trace)
+                OutputTrace.Current.Record(new("load.return", "PLAYER", Stopwatch.GetTimestamp()));
+        }
     }
 }
 

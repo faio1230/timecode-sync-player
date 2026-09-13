@@ -77,6 +77,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly LtcSyncController _ltcSyncController;
     private readonly ILtcMonitor _ltcMonitor;
     private readonly TimecodeSyncService _syncService;
+    private readonly SeekingProbe _seekingProbe = new();
     private readonly FileLoadStabilityLogState _fileLoadStabilityLogState = new(TimeSpan.FromSeconds(1));
     private readonly GapPlaybackCommandExecutor _gapPlaybackCommandExecutor;
     private volatile bool _disposed;
@@ -1874,8 +1875,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
-    private bool IsNativeSeeking() =>
-        _mpv == IntPtr.Zero || _mpvApi.GetPropertyString(_mpv, "seeking") != MpvValueNo;
+    private bool IsNativeSeeking()
+    {
+        string raw = _mpv == IntPtr.Zero ? "<null>" : _mpvApi.GetPropertyString(_mpv, "seeking");
+        bool seeking = _mpv == IntPtr.Zero || raw != MpvValueNo;
+        _seekingProbe.Record(raw, seeking);
+        return seeking;
+    }
 
     // Recheck on the UI thread after the native render await. A manual operation can
     // start and finish during that await without changing the gap capture attempt.
