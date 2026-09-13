@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Globalization;
 using Serilog;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -117,7 +119,25 @@ internal sealed class PlaybackOperationsCoordinator
         {
             var prefix = suppressOsd ? MpvCommandNoOsd : "";
             var command = $"{prefix} seek {seconds.ToString("F3", CultureInfo.InvariantCulture)} {MpvSeekModeAbsolute}".Trim();
-            int rc = _effects.CommandString(command);
+            // 計測専用（出力トレース有効時のみ）。プレイヤーへの seek 発行〜復帰を同じ QPC で残す。
+            // GStreamer ではこの呼び出しが shim の tcs_player_seek を同期で通る。
+            bool trace = OutputTrace.Current.IsEnabled;
+            if (trace)
+            {
+                OutputTrace.Current.Record(new("seek.issue", "PLAYER", Stopwatch.GetTimestamp(),
+                    Value: (long)Math.Round(seconds * 1_000_000.0),
+                    Detail: suppressOsd ? "no-osd" : "osd"));
+            }
+            int rc;
+            try
+            {
+                rc = _effects.CommandString(command);
+            }
+            finally
+            {
+                if (trace)
+                    OutputTrace.Current.Record(new("seek.return", "PLAYER", Stopwatch.GetTimestamp()));
+            }
             if (rc != 0)
             {
                 Log.Warning("Seek failed: rc={Rc}, target={Target}", rc, seconds);

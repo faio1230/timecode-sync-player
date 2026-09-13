@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using TimecodeSyncPlayer.Output;
+
 namespace TimecodeSyncPlayer;
 
 internal sealed class SyncDecisionEngine : ISyncDecisionEngine
@@ -30,6 +33,15 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         double delta = target - state.PlaybackSeconds;
         if (Math.Abs(delta) <= toleranceSeconds)
             return SyncDecision.NoneWith(fps, toleranceSeconds);
+
+        // 計測専用（出力トレース有効時のみ）。シークを決めた時刻 a を同じ QPC で残す。
+        if (OutputTrace.Current.IsEnabled)
+        {
+            OutputTrace.Current.Record(new("seek.decide", "SYNC", Stopwatch.GetTimestamp(),
+                Value: (long)Math.Round(target * 1_000_000.0),
+                Detail: FormattableString.Invariant(
+                    $"delta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6}")));
+        }
 
         return new SyncDecision(
             SyncActionType.Seek,
