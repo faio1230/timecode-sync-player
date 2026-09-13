@@ -37,7 +37,7 @@ PAIR_KEYS = (
     ("decide_first", "scanout", "decide_scanout"),
 )
 ROW_KEYS = (
-    "player", "run", "phase", "kind", "target_s", "frame_pts_s",
+    "player", "run", "phase", "phase_group", "kind", "target_s", "frame_pts_s",
     "decide_first_ms", "decide_last_ms", "issue_ms", "return_ms", "frame_ms",
     "publish_ms", "scanout_ms",
 ) + tuple("d_" + key + "_ms" for key in DELTA_KEYS)
@@ -93,11 +93,31 @@ def match_decide(decides, issues, issue):
     return candidates[0], candidates[-1]
 
 
-def first_after(events, stage, qpc, predicate=None):
+def first_after(events, stage, qpc, predicate=None, end_qpc=None):
     for event in events:
         if event.get("stage") != stage or event["qpc"] < qpc:
             continue
+        if end_qpc is not None and event["qpc"] >= end_qpc:
+            return None
         if predicate is None or predicate(event):
+            return event
+    return None
+
+
+def first_gst_frame(deliveries, issue_qpc, end_qpc, target_s):
+    """新位置の最初の配信を pts で同定する。preroll（pts=0）や旧位置のフレームを拾わない。"""
+    for event in deliveries:
+        if event["qpc"] <= issue_qpc:
+            continue
+        if end_qpc is not None and event["qpc"] >= end_qpc:
+            return None
+        pts = gst_pts_seconds(event)
+        if pts is None:
+            continue
+        if target_s is not None and target_s > 0.05:
+            if pts >= target_s - 0.2:
+                return event
+        elif pts >= -0.05:
             return event
     return None
 
@@ -127,7 +147,9 @@ def build_rows(player, run_name, phases, frequency, events):
     operations.sort(key=lambda item: item[1]["qpc"])
     rows = []
 
-    for kind, issue in operations:
+    for index, (kind, issue) in enumerate(operations):
+        # 次の操作（seek/load）までをこの操作の測定区間とする。それ以降のフレームは次の操作のもの。
+        end_qpc = operations[index + 1][1]["qpc"] if index + 1 < len(operations) else None
         phase = find_phase(issue["qpc"])
         phase_name = phase["name"] if phase else "(outside)"
         qpc_ref = phase["start"] if phase else issue["qpc"]
@@ -143,15 +165,14 @@ def build_rows(player, run_name, phases, frequency, events):
         frame = None
         frame_pts_s = None
         if player == "gst":
-            frame = first_after(deliveries, "gst.delivery", issue["qpc"])
+            frame = first_gst_frame(deliveries, issue["qpc"], end_qpc, target_s)
             if frame is not None:
                 frame_pts_s = gst_pts_seconds(frame)
         else:
             if target_us is not None and target_us >= 0:
                 frame = first_after(mpv_frames, "mpv.frame", issue["qpc"],
-                                    lambda e: e.get("value") is not None and e["value"] >= target_us - 50_000)
-            if frame is None:
-                frame = first_after(mpv_frames, "mpv.frame", issue["qpc"])
+                                    lambda e: e.get("value") is not None and e["value"] >= target_us - 150_000,
+                                    end_qpc=end_qpc)
 
         publish = first_after(publishes, "compose.publish", frame["qpc"]) if frame else None
         scanout = first_after(scanouts, "present.scanout", publish["qpc"]) if publish else None
@@ -169,6 +190,7 @@ def build_rows(player, run_name, phases, frequency, events):
             "player": player,
             "run": run_name,
             "phase": phase_name,
+            "phase_group": "resync" if phase_name.startswith("resync-") else phase_name,
             "kind": kind,
             "target_s": round(target_s, 6) if target_s is not None else None,
             "frame_pts_s": round(frame_pts_s, 6) if frame_pts_s is not None else None,
@@ -212,15 +234,16 @@ def format_ms(value):
 def aggregate_cell(stats, key):
     value = stats[key]["p95"]
     median = stats[key]["median"]
-    return "-" if value is None else f"{format_ms(median)} / {format_ms(value)}"
+    count = stats[key]["n"]
+    return "-" if value is None else f"{format_ms(median)} / {format_ms(value)} (n={count})"
 
 
 def ordered_phase_names(all_rows):
-    names = {row["phase"] for row in all_rows}
+    names = {row["phase_group"] for row in all_rows}
     ordered = [name for name in KNOWN_PHASES if name in names]
     for row in all_rows:
-        if row["phase"] not in ordered:
-            ordered.append(row["phase"])
+        if row["phase_group"] not in ordered:
+            ordered.append(row["phase_group"])
     return ordered
 
 
@@ -297,7 +320,7 @@ def main():
     lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for phase in ordered_phase_names(all_rows):
         for kind in ("seek", "load"):
-            subset = [r for r in all_rows if r["phase"] == phase and r["kind"] == kind]
+            subset = [r for r in all_rows if r["phase_group"] == phase and r["kind"] == kind]
             if not subset:
                 continue
             stats = aggregate(subset)
