@@ -42,6 +42,14 @@ public sealed class GStreamerBackendE2ETests
         string sender = $"TCSGstE2E-{Environment.ProcessId}-{DateTime.UtcNow.Ticks}";
         Environment.SetEnvironmentVariable(SenderEnvVar, sender);
 
+        // 受信側は 1 フレームずつ無圧縮 BMP を書き出す (720p60 8 秒で約 3 GB)。
+        // 過去に消し忘れでディスクを使い切り E2E 全体が落ちたため、
+        // 開始時に旧世代を掃除し、finally で必ず消す。
+        PruneStaleTempDirs("tcs-gst-e2e-recv1");
+        PruneStaleTempDirs("tcs-gst-e2e-recv2");
+        string? recvDir1 = null;
+        string? recvDir2 = null;
+
         E2EAppRunner? runner = null;
         ReceiverRun? recv = null;
         try
@@ -58,7 +66,7 @@ public sealed class GStreamerBackendE2ETests
                 TimeSpan.FromSeconds(10));
 
             // 1 回目の受信
-            string recvDir1 = NewTempDir("tcs-gst-e2e-recv1");
+            recvDir1 = NewTempDir("tcs-gst-e2e-recv1");
             recv = StartReceiver(recvExe, sender, 8, Path.Combine(recvDir1, "frame"));
             recv.Process.WaitForExit(40_000);
             recv.Process.WaitForExit(); // 非同期 stdout 回収の完了待ち
@@ -74,7 +82,7 @@ public sealed class GStreamerBackendE2ETests
             Thread.Sleep(500);
 
             DateTime recv2StartedAt = DateTime.Now;
-            string recvDir2 = NewTempDir("tcs-gst-e2e-recv2");
+            recvDir2 = NewTempDir("tcs-gst-e2e-recv2");
             recv = StartReceiver(recvExe, sender, 8, Path.Combine(recvDir2, "frame"));
             recv.Process.WaitForExit(40_000);
             recv.Process.WaitForExit();
@@ -103,6 +111,8 @@ public sealed class GStreamerBackendE2ETests
             recv?.Process.Dispose();
             runner?.Dispose();
             TryDeleteDir(workDir);
+            if (recvDir1 is not null) { TryDeleteDir(recvDir1); }
+            if (recvDir2 is not null) { TryDeleteDir(recvDir2); }
         }
     }
 
@@ -386,6 +396,20 @@ public sealed class GStreamerBackendE2ETests
             dir = dir.Parent;
         dir.Should().NotBeNull("テストは worktree 内のビルド出力から実行される");
         return dir!.FullName;
+    }
+
+    /// <summary>
+    /// 過去の実行が残した %TEMP%/&lt;prefix&gt;/&lt;GUID&gt; を消す。
+    /// このテストだけが作る名前空間なので他に影響しない。
+    /// </summary>
+    private static void PruneStaleTempDirs(string prefix)
+    {
+        string root = Path.Combine(Path.GetTempPath(), prefix);
+        if (!Directory.Exists(root)) { return; }
+        foreach (string dir in Directory.GetDirectories(root))
+        {
+            TryDeleteDir(dir);
+        }
     }
 
     private static void TryDeleteDir(string dir)
