@@ -714,6 +714,30 @@ mpv は切替時の 1 回だけ。**
 `gst.delivery`（実際のフレーム到着）も seek-c で 354 件 / 6.2 秒（≒60fps）、
 シーク時の 253ms を除けば最大 34ms。**GPU 合成では両バックエンドとも停滞しない。**
 
+### 機構: CPU 合成は 1 フレームごとに GPU からの同期読み戻しをしている
+
+`GstMpvRenderApiAdapter.RenderContextRender` -> `GstBackendState.RenderInto` ->
+`tcs_player_leased_cpu_copy`（`tcs_gstreamer.cpp`）。この最後の関数は
+**`frame_lock` を保持したまま**、1 フレームごとに次をやる。
+
+1. GPU テクスチャ -> staging テクスチャへ `CopyResource` / `CopySubresourceRegion`
+2. `ID3D11DeviceContext::Flush()`
+3. **`Map(staging, D3D11_MAP_READ)`** — GPU の完了を待つ**同期読み戻し**。呼び出しスレッド（UI）がブロックする
+4. 1920x1080x4 = **8.3MB** を行ごとに `memcpy`
+
+60fps では毎秒 60 回、**約 500MB/秒の読み戻しとフレームごとの強制同期点**が UI スレッドに乗る。
+さらに `frame_lock` を保持している間は `on_new_sample`（ストリーミングスレッド）も待たされる。
+
+**3 つのクリップは全て 1920x1080 で、違いはフレームレートだけ**（24 / 29.97 / 60）。
+解像度も形式も同じなので staging テクスチャは作り直されない。**変数は fps だけ**である。
+24fps・29.97fps では間に合い、60fps で間に合わなくなる、という観測と一致する。
+
+mpv にこれが無いのは、mpv が SW レンダー API で最初から CPU バッファへ描くからである。
+GPU 合成にこれが無いのは、D3D11 テクスチャをそのまま合成して読み戻さないからである。
+
+このコードのコメント自身が `暫定プレビュー通路` と書いている。
+**GStreamer x CPU 合成は設計上ここが高コストであり、60fps 素材はその限界を超えている。**
+
 ### 結論（V3 の判定ではなく、事実として）
 
 seek-c の劣位は **GStreamer × CPU 合成**の組み合わせに固有で、**GStreamer × GPU 合成には現れない**。
