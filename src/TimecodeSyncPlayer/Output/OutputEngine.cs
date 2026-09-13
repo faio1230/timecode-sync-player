@@ -1030,7 +1030,10 @@ internal sealed class OutputEngine : IDisposable
             else if (SyncAccuracyTrace.Current.IsEnabled)
                 RecordGpuAccuracyFrame(surface.Texture.NativePointer, canvas.Width, canvas.Height,
                     publishedTicks, "gpu-canvas");
-            if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; lease = null; }
+            // D5: GStreamer のリースは LayerImage が持たない（共有リング画像は Lease=null）ため、
+            // ここで lease を null にして捨てると返却漏れになる。finally の lease?.Dispose() に返させる
+            // （mpv は LayerImage.Release() が返却済みで、その Dispose は冪等）。
+            if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; }
         }
         finally
         {
