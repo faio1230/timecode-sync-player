@@ -80,6 +80,16 @@ env_flag (const char* name)
   return GetEnvironmentVariableA (name, buf, sizeof (buf)) > 0;
 }
 
+static int
+env_int (const char* name, int fallback)
+{
+  char buf[32];
+  DWORD n = GetEnvironmentVariableA (name, buf, sizeof (buf));
+  if (n == 0 || n >= sizeof (buf))
+    return fallback;
+  return atoi (buf);
+}
+
 /* diagnostics: dump every delivered sample (pacing analysis) */
 static bool frame_log = env_flag ("TCS_FRAME_LOG");
 
@@ -87,6 +97,12 @@ static bool frame_log = env_flag ("TCS_FRAME_LOG");
  * The paused-seek bug is about state, so the report needs the state at each
  * boundary, not just arrival times. */
 static bool paused_seek_diag = env_flag ("TCS_PAUSED_SEEK_DIAG");
+
+/* D2 rework test hook: hold frame_lock in on_new_sample for the first few
+ * samples, widening the streaming-thread window that a state change under
+ * frame_lock deadlocks with. No effect when unset. */
+static int test_hold_frame_lock_ms = env_int ("TCS_TEST_HOLD_FRAME_LOCK_MS", 0);
+static std::atomic<int> test_hold_budget{test_hold_frame_lock_ms > 0 ? 40 : 0};
 
 struct TcsPlayer {
   /* D3D11 + Spout.
@@ -264,6 +280,10 @@ struct TcsPlayer {
   bool paused = true;
   bool eos = false;
   bool failed = false;
+  /* seek_locked runs under frame_lock, so an EOS restart cannot change the
+   * pipeline state there (streaming thread / sink stream lock deadlock, the
+   * same rule as tcs_player_set_paused). The caller applies it after release. */
+  bool pending_play_restart = false;
 
   /* bus thread */
   std::atomic<bool> bus_running{false};
@@ -946,7 +966,16 @@ on_new_sample (GstAppSink* sink, gpointer user)
   bool log_av = false;
   uint64_t log_av_seq = 0, log_av_gen = 0, log_av_target_ns = 0;
   {
-    std::lock_guard<std::mutex> g (p->frame_lock);
+    /* D2 rework diagnostics: the streaming thread holds the appsink stream lock
+     * here. If a state change holds frame_lock (the documented deadlock), this
+     * contention line is the last one before the hang. */
+    std::unique_lock<std::mutex> g (p->frame_lock, std::try_to_lock);
+    if (!g.owns_lock()) {
+      LOG ("on_new_sample: frame_lock busy; waiting (state change in progress?)");
+      g.lock();
+    }
+    if (test_hold_frame_lock_ms > 0 && test_hold_budget.fetch_sub (1) > 0)
+      Sleep ((DWORD) test_hold_frame_lock_ms);
     if (p->seg_diag_left > 0) {
       p->seg_diag_left--;
       LOG ("seek: diag vsample pts_ms=%.1f seg_start_ms=%.1f seg_base_ms=%.1f "
@@ -1551,8 +1580,11 @@ pump_arm (TcsPlayer* p, uint64_t generation)
       }
       pipeline = p->pipeline;
     }
-    if (pipeline)
+    if (pipeline) {
+      LOG ("pump_arm: set_state(PLAYING) begin");
       gst_element_set_state (pipeline, GST_STATE_PLAYING);
+      LOG ("pump_arm: set_state(PLAYING) end");
+    }
   }
 }
 
@@ -1602,8 +1634,11 @@ pump_preroll_tick (TcsPlayer* p)
       LOG ("paused-seek: pump deadline gen=%llu -> PAUSED (faults=%llu)",
           (unsigned long long) gen, (unsigned long long) faults);
     /* A user resume clears pump_active in set_paused and keeps PLAYING. */
-    if (pipeline && (timed_out || user_paused))
+    if (pipeline && (timed_out || user_paused)) {
+      LOG ("pump_tick: set_state(PAUSED) begin");
       gst_element_set_state (pipeline, GST_STATE_PAUSED);
+      LOG ("pump_tick: set_state(PAUSED) end");
+    }
   }
 }
 
@@ -1614,6 +1649,23 @@ pump_reset_locked (TcsPlayer* p)
   p->pump_active = false;
   p->pump_muted = false;
   p->pump_pending.store (false, std::memory_order_relaxed);
+}
+
+/* Apply the EOS restart that seek_locked deferred (pending_play_restart).
+ * Must not be called with frame_lock held. */
+static void
+apply_pending_play_restart (TcsPlayer* p)
+{
+  GstElement* pipeline = nullptr;
+  {
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    if (!p->pending_play_restart)
+      return;
+    p->pending_play_restart = false;
+    pipeline = p->pipeline;
+  }
+  if (pipeline)
+    gst_element_set_state (pipeline, GST_STATE_PLAYING);
 }
 
 /* ---------------- bus thread ---------------- */
@@ -1687,6 +1739,7 @@ teardown_pipeline (TcsPlayer* p)
     p->rebase_armed = false;
     p->rebase_seek_seqnum = 0;
     p->av_log_left = 0;
+    p->pending_play_restart = false;
     pump_reset_locked (p);
   }
 
@@ -1739,7 +1792,7 @@ seek_locked (TcsPlayer* p, double seconds, double rate)
   if (p->eos) {
     p->eos = false;
     if (!p->paused)
-      gst_element_set_state (p->pipeline, GST_STATE_PLAYING);
+      p->pending_play_restart = true;
   }
   /* MPEG-TS: tsdemux's ACCURATE seek scans each PES for a keyframe NAL and
    * loses track on H.264 whose IDRs carry no SPS/PPS, so instead snap to the
@@ -1774,15 +1827,21 @@ seek_locked (TcsPlayer* p, double seconds, double rate)
     gst_event_set_seqnum (sev, seq);
     /* TCS_NO_SEGMENT_REWRITE=1 is a debug escape hatch back to method 5 */
     p->rebase_seek_seqnum = env_flag ("TCS_NO_SEGMENT_REWRITE") ? 0 : seq;
+    LOG ("seek: send begin (ts) target_ns=%llu seq=%u",
+        (unsigned long long) p->gate_target_ns, seq);
     ok = gst_element_send_event (p->pipeline, sev);
+    LOG ("seek: send end (ts) ok=%d", ok ? 1 : 0);
     LOG ("seek: ts keyframe-snap target_ns=%llu gate armed seq=%u",
         (unsigned long long) p->gate_target_ns, seq);
   } else {
     p->rebase_armed = false;
     p->rebase_seek_seqnum = 0;
+    LOG ("seek: send begin (accurate) target_ns=%llu",
+        (unsigned long long) p->gate_target_ns);
     ok = gst_element_seek (p->pipeline, rate > 0.0 ? rate : 1.0,
         GST_FORMAT_TIME, flags, GST_SEEK_TYPE_SET,
         (gint64) (seconds * GST_SECOND), GST_SEEK_TYPE_NONE, -1);
+    LOG ("seek: send end (accurate) ok=%d", ok ? 1 : 0);
   }
   if (!ok) {
     char msg[256];
@@ -2013,6 +2072,8 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       /* wait (bounded) for the audio sink to consume its first buffer before
        * pausing; otherwise the sink never recovers on the next PLAYING. */
       if (p->asink) {
+        LOG ("load.prime: waiting for the audio sink (frames=%llu)",
+            (unsigned long long) p->frames_decoded);
         for (int i = 0; i < 40; i++) {
           bool failed;
           {
@@ -2023,13 +2084,19 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
             break;
           Sleep (50);
         }
+        LOG ("load.prime: done buffers=%llu",
+            (unsigned long long) p->audio_sink_buffers.load (std::memory_order_relaxed));
       }
       audio_prime_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
       t_anchor = qpc_now ();
-      {
-        std::lock_guard<std::mutex> g (p->frame_lock);
-        gst_element_set_state (p->pipeline, GST_STATE_PAUSED);
-      }
+      /* The PAUSED transition must NOT run under frame_lock: the streaming
+       * thread can be inside on_new_sample waiting for frame_lock while
+       * holding the sink's stream lock, and the state change needs that
+       * stream lock (the rule documented in tcs_player_set_paused). Holding
+       * frame_lock here deadlocks load: seek-to-lease never returns. */
+      LOG ("load.pause: set_state(PAUSED) begin");
+      gst_element_set_state (p->pipeline, GST_STATE_PAUSED);
+      LOG ("load.pause: set_state(PAUSED) end");
       pause_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
       t_anchor = qpc_now ();
       p->load_priming = false;
@@ -2312,6 +2379,8 @@ tcs_player_seek (TcsPlayer* player, double seconds)
     gen = seek_locked (player, seconds, player->rate);
   }
   log_pipe_state (player, "seek.after");
+  /* EOS restart deferred out of seek_locked (frame_lock was held there). */
+  apply_pending_play_restart (player);
   /* A paused pipeline cannot render the post-flush preroll (appsink sync=true
    * with a stopped clock). Arm the non-blocking pump: <=0.1ms here, delivery
    * and the PAUSED return happen on the bus thread. */
@@ -2341,6 +2410,7 @@ tcs_player_step_frame (TcsPlayer* player)
     gen = seek_locked (player, (double) pos / GST_SECOND + step, player->rate);
     pipeline = player->pipeline;
   }
+  apply_pending_play_restart (player);
   if (wasPaused) {
     /* PAUSED sinks do not re-preroll after a flush seek: run briefly and
      * stop again once the stepped frame has been delivered. The state changes
