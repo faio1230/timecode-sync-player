@@ -104,6 +104,12 @@ static bool paused_seek_diag = env_flag ("TCS_PAUSED_SEEK_DIAG");
 static int test_hold_frame_lock_ms = env_int ("TCS_TEST_HOLD_FRAME_LOCK_MS", 0);
 static std::atomic<int> test_hold_budget{test_hold_frame_lock_ms > 0 ? 40 : 0};
 
+/* Same idea for the seek path: hold frame_lock inside seek_locked before the
+ * seek event is sent, so on_new_sample queues on frame_lock while the flush
+ * seek needs the streaming thread. No effect when unset. */
+static int test_hold_seek_lock_ms = env_int ("TCS_TEST_HOLD_SEEK_LOCK_MS", 0);
+static std::atomic<int> test_seek_hold_budget{test_hold_seek_lock_ms > 0 ? 8 : 0};
+
 struct TcsPlayer {
   /* D3D11 + Spout.
    * Stage 6b: the device is ALWAYS owned by the shim. The compositor pointer
@@ -1769,12 +1775,31 @@ teardown_pipeline (TcsPlayer* p)
   p->audio_rewrite_sink = nullptr;
 }
 
-/* Seek implementation (manual seek, step and load-with-start all go through
+/* A seek prepared under frame_lock. The event/parameters are sent by
+ * seek_send() AFTER the lock is released: a flushing seek needs the streaming
+ * thread, which may be inside on_new_sample waiting for frame_lock while
+ * holding the sink's stream lock (the rule documented in
+ * tcs_player_set_paused). Holding frame_lock across the send deadlocks. */
+struct SeekRequest {
+  bool valid = false;
+  bool ts = false;
+  GstElement* pipeline = nullptr;
+  double seconds = 0.0;
+  double rate = 1.0;
+  gint64 target_ns = 0;
+  GstSeekFlags flags = (GstSeekFlags) 0;
+  guint32 seq = 0;
+  GstEvent* event = nullptr;   /* ts only: created under frame_lock, sent after */
+};
+
+/* Seek preparation (manual seek, step and load-with-start all go through
  * this): opens a new generation, discards undelivered frames and arms the TS
- * delivery gate. Caller holds frame_lock. */
+ * delivery gate. Caller holds frame_lock. The seek itself is NOT sent here;
+ * the caller runs seek_send() after releasing frame_lock. */
 static uint64_t
-seek_locked (TcsPlayer* p, double seconds, double rate)
+seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out)
 {
+  out->valid = false;
   if (!p->pipeline)
     return p->generation;
   p->generation++;
@@ -1794,6 +1819,8 @@ seek_locked (TcsPlayer* p, double seconds, double rate)
     if (!p->paused)
       p->pending_play_restart = true;
   }
+  if (test_hold_seek_lock_ms > 0 && test_seek_hold_budget.fetch_sub (1) > 0)
+    Sleep ((DWORD) test_hold_seek_lock_ms);
   /* MPEG-TS: tsdemux's ACCURATE seek scans each PES for a keyframe NAL and
    * loses track on H.264 whose IDRs carry no SPS/PPS, so instead snap to the
    * keyframe before the target (KEY_UNIT|SNAP_BEFORE) and let the sinks drop
@@ -1804,7 +1831,6 @@ seek_locked (TcsPlayer* p, double seconds, double rate)
       ? (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT |
           GST_SEEK_FLAG_SNAP_BEFORE)
       : (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE);
-  gboolean ok;
   if (p->mpegts) {
     LARGE_INTEGER now;
     QueryPerformanceCounter (&now);
@@ -1827,31 +1853,53 @@ seek_locked (TcsPlayer* p, double seconds, double rate)
     gst_event_set_seqnum (sev, seq);
     /* TCS_NO_SEGMENT_REWRITE=1 is a debug escape hatch back to method 5 */
     p->rebase_seek_seqnum = env_flag ("TCS_NO_SEGMENT_REWRITE") ? 0 : seq;
-    LOG ("seek: send begin (ts) target_ns=%llu seq=%u",
-        (unsigned long long) p->gate_target_ns, seq);
-    ok = gst_element_send_event (p->pipeline, sev);
-    LOG ("seek: send end (ts) ok=%d", ok ? 1 : 0);
-    LOG ("seek: ts keyframe-snap target_ns=%llu gate armed seq=%u",
-        (unsigned long long) p->gate_target_ns, seq);
+    out->event = sev;
+    out->seq = seq;
+    out->ts = true;
   } else {
     p->rebase_armed = false;
     p->rebase_seek_seqnum = 0;
+    out->ts = false;
+  }
+  out->valid = true;
+  out->pipeline = p->pipeline;
+  out->seconds = seconds;
+  out->rate = rate > 0.0 ? rate : 1.0;
+  out->target_ns = (gint64) (seconds * GST_SECOND);
+  out->flags = flags;
+  return p->generation;
+}
+
+/* Send a prepared seek with NO lock held (see SeekRequest). */
+static void
+seek_send (TcsPlayer* p, const SeekRequest& req)
+{
+  if (!req.valid || !req.pipeline)
+    return;
+  gboolean ok;
+  if (req.ts) {
+    LOG ("seek: send begin (ts) target_ns=%llu seq=%u",
+        (unsigned long long) req.target_ns, req.seq);
+    ok = gst_element_send_event (req.pipeline, req.event);
+    LOG ("seek: send end (ts) ok=%d", ok ? 1 : 0);
+    LOG ("seek: ts keyframe-snap target_ns=%llu gate armed seq=%u",
+        (unsigned long long) req.target_ns, req.seq);
+  } else {
     LOG ("seek: send begin (accurate) target_ns=%llu",
-        (unsigned long long) p->gate_target_ns);
-    ok = gst_element_seek (p->pipeline, rate > 0.0 ? rate : 1.0,
-        GST_FORMAT_TIME, flags, GST_SEEK_TYPE_SET,
-        (gint64) (seconds * GST_SECOND), GST_SEEK_TYPE_NONE, -1);
+        (unsigned long long) req.target_ns);
+    ok = gst_element_seek (req.pipeline, req.rate, GST_FORMAT_TIME, req.flags,
+        GST_SEEK_TYPE_SET, req.target_ns, GST_SEEK_TYPE_NONE, -1);
     LOG ("seek: send end (accurate) ok=%d", ok ? 1 : 0);
   }
   if (!ok) {
     char msg[256];
     snprintf (msg, sizeof (msg),
         "seek failed (gst_element_seek FALSE, %s, target=%.3f)",
-        p->mpegts ? "ts keyunit/snap-before" : "accurate", seconds);
+        req.ts ? "ts keyunit/snap-before" : "accurate", req.seconds);
+    std::lock_guard<std::mutex> g (p->frame_lock);
     p->last_error = msg;
     LOG ("%s", msg);
   }
-  return p->generation;
 }
 
 static int
@@ -2055,11 +2103,15 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
 
     t_anchor = qpc_now ();
     if (start_sec > 0.0) {
-      std::lock_guard<std::mutex> g (p->frame_lock);
-      p->eos = false;
-      /* same seek semantics (and TS gate) as a manual seek; a load seek
-       * always starts at normal rate like before */
-      seek_locked (p, start_sec, 1.0);
+      SeekRequest req;
+      {
+        std::lock_guard<std::mutex> g (p->frame_lock);
+        p->eos = false;
+        /* same seek semantics (and TS gate) as a manual seek; a load seek
+         * always starts at normal rate like before */
+        seek_prepare_locked (p, start_sec, 1.0, &req);
+      }
+      seek_send (p, req);
     }
     seek_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     t_anchor = qpc_now ();
@@ -2373,13 +2425,16 @@ tcs_player_seek (TcsPlayer* player, double seconds)
   log_pipe_state (player, "seek.before");
   uint64_t gen;
   bool was_paused;
+  SeekRequest req;
   {
     std::lock_guard<std::mutex> g (player->frame_lock);
     was_paused = player->paused;
-    gen = seek_locked (player, seconds, player->rate);
+    gen = seek_prepare_locked (player, seconds, player->rate, &req);
   }
+  /* The flushing seek goes out with no lock held (see SeekRequest). */
+  seek_send (player, req);
   log_pipe_state (player, "seek.after");
-  /* EOS restart deferred out of seek_locked (frame_lock was held there). */
+  /* EOS restart deferred out of seek_prepare_locked (frame_lock was held there). */
   apply_pending_play_restart (player);
   /* A paused pipeline cannot render the post-flush preroll (appsink sync=true
    * with a stopped clock). Arm the non-blocking pump: <=0.1ms here, delivery
@@ -2397,6 +2452,7 @@ tcs_player_step_frame (TcsPlayer* player)
   bool wasPaused;
   uint64_t gen;
   GstElement* pipeline;
+  SeekRequest req;
   log_pipe_state (player, "step.before");
   {
     std::lock_guard<std::mutex> g (player->frame_lock);
@@ -2407,9 +2463,10 @@ tcs_player_step_frame (TcsPlayer* player)
     before = player->frames_decoded;
     wasPaused = player->paused;
     /* the step target goes through the same TS gate as a manual seek */
-    gen = seek_locked (player, (double) pos / GST_SECOND + step, player->rate);
+    gen = seek_prepare_locked (player, (double) pos / GST_SECOND + step, player->rate, &req);
     pipeline = player->pipeline;
   }
+  seek_send (player, req);
   apply_pending_play_restart (player);
   if (wasPaused) {
     /* PAUSED sinks do not re-preroll after a flush seek: run briefly and
@@ -2455,17 +2512,26 @@ TCS_GST_API int
 tcs_player_set_speed (TcsPlayer* player, double rate)
 {
   if (!player) return TCS_ERR_GENERIC;
-  std::lock_guard<std::mutex> g (player->frame_lock);
-  player->rate = rate > 0.0 ? rate : 1.0;
-  if (!player->pipeline) return TCS_OK;
-  /* a rate change re-seeks; the TS segment rewrite does not apply to it */
-  player->rebase_armed = false;
-  player->rebase_seek_seqnum = 0;
+  GstElement* pipeline = nullptr;
+  double new_rate = 1.0;
   gint64 pos = 0;
-  gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos);
-  gst_element_seek (player->pipeline, player->rate, GST_FORMAT_TIME,
+  {
+    std::lock_guard<std::mutex> g (player->frame_lock);
+    player->rate = rate > 0.0 ? rate : 1.0;
+    if (!player->pipeline) return TCS_OK;
+    /* a rate change re-seeks; the TS segment rewrite does not apply to it */
+    player->rebase_armed = false;
+    player->rebase_seek_seqnum = 0;
+    new_rate = player->rate;
+    gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos);
+    pipeline = player->pipeline;
+  }
+  /* The flushing seek goes out with no lock held (the rule in SeekRequest). */
+  LOG ("seek: send begin (rate) target_ns=%lld", (long long) pos);
+  gboolean ok = gst_element_seek (pipeline, new_rate, GST_FORMAT_TIME,
       (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE | GST_SEEK_FLAG_SKIP),
       GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, -1);
+  LOG ("seek: send end (rate) ok=%d", ok ? 1 : 0);
   return TCS_OK;
 }
 
