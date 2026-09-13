@@ -974,6 +974,86 @@ seek-c の定常オフセットが -274ms なので、tol 250ms には到達し�
 **公開が止まって誤差が -290 → -640ms へ発散する**という別の挙動だった（GPU 合成では起きない）。
 今回のものは GPU 合成で、**発散せず一定**。共通しているのは **60fps 素材でだけ起きる**という点。
 
+## 欠陥 D4: GPU 合成にすると、ロード後 5 秒間 LTC 同期の補正が止まる（2026-09-14）
+
+**V3 の数字より根の深い欠陥。V1〜V10 の前提そのものに関わる。**
+
+### 観測
+
+V3-B（`sync.evaluate` 計測、`TestResults/v3b`）でフェーズごとの評価回数を数えた。
+
+| フェーズ | 長さ | gst の評価回数 | 1 秒あたり | エンジンの \|delta\| | 実際の表示誤差 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| black-sweep | 36.3s | 496 | 13.68 | 17.3ms | - |
+| freeze-sweep | 36.3s | 371 | 10.23 | 23.5ms | -37〜-53ms |
+| seek-a | 6.2s | **1** | **0.16** | 44.8ms | -105.8ms |
+| seek-b | 6.2s | **1** | **0.16** | 125.9ms | -112.7ms |
+| **seek-c** | 6.2s | **1** | **0.16** | **99.2ms** | **-274.1ms** |
+| seek-back | 6.2s | **1** | **0.16** | 40.0ms | -102.1ms |
+
+**mpv でも同じ**（seek-a/c/back が各 1 回、seek-b が 4 回）。**出力経路側の問題であって、プレイヤー側ではない。**
+
+### 原因（コードで確定）
+
+`ContinueOnTrackCoordinator` は `Decide` に入る前に 3 つのゲートを通る。
+
+```csharp
+if (_effects.IsNativeSeeking?.Invoke() == true) return SyncRequestResult.Deferred;
+(int timePosRc, double playbackSeconds) = _effects.GetTimePos();
+if (timePosRc != 0) return SyncRequestResult.Deferred;
+if (!_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames())) return SyncRequestResult.Deferred;
+```
+
+止めているのは 3 番目である。アプリログに証拠が残っていた:
+
+```
+Continue mode: waiting for file load stability playback=4.167 mediaPos=4.200 renderedFrames=0
+Continue mode: waiting for file load stability playback=5.167 mediaPos=5.240 renderedFrames=0
+Continue mode: waiting for file load stability playback=6.167 mediaPos=6.200 renderedFrames=0
+```
+
+**`renderedFrames=0`。** `TimecodeSyncService.TryMarkFileLoaded`:
+
+```csharp
+private const double FileLoadPlaybackProgressSeconds = 0.08;
+private const long FileLoadRenderedFrameProgress = 2;
+private static readonly TimeSpan FileLoadTimeout = TimeSpan.FromSeconds(5);
+...
+long renderedFrameProgress = renderedFrameCount - _fileLoadStartedRenderedFrames;
+if (playbackProgress < FileLoadPlaybackProgressSeconds ||
+    renderedFrameProgress < FileLoadRenderedFrameProgress)
+    return false;
+```
+
+`renderedFrameCount` の実体は `MainWindow` の
+`GetTotalRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames` であり、
+これは **CPU の WriteableBitmap 経路で描画したフレーム数**である。
+**GPU 合成ではビットマップを描かないので、この値は永久に 0 のまま。**
+
+したがって `renderedFrameProgress` は常に `0 < 2` となり、**ゲートは 5 秒のタイムアウトでしか開かない**。
+
+### 影響
+
+- **`OutputBackend=Gpu` にすると、ファイルロード・トラック切替のたびに LTC 同期の補正が 5 秒間止まる。**
+- 精度ハーネスのシークフェーズはちょうど 5 秒なので、**フェーズ全体で同期が効いていなかった**。
+  スイープ（35 秒）ではタイムアウト後に毎秒 10〜14 回動くため、この欠陥が見えていなかった。
+- **本番では、トラックが切り替わるたびに 5 秒間 LTC からずれても補正されない**ことになる。
+  ライブショー用途としては見過ごせない。
+
+### V3 の数字への影響
+
+**V3 の測定値は、この欠陥を含んだ状態のものである。**
+seek-c の -274ms が「着地のずれ」なのか「5 秒間補正されないこと」なのかは、
+**D4 を直してから測り直さないと分けられない。**
+
+依頼 A で確定した「着地の遅れが定常オフセットを決める」という連鎖自体は変わらないが、
+**「その後、誰も補正しない」の理由が、許容内だからではなく、そもそもエンジンが止められていたから**
+という可能性が出てきた（seek-c の唯一の評価では \|delta\|=99.2ms で許容 240ms 内だったので、
+仮に動いていても補正はしなかったはずだが、それは 1 標本の話であり、
+5 秒間動いていればどこかで超えた可能性がある）。
+
+**D4 を直し、V3 を測り直す。それまで V3 の判定は保留とする。**
+
 ## V3 の判定（表 1・表 2・表 3 が揃ったので出す）
 
 判定は `docs/GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md` の「V3 の判定基準」に従う。**基準は緩めない。**
