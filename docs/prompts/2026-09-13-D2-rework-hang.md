@@ -86,3 +86,49 @@ D2 の非同期 pump は**一時的に PLAYING へ遷移させ、bus スレッ�
 
 終了させる前に **スレッド数・各スレッドの待機理由・CPU 時間**を残す。上の表がそれで、
 これがあったから「同一事象」と判定できた。可能ならダンプも取る。
+
+## 追記: 親のコードレビューで見つけた構造（2026-09-13 17:45）
+
+**`state_mutex` を保持したまま `gst_element_set_state` を呼んでいる箇所が 3 つある。**
+
+| 関数 | 行（D2 ブランチ） | 状況 |
+| --- | ---: | --- |
+| `pump_arm` | 1554 | `state_mutex` 保持のまま `set_state(PLAYING)` |
+| `pump_preroll_tick`（**バススレッド**） | 1605 | `state_mutex` 保持のまま `set_state(PAUSED)` |
+| `tcs_player_set_paused` | 2287 | `state_mutex` 保持のまま `set_state(PAUSED/PLAYING)` |
+
+`pump_preroll_tick` はバススレッド（1651 行の `bus_loop` 内）から呼ばれ、**入口で `state_mutex` を取る**。
+
+### 疑われる経路（ABBA）
+
+- スレッド A（`tcs_player_set_paused` または `pump_arm`）: **`state_mutex` を保持**した状態で
+  `gst_element_set_state` に入り、GStreamer 内部のパイプライン状態ロックを待つ。
+- スレッド B（バススレッド `pump_preroll_tick`）: GStreamer 内部の状態ロック側で進行しているか、
+  あるいは自身の `set_state` に入っており、**`state_mutex` を待つ**。
+
+→ `state_mutex` と GStreamer 内部の状態ロックの間で相互待ち。**37 スレッドすべて待機**という観測と整合する。
+
+### 既存コードは同じ規則を frame_lock については知っている
+
+`tcs_player_set_paused` のコメント:
+
+```
+/* Do not hold frame_lock across the state change: the streaming thread may
+ * be inside on_new_sample waiting for frame_lock while holding the sink's
+ * stream lock, and the state change needs that stream lock (deadlock). */
+```
+
+**同じ規則が `state_mutex` とバススレッドの間にも当てはまる。** `frame_lock` は正しく外していたが、
+新設した `state_mutex` で同じ罠を踏んでいる。
+
+### 確認と修正の方向（**採否は計測で決めること。親の推測である**）
+
+- **`gst_element_set_state` をどのミューテックスも保持しない状態で呼ぶ。** `state_mutex` は
+  「どの状態にするか」の決定だけを保護し、実際の遷移はロックの外で行う。
+  ただし決定と遷移の間に別の決定が割り込む競合をどう防ぐかは設計が要る
+  （`state_mutex` を使う目的がまさにそれなので、単に外へ出すだけでは競合が戻る）。
+- 代替として、状態遷移を 1 本のスレッドに集約する（遷移の要求をキューに積み、バススレッドだけが
+  `set_state` を呼ぶ）案も考えられる。
+
+**まず上の経路が実際に起きているかを計測で確かめること。** 親の読みが外れている可能性もある。
+ハング時のスタックが取れれば一発で分かる。
