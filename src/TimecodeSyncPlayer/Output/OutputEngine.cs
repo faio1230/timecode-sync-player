@@ -122,6 +122,7 @@ internal sealed class OutputEngine : IDisposable
     private TickSchedule? composeSchedule;
     private long originQpc;
     private long nextImageId;
+    private long publishedFrameCount;
     private long lastPreviewQpc;
     private bool testCard;
     private bool spoutRunning;
@@ -190,6 +191,12 @@ internal sealed class OutputEngine : IDisposable
 
     /// <summary>Adopt 済みデバイスポインタ（未初期化なら IntPtr.Zero）。</summary>
     public IntPtr DevicePointer => Volatile.Read(ref devicePointer);
+
+    /// <summary>
+    /// D4: 合成プール（表示経路）へ公開したフレーム数。CPU 合成の
+    /// PlaybackPerformanceStats.TotalRenderedFrames に相当し、GPU 合成のロード安定ゲートが読む。
+    /// </summary>
+    internal long PublishedFrameCount => Interlocked.Read(ref publishedFrameCount);
 
     /// <summary>
     /// UI スレッド。GStreamer プレイヤーをソースとして接続する（PlayerBackend=Gstreamer かつ Gpu 出力時）。
@@ -411,6 +418,7 @@ internal sealed class OutputEngine : IDisposable
 
     private void OnComposePublished()
     {
+        Interlocked.Increment(ref publishedFrameCount);
         foreach (var entry in retired) entry.Plan.NewImagePublished();
     }
 
