@@ -7,7 +7,7 @@ namespace TimecodeSyncPlayer;
 /// <summary>
 /// V3 計測: IsNativeSeeking() の戻り値と、その判定に使う seeking プロパティの生値を残す。
 /// events.jsonl へは変化時と 2 秒ごと（連続性の証跡）、アプリログへは変化時のみ書く。
-/// トレース無効時もアプリログの変化記録だけは残す（サンプリング判定には影響しない）。
+/// トレース無効時は先頭で即 return し、時刻取得・比較・ログを行わない（I4/I6）。
 /// </summary>
 internal sealed class SeekingProbe
 {
@@ -19,6 +19,7 @@ internal sealed class SeekingProbe
 
     public void Record(string raw, bool result)
     {
+        if (!OutputTrace.Current.IsEnabled) return;
         long now = Stopwatch.GetTimestamp();
         bool changed = !_initialized || raw != _lastRaw || result != _lastResult;
         if (!changed && now - _lastQpc < HeartbeatTicks) return;
@@ -26,12 +27,9 @@ internal sealed class SeekingProbe
         _lastRaw = raw;
         _lastResult = result;
         _lastQpc = now;
-        if (OutputTrace.Current.IsEnabled)
-        {
-            OutputTrace.Current.Record(new("player.seeking", "PLAYER", now,
-                Value: result ? 1 : 0,
-                Detail: "raw=" + (raw.Length == 0 ? "<empty>" : raw)));
-        }
+        OutputTrace.Current.Record(new("player.seeking", "PLAYER", now,
+            Value: result ? 1 : 0,
+            Detail: "raw=" + (raw.Length == 0 ? "<empty>" : raw)));
         if (changed)
             Log.Information("player.seeking raw={Raw} isNativeSeeking={Result}",
                 raw.Length == 0 ? "<empty>" : raw, result);
