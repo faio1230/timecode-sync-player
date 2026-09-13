@@ -178,6 +178,77 @@ public class GstMpvApiAdapterTests
         api.GetPropertyString(ctx, "video-codec").Should().Be("d3d11h264dec");
         api.GetPropertyString(ctx, "nothere").Should().BeEmpty();
     }
+
+    [Fact]
+    public void Pause_PropertyReportsNativePauseState()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1), IsPausedValue = true };
+        var state = new GstBackendState(native);
+        var api = new GstMpvApiAdapter(state);
+        IntPtr ctx = api.Create();
+
+        api.GetPropertyString(ctx, "pause").Should().Be("yes");
+        native.IsPausedValue = false;
+        api.GetPropertyString(ctx, "pause").Should().Be("no");
+    }
+
+    [Fact]
+    public void Seeking_IsNoWithoutSeek()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1) };
+        var state = new GstBackendState(native);
+        var api = new GstMpvApiAdapter(state);
+        IntPtr ctx = api.Create();
+
+        api.GetPropertyString(ctx, "seeking").Should().Be("no");
+    }
+
+    [Fact]
+    public void Seeking_IsYesUntilANewDeliveryArrives()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1), DeliveryArrivals = 10 };
+        var state = new GstBackendState(native);
+        var api = new GstMpvApiAdapter(state);
+        IntPtr ctx = api.Create();
+
+        api.CommandString(ctx, "no-osd seek 5.0 absolute+exact").Should().Be(0);
+        api.GetPropertyString(ctx, "seeking").Should().Be("yes");
+
+        // 新位置のフレームが届く前は yes のまま。
+        api.GetPropertyString(ctx, "seeking").Should().Be("yes");
+        native.DeliveryArrivals = 11;
+        api.GetPropertyString(ctx, "seeking").Should().Be("no");
+
+        // 解除後は到着数が増えても no。
+        native.DeliveryArrivals = 12;
+        api.GetPropertyString(ctx, "seeking").Should().Be("no");
+    }
+
+    [Fact]
+    public void Seeking_LoadClearsPendingSeek()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1), DeliveryArrivals = 3 };
+        var state = new GstBackendState(native);
+        var api = new GstMpvApiAdapter(state);
+        IntPtr ctx = api.Create();
+
+        api.CommandString(ctx, "seek 2.0 absolute+exact");
+        api.GetPropertyString(ctx, "seeking").Should().Be("yes");
+
+        api.CommandString(ctx, MpvPlaybackCommandBuilder.BuildLoadFileCommand(@"D:\clip.mp4", 1.0));
+        api.GetPropertyString(ctx, "seeking").Should().Be("no");
+    }
+
+    [Fact]
+    public void AudioCodec_IsEmptyBecauseShimHasNoQuery()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1) };
+        var state = new GstBackendState(native);
+        var api = new GstMpvApiAdapter(state);
+        IntPtr ctx = api.Create();
+
+        api.GetPropertyString(ctx, "audio-codec").Should().BeEmpty();
+    }
 }
 
 public class GstMpvRenderApiAdapterTests
@@ -439,7 +510,8 @@ file sealed class FakeGstNative : IGstNativeApi
         return 0;
     }
 
-    public bool IsPaused(IntPtr player) => true;
+    public bool IsPausedValue { get; set; } = true;
+    public bool IsPaused(IntPtr player) => IsPausedValue;
 
     public ulong Seek(IntPtr player, double seconds)
     {
@@ -511,9 +583,10 @@ file sealed class FakeGstNative : IGstNativeApi
         return 0;
     }
 
+    public ulong DeliveryArrivals { get; set; }
     public int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats)
     {
-        stats = default;
+        stats = new GstNative.TcsDeliveryStats { Arrivals = DeliveryArrivals };
         return 0;
     }
 
