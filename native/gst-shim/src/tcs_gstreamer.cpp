@@ -83,6 +83,11 @@ env_flag (const char* name)
 /* diagnostics: dump every delivered sample (pacing analysis) */
 static bool frame_log = env_flag ("TCS_FRAME_LOG");
 
+/* D2 diagnostics: pipeline/sink state around seeks, pause changes and steps.
+ * The paused-seek bug is about state, so the report needs the state at each
+ * boundary, not just arrival times. */
+static bool paused_seek_diag = env_flag ("TCS_PAUSED_SEEK_DIAG");
+
 struct TcsPlayer {
   /* D3D11 + Spout.
    * Stage 6b: the device is ALWAYS owned by the shim. The compositor pointer
@@ -225,6 +230,21 @@ struct TcsPlayer {
   tcs_frame_notify_fn notify = nullptr;
   void* notify_user = nullptr;
 
+  /* D2: paused-seek preroll pump. A flushing seek on a PAUSED pipeline leaves
+   * the target sample in preroll; appsink has sync=true, so new_sample is only
+   * emitted once the clock runs. The pump briefly runs the pipeline PLAYING
+   * (muted) until a frame of the seek generation is queued, then returns to
+   * PAUSED. tcs_player_seek only arms it (non-blocking); the bus thread ticks
+   * it; state_mutex serializes the final PAUSED decision with pause calls so a
+   * user resume always wins. */
+  std::mutex state_mutex;
+  std::atomic<bool> pump_pending{false};
+  bool pump_active = false;              /* frame_lock */
+  uint64_t pump_generation = 0;          /* frame_lock */
+  ULONGLONG pump_deadline = 0;           /* frame_lock */
+  bool pump_muted = false;               /* frame_lock */
+  uint64_t pump_faults = 0;              /* frame_lock (diagnostics) */
+
   /* audio priming: a paused load must not yank the audio sink down while it
    * is still initializing (wasapi2 stopped mid-init never recovers). */
   std::atomic<uint64_t> audio_sink_buffers{0};
@@ -256,6 +276,16 @@ struct TcsPlayer {
   D3D11_TEXTURE2D_DESC single_desc = {};
 };
 
+/* Volume with every mute source (user mute, load priming, D2 pause pump);
+ * caller holds frame_lock. Internal helper: outside the extern "C" block. */
+static void
+apply_volume_locked (TcsPlayer* p)
+{
+  if (p->avolume)
+    g_object_set (p->avolume, "volume",
+        (p->muted || p->load_priming || p->pump_muted) ? 0.0 : p->volume_value / 100.0, nullptr);
+}
+
 static void
 set_error (TcsPlayer* p, const char* fmt, ...)
 {
@@ -267,6 +297,34 @@ set_error (TcsPlayer* p, const char* fmt, ...)
   std::lock_guard<std::mutex> g (p->frame_lock);
   p->last_error = buf;
   LOG ("%s", buf);
+}
+
+/* D2: one-line snapshot of the pipeline/sink state at a boundary.
+ * Caller must NOT hold frame_lock. */
+static void
+log_pipe_state (TcsPlayer* p, const char* where)
+{
+  if (!paused_seek_diag || !p)
+    return;
+  GstState cur = GST_STATE_VOID_PENDING, pending = GST_STATE_VOID_PENDING;
+  if (p->pipeline)
+    gst_element_get_state (p->pipeline, &cur, &pending, 0);
+  GstState vsink = GST_STATE_VOID_PENDING, vpending = GST_STATE_VOID_PENDING;
+  if (p->appsink)
+    gst_element_get_state (p->appsink, &vsink, &vpending, 0);
+  gint64 pos = -1;
+  if (p->pipeline)
+    gst_element_query_position (p->pipeline, GST_FORMAT_TIME, &pos);
+  guint64 frames = 0;
+  guint32 queued = 0;
+  {
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    frames = p->frames_decoded;
+    queued = (guint32) p->frames.size ();
+  }
+  LOG ("diag: %s paused=%d pipe=%d/%d vsink=%d/%d pos_ms=%.1f frames=%llu queued=%u",
+      where, p->paused ? 1 : 0, (int) cur, (int) pending, (int) vsink, (int) vpending,
+      (double) pos / 1e6, (unsigned long long) frames, queued);
 }
 
 static void
@@ -1354,7 +1412,7 @@ build_audio_chain (TcsPlayer* p, gboolean need_audio_decode)
     ahead = p->aconvert;
   }
   g_object_set (p->avolume, "volume",
-      (p->muted || p->load_priming) ? 0.0 : p->volume_value / 100.0, nullptr);
+      (p->muted || p->load_priming || p->pump_muted) ? 0.0 : p->volume_value / 100.0, nullptr);
   if (p->adecodebin) {
     gst_bin_add (GST_BIN (p->pipeline), p->adecodebin);
     g_signal_connect (p->adecodebin, "pad-added",
@@ -1462,6 +1520,102 @@ on_demux_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user)
   if (caps)
     gst_caps_unref (caps);
 }
+/* ---------------- D2: paused-seek preroll pump ---------------- */
+
+/* Upper bound for one pump. Reached without a frame -> back to PAUSED and the
+ * failure is recorded (last_error + counter), never a silent PLAYING. */
+static const ULONGLONG kPumpBudgetMs = 500;
+
+/* Arm the pump for a seek that was issued while paused. Called outside
+ * frame_lock / state_mutex by tcs_player_seek; returns immediately (the
+ * PLAYING state change itself is asynchronous). */
+static void
+pump_arm (TcsPlayer* p, uint64_t generation)
+{
+  GstElement* pipeline = nullptr;
+  {
+    std::lock_guard<std::mutex> st (p->state_mutex);
+    {
+      std::lock_guard<std::mutex> g (p->frame_lock);
+      if (!p->pipeline || !p->paused)
+        return;
+      p->pump_active = true;
+      p->pump_pending.store (true, std::memory_order_relaxed);
+      p->pump_generation = generation;
+      p->pump_deadline = GetTickCount64 () + kPumpBudgetMs;
+      if (!p->pump_muted) {
+        /* No audible output while the pipeline runs for the preroll: the user
+         * still believes playback is paused (same idea as load_priming). */
+        p->pump_muted = true;
+        apply_volume_locked (p);
+      }
+      pipeline = p->pipeline;
+    }
+    if (pipeline)
+      gst_element_set_state (pipeline, GST_STATE_PLAYING);
+  }
+}
+
+/* Bus-thread tick: deliver the pending frame, then stop again. */
+static void
+pump_preroll_tick (TcsPlayer* p)
+{
+  if (!p || !p->pump_pending.load (std::memory_order_relaxed))
+    return;
+  GstElement* pipeline = nullptr;
+  bool has_frame = false, timed_out = false, user_paused = false;
+  uint64_t gen = 0, faults = 0;
+  {
+    std::lock_guard<std::mutex> st (p->state_mutex);
+    {
+      std::lock_guard<std::mutex> g (p->frame_lock);
+      if (!p->pump_active) {
+        p->pump_pending.store (false, std::memory_order_relaxed);
+        return;
+      }
+      for (const TcsPlayer::FrameSlot& f : p->frames) {
+        if (f.generation == p->pump_generation) {
+          has_frame = true;
+          break;
+        }
+      }
+      if (!has_frame && GetTickCount64 () >= p->pump_deadline)
+        timed_out = true;
+      if (!has_frame && !timed_out)
+        return;
+      p->pump_active = false;
+      p->pump_pending.store (false, std::memory_order_relaxed);
+      if (p->pump_muted) {
+        p->pump_muted = false;
+        apply_volume_locked (p);
+      }
+      user_paused = p->paused;
+      gen = p->pump_generation;
+      if (timed_out) {
+        p->pump_faults++;
+        faults = p->pump_faults;
+        p->last_error = "paused seek: no frame before the pump deadline";
+      }
+      pipeline = p->pipeline;
+    }
+    if (timed_out)
+      LOG ("paused-seek: pump deadline gen=%llu -> PAUSED (faults=%llu)",
+          (unsigned long long) gen, (unsigned long long) faults);
+    /* A user resume clears pump_active in set_paused and keeps PLAYING. */
+    if (pipeline && (timed_out || user_paused))
+      gst_element_set_state (pipeline, GST_STATE_PAUSED);
+  }
+}
+
+/* Drop pump state without touching the pipeline (teardown holds frame_lock). */
+static void
+pump_reset_locked (TcsPlayer* p)
+{
+  p->pump_active = false;
+  p->pump_muted = false;
+  p->pump_pending.store (false, std::memory_order_relaxed);
+}
+
 /* ---------------- bus thread ---------------- */
 
 static void
@@ -1494,6 +1648,7 @@ static void
 bus_loop (TcsPlayer* p)
 {
   while (p->bus_running.load ()) {
+    pump_preroll_tick (p);
     GstBus* bus = p->pipeline ? gst_element_get_bus (p->pipeline) : nullptr;
     if (bus) {
       GstMessage* msg = gst_bus_timed_pop_filtered (bus, 2 * GST_MSECOND,
@@ -1532,6 +1687,7 @@ teardown_pipeline (TcsPlayer* p)
     p->rebase_armed = false;
     p->rebase_seek_seqnum = 0;
     p->av_log_left = 0;
+    pump_reset_locked (p);
   }
 
   if (p->pipeline) {
@@ -2103,14 +2259,37 @@ tcs_player_set_paused (TcsPlayer* player, int paused)
    * be inside on_new_sample waiting for frame_lock while holding the sink's
    * stream lock, and the state change needs that stream lock (deadlock). */
   GstElement* pipeline;
+  log_pipe_state (player, paused ? "set_paused.before(yes)" : "set_paused.before(no)");
+  bool skip_state_change = false;
   {
-    std::lock_guard<std::mutex> g (player->frame_lock);
-    player->paused = paused != 0;
-    pipeline = player->pipeline;
+    /* Serialize the final decision with the pump's PAUSED return so a resume
+     * always wins over a pump that has just delivered its frame. */
+    std::lock_guard<std::mutex> st (player->state_mutex);
+    {
+      std::lock_guard<std::mutex> g (player->frame_lock);
+      player->paused = paused != 0;
+      if (paused) {
+        /* A pause request while the pump is delivering stays PLAYING until
+         * the pump has the frame; the pump restores PAUSED itself. */
+        skip_state_change = player->pump_active;
+      } else {
+        /* Resume wins: cancel the pump and unmute before going PLAYING. */
+        if (player->pump_active) {
+          player->pump_active = false;
+          player->pump_pending.store (false, std::memory_order_relaxed);
+        }
+        if (player->pump_muted) {
+          player->pump_muted = false;
+          apply_volume_locked (player);
+        }
+      }
+      pipeline = player->pipeline;
+    }
+    if (pipeline && !skip_state_change)
+      gst_element_set_state (pipeline,
+          paused ? GST_STATE_PAUSED : GST_STATE_PLAYING);
   }
-  if (pipeline)
-    gst_element_set_state (pipeline,
-        paused ? GST_STATE_PAUSED : GST_STATE_PLAYING);
+  log_pipe_state (player, paused ? "set_paused.after(yes)" : "set_paused.after(no)");
   return TCS_OK;
 }
 
@@ -2124,8 +2303,21 @@ TCS_GST_API uint64_t
 tcs_player_seek (TcsPlayer* player, double seconds)
 {
   if (!player) return 0;
-  std::lock_guard<std::mutex> g (player->frame_lock);
-  return seek_locked (player, seconds, player->rate);
+  log_pipe_state (player, "seek.before");
+  uint64_t gen;
+  bool was_paused;
+  {
+    std::lock_guard<std::mutex> g (player->frame_lock);
+    was_paused = player->paused;
+    gen = seek_locked (player, seconds, player->rate);
+  }
+  log_pipe_state (player, "seek.after");
+  /* A paused pipeline cannot render the post-flush preroll (appsink sync=true
+   * with a stopped clock). Arm the non-blocking pump: <=0.1ms here, delivery
+   * and the PAUSED return happen on the bus thread. */
+  if (was_paused)
+    pump_arm (player, gen);
+  return gen;
 }
 
 TCS_GST_API uint64_t
@@ -2136,6 +2328,7 @@ tcs_player_step_frame (TcsPlayer* player)
   bool wasPaused;
   uint64_t gen;
   GstElement* pipeline;
+  log_pipe_state (player, "step.before");
   {
     std::lock_guard<std::mutex> g (player->frame_lock);
     if (!player->pipeline) return player->generation;
@@ -2153,6 +2346,7 @@ tcs_player_step_frame (TcsPlayer* player)
      * stop again once the stepped frame has been delivered. The state changes
      * are outside frame_lock (see tcs_player_set_paused). */
     gst_element_set_state (pipeline, GST_STATE_PLAYING);
+    log_pipe_state (player, "step.playing");
     ULONGLONG t0 = GetTickCount64 ();
     while (GetTickCount64 () - t0 < 500) {
       bool arrived;
@@ -2165,6 +2359,7 @@ tcs_player_step_frame (TcsPlayer* player)
       Sleep (10);
     }
     gst_element_set_state (pipeline, GST_STATE_PAUSED);
+    log_pipe_state (player, "step.paused");
   }
   return gen;
 }
@@ -2202,14 +2397,6 @@ tcs_player_set_speed (TcsPlayer* player, double rate)
       (GstSeekFlags) (GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE | GST_SEEK_FLAG_SKIP),
       GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, -1);
   return TCS_OK;
-}
-
-static void
-apply_volume_locked (TcsPlayer* p)
-{
-  if (p->avolume)
-    g_object_set (p->avolume, "volume",
-        p->muted ? 0.0 : p->volume_value / 100.0, nullptr);
 }
 
 TCS_GST_API int
