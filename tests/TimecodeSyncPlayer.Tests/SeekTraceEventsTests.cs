@@ -78,6 +78,85 @@ public class SeekTraceEventsTests
             .Should().NotContain(e => e.GetProperty("value").GetInt64() == 33_187_000);
     }
 
+    private static string EvaluateDetail(List<JsonElement> events) =>
+        Events(events, "sync.evaluate").Should().ContainSingle().Subject
+            .GetProperty("detail").GetString()!;
+
+    [Theory]
+    [InlineData(false, true, false, "disabled")]
+    [InlineData(true, false, false, "no-track")]
+    [InlineData(true, true, true, "seeking")]
+    public void Evaluate_EarlyNone_RecordsReasonAndLtc(bool syncEnabled, bool hasTrack, bool isSeeking, string reason)
+    {
+        List<JsonElement> events = Capture(() =>
+            new SyncDecisionEngine().Decide(10.0, new SyncPlaybackState(
+                SyncEnabled: syncEnabled,
+                HasCurrentTrack: hasTrack,
+                IsSeeking: isSeeking,
+                PlaybackSeconds: 0.0,
+                DurationSeconds: 200.0,
+                VideoFps: 30.0,
+                TimecodeFps: 30.0)));
+
+        var evaluate = Events(events, "sync.evaluate").Should().ContainSingle().Subject;
+        evaluate.GetProperty("value").GetInt64().Should().Be(10_000_000);
+        evaluate.GetProperty("detail").GetString().Should().Contain($"reason={reason}");
+        Events(events, "seek.decide").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Evaluate_NotFinite_RecordsReasonWithoutValue()
+    {
+        List<JsonElement> events = Capture(() =>
+            new SyncDecisionEngine().Decide(double.NaN, SeekYieldingState(0.0)));
+
+        var evaluate = Events(events, "sync.evaluate").Should().ContainSingle().Subject;
+        evaluate.GetProperty("value").GetInt64().Should().Be(0);
+        evaluate.GetProperty("detail").GetString().Should().Contain("reason=not-finite");
+    }
+
+    [Fact]
+    public void Evaluate_BadDuration_RecordsReason()
+    {
+        List<JsonElement> events = Capture(() =>
+            new SyncDecisionEngine().Decide(1.0, new SyncPlaybackState(
+                SyncEnabled: true,
+                HasCurrentTrack: true,
+                IsSeeking: false,
+                PlaybackSeconds: 0.0,
+                DurationSeconds: 0.0,
+                VideoFps: 30.0,
+                TimecodeFps: 30.0)));
+
+        EvaluateDetail(events).Should().Contain("reason=bad-duration");
+        Events(events, "seek.decide").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Evaluate_WithinTolerance_RecordsDeltaAndReason()
+    {
+        // 30fps × tolerance 6 フレーム = 0.2 秒。delta = -0.1 秒は許容内。
+        List<JsonElement> events = Capture(() =>
+            new SyncDecisionEngine().Decide(33.1, SeekYieldingState(33.2)));
+
+        string detail = EvaluateDetail(events);
+        detail.Should().Contain("delta=-0.100000");
+        detail.Should().Contain("reason=within-tolerance");
+        Events(events, "seek.decide").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Evaluate_Seek_RecordsDeltaAndReason()
+    {
+        List<JsonElement> events = Capture(() =>
+            new SyncDecisionEngine().Decide(77.25, SeekYieldingState(0.0)));
+
+        string detail = EvaluateDetail(events);
+        detail.Should().Contain("delta=77.250000");
+        detail.Should().Contain("reason=seek");
+        Events(events, "seek.decide").Should().ContainSingle();
+    }
+
     [Fact]
     public void SeekTo_RecordsIssueAndReturnAroundCommand()
     {

@@ -21,22 +21,42 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     {
         SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
         double toleranceSeconds = Math.Max(fps.VideoFrameSeconds, fps.TimecodeFrameSeconds) * _options.ToleranceFrames;
+        // 計測専用（出力トレース有効時のみ）。既定経路では読み取り 1 回だけで、文字列は作らない。
+        bool traceEnabled = OutputTrace.Current.IsEnabled;
 
         if (!state.SyncEnabled || !state.HasCurrentTrack || state.IsSeeking)
+        {
+            if (traceEnabled)
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, RawDelta(ltcSeconds, state),
+                    !state.SyncEnabled ? "disabled" : !state.HasCurrentTrack ? "no-track" : "seeking");
             return SyncDecision.NoneWith(fps, toleranceSeconds);
+        }
         if (!IsFinite(ltcSeconds) || !IsFinite(state.PlaybackSeconds))
+        {
+            if (traceEnabled)
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, null, "not-finite");
             return SyncDecision.NoneWith(fps, toleranceSeconds);
+        }
         if (!SeekBarUpdateState.IsUsableDuration(state.DurationSeconds))
+        {
+            if (traceEnabled)
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, RawDelta(ltcSeconds, state), "bad-duration");
             return SyncDecision.NoneWith(fps, toleranceSeconds);
+        }
 
         double target = Math.Clamp(ltcSeconds, 0.0, state.DurationSeconds);
         double delta = target - state.PlaybackSeconds;
         if (Math.Abs(delta) <= toleranceSeconds)
+        {
+            if (traceEnabled)
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "within-tolerance");
             return SyncDecision.NoneWith(fps, toleranceSeconds);
+        }
 
         // 計測専用（出力トレース有効時のみ）。シークを決めた時刻 a を同じ QPC で残す。
-        if (OutputTrace.Current.IsEnabled)
+        if (traceEnabled)
         {
+            RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "seek");
             OutputTrace.Current.Record(new("seek.decide", "SYNC", Stopwatch.GetTimestamp(),
                 Value: (long)Math.Round(target * 1_000_000.0),
                 Detail: FormattableString.Invariant(
@@ -53,6 +73,23 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             fps.UsedDefaultVideoFps,
             fps.UsedDefaultTimecodeFps);
     }
+
+    // 早期 return では判定用 delta（target でクランプ後）を計算していないため、生の差を記録する（有限のときだけ）。
+    private static double? RawDelta(double ltcSeconds, SyncPlaybackState state) =>
+        IsFinite(ltcSeconds) && IsFinite(state.PlaybackSeconds) ? ltcSeconds - state.PlaybackSeconds : null;
+
+    // 計測専用（呼び出し側で IsEnabled を確認済み）。reason は None を返した理由を 1 語で残す。
+    private static void RecordEvaluate(double ltcSeconds, SyncPlaybackState state, double toleranceSeconds,
+        double? delta, string reason)
+    {
+        OutputTrace.Current.Record(new("sync.evaluate", "SYNC", Stopwatch.GetTimestamp(),
+            Value: ToMicroseconds(ltcSeconds),
+            Detail: FormattableString.Invariant(
+                $"playback={state.PlaybackSeconds:F6} delta={delta ?? double.NaN:F6} tolerance={toleranceSeconds:F6} syncEnabled={state.SyncEnabled} hasTrack={state.HasCurrentTrack} isSeeking={state.IsSeeking} reason={reason}")));
+    }
+
+    private static long ToMicroseconds(double seconds) =>
+        IsFinite(seconds) ? (long)Math.Round(seconds * 1_000_000.0) : 0;
 
     private SyncFpsResolution ResolveFps(double videoFps, double timecodeFps)
     {
