@@ -292,6 +292,58 @@ S4 の撤回を受けた測り直し。runner に**操作した瞬間の QPC と
 **表示までの時間を測るには、実装側が追加した `load.attempt` / `load.summary` / `loadfile elapsedMs` が要る。**
 それらを親が検証したうえで、改めて数値を確定させる。
 
+## V3 の途中結果（2026-09-13 09:08〜09:20 JST、`TestResults/v3`）— **判定不能。ハーネスの拡張が要る**
+
+利用者の指摘で、V3 は**実機接続なしに VB-CABLE で実施できる**ことが分かった（`docs/ltc-hardware-loop-e2e-plan.md`
+の自動化が実装済み。`LtcSignalPlayer` が `CABLE Input` へ LTC 波形を出し、アプリ本体の `LtcAudioMonitor` が
+`CABLE Output` から拾う）。**ループ自体は完全に機能している**（LTC は毎回 2237〜2242 標本復号された）。
+
+### 分かったこと: このハーネスは CPU 出力経路しか測れない
+
+計測の境界は「復号した LTC の受信 → **WriteableBitmap** への画素公開」で、
+公開されたビットマップの**画素マーカーを読んで**どのフレームが出ているかを判定する。
+`outputBackend=Gpu` では画像が GPU 合成器へ直接渡り WriteableBitmap を経由しないため、捕捉できない:
+
+| 構成 | `ltcEvents` | `frameEvents` | 解析 |
+| --- | ---: | ---: | --- |
+| mpv × Gpu | 2239 | **143** | INCOMPLETE |
+| GStreamer × Gpu | 2242 | **3** | INCOMPLETE |
+| mpv × Cpu | 2237 | 3300 | INCOMPLETE（位相の被覆不足） |
+| GStreamer × Cpu | 2241 | 3158 | INCOMPLETE（同上） |
+
+**これはハーネスの限界であって製品の欠陥ではない。** Gpu 経路が WriteableBitmap を経由しないのは設計どおり。
+
+### mpv の基準値は取れた（削除前に残すべき値）
+
+mpv 本来の構成（`backend=0` + `outputBackend=0`）での steady 統計:
+
+| 指標 | 値 |
+| --- | ---: |
+| 標本数 / 測定できた数 | 1741 / 1741 |
+| 平均絶対誤差 | **59.7ms** |
+| p95 絶対 | 118.6ms |
+| p99 絶対 | 146.7ms |
+| 最大絶対 | 160.0ms |
+
+### GStreamer の公正な数字は取れていない
+
+`outputBackend=0` で測った GStreamer の値（平均絶対 200.3ms、p95 636.7ms）は**採用しない**。
+`backend=1` + `outputBackend=0` は SETUP.md のとおり**互換アダプター（CPU 読み戻し）経路**であり、
+出荷構成ではない。mpv は本来の経路、GStreamer は読み戻し込みという不公平な比較になる。
+
+- 出荷構成（`outputBackend=1`）はハーネスが測れない
+- `outputBackend=0` は GStreamer にとって互換経路
+
+**したがって現状どちらの設定でも GStreamer の精度は測れない。**
+
+### 結論と影響
+
+**V3 はハーネスを GPU 経路へ拡張しないと判定できない。V3 は mpv 削除の前提条件なので、
+この拡張が v0.4 のクリティカルパスに乗る**（指示: `docs/prompts/2026-09-13-A1-accuracy-gpu-path.md`）。
+
+親が外側で既存トレース同士を突き合わせる案も検討したが成立しない。どのフレームが表示されたかの判定に
+画素マーカーの読み取りが必要で、GPU 経路では合成後テクスチャの読み戻しがアプリ側に要るため。
+
 ## V1 の結果（2026-09-12 13:07〜13:19 JST、`TestResults/v1`、生成素材 `artifacts/media/v1`）
 
 素材は GStreamer で生成（`videotestsrc pattern=ball motion=wavy`＋`timeoverlay`、NVENC／`avenc_prores_ks`、GOP 1 秒、60 秒）。実素材ではないのでデコード負荷は軽め。run は 50 秒、解析窓 8〜48 秒、GStreamer×Gpu、Spout ON、DISPLAY2 全画面。集計 `scripts/GpuOutputProbeHarness/v1_matrix_summary.py`。
