@@ -17,12 +17,7 @@ PHASES = {"black-sweep": (0, 35), "freeze-sweep": (0, 35),
           "seek-a": (3, 5), "seek-b": (15, 5), "seek-c": (27, 5), "seek-back": (3, 5)}
 THRESHOLDS = (20, 40, 80, 250)
 EPS = 1e-7
-# "preview-frame" is the 960x540 preview presenter's pixel frame. It shares the
-# writer and the footer count with "frame", so it has to be listed here or the
-# footer never reconciles, but it is NOT display evidence: the measurement
-# population below selects type == "frame" explicitly and never sees it.
-TRACE_DATA_TYPES = ("ltc", "frame", "preview-frame", "render-stage")
-PIXEL_FRAME_TYPES = ("frame", "preview-frame")
+TRACE_DATA_TYPES = ("ltc", "frame", "render-stage")
 TRACE_TYPES = ("meta", "end") + TRACE_DATA_TYPES
 
 
@@ -163,11 +158,11 @@ def analyze(events, fixture, journal):
         if event.get("type") == "ltc" and (not number(event.get("seconds")) or event.get("fps") != 25):
             reasons.append("invalid-ltc-event")
             continue
-        if event.get("type") in PIXEL_FRAME_TYPES and (not integer(event.get("width")) or event["width"] <= 0 or
+        if event.get("type") == "frame" and (not integer(event.get("width")) or event["width"] <= 0 or
                 not integer(event.get("height")) or event["height"] <= 0 or
                 not isinstance(event.get("markerValid"), bool) or not isinstance(event.get("isBlack"), bool) or
                 not number(event.get("probeTicks")) or event["probeTicks"] < 0):
-            reasons.append("invalid-%s-event" % event["type"])
+            reasons.append("invalid-frame-event")
             continue
         clean.append(event)
     events = sorted(clean, key=lambda e: e["ticks"])
