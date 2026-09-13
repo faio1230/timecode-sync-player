@@ -36,6 +36,13 @@ internal sealed class OutputTrace
 
     internal static OutputTrace Disabled { get; } = new();
 
+    /// <summary>
+    /// 計測専用イベント（seek.decide / seek.issue / seek.return / mpv.frame）の共有参照。
+    /// GPU 出力を開始するときに MainWindow が設定する。既定は無効で、記録側は
+    /// IsEnabled を確認してから呼ぶ（無効時にコストを増やさない）。
+    /// </summary>
+    public static OutputTrace Current { get; set; } = Disabled;
+
     private OutputTrace() { capacity = DefaultCapacity; }
 
     internal OutputTrace(string directory, int capacity)

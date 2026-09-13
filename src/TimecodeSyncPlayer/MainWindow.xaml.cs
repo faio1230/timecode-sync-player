@@ -205,6 +205,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (outputBackendState.Effective == OutputBackend.Gpu)
         {
             // Gpu backend: プレビューは OutputEngine の読み戻しで更新し、CPU 経路のプレビューは接続しない。
+            OutputTrace outputTrace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable));
+            OutputTrace.Current = outputTrace;
             _outputEngine = new OutputEngine(new OutputEngineSettings
             {
                 CanvasWidth = CanvasSettings.Default.Width,
@@ -212,7 +214,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 SenderName = ResolveOutputSenderName(),
                 AdapterLuid = OutputDisplays.FindAdapterLuid(settingsManager.Current.FullscreenDisplayDeviceName),
                 TestCardEnabled = _vm.Output.TestCardEnabled,
-                Trace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable)),
+                Trace = outputTrace,
                 PreviewFrameReady = OnOutputPreviewFrame,
                 SimulatedDeviceLossSeconds = OutputEngineSettings.ParseSimulatedDeviceLossSeconds(
                     Environment.GetEnvironmentVariable(OutputEngineSettings.SimulateDeviceLossEnvironmentVariable)),

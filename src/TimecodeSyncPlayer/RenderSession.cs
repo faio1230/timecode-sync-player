@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Windows.Media.Imaging;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -231,7 +232,20 @@ internal sealed class RenderSession : IDisposable
                             // 位置はここ（snapshot 生成側）で読み、UI での再読取はしない。
                             var sink = GpuFrameSink;
                             if (sink != null)
-                                sink(update.Snapshot.Retain(), update.Snapshot.Generation, PositionSecondsProvider?.Invoke() ?? 0);
+                            {
+                                RenderedFrameSnapshot retained = update.Snapshot.Retain();
+                                double position = PositionSecondsProvider?.Invoke() ?? 0;
+                                // 計測専用（出力トレース有効時のみ）。mpv スレッドで新しいフレームが
+                                // GPU 経路へ渡った時刻 c を同じ QPC で残す。
+                                if (OutputTrace.Current.IsEnabled)
+                                {
+                                    OutputTrace.Current.Record(new("mpv.frame", "MPV", Stopwatch.GetTimestamp(),
+                                        ImageId: update.Snapshot.Sequence,
+                                        Value: (long)Math.Round(position * 1_000_000.0),
+                                        Detail: FormattableString.Invariant($"gen={update.Snapshot.Generation}")));
+                                }
+                                sink(retained, update.Snapshot.Generation, position);
+                            }
                         }
                         if (update.HasFrame) Interlocked.Exchange(ref _pendingHasFrame, 1);
                         if (_scheduler.RequestDispatch()) _scheduleUpdate(OnRenderUpdate);
