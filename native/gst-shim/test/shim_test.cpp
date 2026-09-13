@@ -432,7 +432,12 @@ run_paused_seek (int argc, char** argv)
     printf ("  PAUSED seek target=%.3f call=%.2fms NO FRAME in %.1fms\n",
         target_paused, paused_call_ms, paused_ms);
   }
-  check (paused_call_ms < 20.0, "paused seek returns without blocking");
+  /* The deterministic test hook deliberately holds frame_lock inside the
+   * prepare phase, so the wall time of the call is not a product measurement
+   * while it is set. */
+  const char* seek_hold = getenv ("TCS_TEST_HOLD_SEEK_LOCK_MS");
+  bool seek_hold_on = seek_hold != nullptr && atoi (seek_hold) > 0;
+  check (seek_hold_on || paused_call_ms < 20.0, "paused seek returns without blocking");
   check (got == 1 && paused_ms < 250.0, "paused seek arrival within 250ms");
 
   /* contrast: the same paused pipeline delivers the frame once PLAYING runs,
@@ -663,8 +668,13 @@ main (int argc, char** argv)
       double frame_s = media_fps > 0.0 ? 1.0 / media_fps : 0.0167;
       printf ("  pacing-median=%.2fms frame=%.2fms samples=%u\n",
           median * 1000.0, frame_s * 1000.0, n);
-      check (median > frame_s * 0.7 && median < frame_s * 1.3,
-          "normal playback pacing matches media frame period");
+      const char* frame_hold = getenv ("TCS_TEST_HOLD_FRAME_LOCK_MS");
+      bool frame_hold_on = frame_hold != nullptr && atoi (frame_hold) > 0;
+      if (frame_hold_on)
+        printf ("  pacing check skipped (TCS_TEST_HOLD_FRAME_LOCK_MS set)\n");
+      else
+        check (median > frame_s * 0.7 && median < frame_s * 1.3,
+            "normal playback pacing matches media frame period");
     }
   }
 
