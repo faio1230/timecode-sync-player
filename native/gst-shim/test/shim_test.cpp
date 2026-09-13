@@ -351,6 +351,182 @@ run_seek_loop (int argc, char** argv)
   return failures;
 }
 
+/* --paused-seek <file> [target]: D2 reproduction. Load playing, seek while
+ * playing (control), pause, seek again and measure how long the new-position
+ * frame takes; if it never arrives, resume and measure when it does. Then a
+ * frame-step for contrast (the step path already handles the paused case by
+ * briefly going PLAYING). */
+static int
+run_paused_seek (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --paused-seek <file> [target]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimPausedSeek", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  for (int w = 0; w < 200; w++) {
+    TcsStats st = {};
+    tcs_player_get_stats (p, &st);
+    if (st.frames_decoded >= 3) break;
+    std::this_thread::sleep_for (std::chrono::milliseconds (10));
+  }
+
+  double dur = 0, fps = 0;
+  tcs_player_get_duration (p, &dur);
+  tcs_player_get_fps (p, &fps);
+  double target_play = dur > 2.0 ? dur * 0.45 : 0.5;
+  double target_paused = dur > 2.0 ? dur * 0.65 : 0.7;
+  printf ("  media duration=%.3fs fps=%.3f play-target=%.3f paused-target=%.3f\n",
+      dur, fps, target_play, target_paused);
+
+  /* control: seek while PLAYING */
+  tcs_player_release (p);
+  auto t0 = std::chrono::steady_clock::now ();
+  uint64_t gen = tcs_player_seek (p, target_play);
+  double play_call_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t0).count ();
+  TcsFrameInfo info = {};
+  int got = 0;
+  for (int i = 0; i < 1500 && !got; i++) {
+    got = tcs_player_acquire (p, gen, &info);
+    if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+  }
+  double play_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t0).count ();
+  printf ("  PLAYING seek target=%.3f call=%.2fms got=%d arrival=%.1fms pts=%.3f\n",
+      target_play, play_call_ms, got, play_ms, got ? info.pts_ns / 1e9 : -1.0);
+  check (got == 1, "playing seek produced a frame");
+  check (play_ms < 500.0, "playing seek arrival within 500ms");
+  tcs_player_release (p);
+  std::this_thread::sleep_for (std::chrono::milliseconds (100));
+
+  /* paused seek */
+  tcs_player_set_paused (p, 1);
+  std::this_thread::sleep_for (std::chrono::milliseconds (300));
+  tcs_player_release (p);
+  t0 = std::chrono::steady_clock::now ();
+  uint64_t gen2 = tcs_player_seek (p, target_paused);
+  double paused_call_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t0).count ();
+  got = 0;
+  for (int i = 0; i < 1500 && !got; i++) {
+    got = tcs_player_acquire (p, gen2, &info);
+    if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+  }
+  double paused_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t0).count ();
+  if (got) {
+    printf ("  PAUSED seek target=%.3f call=%.2fms got=1 arrival=%.1fms pts=%.3f\n",
+        target_paused, paused_call_ms, paused_ms, info.pts_ns / 1e9);
+  } else {
+    printf ("  PAUSED seek target=%.3f call=%.2fms NO FRAME in %.1fms\n",
+        target_paused, paused_call_ms, paused_ms);
+  }
+  check (paused_call_ms < 20.0, "paused seek returns without blocking");
+  check (got == 1 && paused_ms < 250.0, "paused seek arrival within 250ms");
+
+  /* contrast: the same paused pipeline delivers the frame once PLAYING runs,
+   * which is exactly what step_frame already does for one frame. */
+  if (!got) {
+    tcs_player_release (p);
+    auto tr = std::chrono::steady_clock::now ();
+    tcs_player_set_paused (p, 0);
+    for (int i = 0; i < 1500 && !got; i++) {
+      got = tcs_player_acquire (p, gen2, &info);
+      if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+    double resume_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - tr).count ();
+    printf ("  PAUSED seek frame after resume: got=%d arrival-after-resume=%.1fms\n",
+        got, resume_ms);
+    check (got == 1, "resume delivered the pending paused-seek frame");
+    tcs_player_release (p);
+    tcs_player_set_paused (p, 1);
+    std::this_thread::sleep_for (std::chrono::milliseconds (300));
+  }
+
+  /* race: resume immediately after arming the pump (resume must win) */
+  {
+    tcs_player_set_paused (p, 1);
+    std::this_thread::sleep_for (std::chrono::milliseconds (200));
+    tcs_player_release (p);
+    double race_target = dur > 2.0 ? dur * 0.30 : 0.3;
+    uint64_t gen4 = tcs_player_seek (p, race_target);
+    tcs_player_set_paused (p, 0);
+    got = 0;
+    for (int i = 0; i < 250 && !got; i++) {
+      got = tcs_player_acquire (p, gen4, &info);
+      if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+    printf ("  RESUME during pump: got=%d\n", got);
+    check (got == 1, "resume during pump still delivers the seek frame");
+    TcsStats s1 = {}, s2 = {};
+    tcs_player_get_stats (p, &s1);
+    std::this_thread::sleep_for (std::chrono::milliseconds (200));
+    tcs_player_get_stats (p, &s2);
+    printf ("  RESUME during pump: frames %llu -> %llu\n",
+        (unsigned long long) s1.frames_decoded, (unsigned long long) s2.frames_decoded);
+    check (s2.frames_decoded > s1.frames_decoded, "resume during pump keeps playing");
+    tcs_player_release (p);
+  }
+
+  /* race: back-to-back paused seeks re-arm the pump */
+  {
+    tcs_player_set_paused (p, 1);
+    std::this_thread::sleep_for (std::chrono::milliseconds (200));
+    tcs_player_release (p);
+    double t_a = dur > 2.0 ? dur * 0.20 : 0.2;
+    double t_b = dur > 2.0 ? dur * 0.80 : 0.8;
+    tcs_player_seek (p, t_a);
+    auto tb0 = std::chrono::steady_clock::now ();
+    uint64_t gen5 = tcs_player_seek (p, t_b);
+    got = 0;
+    for (int i = 0; i < 1500 && !got; i++) {
+      got = tcs_player_acquire (p, gen5, &info);
+      if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+    double back_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - tb0).count ();
+    printf ("  BACK-TO-BACK paused seeks: got=%d second-arrival=%.1fms pts=%.3f\n",
+        got, back_ms, got ? info.pts_ns / 1e9 : -1.0);
+    check (got == 1 && back_ms < 250.0, "second paused seek still arrives within 250ms");
+    tcs_player_release (p);
+  }
+
+  /* contrast: step_frame's temporary PLAYING path */
+  {
+    tcs_player_set_paused (p, 1);
+    std::this_thread::sleep_for (std::chrono::milliseconds (200));
+    tcs_player_release (p);
+    auto ts = std::chrono::steady_clock::now ();
+    uint64_t gen3 = tcs_player_step_frame (p);
+    got = 0;
+    for (int i = 0; i < 500 && !got; i++) {
+      got = tcs_player_acquire (p, gen3, &info);
+      if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+    double step_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - ts).count ();
+    printf ("  STEP (temporary PLAYING) got=%d arrival=%.1fms pts=%.3f\n",
+        got, step_ms, got ? info.pts_ns / 1e9 : -1.0);
+    check (got == 1 && step_ms < 500.0, "step frame arrival within 500ms");
+    tcs_player_release (p);
+  }
+
+  tcs_player_destroy (p);
+  return failures ? 1 : 0;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -371,6 +547,11 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--seek-loop") == 0) {
     int rc = run_seek_loop (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--paused-seek") == 0) {
+    run_paused_seek (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
