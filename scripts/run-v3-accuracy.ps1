@@ -1,7 +1,10 @@
 # V3 (LTC sync accuracy): run the VB-CABLE accuracy harness for one or both backends
 # and print the two metrics the plan defines: steady error and recovery time.
 #
-#   powershell -File scripts\run-v3-accuracy.ps1 -Backends gst,mpv -Label after-d2
+#   powershell -File scripts\run-v3-accuracy.ps1 -Backends gst -Label after-d2
+#
+# NOTE: array parameters do not survive `powershell -File` (the whole list arrives
+# as one string and fails ValidateSet), so call this once per backend.
 #
 # Each run needs its own empty report directory (phases.jsonl uses FileMode.CreateNew)
 # and a settings.json placed there BEFORE the run to select the backend.
@@ -18,7 +21,13 @@ param(
     [Parameter(Mandatory)][string]$Label,
     [string]$TestProject = 'C:\Users\codea\Documents\timecode-sync-player-wt-verify-oe-20260911-1344\tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj',
     [string]$LogRoot = 'C:\Users\codea\Documents\timecode-sync-player-wt-integrate-20260912\TestResults\v3',
-    [int]$Repeats = 1
+    [int]$Repeats = 1,
+    # 0 = Cpu compositor, 1 = Gpu compositor. MUST stay 0: this harness samples the
+    # WriteableBitmap and the Gpu path never writes one, so every sample comes back
+    # as 'unexpected-black' and nothing is measurable. Measured 2026-09-13 with
+    # outputBackend=1: 2243 samples, 0 measured, 1744 unexpected-black.
+    # GPU-path timing needs the output trace instead (analyze-v3-seek-breakdown.py).
+    [ValidateSet(0, 1)][int]$OutputBackend = 0
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -32,7 +41,8 @@ foreach ($backend in $Backends) {
         if (Test-Path $report) { Remove-Item $report -Recurse -Force }
         New-Item -ItemType Directory -Force $report | Out-Null
         $backendValue = if ($backend -eq 'gst') { 1 } else { 0 }
-        ('{"backend":' + $backendValue + ',"outputBackend":1}') | Set-Content (Join-Path $report 'settings.json') -Encoding UTF8
+        ('{"backend":' + $backendValue + ',"outputBackend":' + $OutputBackend + '}') |
+            Set-Content (Join-Path $report 'settings.json') -Encoding UTF8
 
         Write-Output ('=== {0} {1}' -f (Get-Date).ToString('HH:mm:ss'), $name)
         $env:TIMECODE_ACCURACY_REPORT_DIR = $report
