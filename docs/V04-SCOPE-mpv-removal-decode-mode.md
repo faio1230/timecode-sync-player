@@ -3,6 +3,63 @@
 状態: 2026-09-13、親が作成。利用者の指示（同日）に基づく v0.4 の範囲変更。
 前提文書: `docs/GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md`、`docs/OUTPUT-GPU-INVARIANTS.md`。
 
+## コミット A の棚卸し（2026-09-15、親の調査）
+
+**製品コードで mpv を参照するのは 41 ファイル。ファイル名に mpv を含むのは 14 ファイル。**
+ただし**名前で消すと壊れる**。下の「消さないもの」を必ず確認すること。
+
+### 消さないもの（コミット A では触らない。コミット B で名前だけ変える）
+
+| ファイル | 理由 |
+| --- | --- |
+| `Contracts/IMpvApi.cs` | **GStreamer が実装している現役の抽象**。`GstMpvApiAdapter` の契約 |
+| `Contracts/IMpvRenderApi.cs` | 同上。`GstMpvRenderApiAdapter` の契約 |
+| `Gst/GstMpvApiAdapter.cs` | **GStreamer 本体の経路**。名前に Mpv が付いているだけ |
+| `Gst/GstMpvRenderApiAdapter.cs` | 同上 |
+
+### 消すもの: mpv の実装本体
+
+`Mpv.cs` / `MpvApi.cs` / `MpvRenderApi.cs` / `MpvRenderNative.cs` / `MpvLibraryNameResolver.cs` /
+`MpvSessionInitializer.cs` / `MpvStartupPropertyApplier.cs` / `MpvRenderFrameExecutor.cs` /
+`MpvPlaybackCommandBuilder.cs` / `Output/MpvSnapshotSource.cs`
+
+### 消すもの: 出力エンジンの mpv スナップショット経路（**ここが見落とされやすい**）
+
+`OutputEngine.cs` を調べた結果、**この経路は完全に mpv 専用**である
+（`UploadPendingSnapshot` は `mpvSource == null` なら即 return）。
+
+| 場所 | 内容 |
+| --- | --- |
+| 88 | `private MpvSnapshotSource<int>? mpvSource;` |
+| 182 | `SubmitFrame(...)` → `snapshotInput.Publish(...)`（UI スレッドが mpv のスナップショットを渡す口） |
+| 85 | `private readonly SnapshotInputMailbox snapshotInput = new();` |
+| 522 / 715 | `CreateMpvSnapshotSource()` の呼び出し |
+| 534 | `CreateMpvSnapshotSource()` の定義 |
+| 850 | 合成ループ内の `UploadPendingSnapshot()` |
+| 855 | `gpuLoopTimer.WaitUntilOrStopOrSignal(..., snapshotInput.ReadyHandle, ...)` の **signal** |
+| 1077〜 | `UploadPendingSnapshot()` の定義 |
+| 1574 | `snapshotInput.Dispose()` |
+
+**`SnapshotInputMailbox` 型そのものと `RenderedFrameSnapshot` の受け渡しも、他に利用者が無ければ消す。**
+
+> **利用者の指示（2026-09-14）**: 「コミット A では、ファイル削除だけでなく
+> `UploadPendingSnapshot`・`snapshotInput`・その到着待ち（`WaitUntilOrStopOrSignal` の signal）まで
+> 残っていないことを確認すること」。
+> V8 の崩れ（`mpv-4k-1` の 507 回）の推定原因がこの経路にあるため、**経路ごと消えることの確認が要る**。
+
+### 消すもの: その他
+
+- `PlayerBackend` 設定と UI、`outputBackend` の `Cpu` 分岐
+- `libmpv-2.dll` の同梱と `scripts/get-mpv.ps1`
+- mpv 用の E2E とドキュメント、`native/README.md` の mpv 記述
+- `FrameRenderer` の mpv 経路（CPU 合成の除去と併せて）
+
+### 確認方法
+
+コミット A の後に `grep -rn "mpv\|Mpv" --include=*.cs src/` を実行し、
+**残るのは上の「消さないもの」4 ファイルの中だけ**であることを確認する。
+`WaitUntilOrStopOrSignal` の signal 引数が消えていることも個別に確認する。
+
 ## 出力側の CPU 合成も v0.4 で落とす（2026-09-14、利用者の決定）
 
 **`outputBackend=Cpu`（CPU 合成経路）は mpv と一緒に除去する。** v0.4 は **GStreamer × GPU 合成の一本**になる。
