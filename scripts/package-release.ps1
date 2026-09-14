@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Version,
     [string]$OutputDirectory,
@@ -102,11 +102,24 @@ try {
         Copy-Item -LiteralPath $_.FullName -Destination $stagingDirectory
     }
 
-    $requiredRuntimeFiles = @("TimecodeSyncPlayer.exe", "TimecodeSyncPlayer.dll", "SpoutDX.dll")
+    $requiredRuntimeFiles = @("TimecodeSyncPlayer.exe", "TimecodeSyncPlayer.dll", "SpoutDX.dll", "tcs_gstreamer.dll")
     foreach ($requiredFile in $requiredRuntimeFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $stagingDirectory $requiredFile) -PathType Leaf)) {
             throw "Required runtime file is missing from Release output: $requiredFile"
         }
+    }
+
+    # 配布する shim は Release ビルドでなければならない（Debug ビルドは MSVCP140D / ucrtbased に依存し、
+    # 利用者環境で動かない）。native\tcs_gstreamer.dll に置いたものも含め、Release ビルドと一致するかを見る。
+    $releaseShim = Join-Path $projectRoot "native\gst-shim\build-release\tcs_gstreamer.dll"
+    if (-not (Test-Path -LiteralPath $releaseShim -PathType Leaf)) {
+        throw "Release ビルドの tcs_gstreamer.dll がありません。先に native\gst-shim\build-shim.ps1 -Config Release を実行してください: $releaseShim"
+    }
+    $stagedShim = Join-Path $stagingDirectory "tcs_gstreamer.dll"
+    $expectedHash = (Get-FileHash -LiteralPath $releaseShim -Algorithm SHA256).Hash
+    $actualHash = (Get-FileHash -LiteralPath $stagedShim -Algorithm SHA256).Hash
+    if ($actualHash -ne $expectedHash) {
+        throw "配布物の tcs_gstreamer.dll が Release ビルドと一致しません。native\tcs_gstreamer.dll（または native\gst-shim\build-debug の出力）が Release ビルドで上書きされているか確認してください。"
     }
 
     Copy-Item -LiteralPath (Join-Path $projectRoot "LICENSE") -Destination $stagingDirectory

@@ -65,15 +65,22 @@ MSVC x64用の1.28.2ランタイムをインストールし、`bin`に`gstreamer
 #### native/gst-shim のビルド
 
 `native/gst-shim`は、GStreamerのデコード結果をD3D11テクスチャのリースAPIとして
-合成層へ公開するshimです。`tcs_gstreamer.dll`は配布物に含めません。次の手順でビルドします。
+合成層へ公開するshimです。`tcs_gstreamer.dll`は配布物にも含まれます。次の手順でビルドします。
 
 ```powershell
 # Spout2 (tag 2.007.017) を vendor/Spout2 へ取得（git管理外）
 powershell -File native\gst-shim\get-spout.ps1
 # Debugビルド（Visual Studio Build Tools + CMake + Ninja が必要）
 powershell -File native\gst-shim\build-shim.ps1 -Config Debug
+# 配布物を作る場合は Release ビルドも必要
+powershell -File native\gst-shim\build-shim.ps1 -Config Release
 # 出力: native\gst-shim\build-debug\tcs_gstreamer.dll
+#       native\gst-shim\build-release\tcs_gstreamer.dll
 ```
+
+配布物（`scripts\package-release.ps1`）は `native\gst-shim\build-release\tcs_gstreamer.dll` と
+同じ内容の DLL が Release 出力にあることを検査します。Debug ビルドの DLL は
+MSVCP140D / ucrtbased に依存するため配布できません。
 
 `tcs_gstreamer.dll`は`native\tcs_gstreamer.dll`へ置くか、`build-debug`に出力したままにすると、
 本体のビルド時に`src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\`へ自動コピーされます
