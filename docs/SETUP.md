@@ -42,29 +42,12 @@ timecode-sync-player/
 
 ## 3. ネイティブDLLの配置
 
-本リポジトリにはネイティブDLL本体を含めません。libmpvは、リポジトリ直下で次のスクリプトを
-1回実行して導入する方法を推奨します。
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1
-```
-
-スクリプトはmpv公式が案内するshinchiroの最新通常x64開発アーカイブを選び、公開SHA-256と
-ピン留めした7zr.exeのSHA-256を検証して、アーカイブ直下の`libmpv-2.dll`を名前を変えず
-`native/libmpv-2.dll`へ配置します。GitHub Releaseに検証可能なdigestがない場合は既定で中断します。
-独立した手段で確認済みの場合に限り、`-AllowUnverified`を明示して続行できます。
-
-手動導入する場合は、[mpv公式インストール案内](https://mpv.io/installation/)からリンクされる
-[shinchiroの最新Release](https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest)で
-`mpv-dev-x86_64-<日付>-git-<コミット>.7z`（`v3`ではない通常x64版）を取得し、アーカイブ直下の
-`libmpv-2.dll`をそのまま`native/`へ配置します。従来名`mpv-2.dll`も互換用に利用できますが、
-リネームは不要です。
+本リポジトリにはネイティブDLL本体を含めません。
 
 | ファイル | 必須/任意 | 入手方法 |
 |---------|---------|---------|
-| `native/libmpv-2.dll` | **必須** | 推奨は`scripts/get-mpv.ps1`。手動時も上流名のまま配置します。**x64版**であることを確認してください。 |
 | `native/SpoutDX.dll` | 任意 | [Spout2](https://github.com/leadedge/Spout2)のSDK内SpoutDXプロジェクトをビルドして配置します。配布zip／インストーラーには同梱済みです。 |
-| `native/tcs_gstreamer.dll` | 任意 | `PlayerBackend=Gstreamer`を使う場合のみ。下記「GStreamerバックエンド」を参照して`native/gst-shim`からビルドします。 |
+| `native/tcs_gstreamer.dll` | **必須** | 動画再生に使います。下記「GStreamer 1.28.2」を参照して`native/gst-shim`からビルドします。 |
 
 詳細は [native/README.md](../native/README.md) を参照してください。
 
@@ -107,8 +90,8 @@ dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 
 ビルド時、`native/` に存在するDLLだけが `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\` へ自動コピーされます。
 
-**注意:** libmpv DLLや`SpoutDX.dll`が無くてもビルド自体は成功します。ただし
-`libmpv-2.dll`／`mpv-2.dll`のどちらも無い場合は動画再生ができません。`SpoutDX.dll`が無い場合は
+**注意:** `tcs_gstreamer.dll`や`SpoutDX.dll`が無くてもビルド自体は成功します。ただし
+`tcs_gstreamer.dll`とGStreamerランタイムが無い場合は動画再生ができません。`SpoutDX.dll`が無い場合は
 Spout出力ボタンが無効化されるだけで、それ以外は正常に動作します。
 
 ---
@@ -128,7 +111,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 FlaUIによるUI自動操作テストのため、以下が必須です。
 
 - **デスクトップセッションが必要**（リモートデスクトップの切断状態やヘッドレスCI環境では実行できません）
-- `native/libmpv-2.dll`（または互換用`mpv-2.dll`）が配置されていること
+- `native/tcs_gstreamer.dll`とGStreamerランタイムが配置されていること
 - **テスト実行中に実際にアプリウィンドウが開閉します**（フォーカスを奪う可能性があるため、実行中は他の操作を避けてください）
 
 ```powershell
@@ -157,7 +140,7 @@ scripts\run-timecodesyncplayer-verification.ps1 -Profile Strict
 | `LogOnly` | ビルド・テストを行わず、既存ログのみ診断 |
 
 `Strict` / `Full` プロファイルはE2Eテストを含むため、5.2の実行前提（デスクトップセッション必須・
-libmpv DLL配置済み）を満たした状態で実行してください。
+GStreamer ランタイムと`tcs_gstreamer.dll`が利用可能）を満たした状態で実行してください。
 
 ---
 
@@ -230,7 +213,7 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD
 
 | 症状 | 原因・対処 |
 |---|---|
-| 起動直後に `mpv_create` 失敗、または映像が表示されない | `native/libmpv-2.dll`（または互換用`mpv-2.dll`）が未配置、もしくはx86/x64の不一致です。`get-mpv.ps1`でx64版を導入してください。 |
+| 映像が表示されない | `native/tcs_gstreamer.dll`またはGStreamerランタイムが未配置です。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
 | Spout出力ボタンが押せない（無効化されている） | `native/SpoutDX.dll` が無いだけです。Spout出力を使わないなら正常な動作であり、修正不要です。 |
 | `outputBackend=1`にしたが映像が出ない | D3D11.4が使えずCpuへフォールバックした可能性があります。ログの`OutputBackend: Gpu を指定されましたが利用できないため Cpu へフォールバックします`を確認してください。 |
 | `backend=1`で再生開始に失敗する | GStreamerランタイム未導入、または`tcs_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
