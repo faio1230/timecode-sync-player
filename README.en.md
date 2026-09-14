@@ -17,8 +17,7 @@ video clips in a playlist.
 - For most users, the per-user `TimecodeSyncPlayer-v0.2.0-setup.exe` installer is recommended and
   does not require administrator privileges.
 - Choose `TimecodeSyncPlayer-v0.2.0-win-x64.zip` for a portable extracted copy.
-- libmpv is not bundled for licensing reasons. Download it from the installer completion screen or
-  with the bundled `scripts/get-mpv.ps1`.
+- Video playback requires the GStreamer 1.28 MSVC x64 runtime (see Requirements).
 
 ## Features
 
@@ -29,13 +28,13 @@ video clips in a playlist.
 - Selectable full-screen output to a connected external display
 - Spout2 output for VJ tool integration
 - Playlist and project save/load workflows
-- Pure C# LTC decoder and libmpv software rendering
+- Pure C# LTC decoder and GStreamer-based GPU output
 
 ## Requirements
 
 - Windows 10/11 x64
 - [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) for release packages
-- An x64 libmpv DLL
+- GStreamer 1.28 MSVC x64 runtime ([official downloads](https://gstreamer.freedesktop.org/download/))
 - An audio input device carrying LTC
 
 `SpoutDX.dll` is included in release packages and is only needed when using Spout output.
@@ -44,25 +43,19 @@ video clips in a playlist.
 
 1. Run `TimecodeSyncPlayer-v0.2.0-setup.exe` from Releases. It installs per user and does not
    require administrator privileges.
-2. Leave **Download mpv now (run get-mpv.ps1)** selected on the completion screen.
-3. Start TimecodeSyncPlayer from the Start menu.
+2. Start TimecodeSyncPlayer from the Start menu.
 
-Uninstalling removes the application, downloaded libmpv, logs, and shortcuts. Per-user preferences
+Uninstalling removes the application, logs, and shortcuts. Per-user preferences
 in `%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json` are intentionally retained for future
 reinstallation. Delete that file manually to remove the preferences completely.
 
 ## Using the zip
 
 1. Extract `TimecodeSyncPlayer-v0.2.0-win-x64.zip` to a writable folder.
-2. Open PowerShell in that folder and install libmpv:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1 -DestinationDirectory .
-   ```
-
+2. Install the GStreamer 1.28 MSVC x64 runtime.
 3. Start `TimecodeSyncPlayer.exe`.
 
-See the [native dependency guide](native/README.md) for manual libmpv installation.
+See the [setup guide](docs/SETUP.md) for GStreamer installation notes.
 
 ## Basic usage
 
@@ -79,11 +72,11 @@ The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) is required.
 ```powershell
 git clone https://github.com/faio1230/timecode-sync-player.git
 cd timecode-sync-player
-powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1
 dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 ```
 
+Video playback requires the GStreamer 1.28 MSVC x64 runtime and `tcs_gstreamer.dll`.
 Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder when building from
 source. See the [setup guide](docs/SETUP.md) for details.
 

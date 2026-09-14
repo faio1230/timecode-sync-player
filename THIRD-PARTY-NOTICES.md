@@ -3,21 +3,6 @@
 TimecodeSyncPlayer uses the following third-party components at runtime. Test-only dependencies
 are not part of the distributed application and are intentionally omitted.
 
-## libmpv / mpv
-
-libmpv is **not included** in the TimecodeSyncPlayer release zip. The project only provides an
-installation script and instructions for obtaining a separate upstream Windows build.
-
-- Project: [mpv](https://github.com/mpv-player/mpv)
-- License: GPL version 2 or later by default, or LGPL version 2.1 or later when built with
-  `-Dgpl=false`. The selected Windows build and its dependencies determine the effective terms.
-- License texts: [GPL-2.0](https://github.com/mpv-player/mpv/blob/master/LICENSE.GPL) and
-  [LGPL-2.1](https://github.com/mpv-player/mpv/blob/master/LICENSE.LGPL)
-- Copyright and per-file details: [mpv Copyright](https://github.com/mpv-player/mpv/blob/master/Copyright)
-
-Users who install libmpv are responsible for retaining the notices and complying with the terms
-provided by that binary's distributor, including the terms of bundled FFmpeg and other libraries.
-
 ## GStreamer 1.28.2 (optional GStreamer playback backend)
 
 The GStreamer runtime is **not included** in the TimecodeSyncPlayer release zip. The optional

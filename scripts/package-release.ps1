@@ -86,9 +86,17 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
 
 try {
-    $excludedNames = @("mpv-2.dll", "libmpv-2.dll")
+    # v0.4 は mpv を除去する。Release 出力に mpv が残っていたら黙って除外せず失敗させ、
+    # 「製品側の除去が入っていないビルド」を配布物にしない。
+    $forbiddenMpvFiles = @(Get-ChildItem -LiteralPath $releaseDirectory -File |
+        Where-Object { $_.Name -in @("mpv-2.dll", "libmpv-2.dll") })
+    if ($forbiddenMpvFiles.Count -gt 0) {
+        $names = ($forbiddenMpvFiles | ForEach-Object { $_.Name }) -join ", "
+        throw "v0.4 の配布物に mpv は含めません。Release 出力に残っています: $names。製品側の mpv 除去が反映されたビルドを使用してください。"
+    }
+
     Get-ChildItem -LiteralPath $releaseDirectory -File | ForEach-Object {
-        if ($excludedNames -contains $_.Name -or $_.Extension -eq ".pdb") {
+        if ($_.Extension -eq ".pdb") {
             return
         }
         Copy-Item -LiteralPath $_.FullName -Destination $stagingDirectory
@@ -105,25 +113,20 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot "THIRD-PARTY-NOTICES.md") -Destination $stagingDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot "CHANGELOG.md") -Destination $stagingDirectory
 
-    $packagedScriptsDirectory = Join-Path $stagingDirectory "scripts"
-    New-Item -ItemType Directory -Path $packagedScriptsDirectory | Out-Null
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "get-mpv.ps1") -Destination $packagedScriptsDirectory
-
     $readme = @"
 TimecodeSyncPlayer v$Version (Windows x64 beta)
 
 Requirements
 - Windows 10/11 x64
 - .NET 8 Desktop Runtime
+- GStreamer 1.28 MSVC x64 runtime
+  (https://gstreamer.freedesktop.org/download/)
 - An audio input device carrying LTC
 
 Setup
-1. Open PowerShell in this extracted folder.
-2. Install libmpv (it is intentionally not included in this zip):
-   powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1 -DestinationDirectory .
-3. Start TimecodeSyncPlayer.exe.
-4. Select the LTC capture device and press START.
-5. Load media, then press Sync ON.
+1. Start TimecodeSyncPlayer.exe.
+2. Select the LTC capture device and press START.
+3. Load media, then press Sync ON.
 
 SpoutDX.dll is included and enables Spout2 output. See THIRD-PARTY-NOTICES.md for
 third-party terms. This beta should be validated with your complete show setup before use.

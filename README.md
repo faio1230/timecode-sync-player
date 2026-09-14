@@ -16,8 +16,7 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 
 - 通常は、管理者権限不要の`TimecodeSyncPlayer-v0.2.0-setup.exe`を推奨します。
 - 展開して使う場合は`TimecodeSyncPlayer-v0.2.0-win-x64.zip`を選択してください。
-- libmpvはライセンス上の理由で同梱していません。インストール完了画面または同梱の
-  `scripts/get-mpv.ps1`から取得できます。
+- 動画再生にはGStreamer 1.28 MSVC x64ランタイムが必要です（下記「動作要件」参照）。
 
 ## 主な機能
 
@@ -28,13 +27,13 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 - 接続ディスプレイを選択できる外部モニターフルスクリーン出力
 - VJツール連携用のSpout2出力
 - プレイリストとプロジェクトの保存・読み込み
-- 純C# LTCデコーダとlibmpvソフトウェアレンダリング
+- 純C# LTCデコーダとGStreamerベースのGPU出力
 
 ## 動作要件
 
 - Windows 10/11 x64
 - 配布パッケージの実行には[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
-- x64版libmpv DLL
+- GStreamer 1.28 MSVC x64ランタイム（[公式ダウンロード](https://gstreamer.freedesktop.org/download/)）
 - LTC音声を入力できるオーディオデバイス
 
 `SpoutDX.dll`は配布パッケージに含まれ、Spout出力を使う場合だけ利用されます。
@@ -43,25 +42,19 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 
 1. Releasesから`TimecodeSyncPlayer-v0.2.0-setup.exe`を実行します。ユーザー単位のため
    管理者権限は不要です。
-2. 完了画面の**mpvを今ダウンロードする（get-mpv.ps1を実行）**を選択したまま完了します。
-3. スタートメニューからTimecodeSyncPlayerを起動します。
+2. スタートメニューからTimecodeSyncPlayerを起動します。
 
-アンインストールではアプリ本体、取得したlibmpv、ログ、ショートカットを削除します。
+アンインストールではアプリ本体、ログ、ショートカットを削除します。
 ユーザー設定`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`は再インストール時に復元できるよう
 意図的に保持されます。完全に削除する場合は手動で削除してください。
 
 ## zipの使い方
 
 1. `TimecodeSyncPlayer-v0.2.0-win-x64.zip`を、書き込み可能なフォルダーへ展開します。
-2. 展開先でPowerShellを開き、libmpvを導入します。
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1 -DestinationDirectory .
-   ```
-
+2. GStreamer 1.28 MSVC x64ランタイムを導入します。
 3. `TimecodeSyncPlayer.exe`を起動します。
 
-手動でlibmpvを導入する場合は[ネイティブDLLガイド](native/README.md)を参照してください。
+GStreamerの導入方法は[セットアップ手順](docs/SETUP.md)を参照してください。
 
 ## 基本的な使い方
 
@@ -78,11 +71,11 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 ```powershell
 git clone https://github.com/faio1230/timecode-sync-player.git
 cd timecode-sync-player
-powershell -ExecutionPolicy Bypass -File scripts\get-mpv.ps1
 dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 ```
 
+動画再生にはGStreamer 1.28 MSVC x64ランタイムと`tcs_gstreamer.dll`が必要です。
 ソースビルドでSpout出力を使う場合は、x64版`SpoutDX.dll`も`native`フォルダーへ配置します。
 詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
 
