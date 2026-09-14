@@ -3,42 +3,45 @@
 TimecodeSyncPlayer uses the following third-party components at runtime. Test-only dependencies
 are not part of the distributed application and are intentionally omitted.
 
-## GStreamer 1.28.2 (optional GStreamer playback backend)
+## GStreamer 1.28.2
 
-The GStreamer runtime is **not included** in the TimecodeSyncPlayer release zip. The optional
-GStreamer backend loads the official runtime installed separately by the user
-(`GSTREAMER_1_0_ROOT_MSVC_X86_64`, default `C:\Program Files\gstreamer\1.0\msvc_x86_64`).
+A subset of the official GStreamer 1.28.2 MSVC x64 runtime is **included** in the TimecodeSyncPlayer
+release packages under the `gstreamer` folder: the DLLs and plugins this application actually loads,
+together with the license texts shipped by the official runtime
+(`gstreamer\share\licenses`). The application prefers the bundled runtime over any system
+installation and pins its plugin search path to it. Source builds instead load an official runtime
+from `GSTREAMER_1_0_ROOT_MSVC_X86_64` or the default install location.
 
 - Project: [GStreamer](https://gstreamer.freedesktop.org/)
-- License: GNU Lesser General Public License, version 2.1 or later (LGPL-2.1-or-later) for the core
-  libraries and the plugins used by this application. TimecodeSyncPlayer links to the GStreamer
-  shared libraries dynamically and does not modify them; no GStreamer source or binaries are
-  redistributed by this project.
-- License text: [LGPL-2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html)
-- Source code: [gstreamer.freedesktop.org/src](https://gstreamer.freedesktop.org/src/) (or the
-  source offer included with the user's GStreamer installation)
+- License: GNU Lesser General Public License for the core libraries and plugins bundled here, as
+  reported by `gst-inspect-1.0` ("LGPL") and by the license texts bundled with the official runtime
+  (`LGPL-2.0-or-later.txt` for GStreamer/GLib components, `LGPL-2.1-or-later.txt` for FFmpeg).
+  TimecodeSyncPlayer links to the GStreamer shared libraries dynamically and does not modify them.
+- License texts: bundled under `gstreamer\share\licenses\<component>\`
+- Source code: [gstreamer.freedesktop.org/src](https://gstreamer.freedesktop.org/src/) and the
+  upstream projects of the bundled components.
 
-Plugins/elements used by the optional backend and their license families (as shipped by the
-official MSVC runtime):
+Bundled plugins and their source components (measured by loading the V1 media and reading the
+plugin-loading log):
 
-| Component (plugin set) | Used for | License |
+| Component | Bundled plugins (used for) | License (as reported) |
 | --- | --- | --- |
-| gstreamer core, gst-plugins-base (`videoconvert`, `audioconvert`, `volume`, `decodebin`, `typefind`) | pipeline core, software conversion, audio tail | LGPL-2.1-or-later |
-| gst-plugins-good (`qtdemux`, `matroskademux`, `avidemux`, `tsdemux`, `mxfdemux`, `h264parse`, `h265parse`, `autoaudiosink`/`wasapi2`) | demux/parse/audio output | LGPL-2.1-or-later |
-| gst-plugins-bad (`d3d11h264dec`, `d3d11h265dec`, `d3d11vp9dec`, `d3d11av1dec`, `d3d11colorconvert`, `d3d11*` device libs, `dav1ddec`) | D3D11 GPU decode / color conversion | LGPL-2.1-or-later (dav1ddec links dav1d: BSD-2-Clause) |
-| gst-libav (`avdec_h264`, `avdec_h265`, ...) | CPU decoder fallback | LGPL-2.1-or-later (built against LGPL FFmpeg in the official runtime) |
-| nvcodec (`nvh264dec`, ...) | not used (rank-demoted; kept out of autoplug) | LGPL-2.1-or-later |
+| GStreamer core | `gstcoreelements` (filesrc/queue/capsfilter/fakesink), core libraries | LGPL |
+| gst-plugins-base | `gstapp`, `gstaudioconvert`, `gstaudiotestsrc`, `gstplayback` (decodebin), `gstvideoconvertscale` (videoconvert), `gstvolume` | LGPL |
+| gst-plugins-good | `gstaudioparsers` (aacparse), `gstautodetect` (autoaudiosink), `gstisomp4` (qtdemux) | LGPL (the official runtime ships no separate license folder for this component) |
+| gst-plugins-bad | `gstd3d11` (d3d11h264dec/h265dec/colorconvert/upload), `gstmpegtsdemux` (tsdemux), `gstmxf` (mxfdemux), `gstvideoparsersbad` (h264parse/h265parse), `gstwasapi2`, `gstdav1d` (dav1ddec) | LGPL; `gstdav1d` is MIT/X11 |
+| gst-libav | `gstlibav` (avdec_prores, avdec_aac) | LGPL; links FFmpeg libraries (`ffmpeg/LGPL-2.1-or-later.txt`) |
+| glib, proxy-libintl, orc, libffi, pcre2, zlib, bzip2, dav1d | runtime dependencies (GLib, i18n, SIMD, FFI, regex, compression, AV1 decoder) | each component's license text is bundled under `gstreamer\share\licenses\` |
 
-The runtime may contain additional optional plugins with other licenses (e.g., GPL components such
-as x264-based encoders). TimecodeSyncPlayer does not use them; users are bound by the terms of the
-runtime they install.
+The official runtime also contains plugins that TimecodeSyncPlayer does not load (for example
+nvcodec and GPL components such as x264-based encoders). Those plugins and their DLLs are not
+bundled. This list is a record of the measured loading behavior; it is not a legal assessment.
 
 ## SpoutDX / Spout2
 
-`SpoutDX.dll` is included in the TimecodeSyncPlayer release zip. When the optional GStreamer backend
-is enabled, `tcs_gstreamer.dll` additionally contains the Spout2 SDK DirectX sources
-(`spoutDX`, compiled in from the pinned upstream tag 2.007.017); the same BSD-2-Clause notice below
-applies to that binary as well.
+`SpoutDX.dll` is included in the TimecodeSyncPlayer release packages. `tcs_gstreamer.dll`
+additionally contains the Spout2 SDK DirectX sources (`spoutDX`, compiled in from the pinned
+upstream tag 2.007.017); the same BSD-2-Clause notice below applies to that binary as well.
 
 - Project: [Spout2](https://github.com/leadedge/Spout2)
 - License: Simplified BSD License (SPDX: BSD-2-Clause)
@@ -66,6 +69,17 @@ The current upstream license is reproduced below.
 > DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
 > IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 > OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## Microsoft Visual C++ 2015-2022 Redistributable (x64)
+
+The installer chains Microsoft's redistributable package (`vc_redist.x64.exe`) when the Visual C++
+runtime is not already installed, so the runtime is registered by Microsoft's own installer instead
+of being copied as DLLs. The zip distribution does not include it; users install it themselves when
+it is missing.
+
+- Project: Microsoft Visual C++ Redistributable
+- Download: [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+- License terms: [Microsoft Software License Terms](https://visualstudio.microsoft.com/license-terms/)
 
 ## NAudio 2.2.1
 

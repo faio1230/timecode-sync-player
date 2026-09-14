@@ -6,8 +6,9 @@ GStreamerランタイムの案内です。
 
 ## GStreamer 1.28.2 ランタイム（必須）
 
-動画再生には公式の**MSVC x64ランタイム 1.28.2**が必要です。本リポジトリには同梱しません。
-[GStreamer公式ダウンロード](https://gstreamer.freedesktop.org/download/)から導入してください。
+配布パッケージには、実際に使う DLL・プラグインとライセンス文書を `gstreamer\` に同梱しています。
+**ソースからビルドして動かす場合のみ**、公式の**MSVC x64ランタイム 1.28.2**を導入してください
+（[GStreamer公式ダウンロード](https://gstreamer.freedesktop.org/download/)）。
 
 - 既定の探索先: `C:\Program Files\gstreamer\1.0\msvc_x86_64`
 - 別の場所へインストールした場合: 環境変数`GSTREAMER_1_0_ROOT_MSVC_X86_64`にルート

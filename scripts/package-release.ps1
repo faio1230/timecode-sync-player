@@ -3,6 +3,9 @@ param(
     [string]$Version,
     [string]$OutputDirectory,
     [string]$InnoSetupCompiler,
+    [string]$GStreamerRoot,
+    [string]$VcRedistPath,
+    [string]$VcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe",
     [switch]$SkipBuild,
     [switch]$SkipInstaller
 )
@@ -37,6 +40,109 @@ $zipPath = Join-Path $OutputDirectory $zipName
 $setupName = "TimecodeSyncPlayer-v$Version-setup.exe"
 $setupPath = Join-Path $OutputDirectory $setupName
 $stagingDirectory = Join-Path $OutputDirectory (".package-stage-" + [Guid]::NewGuid().ToString("N"))
+
+# v0.4 は GStreamer 1.28.2 の必要 DLL を同梱する（実行環境に GStreamer を要求しない）。
+# 一覧は V1 の 11 素材で実際にロードされたプラグインと、dumpbin で求めた依存閉包の実測
+# （TestResults/p1/closure.json、49 DLL / 38.39MB）。プラグインは lib\gstreamer-1.0、それ以外は bin。
+$gstCoreDlls = @(
+    "avcodec-61.dll", "avfilter-10.dll", "avformat-61.dll", "avutil-59.dll",
+    "bz2.dll", "dav1d.dll", "ffi-7.dll", "glib-2.0-0.dll", "gmodule-2.0-0.dll",
+    "gobject-2.0-0.dll", "gstapp-1.0-0.dll", "gstaudio-1.0-0.dll", "gstbase-1.0-0.dll",
+    "gstcodecparsers-1.0-0.dll", "gstcodecs-1.0-0.dll", "gstd3d11-1.0-0.dll",
+    "gstd3dshader-1.0-0.dll", "gstdxva-1.0-0.dll", "gstmpegts-1.0-0.dll",
+    "gstpbutils-1.0-0.dll", "gstreamer-1.0-0.dll", "gstriff-1.0-0.dll", "gstrtp-1.0-0.dll",
+    "gsttag-1.0-0.dll", "gstvideo-1.0-0.dll", "intl-8.dll", "orc-0.4-0.dll",
+    "pcre2-8-0.dll", "swresample-5.dll", "swscale-8.dll", "z-1.dll"
+)
+$gstPluginDlls = @(
+    "gstapp.dll", "gstaudioconvert.dll", "gstaudioparsers.dll", "gstaudiotestsrc.dll",
+    "gstautodetect.dll", "gstcoreelements.dll", "gstd3d11.dll", "gstdav1d.dll",
+    "gstisomp4.dll", "gstlibav.dll", "gstmpegtsdemux.dll", "gstmxf.dll",
+    "gstplayback.dll", "gstvideoconvertscale.dll", "gstvideoparsersbad.dll",
+    "gstvolume.dll", "gstwasapi2.dll"
+)
+$gstLicenseComponents = @(
+    "gstreamer-1.0", "gst-plugins-base-1.0", "gst-plugins-bad-1.0", "glib", "ffmpeg",
+    "dav1d", "orc", "libffi", "pcre2", "zlib", "bzip2", "proxy-libintl"
+)
+
+function Resolve-GStreamerRoot([string]$ExplicitPath) {
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) { $candidates += $ExplicitPath }
+    if (-not [string]::IsNullOrWhiteSpace($env:GSTREAMER_1_0_ROOT_MSVC_X86_64)) {
+        $candidates += $env:GSTREAMER_1_0_ROOT_MSVC_X86_64
+    }
+    $candidates += Join-Path $env:ProgramFiles "gstreamer\1.0\msvc_x86_64"
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and
+            (Test-Path -LiteralPath (Join-Path $candidate "bin\gstreamer-1.0-0.dll") -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $candidate "lib\gstreamer-1.0") -PathType Container)) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+
+    throw "GStreamer 1.28.2 runtime not found. Use -GStreamerRoot or set GSTREAMER_1_0_ROOT_MSVC_X86_64."
+}
+
+function Copy-GStreamerBundle([string]$root, [string]$staging) {
+    $binSource = Join-Path $root "bin"
+    $pluginSource = Join-Path $root "lib\gstreamer-1.0"
+    $binTarget = Join-Path $staging "gstreamer\bin"
+    $pluginTarget = Join-Path $staging "gstreamer\lib\gstreamer-1.0"
+    New-Item -ItemType Directory -Path $binTarget -Force | Out-Null
+    New-Item -ItemType Directory -Path $pluginTarget -Force | Out-Null
+
+    foreach ($name in $gstCoreDlls) {
+        $source = Join-Path $binSource $name
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "GStreamer DLL not found: $source"
+        }
+        Copy-Item -LiteralPath $source -Destination $binTarget
+    }
+    foreach ($name in $gstPluginDlls) {
+        $source = Join-Path $pluginSource $name
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "GStreamer plugin not found: $source"
+        }
+        Copy-Item -LiteralPath $source -Destination $pluginTarget
+    }
+    foreach ($component in $gstLicenseComponents) {
+        $licenseSource = Join-Path $root "share\licenses\$component"
+        if (-not (Test-Path -LiteralPath $licenseSource -PathType Container)) {
+            throw "GStreamer license directory not found: $licenseSource"
+        }
+        $licenseTarget = Join-Path $staging "gstreamer\share\licenses\$component"
+        New-Item -ItemType Directory -Path $licenseTarget -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $licenseSource "*") -Destination $licenseTarget
+    }
+}
+
+function Resolve-VcRedist([string]$ExplicitPath, [string]$Url, [string]$CacheDirectory) {
+    $path = $ExplicitPath
+    if (-not [string]::IsNullOrWhiteSpace($path)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "VcRedistPath not found: $path"
+        }
+    }
+    else {
+        New-Item -ItemType Directory -Path $CacheDirectory -Force | Out-Null
+        $path = Join-Path $CacheDirectory "vc_redist.x64.exe"
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            Write-Host "Downloading $Url ..."
+            [Net.ServicePointManager]::SecurityProtocol =
+                [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $Url -OutFile $path -UseBasicParsing
+        }
+    }
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $path
+    if ($signature.Status -ne "Valid" -or
+        $signature.SignerCertificate.Subject -notmatch "Microsoft Corporation") {
+        throw "vc_redist.x64.exe の署名を検証できませんでした（Status=$($signature.Status)）。-VcRedistPath で検証済みのファイルを指定してください。"
+    }
+    return [System.IO.Path]::GetFullPath($path)
+}
 
 function Resolve-InnoSetupCompiler([string]$ExplicitPath) {
     $candidates = @()
@@ -122,6 +228,19 @@ try {
         throw "配布物の tcs_gstreamer.dll が Release ビルドと一致しません。native\tcs_gstreamer.dll（または native\gst-shim\build-debug の出力）が Release ビルドで上書きされているか確認してください。"
     }
 
+    # GStreamer ランタイム（必要 DLL とライセンス文書）を同梱する。
+    $gstRoot = Resolve-GStreamerRoot $GStreamerRoot
+    Write-Host "Bundling GStreamer runtime from $gstRoot ..."
+    Copy-GStreamerBundle $gstRoot $stagingDirectory
+    foreach ($bundledFile in @(
+        "gstreamer\bin\gstreamer-1.0-0.dll",
+        "gstreamer\lib\gstreamer-1.0\gstcoreelements.dll",
+        "gstreamer\share\licenses\gstreamer-1.0\LGPL-2.0-or-later.txt")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $stagingDirectory $bundledFile) -PathType Leaf)) {
+            throw "Bundled GStreamer file is missing: $bundledFile"
+        }
+    }
+
     Copy-Item -LiteralPath (Join-Path $projectRoot "LICENSE") -Destination $stagingDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot "THIRD-PARTY-NOTICES.md") -Destination $stagingDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot "CHANGELOG.md") -Destination $stagingDirectory
@@ -132,8 +251,9 @@ TimecodeSyncPlayer v$Version (Windows x64 beta)
 Requirements
 - Windows 10/11 x64
 - .NET 8 Desktop Runtime
-- GStreamer 1.28 MSVC x64 runtime
-  (https://gstreamer.freedesktop.org/download/)
+- Microsoft Visual C++ 2015-2022 Redistributable (x64)
+  The setup installs it automatically. When using the zip, install it manually
+  if it is missing: https://aka.ms/vs/17/release/vc_redist.x64.exe
 - An audio input device carrying LTC
 
 Setup
@@ -141,8 +261,10 @@ Setup
 2. Select the LTC capture device and press START.
 3. Load media, then press Sync ON.
 
-SpoutDX.dll is included and enables Spout2 output. See THIRD-PARTY-NOTICES.md for
-third-party terms. This beta should be validated with your complete show setup before use.
+The GStreamer 1.28.2 runtime (bin, plugins and license texts) is included in the
+gstreamer folder; no separate GStreamer installation is required. SpoutDX.dll
+enables Spout2 output. See THIRD-PARTY-NOTICES.md for third-party terms. This
+beta should be validated with your complete show setup before use.
 "@
     Set-Content -LiteralPath (Join-Path $stagingDirectory "README.txt") -Value $readme -Encoding UTF8
 
@@ -154,26 +276,28 @@ third-party terms. This beta should be validated with your complete show setup b
     Compress-Archive -Path (Join-Path $stagingDirectory "*") -DestinationPath $zipPath -CompressionLevel Optimal
 
     Write-Host "Created: $zipPath"
+
+    if ($SkipInstaller) {
+        Write-Host "Skipping installer generation because -SkipInstaller was specified."
+    }
+    else {
+        # インストーラーは zip と同じステージング内容（同梱 GStreamer・ライセンス含む）から作る。
+        $isccPath = Resolve-InnoSetupCompiler $InnoSetupCompiler
+        $vcRedist = Resolve-VcRedist $VcRedistPath $VcRedistUrl (Join-Path (Join-Path $projectRoot "artifacts") "cache")
+        $installerScript = Join-Path $PSScriptRoot "installer.iss"
+        Write-Host "Creating $setupName with $isccPath..."
+        & $isccPath "/DMyAppVersion=$Version" "/DReleaseDirectory=$stagingDirectory" "/DVcRedistFile=$vcRedist" "/DProjectRoot=$projectRoot" "/O$OutputDirectory" "/F$([System.IO.Path]::GetFileNameWithoutExtension($setupName))" $installerScript
+        if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
+        }
+        if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
+            throw "Inno Setup completed without creating the expected file: $setupPath"
+        }
+        Write-Host "Created: $setupPath"
+    }
 }
 finally {
     if (Test-Path -LiteralPath $stagingDirectory) {
         Remove-Item -LiteralPath $stagingDirectory -Recurse -Force
     }
-}
-
-if ($SkipInstaller) {
-    Write-Host "Skipping installer generation because -SkipInstaller was specified."
-}
-else {
-    $isccPath = Resolve-InnoSetupCompiler $InnoSetupCompiler
-    $installerScript = Join-Path $PSScriptRoot "installer.iss"
-    Write-Host "Creating $setupName with $isccPath..."
-    & $isccPath "/DMyAppVersion=$Version" "/DReleaseDirectory=$releaseDirectory" "/DProjectRoot=$projectRoot" "/O$OutputDirectory" "/F$([System.IO.Path]::GetFileNameWithoutExtension($setupName))" $installerScript
-    if ($LASTEXITCODE -ne 0) {
-        throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
-    }
-    if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
-        throw "Inno Setup completed without creating the expected file: $setupPath"
-    }
-    Write-Host "Created: $setupPath"
 }

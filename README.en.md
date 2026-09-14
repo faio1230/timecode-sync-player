@@ -17,7 +17,7 @@ video clips in a playlist.
 - For most users, the per-user `TimecodeSyncPlayer-v0.2.0-setup.exe` installer is recommended and
   does not require administrator privileges.
 - Choose `TimecodeSyncPlayer-v0.2.0-win-x64.zip` for a portable extracted copy.
-- Video playback requires the GStreamer 1.28 MSVC x64 runtime (see Requirements).
+- The GStreamer 1.28.2 runtime is included; no separate GStreamer installation is required.
 
 ## Features
 
@@ -34,7 +34,9 @@ video clips in a playlist.
 
 - Windows 10/11 x64
 - [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) for release packages
-- GStreamer 1.28 MSVC x64 runtime ([official downloads](https://gstreamer.freedesktop.org/download/))
+- **Microsoft Visual C++ 2015-2022 Redistributable (x64)**
+  The setup installs it automatically. For the zip, install it manually when missing
+  ([vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)).
 - An audio input device carrying LTC
 
 `SpoutDX.dll` is included in release packages and is only needed when using Spout output.
@@ -52,10 +54,11 @@ reinstallation. Delete that file manually to remove the preferences completely.
 ## Using the zip
 
 1. Extract `TimecodeSyncPlayer-v0.2.0-win-x64.zip` to a writable folder.
-2. Install the GStreamer 1.28 MSVC x64 runtime.
+2. If the Visual C++ 2015-2022 Redistributable (x64) is missing, run
+   [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 3. Start `TimecodeSyncPlayer.exe`.
 
-See the [setup guide](docs/SETUP.md) for GStreamer installation notes.
+The GStreamer runtime is included. See the [setup guide](docs/SETUP.md) for details.
 
 ## Basic usage
 
@@ -76,7 +79,8 @@ dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 ```
 
-Video playback requires the GStreamer 1.28 MSVC x64 runtime and `tcs_gstreamer.dll`.
+Building from source requires the GStreamer 1.28 MSVC x64 runtime and `tcs_gstreamer.dll`
+(release packages bundle them).
 Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder when building from
 source. See the [setup guide](docs/SETUP.md) for details.
 

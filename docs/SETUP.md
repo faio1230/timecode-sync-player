@@ -51,10 +51,14 @@ timecode-sync-player/
 
 詳細は [native/README.md](../native/README.md) を参照してください。
 
-### GStreamer 1.28.2（PlayerBackend=Gstreamer を使う場合）
+### GStreamer 1.28.2
 
-GStreamerバックエンドで再生する場合は、公式の**MSVC x64ランタイム 1.28.2**を別途導入します
-（本リポジトリには同梱しません）。[GStreamer公式ダウンロード](https://gstreamer.freedesktop.org/download/)から
+配布パッケージ（zip／インストーラー）には、このアプリが実際に使う GStreamer の DLL・
+プラグインとライセンス文書（`gstreamer\share\licenses`）を `gstreamer\` に同梱しています。
+アプリは環境変数が未設定なら同梱ランタイムを優先し、プラグイン探索とレジストリキャッシュを
+同梱ディレクトリへ固定します（システムに別の GStreamer があっても混在しません）。
+**ソースからビルドして動かす場合のみ**、公式の**MSVC x64ランタイム 1.28.2**を別途導入します。
+[GStreamer公式ダウンロード](https://gstreamer.freedesktop.org/download/)から
 MSVC x64用の1.28.2ランタイムをインストールし、`bin`に`gstreamer-1.0-0.dll`（または
 `gstreamer-1.0.dll`）があることを確認します。
 
