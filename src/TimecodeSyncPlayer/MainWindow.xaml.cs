@@ -223,6 +223,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Environment.GetEnvironmentVariable(OutputEngineSettings.SimulateDeviceLossEnvironmentVariable)),
                 GpuStatusChanged = OnGpuStatusChanged,
                 GStreamerRebindRequested = OnGStreamerRebindRequested,
+                SourceFrameReady = (qpc, generation, sequence) =>
+                    _syncService.LatencyCompensator.ObserveFrameReady(qpc, generation, sequence),
             });
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
@@ -1120,6 +1122,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// </summary>
     private void SetLoadedTrack(Guid? id)
     {
+        // 着地遅延 L はトラック単位で保持する。切替では消さず、対象トラックの学習値へ引き当てる。
+        if (id != _loadedTrackId)
+            _syncService.LatencyCompensator.SelectTrack(id);
         _loadedTrackId = id;
         if (_timelinePanel != null)
             _timelinePanel.LoadedTrackId = id;

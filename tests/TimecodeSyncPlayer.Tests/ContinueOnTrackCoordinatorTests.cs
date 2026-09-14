@@ -236,6 +236,33 @@ public class ContinueOnTrackCoordinatorTests
     // ---- (b) SwitchTrack 分岐 ----
 
     [Fact]
+    public void SwitchTrack_LoadsAtMediaPosPlusLearnedCompensation()
+    {
+        var loadedId = Guid.NewGuid();
+        var newTrack = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
+        var service = CreateService();
+        var compensator = service.LatencyCompensator;
+        compensator.SelectTrack(newTrack.Id);
+        compensator.MarkLoadSent(1_000);
+        compensator.ObserveFrameReady(1_000 + (long)(0.25 * System.Diagnostics.Stopwatch.Frequency), generation: 1, sourceSequence: 1);
+        var rec = new Recorder
+        {
+            LoadedTrackId = loadedId,   // != newTrack.Id → SwitchTrack
+            LoadFileResult = true,
+            TotalRenderedFrames = 7,
+        };
+        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
+
+        coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
+
+        rec.LoadFileArgs.Should().ContainSingle();
+        rec.LoadFileArgs[0].path.Should().Be("C:/next.mp4");
+        rec.LoadFileArgs[0].start.Should().BeApproximately(12.75, 1e-9);
+        rec.SetLoadedTrackIds.Should().ContainSingle().Which.Should().Be(newTrack.Id);
+        rec.Calls.Should().NotContain("GetTimePos");
+    }
+
+    [Fact]
     public void SwitchTrack_OnLoadFileSuccess_UpdatesLoadedTrackId_AndBeginsFileLoad()
     {
         var loadedId = Guid.NewGuid();

@@ -47,9 +47,16 @@ public partial class App : Application
         services.AddSingleton<IMediaDurationReader, MediaDurationReader>();
         services.AddSingleton<ILtcMonitor, LtcAudioMonitor>();
         services.AddSingleton<PlaylistState>();
-        services.AddSingleton<ISyncDecisionEngine, SyncDecisionEngine>();
+        services.AddSingleton<SeekLatencyCompensator>();
+        services.AddSingleton<ISyncDecisionEngine>(sp => new SyncDecisionEngine(
+            new SyncDecisionOptions(),
+            sp.GetRequiredService<SeekLatencyCompensator>()));
         services.AddSingleton<ITimecodeSyncSeekState, TimecodeSyncSeekState>();
-        services.AddSingleton<TimecodeSyncService>();
+        services.AddSingleton(sp => new TimecodeSyncService(
+            sp.GetRequiredService<ISyncDecisionEngine>(),
+            sp.GetRequiredService<ITimecodeSyncSeekState>(),
+            null,
+            sp.GetRequiredService<SeekLatencyCompensator>()));
         services.AddSingleton<PlaylistDurationBackfillService>();
         services.AddSingleton<PlaylistLoadCoordinator>();
         services.AddSingleton<GapPlaybackCommandExecutor>();

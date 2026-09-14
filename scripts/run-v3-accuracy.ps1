@@ -14,6 +14,11 @@
 # the steady error can never be reached - see the "V3 criteria" section in
 # docs/GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md.
 #
+# outputBackend=1 (Gpu compositor) is the V3 validation target. With the accuracy trace
+# enabled the app records samples from the published GPU texture
+# (OutputEngine.RecordGpuAccuracyFrame), so the GPU path is measurable. The older note
+# that required outputBackend=0 (WriteableBitmap sampling only) is obsolete (2026-09-15).
+#
 # NOTE: keep this file ASCII-only and BOM-less like the other scripts in this repo.
 [CmdletBinding()]
 param(
@@ -22,12 +27,8 @@ param(
     [string]$TestProject = 'C:\Users\codea\Documents\timecode-sync-player-wt-verify-oe-20260911-1344\tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj',
     [string]$LogRoot = 'C:\Users\codea\Documents\timecode-sync-player-wt-integrate-20260912\TestResults\v3',
     [int]$Repeats = 1,
-    # 0 = Cpu compositor, 1 = Gpu compositor. MUST stay 0: this harness samples the
-    # WriteableBitmap and the Gpu path never writes one, so every sample comes back
-    # as 'unexpected-black' and nothing is measurable. Measured 2026-09-13 with
-    # outputBackend=1: 2243 samples, 0 measured, 1744 unexpected-black.
-    # GPU-path timing needs the output trace instead (analyze-v3-seek-breakdown.py).
-    [ValidateSet(0, 1)][int]$OutputBackend = 0
+    # 0 = Cpu compositor, 1 = Gpu compositor. Default 1: V3 judges the shipping GPU path.
+    [ValidateSet(0, 1)][int]$OutputBackend = 1
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
