@@ -263,6 +263,29 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
+    public void SwitchTrack_WithCompensationDisabled_LoadsAtMediaPos()
+    {
+        var compensator = new SeekLatencyCompensator(enabled: false);
+        var service = new TimecodeSyncService(
+            new SyncDecisionEngine(new SyncDecisionOptions(), compensator),
+            new TimecodeSyncSeekState(), null, compensator);
+        var newTrack = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
+        compensator.SelectTrack(newTrack.Id);
+        compensator.MarkLoadSent(1_000);
+        compensator.ObserveFrameReady(1_000 + (long)(0.5 * System.Diagnostics.Stopwatch.Frequency), generation: 1, sourceSequence: 1);
+        var rec = new Recorder
+        {
+            LoadedTrackId = Guid.NewGuid(),   // != newTrack.Id → SwitchTrack
+            LoadFileResult = true,
+        };
+        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
+
+        coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
+
+        rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
+    }
+
+    [Fact]
     public void SwitchTrack_OnLoadFileSuccess_UpdatesLoadedTrackId_AndBeginsFileLoad()
     {
         var loadedId = Guid.NewGuid();

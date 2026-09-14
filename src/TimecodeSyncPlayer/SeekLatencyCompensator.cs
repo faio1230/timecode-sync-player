@@ -17,7 +17,11 @@ internal sealed class SeekLatencyCompensator
     public const double EmaAlpha = 0.25;
     public const double MaxCompensationSeconds = 0.4;
 
+    /// <summary>TCS_SEEK_LATENCY_COMPENSATION=off で補償を無効化する（L は常に 0、測定も行わない）。</summary>
+    public const string EnvironmentVariable = "TCS_SEEK_LATENCY_COMPENSATION";
+
     private readonly object gate = new();
+    private readonly bool _enabled;
     private readonly Dictionary<Guid, double> _compensationByTrack = new();
     private readonly HashSet<Guid> _observedTracks = new();
     private Guid? _currentTrack;
@@ -29,27 +33,53 @@ internal sealed class SeekLatencyCompensator
     private int _generationAtArm;
     private long _sequenceAtArm;
 
+    public SeekLatencyCompensator()
+        : this(IsCompensationEnabled(Environment.GetEnvironmentVariable(EnvironmentVariable)))
+    {
+    }
+
+    internal SeekLatencyCompensator(bool enabled)
+    {
+        _enabled = enabled;
+        if (!enabled)
+            Log.Information("Seek latency compensator: 無効化されています（{Variable}=off）", EnvironmentVariable);
+    }
+
+    /// <summary>環境変数値の解釈。null・空・"on" は有効、"off"（大文字小文字不問）で無効。</summary>
+    internal static bool IsCompensationEnabled(string? value)
+        => value is null || !value.Equals("off", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>現在のトラックの補償値（未学習は 0）。</summary>
     public double CompensationSeconds
     {
-        get { lock (gate) return CompensationLocked(_currentTrack); }
+        get
+        {
+            if (!_enabled) return 0.0;
+            lock (gate) return CompensationLocked(_currentTrack);
+        }
     }
 
     /// <summary>指定トラックの補償値（未学習は 0）。</summary>
     public double CompensationForTrack(Guid? trackId)
     {
+        if (!_enabled) return 0.0;
         lock (gate) return CompensationLocked(trackId);
     }
 
     /// <summary>補償・観測の対象トラックを切り替える（学習値は保持したまま引き当てる）。</summary>
     public void SelectTrack(Guid? trackId)
     {
+        if (!_enabled) return;
         lock (gate) _currentTrack = trackId;
     }
 
     public bool IsMeasurementArmed
     {
-        get { lock (gate) return _measurementArmed; }
+        get
+        {
+            if (!_enabled) return false;
+            lock (gate) return _measurementArmed;
+        }
     }
 
     /// <summary>
@@ -58,12 +88,14 @@ internal sealed class SeekLatencyCompensator
     /// </summary>
     public void MarkSeekDecision(long qpc)
     {
+        if (!_enabled) return;
         lock (gate) _pendingDecisionQpc = qpc;
     }
 
     /// <summary>実際にシークを発行したときに測定を開始する（抑止・デバウンスされた決定で L を汚さない）。</summary>
     public void MarkSeekSent()
     {
+        if (!_enabled) return;
         lock (gate)
         {
             ArmLocked(_pendingDecisionQpc != 0 ? _pendingDecisionQpc : Stopwatch.GetTimestamp());
@@ -77,6 +109,7 @@ internal sealed class SeekLatencyCompensator
     /// </summary>
     public void MarkLoadSent(long issuedQpc)
     {
+        if (!_enabled) return;
         lock (gate) ArmLocked(issuedQpc != 0 ? issuedQpc : Stopwatch.GetTimestamp());
     }
 
@@ -95,6 +128,7 @@ internal sealed class SeekLatencyCompensator
     /// </summary>
     public void ObserveFrameReady(long qpc, int generation, long sourceSequence)
     {
+        if (!_enabled) return;
         bool clampedAtUpper;
         double latencySeconds, compensationSeconds;
         Guid? track;

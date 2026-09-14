@@ -48,6 +48,55 @@ public class SeekLatencyCompensatorTests
         compensator.CompensateTarget(150.0, 100.0).Should().Be(100.0);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("on", true)]
+    [InlineData("off", false)]
+    [InlineData("OFF", false)]
+    public void IsCompensationEnabled_ParsesEnvironmentValue(string? value, bool expected)
+        => SeekLatencyCompensator.IsCompensationEnabled(value).Should().Be(expected);
+
+    [Fact]
+    public void CompensationDisabled_KeepsLZeroEvenAfterObservations()
+    {
+        var compensator = new SeekLatencyCompensator(enabled: false);
+        compensator.SelectTrack(TrackA);
+
+        Learn(compensator, latencySeconds: 0.3, sourceSequence: 1);
+
+        compensator.CompensationSeconds.Should().Be(0.0);
+        compensator.CompensationForTrack(TrackA).Should().Be(0.0);
+        compensator.CompensateTarget(10.0, 100.0).Should().Be(10.0);
+        compensator.IsMeasurementArmed.Should().BeFalse();
+    }
+
+    [Fact]
+    public void CompensationDisabled_EngineKeepsCurrentTargetAndDelta()
+    {
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(), new SeekLatencyCompensator(enabled: false));
+
+        SyncDecision decision = engine.Decide(10.0, SeekYieldingState(4.0));
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().Be(10.0);
+        decision.DeltaSeconds.Should().Be(6.0);
+    }
+
+    [Fact]
+    public void CompensationDisabled_ServiceDoesNotArmMeasurement()
+    {
+        var compensator = new SeekLatencyCompensator(enabled: false);
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
+        var service = new TimecodeSyncService(engine, new TimecodeSyncSeekState(), null, compensator);
+
+        SyncDecision decision = service.EvaluateDecision(10.0, SeekYieldingState(4.0));
+        service.ReportSeekSent(decision.TargetSeconds);
+
+        compensator.IsMeasurementArmed.Should().BeFalse();
+        compensator.CompensationSeconds.Should().Be(0.0);
+    }
+
     [Fact]
     public void CompensateTarget_FirstSamplePerTrack_IsAdoptedWithoutEma()
     {
