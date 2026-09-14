@@ -4,6 +4,7 @@
  */
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
+#include "tcs_decode_policy.h"
 #include <d3d11.h>
 #include <psapi.h>
 #include <cstdio>
@@ -259,6 +260,47 @@ run_delivery_policy_tests ()
   const int32_t single[1] = { 0 };
   check (tcs_ring_evict_index (single, 1) == 0, "ring evict: first item");
   check (tcs_ring_evict_index (single, 0) == -1, "ring evict: empty -> -1");
+
+  /* V11: decode profile order (pure). 4 GPU profiles then 5 CPU profiles,
+   * mirroring the shim's table shape (9 profiles + decodebin fallback). */
+  {
+    const int software_flags[9] = { 0, 0, 0, 0, 1, 1, 1, 1, 1 };
+    int order[10];
+    int n;
+
+    /* hardware, no cached profile: table order, then decodebin. */
+    n = tcs_decode_profile_order (0, 0, software_flags, 9, order);
+    check (n == 10, "decode order: hardware count");
+    check (order[0] == 0 && order[1] == 1 && order[2] == 2 && order[3] == 3 &&
+           order[4] == 4 && order[5] == 5 && order[6] == 6 && order[7] == 7 &&
+           order[8] == 8 && order[9] == TCS_DECODE_PROFILE_FALLBACK,
+        "decode order: hardware is table order + fallback");
+
+    /* hardware, cached CPU profile: cache first, fallback last. */
+    n = tcs_decode_profile_order (0, 6, software_flags, 9, order);
+    check (n == 10 && order[0] == 6 && order[9] == TCS_DECODE_PROFILE_FALLBACK,
+        "decode order: hardware keeps last-good first");
+
+    /* software: CPU profiles, decodebin, then GPU profiles. */
+    n = tcs_decode_profile_order (1, 0, software_flags, 9, order);
+    check (n == 10, "decode order: software count");
+    check (order[0] == 4 && order[1] == 5 && order[2] == 6 && order[3] == 7 &&
+           order[4] == 8 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
+           order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
+        "decode order: software is CPU + decodebin + GPU");
+
+    /* software, cached CPU profile: cache first, no duplicate. */
+    n = tcs_decode_profile_order (1, 5, software_flags, 9, order);
+    check (n == 10 && order[0] == 5 && order[1] == 4 && order[2] == 6 &&
+           order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
+        "decode order: software keeps a CPU last-good first");
+
+    /* software, cached GPU profile: the GPU cache stays in the GPU block. */
+    n = tcs_decode_profile_order (1, 2, software_flags, 9, order);
+    check (n == 10 && order[0] == 4 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
+           order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
+        "decode order: software does not promote a GPU last-good");
+  }
 }
 
 /* --seek-loop <file> [iters]: consecutive seeks (V5). Every target must land
