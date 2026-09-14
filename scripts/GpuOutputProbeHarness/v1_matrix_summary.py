@@ -29,12 +29,18 @@ for run in sorted(glob.glob(os.path.join(root,"*-v1-*"))):
         if e.get("stage") in ("compose.start","compose.complete") and lo<=t(e)<hi: d.setdefault(e.get("scheduledQpc"),{})[e["stage"]]=e["qpc"]
     cm=sorted((v["compose.complete"]-v["compose.start"])*1000/f for v in d.values() if len(v)==2)
     errs=[e for e in ev if "error" in e.get("stage","")]
-    diag=None
-    try: diag=json.load(io.open(os.path.join(run,"app","summary.json"),encoding="utf-8-sig")).get("sourceDiagnostics") or json.load(io.open(os.path.join(run,"app","summary.json"),encoding="utf-8-sig")).get("source",{}).get("sourceDiagnostics")
+    summary={}; diag=None
+    try:
+        summary=json.load(io.open(os.path.join(run,"app","summary.json"),encoding="utf-8-sig"))
+        diag=summary.get("sourceDiagnostics") or summary.get("source",{}).get("sourceDiagnostics")
     except Exception: pass
     dec=(diag or {}).get("decoder","?") if isinstance(diag,dict) else "?"
+    # V11-b: 平均占有コア数（engine 区間）。summary が無い旧 run は '-'.
+    cpu=summary.get("appCpuSeconds")
+    elapsed=((summary.get("appCpuEndQpc") or 0)-(summary.get("appCpuStartQpc") or 0))/1e7
+    cores=round(cpu/elapsed,3) if cpu and elapsed else "-"
     exp=round(fps) if fps else None
     ok_src = exp is not None and secs and min(dist)>=exp-1 and max(dist)<=exp+1
-    rows.append((os.path.basename(rr["media"]),codec,pix,round(fps,3),dec,"%d..%d"%(min(dist),max(dist)) if dist else "-",exp,round(min(pres.values()) if pres else 0),round(sum(pub.values())/max(1,len(pub)),1),"%.2f"%(cm[int(len(cm)*.99)] if cm else 0),len(errs),rr.get("appExit"),"OK" if ok_src and errs==[] and rr.get("appExit")==0 and (min(pres.values()) if pres else 0)>=59 else "CHECK"))
-print("%-28s %-6s %-10s %-7s %-14s %-9s %-4s %-6s %-6s %-6s %-4s %-4s %s"%("clip","codec","pix","fps","decoder","dist/s","exp","minPr","spout","cp99","err","exit","verdict"))
-for r in rows: print(" ".join(str(x).ljust(w) for x,w in zip(r,(28,6,10,7,14,9,4,6,6,6,4,4,6))))
+    rows.append((os.path.basename(rr["media"]),codec,pix,round(fps,3),dec,"%d..%d"%(min(dist),max(dist)) if dist else "-",exp,cores,round(min(pres.values()) if pres else 0),round(sum(pub.values())/max(1,len(pub)),1),"%.2f"%(cm[int(len(cm)*.99)] if cm else 0),len(errs),rr.get("appExit"),"OK" if ok_src and errs==[] and rr.get("appExit")==0 and (min(pres.values()) if pres else 0)>=59 else "CHECK"))
+print("%-28s %-6s %-10s %-7s %-14s %-9s %-4s %-6s %-6s %-6s %-6s %-4s %-4s %s"%("clip","codec","pix","fps","decoder","dist/s","exp","cpu","minPr","spout","cp99","err","exit","verdict"))
+for r in rows: print(" ".join(str(x).ljust(w) for x,w in zip(r,(28,6,10,7,14,9,4,6,6,6,6,4,4,6))))
