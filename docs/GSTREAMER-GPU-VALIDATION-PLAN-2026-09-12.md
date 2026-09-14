@@ -16,10 +16,11 @@
 | V4 | ギャップ 3 種 | Freeze／Black／Hold をプロジェクトで作り、Gpu 経路で確認（Freeze の元画像が合成前であること、Black が不透明黒、Hold が最後の確定画像） | 既存 E2E（`RealProjectGapE2ETests`）を GStreamer×Gpu 設定で通す |
 | V5 | トラック切替・シーク連打 | `GStreamerBackend_SurvivesRepeatedTrackSwitches` と手動 20 回切替、世代排除の記録 | generationRejected が切替直後のみ、黒フレームなし |
 | V6 | 長時間 | 120 秒素材をループまたは 1 時間プロジェクトで 60 分 | 欠落 0、到着→取得の遅れが鋸歯（H-3 の 21ms 閾値で 1 枚破棄→4ms 台へ）、メモリ増加なし |
-| V7 | mpv×Gpu×Spout | 1080p/4K、受信機あり、受信機断 | 共通条件（実フレームは mpv の上限で可） |
+| ~~V7~~ | ~~mpv×Gpu×Spout~~ | **消滅**（mpv を v0.4 で除去する決定による、2026-09-13） | — |
 | V8 | 表示先の違い | DISPLAY1（4K 主画面）を表示先にした全画面、120Hz 表示先があれば追加 | 表示周期に合成が追従、落ち 0 |
-| V9 | 起動・終了・復旧 | 起動直後の再生、通常終了／強制終了、消失シミュレーション 2 回＋手動再試行を GStreamer と mpv で | 既存 E2E＋段階 5 の runner 手順 |
+| V9 | 起動・終了・復旧 | 起動直後の再生、通常終了／強制終了、消失シミュレーション 2 回＋手動再試行。**mpv 除去後は GStreamer のみ**（手順の書き換えが要る） | 既存 E2E＋段階 5 の runner 手順 |
 | V10 | 旧プロジェクトの読込 | Canvas なしの既存 .tsp を開く | ダイアログで選択→保存で記録。キャンセルで 1920×1080 仮採用 |
+| V11 | デコード方式の切替 | `decodeMode=hardware/software` の 4 項目（a: 既定の非回帰、b: software の再生能力、c: 退避の警告、d: 出力側の不変）。詳細は `docs/V04-SCOPE-mpv-removal-decode-mode.md` の 5 節 | 同文書の表に従う |
 
 ## 既定切替の条件
 
