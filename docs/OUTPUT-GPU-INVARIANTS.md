@@ -39,6 +39,10 @@ D2 修正後（`fdbf543`）の shim には、**`state_mutex` を保持したま�
 つまり安全性は**ミューテックスの性質ではなくコードの性質**であり、`state_mutex` を取る関数が増えた瞬間に
 前提が崩れる。そこで `scripts/check-shim-lock-rule.py` に `state_mutex` を取る関数の集合を固定し、
 **増えたら検査を失敗させて人間に再検討を強制する**ようにした。
+
+**追加（2026-09-15、V11 decodeMode）**: `tcs_player_set_decode_mode` は `state_mutex` を取る 4 つ目の
+関数になった。**GStreamer 呼び出しを一切せず**（制御スレッド専用の scalar 書き込み。最初の load 前に
+1 回だけ呼ばれる）、ストリーミングスレッドから呼ばれ得ない。`STATE_MUTEX_HOLDERS` に追加済み。
 負の対照として、D2 修正前の main に対しては既知の 2 箇所を検出して FAIL することを確認済み。
 
 ### I13 の補足（同じ罠を 3 回踏んだ経緯）

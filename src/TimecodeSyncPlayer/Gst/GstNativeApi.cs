@@ -54,6 +54,9 @@ internal sealed class GstNativeApi : IGstNativeApi
 
     public int SetMute(IntPtr player, bool mute) => GstNative.Imports.tcs_player_set_mute(player, mute ? 1 : 0);
 
+    public int SetDecodeMode(IntPtr player, int mode) =>
+        GstNative.Imports.tcs_player_set_decode_mode(player, mode);
+
     public bool TryGetTimePos(IntPtr player, out double seconds) =>
         GstNative.Imports.tcs_player_get_time_pos(player, out seconds) == 0;
 

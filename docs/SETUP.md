@@ -184,12 +184,14 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD
 ### PlayerBackend / OutputBackend
 
 設定は`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`（`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`で
-上書き可）の次のキーで選びます。変更後はアプリを再起動してください。
+上書き可）の次のキーで選びます。変更後はアプリを再起動してください（`decodeMode`も同様に、
+プレイヤー生成時に読むため再起動しないと反映されません）。
 
 | JSONキー | 値 | 既定 | 内容 |
 |---|---|---|---|
 | `backend` | `0` = Mpv / `1` = Gstreamer | `0` | 再生バックエンド。Gstreamerは`tcs_gstreamer.dll`とGStreamerランタイムが必要です |
 | `outputBackend` | `0` = Cpu / `1` = Gpu | `0` | 映像出力バックエンド。Cpuは従来の`OutputFrame`→`WriteableBitmap`→`SendImage`経路です |
+| `decodeMode` | `hardware` / `software` | `hardware` | デコード方式。`software`はCPUデコーダを優先し、GPUデコーダは最後の手段として使います（GPUに落ちた場合は警告ログ）。**変更はアプリの再起動が必要です**（プレイヤー生成時に1回だけ読みます）。不正値は`hardware`として扱い、警告ログを出します |
 
 例（GStreamer + GPU出力）:
 

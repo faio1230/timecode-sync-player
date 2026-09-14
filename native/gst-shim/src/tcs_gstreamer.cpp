@@ -30,6 +30,7 @@
 
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
+#include "tcs_decode_policy.h"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -178,6 +179,8 @@ struct TcsPlayer {
   bool rejected = false;
   int vProfile = 0;
   int lastGoodProfile = 0;
+  int decode_mode = TCS_DECODE_MODE_HARDWARE;  /* tcs_player_set_decode_mode */
+  bool ever_loaded = false;                    /* the first load locks decode_mode */
   GstElement* aconvert = nullptr;         /* first: accepts non-interleaved decoder output */
   GstElement* aqueue = nullptr;
   GstElement* avolume = nullptr;
@@ -1251,6 +1254,18 @@ static const VideoProfile g_profiles[] = {
 };
 static const int kProfileCount = (int) (sizeof (g_profiles) / sizeof (g_profiles[0]));
 #define PROFILE_INDEX_FALLBACK (-1)
+static_assert (PROFILE_INDEX_FALLBACK == TCS_DECODE_PROFILE_FALLBACK,
+    "fallback index must match tcs_decode_policy.h");
+
+/* CPU decode profiles (decode to sysmem, uploaded with d3d11upload) versus
+ * GPU profiles (d3d11*dec -> d3d11colorconvert). Derived from the converter
+ * so reordering the table stays safe. */
+static bool
+profile_is_software (int idx)
+{
+  return idx >= 0 && idx < kProfileCount &&
+      strstr (g_profiles[idx].conv, "d3d11") == nullptr;
+}
 
 static gboolean
 caps_is_hap (GstCaps* caps)
@@ -1961,11 +1976,12 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
   int order[kProfileCount + 1];
   int nOrder = 0;
   if (!ext_is_decodebin) {
-    if (p->lastGoodProfile >= 0 && p->lastGoodProfile < kProfileCount)
-      order[nOrder++] = p->lastGoodProfile;
+    int software_flags[kProfileCount];
     for (int i = 0; i < kProfileCount; i++)
-      if (i != p->lastGoodProfile)
-        order[nOrder++] = i;
+      software_flags[i] = profile_is_software (i) ? 1 : 0;
+    nOrder = tcs_decode_profile_order (
+        p->decode_mode == TCS_DECODE_MODE_SOFTWARE ? 1 : 0,
+        p->lastGoodProfile, software_flags, kProfileCount, order);
   }
   order[nOrder++] = PROFILE_INDEX_FALLBACK;
 
@@ -2168,6 +2184,9 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     p->path = utf8_path;
     p->paused = paused != 0;
     p->lastGoodProfile = idx;
+    if (p->decode_mode == TCS_DECODE_MODE_SOFTWARE && idx >= 0 && !profile_is_software (idx))
+      LOG ("software decode requested but no CPU decoder was usable; "
+          "using hardware profile %s", g_profiles[idx].name);
 
     if (paused) {
       /* wait (bounded) for the audio sink to consume its first buffer before
@@ -2399,6 +2418,9 @@ tcs_player_load (TcsPlayer* player, const char* utf8_path, double start_sec,
 {
   if (!player || !utf8_path || !utf8_path[0])
     return TCS_ERR_GENERIC;
+  /* The first load fixes the decode mode (tcs_player_set_decode_mode). Both
+   * this write and the setter run on the control thread only. */
+  player->ever_loaded = true;
   int rc = build_pipeline (player, utf8_path, start_sec, paused);
   if (rc != TCS_OK && errbuf && errbuf_len)
     snprintf (errbuf, errbuf_len, "%s", player->last_error.c_str ());
@@ -2465,6 +2487,26 @@ TCS_GST_API int
 tcs_player_get_paused (TcsPlayer* player)
 {
   return player ? (player->paused ? 1 : 0) : -1;
+}
+
+TCS_GST_API int
+tcs_player_set_decode_mode (TcsPlayer* player, int mode)
+{
+  if (!player)
+    return TCS_ERR_GENERIC;
+  if (mode != TCS_DECODE_MODE_HARDWARE && mode != TCS_DECODE_MODE_SOFTWARE)
+    return TCS_ERR_INVALID_ARG;
+
+  /* Thread-confinement invariant: this setter and build_pipeline both run on
+   * the control thread that owns load/seek/pause, so the field needs no
+   * cross-thread protocol. state_mutex makes the ordering with the other
+   * control-thread entry points explicit; no GStreamer call is made while it
+   * is held. */
+  std::lock_guard<std::mutex> st (player->state_mutex);
+  if (player->ever_loaded)
+    return TCS_ERR_GENERIC;
+  player->decode_mode = mode;
+  return TCS_OK;
 }
 
 TCS_GST_API uint64_t

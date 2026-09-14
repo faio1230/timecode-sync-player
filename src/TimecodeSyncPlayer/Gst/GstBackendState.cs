@@ -17,6 +17,7 @@ internal sealed class GstBackendState : IDisposable
     public const string DefaultSenderName = "TimecodeSyncPlayer";
 
     private readonly IGstNativeApi _native;
+    private readonly AppSettingsManager? _settingsManager;
     private readonly object _gate = new();
     private IntPtr _player;
     private IntPtr _externalDevice;
@@ -25,9 +26,10 @@ internal sealed class GstBackendState : IDisposable
     private MpvRenderNative.MpvRenderUpdateFn? _renderCallback;
     private IntPtr _renderCallbackCtx;
 
-    public GstBackendState(IGstNativeApi native)
+    public GstBackendState(IGstNativeApi native, AppSettingsManager? settingsManager = null)
     {
         _native = native;
+        _settingsManager = settingsManager;
     }
 
     public IGstNativeApi Native => _native;
@@ -69,6 +71,7 @@ internal sealed class GstBackendState : IDisposable
                 Log.Error("GstBackendState: プレイヤー生成失敗 {Error}", error);
             else
             {
+                ApplyDecodeMode(_player);
                 Log.Information("GstBackendState: プレイヤー生成 sender='{Sender}'", SenderName);
                 if (_renderCallback is not null)
                 {
@@ -78,6 +81,25 @@ internal sealed class GstBackendState : IDisposable
             }
             return _player != IntPtr.Zero;
         }
+    }
+
+    /// <summary>
+    /// settings.json の decodeMode を shim に伝える。既定 hardware では shim の既定と同じなので触らない。
+    /// software のときだけ、player 生成直後・最初の load 前に 1 回呼ぶ。設定の変更には再起動が必要。
+    /// </summary>
+    private void ApplyDecodeMode(IntPtr player)
+    {
+        DecodeMode mode = DecodeModePolicy.Resolve(
+            _settingsManager?.Current.DecodeMode,
+            value => Log.Warning("decodeMode の未知の値 '{Value}' は hardware として扱います", value));
+        if (mode != DecodeMode.Software)
+            return;
+
+        int rc = _native.SetDecodeMode(player, GstNative.DecodeModeSoftware);
+        if (rc == 0)
+            Log.Information("GstBackendState: decodeMode=software を shim に設定しました");
+        else
+            Log.Error("GstBackendState: decodeMode=software を shim に設定できませんでした rc={Rc}", rc);
     }
 
     public void DisposePlayer()
