@@ -46,17 +46,39 @@
 - `decodeMode`（C ABI + shim + managed + `docs/V11-DECODE-MODE-VERIFICATION.md`）
 - 配布物（mpv 除去、48 DLL 同梱、プラグインパス固定、VC++ 連鎖、SHA256 検査）
 
-## 3. worktree と用途（2026-09-15 12:00）
+## 3. worktree と用途（2026-09-16 整理後）
+
+**3 つだけ。** 2026-09-16 に 10 → 3、ブランチを 43 → 5 に整理した。
 
 | パス | ブランチ | 用途 |
 | --- | --- | --- |
-| `timecode-sync-player` | `codex/v3-next-20260914` | **共有ツリー。実装側と共用なので親は書き込まない**（読み取りのみ） |
-| `...-wt-verify-oe-20260911-1344` | **`main`** | **親の検証・記録・コミット場所。**`vendor/Spout2` あり。報告 SHA へ `checkout --detach` して検証し、必ず `main` へ戻す |
-| `...-wt-d6-sync-20260915` | `codex/d6-sync-residual-20260915` | **w5:p6 の作業場。**D7-a / LTC fps / 29.97 修正 / T5。native DLL 配置済み |
-| `...-wt-ui-20260915` | `codex/v04-ui-20260915` | **w5:p3 の作業場（現在）。**T4（タイムコード入力） |
-| `...-wt-pkg-20260915` | `codex/v04-packaging-20260915` | 配布物と `decodeMode`。**7 コミット済み、実機待ち。**引き継ぎは `docs/HANDOVER-P1-20260915.md` |
-| `...-wt-integrate-20260912` | `integrate/gpu-output-20260912` | 素材（`artifacts/media/v1`）あり。**shim は main より 1232 行古い。DLL を流用しない** |
-| `...-wt-output-engine-20260911-1247` | `codex/v8c-thread-priority-20260915` | MMCSS の作業場（**統合しない**）。**ここの `tcs_gstreamer.dll` は shim ソースが main と一致**するので流用可 |
+| `timecode-sync-player`（本体） | **`main`** | **親の検証・記録・コミット場所。** 報告 SHA へ `checkout --detach` して検証し、必ず `main` へ戻す |
+| `timecode-sync-player-wt-a` | `agent-a` | **同期担当のエージェント**（ペイン `oc-sync`） |
+| `timecode-sync-player-wt-b` | `agent-b` | **もう 1 人のエージェント**（ペイン `oc-v11`。次は mpv 除去） |
+
+作業ツリー名は役割ではなく `a` / `b` にした。**役割は変わるが、作業ツリーは作り直さずに済むように。**
+担当が変わったらペインのラベルだけ付け替える。
+
+### 残したブランチ
+
+| ブランチ | 理由 |
+| --- | --- |
+| `codex/v8c-thread-priority-20260915` | **MMCSS（採否は要検討）**。実装と、観測スクリプトの判定値の訂正（`280c327`、MMCSS 中の `GetThreadPriority` は相対 15） |
+| `codex/v3-next-20260914` | 旧・共有ツリーに残っていた未コミット変更の保全先（`70eefda`）。`run-v3-accuracy.ps1` の `TIMECODE_SYNC_PLAYER_OUTPUT_TRACE` 設定は **main が構成を変えていて機械的に当てられず要確認** |
+
+### ビルド依存と素材の置き場（gitignore のため作業ツリーに入らない）
+
+| 物 | 場所 |
+| --- | --- |
+| `vendor/`（Spout2 ほか） | `E:	cs-archiveuild-depsendor` → 各作業ツリーの `vendor/` へ複写済み |
+| `SpoutDX.dll` / `libmpv-2.dll` | `E:	cs-archiveuild-deps
+ative-dll` → 各作業ツリーの `native/` へ複写済み |
+| **`tcs_gstreamer.dll`** | **保全していない。各作業ツリーで自分のソースから建てる**（他ツリーの DLL を流用しない） |
+| V1 素材セット | `E:	cs-archive\media1-set1` |
+| **H.264 4K60 素材**（V11-e で生成） | `E:	cs-archive\media11-extra1_h264_4k60.mp4` |
+| 測定の証跡（`TestResults`） | `E:	cs-archive	estresults\<旧作業ツリー名>` |
+
+**文書中の旧パス `...-wt-integrate-20260912rtifacts\media1` は失効している。** 素材は E: を使うこと。
 
 ## 4. 実機試験の規則（利用者の指示、厳守）
 
@@ -91,24 +113,21 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 合格の目安（GStreamer×Gpu、1080p／4K）: 実フレーム = 素材 fps（起動 2 秒を除く）、表示 59.9Hz 以上、合成 p99 1ms 以下、Spout 60Hz、生成→走査 4〜6ms、error 0、exit 0、seq+2 と NotReady の対 0。
 
-## 6. OpenCode（Herdr）の扱い（2026-09-15 12:00）
+## 6. OpenCode（Herdr）の扱い（2026-09-16 整理後）
 
-**ペインは 2 つある。** どちらも OpenCode（DeepSeek V4.1 Flash）。
+| ペイン | ラベル | 作業ツリー | 担当 |
+| --- | --- | --- | --- |
+| `w5:p3` | `oc-sync` | `wt-a` | 同期精度の調査（T6） |
+| `w5:p6` | `oc-v11` | `wt-b` | V11 完了。**次は mpv 除去**（同期側と同じコード領域なので V3 が片付いてから） |
 
-| ペイン | ラベル | 担当 |
-| --- | --- | --- |
-| `w5:p6` | `oc-d7-sync` | 同期（D7-a → LTC fps → 29.97 → **T5**） |
-| `w5:p3` | `codex-worker` | 配布物 → `decodeMode` → **T4** |
-
-- 状態: `herdr pane get <pane>`。`blocked` は**ほぼ許可プロンプト**。
-  `send-keys Right` → `Enter`（Allow always）→ `Enter`（Confirm）で通る
-- **実機は 1 本ずつ。** 片方が測定中はもう片方の GPU・ディスプレイ・重い CPU を止める。
-  親から明示的に合図を出すこと
-- **モデル障害の罠**: 途中まで進めて `idle`／`done` に戻り、追加指示も即終了する場合、
-  ツールでもハングでもなく**モデル側のエラー**のことがある。
-  `pane read <pane> --source recent-unwrapped | grep -i 'error\|opt in'` で確認する。
-  **ペインを増やしても同じモデルなら同じく落ちる**
-- コンテキストが 80% を超えたら引き継ぎ文書を書かせて区切る（w5:p3 は 09-15 に実施済み）
+- **PC 再起動後の復元でセッションがペイン間で入れ替わることがある**（2026-09-16 に発生）。
+  ラベルもタイトルも当てにならない。**直近の発言内容とコンテキスト使用率で照合**してからラベルを直す
+- 状態: `herdr pane get <pane>`。`blocked` はほぼ許可プロンプト。**範囲を確認してから**
+  `Right` → `Enter`（Allow always）→ `Enter`（Confirm）。**`C:\*` のような広い範囲は Allow once にとどめる**
+- `/new` は `MSYS_NO_PATHCONV=1` を付けて送り、補完メニューで止まるので `Enter` を追送する。
+  **切り替える前に、会話にしか無い情報を文書へ書き写す**
+- **実機は 1 本ずつ。** 片方が測定中はもう片方の GPU・ディスプレイ・重い CPU を止める
+- **モデル障害の罠**: 途中で止まり追加指示も即終了するなら、`pane read | grep -i 'error\|opt in'` で確認する
 
 ## 7. 未完了と次の順（2026-09-15 12:00）
 
