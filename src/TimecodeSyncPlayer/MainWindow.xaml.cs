@@ -303,7 +303,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GetPlaybackSeconds: () => ReadMpvTimePos(),
                 ApplyRateInstant: rate => _mpvApi.SetRateInstant(_mpv, rate) == 0,
                 SeekTo: target => SeekTo(target),
-                SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text),
+                SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text,
+                GetSyncOffsetMilliseconds: () => _vm.Sync.SyncOffsetMs),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
@@ -323,6 +324,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Sync.GapBehaviorIndex = ProjectSyncSelectionMapper.GetGapBehaviorIndex(settingsManager.Current.GapBehavior);
         _vm.Sync.SyncCorrectionModeIndex =
             settingsManager.Current.SyncCorrectionMode == SyncCorrectionMode.Jump ? 1 : 0;
+        _vm.Sync.SyncOffsetMs = settingsManager.Current.SyncOffsetMs;
         _vm.Sync.LtcSignalLossModeIndex =
             settingsManager.Current.LtcSignalLossMode == LtcSignalLossMode.Stop ? 1 : 0;
         _playlistDragDropCoordinator = new PlaylistDragDropCoordinator(new PlaylistDragDropEffects(
@@ -432,6 +434,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                         SyncCorrectionMode = _vm.Sync.SyncCorrectionMode,
                     });
                     Log.Information("Sync correction mode changed mode={Mode}", _vm.Sync.SyncCorrectionMode);
+                    break;
+                case nameof(SyncViewModel.SyncOffsetMs):
+                    _ = _settingsManager.UpdateAsync(settings => settings with
+                    {
+                        SyncOffsetMs = _vm.Sync.SyncOffsetMs,
+                    });
+                    Log.Information("Sync offset changed offsetMs={OffsetMs}", _vm.Sync.SyncOffsetMs);
                     break;
                 case nameof(SyncViewModel.LtcSignalLossMode):
                     _ = _settingsManager.UpdateAsync(settings => settings with

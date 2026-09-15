@@ -165,7 +165,8 @@ internal sealed class SyncScenarioHarness
                 {
                     RecordMpvProperty("pause", "no");
                     SetPaused(false);
-                }),
+                },
+                GetSyncOffsetMilliseconds: () => SyncOffsetMilliseconds),
             () => single, () => _continueCoordinator, () => _gapCoordinator);
     }
 
@@ -205,6 +206,10 @@ internal sealed class SyncScenarioHarness
         }
     }
     public LtcSignalLossMode SignalLossMode { get; set; } = LtcSignalLossMode.Stop;
+
+    /// <summary>T3: 全体に効く同期オフセット（ms）。プラスで映像が先行する。</summary>
+    public double SyncOffsetMilliseconds { get; set; }
+
     public bool IsPaused => _playback.IsPaused;
     public bool IsGapActive => !_gap.IsInactive;
     public GapState GapState => _gap.CurrentState;
