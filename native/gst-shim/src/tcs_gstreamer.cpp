@@ -1294,6 +1294,50 @@ profile_matches_caps (const VideoProfile* prof, GstCaps* caps)
   return FALSE;
 }
 
+/* V11-e measurement switch: feed avdec_* the multithreading properties from the
+ * environment. Unset (the default) leaves the properties untouched, so the
+ * shipped behavior is unchanged. Properties that the element does not have are
+ * skipped silently. */
+static void
+apply_decode_thread_env (GstElement* dec)
+{
+  if (!dec)
+    return;
+  char type[16];
+  DWORD type_n = GetEnvironmentVariableA ("TCS_DECODE_THREAD_TYPE", type, sizeof (type));
+  char threads[16];
+  DWORD threads_n = GetEnvironmentVariableA ("TCS_DECODE_MAX_THREADS", threads, sizeof (threads));
+  if (type_n == 0 && threads_n == 0)
+    return;
+  GObjectClass* klass = G_OBJECT_GET_CLASS (dec);
+  if (type_n > 0 && type_n < sizeof (type))
+    {
+      guint value = G_MAXUINT;
+      if (g_ascii_strcasecmp (type, "frame") == 0) value = 1;
+      else if (g_ascii_strcasecmp (type, "slice") == 0) value = 2;
+      else if (g_ascii_strcasecmp (type, "auto") == 0) value = 0;
+      if (value == G_MAXUINT)
+        LOG ("decode-thread-type: unknown value '%s' -> ignored", type);
+      else if (g_object_class_find_property (klass, "thread-type"))
+        {
+          g_object_set (dec, "thread-type", value, nullptr);
+          LOG ("decode-thread-type: %s (0x%x) on %s", type, value,
+              GST_ELEMENT_NAME (dec));
+        }
+    }
+  if (threads_n > 0 && threads_n < sizeof (threads))
+    {
+      gint value = atoi (threads);
+      if (value < 0)
+        LOG ("decode-max-threads: invalid value '%s' -> ignored", threads);
+      else if (g_object_class_find_property (klass, "max-threads"))
+        {
+          g_object_set (dec, "max-threads", value, nullptr);
+          LOG ("decode-max-threads: %d on %s", value, GST_ELEMENT_NAME (dec));
+        }
+    }
+}
+
 /* Build the static video tail for profile index idx (-1 = decodebin
  * fallback). Elements are added, given the device context and linked;
  * on_demux_pad_added only links the demux pad to p->vhead. */
@@ -1336,6 +1380,7 @@ build_video_chain_static (TcsPlayer* p, int idx)
   GstElement* head = nullptr;
   p->vparse = prof->parse ? gst_element_factory_make (prof->parse, nullptr) : nullptr;
   p->vdec = prof->dec ? gst_element_factory_make (prof->dec, nullptr) : nullptr;
+  apply_decode_thread_env (p->vdec);
   p->vconvert = gst_element_factory_make (prof->conv, nullptr);
   /* CPU profiles decode to sysmem BGRA; d3d11upload moves it to the shim
    * device so every lease goes through the shared ring (slot >= 0). */

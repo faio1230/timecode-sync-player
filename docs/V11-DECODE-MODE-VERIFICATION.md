@@ -55,6 +55,10 @@ Copy-Item native\gst-shim\build-debug\tcs_gstreamer.dll native\tcs_gstreamer.dll
   まとめて回す場合は 11 本を 1 つの作業ディレクトリへコピーする（例:
   `artifacts\media\v11\` を作ってコピー）。または MXF だけ `Invoke-AppGpuTrial.ps1` で個別に回す。
 - MXF は 10 秒素材なので、個別に回す場合は `-Seconds 10`、集計窓は `v1_matrix_summary.py <root> 2 9`。
+- `v1_prores422_1080p60.mov` は**長さが 30 秒**。50 秒 run の既定窓 `[8,48)` で集計すると 30 秒以降に
+  フレームが来ず `dist/s` の下限が落ちる（例: `25..60`）。**ProRes は窓 `[8,28)` で集計する**
+  （V1 の記録もこの窓）。`v1_matrix_summary.py` は root 単位で窓を取るので、ProRes の run だけ
+  別 root へ置いて（run ディレクトリのコピーまたは junction で）`8 28` を渡す。
 
 ### 0-3. decodeMode の与え方
 
@@ -112,6 +116,7 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py TestResults\v11-a 8 48
 - `dist/s` が素材 fps ±1（1080p）、`minPr` ≥ 59、`err=0`、`exit=0`。
 - `cp99` は V1 実測の水準（約 0.8〜1.0ms）と同程度か。
 - MXF を個別に回した場合は、その run だけ別 root で集計し `2 9` 窓にする。
+- ProRes は 0-2 の注記どおり `[8,28)` 窓で別途集計する（既定窓だと 30 秒以降が空白になる）。
 
 ---
 
@@ -140,6 +145,7 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py TestResults\v11-b 8 48
   未達として記録し、限界（実フレーム数と CPU コア数）を文書化する。合否は親が決める。
 - `cpu` 列（平均占有コア）を素材ごとに表へ写す。参考: 事前計測（合成映像）では HEVC 4K が
   実時間の約 3.5 倍。実素材では 1〜1.5 倍程度まで落ちうる。
+- ProRes は 0-2 の注記どおり `[8,28)` 窓で別途集計する（30 秒素材のため既定窓では下限が落ちる）。
 - V11-d と同じ run を使うので、追加の実行は不要。
 
 ---
