@@ -238,6 +238,8 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <TextBlock Text="FPS:" Foreground="#BBBBBB"
                                Grid.Row="0" Grid.Column="0"
@@ -269,6 +271,25 @@
                                AutomationProperties.AutomationId="SyncCorrectionStatusText"
                                Foreground="#FFB300" FontSize="11" Margin="0,4,0,0"
                                Text="{Binding Sync.SyncCorrectionStatus}"/>
+                    <TextBlock Text="オフセット:" Foreground="#BBBBBB"
+                               Grid.Row="2" Grid.Column="0"
+                               VerticalAlignment="Center" Margin="0,6,8,0"/>
+                    <Slider x:Name="SyncOffsetSlider"
+                            Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"
+                            AutomationProperties.AutomationId="SyncOffsetSlider"
+                            Minimum="-1000" Maximum="1000"
+                            SmallChange="1" LargeChange="10"
+                            TickFrequency="1" IsSnapToTickEnabled="True"
+                            Margin="0,6,0,0"
+                            Value="{Binding Sync.SyncOffsetMs, Mode=TwoWay}"/>
+                    <StackPanel Grid.Row="3" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,4,0,0">
+                        <TextBlock Text="{Binding Sync.SyncOffsetText}"
+                                   AutomationProperties.AutomationId="SyncOffsetValueText"
+                                   Foreground="#DDDDDD" FontSize="11"/>
+                        <TextBlock Text="　＋で映像が先行（下流の遅延を補正）"
+                                   AutomationProperties.AutomationId="SyncOffsetHintText"
+                                   Foreground="#888888" FontSize="11"/>
+                    </StackPanel>
                 </Grid>
 
                 <UniformGrid Grid.Row="3" Rows="1" Columns="3" Margin="0,0,0,8">
