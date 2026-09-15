@@ -2079,3 +2079,77 @@ g_object_set (p->appsink, "emit-signals", TRUE, "sync", sync_pacing, "drop", FAL
 
 代償の指標を今日の seek 分解と同じものにしたのは、**V3 の不足がまさにシークの着地の遅さ**だったため。
 4K の退避を得る代わりに同期精度を失うなら交換にならない。
+
+---
+
+## V11-h: 4K software が 24fps だった真の原因は CPU の色変換だった（2026-09-15 21:00〜21:15）
+
+**別エージェントの調査で根本原因が特定され、対策で解決した。** 親の仮説は 2 つとも外れていた。
+
+### 原因
+
+1. 素材 `v1_h265_4k60.mp4` は **Main 10**。`avdec_h265` は `I420_10LE` を出す
+2. shim の CPU 経路は `avdec_* ! videoconvert ! d3d11upload ! capsfilter(D3D11Memory,BGRA) ! appsink`。
+   `d3d11upload` は形式を変えないので、**BGRA への変換は `videoconvert` が CPU で行う**
+3. `videoconvert` の `n-threads` は既定 1。**10bit → BGRA に速い経路が無く、4K で 1 フレーム 38ms。上限 26fps**
+   （8bit I420 → BGRA なら 3.7ms）
+
+### 親の誤り 3 件（記録として残す）
+
+| # | 主張 | 実際 |
+| --- | --- | --- |
+| 1 | `thread-type=frame` で並列度が上がる | 適用しても効果なし（ログで適用を確認済み） |
+| 2 | `max-buffers=4` が先行を妨げている | 4/8/16/32 で差は 85.8/92.1/66.7/78.4 と動かず、**ばらつきは 155.3→183.7 と悪化** |
+| 3 | **gst-launch で 185fps なので変換は律速でない** | **出口の `D3D11Memory,BGRA` caps を付け忘れ、`videoconvert` が素通ししていた** |
+
+**3 が根本。** アプリと違うパイプラインを測っていた。caps を付けると 23.2fps で、アプリの実測 23〜25 と一致する。
+
+再現表（`v1_h265_4k60.mp4`、600 フレーム、`fakesink sync=false`）:
+
+| デコーダの後ろ | fps | CPU コア |
+| --- | ---: | ---: |
+| なし（デコードのみ） | 187.2 | 3.85 |
+| `videoconvert ! d3d11upload`（**caps 無し＝親が測ったもの**） | 180.5 | 3.83 |
+| **`videoconvert ! d3d11upload ! D3D11Memory,BGRA`（現行 shim と同じ）** | **23.2** | 1.20 |
+| `videoconvert n-threads=0 ! ... BGRA` | 70.6 | 5.52 |
+| **`videoconvert ! d3d11upload ! d3d11colorconvert ! BGRA`（対策）** | **123.6** | 2.75 |
+
+同内容でビット深度だけ違う 4K HEVC では 8bit 124fps / 10bit 22.8fps。**コーデックではなくビット深度の差。**
+
+### 対策と結果（`f9d381c`、親の独立検証済み）
+
+CPU profile と `decodebin` 退避で、`d3d11upload` の直後に **`d3d11colorconvert`** を入れて変換を GPU へ移した。
+
+| 素材 | 変更前 | **変更後** | hardware（対照） |
+| --- | ---: | ---: | ---: |
+| **HEVC 4K60 10bit** | **13〜24** | **59..61** | 60..60 |
+| H.264 1080p（5 種） | 素材 fps | 素材 fps | — |
+| HEVC 1080p60 / 10bit | 60 | 60 / 59..60 | — |
+| ProRes 422（窓 8〜28） | 60 | 60 | — |
+
+**全 run で `err=0` / `exit=0`。非回帰なし。**
+
+#### 実装の質（記録）
+
+- **`g_profiles[].conv` は不変。** 表は `tcs_video_profiles.h` へ移動しただけで**中身は文字列レベルで同一**（親が確認）。
+  CPU/GPU の判定は `strstr(prof->conv, "d3d11")`（1279 行）なので、書き換えると CPU profile が GPU 扱いになる。
+  アップロード後の変換器は別フィールド `vgpuconvert` として追加された
+- **GPU profile のチェーンは不変**
+- **profile 4〜8 が software のままであることを native テストに固定**（親が最も懸念した事故を塞いだ）
+- 構築したチェーンの要素並びを 1 行ログに出すようにした（GPU 経路を変えていない証拠になる）
+- `pngenc` が BGRA 非対応と分かり、生 BGRA を厳密に取得する C ヘルパーを書いて色差を検証。
+  `identity eos-after` 方式は EOS フラッシュでフレームがずれるため破棄した、と明記
+
+親の独立検証: ビルド 0 エラー、非E2E **1773 合格 / 0 失敗**、`check-shim-lock-rule.py` **PASS**。
+
+### 意味
+
+**mpv 除去後の唯一の退避経路（`decodeMode=software`）が、4K 10bit でも成立するようになった。**
+「HEVC 4K に逃げ道が無い」という制限が消えた。
+
+### 未検証
+
+- 色差の (c) 経路で 10,422 画素の差が出た原因
+- 実素材（合成映像以外）
+- **HEVC の 8bit 素材**（V1 の HEVC は 3 本とも Main 10。V1 表の「HEVC 8bit」の行は実際には 8bit を測っていない）
+- **同期精度（V3 系）への影響。** CPU 変換が消えて配信のタイミングが変わるため、影響しうる
