@@ -264,44 +264,88 @@ run_delivery_policy_tests ()
   check (tcs_ring_evict_index (single, 0) == -1, "ring evict: empty -> -1");
 
   /* V11: decode profile order (pure). 4 GPU profiles then 5 CPU profiles,
-   * mirroring the shim's table shape (9 profiles + decodebin fallback). */
+   * mirroring the shim's table shape (9 profiles + decodebin fallback).
+   * `order` is sized profile_count + 2 and carries a sentinel just past the
+   * documented maximum (profile_count + 1): the function must never write
+   * past that, and build_pipeline appends nothing itself. */
   {
     const int software_flags[9] = { 0, 0, 0, 0, 1, 1, 1, 1, 1 };
-    int order[10];
+    const int profile_count = 9;
+    const int sentinel = 0x5A5A5A5A;
+    int order[profile_count + 2];
     int n;
+    auto fallback_count = [](const int* values, int count) {
+      int found = 0;
+      for (int i = 0; i < count; i++)
+        if (values[i] == TCS_DECODE_PROFILE_FALLBACK)
+          found++;
+      return found;
+    };
+    auto fresh = [&]() {
+      for (int i = 0; i < profile_count + 2; i++)
+        order[i] = sentinel;
+    };
 
     /* hardware, no cached profile: table order, then decodebin. */
-    n = tcs_decode_profile_order (0, 0, software_flags, 9, order);
-    check (n == 10, "decode order: hardware count");
+    fresh ();
+    n = tcs_decode_profile_order (0, 0, 0, software_flags, profile_count, order);
+    check (n == profile_count + 1, "decode order: hardware count");
     check (order[0] == 0 && order[1] == 1 && order[2] == 2 && order[3] == 3 &&
            order[4] == 4 && order[5] == 5 && order[6] == 6 && order[7] == 7 &&
            order[8] == 8 && order[9] == TCS_DECODE_PROFILE_FALLBACK,
         "decode order: hardware is table order + fallback");
+    check (fallback_count (order, n) == 1, "decode order: hardware fallback once");
+    check (order[profile_count + 1] == sentinel, "decode order: hardware sentinel");
 
     /* hardware, cached CPU profile: cache first, fallback last. */
-    n = tcs_decode_profile_order (0, 6, software_flags, 9, order);
-    check (n == 10 && order[0] == 6 && order[9] == TCS_DECODE_PROFILE_FALLBACK,
+    fresh ();
+    n = tcs_decode_profile_order (0, 0, 6, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 6 &&
+           order[profile_count] == TCS_DECODE_PROFILE_FALLBACK,
         "decode order: hardware keeps last-good first");
+    check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
+        "decode order: hardware last-good fallback once + sentinel");
 
     /* software: CPU profiles, decodebin, then GPU profiles. */
-    n = tcs_decode_profile_order (1, 0, software_flags, 9, order);
-    check (n == 10, "decode order: software count");
+    fresh ();
+    n = tcs_decode_profile_order (0, 1, 0, software_flags, profile_count, order);
+    check (n == profile_count + 1, "decode order: software count");
     check (order[0] == 4 && order[1] == 5 && order[2] == 6 && order[3] == 7 &&
            order[4] == 8 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
            order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
         "decode order: software is CPU + decodebin + GPU");
+    check (fallback_count (order, n) == 1, "decode order: software fallback once");
+    check (order[profile_count + 1] == sentinel, "decode order: software sentinel");
 
     /* software, cached CPU profile: cache first, no duplicate. */
-    n = tcs_decode_profile_order (1, 5, software_flags, 9, order);
-    check (n == 10 && order[0] == 5 && order[1] == 4 && order[2] == 6 &&
-           order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
+    fresh ();
+    n = tcs_decode_profile_order (0, 1, 5, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 5 && order[1] == 4 &&
+           order[2] == 6 && order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
         "decode order: software keeps a CPU last-good first");
+    check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
+        "decode order: software last-good fallback once + sentinel");
 
     /* software, cached GPU profile: the GPU cache stays in the GPU block. */
-    n = tcs_decode_profile_order (1, 2, software_flags, 9, order);
-    check (n == 10 && order[0] == 4 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
-           order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
+    fresh ();
+    n = tcs_decode_profile_order (0, 1, 2, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 4 &&
+           order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0 &&
+           order[7] == 1 && order[8] == 2 && order[9] == 3,
         "decode order: software does not promote a GPU last-good");
+    check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
+        "decode order: software GPU-cache fallback once + sentinel");
+
+    /* decodebin: the fallback alone, whatever mode/cache was requested. */
+    fresh ();
+    n = tcs_decode_profile_order (1, 0, 0, software_flags, profile_count, order);
+    check (n == 1 && order[0] == TCS_DECODE_PROFILE_FALLBACK,
+        "decode order: decodebin is fallback only");
+    check (order[1] == sentinel, "decode order: decodebin sentinel");
+    fresh ();
+    n = tcs_decode_profile_order (1, 1, 6, software_flags, profile_count, order);
+    check (n == 1 && order[0] == TCS_DECODE_PROFILE_FALLBACK && order[1] == sentinel,
+        "decode order: decodebin ignores mode and cache");
   }
 
   /* V11-h: pin the CPU/GPU classification of the real profile table. The chain
