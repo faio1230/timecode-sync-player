@@ -121,7 +121,8 @@ public class SyncAccuracyTraceTests
 
             var lines = Read(path);
             Assert.Equal(30000.0 / 1001.0, lines[0].GetProperty("nominalLtcFps").GetDouble(), 6);
-            Assert.Equal(1 + (12 / (30000.0 / 1001.0)), lines[1].GetProperty("seconds").GetDouble(), 6);
+            // 29.97 NDF は総フレーム換算: (0,0,1,12) は 42 フレーム ÷ 29.97。
+            Assert.Equal(42 / (30000.0 / 1001.0), lines[1].GetProperty("seconds").GetDouble(), 6);
             Assert.Equal(30000.0 / 1001.0, lines[1].GetProperty("fps").GetDouble(), 6);
         }
         finally { File.Delete(path); }
