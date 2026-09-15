@@ -34,6 +34,9 @@ internal sealed class OutputTrace
     /// <summary>記録したイベント数（破棄を除く）。</summary>
     internal int Recorded => Volatile.Read(ref count) - Dropped;
 
+    /// <summary>テスト用: 現在までに記録したイベントのコピー（記録順、破棄分は含まない）。</summary>
+    internal OutputTraceEvent[] Snapshot() => events.ToArray();
+
     internal static OutputTrace Disabled { get; } = new();
 
     /// <summary>

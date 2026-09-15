@@ -1305,7 +1305,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private void StopPlayback()
-        => CreatePlaybackOperationsCoordinator().StopPlayback();
+    {
+        // T7: 再生停止・プロジェクト/プレイリスト差し替えで補正状態を捨てる。
+        _ltcSyncController.CorrectionReset();
+        CreatePlaybackOperationsCoordinator().StopPlayback();
+    }
 
     private bool LoadFile(string path, double? startPosition = null)
         => CreatePlaybackOperationsCoordinator().LoadFile(path, startPosition);
@@ -1322,6 +1326,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     void IPlaybackController.TogglePlayPause()
     {
         if (_mpv == IntPtr.Zero) return;
+        // T7: 操作者の再生・一時停止で補正状態を捨てる。
+        _ltcSyncController.CorrectionReset();
         _projectRestorePauseState.Clear();
         PlaybackPauseChange change = _playbackControl.TogglePlayPause();
         _mpvApi.SetPropertyString(_mpv, "pause", change.MpvPauseValue);
