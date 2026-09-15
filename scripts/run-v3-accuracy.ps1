@@ -34,8 +34,8 @@ param(
     [ValidateSet('24', '25', '29.97', '30')][string]$LtcFps = '25',
     [ValidateSet('auto', 'fixed')][string]$LtcFpsMode = 'auto',
     [ValidateSet('smooth', 'jump')][string]$SyncCorrectionMode = 'smooth',
-    [string]$TestProject = 'C:\Users\<user>\Documents\timecode-sync-player-wt-verify-oe-20260911-1344\tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj',
-    [string]$LogRoot = 'C:\Users\<user>\Documents\timecode-sync-player-wt-integrate-20260912\TestResults\v3',
+    [string]$TestProject = '',
+    [string]$LogRoot = '',
     [int]$Repeats = 1,
     # 0 = Cpu compositor, 1 = Gpu compositor. Default 1: V3 judges the shipping GPU path.
     [ValidateSet(0, 1)][int]$OutputBackend = 1
@@ -44,6 +44,20 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $analyzer = Join-Path $PSScriptRoot 'analyze-sync-accuracy.py'
 $fpsToken = $LtcFps -replace '\.', '_'
+
+# Defaults are repo-relative, so any worktree runs its own test project and writes
+# TestResults\v3 under that same worktree.
+if (-not $TestProject) {
+    $TestProject = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
+}
+if (-not $LogRoot) {
+    $LogRoot = Join-Path $repoRoot 'TestResults\v3'
+}
+# The E2E harness resolves the app under test from this variable; point it at the
+# same worktree's Debug build when the caller did not set one.
+if (-not $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH) {
+    $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
+}
 
 $runs = @()
 foreach ($backend in $Backends) {
