@@ -25,7 +25,16 @@ internal sealed class ContinueOnTrackCoordinator
         _effects = effects;
     }
 
-    public SyncRequestResult Handle(TimelineQueryResult result, double ltcSeconds)
+    public SyncRequestResult Handle(TimelineQueryResult result, double ltcSeconds) =>
+        HandleFrame(result, ltcSeconds).Request;
+
+    /// <summary>
+    /// T7: 補正（Smooth / Jump）が使う素材位置と、このフレームで評価してよいかも返す。
+    /// MediaPositionSeconds / PlaybackSeconds は粗い同期判定（EvaluateDecision）に渡した値
+    /// そのもので、補正の残差は MediaPositionSeconds − PlaybackSeconds（= sync.evaluate の
+    /// delta）になる。素材位置の計算はここ 1 か所だけに置く。
+    /// </summary>
+    public ContinueFrameContext HandleFrame(TimelineQueryResult result, double ltcSeconds)
     {
         ContinueOnTrackDecision onTrackDecision = ContinueOnTrackPlanner.Decide(result, _effects.GetLoadedTrackId());
         PlaylistTrack track = onTrackDecision.Track;
@@ -38,9 +47,10 @@ internal sealed class ContinueOnTrackCoordinator
         if (exitingGap && onTrackDecision.Action != ContinueOnTrackAction.SwitchTrack)
         {
             if (!_effects.SeekTo(mediaPos))
-                return SyncRequestResult.Deferred;
+                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "gap-exit-seek");
             CompleteGapExit(exitAction);
-            return SyncRequestResult.Complete;
+            // ギャップ出口のシークを発行したフレームでは補正を評価しない。
+            return new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, 0.0, "gap-exit", ExitedGap: true);
         }
 
         if (onTrackDecision.Action == ContinueOnTrackAction.SwitchTrack)
@@ -69,17 +79,20 @@ internal sealed class ContinueOnTrackCoordinator
                     CompleteGapExit(exitAction);
                 }
             }
-            return success ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
+            return success
+                ? new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, 0.0, "switch", SwitchedTrack: true)
+                : ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "switch-failed");
         }
         else
         {
             // Track switches and gap exits above may replace the pending operation.
             // For this clip, native time-pos is not stable until seeking has finished.
             if (_effects.IsNativeSeeking?.Invoke() == true)
-                return SyncRequestResult.Deferred;
+                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "native-seeking");
 
             (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
-            if (timePosRc != 0) return SyncRequestResult.Deferred;
+            if (timePosRc != 0)
+                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "time-pos");
 
             if (!_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
             {
@@ -90,7 +103,7 @@ internal sealed class ContinueOnTrackCoordinator
                         playbackSeconds, mediaPos, _effects.GetTotalRenderedFrames());
                 }
 
-                return SyncRequestResult.Deferred;
+                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "load-stability");
             }
 
             _fileLoadStabilityLogState.Reset();
@@ -102,9 +115,13 @@ internal sealed class ContinueOnTrackCoordinator
             ContinueSyncSeekPlan seekPlan = ContinueSyncSeekPlanner.Decide(decision, suppressSeek, _syncService.IsDebounced());
 
             if (!seekPlan.ShouldSeek)
-                return seekPlan.SkipReason == ContinueSyncSeekSkipReason.NoSeekDecision &&
-                       !_syncService.SeekState.HasPendingSeek
-                    ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
+            {
+                if (seekPlan.SkipReason == ContinueSyncSeekSkipReason.NoSeekDecision &&
+                    !_syncService.SeekState.HasPendingSeek)
+                    return new ContinueFrameContext(SyncRequestResult.Complete, true, mediaPos, playbackSeconds);
+                // 保留中・抑止・デバウンスのシークがあるフレームでは補正を評価しない。
+                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "pending-seek");
+            }
 
             bool success = _effects.SeekTo(seekPlan.TargetSeconds);
             if (success)
@@ -113,9 +130,12 @@ internal sealed class ContinueOnTrackCoordinator
                 "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success}",
                 ltcSeconds, playbackSeconds, seekPlan.TargetSeconds,
                 decision.DeltaSeconds, decision.ToleranceSeconds, success);
-            return success ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
+            return success
+                ? new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, playbackSeconds, "seek-issued")
+                : ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "seek-failed");
         }
     }
+
     private void CompleteGapExit(GapExitAction exitAction)
     {
         _effects.DecideGapExit();
@@ -129,6 +149,23 @@ internal sealed class ContinueOnTrackCoordinator
         _effects.UpdateCurrentTrackLabel();
     }
 
+}
+
+/// <summary>
+/// T7: 1 フレーム分の Continue 判定結果。補正は CorrectionAllowed のときだけ評価し、
+/// 残差 = MediaPositionSeconds − PlaybackSeconds、Jump のシーク先 = MediaPositionSeconds を使う。
+/// </summary>
+internal readonly record struct ContinueFrameContext(
+    SyncRequestResult Request,
+    bool CorrectionAllowed,
+    double MediaPositionSeconds,
+    double PlaybackSeconds,
+    string CorrectionBlockedReason = "",
+    bool SwitchedTrack = false,
+    bool ExitedGap = false)
+{
+    public static ContinueFrameContext Blocked(SyncRequestResult request, string reason) =>
+        new(request, false, 0.0, 0.0, reason);
 }
 
 /// <summary>

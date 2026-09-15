@@ -34,7 +34,7 @@ internal sealed class SyncScenarioHarness
     private double _videoFps = 25;
     private bool _renderVideoOnNextSeek;
 
-    public SyncScenarioHarness(TimeProvider? timeProvider = null)
+    public SyncScenarioHarness(TimeProvider? timeProvider = null, bool enableCorrection = false)
     {
         _syncService = new(new SyncDecisionEngine(), new TimecodeSyncSeekState(), timeProvider);
         _audioControlCoordinator = new AudioControlCoordinator(
@@ -166,8 +166,21 @@ internal sealed class SyncScenarioHarness
                     RecordMpvProperty("pause", "no");
                     SetPaused(false);
                 },
-                GetSyncOffsetMilliseconds: () => SyncOffsetMilliseconds),
-            () => single, () => _continueCoordinator, () => _gapCoordinator);
+                GetSyncOffsetMilliseconds: () => SyncOffsetMilliseconds,
+                GetCorrectionMode: enableCorrection ? () => CorrectionMode : null,
+                GetPlaybackSeconds: enableCorrection ? () => _playbackSeconds : null,
+                ApplyRateInstant: enableCorrection
+                    ? rate =>
+                    {
+                        AppliedRates.Add(rate);
+                        Operations.Add(new("rate", rate));
+                        return RateApplySucceeds;
+                    }
+                    : null,
+                SeekTo: enableCorrection ? Seek : null,
+                SetCorrectionStatus: enableCorrection ? text => CorrectionStatus = text : null),
+            () => single, () => _continueCoordinator, () => _gapCoordinator,
+            getUtcNow: timeProvider is null ? null : () => timeProvider.GetUtcNow().UtcDateTime);
     }
 
     public LtcSyncController Controller { get; }
@@ -209,6 +222,12 @@ internal sealed class SyncScenarioHarness
 
     /// <summary>T3: 全体に効く同期オフセット（ms）。プラスで映像が先行する。</summary>
     public double SyncOffsetMilliseconds { get; set; }
+
+    /// <summary>T7: 補正を有効にしたハーネスだけが使う補正モード。</summary>
+    public SyncCorrectionMode CorrectionMode { get; set; } = SyncCorrectionMode.Smooth;
+    public bool RateApplySucceeds { get; set; } = true;
+    public List<double> AppliedRates { get; } = [];
+    public string CorrectionStatus { get; private set; } = "";
 
     public bool IsPaused => _playback.IsPaused;
     public bool IsGapActive => !_gap.IsInactive;

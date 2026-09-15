@@ -58,6 +58,8 @@ internal sealed class LtcSyncController
     private readonly Func<GapEnterCoordinator> _gapCoordinator;
     private readonly ContinueModeQueryLogState _queryLog = new(TimeSpan.FromSeconds(1), mediaPositionToleranceSeconds: 0.5);
     private readonly SyncCorrectionController _correction = new();
+    private readonly Func<DateTime> _getUtcNow;
+    private ContinueFrameContext? _lastContinueFrame;
     private bool _smoothAvailable = true;
     private double _lastAppliedRate = 1.0;
     private double? _lastAcceptedLtcSeconds;
@@ -68,7 +70,8 @@ internal sealed class LtcSyncController
         PlaylistState playlist, GapFreezeHandler gap, TimecodeSyncService syncService,
         LtcFrameProcessor frames, int timeoutMilliseconds, int resumeFrames,
         LtcSyncEffects effects, Func<SingleModeSyncCoordinator> single,
-        Func<ContinueOnTrackCoordinator> continueOnTrack, Func<GapEnterCoordinator> gapCoordinator)
+        Func<ContinueOnTrackCoordinator> continueOnTrack, Func<GapEnterCoordinator> gapCoordinator,
+        Func<DateTime>? getUtcNow = null)
     {
         _playlist = playlist;
         _gap = gap;
@@ -79,6 +82,7 @@ internal sealed class LtcSyncController
         _single = single;
         _continue = continueOnTrack;
         _gapCoordinator = gapCoordinator;
+        _getUtcNow = getUtcNow ?? (() => DateTime.UtcNow);
     }
 
     public double LastLtcSeconds { get; private set; }
@@ -116,7 +120,15 @@ internal sealed class LtcSyncController
             RequestSync(seconds);
     }
 
-    public void CancelPendingSync() => _pendingSyncSeconds = null;
+    public void CancelPendingSync()
+    {
+        _pendingSyncSeconds = null;
+        // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
+        _correction.Reset();
+    }
+
+    /// <summary>T7: 操作者の再生・一時停止、プロジェクト差し替えで補正状態を捨てる。</summary>
+    public void CorrectionReset() => _correction.Reset();
 
     private void RequestSync(double seconds)
     {
@@ -200,7 +212,7 @@ internal sealed class LtcSyncController
     /// </summary>
     private void ApplyCorrection(double ltcSeconds)
     {
-        if (_effects.GetCorrectionMode == null || _effects.GetPlaybackSeconds == null ||
+        if (_effects.GetCorrectionMode == null ||
             _effects.ApplyRateInstant == null || _effects.SeekTo == null)
             return;
 
@@ -209,11 +221,29 @@ internal sealed class LtcSyncController
             return;
         if (_syncService.SeekState.HasPendingSeek)
             return;
-        if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
-            return;
+
+        double residualSeconds;
+        double targetSeconds;
+        if (state.Mode == SyncMode.Continue)
+        {
+            // T7: Continue は粗い同期判定と同じ素材位置と再生位置を使う。素材位置は
+            // コーディネーターが 1 か所で出した値なので、残差は sync.evaluate の delta と一致する。
+            if (_lastContinueFrame is not { CorrectionAllowed: true } frame)
+                return;
+            residualSeconds = frame.MediaPositionSeconds - frame.PlaybackSeconds;
+            targetSeconds = frame.MediaPositionSeconds;
+        }
+        else
+        {
+            if (_effects.GetPlaybackSeconds == null) return;
+            if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
+                return;
+            residualSeconds = ltcSeconds - playback;
+            targetSeconds = ltcSeconds;
+        }
 
         SyncCorrectionDecision decision = _correction.Evaluate(
-            ltcSeconds - playback, ltcSeconds, _effects.GetCorrectionMode(), _smoothAvailable, DateTime.UtcNow);
+            residualSeconds, targetSeconds, _effects.GetCorrectionMode(), _smoothAvailable, _getUtcNow());
 
         switch (decision.Action)
         {
@@ -228,7 +258,7 @@ internal sealed class LtcSyncController
                     _lastAppliedRate = decision.Rate;
                     Log.Information(
                         "Smooth correction rate={Rate:F5} residualMs={ResidualMs:F1}",
-                        decision.Rate, (ltcSeconds - playback) * 1000.0);
+                        decision.Rate, residualSeconds * 1000.0);
                 }
                 break;
             case SyncCorrectionActionType.Seek:
@@ -239,7 +269,7 @@ internal sealed class LtcSyncController
                 {
                     Log.Information(
                         "Jump correction seek target={Target:F3} residualMs={ResidualMs:F1}",
-                        decision.TargetSeconds, (ltcSeconds - playback) * 1000.0);
+                        decision.TargetSeconds, residualSeconds * 1000.0);
                     _syncService.ReportSeekSent(decision.TargetSeconds);
                 }
                 break;
@@ -325,6 +355,7 @@ internal sealed class LtcSyncController
 
     private SyncRequestResult ApplySync(double seconds)
     {
+        _lastContinueFrame = null;
         LtcSyncContext state = _effects.GetContext();
         if (!state.IsMpvReady || !state.IsMonitoring || !state.SyncEnabled ||
             state.IsSeeking || _signalLoss.ShouldSuppressSync)
@@ -344,8 +375,20 @@ internal sealed class LtcSyncController
         {
             case TimelineQueryStatus.OnTrack:
                 _effects.ResumeProjectRestorePause();
-                return _continue().Handle(result, seconds);
+                ContinueFrameContext frame = _continue().HandleFrame(result, seconds);
+                _lastContinueFrame = frame;
+                if (frame.SwitchedTrack)
+                {
+                    // T7: トラック切替（ロード成功）で補正状態を捨て、Smooth を再試行できるようにする。
+                    _correction.Reset();
+                    _smoothAvailable = true;
+                }
+                if (frame.ExitedGap)
+                    _correction.Reset();
+                return frame.Request;
             case TimelineQueryStatus.Gap:
+                // T7: ギャップ中は補正を評価しない（出入りのたびに状態を捨てる）。
+                _correction.Reset();
                 if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
                     _effects.ClearGapFreezeFrame();
                 _effects.UpdateTimelinePosition(seconds);
@@ -359,6 +402,7 @@ internal sealed class LtcSyncController
                 _effects.UpdateCurrentTrackLabel();
                 break;
             case TimelineQueryStatus.NoTracks:
+                _correction.Reset();
                 if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
                     _effects.ClearGapFreezeFrame();
                 _gapCoordinator().HandleNoTracks();
