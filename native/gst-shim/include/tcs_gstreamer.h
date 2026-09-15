@@ -49,6 +49,14 @@ typedef struct TcsPlayer TcsPlayer;
 #define TCS_ERR_SPOUT -4
 #define TCS_ERR_SIZE -5
 #define TCS_ERR_ENDED -6   /* acquire: end of stream, nothing left to hand over */
+#define TCS_ERR_INVALID_ARG -7
+
+/* Decode mode for tcs_player_set_decode_mode. HARDWARE is 0 so a caller that
+ * never calls the setter keeps the hardware-first order (the default). */
+typedef enum tcs_decode_mode {
+  TCS_DECODE_MODE_HARDWARE = 0,  /* GPU profiles first (default) */
+  TCS_DECODE_MODE_SOFTWARE = 1   /* CPU profiles first; GPU only as a last resort */
+} tcs_decode_mode;
 
 /* Frame notification; called from a GStreamer streaming thread.
  * Mirrors mpv_render_update_fn's "wakeup, go look" semantics while
@@ -154,6 +162,15 @@ TCS_GST_API uint64_t tcs_player_get_generation(TcsPlayer* player);
 TCS_GST_API int tcs_player_set_speed(TcsPlayer* player, double rate);
 TCS_GST_API int tcs_player_set_volume(TcsPlayer* player, double volume_0_to_100);
 TCS_GST_API int tcs_player_set_mute(TcsPlayer* player, int mute);
+/* Select the decode mode used by subsequent tcs_player_load calls. Must be
+ * called before the first load (the pipeline and the last-good profile cache
+ * belong to the mode they were built with); a later call returns
+ * TCS_ERR_GENERIC and leaves the current mode unchanged. Call it from the
+ * same control thread that calls load/seek/pause. Returns TCS_OK,
+ * TCS_ERR_INVALID_ARG for an unknown mode, or TCS_ERR_GENERIC (NULL player or
+ * already loaded). In software mode a load that ends on a GPU profile logs a
+ * warning ("no CPU decoder was usable"). */
+TCS_GST_API int tcs_player_set_decode_mode(TcsPlayer* player, int mode);
 
 /* Media-time queries (seconds). TCS_OK or TCS_ERR_NOT_LOADED. */
 TCS_GST_API int tcs_player_get_time_pos(TcsPlayer* player, double* out_sec);

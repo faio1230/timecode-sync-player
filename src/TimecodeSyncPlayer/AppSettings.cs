@@ -54,6 +54,8 @@ public sealed record AppSettings
     public double Volume { get; init; } = 100;
     public PlayerBackend Backend { get; init; } = PlayerBackend.Mpv;
     public OutputBackend OutputBackend { get; init; } = OutputBackend.Cpu;
+    /// <summary>"hardware"（既定）/ "software"。不正値は hardware として扱い警告する。変更には再起動が必要。</summary>
+    public string DecodeMode { get; init; } = DecodeModePolicy.HardwareValue;
 
     public static AppSettings Default => new();
 }
