@@ -172,9 +172,11 @@ internal sealed class SyncScenarioHarness
                 ApplyRateInstant: enableCorrection
                     ? rate =>
                     {
+                        RateAttempts.Add(rate);
+                        if (!RateApplySucceeds) return false;
                         AppliedRates.Add(rate);
                         Operations.Add(new("rate", rate));
-                        return RateApplySucceeds;
+                        return true;
                     }
                     : null,
                 SeekTo: enableCorrection ? Seek : null,
@@ -227,6 +229,7 @@ internal sealed class SyncScenarioHarness
     public SyncCorrectionMode CorrectionMode { get; set; } = SyncCorrectionMode.Smooth;
     public bool RateApplySucceeds { get; set; } = true;
     public List<double> AppliedRates { get; } = [];
+    public List<double> RateAttempts { get; } = [];
     public string CorrectionStatus { get; private set; } = "";
 
     public bool IsPaused => _playback.IsPaused;

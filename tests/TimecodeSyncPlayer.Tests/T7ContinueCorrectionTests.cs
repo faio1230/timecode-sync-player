@@ -175,6 +175,116 @@ public class T7ContinueCorrectionTests
         harness.AppliedRates.Should().BeEmpty();
     }
 
+    [Fact]
+    public void SuppressedSyncFrame_DropsPreviousFrameContext()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var harness = new SyncScenarioHarness(clock, enableCorrection: true);
+        harness.AddTrack("clip1", 0);
+        harness.ManualPlay();
+        harness.SupplyLtc(1.0);                                   // clip1 へ切替
+        harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // 残差 +0.1 → 文脈が入る
+        harness.Controller.LastContinueFrame.Should().NotBeNull();
+
+        // 信号断 → ポリシーが停止して ShouldSuppressSync=true になる。
+        harness.Tick100Milliseconds(4);
+        harness.IsPaused.Should().BeTrue();
+        harness.Controller.LastContinueFrame.Should().NotBeNull("セットアップ: tick では文脈を捨てない");
+        harness.AppliedRates.Clear();
+
+        harness.SupplyLtc(1.6);                                   // 抑止フレーム（RequestSync が走らない）
+
+        harness.Controller.LastContinueFrame.Should().BeNull(
+            "抑止フレームでは前のフレームの素材位置・再生位置を使わない");
+        harness.AppliedRates.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SmoothRateRestoredOnTrackSwitch()
+    {
+        var harness = new SyncScenarioHarness(enableCorrection: true);
+        harness.AddTrack("clip1", 0);
+        harness.AddTrack("clip2", 12);
+        harness.ManualPlay();
+        harness.SupplyLtc(1.0);
+        harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // rate 1.10
+        harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
+
+        harness.SupplyLtc(12.0);                                  // clip2 へ切替
+
+        harness.AppliedRates.Should().HaveCount(2);
+        harness.AppliedRates[^1].Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public void SmoothRateRestoredOnGapEnter()
+    {
+        var harness = new SyncScenarioHarness(enableCorrection: true);
+        harness.AddTrack("clip1", 0);
+        harness.AddTrack("clip2", 8);
+        harness.ManualPlay();
+        harness.SupplyLtc(1.0);
+        harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // rate 1.10
+        harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
+
+        harness.SupplyLtc(6.0);                                   // ギャップ入り
+
+        harness.AppliedRates.Should().HaveCount(2);
+        harness.AppliedRates[^1].Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public void SmoothRateRestoredOnManualControl()
+    {
+        var harness = new SyncScenarioHarness(enableCorrection: true);
+        harness.AddTrack("clip1", 0);
+        harness.ManualPlay();
+        harness.SupplyLtc(1.0);
+        harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // rate 1.10
+
+        harness.Controller.CorrectionReset();                     // 手動の再生・一時停止/差し替え相当
+        harness.AppliedRates[^1].Should().BeApproximately(1.0, 1e-9);
+
+        harness.AdvancePlayback(1.3, renderedFrames: 1);
+        harness.SupplyLtc(1.4);                                   // rate 1.10 に戻す
+        harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
+
+        harness.BeginSeekBarInteraction();                        // 手動シーク
+
+        harness.AppliedRates[^1].Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public void SmoothRateRestore_RetriedOnNextEvaluableFrame()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var harness = new SyncScenarioHarness(clock, enableCorrection: true);
+        harness.AddTrack("clip1", 0);
+        harness.ManualPlay();
+        harness.SupplyLtc(1.0);
+        harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // rate 1.10
+        harness.AppliedRates.Should().ContainSingle();
+
+        harness.RateApplySucceeds = false;
+        harness.Controller.CorrectionReset();                     // 一時停止中相当で戻せない
+        harness.AppliedRates.Should().ContainSingle("拒否された戻しは成功に数えない");
+        harness.RateAttempts[^1].Should().BeApproximately(1.0, 1e-9);
+
+        harness.RateApplySucceeds = true;
+        harness.AdvancePlayback(1.25, renderedFrames: 1);
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        harness.SupplyLtc(1.3);                                   // 評価の前に 1.0 へ戻す
+
+        harness.AppliedRates.Should().HaveCount(3);
+        harness.AppliedRates[1].Should().BeApproximately(1.0, 1e-9);
+        harness.AppliedRates[2].Should().BeApproximately(1.05, 1e-9);
+    }
+
     // ── ContinueOnTrackCoordinator のフレーム文脈 ─────────────────────
 
     private sealed class Recorder

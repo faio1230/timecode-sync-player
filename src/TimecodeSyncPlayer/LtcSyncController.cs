@@ -62,6 +62,7 @@ internal sealed class LtcSyncController
     private ContinueFrameContext? _lastContinueFrame;
     private bool _smoothAvailable = true;
     private double _lastAppliedRate = 1.0;
+    private bool _rateRestorePending;
     private double? _lastAcceptedLtcSeconds;
     private double? _pendingSyncSeconds;
     private string _formatText = "LTC 停止中";
@@ -88,9 +89,12 @@ internal sealed class LtcSyncController
     public double LastLtcSeconds { get; private set; }
     public double LastTimecodeFps => _frames.LastTimecodeFps;
 
+    /// <summary>テスト・診断用: 直近フレームの Continue 補正文脈（フレーム先頭で捨てる）。</summary>
+    internal ContinueFrameContext? LastContinueFrame => _lastContinueFrame;
+
     public void SyncEnabledChanged()
     {
-        _correction.Reset();
+        ResetCorrection();
         _smoothAvailable = true;
         if (!_effects.GetContext().SyncEnabled)
             _syncService.ClearSeekState();
@@ -100,7 +104,7 @@ internal sealed class LtcSyncController
 
     public void SyncModeChanged()
     {
-        _correction.Reset();
+        ResetCorrection();
         _smoothAvailable = true;
         _frames.ResetDiagnostics();
         _syncService.ClearSeekState();
@@ -124,11 +128,26 @@ internal sealed class LtcSyncController
     {
         _pendingSyncSeconds = null;
         // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
-        _correction.Reset();
+        ResetCorrection();
     }
 
     /// <summary>T7: 操作者の再生・一時停止、プロジェクト差し替えで補正状態を捨てる。</summary>
-    public void CorrectionReset() => _correction.Reset();
+    public void CorrectionReset() => ResetCorrection();
+
+    /// <summary>
+    /// T7: 補正状態を捨て、プレイヤーに掛けた倍率が残っていれば 1.0 に戻す。
+    /// 一時停止中などで戻せないときは次の評価可能フレームの評価前に戻す。
+    /// </summary>
+    private void ResetCorrection()
+    {
+        _correction.Reset();
+        if (_rateRestorePending || Math.Abs(_lastAppliedRate - 1.0) < 0.0005)
+            return;
+        if (_effects.ApplyRateInstant?.Invoke(1.0) == true)
+            _lastAppliedRate = 1.0;
+        else
+            _rateRestorePending = true;
+    }
 
     private void RequestSync(double seconds)
     {
@@ -195,6 +214,9 @@ internal sealed class LtcSyncController
             LogFrameDiagnostics(sourceFrame, processed, mode);
         if (!processed.ShouldApplySync)
             return;
+        // T7: フレーム文脈は必ずこのフレームの処理の先頭で捨てる。抑止などで
+        // ApplySync が走らないフレームに前のフレームの素材位置・再生位置を持ち越さない。
+        _lastContinueFrame = null;
         // T3: 同期に使う値だけを入口で 1 回オフセットする。表示用の LastLtcSeconds は
         // 受信した LTC の生値を保つ。ここで作った effective 値を共有することで、
         // 同期判断・シーク・クリップ切替・ギャップ出入りが同じ量だけずれる。
@@ -221,6 +243,15 @@ internal sealed class LtcSyncController
             return;
         if (_syncService.SeekState.HasPendingSeek)
             return;
+
+        if (_rateRestorePending)
+        {
+            // T7: 一時停止中などで戻せなかった倍率を、評価の前に 1.0 へ戻す。
+            if (!_effects.ApplyRateInstant(1.0))
+                return;
+            _lastAppliedRate = 1.0;
+            _rateRestorePending = false;
+        }
 
         double residualSeconds;
         double targetSeconds;
@@ -380,15 +411,15 @@ internal sealed class LtcSyncController
                 if (frame.SwitchedTrack)
                 {
                     // T7: トラック切替（ロード成功）で補正状態を捨て、Smooth を再試行できるようにする。
-                    _correction.Reset();
+                    ResetCorrection();
                     _smoothAvailable = true;
                 }
                 if (frame.ExitedGap)
-                    _correction.Reset();
+                    ResetCorrection();
                 return frame.Request;
             case TimelineQueryStatus.Gap:
                 // T7: ギャップ中は補正を評価しない（出入りのたびに状態を捨てる）。
-                _correction.Reset();
+                ResetCorrection();
                 if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
                     _effects.ClearGapFreezeFrame();
                 _effects.UpdateTimelinePosition(seconds);
@@ -402,7 +433,7 @@ internal sealed class LtcSyncController
                 _effects.UpdateCurrentTrackLabel();
                 break;
             case TimelineQueryStatus.NoTracks:
-                _correction.Reset();
+                ResetCorrection();
                 if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
                     _effects.ClearGapFreezeFrame();
                 _gapCoordinator().HandleNoTracks();
