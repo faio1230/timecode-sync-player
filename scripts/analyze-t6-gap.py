@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """T6: 「アプリが報告する再生位置」と「画面に出ている絵」のギャップを B1〜B4 に分解する。
 
 2026-09-16 追記版。shim の gst.position（flags bit 3）が入ったログで、B1 を
@@ -236,6 +236,26 @@ def describe(values):
             f"p95 {percentile(clean, 95):.1f} / 平均 {statistics.fmean(clean):.1f} (n={len(clean)})")
 
 
+def median_p5_p95(values):
+    clean = [v for v in values if v is not None]
+    if not clean:
+        return "-"
+    return (f"{statistics.median(clean):.1f} / {percentile(clean, 5):.1f} / "
+            f"{percentile(clean, 95):.1f} (n={len(clean)})")
+
+
+def pooled_spread(values):
+    clean = [v for v in values if v is not None]
+    if not clean:
+        return "-"
+    return f"{percentile(clean, 95) - percentile(clean, 5):.1f}"
+
+
+def median_str(values):
+    clean = [v for v in values if v is not None]
+    return "-" if not clean else f"{statistics.median(clean):.1f}"
+
+
 def mean_of(values):
     clean = [v for v in values if v is not None]
     return statistics.fmean(clean) if clean else None
@@ -301,6 +321,39 @@ def report_combined(runs):
     return "\n".join(lines)
 
 
+def report_t7(runs):
+    """T7 集計: delta / signedErrorMs の中央値・p5・p95、プール p95-p5、絵の遅れの中央値。"""
+    lines = ["## T7 集計（フェーズ別・全 run 結合）", "",
+             "| phase | n | delta 中央値 / p5 / p95 | signedError 中央値 / p5 / p95 | "
+             "絵の遅れ 中央値 | signedError プール p95-p5 | delta プール p95-p5 |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
+    all_rows = [r for run in runs for r in run[1]]
+    for phase in PHASES:
+        rows = [r for r in all_rows if r["phase"] == phase]
+        if not rows:
+            continue
+        lines.append(
+            f"| {phase} | {len(rows)} | {median_p5_p95([r['delta_ms'] for r in rows])} | "
+            f"{median_p5_p95([r['signed_ms'] for r in rows])} | "
+            f"{median_str([picture_delay(r) for r in rows])} | "
+            f"{pooled_spread([r['signed_ms'] for r in rows])} | {pooled_spread([r['delta_ms'] for r in rows])} |")
+    lines.append(
+        f"| **全体** | {len(all_rows)} | {median_p5_p95([r['delta_ms'] for r in all_rows])} | "
+        f"{median_p5_p95([r['signed_ms'] for r in all_rows])} | "
+        f"{median_str([picture_delay(r) for r in all_rows])} | "
+        f"{pooled_spread([r['signed_ms'] for r in all_rows])} | {pooled_spread([r['delta_ms'] for r in all_rows])} |")
+    lines.append("")
+    lines.append("| run | n | delta 中央値 / p5 / p95 | signedError 中央値 / p5 / p95 | 絵の遅れ 中央値 |")
+    lines.append("| --- | ---: | ---: | ---: | ---: |")
+    for run_name, records in runs:
+        lines.append(
+            f"| {run_name.name} | {len(records)} | {median_p5_p95([r['delta_ms'] for r in records])} | "
+            f"{median_p5_p95([r['signed_ms'] for r in records])} | "
+            f"{median_str([picture_delay(r) for r in records])} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", action="append", required=True, type=Path)
@@ -313,6 +366,7 @@ def main():
         runs.append((run, records))
         sections.append(report_run(run, records, misses, stage_counts))
     sections.append(report_combined(runs))
+    sections.append(report_t7(runs))
     text = "\n".join(sections)
     if args.output:
         args.output.write_text(text, encoding="utf-8")
