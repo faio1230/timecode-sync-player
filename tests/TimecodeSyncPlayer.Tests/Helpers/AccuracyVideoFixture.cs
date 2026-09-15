@@ -14,7 +14,10 @@ internal sealed record AccuracyFixture(string ProjectPath, IReadOnlyList<Accurac
 /// <summary>Generates a fresh, independently decode-verified 1080p fixture in the report directory.</summary>
 internal static class AccuracyVideoFixture
 {
-    public static async Task<AccuracyFixture> CreateAsync(string reportDirectory, Action<string>? progress = null)
+    public static async Task<AccuracyFixture> CreateAsync(
+        string reportDirectory,
+        Action<string>? progress = null,
+        double ltcFps = 25.0)
     {
         string directory = Path.GetFullPath(reportDirectory);
         Directory.CreateDirectory(directory);
@@ -40,9 +43,13 @@ internal static class AccuracyVideoFixture
         await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Continue, GapBehavior.Black,
             new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
         await File.WriteAllTextAsync(Path.Combine(directory, "fixture.json"),
-            JsonSerializer.Serialize(new { schema = 1, ltcFps = 25, clips }, MonkeyJson.Options), new UTF8Encoding(false));
+            BuildFixtureJson(ltcFps, clips), new UTF8Encoding(false));
         return new AccuracyFixture(projectPath, clips);
     }
+
+    /// <summary>fixture.json の中身。ltcFps は V3 の LTC fps マトリクス（24/25/29.97/30）で変わる。</summary>
+    internal static string BuildFixtureJson(double ltcFps, IReadOnlyList<AccuracyClip> clips)
+        => JsonSerializer.Serialize(new { schema = 1, ltcFps, clips }, MonkeyJson.Options);
 
     internal static byte[] CreateMarkerPanel(int clipId, int frameIndex)
     {

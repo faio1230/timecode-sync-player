@@ -9,6 +9,13 @@
 # Each run needs its own empty report directory (phases.jsonl uses FileMode.CreateNew)
 # and a settings.json placed there BEFORE the run to select the backend.
 #
+# LTC fps matrix: -LtcFps selects the signal rate (24/25/29.97/30, default 25).
+# -LtcFpsMode selects the app's LtcFpsModeCombo: auto (default, detection is logged
+# and checked) or fixed (the matching Fixed24/25/29_97/30 mode). Non-drop 29.97 is
+# generated; the app cannot auto-distinguish it from 30 (drop-frame flag is false),
+# so use -LtcFpsMode fixed for that combination if the auto run misresolves.
+# The run name includes the LTC fps token so matrix runs never share a directory.
+#
 # Steady error excludes black-sweep (no correct frame exists during a black gap) and
 # settling samples. Recovery time is swept over tolerances because a tolerance below
 # the steady error can never be reached - see the "V3 criteria" section in
@@ -24,6 +31,8 @@
 param(
     [ValidateSet('gst', 'mpv')][string[]]$Backends = @('gst', 'mpv'),
     [Parameter(Mandatory)][string]$Label,
+    [ValidateSet('24', '25', '29.97', '30')][string]$LtcFps = '25',
+    [ValidateSet('auto', 'fixed')][string]$LtcFpsMode = 'auto',
     [string]$TestProject = 'C:\Users\codea\Documents\timecode-sync-player-wt-verify-oe-20260911-1344\tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj',
     [string]$LogRoot = 'C:\Users\codea\Documents\timecode-sync-player-wt-integrate-20260912\TestResults\v3',
     [int]$Repeats = 1,
@@ -33,11 +42,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $analyzer = Join-Path $PSScriptRoot 'analyze-sync-accuracy.py'
+$fpsToken = $LtcFps -replace '\.', '_'
 
 $runs = @()
 foreach ($backend in $Backends) {
     foreach ($i in 1..$Repeats) {
-        $name = '{0}-{1}{2}' -f $Label, $backend, $(if ($Repeats -gt 1) { "-$i" } else { '' })
+        $name = '{0}-ltc{1}-{2}{3}' -f $Label, $fpsToken, $backend, $(if ($Repeats -gt 1) { "-$i" } else { '' })
         $report = Join-Path $LogRoot $name
         if (Test-Path $report) { Remove-Item $report -Recurse -Force }
         New-Item -ItemType Directory -Force $report | Out-Null
@@ -45,11 +55,15 @@ foreach ($backend in $Backends) {
         ('{"backend":' + $backendValue + ',"outputBackend":' + $OutputBackend + '}') |
             Set-Content (Join-Path $report 'settings.json') -Encoding UTF8
 
-        Write-Output ('=== {0} {1}' -f (Get-Date).ToString('HH:mm:ss'), $name)
+        Write-Output ('=== {0} {1} ltcFps={2} mode={3}' -f (Get-Date).ToString('HH:mm:ss'), $name, $LtcFps, $LtcFpsMode)
         $env:TIMECODE_ACCURACY_REPORT_DIR = $report
+        $env:TCS_V3_LTC_FPS = $LtcFps
+        $env:TCS_V3_LTC_FPS_MODE = $LtcFpsMode
         & dotnet test $TestProject -c Debug --no-build --filter 'FullyQualifiedName~SyncAccuracy' 2>&1 |
             Select-String -Pattern 'Passed!|Failed!|:\s+\d+' | Select-Object -Last 1 | ForEach-Object { '    ' + $_.ToString().Trim() }
         Remove-Item Env:TIMECODE_ACCURACY_REPORT_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:TCS_V3_LTC_FPS -ErrorAction SilentlyContinue
+        Remove-Item Env:TCS_V3_LTC_FPS_MODE -ErrorAction SilentlyContinue
 
         & python $analyzer --trace (Join-Path $report 'trace.jsonl') --fixture (Join-Path $report 'fixture.json') `
             --phases (Join-Path $report 'phases.jsonl') --output (Join-Path $report 'analysis') 2>&1 |
