@@ -6,7 +6,7 @@ using Serilog;
 
 namespace TimecodeSyncPlayer.Output;
 
-internal sealed record OutputTraceEvent(string Stage, string Worker, long Qpc, long ScheduledQpc = 0, long ImageId = 0, long GeneratedQpc = 0, string? Detail = null, long Value = 0, long DeadlineQpc = 0);
+internal sealed record OutputTraceEvent(string Stage, string Worker, long Qpc, long ScheduledQpc = 0, long ImageId = 0, long GeneratedQpc = 0, string? Detail = null, long Value = 0, long DeadlineQpc = 0, long PtsNs = 0);
 
 /// <summary>
 /// 出力トレース（試作 GpuOutputProbe の manifest.json / events.jsonl / summary.json と同スキーマ）。

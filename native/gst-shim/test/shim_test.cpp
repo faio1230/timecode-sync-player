@@ -264,44 +264,88 @@ run_delivery_policy_tests ()
   check (tcs_ring_evict_index (single, 0) == -1, "ring evict: empty -> -1");
 
   /* V11: decode profile order (pure). 4 GPU profiles then 5 CPU profiles,
-   * mirroring the shim's table shape (9 profiles + decodebin fallback). */
+   * mirroring the shim's table shape (9 profiles + decodebin fallback).
+   * `order` is sized profile_count + 2 and carries a sentinel just past the
+   * documented maximum (profile_count + 1): the function must never write
+   * past that, and build_pipeline appends nothing itself. */
   {
     const int software_flags[9] = { 0, 0, 0, 0, 1, 1, 1, 1, 1 };
-    int order[10];
+    const int profile_count = 9;
+    const int sentinel = 0x5A5A5A5A;
+    int order[profile_count + 2];
     int n;
+    auto fallback_count = [](const int* values, int count) {
+      int found = 0;
+      for (int i = 0; i < count; i++)
+        if (values[i] == TCS_DECODE_PROFILE_FALLBACK)
+          found++;
+      return found;
+    };
+    auto fresh = [&]() {
+      for (int i = 0; i < profile_count + 2; i++)
+        order[i] = sentinel;
+    };
 
     /* hardware, no cached profile: table order, then decodebin. */
-    n = tcs_decode_profile_order (0, 0, software_flags, 9, order);
-    check (n == 10, "decode order: hardware count");
+    fresh ();
+    n = tcs_decode_profile_order (0, 0, 0, software_flags, profile_count, order);
+    check (n == profile_count + 1, "decode order: hardware count");
     check (order[0] == 0 && order[1] == 1 && order[2] == 2 && order[3] == 3 &&
            order[4] == 4 && order[5] == 5 && order[6] == 6 && order[7] == 7 &&
            order[8] == 8 && order[9] == TCS_DECODE_PROFILE_FALLBACK,
         "decode order: hardware is table order + fallback");
+    check (fallback_count (order, n) == 1, "decode order: hardware fallback once");
+    check (order[profile_count + 1] == sentinel, "decode order: hardware sentinel");
 
     /* hardware, cached CPU profile: cache first, fallback last. */
-    n = tcs_decode_profile_order (0, 6, software_flags, 9, order);
-    check (n == 10 && order[0] == 6 && order[9] == TCS_DECODE_PROFILE_FALLBACK,
+    fresh ();
+    n = tcs_decode_profile_order (0, 0, 6, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 6 &&
+           order[profile_count] == TCS_DECODE_PROFILE_FALLBACK,
         "decode order: hardware keeps last-good first");
+    check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
+        "decode order: hardware last-good fallback once + sentinel");
 
     /* software: CPU profiles, decodebin, then GPU profiles. */
-    n = tcs_decode_profile_order (1, 0, software_flags, 9, order);
-    check (n == 10, "decode order: software count");
+    fresh ();
+    n = tcs_decode_profile_order (0, 1, 0, software_flags, profile_count, order);
+    check (n == profile_count + 1, "decode order: software count");
     check (order[0] == 4 && order[1] == 5 && order[2] == 6 && order[3] == 7 &&
            order[4] == 8 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
            order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
         "decode order: software is CPU + decodebin + GPU");
+    check (fallback_count (order, n) == 1, "decode order: software fallback once");
+    check (order[profile_count + 1] == sentinel, "decode order: software sentinel");
 
     /* software, cached CPU profile: cache first, no duplicate. */
-    n = tcs_decode_profile_order (1, 5, software_flags, 9, order);
-    check (n == 10 && order[0] == 5 && order[1] == 4 && order[2] == 6 &&
-           order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
+    fresh ();
+    n = tcs_decode_profile_order (0, 1, 5, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 5 && order[1] == 4 &&
+           order[2] == 6 && order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
         "decode order: software keeps a CPU last-good first");
+    check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
+        "decode order: software last-good fallback once + sentinel");
 
     /* software, cached GPU profile: the GPU cache stays in the GPU block. */
-    n = tcs_decode_profile_order (1, 2, software_flags, 9, order);
-    check (n == 10 && order[0] == 4 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
-           order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
+    fresh ();
+    n = tcs_decode_profile_order (0, 1, 2, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 4 &&
+           order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0 &&
+           order[7] == 1 && order[8] == 2 && order[9] == 3,
         "decode order: software does not promote a GPU last-good");
+    check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
+        "decode order: software GPU-cache fallback once + sentinel");
+
+    /* decodebin: the fallback alone, whatever mode/cache was requested. */
+    fresh ();
+    n = tcs_decode_profile_order (1, 0, 0, software_flags, profile_count, order);
+    check (n == 1 && order[0] == TCS_DECODE_PROFILE_FALLBACK,
+        "decode order: decodebin is fallback only");
+    check (order[1] == sentinel, "decode order: decodebin sentinel");
+    fresh ();
+    n = tcs_decode_profile_order (1, 1, 6, software_flags, profile_count, order);
+    check (n == 1 && order[0] == TCS_DECODE_PROFILE_FALLBACK && order[1] == sentinel,
+        "decode order: decodebin ignores mode and cache");
   }
 
   /* V11-h: pin the CPU/GPU classification of the real profile table. The chain
@@ -716,6 +760,9 @@ main (int argc, char** argv)
   double play_secs = argc > 2 ? atof (argv[2]) : 2.0;
 
   char err[512] = "";
+  /* T6: position snapshots are only recorded while the owner's output trace
+   * is on; enable it before create so the snapshot path is exercised. */
+  _putenv_s ("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", "1");
   TcsPlayer* p = tcs_player_create ("TCSGstShimTest", nullptr, err, sizeof (err));
   check (p != nullptr, "create (internal device)");
   if (!p) { printf ("  err=%s\n", err); return 1; }
@@ -833,6 +880,23 @@ main (int argc, char** argv)
   double pos = 0;
   check (tcs_player_get_time_pos (p, &pos) == TCS_OK && pos > 0.05, "time-pos advances");
   (void) pos;
+  {
+    /* T6: the query must have appended exactly one position snapshot (flags
+     * bit 3) with the queried position and the newest delivered frame. */
+    std::vector<TcsDeliveryEvent> pevs (512);
+    uint32_t pn = 0;
+    tcs_player_drain_delivery_events (p, pevs.data (), (uint32_t) pevs.size (), &pn);
+    bool pos_snapshot = false;
+    for (uint32_t i = 0; i < pn; i++) {
+      if ((pevs[i].flags & 8u) == 0)
+        continue;
+      pos_snapshot = true;
+      check (pevs[i].running_ns > 0, "position snapshot carries the queried position");
+      check (pevs[i].seq > 0, "position snapshot carries the newest delivery seq");
+      check (pevs[i].pts_ns > 0, "position snapshot carries the newest delivery pts");
+    }
+    check (pos_snapshot, "position snapshot recorded while output trace is enabled");
+  }
 
   /* verification-layer Spout publish from GPU texture */
   gen = tcs_player_get_generation (p);
@@ -974,6 +1038,9 @@ main (int argc, char** argv)
         nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx);
     check (SUCCEEDED (hr), "external device created");
     if (SUCCEEDED (hr)) {
+      /* T6: with the output trace off at create, tcs_player_get_time_pos must
+       * not append a position snapshot. */
+      _putenv_s ("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", "");
       TcsPlayer* p2 = tcs_player_create ("TCSGstShimTest", dev, err, sizeof (err));
       check (p2 != nullptr, "create (external device)");
       if (p2) {
@@ -1022,6 +1089,20 @@ main (int argc, char** argv)
             check (false, "leased texture on shim device");
           }
           tcs_player_release (p2);
+          {
+            /* T6: no position snapshot when the output trace was off at create. */
+            double pos2 = 0;
+            check (tcs_player_get_time_pos (p2, &pos2) == TCS_OK && pos2 >= 0.0,
+                "time-pos on external-device player");
+            std::vector<TcsDeliveryEvent> devs2 (512);
+            uint32_t dn2 = 0;
+            tcs_player_drain_delivery_events (p2, devs2.data (), (uint32_t) devs2.size (), &dn2);
+            bool pos_snapshot2 = false;
+            for (uint32_t i = 0; i < dn2; i++)
+              if (devs2[i].flags & 8u)
+                pos_snapshot2 = true;
+            check (!pos_snapshot2, "position snapshot skipped while output trace is disabled");
+          }
         } else {
           check (false, "acquire on external device");
         }

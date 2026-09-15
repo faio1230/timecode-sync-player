@@ -96,6 +96,17 @@ env_int (const char* name, int fallback)
 /* diagnostics: dump every delivered sample (pacing analysis) */
 static bool frame_log = env_flag ("TCS_FRAME_LOG");
 
+/* The owner enables the output trace (events.jsonl) by setting the app's
+ * TIMECODE_SYNC_PLAYER_OUTPUT_TRACE. tcs_player_get_time_pos appends a
+ * position snapshot to the delivery ring only when that variable was set at
+ * create time: with the trace off the default path must not pay for a QPC
+ * read or a ring write. */
+static const char* kOutputTraceEnv = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
+
+/* TcsDeliveryEvent.flags bit 3: not a frame arrival but the snapshot
+ * tcs_player_get_time_pos records while the output trace is enabled. */
+enum { kDeliveryFlagPosition = 8 };
+
 /* D2 diagnostics: pipeline/sink state around seeks, pause changes and steps.
  * The paused-seek bug is about state, so the report needs the state at each
  * boundary, not just arrival times. */
@@ -289,6 +300,7 @@ struct TcsPlayer {
   std::atomic<uint64_t> delivery_decoder_out{0}; /* (preroll waits on the streaming thread) */
   uint64_t delivery_ring_dropped = 0;
   uint64_t delivery_last_qpc = 0;
+  bool position_trace = false;            /* output trace was on at create */
 
   /* callback */
   tcs_frame_notify_fn notify = nullptr;
@@ -738,6 +750,30 @@ copy_ring_locked (TcsPlayer* p, int32_t slot, ID3D11Texture2D* src, guint sub,
 
 /* ---------------- frame delivery ---------------- */
 
+/* Append one event to the delivery ring and return its slot. Caller holds
+ * frame_lock: on_new_sample, tcs_player_get_time_pos and the drain all
+ * serialize there, so every ring access is ordered. The returned pointer
+ * stays valid for one callback (ring_size >> frame rate); callers only touch
+ * it before returning to their own caller. */
+static TcsDeliveryEvent*
+delivery_append_locked (TcsPlayer* p, uint64_t qpc, uint64_t seq, int64_t pts_ns,
+                        int64_t running_ns, uint32_t flags)
+{
+  TcsDeliveryEvent* e = &p->delivery_ring[p->delivery_write % TcsPlayer::kDeliveryCapacity];
+  e->qpc = qpc;
+  e->seq = seq;
+  e->pts_ns = pts_ns;
+  e->running_ns = running_ns;
+  e->callback_us = 0;
+  e->flags = flags;
+  p->delivery_write++;
+  if (p->delivery_write - p->delivery_read > TcsPlayer::kDeliveryCapacity) {
+    p->delivery_read = p->delivery_write - TcsPlayer::kDeliveryCapacity;
+    p->delivery_ring_dropped++;
+  }
+  return e;
+}
+
 /* QoS events (upstream) and decoder output buffers are counted so the
  * delivery trace can distinguish source-side drops from scheduling. */
 static GstPadProbeReturn
@@ -1013,7 +1049,7 @@ on_new_sample (GstAppSink* sink, gpointer user)
   void* cb_user = nullptr;
   uint64_t cb_gen = 0, cb_seq = 0;
   bool replaced = false;
-  uint32_t event_slot = 0;
+  TcsDeliveryEvent* delivery_event = nullptr;
   bool gated = false;
   bool log_av = false;
   uint64_t log_av_seq = 0, log_av_gen = 0, log_av_target_ns = 0;
@@ -1123,19 +1159,9 @@ on_new_sample (GstAppSink* sink, gpointer user)
        * may block, but the event must not wait for it. callback_us is filled
        * in place afterwards (single writer; the ring cannot wrap within one
        * callback at ring_size >> frame rate). */
-      event_slot = p->delivery_write % TcsPlayer::kDeliveryCapacity;
-      TcsDeliveryEvent& e = p->delivery_ring[event_slot];
-      e.qpc = (uint64_t) arrival.QuadPart;
-      e.seq = p->latest_seq;
-      e.pts_ns = (int64_t) pts;
-      e.running_ns = running_ns;
-      e.callback_us = 0;
-      e.flags = (replaced ? 1u : 0u) | (cb ? 2u : 0u) | (gpu ? 4u : 0u);
-      p->delivery_write++;
-      if (p->delivery_write - p->delivery_read > TcsPlayer::kDeliveryCapacity) {
-        p->delivery_read = p->delivery_write - TcsPlayer::kDeliveryCapacity;
-        p->delivery_ring_dropped++;
-      }
+      delivery_event = delivery_append_locked (p, (uint64_t) arrival.QuadPart,
+          p->latest_seq, (int64_t) pts, running_ns,
+          (replaced ? 1u : 0u) | (cb ? 2u : 0u) | (gpu ? 4u : 0u));
     }
   }
 
@@ -1188,8 +1214,9 @@ on_new_sample (GstAppSink* sink, gpointer user)
     cb (cb_user, cb_gen, cb_seq);
     QueryPerformanceCounter (&c1);
     QueryPerformanceFrequency (&qfreq);
-    p->delivery_ring[event_slot].callback_us = (uint32_t) (((c1.QuadPart - c0.QuadPart) * 1000000) /
-        (qfreq.QuadPart ? qfreq.QuadPart : 1));
+    if (delivery_event != nullptr)
+      delivery_event->callback_us = (uint32_t) (((c1.QuadPart - c0.QuadPart) * 1000000) /
+          (qfreq.QuadPart ? qfreq.QuadPart : 1));
   }
   if (src_tex)
     src_tex->Release ();
@@ -2057,16 +2084,15 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
   gboolean ext_is_decodebin = demux_is_decodebin (demux_name);
 
   int order[kProfileCount + 1];
-  int nOrder = 0;
-  if (!ext_is_decodebin) {
-    int software_flags[kProfileCount];
-    for (int i = 0; i < kProfileCount; i++)
-      software_flags[i] = profile_is_software (i) ? 1 : 0;
-    nOrder = tcs_decode_profile_order (
-        p->decode_mode == TCS_DECODE_MODE_SOFTWARE ? 1 : 0,
-        p->lastGoodProfile, software_flags, kProfileCount, order);
-  }
-  order[nOrder++] = PROFILE_INDEX_FALLBACK;
+  int software_flags[kProfileCount];
+  for (int i = 0; i < kProfileCount; i++)
+    software_flags[i] = profile_is_software (i) ? 1 : 0;
+  /* The full order (profiles and the decodebin fallback) is written here in
+   * one call; do not append to `order` afterwards. */
+  int nOrder = tcs_decode_profile_order (
+      ext_is_decodebin ? 1 : 0,
+      p->decode_mode == TCS_DECODE_MODE_SOFTWARE ? 1 : 0,
+      p->lastGoodProfile, software_flags, kProfileCount, order);
 
   for (int attempt = 0; attempt < nOrder; attempt++) {
     int idx = order[attempt];
@@ -2432,6 +2458,7 @@ tcs_player_create (const char* sender_name, void* external_d3d11_device,
 
   TcsPlayer* p = new TcsPlayer ();
   p->sender_name = (sender_name && sender_name[0]) ? sender_name : "TimecodeSyncPlayer";
+  p->position_trace = env_flag (kOutputTraceEnv);
   LARGE_INTEGER qpc_freq;
   if (QueryPerformanceFrequency (&qpc_freq))
     p->qpc_freq = qpc_freq.QuadPart;
@@ -2777,6 +2804,16 @@ tcs_player_get_time_pos (TcsPlayer* player, double* out_sec)
   if (!gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos) || pos < 0)
     return TCS_ERR_NOT_LOADED;
   *out_sec = (double) pos / GST_SECOND;
+  if (player->position_trace) {
+    /* One snapshot per query. frame_lock freezes latest_seq/latest_pts_ns
+     * while the QPC is taken, so the owner gets the queried position and the
+     * newest delivery PTS from the same instant in one trace line:
+     * running_ns = queried position, pts_ns/seq = newest delivered frame. */
+    LARGE_INTEGER now;
+    QueryPerformanceCounter (&now);
+    delivery_append_locked (player, (uint64_t) now.QuadPart, player->latest_seq,
+        (int64_t) player->latest_pts_ns, (int64_t) pos, (uint32_t) kDeliveryFlagPosition);
+  }
   return TCS_OK;
 }
 
