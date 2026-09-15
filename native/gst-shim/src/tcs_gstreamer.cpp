@@ -2084,16 +2084,15 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
   gboolean ext_is_decodebin = demux_is_decodebin (demux_name);
 
   int order[kProfileCount + 1];
-  int nOrder = 0;
-  if (!ext_is_decodebin) {
-    int software_flags[kProfileCount];
-    for (int i = 0; i < kProfileCount; i++)
-      software_flags[i] = profile_is_software (i) ? 1 : 0;
-    nOrder = tcs_decode_profile_order (
-        p->decode_mode == TCS_DECODE_MODE_SOFTWARE ? 1 : 0,
-        p->lastGoodProfile, software_flags, kProfileCount, order);
-  }
-  order[nOrder++] = PROFILE_INDEX_FALLBACK;
+  int software_flags[kProfileCount];
+  for (int i = 0; i < kProfileCount; i++)
+    software_flags[i] = profile_is_software (i) ? 1 : 0;
+  /* The full order (profiles and the decodebin fallback) is written here in
+   * one call; do not append to `order` afterwards. */
+  int nOrder = tcs_decode_profile_order (
+      ext_is_decodebin ? 1 : 0,
+      p->decode_mode == TCS_DECODE_MODE_SOFTWARE ? 1 : 0,
+      p->lastGoodProfile, software_flags, kProfileCount, order);
 
   for (int attempt = 0; attempt < nOrder; attempt++) {
     int idx = order[attempt];
