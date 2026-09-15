@@ -58,6 +58,11 @@ public sealed record AppSettings
     public string DecodeMode { get; init; } = DecodeModePolicy.HardwareValue;
     /// <summary>T5: 同期補正モード。既定はフィードバック（レート微調整）。</summary>
     public SyncCorrectionMode SyncCorrectionMode { get; init; } = SyncCorrectionMode.Smooth;
+    /// <summary>
+    /// T3: 全体に効く同期オフセット（ms）。プラスで映像が先行し、入力側と下流（LED 等）の
+    /// 遅延をまとめて補正する。既定 0（現行と同一挙動）。範囲は SyncOffsetPolicy が clamp する。
+    /// </summary>
+    public double SyncOffsetMs { get; init; } = SyncOffsetPolicy.DefaultMilliseconds;
 
     public static AppSettings Default => new();
 }
@@ -174,6 +179,13 @@ public sealed class AppSettingsManager
             settings = settings with { OutputBackend = OutputBackend.Cpu };
         if (!Enum.IsDefined(settings.SyncCorrectionMode))
             settings = settings with { SyncCorrectionMode = SyncCorrectionMode.Smooth };
+        if (SyncOffsetPolicy.IsOutOfRange(settings.SyncOffsetMs))
+        {
+            Serilog.Log.Warning(
+                "SyncOffsetMs {Value} は範囲外 [{Min}, {Max}] ms のため clamp しました",
+                settings.SyncOffsetMs, SyncOffsetPolicy.MinimumMilliseconds, SyncOffsetPolicy.MaximumMilliseconds);
+            settings = settings with { SyncOffsetMs = SyncOffsetPolicy.Clamp(settings.SyncOffsetMs) };
+        }
         settings = settings with
         {
             LtcSignalLossTimeoutMs = Math.Clamp(

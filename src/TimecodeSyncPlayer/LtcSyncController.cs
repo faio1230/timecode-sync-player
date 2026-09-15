@@ -36,7 +36,8 @@ internal sealed record LtcSyncEffects(
     Func<double?>? GetPlaybackSeconds = null,
     Func<double, bool>? ApplyRateInstant = null,
     Func<double, bool>? SeekTo = null,
-    Action<string>? SetCorrectionStatus = null);
+    Action<string>? SetCorrectionStatus = null,
+    Func<double>? GetSyncOffsetMilliseconds = null);
 
 /// <summary>
 /// UI-thread LTC session orchestration shared by the window and integration scenarios.
@@ -182,9 +183,15 @@ internal sealed class LtcSyncController
             LogFrameDiagnostics(sourceFrame, processed, mode);
         if (!processed.ShouldApplySync)
             return;
-        _lastAcceptedLtcSeconds = processed.ResolvedSeconds;
-        ObserveValidFrame(processed.ResolvedSeconds, receivedAtMilliseconds);
-        ApplyCorrection(processed.ResolvedSeconds);
+        // T3: 同期に使う値だけを入口で 1 回オフセットする。表示用の LastLtcSeconds は
+        // 受信した LTC の生値を保つ。ここで作った effective 値を共有することで、
+        // 同期判断・シーク・クリップ切替・ギャップ出入りが同じ量だけずれる。
+        double effectiveSeconds = SyncOffsetPolicy.Apply(
+            processed.ResolvedSeconds,
+            _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
+        _lastAcceptedLtcSeconds = effectiveSeconds;
+        ObserveValidFrame(effectiveSeconds, receivedAtMilliseconds);
+        ApplyCorrection(effectiveSeconds);
     }
 
     /// <summary>
