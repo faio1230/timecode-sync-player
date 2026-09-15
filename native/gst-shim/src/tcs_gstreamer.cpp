@@ -31,6 +31,7 @@
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
+#include "tcs_video_profiles.h"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -174,6 +175,7 @@ struct TcsPlayer {
   GstElement* vdec = nullptr;
   GstElement* vconvert = nullptr;
   GstElement* vupload = nullptr;          /* CPU decode: sysmem BGRA -> D3D11 */
+  GstElement* vgpuconvert = nullptr;      /* CPU decode: uploaded -> BGRA on the GPU (V11-h) */
   bool vchain_built = false;
   bool capsMismatch = false;
   bool rejected = false;
@@ -1230,41 +1232,20 @@ static gboolean sync_pacing = TRUE;
 
 static void create_appsink_tail (TcsPlayer* p, gboolean d3d);
 
-struct VideoProfile {
-  const char* name;
-  const char* media;      /* stream media-type prefix, e.g. "video/x-h264" */
-  const char* media2;     /* optional alias, e.g. "video/x-hevc" */
-  const char* parse;      /* may be NULL (raw pad / self-parsing decoder) */
-  const char* dec;        /* may be NULL (already-raw pad) */
-  const char* conv;       /* color converter element name */
-};
-
-/* GPU profiles first, then explicit CPU decoders (uploaded to the ring). An
- * unmatched video pad retries with the decodebin fallback (PROFILE_INDEX_FALLBACK). */
-static const VideoProfile g_profiles[] = {
-  { "h264-gpu", "video/x-h264", nullptr, "h264parse", "d3d11h264dec", "d3d11colorconvert" },
-  { "h265-gpu", "video/x-h265", "video/x-hevc", "h265parse", "d3d11h265dec", "d3d11colorconvert" },
-  { "vp9-gpu",  "video/x-vp9",  nullptr, "vp9parse", "d3d11vp9dec", "d3d11colorconvert" },
-  { "av1-gpu",  "video/x-av1",  nullptr, "av1parse", "d3d11av1dec", "d3d11colorconvert" },
-  { "h264-cpu", "video/x-h264", nullptr, "h264parse", "avdec_h264", "videoconvert" },
-  { "h265-cpu", "video/x-h265", "video/x-hevc", "h265parse", "avdec_h265", "videoconvert" },
-  { "vp9-cpu",  "video/x-vp9",  nullptr, "vp9parse", "avdec_vp9", "videoconvert" },
-  { "av1-cpu",  "video/x-av1",  nullptr, "av1parse", "dav1ddec", "videoconvert" },
-  { "prores-cpu", "video/x-prores", nullptr, nullptr, "avdec_prores", "videoconvert" },
-};
-static const int kProfileCount = (int) (sizeof (g_profiles) / sizeof (g_profiles[0]));
+typedef TcsVideoProfile VideoProfile;
+static const VideoProfile* const g_profiles = kTcsVideoProfiles;
+static const int kProfileCount = TCS_VIDEO_PROFILE_COUNT;
 #define PROFILE_INDEX_FALLBACK (-1)
 static_assert (PROFILE_INDEX_FALLBACK == TCS_DECODE_PROFILE_FALLBACK,
     "fallback index must match tcs_decode_policy.h");
 
 /* CPU decode profiles (decode to sysmem, uploaded with d3d11upload) versus
  * GPU profiles (d3d11*dec -> d3d11colorconvert). Derived from the converter
- * so reordering the table stays safe. */
+ * so reordering the table stays safe (see tcs_video_profiles.h). */
 static bool
 profile_is_software (int idx)
 {
-  return idx >= 0 && idx < kProfileCount &&
-      strstr (g_profiles[idx].conv, "d3d11") == nullptr;
+  return tcs_video_profile_is_software (idx) != 0;
 }
 
 static gboolean
@@ -1338,6 +1319,24 @@ apply_decode_thread_env (GstElement* dec)
     }
 }
 
+/* V11-h: log the element order actually linked, one line per built chain. The
+ * hardware chain must contain exactly one d3d11colorconvert; the CPU chain is
+ * videoconvert -> d3d11upload -> d3d11colorconvert (the CPU-side videoconvert
+ * passes through whenever d3d11upload accepts the decoder format). */
+static void
+log_video_chain (const char* profile, GstElement* const* chain, int n)
+{
+  std::string names;
+  for (int i = 0; i < n; i++) {
+    if (!chain[i])
+      continue;
+    if (!names.empty ())
+      names += ",";
+    names += GST_ELEMENT_NAME (chain[i]);
+  }
+  LOG ("video-chain: %s elements=%s", profile, names.c_str ());
+}
+
 /* Build the static video tail for profile index idx (-1 = decodebin
  * fallback). Elements are added, given the device context and linked;
  * on_demux_pad_added only links the demux pad to p->vhead. */
@@ -1351,23 +1350,32 @@ build_video_chain_static (TcsPlayer* p, int idx)
 
   if (idx == PROFILE_INDEX_FALLBACK) {
     /* Last resort for unmatched video/*: the container is decodebin, so its
-     * src pad is already decoded raw video. videoconvert -> d3d11upload keeps
-     * the shared-ring delivery contract (CPU decode, GPU lease). */
+     * src pad is already decoded raw video. videoconvert -> d3d11upload ->
+     * d3d11colorconvert keeps the shared-ring delivery contract (CPU decode,
+     * GPU lease) with the format conversion on the GPU (V11-h). */
     p->vhead = gst_element_factory_make ("videoconvert", nullptr);
     p->vupload = gst_element_factory_make ("d3d11upload", nullptr);
+    p->vgpuconvert = gst_element_factory_make ("d3d11colorconvert", nullptr);
     create_appsink_tail (p, TRUE);
-    if (!p->vhead || !p->vupload || !p->vcaps || !p->appsink) {
+    if (!p->vhead || !p->vupload || !p->vgpuconvert || !p->vcaps || !p->appsink) {
       set_error (p, "fallback chain factory failed");
       return FALSE;
     }
     gst_bin_add_many (GST_BIN (p->pipeline), p->vhead, p->vupload,
-        p->vcaps, p->appsink, nullptr);
+        p->vgpuconvert, p->vcaps, p->appsink, nullptr);
     give_device_context (p, p->vhead);
     give_device_context (p, p->vupload);
+    give_device_context (p, p->vgpuconvert);
     give_device_context (p, p->pipeline);
-    if (!gst_element_link_many (p->vhead, p->vupload, p->vcaps, p->appsink, nullptr)) {
+    if (!gst_element_link_many (p->vhead, p->vupload, p->vgpuconvert,
+            p->vcaps, p->appsink, nullptr)) {
       set_error (p, "fallback chain link failed");
       return FALSE;
+    }
+    {
+      GstElement* chain[] = { p->vhead, p->vupload, p->vgpuconvert,
+          p->vcaps, p->appsink };
+      log_video_chain ("decodebin-fallback", chain, 5);
     }
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->decoder_name = "decodebin(sysmem)";
@@ -1382,13 +1390,16 @@ build_video_chain_static (TcsPlayer* p, int idx)
   p->vdec = prof->dec ? gst_element_factory_make (prof->dec, nullptr) : nullptr;
   apply_decode_thread_env (p->vdec);
   p->vconvert = gst_element_factory_make (prof->conv, nullptr);
-  /* CPU profiles decode to sysmem BGRA; d3d11upload moves it to the shim
-   * device so every lease goes through the shared ring (slot >= 0). */
+  /* CPU profiles decode to sysmem; d3d11upload moves it to the shim device and
+   * the post-upload d3d11colorconvert finishes the format conversion on the
+   * GPU (V11-h). The CPU-side videoconvert stays as the pass-through safety
+   * net for formats d3d11upload cannot take. */
   p->vupload = d3d ? nullptr : gst_element_factory_make ("d3d11upload", nullptr);
+  p->vgpuconvert = d3d ? nullptr : gst_element_factory_make ("d3d11colorconvert", nullptr);
   create_appsink_tail (p, TRUE);
   if (!p->vconvert || !p->vcaps || !p->appsink ||
       (prof->parse && !p->vparse) || (prof->dec && !p->vdec) ||
-      (!d3d && !p->vupload)) {
+      (!d3d && (!p->vupload || !p->vgpuconvert))) {
     set_error (p, "chain factory failed for profile %s", prof->name);
     return FALSE;
   }
@@ -1399,6 +1410,7 @@ build_video_chain_static (TcsPlayer* p, int idx)
   if (p->vdec) gst_bin_add (GST_BIN (p->pipeline), p->vdec);
   gst_bin_add (GST_BIN (p->pipeline), p->vconvert);
   if (p->vupload) gst_bin_add (GST_BIN (p->pipeline), p->vupload);
+  if (p->vgpuconvert) gst_bin_add (GST_BIN (p->pipeline), p->vgpuconvert);
   gst_bin_add (GST_BIN (p->pipeline), p->vcaps);
   gst_bin_add (GST_BIN (p->pipeline), p->appsink);
 
@@ -1406,10 +1418,11 @@ build_video_chain_static (TcsPlayer* p, int idx)
   if (p->vdec) give_device_context (p, p->vdec);
   give_device_context (p, p->vconvert);
   if (p->vupload) give_device_context (p, p->vupload);
+  if (p->vgpuconvert) give_device_context (p, p->vgpuconvert);
   give_device_context (p, p->pipeline);
 
   GstElement* chain[] = { p->vparse, p->vdec, p->vconvert, p->vupload,
-      p->vcaps, p->appsink, nullptr };
+      p->vgpuconvert, p->vcaps, p->appsink, nullptr };
   int nChain = (int) (sizeof (chain) / sizeof (chain[0])) - 1;
   GstElement* prev = nullptr;
   for (int i = 0; i < nChain; i++) {
@@ -1420,6 +1433,7 @@ build_video_chain_static (TcsPlayer* p, int idx)
     }
     prev = chain[i];
   }
+  log_video_chain (prof->name, chain, nChain);
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->decoder_name = prof->dec ? prof->dec : "raw";
@@ -1885,6 +1899,7 @@ teardown_pipeline (TcsPlayer* p)
   p->vdec = nullptr;
   p->vconvert = nullptr;
   p->vupload = nullptr;
+  p->vgpuconvert = nullptr;
   p->vchain_built = false;
   p->capsMismatch = false;
   p->aqueue = nullptr;
@@ -2203,9 +2218,11 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
         GstState cs2, ps2;
         gst_element_get_state (p->pipeline, &cs2, &ps2, 0);
         LOG ("diag: pipe cur=%d pending=%d", (int) cs2, (int) ps2);
-        GstElement* els[] = { p->vparse, p->vdec, p->vconvert, p->vupload, p->appsink };
-        const char* nms[] = { "vparse", "vdec", "vconv", "vupload", "vsink" };
-        for (int ei = 0; ei < 5; ei++) {
+        GstElement* els[] = { p->vparse, p->vdec, p->vconvert, p->vupload,
+            p->vgpuconvert, p->appsink };
+        const char* nms[] = { "vparse", "vdec", "vconv", "vupload", "vgpuconv",
+            "vsink" };
+        for (int ei = 0; ei < 6; ei++) {
           if (!els[ei])
             continue;
           GstState s3 = GST_STATE_VOID_PENDING;
