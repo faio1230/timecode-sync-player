@@ -49,6 +49,9 @@ internal sealed class GstNativeApi : IGstNativeApi
 
     public int SetSpeed(IntPtr player, double rate) => GstNative.Imports.tcs_player_set_speed(player, rate);
 
+    public int SetRateInstant(IntPtr player, double rate) =>
+        GstNative.Imports.tcs_player_set_rate_instant(player, rate);
+
     public int SetVolume(IntPtr player, double volume0To100) =>
         GstNative.Imports.tcs_player_set_volume(player, volume0To100);
 
