@@ -52,7 +52,10 @@ internal sealed class SyncCorrectionController
     private DateTime _windowStartedAt = DateTime.MinValue;
     private double _windowStartAbsResidual = double.NaN;
 
-    /// <summary>shim が非フラッシュレート変更を受け付けない（1.18 未満・pipeline 拒否）。</summary>
+    /// <summary>
+    /// GStreamer 側で INSTANT_RATE_CHANGE が効かない場合（1.18 未満、またはパイプラインの
+    /// demuxer / clock-synchronizing element が非対応）。shim の戻り値からアプリが設定する。
+    /// </summary>
     public bool SmoothUnavailable { get; private set; }
 
     /// <summary>レートを出しても残差が縮まないため Smooth を諦めた。</summary>
