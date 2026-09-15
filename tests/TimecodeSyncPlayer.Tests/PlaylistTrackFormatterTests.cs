@@ -34,11 +34,64 @@ public class PlaylistTrackFormatterTests
     [InlineData("00:00:00:15", 30, 0.5)]
     [InlineData("01:00:00:00", 30, 3600.0)]
     [InlineData("00:00:00:00", 30, 0.0)]
-    public void TryParseTimecode_ValidInputs_ReturnsCorrectTimeSpan(string input, int fps, double expectedSeconds)
+    [InlineData("00:00:59:29", 30, 59.0 + 29.0 / 30.0)]
+    [InlineData("99:59:59:23", 24, 99 * 3600.0 + 59 * 60.0 + 59.0 + 23.0 / 24.0)]
+    public void TryParseTimecode_InRangeInputs_ReturnSameValueWithoutAdjustment(
+        string input, int fps, double expectedSeconds)
     {
-        var success = PlaylistTrackFormatter.TryParseTimecode(input, fps, out var result);
+        var success = PlaylistTrackFormatter.TryParseTimecode(input, fps, out var result, out bool adjusted);
+
         success.Should().BeTrue();
         result.TotalSeconds.Should().BeApproximately(expectedSeconds, 0.001);
+        adjusted.Should().BeFalse("範囲内の入力は現行と同じ");
+    }
+
+    [Theory]
+    [InlineData("00:00:00:55", 30, 29)]
+    [InlineData("00:00:00:30", 30, 29)]
+    [InlineData("00:00:00:24", 24, 23)]
+    [InlineData("00:00:00:60", 60, 59)]
+    [InlineData("00:00:00:-3", 30, 0)]
+    public void TryParseTimecode_ClampsFramesIntoRange_AndReportsAdjustment(
+        string input, int fps, int expectedFrames)
+    {
+        var success = PlaylistTrackFormatter.TryParseTimecode(input, fps, out var result, out bool adjusted);
+
+        success.Should().BeTrue("範囲外の ff は拒否せず丸め込む");
+        adjusted.Should().BeTrue();
+        result.TotalSeconds.Should().BeApproximately((double)expectedFrames / fps, 0.000001);
+        result.TotalSeconds.Should().BeLessThan(1.0, "ff の丸め込みは秒へ繰り上がらない（fps-1 は 1 秒未満）");
+    }
+
+    [Theory]
+    [InlineData("00:00:75:00", 75.0)]
+    [InlineData("00:75:00:00", 75 * 60.0)]
+    [InlineData("01:90:90:00", 3600.0 + 90 * 60.0 + 90.0)]
+    public void TryParseTimecode_CarriesSecondsAndMinutes_AndReportsAdjustment(
+        string input, double expectedSeconds)
+    {
+        var success = PlaylistTrackFormatter.TryParseTimecode(input, 30, out var result, out bool adjusted);
+
+        success.Should().BeTrue("ss/mm は拒否せず上の桁へ繰り上げる");
+        adjusted.Should().BeTrue();
+        result.TotalSeconds.Should().BeApproximately(expectedSeconds, 0.001);
+    }
+
+    [Fact]
+    public void TryParseTimecode_SemicolonSeparator_IsEquivalentToColon()
+    {
+        PlaylistTrackFormatter.TryParseTimecode("00:00:00:55", 30, out var colonValue, out bool colonAdjusted)
+            .Should().BeTrue();
+        PlaylistTrackFormatter.TryParseTimecode("00:00:00;55", 30, out var semicolonValue, out bool semicolonAdjusted)
+            .Should().BeTrue("現場の慣習の ; 区切りも入力として受け付ける");
+
+        semicolonValue.Should().Be(colonValue);
+        semicolonAdjusted.Should().Be(colonAdjusted);
+
+        PlaylistTrackFormatter.TryParseTimecode("00:00:00;15", 30, out var inRange, out bool inRangeAdjusted)
+            .Should().BeTrue();
+        inRange.TotalSeconds.Should().BeApproximately(0.5, 0.001);
+        inRangeAdjusted.Should().BeFalse("区切り文字は値の変更ではない");
     }
 
     [Theory]
@@ -46,14 +99,24 @@ public class PlaylistTrackFormatterTests
     [InlineData("00:00:00")]
     [InlineData("00:00:00:00:00")]
     [InlineData("invalid")]
-    [InlineData("00:00:00:30")]
-    [InlineData("00:00:60:00")]
-    [InlineData("00:60:00:00")]
     [InlineData("-01:00:00:00")]
+    [InlineData("00:00:-1:00")]
+    [InlineData("00:-1:00:00")]
+    [InlineData("100:00:00:00")]
+    [InlineData("99:60:00:00")]
     public void TryParseTimecode_InvalidInputs_ReturnsFalse(string input)
     {
-        var success = PlaylistTrackFormatter.TryParseTimecode(input, 30, out _);
+        var success = PlaylistTrackFormatter.TryParseTimecode(input, 30, out _, out bool adjusted);
+
         success.Should().BeFalse();
+        adjusted.Should().BeFalse();
+    }
+
+    [Fact]
+    public void TryParseTimecode_NonPositiveFps_ReturnsFalse()
+    {
+        PlaylistTrackFormatter.TryParseTimecode("00:00:00:00", 0, out _, out _).Should().BeFalse();
+        PlaylistTrackFormatter.TryParseTimecode("00:00:00:00", -30, out _, out _).Should().BeFalse();
     }
 
     [Fact]

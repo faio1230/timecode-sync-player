@@ -12,7 +12,8 @@ internal sealed record PlaylistTimelineOffsetEditResult(
     int Index,
     PlaylistTrack? OriginalTrack,
     PlaylistTrack? UpdatedTrack,
-    int Fps);
+    int Fps,
+    bool Adjusted);
 
 internal static class PlaylistTimelineOffsetEditor
 {
@@ -41,19 +42,21 @@ internal static class PlaylistTimelineOffsetEditor
                 -1,
                 null,
                 null,
-                (int)Math.Round(fallbackFps));
+                (int)Math.Round(fallbackFps),
+                false);
 
         int fps = targetTrack.FrameRate > 0
             ? (int)Math.Round(targetTrack.FrameRate.Value)
             : (int)Math.Round(fallbackFps);
 
-        if (!PlaylistTrackFormatter.TryParseTimecode(input, fps, out TimeSpan newOffset))
+        if (!PlaylistTrackFormatter.TryParseTimecode(input, fps, out TimeSpan newOffset, out bool adjusted))
             return new PlaylistTimelineOffsetEditResult(
                 PlaylistTimelineOffsetEditStatus.ParseFailed,
                 index,
                 targetTrack,
                 null,
-                fps);
+                fps,
+                false);
 
         var updated = targetTrack with { TimelineOffset = newOffset };
         playlist.Tracks[index] = updated;
@@ -66,6 +69,7 @@ internal static class PlaylistTimelineOffsetEditor
             index,
             targetTrack,
             updated,
-            fps);
+            fps,
+            adjusted);
     }
 }

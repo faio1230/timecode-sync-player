@@ -59,8 +59,83 @@ public class PlaylistTimelineOffsetEditorTests
         result.Status.Should().Be(PlaylistTimelineOffsetEditStatus.Applied);
         result.Index.Should().Be(0);
         result.Fps.Should().Be(30);
+        result.Adjusted.Should().BeFalse("範囲内の入力は現行と同一");
         state.Tracks[0].TimelineOffset.Should().Be(TimeSpan.FromSeconds(10));
         state.Tracks[1].TimelineOffset.Should().Be(TimeSpan.FromSeconds(60));
+    }
+
+    [Fact]
+    public void Apply_OutOfRangeFrames_ClampsAndReportsAdjustment()
+    {
+        var state = CreatePlaylist();
+        Guid trackId = state.Tracks[0].Id;
+
+        var result = PlaylistTimelineOffsetEditor.Apply(
+            state,
+            trackId,
+            "00:00:00:55",
+            autoOffset: false,
+            fallbackFps: 30.0);
+
+        result.Status.Should().Be(PlaylistTimelineOffsetEditStatus.Applied, "拒否ではなく丸めで編集を成立させる");
+        result.Adjusted.Should().BeTrue("呼び出し側が書き戻しを判断できる");
+        result.Fps.Should().Be(30);
+        state.Tracks[0].TimelineOffset.TotalSeconds.Should().BeApproximately(29.0 / 30.0, 0.000001);
+        PlaylistTrackFormatter.FormatTimecode(state.Tracks[0].TimelineOffset, result.Fps)
+            .Should().Be("00:00:00:29", "確定値は hh:mm:ss:ff で書き戻せる");
+    }
+
+    [Fact]
+    public void Apply_SecondsCarry_ReportsAdjustment()
+    {
+        var state = CreatePlaylist();
+        Guid trackId = state.Tracks[0].Id;
+
+        var result = PlaylistTimelineOffsetEditor.Apply(
+            state,
+            trackId,
+            "00:00:75:00",
+            autoOffset: false,
+            fallbackFps: 30.0);
+
+        result.Status.Should().Be(PlaylistTimelineOffsetEditStatus.Applied);
+        result.Adjusted.Should().BeTrue();
+        state.Tracks[0].TimelineOffset.Should().Be(TimeSpan.FromSeconds(75));
+    }
+
+    [Fact]
+    public void Apply_SemicolonSeparator_IsAcceptedWithoutAdjustment()
+    {
+        var state = CreatePlaylist();
+        Guid trackId = state.Tracks[0].Id;
+
+        var result = PlaylistTimelineOffsetEditor.Apply(
+            state,
+            trackId,
+            "00:00:00;15",
+            autoOffset: false,
+            fallbackFps: 30.0);
+
+        result.Status.Should().Be(PlaylistTimelineOffsetEditStatus.Applied);
+        result.Adjusted.Should().BeFalse();
+        state.Tracks[0].TimelineOffset.Should().Be(TimeSpan.FromSeconds(0.5));
+    }
+
+    [Fact]
+    public void Apply_CarryPastHundredHours_ParseFailed()
+    {
+        var state = CreatePlaylist();
+        Guid trackId = state.Tracks[0].Id;
+
+        var result = PlaylistTimelineOffsetEditor.Apply(
+            state,
+            trackId,
+            "99:60:00:00",
+            autoOffset: true,
+            fallbackFps: 30.0);
+
+        result.Status.Should().Be(PlaylistTimelineOffsetEditStatus.ParseFailed, "繰り上げ先が 99 時間を超える");
+        state.Tracks[0].TimelineOffset.Should().Be(TimeSpan.Zero);
     }
 
     [Fact]
