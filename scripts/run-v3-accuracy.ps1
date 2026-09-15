@@ -59,11 +59,18 @@ foreach ($backend in $Backends) {
 
         Write-Output ('=== {0} {1} ltcFps={2} mode={3} correction={4}' -f (Get-Date).ToString('HH:mm:ss'), $name, $LtcFps, $LtcFpsMode, $SyncCorrectionMode)
         $env:TIMECODE_ACCURACY_REPORT_DIR = $report
+        # Also emit the output trace into the same directory, so one run feeds both
+        # tables: the accuracy CSV (steady error / recovery) and the per-stage / per-seek
+        # breakdown (analyze-v3-spread-stages.py and analyze-v3-seek-breakdown.py read
+        # events.jsonl from the run root). No name clash: OutputTrace writes
+        # manifest.json / events.jsonl / summary.json, none of which the harness writes.
+        $env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE = $report
         $env:TCS_V3_LTC_FPS = $LtcFps
         $env:TCS_V3_LTC_FPS_MODE = $LtcFpsMode
         & dotnet test $TestProject -c Debug --no-build --filter 'FullyQualifiedName~SyncAccuracy' 2>&1 |
             Select-String -Pattern 'Passed!|Failed!|:\s+\d+' | Select-Object -Last 1 | ForEach-Object { '    ' + $_.ToString().Trim() }
         Remove-Item Env:TIMECODE_ACCURACY_REPORT_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE -ErrorAction SilentlyContinue
         Remove-Item Env:TCS_V3_LTC_FPS -ErrorAction SilentlyContinue
         Remove-Item Env:TCS_V3_LTC_FPS_MODE -ErrorAction SilentlyContinue
 
