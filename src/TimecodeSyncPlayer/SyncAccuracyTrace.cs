@@ -13,9 +13,11 @@ namespace TimecodeSyncPlayer;
 internal sealed class SyncAccuracyTrace : IDisposable
 {
     internal const string EnvironmentVariable = "TIMECODE_ACCURACY_TRACE";
-    private const double ReferenceLtcFps = 25;
+    /// <summary>計測用の LTC 参照 fps（V3 の 24/25/29.97/30 マトリクス）。未設定・不正は 25。</summary>
+    internal const string ReferenceFpsEnvironmentVariable = "TIMECODE_ACCURACY_LTC_FPS";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private readonly object _gate = new();
+    private readonly double _referenceLtcFps;
     private readonly Channel<object>? _queue;
     private readonly Task? _writerTask;
     private bool _closed;
@@ -24,14 +26,15 @@ internal sealed class SyncAccuracyTrace : IDisposable
     private long _events;
     private long _renderSessions;
 
-    public static SyncAccuracyTrace Disabled { get; } = new();
+    public static SyncAccuracyTrace Disabled { get; } = new(25.0);
     public static SyncAccuracyTrace Current { get; set; } = Disabled;
     public bool IsEnabled => _queue != null;
 
-    private SyncAccuracyTrace() { }
+    private SyncAccuracyTrace(double referenceLtcFps) => _referenceLtcFps = referenceLtcFps;
 
-    private SyncAccuracyTrace(StreamWriter writer, int capacity)
+    private SyncAccuracyTrace(StreamWriter writer, int capacity, double referenceLtcFps)
     {
+        _referenceLtcFps = referenceLtcFps;
         _queue = Channel.CreateBounded<object>(new BoundedChannelOptions(capacity)
         {
             SingleReader = true,
@@ -44,6 +47,14 @@ internal sealed class SyncAccuracyTrace : IDisposable
     }
 
     public static SyncAccuracyTrace Create(string? path, int capacity = 8192)
+        => Create(path, capacity,
+            ParseReferenceLtcFps(Environment.GetEnvironmentVariable(ReferenceFpsEnvironmentVariable)));
+
+    /// <summary>
+    /// referenceLtcFps は計測対象の LTC レート（24/25/29.97/30）。アプリ側の解決 fps とは独立に、
+    /// 記録する LTC 秒と meta の nominalLtcFps を決める。
+    /// </summary>
+    internal static SyncAccuracyTrace Create(string? path, int capacity, double referenceLtcFps)
     {
         if (string.IsNullOrWhiteSpace(path)) return Disabled;
         if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
@@ -51,7 +62,7 @@ internal sealed class SyncAccuracyTrace : IDisposable
         {
             // Never erase a prior measurement, including on an accidental second launch.
             var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-            return new SyncAccuracyTrace(new StreamWriter(stream), capacity);
+            return new SyncAccuracyTrace(new StreamWriter(stream), capacity, referenceLtcFps);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
@@ -60,15 +71,22 @@ internal sealed class SyncAccuracyTrace : IDisposable
         }
     }
 
+    /// <summary>環境変数の解釈。不正値・範囲外は 25 に落とす（従来の計測と同じ）。</summary>
+    internal static double ParseReferenceLtcFps(string? value)
+        => double.TryParse(value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double fps)
+            && fps is >= 1.0 and <= 1000.0
+            ? fps
+            : 25.0;
+
     public void RecordLtc(LtcFrameReceivedEventArgs frame)
     {
         if (!IsEnabled) return;
         long ticks = Stopwatch.GetTimestamp();
-        // This observer's approved fixture is nominal 25 fps. Do not substitute the decoder's
-        // transient estimate or mutate the application's independently resolved synchronization fps.
-        double seconds = frame.Timecode.Hours * 3600.0 + frame.Timecode.Minutes * 60.0
-            + frame.Timecode.Seconds + frame.Timecode.Frames / ReferenceLtcFps;
-        Enqueue(new LtcEvent("ltc", ticks, seconds, ReferenceLtcFps));
+        // 計測用の参照 fps はハーネス（V3 LTC fps マトリクス）が与える。デコーダの過渡推定や
+        // アプリが独立に解決した同期 fps の代用はしない（記録の一貫性を崩さないため）。
+        // 換算はアプリ本体と同じ LtcTimecode.ToRealSeconds を使い、29.97 の総フレーム換算も揃える。
+        Enqueue(new LtcEvent("ltc", ticks, frame.Timecode.ToRealSeconds(_referenceLtcFps), _referenceLtcFps));
     }
 
     internal long AllocateRenderSessionId() => IsEnabled ? Interlocked.Increment(ref _renderSessions) : 0;
@@ -145,7 +163,7 @@ internal sealed class SyncAccuracyTrace : IDisposable
                 {
                     Type = "meta", Ticks = started, Schema = 1, Frequency = Stopwatch.Frequency,
                     Boundary = "bitmap-publication", Reference = "decoded-ltc-receipt",
-                    NominalLtcFps = ReferenceLtcFps,
+                    NominalLtcFps = _referenceLtcFps,
                     BlackProbe = "9x9-grid-and-marker-centers", RenderStageSchema = 1,
                     PreviewFrameSchema = 1, PreviewBoundary = "reduced-preview-bitmap; separate from full-resolution frame events",
                     RenderStageMeasure = "native-render is the entire mpv render call, not decoder-only; stages overlap across threads; join by session/generation/sequence, attempt for unpublished native work"

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Serilog;
 
 namespace TimecodeSyncPlayer;
@@ -44,13 +45,21 @@ internal sealed class ContinueOnTrackCoordinator
 
         if (onTrackDecision.Action == ContinueOnTrackAction.SwitchTrack)
         {
-            Log.Information("Continue mode: switching to track {TrackName} at media position {Pos:F3}s", track.Name, mediaPos);
-            bool success = _effects.LoadFile(track.FilePath, mediaPos);
+            // トラック切替はロードで着地位置が決まるため、ここでも先行補償を通す（学習はトラック単位）。
+            SeekLatencyCompensator compensator = _syncService.LatencyCompensator;
+            compensator.SelectTrack(track.Id);
+            double compensationSeconds = compensator.CompensationForTrack(track.Id);
+            double loadPosition = mediaPos + compensationSeconds;
+            Log.Information(
+                "Continue mode: switching to track {TrackName} at media position {Pos:F3}s compensation={CompensationMs:F1}ms",
+                track.Name, mediaPos, compensationSeconds * 1000.0);
+            long loadIssuedQpc = Stopwatch.GetTimestamp();
+            bool success = _effects.LoadFile(track.FilePath, loadPosition);
             if (success)
             {
                 _effects.SetLoadedTrackId(track.Id);
 
-                _syncService.BeginFileLoad(mediaPos, _effects.GetTotalRenderedFrames());
+                _syncService.BeginFileLoad(loadPosition, _effects.GetTotalRenderedFrames(), loadIssuedQpc);
                 _fileLoadStabilityLogState.Reset();
                 _effects.UpdateCurrentTrackLabel();
                 if (exitingGap)

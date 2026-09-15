@@ -54,6 +54,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
+#include <cmath>
 
 #define LOG(fmt, ...) fprintf (stderr, "[tcs-gst] " fmt "\n", ##__VA_ARGS__)
 
@@ -2708,6 +2709,42 @@ tcs_player_set_speed (TcsPlayer* player, double rate)
       GST_SEEK_TYPE_SET, pos, GST_SEEK_TYPE_NONE, -1);
   LOG ("seek: send end (rate) ok=%d", ok ? 1 : 0);
   return TCS_OK;
+}
+
+TCS_GST_API int
+tcs_player_set_rate_instant (TcsPlayer* player, double rate)
+{
+  if (!player) return TCS_ERR_GENERIC;
+  if (!std::isfinite (rate) || rate <= 0.0) return TCS_ERR_GENERIC;
+#if GST_CHECK_VERSION(1,18,0)
+  GstElement* pipeline = nullptr;
+  {
+    /* I13: the locks guard the decision only (paused / rate / pipeline); the
+     * GStreamer call goes out with no lock held. Lock order matches
+     * tcs_player_set_paused (state_mutex -> frame_lock). */
+    std::lock_guard<std::mutex> st (player->state_mutex);
+    std::lock_guard<std::mutex> g (player->frame_lock);
+    /* A non-flushing seek in PAUSED is undefined; refuse instead of guessing. */
+    if (player->paused) return TCS_ERR_GENERIC;
+    player->rate = rate;
+    /* The instant rate change rewrites the segment like a rate seek: the TS
+     * rebase rewrite does not apply to it (same reasoning as set_speed). */
+    player->rebase_armed = false;
+    player->rebase_seek_seqnum = 0;
+    pipeline = player->pipeline;
+  }
+  if (!pipeline) return TCS_ERR_NOT_LOADED;
+  LOG ("seek: send begin (rate.instant) rate=%.6f", rate);
+  gboolean ok = gst_element_seek (pipeline, rate, GST_FORMAT_TIME,
+      GST_SEEK_FLAG_INSTANT_RATE_CHANGE,
+      GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE,
+      GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+  LOG ("seek: send end (rate.instant) ok=%d", ok ? 1 : 0);
+  return ok ? TCS_OK : TCS_ERR_GENERIC;
+#else
+  /* GST_SEEK_FLAG_INSTANT_RATE_CHANGE needs GStreamer 1.18+. */
+  return TCS_ERR_GENERIC;
+#endif
 }
 
 TCS_GST_API int

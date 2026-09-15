@@ -31,6 +31,12 @@ def integer(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def supported_ltc_fps(fps):
+    """V3 LTC fps matrix: 24, 25, 30, and non-drop 29.97 (30000/1001)."""
+    return (abs(fps - 24.0) < 0.01 or abs(fps - 25.0) < 0.01 or
+            abs(fps - 30.0) < 0.01 or abs(fps - (30000.0 / 1001.0)) < 0.01)
+
+
 def valid_render_stage(event):
     """Validate the diagnostic envelope without using it as frame evidence."""
     return (all(integer(event.get(key)) for key in
@@ -116,9 +122,10 @@ def analyze(events, fixture, journal):
     if meta.get("boundary") != "bitmap-publication" or meta.get("reference") != "decoded-ltc-receipt":
         raise ValueError("unsupported measurement boundary/reference")
     frequency = meta["frequency"]
-    if fixture.get("schema") != 1 or fixture.get("ltcFps") != 25:
-        raise ValueError("fixture requires schema=1 and ltcFps=25")
-    period = 1 / fixture["ltcFps"]
+    ltc_fps = fixture.get("ltcFps")
+    if fixture.get("schema") != 1 or not number(ltc_fps) or not supported_ltc_fps(ltc_fps):
+        raise ValueError("fixture requires schema=1 and ltcFps in {24, 25, 29.97, 30}")
+    period = 1 / ltc_fps
     max_interval = 3 * period
     clips = {}
     for source in fixture.get("clips", []):
@@ -161,7 +168,8 @@ def analyze(events, fixture, journal):
                 not integer(meta.get("previewFrameSchema")) or meta["previewFrameSchema"] != 1):
             reasons.append("unsupported-preview-frame-schema")
             continue
-        if event.get("type") == "ltc" and (not number(event.get("seconds")) or event.get("fps") != 25):
+        if event.get("type") == "ltc" and (not number(event.get("seconds")) or
+                not number(event.get("fps")) or abs(event["fps"] - ltc_fps) > 0.01):
             reasons.append("invalid-ltc-event")
             continue
         if event.get("type") == "frame" and (not integer(event.get("width")) or event["width"] <= 0 or

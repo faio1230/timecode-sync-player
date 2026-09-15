@@ -188,6 +188,20 @@ internal sealed class GstMpvApiAdapter : IMpvApi
         }
     }
 
+    public int SetRateInstant(IntPtr ctx, double rate)
+    {
+        if (ctx == IntPtr.Zero) return -1;
+        try
+        {
+            return _state.Native.SetRateInstant(ctx, rate);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "GstMpvApiAdapter.SetRateInstant 失敗 rate={Rate}", rate);
+            return -1;
+        }
+    }
+
     public void Free(IntPtr data)
     {
         // mpv_free 相当は使わない（文字列はマネージ側でコピーして返す）。

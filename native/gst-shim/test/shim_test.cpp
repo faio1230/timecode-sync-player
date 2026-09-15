@@ -6,6 +6,7 @@
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
 #include "tcs_video_profiles.h"
+#include <gst/gstversion.h>
 #include <d3d11.h>
 #include <psapi.h>
 #include <cstdio>
@@ -927,6 +928,33 @@ main (int argc, char** argv)
   check (st.frames_decoded > 0, "frames after reload");
   check (st.gpu_path == 1, "gpu path after reload");
   tcs_player_release (p);
+
+  /* T5: instant rate change (no flush, frame supply continues). */
+  {
+    check (tcs_player_set_rate_instant (nullptr, 1.0) == TCS_ERR_GENERIC,
+        "rate_instant rejects NULL player");
+    check (tcs_player_set_rate_instant (p, 0.0) == TCS_ERR_GENERIC,
+        "rate_instant rejects zero rate");
+    check (tcs_player_set_rate_instant (p, -0.5) == TCS_ERR_GENERIC,
+        "rate_instant rejects negative rate");
+
+    /* PAUSED is refused: a non-flushing seek there is undefined. */
+    tcs_player_set_paused (p, 1);
+    check (tcs_player_set_rate_instant (p, 1.002) == TCS_ERR_GENERIC,
+        "rate_instant rejects a paused player");
+    tcs_player_set_paused (p, 0);
+    std::this_thread::sleep_for (std::chrono::milliseconds (100));
+
+#if GST_CHECK_VERSION(1,18,0)
+    check (tcs_player_set_rate_instant (p, 1.002) == TCS_OK,
+        "rate_instant accepted while playing");
+    check (tcs_player_set_rate_instant (p, 1.0) == TCS_OK,
+        "rate_instant back to 1.0");
+#else
+    check (tcs_player_set_rate_instant (p, 1.002) == TCS_ERR_GENERIC,
+        "rate_instant unavailable below GStreamer 1.18");
+#endif
+  }
 
   /* stop: lease slot and latest cleared */
   rc = tcs_player_stop (p);

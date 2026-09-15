@@ -20,11 +20,15 @@ public sealed class SyncAccuracyE2ETests
         Directory.CreateDirectory(report);
         using var journal = new MonkeyJournal(Path.Combine(report, "harness.jsonl"), 0);
         journal.Write("prerequisites");
+        double ltcFps = V3LtcFpsMatrix.ResolveFps(Environment.GetEnvironmentVariable(V3LtcFpsMatrix.FpsEnvironmentVariable));
+        int ltcFpsModeIndex = V3LtcFpsMatrix.ResolveFpsModeIndex(
+            Environment.GetEnvironmentVariable(V3LtcFpsMatrix.ModeEnvironmentVariable), ltcFps);
+        journal.Write("ltc-fps", details: new { ltcFps, ltcFpsModeIndex });
         var prerequisites = E2EAppRunner.ResolvePrereqs();
         Assert.True(prerequisites.SkipReason == null, prerequisites.SkipReason);
         Assert.True(LtcSignalPlayer.TryCreateCablePlayer(out var signal, out var reason), reason);
         using var signalOwner = signal!;
-        AccuracyFixture fixture = await AccuracyVideoFixture.CreateAsync(report, step => journal.Write(step));
+        AccuracyFixture fixture = await AccuracyVideoFixture.CreateAsync(report, step => journal.Write(step), ltcFps);
         string tracePath = Path.Combine(report, "trace.jsonl");
         Assert.False(File.Exists(tracePath), "A new trace output path is required.");
         using var phases = new StreamWriter(new FileStream(Path.Combine(report, "phases.jsonl"),
@@ -33,11 +37,12 @@ public sealed class SyncAccuracyE2ETests
             Path.Combine(report, "settings.json"), environment: new Dictionary<string, string?>
             {
                 ["TIMECODE_ACCURACY_TRACE"] = tracePath,
+                [SyncAccuracyTrace.ReferenceFpsEnvironmentVariable] = V3LtcFpsMatrix.FormatReferenceFps(ltcFps),
             });
         MonkeyJson.WriteAppProcessMarker(Path.Combine(report, "app-process.json"), app.Process);
         try
         {
-            ConfigureSync(app);
+            ConfigureSync(app, ltcFpsModeIndex);
             if (app.Button("BtnPlay").Name == "▶") app.Button("BtnPlay").Invoke();
             foreach (var phase in new[]
             {
@@ -57,7 +62,7 @@ public sealed class SyncAccuracyE2ETests
                     mode = phase.Mode, ticks = Stopwatch.GetTimestamp(), frequency = Stopwatch.Frequency,
                     startSeconds = phase.Start, durationSeconds = phase.Duration }, MonkeyJson.Options));
                 journal.Write("phase-start", details: new { phase.Name, phase.Start, phase.Duration });
-                signalOwner.Play(new LtcTimecode(0, 0, phase.Start, 0, false), 25, TimeSpan.FromSeconds(phase.Duration));
+                signalOwner.Play(new LtcTimecode(0, 0, phase.Start, 0, false), ltcFps, TimeSpan.FromSeconds(phase.Duration));
                 var clock = Stopwatch.StartNew();
                 while (clock.Elapsed < TimeSpan.FromSeconds(phase.Duration + 0.5))
                 {
@@ -101,14 +106,14 @@ public sealed class SyncAccuracyE2ETests
         }
     }
 
-    private static void ConfigureSync(E2EAppRunner app)
+    private static void ConfigureSync(E2EAppRunner app, int ltcFpsModeIndex)
     {
         app.Button("BtnRefreshLtcDevices").Invoke();
         var devices = app.Combo("LtcDeviceCombo");
         int index = Array.FindIndex(devices.Items, item => item.Name.Contains("CABLE Output", StringComparison.OrdinalIgnoreCase));
         Assert.True(index >= 0, "CABLE Output not listed.");
         devices.Select(index);
-        app.Combo("LtcFpsModeCombo").Select(2); // Fixed 25 fps.
+        app.Combo("LtcFpsModeCombo").Select(ltcFpsModeIndex);
         app.Combo("LtcSignalLossModeCombo").Select(0);
         app.Button("BtnStartLtc").Invoke();
         app.Combo("SyncModeCombo").Select(1);

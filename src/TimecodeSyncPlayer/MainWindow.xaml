@@ -232,11 +232,18 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
                     <TextBlock Text="FPS:" Foreground="#BBBBBB"
+                               Grid.Row="0" Grid.Column="0"
                                VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox x:Name="LtcFpsModeCombo"
-                              Grid.Column="1"
+                              Grid.Row="0" Grid.Column="1"
                               AutomationProperties.AutomationId="LtcFpsModeCombo"
                               Height="28"
                               SelectedIndex="{Binding Sync.LtcFpsModeIndex, Mode=TwoWay}">
@@ -246,6 +253,22 @@
                         <ComboBoxItem Content="29.97 fps DF" Tag="Fixed29_97"/>
                         <ComboBoxItem Content="30 fps" Tag="Fixed30"/>
                     </ComboBox>
+                    <TextBlock Text="補正:" Foreground="#BBBBBB"
+                               Grid.Row="0" Grid.Column="2"
+                               VerticalAlignment="Center" Margin="8,0,8,0"/>
+                    <ComboBox x:Name="SyncCorrectionModeCombo"
+                              Grid.Row="0" Grid.Column="3"
+                              AutomationProperties.AutomationId="SyncCorrectionModeCombo"
+                              Height="28"
+                              SelectedIndex="{Binding Sync.SyncCorrectionModeIndex, Mode=TwoWay}">
+                        <ComboBoxItem Content="Smooth" Tag="Smooth"/>
+                        <ComboBoxItem Content="Jump" Tag="Jump"/>
+                    </ComboBox>
+                    <TextBlock x:Name="SyncCorrectionStatusText"
+                               Grid.Row="1" Grid.ColumnSpan="4"
+                               AutomationProperties.AutomationId="SyncCorrectionStatusText"
+                               Foreground="#FFB300" FontSize="11" Margin="0,4,0,0"
+                               Text="{Binding Sync.SyncCorrectionStatus}"/>
                 </Grid>
 
                 <UniformGrid Grid.Row="3" Rows="1" Columns="3" Margin="0,0,0,8">

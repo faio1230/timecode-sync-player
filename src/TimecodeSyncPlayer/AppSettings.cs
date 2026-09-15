@@ -56,6 +56,8 @@ public sealed record AppSettings
     public OutputBackend OutputBackend { get; init; } = OutputBackend.Cpu;
     /// <summary>"hardware"（既定）/ "software"。不正値は hardware として扱い警告する。変更には再起動が必要。</summary>
     public string DecodeMode { get; init; } = DecodeModePolicy.HardwareValue;
+    /// <summary>T5: 同期補正モード。既定はフィードバック（レート微調整）。</summary>
+    public SyncCorrectionMode SyncCorrectionMode { get; init; } = SyncCorrectionMode.Smooth;
 
     public static AppSettings Default => new();
 }
@@ -170,6 +172,8 @@ public sealed class AppSettingsManager
             settings = settings with { Backend = PlayerBackend.Mpv };
         if (!Enum.IsDefined(settings.OutputBackend))
             settings = settings with { OutputBackend = OutputBackend.Cpu };
+        if (!Enum.IsDefined(settings.SyncCorrectionMode))
+            settings = settings with { SyncCorrectionMode = SyncCorrectionMode.Smooth };
         settings = settings with
         {
             LtcSignalLossTimeoutMs = Math.Clamp(

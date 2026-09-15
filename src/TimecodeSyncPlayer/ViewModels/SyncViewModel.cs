@@ -165,6 +165,33 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
             ? FpsModes[_ltcFpsModeIndex]
             : TimecodeFpsMode.Auto;
 
+    // 0=Smooth, 1=Jump
+    private int _syncCorrectionModeIndex;
+    public int SyncCorrectionModeIndex
+    {
+        get => _syncCorrectionModeIndex;
+        set
+        {
+            _syncCorrectionModeIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SyncCorrectionMode));
+        }
+    }
+
+    public SyncCorrectionMode SyncCorrectionMode =>
+        _syncCorrectionModeIndex == 1 ? SyncCorrectionMode.Jump : SyncCorrectionMode.Smooth;
+
+    private string _syncCorrectionStatus = "";
+    public string SyncCorrectionStatus
+    {
+        get => _syncCorrectionStatus;
+        set
+        {
+            _syncCorrectionStatus = value;
+            OnPropertyChanged();
+        }
+    }
+
     public string SyncToggleLabel => _syncEnabled ? "Sync ON" : "Sync OFF";
 
     public string LtcTimecodeText

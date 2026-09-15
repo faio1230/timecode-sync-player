@@ -31,7 +31,12 @@ internal sealed record LtcSyncEffects(
     Action<double> UpdateTimelinePosition,
     Action UpdateCurrentTrackLabel,
     Action RenderGapFreeze,
-    Action ResumeGapPause);
+    Action ResumeGapPause,
+    Func<SyncCorrectionMode>? GetCorrectionMode = null,
+    Func<double?>? GetPlaybackSeconds = null,
+    Func<double, bool>? ApplyRateInstant = null,
+    Func<double, bool>? SeekTo = null,
+    Action<string>? SetCorrectionStatus = null);
 
 /// <summary>
 /// UI-thread LTC session orchestration shared by the window and integration scenarios.
@@ -51,6 +56,9 @@ internal sealed class LtcSyncController
     private readonly Func<ContinueOnTrackCoordinator> _continue;
     private readonly Func<GapEnterCoordinator> _gapCoordinator;
     private readonly ContinueModeQueryLogState _queryLog = new(TimeSpan.FromSeconds(1), mediaPositionToleranceSeconds: 0.5);
+    private readonly SyncCorrectionController _correction = new();
+    private bool _smoothAvailable = true;
+    private double _lastAppliedRate = 1.0;
     private double? _lastAcceptedLtcSeconds;
     private double? _pendingSyncSeconds;
     private string _formatText = "LTC 停止中";
@@ -77,6 +85,8 @@ internal sealed class LtcSyncController
 
     public void SyncEnabledChanged()
     {
+        _correction.Reset();
+        _smoothAvailable = true;
         if (!_effects.GetContext().SyncEnabled)
             _syncService.ClearSeekState();
         ExitGapForManualControl();
@@ -85,6 +95,8 @@ internal sealed class LtcSyncController
 
     public void SyncModeChanged()
     {
+        _correction.Reset();
+        _smoothAvailable = true;
         _frames.ResetDiagnostics();
         _syncService.ClearSeekState();
         ExitGapForManualControl();
@@ -172,6 +184,65 @@ internal sealed class LtcSyncController
             return;
         _lastAcceptedLtcSeconds = processed.ResolvedSeconds;
         ObserveValidFrame(processed.ResolvedSeconds, receivedAtMilliseconds);
+        ApplyCorrection(processed.ResolvedSeconds);
+    }
+
+    /// <summary>
+    /// T5: 粗いデッドゾーンの内側で残差を詰める。Smooth はシークを発行しない。
+    /// shim がレート変更を拒否したら Smooth 使用不可として表示し、自動では Jump へ落とさない。
+    /// </summary>
+    private void ApplyCorrection(double ltcSeconds)
+    {
+        if (_effects.GetCorrectionMode == null || _effects.GetPlaybackSeconds == null ||
+            _effects.ApplyRateInstant == null || _effects.SeekTo == null)
+            return;
+
+        LtcSyncContext state = _effects.GetContext();
+        if (!state.SyncEnabled || !state.IsMonitoring || state.IsPlaybackPaused || state.IsSeeking)
+            return;
+        if (_syncService.SeekState.HasPendingSeek)
+            return;
+        if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
+            return;
+
+        SyncCorrectionDecision decision = _correction.Evaluate(
+            ltcSeconds - playback, ltcSeconds, _effects.GetCorrectionMode(), _smoothAvailable, DateTime.UtcNow);
+
+        switch (decision.Action)
+        {
+            case SyncCorrectionActionType.SetRate:
+                if (!_effects.ApplyRateInstant(decision.Rate))
+                {
+                    _smoothAvailable = false;
+                    Log.Warning("Smooth 補正を使用できません（レート変更が拒否されました）。Jump への切替を検討してください");
+                }
+                else if (Math.Abs(decision.Rate - _lastAppliedRate) >= 0.0005)
+                {
+                    _lastAppliedRate = decision.Rate;
+                    Log.Information(
+                        "Smooth correction rate={Rate:F5} residualMs={ResidualMs:F1}",
+                        decision.Rate, (ltcSeconds - playback) * 1000.0);
+                }
+                break;
+            case SyncCorrectionActionType.Seek:
+                // Smooth の倍率を Jump へ持ち込まない（shim 側では強制しない）。
+                _effects.ApplyRateInstant(1.0);
+                _lastAppliedRate = 1.0;
+                if (_effects.SeekTo(decision.TargetSeconds))
+                {
+                    Log.Information(
+                        "Jump correction seek target={Target:F3} residualMs={ResidualMs:F1}",
+                        decision.TargetSeconds, (ltcSeconds - playback) * 1000.0);
+                    _syncService.ReportSeekSent(decision.TargetSeconds);
+                }
+                break;
+        }
+
+        string status =
+            !_smoothAvailable || _correction.SmoothUnavailable ? "Smooth 使用不可: Jump に切替"
+            : _correction.SmoothDisabled ? "Smooth 補正なし（効かない）"
+            : "";
+        _effects.SetCorrectionStatus?.Invoke(status);
     }
 
     private static void LogFrameDiagnostics(

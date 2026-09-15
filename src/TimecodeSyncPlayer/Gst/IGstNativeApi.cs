@@ -26,6 +26,8 @@ internal interface IGstNativeApi
     ulong GetGeneration(IntPtr player);
     ulong SetGeneration(IntPtr player, ulong generation);
     int SetSpeed(IntPtr player, double rate);
+    /// <summary>T5: 非フラッシュのレート変更。TCS_OK / TCS_ERR_GENERIC / TCS_ERR_NOT_LOADED。</summary>
+    int SetRateInstant(IntPtr player, double rate);
     int SetVolume(IntPtr player, double volume0To100);
     int SetMute(IntPtr player, bool mute);
 
