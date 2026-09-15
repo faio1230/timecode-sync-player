@@ -80,6 +80,26 @@ public class LtcDecoderRoundTripTests
     }
 
     /// <summary>
+    /// 非整数 29.97（30000/1001）のノンドロップ信号。番号付けはノミナル 30 進みで、
+    /// 波形の 1 フレーム長だけが 1001/30000 秒になる。
+    /// </summary>
+    [Theory]
+    [InlineData(44100)]
+    [InlineData(48000)]
+    public void RoundTrip_Decodes29_97NonDropTimecode(int sampleRate)
+    {
+        const double fps = 30000.0 / 1001.0;
+        var tc = new LtcTimecode(0, 0, 3, 29, false);
+        var stream = new List<LtcTimecode> { tc, tc, tc, tc };
+        var samples = LtcTestSignalGenerator.Generate(stream, fps, sampleRate);
+
+        var decoded = DecodeAll(samples, sampleRate, fps);
+
+        decoded.Should().NotBeEmpty();
+        decoded.Should().OnlyContain(d => d == tc);
+    }
+
+    /// <summary>
     /// コンストラクタに誤った fps ヒント（25）を渡しても、実際は 30fps の波形を
     /// 与えれば BMC クロックリカバリの指数移動平均（EMA）により EstimatedFps が
     /// 真値へ収束することを確認する。EMA の減衰率は 0.9/遷移で、1フレーム

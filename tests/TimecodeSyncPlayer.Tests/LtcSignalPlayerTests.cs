@@ -23,6 +23,50 @@ public class LtcSignalPlayerTests
     }
 
     [Fact]
+    public void HeldSignal_At29_97_UsesNominalFrameBaseForTimecode()
+    {
+        const double fps = 30000.0 / 1001.0;
+        float[] samples = LtcSignalPlayer.BuildHeldSamples(440, fps, TimeSpan.FromSeconds(1), 48000);
+
+        // 29.97 のタイムコード番号はノミナル 30 進み（ノンドロップ）。1 秒ぶんは ceil(29.97)=30 フレーム。
+        samples.Length.Should().Be((int)Math.Round((5 + Math.Ceiling(fps)) * 48000 / fps));
+        var decoder = new LtcDecoder(48000, fps);
+        decoder.Write(samples, samples.Length);
+        var decoded = new List<LtcTimecode>();
+        while (decoder.Read() is { } frame) decoded.Add(frame);
+        decoded.Count.Should().BeGreaterThanOrEqualTo(30);
+        decoded.TakeLast(29).Should().OnlyContain(t => t == new LtcTimecode(0, 7, 20, 0, false));
+    }
+
+    [Fact]
+    public void ContinuousTimecodes_At29_97_AdvanceByNominalThirtyFrames()
+    {
+        var frames = LtcSignalPlayer.BuildContinuousTimecodes(
+            new LtcTimecode(0, 0, 0, 0, false), 30000.0 / 1001.0, 31);
+
+        frames.Should().HaveCount(31);
+        frames[^1].Should().Be(new LtcTimecode(0, 0, 1, 0, false));
+    }
+
+    [Fact]
+    public void AdvanceTimecode_At29_97_CountsNominalFrames()
+    {
+        LtcTimecode result = LtcSignalPlayer.AdvanceTimecode(
+            new LtcTimecode(0, 0, 0, 0, false), 30000.0 / 1001.0, 90);
+
+        result.Should().Be(new LtcTimecode(0, 0, 3, 0, false));
+    }
+
+    [Fact]
+    public void ContinuousTimecodes_WithUnsupportedFpsThrows()
+    {
+        Action act = () => LtcSignalPlayer.BuildContinuousTimecodes(
+            new LtcTimecode(0, 0, 0, 0, false), 23.976, 10);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
     public void AdvanceTimecode_SkipsElapsedSilentFrames()
     {
         var start = new LtcTimecode(1, 2, 3, 20, false);

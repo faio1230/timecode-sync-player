@@ -96,6 +96,37 @@ public class SyncAccuracyTraceTests
         finally { File.Delete(path); }
     }
 
+    [Theory]
+    [InlineData(null, 25.0)]
+    [InlineData("", 25.0)]
+    [InlineData("24", 24.0)]
+    [InlineData("29.97002997002997", 30000.0 / 1001.0)]
+    [InlineData("30", 30.0)]
+    [InlineData("bad", 25.0)]
+    [InlineData("0", 25.0)]
+    [InlineData("-25", 25.0)]
+    public void ParseReferenceLtcFps_FallsBackToNominal25(string? value, double expected)
+    {
+        Assert.Equal(expected, SyncAccuracyTrace.ParseReferenceLtcFps(value), 6);
+    }
+
+    [Fact]
+    public void ReferenceLtcFps_At29_97_ControlsLtcSecondsAndFpsField()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path, capacity: 64, referenceLtcFps: 30000.0 / 1001.0))
+                trace.RecordLtc(new(new(0, 0, 1, 12, false), 0, 0));
+
+            var lines = Read(path);
+            Assert.Equal(30000.0 / 1001.0, lines[0].GetProperty("nominalLtcFps").GetDouble(), 6);
+            Assert.Equal(1 + (12 / (30000.0 / 1001.0)), lines[1].GetProperty("seconds").GetDouble(), 6);
+            Assert.Equal(30000.0 / 1001.0, lines[1].GetProperty("fps").GetDouble(), 6);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Fact]
     public void PreviewFrames_KeepSourceKindAndProbeData_AndRemainSeparateFromExternalFrames()
     {
