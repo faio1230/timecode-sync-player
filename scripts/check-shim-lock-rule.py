@@ -37,10 +37,14 @@ FUNC = re.compile(r'^([A-Za-z_]\w*)\s*\([^;]*$')
 # docs/OUTPUT-GPU-INVARIANTS.md (I13). None of these run on the streaming
 # thread: pump_arm / tcs_player_set_paused are API-thread, pump_preroll_tick is
 # the dedicated bus thread (bus_loop), and the sync bus handler takes no lock.
+# tcs_player_set_rate_instant (T5) reads paused under state_mutex to decide
+# whether the instant-rate seek may be sent; the seek itself goes out with no
+# lock held.
 STATE_MUTEX_HOLDERS = {
     'pump_arm',
     'pump_preroll_tick',
     'tcs_player_set_paused',
+    'tcs_player_set_rate_instant',
 }
 
 STREAMING_LOCKS = {'frame_lock'}

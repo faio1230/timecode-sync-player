@@ -152,6 +152,26 @@ TCS_GST_API uint64_t tcs_player_set_generation(TcsPlayer* player,
                                                uint64_t generation);
 TCS_GST_API uint64_t tcs_player_get_generation(TcsPlayer* player);
 TCS_GST_API int tcs_player_set_speed(TcsPlayer* player, double rate);
+
+/* T5: apply a playback-rate change WITHOUT flushing the pipeline
+ * (GStreamer 1.18+ GST_SEEK_FLAG_INSTANT_RATE_CHANGE).
+ *
+ * Contract:
+ *  - No flush and no position change: the pipeline keeps playing, the frame
+ *    supply is NOT interrupted and the generation is not bumped.
+ *  - Not available below GStreamer 1.18 (returns TCS_ERR_GENERIC there).
+ *  - rate must be finite and > 0. Direction changes are not supported.
+ *  - Refuses while the player is paused (a non-flushing seek in PAUSED is
+ *    undefined); the caller must only use this while playing.
+ *  - Returns TCS_OK when the seek event was accepted, TCS_ERR_GENERIC when
+ *    the pipeline refused the flag or the rate is invalid, and
+ *    TCS_ERR_NOT_LOADED when no pipeline is loaded.
+ *  - A caller that gets an error must stop using smooth rate correction and
+ *    report it; do NOT fall back to a flushing seek per call (that would
+ *    reintroduce the picture jump this path exists to avoid).
+ *  - tcs_player_set_speed (the flushing path) is unchanged and remains the
+ *    manual speed / jump path. */
+TCS_GST_API int tcs_player_set_rate_instant(TcsPlayer* player, double rate);
 TCS_GST_API int tcs_player_set_volume(TcsPlayer* player, double volume_0_to_100);
 TCS_GST_API int tcs_player_set_mute(TcsPlayer* player, int mute);
 

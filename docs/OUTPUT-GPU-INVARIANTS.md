@@ -29,7 +29,7 @@ D2 修正後（`fdbf543`）の shim には、**`state_mutex` を保持したま�
 **デッドロックが成立する条件は「状態変更を待つ側が持つロックを、ストリーミングスレッドが要求すること」**。
 `frame_lock` は `on_new_sample` が取るので条件を満たす。`state_mutex` は満たさない:
 
-- `state_mutex` を取るのは上記 3 関数だけ。`pump_arm` と `tcs_player_set_paused` は API（UI）スレッド、
+- `state_mutex` を取るのは上記 3 関数と `tcs_player_set_rate_instant`（T5、下記）だけ。`pump_arm` と `tcs_player_set_paused` は API（UI）スレッド、
   `pump_preroll_tick` は `bus_loop` の**専用バススレッド**（`gst_bus_timed_pop_filtered`）から呼ばれる。
 - 投稿スレッド上で走る `sync_bus_handler` は `NEED_CONTEXT` を処理するだけで**ロックを一切取らない**。
 - `tcs_player_seek` は `pump_arm` を `frame_lock` の**外**で呼ぶ。ここが内側だと
@@ -39,6 +39,12 @@ D2 修正後（`fdbf543`）の shim には、**`state_mutex` を保持したま�
 つまり安全性は**ミューテックスの性質ではなくコードの性質**であり、`state_mutex` を取る関数が増えた瞬間に
 前提が崩れる。そこで `scripts/check-shim-lock-rule.py` に `state_mutex` を取る関数の集合を固定し、
 **増えたら検査を失敗させて人間に再検討を強制する**ようにした。
+
+T5（2026-09-15）で `tcs_player_set_rate_instant` を追加した。paused を `state_mutex` の下で読んで
+送信可否を決め、`gst_element_seek`（`GST_SEEK_FLAG_INSTANT_RATE_CHANGE`、非フラッシュ）は
+**ロックの外**で呼ぶ。API（UI）スレッド専用で、ストリーミングスレッドは取らない。
+`STATE_MUTEX_HOLDERS` に登録済み。
+
 負の対照として、D2 修正前の main に対しては既知の 2 箇所を検出して FAIL することを確認済み。
 
 ### I13 の補足（同じ罠を 3 回踏んだ経緯）
