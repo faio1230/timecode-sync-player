@@ -99,7 +99,11 @@ typedef struct TcsDeliveryEvent {
   int64_t  pts_ns;
   int64_t  running_ns;   /* segment running time at pts */
   uint32_t callback_us;  /* frame-notify callback duration */
-  uint32_t flags;        /* 1=replaced previous latest, 2=callback, 4=gpu */
+  uint32_t flags;        /* 1=replaced previous latest, 2=callback, 4=gpu,
+                          * 8=position snapshot (tcs_player_get_time_pos):
+                          * running_ns=queried position, pts_ns/seq=newest
+                          * delivered frame at the same instant; only emitted
+                          * while the output trace is enabled */
 } TcsDeliveryEvent;
 
 typedef struct TcsDeliveryStats {

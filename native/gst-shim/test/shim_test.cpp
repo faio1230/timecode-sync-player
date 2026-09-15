@@ -716,6 +716,9 @@ main (int argc, char** argv)
   double play_secs = argc > 2 ? atof (argv[2]) : 2.0;
 
   char err[512] = "";
+  /* T6: position snapshots are only recorded while the owner's output trace
+   * is on; enable it before create so the snapshot path is exercised. */
+  _putenv_s ("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", "1");
   TcsPlayer* p = tcs_player_create ("TCSGstShimTest", nullptr, err, sizeof (err));
   check (p != nullptr, "create (internal device)");
   if (!p) { printf ("  err=%s\n", err); return 1; }
@@ -833,6 +836,23 @@ main (int argc, char** argv)
   double pos = 0;
   check (tcs_player_get_time_pos (p, &pos) == TCS_OK && pos > 0.05, "time-pos advances");
   (void) pos;
+  {
+    /* T6: the query must have appended exactly one position snapshot (flags
+     * bit 3) with the queried position and the newest delivered frame. */
+    std::vector<TcsDeliveryEvent> pevs (512);
+    uint32_t pn = 0;
+    tcs_player_drain_delivery_events (p, pevs.data (), (uint32_t) pevs.size (), &pn);
+    bool pos_snapshot = false;
+    for (uint32_t i = 0; i < pn; i++) {
+      if ((pevs[i].flags & 8u) == 0)
+        continue;
+      pos_snapshot = true;
+      check (pevs[i].running_ns > 0, "position snapshot carries the queried position");
+      check (pevs[i].seq > 0, "position snapshot carries the newest delivery seq");
+      check (pevs[i].pts_ns > 0, "position snapshot carries the newest delivery pts");
+    }
+    check (pos_snapshot, "position snapshot recorded while output trace is enabled");
+  }
 
   /* verification-layer Spout publish from GPU texture */
   gen = tcs_player_get_generation (p);
@@ -974,6 +994,9 @@ main (int argc, char** argv)
         nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx);
     check (SUCCEEDED (hr), "external device created");
     if (SUCCEEDED (hr)) {
+      /* T6: with the output trace off at create, tcs_player_get_time_pos must
+       * not append a position snapshot. */
+      _putenv_s ("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", "");
       TcsPlayer* p2 = tcs_player_create ("TCSGstShimTest", dev, err, sizeof (err));
       check (p2 != nullptr, "create (external device)");
       if (p2) {
@@ -1022,6 +1045,20 @@ main (int argc, char** argv)
             check (false, "leased texture on shim device");
           }
           tcs_player_release (p2);
+          {
+            /* T6: no position snapshot when the output trace was off at create. */
+            double pos2 = 0;
+            check (tcs_player_get_time_pos (p2, &pos2) == TCS_OK && pos2 >= 0.0,
+                "time-pos on external-device player");
+            std::vector<TcsDeliveryEvent> devs2 (512);
+            uint32_t dn2 = 0;
+            tcs_player_drain_delivery_events (p2, devs2.data (), (uint32_t) devs2.size (), &dn2);
+            bool pos_snapshot2 = false;
+            for (uint32_t i = 0; i < dn2; i++)
+              if (devs2[i].flags & 8u)
+                pos_snapshot2 = true;
+            check (!pos_snapshot2, "position snapshot skipped while output trace is disabled");
+          }
         } else {
           check (false, "acquire on external device");
         }
