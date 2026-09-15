@@ -33,6 +33,7 @@ param(
     [Parameter(Mandatory)][string]$Label,
     [ValidateSet('24', '25', '29.97', '30')][string]$LtcFps = '25',
     [ValidateSet('auto', 'fixed')][string]$LtcFpsMode = 'auto',
+    [ValidateSet('smooth', 'jump')][string]$SyncCorrectionMode = 'smooth',
     [string]$TestProject = 'C:\Users\<user>\Documents\timecode-sync-player-wt-verify-oe-20260911-1344\tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj',
     [string]$LogRoot = 'C:\Users\<user>\Documents\timecode-sync-player-wt-integrate-20260912\TestResults\v3',
     [int]$Repeats = 1,
@@ -52,10 +53,11 @@ foreach ($backend in $Backends) {
         if (Test-Path $report) { Remove-Item $report -Recurse -Force }
         New-Item -ItemType Directory -Force $report | Out-Null
         $backendValue = if ($backend -eq 'gst') { 1 } else { 0 }
-        ('{"backend":' + $backendValue + ',"outputBackend":' + $OutputBackend + '}') |
+        $correctionValue = if ($SyncCorrectionMode -eq 'jump') { 1 } else { 0 }
+        ('{"backend":' + $backendValue + ',"outputBackend":' + $OutputBackend + ',"syncCorrectionMode":' + $correctionValue + '}') |
             Set-Content (Join-Path $report 'settings.json') -Encoding UTF8
 
-        Write-Output ('=== {0} {1} ltcFps={2} mode={3}' -f (Get-Date).ToString('HH:mm:ss'), $name, $LtcFps, $LtcFpsMode)
+        Write-Output ('=== {0} {1} ltcFps={2} mode={3} correction={4}' -f (Get-Date).ToString('HH:mm:ss'), $name, $LtcFps, $LtcFpsMode, $SyncCorrectionMode)
         $env:TIMECODE_ACCURACY_REPORT_DIR = $report
         $env:TCS_V3_LTC_FPS = $LtcFps
         $env:TCS_V3_LTC_FPS_MODE = $LtcFpsMode

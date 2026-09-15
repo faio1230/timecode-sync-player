@@ -58,6 +58,7 @@ internal sealed class LtcSyncController
     private readonly ContinueModeQueryLogState _queryLog = new(TimeSpan.FromSeconds(1), mediaPositionToleranceSeconds: 0.5);
     private readonly SyncCorrectionController _correction = new();
     private bool _smoothAvailable = true;
+    private double _lastAppliedRate = 1.0;
     private double? _lastAcceptedLtcSeconds;
     private double? _pendingSyncSeconds;
     private string _formatText = "LTC 停止中";
@@ -215,12 +216,25 @@ internal sealed class LtcSyncController
                     _smoothAvailable = false;
                     Log.Warning("Smooth 補正を使用できません（レート変更が拒否されました）。Jump への切替を検討してください");
                 }
+                else if (Math.Abs(decision.Rate - _lastAppliedRate) >= 0.0005)
+                {
+                    _lastAppliedRate = decision.Rate;
+                    Log.Information(
+                        "Smooth correction rate={Rate:F5} residualMs={ResidualMs:F1}",
+                        decision.Rate, (ltcSeconds - playback) * 1000.0);
+                }
                 break;
             case SyncCorrectionActionType.Seek:
                 // Smooth の倍率を Jump へ持ち込まない（shim 側では強制しない）。
                 _effects.ApplyRateInstant(1.0);
+                _lastAppliedRate = 1.0;
                 if (_effects.SeekTo(decision.TargetSeconds))
+                {
+                    Log.Information(
+                        "Jump correction seek target={Target:F3} residualMs={ResidualMs:F1}",
+                        decision.TargetSeconds, (ltcSeconds - playback) * 1000.0);
                     _syncService.ReportSeekSent(decision.TargetSeconds);
+                }
                 break;
         }
 
