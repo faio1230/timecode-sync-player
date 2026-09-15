@@ -1234,10 +1234,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (sender is not System.Windows.Controls.TextBox textBox || textBox.Tag is not Guid trackId)
             return;
 
+        string input = textBox.Text;
         var result = PlaylistTimelineOffsetEditor.Apply(
             _playlist,
             trackId,
-            textBox.Text,
+            input,
             _settingsManager.Current.AutoOffsetOnAdd,
             GapFreezeHandler.DefaultFallbackFps);
         if (result.Status == PlaylistTimelineOffsetEditStatus.TrackNotFound)
@@ -1245,7 +1246,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         Log.Debug("TimelineOffset edit: track={Track} input='{Input}' fps={Fps} currentOffset={CurrentOffset:F3} autoOffset={AutoOffset}",
             result.OriginalTrack!.Name,
-            textBox.Text,
+            input,
             result.Fps,
             result.OriginalTrack.TimelineOffset.TotalSeconds,
             _settingsManager.Current.AutoOffsetOnAdd);
@@ -1262,6 +1263,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             }
 
             UpdatePlaylistTimelineDisplay();
+            if (result.Adjusted)
+            {
+                // 丸め・繰り上げが起きたら確定値を入力欄へ書き戻す（黙って違う値を採用しない）。
+                // 表示形式は FormatTimecode のコロンのまま。
+                textBox.Text = PlaylistTrackFormatter.FormatTimecode(
+                    result.UpdatedTrack!.TimelineOffset, result.Fps);
+                Log.Information("TimelineOffset adjusted: track={Track} input='{Input}' confirmed={Confirmed}",
+                    result.OriginalTrack.Name, input, textBox.Text);
+            }
             Log.Information("TimelineOffset updated: track={Track} offset={Offset:F3} actualIn={ActualIn:F3} actualOut={ActualOut:F3} autoOffset={AutoOffset}",
                 result.OriginalTrack.Name,
                 result.UpdatedTrack!.TimelineOffset.TotalSeconds,
@@ -1271,7 +1281,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
         else
         {
-            Log.Warning("TimelineOffset parse failed: track={Track} input='{Input}' fps={Fps}", result.OriginalTrack!.Name, textBox.Text, result.Fps);
+            Log.Warning("TimelineOffset parse failed: track={Track} input='{Input}' fps={Fps}", result.OriginalTrack!.Name, input, result.Fps);
             textBox.Text = result.OriginalTrack.TimelineOffsetText;
         }
     }
