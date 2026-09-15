@@ -298,7 +298,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 {
                     _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
                     ApplyPauseState(false);
-                }),
+                },
+                GetCorrectionMode: () => _vm.Sync.SyncCorrectionMode,
+                GetPlaybackSeconds: () => ReadMpvTimePos(),
+                ApplyRateInstant: rate => _mpvApi.SetRateInstant(_mpv, rate) == 0,
+                SeekTo: target => SeekTo(target),
+                SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
@@ -316,6 +321,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         ApplyAudioControlUi(audioState.Snapshot);
         _vm.Sync.SyncModeIndex = ProjectSyncSelectionMapper.GetSyncModeIndex(settingsManager.Current.SyncMode);
         _vm.Sync.GapBehaviorIndex = ProjectSyncSelectionMapper.GetGapBehaviorIndex(settingsManager.Current.GapBehavior);
+        _vm.Sync.SyncCorrectionModeIndex =
+            settingsManager.Current.SyncCorrectionMode == SyncCorrectionMode.Jump ? 1 : 0;
         _vm.Sync.LtcSignalLossModeIndex =
             settingsManager.Current.LtcSignalLossMode == LtcSignalLossMode.Stop ? 1 : 0;
         _playlistDragDropCoordinator = new PlaylistDragDropCoordinator(new PlaylistDragDropEffects(
@@ -418,6 +425,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 case nameof(SyncViewModel.LtcFpsMode):
                     _ltcSyncController.FpsModeChanged();
                     Log.Information("LTC fps mode changed mode={Mode}", _vm.Sync.LtcFpsMode);
+                    break;
+                case nameof(SyncViewModel.SyncCorrectionMode):
+                    _ = _settingsManager.UpdateAsync(settings => settings with
+                    {
+                        SyncCorrectionMode = _vm.Sync.SyncCorrectionMode,
+                    });
+                    Log.Information("Sync correction mode changed mode={Mode}", _vm.Sync.SyncCorrectionMode);
                     break;
                 case nameof(SyncViewModel.LtcSignalLossMode):
                     _ = _settingsManager.UpdateAsync(settings => settings with

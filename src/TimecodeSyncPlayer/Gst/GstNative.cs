@@ -89,7 +89,9 @@ internal static class GstNative
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_set_speed(IntPtr player, double rate);
-    internal static extern int tcs_player_set_rate_instant(IntPtr player, double rate);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_set_rate_instant(IntPtr player, double rate);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_set_volume(IntPtr player, double volume0To100);
