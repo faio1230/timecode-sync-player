@@ -953,7 +953,8 @@ internal sealed class OutputEngine : IDisposable
             if (settings.Trace.IsEnabled)
                 settings.Trace.Record(new("compose.acquire", "GPU", acquireEndedQpc, scheduled,
                     gst.Stamp.Sequence, gst.Stamp.DecodedQpc, status.ToString(),
-                    (acquireEndedQpc - acquireStartedQpc) * 1_000_000 / Stopwatch.Frequency));
+                    (acquireEndedQpc - acquireStartedQpc) * 1_000_000 / Stopwatch.Frequency,
+                    PtsNs: SourceStampPtsNs(gst.Stamp.PositionSeconds)));
             settings.Trace.Add("source.acquire", "GPU", scheduled,
                 new ImageStamp(gst.Stamp.Sequence, gst.Stamp.DecodedQpc), status.ToString(),
                 (long)Math.Round(position * 1_000_000));
@@ -975,7 +976,8 @@ internal sealed class OutputEngine : IDisposable
             if (settings.Trace.IsEnabled)
                 settings.Trace.Record(new("compose.acquire", "GPU", acquireEndedQpc, scheduled,
                     acquiredStamp.Id, acquiredStamp.GeneratedQpc, status.ToString(),
-                    (acquireEndedQpc - acquireStartedQpc) * 1_000_000 / Stopwatch.Frequency));
+                    (acquireEndedQpc - acquireStartedQpc) * 1_000_000 / Stopwatch.Frequency,
+                    PtsNs: lease != null ? SourceStampPtsNs(lease.Stamp.PositionSeconds) : 0));
             settings.Trace.Add("source.acquire", "GPU", scheduled, acquiredStamp, status.ToString(),
                 (long)Math.Round(position * 1_000_000));
             if (status == SourceStatus.Ready)
@@ -1027,7 +1029,11 @@ internal sealed class OutputEngine : IDisposable
             UpdateComposeLead(composeCompletedQpc - composeStartedQpc, composeCompletedQpc);
             settings.Trace.Add("compose.complete", "GPU", scheduled, stamp);
             long publishedTicks = Stopwatch.GetTimestamp();
-            settings.Trace.Add("compose.publish", "GPU", scheduled, stamp);
+            // B4 の厳密結合: accuracy の frame イベント（RecordGpuAccuracyFrame）へ渡す
+            // publishedTicks と同一の QPC を compose.publish に使う。frameTicks ==
+            // compose.publish.qpc となり、全標本を完全一致で結べる（従来は別々の
+            // GetTimestamp で ±2ms の近似結合だった）。
+            settings.Trace.Record(new("compose.publish", "GPU", publishedTicks, scheduled, stamp.Id, stamp.GeneratedQpc));
             current.Pool.Publish(slot, stamp, true);
             OnComposePublished();
             writing = false;
@@ -1067,6 +1073,12 @@ internal sealed class OutputEngine : IDisposable
         if (target != null) ObserveScanout();
         UpdatePreview(Stopwatch.GetTimestamp());
     }
+
+    // 取得画像のスタンプ PTS（秒）を ns へ。負値・非有限は 0（未取得）にする。
+    private static long SourceStampPtsNs(double positionSeconds) =>
+        double.IsFinite(positionSeconds) && positionSeconds >= 0
+            ? (long)Math.Round(positionSeconds * 1_000_000_000.0)
+            : 0;
 
     // A1: 計測有効時のみ動く GPU 経路の精度プローブ。公開したソーステクスチャの画素を読み戻し、
     // CPU 経路と同一の AccuracyFrameMarker でフレームを同定して精度トレースへ記録する。
@@ -1190,9 +1202,8 @@ internal sealed class OutputEngine : IDisposable
                 if (gstNative.DrainDeliveryEvents(gstPlayer, buffer, (uint)buffer.Length, out uint count) != 0 || count == 0) return;
                 for (int i = 0; i < count; i++)
                 {
-                    GstNative.TcsDeliveryEvent e = buffer[i];
-                    settings.Trace.Record(new("gst.delivery", "GST", (long)e.Qpc, ImageId: (long)e.Seq,
-                        Detail: $"{e.PtsNs}:{e.RunningNs}:{e.Flags}", Value: e.CallbackUs));
+                    // flags bit 3 は GetTimePos 同時点の position スナップショット（gst.position）。
+                    settings.Trace.Record(GstDeliveryTraceMapper.Map(buffer[i]));
                 }
                 if (count < buffer.Length) return;
             }
