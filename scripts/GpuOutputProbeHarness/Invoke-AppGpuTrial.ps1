@@ -19,6 +19,8 @@ param(
     [ValidateSet('None','Normal','Force')][string]$ExitDialog = 'Normal',
     [string]$SimulateDeviceLoss = '',
     [int]$GpuRetryAtSeconds = 0,
+    # V11: decodeMode を settings.json へ入れる（空 = 既存の settings 生成のまま = hardware 既定）。
+    [ValidateSet('', 'hardware', 'software')][string]$DecodeMode = '',
     # V2 (audio). MuteAtSeconds/SpeedAtSeconds take a comma list of seconds; both
     # controls are toggles, so "10,20" mutes at 10 s and unmutes at 20 s.
     # VolumeAtSeconds takes "seconds:value" pairs, e.g. "12:50,20:100" (0..100).
@@ -62,6 +64,38 @@ public static class AppTrialNative {
 }
 '@
 }
+# V11: アプリの stdout / stderr を QPC タイムスタンプ付きで保存する。
+# shim の LOG（decodeMode のフォールバック警告など）は stderr にしか出ないため。
+if (-not ('AppOutputCapture' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+public static class AppOutputCapture {
+    private static readonly object Gate = new object();
+    private static StreamWriter OutputWriter;
+    private static StreamWriter ErrorWriter;
+    [DllImport("kernel32.dll")] private static extern bool QueryPerformanceCounter(out long value);
+    private static long Qpc() { long v; QueryPerformanceCounter(out v); return v; }
+    public static void Attach(Process process, string outputPath, string errorPath) {
+        OutputWriter = new StreamWriter(outputPath, false);
+        OutputWriter.AutoFlush = true;
+        ErrorWriter = new StreamWriter(errorPath, false);
+        ErrorWriter.AutoFlush = true;
+        process.OutputDataReceived += (s, e) => Write(OutputWriter, "out", e.Data);
+        process.ErrorDataReceived  += (s, e) => Write(ErrorWriter, "err", e.Data);
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+    }
+    private static void Write(StreamWriter writer, string stream, string line) {
+        if (line == null) { return; }
+        string row = Qpc().ToString() + "\t" + stream + "\t" + line;
+        lock (Gate) { writer.WriteLine(row); }
+    }
+}
+'@
+}
 $receiverExe = 'C:\Users\<user>\Downloads\Spout-SDK-examples_2-007-017\Spout-SDK-examples\Examples_2-007-017\SpoutDX\WinSpoutDXreceiver.exe'
 $session = (query session 2>$null | Select-String '>console') -ne $null
 if (-not $session) { throw 'Not a console session; refusing to run a display test.' }
@@ -74,12 +108,14 @@ $settings = Join-Path $run 'settings.json'
 $sender = 'TCSParent-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 $escapedDevice = $DisplayDeviceName.Replace('\', '\\')  # JSON: one backslash -> two
 $backendValue = if ($PlayerBackend -eq 'Gstreamer') { 1 } else { 0 }  # PlayerBackend enum: Mpv=0, Gstreamer=1
-$json = '{"outputBackend":1,"backend":' + $backendValue + ',"fullscreenDisplayDeviceName":"' + $escapedDevice + '"}'
+$json = '{"outputBackend":1,"backend":' + $backendValue + ',"fullscreenDisplayDeviceName":"' + $escapedDevice + '"'
+if ($DecodeMode) { $json += ',"decodeMode":"' + $DecodeMode + '"' }
+$json += '}'
 [IO.File]::WriteAllText($settings, $json, [Text.UTF8Encoding]::new($false))
 $hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'TimecodeSyncPlayer.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'tcs_gstreamer.dll'), $receiverExe, $MediaPath) |
     Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { Get-FileHash $_ -Algorithm SHA256 | Select-Object Path, Hash }
 $hashes | ConvertTo-Json | Set-Content (Join-Path $run 'inputs.json') -Encoding UTF8
-$result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; audioProbe=$null; completedNormally=$false; receiverMode=$(if ($NoSpout) { 'none' } else { 'official' }); steps=@() }
+$result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; decodeMode=$(if ($DecodeMode) { $DecodeMode } else { $null }); media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; audioProbe=$null; completedNormally=$false; receiverMode=$(if ($NoSpout) { 'none' } else { 'official' }); steps=@() }
 $app = $null; $recv = $null
 function Find-Button([int]$processId, [string]$automationId, [int]$timeoutSec) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
@@ -139,12 +175,15 @@ try {
         $psi.Arguments = '--open "' + $MediaPath + '"'
     }
     $psi.WorkingDirectory = Split-Path $AppExe; $psi.UseShellExecute = $false
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
     $psi.Environment['TIMECODE_SYNC_PLAYER_SETTINGS_PATH'] = $settings
     $psi.Environment['TIMECODE_SYNC_PLAYER_SPOUT_NAME'] = $sender
     $psi.Environment['TIMECODE_SYNC_PLAYER_OUTPUT_TRACE'] = $trace
     if ($SimulateDeviceLoss) { $psi.Environment['TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS'] = $SimulateDeviceLoss }
-    $app = [System.Diagnostics.Process]::Start($psi)
-    $null = $app.Handle
+$app = [System.Diagnostics.Process]::Start($psi)
+$null = $app.Handle
+[AppOutputCapture]::Attach($app, (Join-Path $run 'app-stdout.txt'), (Join-Path $run 'app-stderr.txt'))
     $result.app = [ordered]@{ pid=$app.Id; startUtc=$app.StartTime.ToUniversalTime().ToString('o'); exe=$AppExe }
     $t0 = Get-Date
     if ($CanvasDialog) {

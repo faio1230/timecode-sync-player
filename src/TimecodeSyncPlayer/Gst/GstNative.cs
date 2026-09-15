@@ -11,6 +11,9 @@ internal static class GstNative
 {
     internal const string Lib = "tcs_gstreamer.dll";
     internal const int TcsErrEnded = -6;
+    /* tcs_gstreamer.h の tcs_decode_mode と同じ値。 */
+    internal const int DecodeModeHardware = 0;
+    internal const int DecodeModeSoftware = 1;
 
     internal static bool IsGstLibrary(string libraryName) =>
         string.Equals(libraryName, Lib, StringComparison.OrdinalIgnoreCase);
@@ -97,6 +100,9 @@ internal static class GstNative
         internal static extern int tcs_player_set_mute(IntPtr player, int mute);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_set_decode_mode(IntPtr player, int mode);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_time_pos(IntPtr player, out double outSec);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
@@ -169,26 +175,82 @@ internal static class GstNative
 /// アセンブリ共通の DllImportResolver は MpvNativeLibraryResolver が所有するため、
 /// ここでは判定と個別ロードだけを提供する。
 /// </summary>
+internal enum GstRootSource
+{
+    EnvironmentVariable,
+    Bundled,
+    ProgramFiles
+}
+
+internal readonly record struct GstRoot(string Path, GstRootSource Source);
+
 internal static class GstNativeLibraryResolver
 {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetDllDirectory(string? lpPathName);
 
+    internal const string BundledDirectoryName = "gstreamer";
+
+    /// <summary>
+    /// 環境変数（明示指定）→ 配布物に同梱した gstreamer ディレクトリ → システム導入先、の順で探す。
+    /// 配布物では同梱ランタイムを使い、版を固定する。
+    /// </summary>
+    public static GstRoot? FindGstRoot() => ResolveRoot(
+        Environment.GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64"),
+        System.IO.Path.Combine(AppContext.BaseDirectory, BundledDirectoryName),
+        System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "gstreamer", "1.0", "msvc_x86_64"),
+        IsGstRoot);
+
+    internal static GstRoot? ResolveRoot(
+        string? environmentRoot, string bundledRoot, string programFilesRoot, Func<string, bool> isGstRoot)
+    {
+        if (!string.IsNullOrEmpty(environmentRoot) && isGstRoot(environmentRoot!))
+            return new GstRoot(environmentRoot!, GstRootSource.EnvironmentVariable);
+        if (isGstRoot(bundledRoot))
+            return new GstRoot(bundledRoot, GstRootSource.Bundled);
+        return isGstRoot(programFilesRoot) ? new GstRoot(programFilesRoot, GstRootSource.ProgramFiles) : null;
+    }
+
+    internal static bool IsGstRoot(string dir) =>
+        !string.IsNullOrEmpty(dir) &&
+        (System.IO.File.Exists(System.IO.Path.Combine(dir, "bin", "gstreamer-1.0-0.dll"))
+         || System.IO.File.Exists(System.IO.Path.Combine(dir, "bin", "gstreamer-1.0.dll")));
+
     public static string? FindGstBinDirectory()
     {
-        string? root = Environment.GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64");
-        if (IsGstRoot(root))
-            return System.IO.Path.Combine(root!, "bin");
+        GstRoot? root = FindGstRoot();
+        return root is null ? null : System.IO.Path.Combine(root.Value.Path, "bin");
+    }
 
-        root = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-            "gstreamer", "1.0", "msvc_x86_64");
-        return IsGstRoot(root) ? System.IO.Path.Combine(root, "bin") : null;
+    /// <summary>
+    /// 同梱ランタイムを使うときだけ、プラグイン探索とレジストリキャッシュを同梱ディレクトリへ固定する。
+    /// システムに別の GStreamer があっても混ざらない（版の固定が配布物の正しさの要件のため）。
+    /// 失敗しても再生経路は止めない。
+    /// </summary>
+    public static void ApplyBundledPluginEnvironment(string bundledRoot)
+    {
+        try
+        {
+            string plugins = System.IO.Path.Combine(bundledRoot, "lib", "gstreamer-1.0");
+            if (!System.IO.Directory.Exists(plugins))
+                return;
 
-        static bool IsGstRoot(string? dir) =>
-            !string.IsNullOrEmpty(dir) &&
-            (System.IO.File.Exists(System.IO.Path.Combine(dir!, "bin", "gstreamer-1.0-0.dll"))
-             || System.IO.File.Exists(System.IO.Path.Combine(dir!, "bin", "gstreamer-1.0.dll")));
+            Environment.SetEnvironmentVariable("GST_PLUGIN_PATH", plugins);
+            Environment.SetEnvironmentVariable("GST_PLUGIN_SYSTEM_PATH", plugins);
+
+            string cacheDirectory = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "TimecodeSyncPlayer");
+            System.IO.Directory.CreateDirectory(cacheDirectory);
+            Environment.SetEnvironmentVariable("GST_REGISTRY",
+                System.IO.Path.Combine(cacheDirectory, "gstreamer-registry-x86_64.bin"));
+        }
+        catch (Exception)
+        {
+            // 環境変数を固定できなくても、システム側の GStreamer で動き続けられるようにする。
+        }
     }
 
     /// <summary>共有 resolver からの呼び出し。該当 DLL でなければ IntPtr.Zero。</summary>
@@ -197,13 +259,17 @@ internal static class GstNativeLibraryResolver
         if (!GstNative.IsGstLibrary(libraryName))
             return IntPtr.Zero;
 
-        string? gstBin = FindGstBinDirectory();
-        if (gstBin is null)
+        GstRoot? root = FindGstRoot();
+        if (root is null)
             return IntPtr.Zero;
 
+        string gstBin = System.IO.Path.Combine(root.Value.Path, "bin");
         string self = System.IO.Path.Combine(AppContext.BaseDirectory, GstNative.Lib);
         if (!System.IO.File.Exists(self))
             return IntPtr.Zero;
+
+        if (root.Value.Source == GstRootSource.Bundled)
+            ApplyBundledPluginEnvironment(root.Value.Path);
 
         bool originalApplied = SetDllDirectory(gstBin);
         try
@@ -217,7 +283,11 @@ internal static class GstNativeLibraryResolver
         finally
         {
             // 呼び出し元(App)が設定した BaseDirectory 検索を復元する。
-            if (originalApplied)
+            // ただし同梱ランタイムでは、後から読み込まれるプラグインの依存 DLL
+            // （avcodec や gstaudio 等。dist\gstreamer\lib ではなく bin にある）も
+            // 同梱 bin から解決させる必要があるため、復元せず検索パスに残す
+            // （アプリのディレクトリは既定で検索される）。
+            if (originalApplied && root.Value.Source != GstRootSource.Bundled)
                 SetDllDirectory(AppContext.BaseDirectory);
         }
     }

@@ -7,6 +7,9 @@
 #ifndef ProjectRoot
   #error ProjectRoot must be supplied by package-release.ps1
 #endif
+#ifndef VcRedistFile
+  #error VcRedistFile must be supplied by package-release.ps1
+#endif
 
 #define MyAppName "TimecodeSyncPlayer"
 #define MyAppPublisher "Studio Sandix"
@@ -40,42 +43,28 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 
-[CustomMessages]
-english.DownloadMpvNow=Download mpv now (run get-mpv.ps1)
-japanese.DownloadMpvNow=mpv を今ダウンロードする (get-mpv.ps1 を実行)
-
 [Files]
-Source: "{#ReleaseDirectory}\*"; DestDir: "{app}"; Excludes: "mpv-2.dll,libmpv-2.dll,*.pdb"; Flags: ignoreversion
+Source: "{#ReleaseDirectory}\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ProjectRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectRoot}\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectRoot}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#ProjectRoot}\scripts\get-mpv.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#VcRedistFile}"; DestDir: "{tmp}"; DestName: "vc_redist.x64.exe"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\get-mpv.ps1"" -DestinationDirectory ""{app}"" -Force"; WorkingDir: "{app}"; Description: "{cm:DownloadMpvNow}"; Flags: postinstall skipifsilent waituntilterminated; Check: not WizardSilent
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\get-mpv.ps1"" -DestinationDirectory ""{app}"" -Force"; WorkingDir: "{app}"; Flags: waituntilterminated; Check: ShouldDownloadMpvSilently
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ 2015-2022 Redistributable (x64)..."; Flags: waituntilterminated shellexec; Check: VcRuntimeMissing
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
 [Code]
-function ShouldDownloadMpvSilently: Boolean;
+function VcRuntimeMissing: Boolean;
 var
-  Index: Integer;
+  Installed: Cardinal;
 begin
-  Result := False;
-  if not WizardSilent then
-    Exit;
-
-  for Index := 1 to ParamCount do
-  begin
-    if CompareText(ParamStr(Index), '/DOWNLOADMPV') = 0 then
-    begin
-      Result := True;
-      Exit;
-    end;
-  end;
+  Result := True;
+  if RegQueryDWordValue(HKLM64, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) then
+    Result := Installed <> 1;
 end;

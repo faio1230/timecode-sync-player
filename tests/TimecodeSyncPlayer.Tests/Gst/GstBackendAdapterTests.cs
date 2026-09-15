@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.IO;
+using System.Runtime.InteropServices;
 using FluentAssertions;
 using TimecodeSyncPlayer.Gst;
 
@@ -446,6 +447,55 @@ public class GstBackendStateTests
         state.Player.Should().Be(IntPtr.Zero);
         api.Create().Should().Be(IntPtr.Zero);
     }
+
+    [Fact]
+    public async Task SoftwareDecodeMode_IsForwardedToShimAtPlayerCreate()
+    {
+        AppSettingsManager manager = await CreateSettingsManager("software");
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native, manager);
+
+        var api = new GstMpvApiAdapter(state);
+        IntPtr ctx = api.Create();
+
+        ctx.Should().Be(new IntPtr(9));
+        native.SetDecodeModeCalls.Should().Equal(GstNative.DecodeModeSoftware);
+    }
+
+    [Fact]
+    public async Task HardwareDecodeMode_DoesNotTouchShim()
+    {
+        AppSettingsManager manager = await CreateSettingsManager("hardware");
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native, manager);
+
+        var api = new GstMpvApiAdapter(state);
+        api.Create();
+
+        native.SetDecodeModeCalls.Should().BeEmpty("既定 hardware は shim の既定と同じ");
+    }
+
+    [Fact]
+    public void MissingSettingsManager_KeepsHardwareDefault()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native);
+
+        var api = new GstMpvApiAdapter(state);
+        api.Create();
+
+        native.SetDecodeModeCalls.Should().BeEmpty();
+    }
+
+    private static async Task<AppSettingsManager> CreateSettingsManager(string decodeMode)
+    {
+        string path = Path.Combine(
+            Path.GetTempPath(), "tcs-decode-mode-" + Guid.NewGuid().ToString("N") + ".json");
+        await File.WriteAllTextAsync(path, "{\"decodeMode\":\"" + decodeMode + "\"}");
+        var manager = new AppSettingsManager(path);
+        await manager.LoadAsync();
+        return manager;
+    }
 }
 
 /// <summary>IGstNativeApi の記録用 fake。ネイティブ DLL に依存しない。</summary>
@@ -525,6 +575,13 @@ file sealed class FakeGstNative : IGstNativeApi
     public int SetSpeed(IntPtr player, double rate) => 0;
     public int SetVolume(IntPtr player, double volume0To100) => 0;
     public int SetMute(IntPtr player, bool mute) => 0;
+    public List<int> SetDecodeModeCalls { get; } = [];
+    public int SetDecodeModeResult { get; set; }
+    public int SetDecodeMode(IntPtr player, int mode)
+    {
+        SetDecodeModeCalls.Add(mode);
+        return SetDecodeModeResult;
+    }
     public bool TryGetTimePos(IntPtr player, out double seconds) { seconds = TimePos; return true; }
     public bool TryGetDuration(IntPtr player, out double seconds) { seconds = Duration; return true; }
     public bool TryGetFps(IntPtr player, out double fps) { fps = Fps; return true; }

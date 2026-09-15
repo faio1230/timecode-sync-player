@@ -5,7 +5,11 @@ param(
     [string]$AppExe = 'C:\Users\<user>\Documents\timecode-sync-player-wt-integrate-20260912\src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe',
     [string]$LogRoot = 'C:\Users\<user>\Documents\timecode-sync-player-wt-integrate-20260912\TestResults\v1',
     [int]$Seconds = 50,
-    [string[]]$Only = @()
+    [string[]]$Only = @(),
+    # V11: '' = hardware 既定（decodeMode を settings に入れない）、software = decodeMode=software で回す。
+    [ValidateSet('', 'hardware', 'software')][string]$DecodeMode = '',
+    # V11: run ラベルは '<prefix>-<clip>'。LogRoot を条件ごとに分けて集計する。
+    [string]$LabelPrefix = 'v1'
 )
 $ErrorActionPreference = 'Continue'
 $runner = Join-Path $PSScriptRoot 'Invoke-AppGpuTrial.ps1'
@@ -13,9 +17,21 @@ $clips = Get-ChildItem $MediaDir -File | Where-Object { $_.Extension -in '.mp4',
 if ($Only.Count -gt 0) { $clips = $clips | Where-Object { $Only -contains $_.Name } }
 $results = @()
 foreach ($c in $clips) {
-    $label = 'v1-' + [IO.Path]::GetFileNameWithoutExtension($c.Name)
+    $label = $LabelPrefix + '-' + [IO.Path]::GetFileNameWithoutExtension($c.Name)
     Write-Output ("=== {0} {1}" -f (Get-Date).ToString('HH:mm:ss'), $c.Name)
-    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner -MediaPath $c.FullName -Label $label -Seconds $Seconds -PlayerBackend Gstreamer -AppExe $AppExe -LogRoot $LogRoot -ExitDialog Normal 2>&1
+    $trialArgs = @(
+        '-MediaPath', $c.FullName,
+        '-Label', $label,
+        '-Seconds', $Seconds,
+        '-PlayerBackend', 'Gstreamer',
+        '-AppExe', $AppExe,
+        '-LogRoot', $LogRoot,
+        '-ExitDialog', 'Normal'
+    )
+    # Windows PowerShell 5.1 の子プロセス呼び出しでは空文字引数が落ちるため、
+    # hardware 既定（$DecodeMode が空）では -DecodeMode ごと渡さない。
+    if ($DecodeMode) { $trialArgs += @('-DecodeMode', $DecodeMode) }
+    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner @trialArgs 2>&1
     $runLine = ($out | Select-String -Pattern '^RUN ' | Select-Object -First 1)
     $json = ($out | Where-Object { $_ -is [string] } | Where-Object { $_ -notmatch '^RUN ' -and $_ -notmatch 'tcs-gst' }) -join "`n"
     $rec = [ordered]@{ clip=$c.Name; run=($(if ($runLine) { $runLine.ToString().Substring(4) } else { $null })); appExit=$null; error=$null }

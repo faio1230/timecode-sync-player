@@ -28,6 +28,9 @@ internal interface IGstNativeApi
     int SetSpeed(IntPtr player, double rate);
     int SetVolume(IntPtr player, double volume0To100);
     int SetMute(IntPtr player, bool mute);
+
+    /// <summary>最初の load 前に 1 回だけ。GstNative.DecodeModeHardware / DecodeModeSoftware。</summary>
+    int SetDecodeMode(IntPtr player, int mode);
     bool TryGetTimePos(IntPtr player, out double seconds);
     bool TryGetDuration(IntPtr player, out double seconds);
     bool TryGetFps(IntPtr player, out double fps);

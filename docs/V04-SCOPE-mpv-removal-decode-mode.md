@@ -172,6 +172,8 @@ C ABI に**明示的な経路**を設ける。環境変数で渡す方法は採�
 | V11-c | 退避の警告 | ソフトウェアデコーダが無いコーデックで `software` を指定 | GPU に落ち、警告ログが出る |
 | V11-d | 出力側の不変 | `software` で共通条件（表示・合成 p99・Spout・error・exit） | `hardware` と同等 |
 
+**実際に回す手順・素材・設定の与え方・ログの見方は [V11 検証手順](V11-DECODE-MODE-VERIFICATION.md) に書く。**
+
 ### 事前計測（親、2026-09-13 09:10 JST）— **ソフトウェアデコードは 4K でも実用域**
 
 `gst-launch-1.0 filesrc ! qtdemux ! <parse> ! <dec> ! videoconvert ! fakesink sync=false` の所要時間から
