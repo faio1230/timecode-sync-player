@@ -5,6 +5,7 @@
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
+#include "tcs_video_profiles.h"
 #include <d3d11.h>
 #include <psapi.h>
 #include <cstdio>
@@ -300,6 +301,24 @@ run_delivery_policy_tests ()
     check (n == 10 && order[0] == 4 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
            order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
         "decode order: software does not promote a GPU last-good");
+  }
+
+  /* V11-h: pin the CPU/GPU classification of the real profile table. The chain
+   * builder derives it from `conv` ("d3d11" means GPU), so a CPU profile whose
+   * conv became a d3d11 converter would lose d3d11upload (and the software
+   * search order). CPU conversion for V11-h is a separate post-upload element. */
+  {
+    check (TCS_VIDEO_PROFILE_COUNT == 9, "profiles: table has 9 entries");
+    int flags_ok = 1;
+    for (int i = 0; i < TCS_VIDEO_PROFILE_COUNT; i++)
+      flags_ok = flags_ok && (tcs_video_profile_is_software (i) == (i >= 4 ? 1 : 0));
+    check (flags_ok == 1, "profiles: software flags are the CPU profiles only");
+    for (int i = 0; i < 4; i++)
+      check (strstr (kTcsVideoProfiles[i].conv, "d3d11") != nullptr,
+          "profiles: GPU profiles convert on the GPU");
+    for (int i = 4; i < TCS_VIDEO_PROFILE_COUNT; i++)
+      check (strstr (kTcsVideoProfiles[i].conv, "d3d11") == nullptr,
+          "profiles: CPU profiles keep a CPU converter (upload must be built)");
   }
 }
 
