@@ -192,6 +192,30 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
         }
     }
 
+    // T3: 全体に効く同期オフセット（ms）。UI には ms のみを出し、フレーム換算はしない。
+    private double _syncOffsetMs;
+    public double SyncOffsetMs
+    {
+        get => _syncOffsetMs;
+        set
+        {
+            if (SyncOffsetPolicy.IsOutOfRange(value))
+            {
+                Serilog.Log.Warning(
+                    "SyncOffsetMs {Value} は範囲外 [{Min}, {Max}] ms のため clamp しました",
+                    value, SyncOffsetPolicy.MinimumMilliseconds, SyncOffsetPolicy.MaximumMilliseconds);
+            }
+            double clamped = SyncOffsetPolicy.Clamp(value);
+            if (clamped.Equals(_syncOffsetMs))
+                return;
+            _syncOffsetMs = clamped;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SyncOffsetText));
+        }
+    }
+
+    public string SyncOffsetText => SyncOffsetPolicy.FormatMilliseconds(_syncOffsetMs);
+
     public string SyncToggleLabel => _syncEnabled ? "Sync ON" : "Sync OFF";
 
     public string LtcTimecodeText
