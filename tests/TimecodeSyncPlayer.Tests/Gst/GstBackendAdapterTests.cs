@@ -472,6 +472,14 @@ file sealed class FakeGstNative : IGstNativeApi
     public int CpuCopyCalls { get; private set; }
     public IntPtr LastCopyDst { get; private set; }
     public int LastCopyStride { get; private set; }
+    public int SetRateInstantResult { get; set; } = -1;
+    public List<double> RateInstantCalls { get; } = [];
+
+    public int SetRateInstant(IntPtr player, double rate)
+    {
+        RateInstantCalls.Add(rate);
+        return SetRateInstantResult;
+    }
 
     private int _opSeq;
     private int _lastReleaseOp;
