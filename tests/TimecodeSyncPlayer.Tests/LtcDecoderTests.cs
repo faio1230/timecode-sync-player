@@ -148,8 +148,9 @@ public class LtcDecoderTests
     {
         var tc = new LtcTimecode(0, 0, 1, 0, DropFrame: true);
 
-        // Drop frame uses 30000/1001 fps regardless of passed fps
-        double expected = 1.0;
+        // Drop frame uses 30000/1001 fps regardless of passed fps.
+        // 00:00:01;00 は 30 フレーム（分をまたがないので飛び番なし）→ 30 ÷ 29.97。
+        double expected = 30 / (30000.0 / 1001.0);
         tc.ToRealSeconds(30.0).Should().BeApproximately(expected, 0.0001);
     }
 

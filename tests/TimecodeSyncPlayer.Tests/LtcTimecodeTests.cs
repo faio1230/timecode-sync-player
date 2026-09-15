@@ -22,11 +22,13 @@ public class LtcTimecodeTests
     }
 
     [Fact]
-    public void ToRealSeconds_DropFrame_CorrectsFps()
+    public void ToRealSeconds_DropFrame_DropsTwoFramesAtMinuteBoundary()
     {
         var tc = new LtcTimecode(0, 1, 0, 0, true);
-        var result = tc.ToRealSeconds(30);
-        result.Should().BeApproximately(60.0, 0.001);
+
+        // 00:01:00;00 は 1800 ではなく 1798 フレーム（毎分 00/01 を飛ばす）→ 1798 ÷ 29.97。
+        tc.ToRealSeconds(30).Should().BeApproximately(1798 / (30000.0 / 1001.0), 1e-9);
+        tc.ToRealSeconds(30).Should().BeApproximately(59.993267, 1e-6);
     }
 
     [Fact]
@@ -36,21 +38,22 @@ public class LtcTimecodeTests
         tc.ToString().Should().Be("01:02:03:04");
     }
 
-    // ── 29.97 の換算（現行挙動の固定）─────────────────────────────
-    // ToRealSeconds は H×3600 + M×60 + S + F÷fps、DropFrame のとき fps は 30000/1001。
-    // 29.97 NDF はフィールド表現が 30fps と同じ（飛び番なし）で、実時間はフレーム総数
-    // からしか復元できない。ここでは現行式が返す値を固定し、実時間との差も記録する。
-    // 修正・仕様変更はこのテストでは行わない（扱いは別途確認中）。
+    // ── 29.97 の換算（総フレーム数経由）────────────────────────────
+    // totalFrames = ((H×60+M)×60+S)×nominalFps + F（nominalFps は actualFps の四捨五入、
+    // 29.97 なら 30）。DropFrame は 2×(総分数 − 総分数/10) を引く。realSeconds =
+    // totalFrames ÷ actualFps。24/25/30 は nominal=actual・DF なしなので旧式
+    // (H×3600 + M×60 + S + F÷fps) と一致し、回帰しない。
 
     [Fact]
-    public void ToRealSeconds_29_97NonDropFrame_MapsFramesAt30000Over1001()
+    public void ToRealSeconds_29_97NonDropFrame_UsesTotalFramesAt30000Over1001()
     {
         var tc = new LtcTimecode(0, 0, 1, 12, false);
 
         double result = tc.ToRealSeconds(30000.0 / 1001.0);
 
-        result.Should().BeApproximately(1 + (12 / (30000.0 / 1001.0)), 1e-9);
-        result.Should().BeApproximately(1.4004, 1e-6);
+        // 42 フレーム（1 秒 × 30 + 12）÷ 29.97。タイムコードの 1 秒は実時間 1.001 秒。
+        result.Should().BeApproximately(42 / (30000.0 / 1001.0), 1e-9);
+        result.Should().BeApproximately(1.4014, 1e-6);
     }
 
     [Fact]
@@ -58,9 +61,19 @@ public class LtcTimecodeTests
     {
         var tc = new LtcTimecode(0, 0, 1, 12, true);
 
-        // DF フラグは fps の選択にのみ効き、飛び番（毎分 00/01 の欠番）はこの式には入らない。
-        tc.ToRealSeconds(30000.0 / 1001.0).Should().BeApproximately(1.4004, 1e-6);
-        tc.ToRealSeconds(30.0).Should().BeApproximately(1.4004, 1e-6);
+        // DF でも分をまたがないので飛び番はなく、fps 引数に関わらず actualFps=30000/1001。
+        tc.ToRealSeconds(30000.0 / 1001.0).Should().BeApproximately(42 / (30000.0 / 1001.0), 1e-9);
+        tc.ToRealSeconds(30.0).Should().BeApproximately(42 / (30000.0 / 1001.0), 1e-9);
+    }
+
+    [Fact]
+    public void ToRealSeconds_29_97DropFrame_TenMinuteBoundaryKeepsRealTime()
+    {
+        var tc = new LtcTimecode(0, 10, 0, 0, true);
+
+        // 10 分は 18 フレーム落として 17982 フレーム → ほぼ 600 秒（誤差 0.6ms）。
+        tc.ToRealSeconds(30000.0 / 1001.0).Should().BeApproximately(17982 / (30000.0 / 1001.0), 1e-9);
+        tc.ToRealSeconds(30000.0 / 1001.0).Should().BeApproximately(599.9994, 1e-6);
     }
 
     [Fact]
@@ -72,28 +85,46 @@ public class LtcTimecodeTests
     }
 
     [Fact]
-    public void ToRealSeconds_29_97NonDropFrame_OneHourTimecode_ReturnsNominal3600Seconds()
+    public void ToRealSeconds_29_97NonDropFrame_OneHourTimecode_ReturnsRealElapsed3603_6Seconds()
     {
         var tc = new LtcTimecode(1, 0, 0, 0, false);
 
-        // 現行挙動: ノミナル秒の 3600 を返す。29.97 NDF でこのタイムコードに達する実時間は
-        // 108000 フレーム ÷ (30000/1001) = 3603.6s で、現行値との差は 3.6s。
-        tc.ToRealSeconds(30000.0 / 1001.0).Should().Be(3600.0);
-        (108000 / (30000.0 / 1001.0)).Should().BeApproximately(3603.6, 0.001);
+        // 108000 フレーム ÷ 29.97 = 3603.6s。ノミナル 3600 ではない。
+        tc.ToRealSeconds(30000.0 / 1001.0).Should().BeApproximately(108000 / (30000.0 / 1001.0), 1e-9);
+        tc.ToRealSeconds(30000.0 / 1001.0).Should().BeApproximately(3603.6, 0.001);
     }
 
     [Fact]
-    public void ToRealSeconds_29_97NonDropFrame_ThirtyFiveSecondsOfSignal_ReturnsAbout34_968Seconds()
+    public void ToRealSeconds_29_97NonDropFrame_ThirtyFiveSecondsOfSignal_ReturnsElapsedRealTime()
     {
         // 29.97 NDF を 35 秒流したときのタイムコードはフレーム 1049（0:00:34:29）。
-        // 現行換算は約 34.968s を返し、実経過（フレーム 1049 ÷ 29.97）≈ 35.002s との差は約 34ms。
+        // 総フレーム換算で実経過時間（35.0016s）と一致する。
         var tc = new LtcTimecode(0, 0, 34, 29, false);
 
         double result = tc.ToRealSeconds(30000.0 / 1001.0);
 
-        result.Should().BeApproximately(34 + (29 / (30000.0 / 1001.0)), 1e-9);
-        (1049 / (30000.0 / 1001.0)).Should().BeApproximately(35.0016, 0.0001);
-        ((1049 / (30000.0 / 1001.0)) - result).Should().BeApproximately(0.0340, 0.0005);
+        result.Should().BeApproximately(1049 / (30000.0 / 1001.0), 1e-9);
+        result.Should().BeApproximately(35.0016, 0.0001);
+    }
+
+    [Theory]
+    [InlineData(24.0)]
+    [InlineData(25.0)]
+    [InlineData(30.0)]
+    public void ToRealSeconds_IntegerFps_MatchesLegacyFieldFormula(double fps)
+    {
+        var samples = new[]
+        {
+            new LtcTimecode(0, 0, 1, 12, false),
+            new LtcTimecode(1, 2, 3, 4, false),
+            new LtcTimecode(23, 59, 59, (int)fps - 1, false),
+        };
+
+        foreach (var tc in samples)
+        {
+            double legacy = (tc.Hours * 3600.0) + (tc.Minutes * 60.0) + tc.Seconds + (tc.Frames / fps);
+            tc.ToRealSeconds(fps).Should().BeApproximately(legacy, 1e-9);
+        }
     }
 
     [Fact]

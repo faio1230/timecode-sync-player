@@ -85,9 +85,8 @@ internal sealed class SyncAccuracyTrace : IDisposable
         long ticks = Stopwatch.GetTimestamp();
         // 計測用の参照 fps はハーネス（V3 LTC fps マトリクス）が与える。デコーダの過渡推定や
         // アプリが独立に解決した同期 fps の代用はしない（記録の一貫性を崩さないため）。
-        double seconds = frame.Timecode.Hours * 3600.0 + frame.Timecode.Minutes * 60.0
-            + frame.Timecode.Seconds + frame.Timecode.Frames / _referenceLtcFps;
-        Enqueue(new LtcEvent("ltc", ticks, seconds, _referenceLtcFps));
+        // 換算はアプリ本体と同じ LtcTimecode.ToRealSeconds を使い、29.97 の総フレーム換算も揃える。
+        Enqueue(new LtcEvent("ltc", ticks, frame.Timecode.ToRealSeconds(_referenceLtcFps), _referenceLtcFps));
     }
 
     internal long AllocateRenderSessionId() => IsEnabled ? Interlocked.Increment(ref _renderSessions) : 0;
