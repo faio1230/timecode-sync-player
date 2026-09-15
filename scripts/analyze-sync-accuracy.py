@@ -15,6 +15,12 @@ from pathlib import Path
 
 PHASES = {"black-sweep": (0, 35), "freeze-sweep": (0, 35),
           "seek-a": (3, 5), "seek-b": (15, 5), "seek-c": (27, 5), "seek-back": (3, 5)}
+# The source restarts at each phase's startSeconds. The decoder can lose the first
+# few frames while it re-locks (observed: 1 at 25 fps, 3 when it is slow), so the
+# restart frame is accepted as the phase clock up to this many LTC periods after
+# startSeconds. Kept small so stale input from the previous phase (e.g. 34.96 for a
+# phase starting at 0) can never match.
+PHASE_START_LTC_LAG_PERIODS = 5
 THRESHOLDS = (20, 40, 80, 250)
 EPS = 1e-7
 TRACE_DATA_TYPES = ("ltc", "frame", "render-stage")
@@ -238,6 +244,7 @@ def analyze(events, fixture, journal):
     latest = None
     identity = None
     hold_tick = None
+    previous_ltc_seconds = None
     for event in events:
         if event["type"] == "frame":
             latest = event
@@ -251,6 +258,13 @@ def analyze(events, fixture, journal):
         if event["type"] != "ltc":
             continue
         tick, seconds = event["ticks"], event["seconds"]
+        # A phase's LTC clock starts at the first frame that is not a one-period
+        # step from the previous frame: the source restart after the phase
+        # boundary shows up as a rollback (0 s sweeps) or a forward jump (seek
+        # targets). Stale queued frames stay continuous with the previous phase
+        # and are not restart candidates.
+        restart = previous_ltc_seconds is None or abs(seconds - previous_ltc_seconds - period) > EPS
+        previous_ltc_seconds = seconds
         p = next((p for p in phases if p["ticks"] <= tick < p["endTicks"]), None)
         row = {"ticks": tick, "receivedSeconds": seconds, "phase": p["name"] if p else None,
                "mode": p["mode"] if p else None, "phaseElapsedMs": None, "expectedClipId": None,
@@ -268,8 +282,14 @@ def analyze(events, fixture, journal):
         if not p:
             continue
         p["rows"].append(row)
-        # The journal's command time cannot identify audio still queued from the previous phase.
-        if p["firstTicks"] is None and -EPS <= seconds - p["startSeconds"] <= 2 * period + EPS:
+        # The journal's command time cannot identify audio still queued from the
+        # previous phase. Take the restart frame as the phase clock, but only when
+        # it is close enough to startSeconds: the decoder can lose a few frames
+        # while it re-locks, while stale input from the previous phase stays far
+        # from startSeconds and is rejected by the window.
+        if p["firstTicks"] is None and restart and (
+                p["startSeconds"] - EPS <= seconds
+                <= p["startSeconds"] + PHASE_START_LTC_LAG_PERIODS * period + EPS):
             p["firstTicks"] = tick
         if p["firstTicks"] is None or not p["startSeconds"] - EPS <= seconds < p["startSeconds"] + p["durationSeconds"]:
             row.update(status="phase-unmatched", excludedReason="phase-unmatched")
@@ -303,6 +323,14 @@ def analyze(events, fixture, journal):
             error = pts - row["expectedMediaSeconds"]
             interval_error = error if error > 0 else min(0, error + 1 / clip["fps"])
             row.update(status="measured", signedErrorMs=error * 1000, intervalErrorMs=interval_error * 1000)
+
+    # Case C: a phase whose start clock never resolved has no usable sample even
+    # though the LTC stream is present; keep the phase-level reason explicit.
+    for p in phases:
+        if p["rows"] and p["firstTicks"] is None:
+            reasons.append("phase-start-not-found:" + p["name"])
+            for row in p["rows"]:
+                row["excludedReason"] = "phase-start-not-found"
 
     input_stats = {"longGapCount": 0, "discontinuityCount": 0, "abnormalReceiptIntervalCount": 0,
                    "maxReceiptIntervalMs": None, "unweightedGapMs": 0}
@@ -376,8 +404,10 @@ def analyze(events, fixture, journal):
     probes = sorted(f["probeTicks"] * 1000 / frequency for f in frames)
     summary = {"schema": 1, "complete": not reasons, "incompleteReasons": sorted(set(reasons)), "warnings": warnings,
                "accuracyPassFail": "not-defined", "boundary": meta["boundary"], "reference": meta["reference"],
-               "policy": {"ltcPeriodMs": period * 1000, "maximumContinuousReceiptIntervalMs": max_interval * 1000,
-                          "phaseStartMatchToleranceMs": 2 * period * 1000, "settlingMs": 1000, "recoverySustainMs": 500,
+                "policy": {"ltcPeriodMs": period * 1000, "maximumContinuousReceiptIntervalMs": max_interval * 1000,
+                          "phaseStartMatchToleranceMs": PHASE_START_LTC_LAG_PERIODS * period * 1000,
+                          "phaseStartMatchRule": "first frame that is not one LTC period after the previous frame",
+                          "settlingMs": 1000, "recoverySustainMs": 500,
                           "percentile": "nearest-rank; sample-weighted", "duration": "forward receipt intervals; zero across discontinuities and after final sample",
                           "signedError": "actual frame PTS minus expected media position", "intervalError": "signed distance from expected media position to frame interval",
                           "resolution": "25 fps LTC: 40 ms steps; frame interval depends on source fps; ms units do not prove 1 ms accuracy"},
