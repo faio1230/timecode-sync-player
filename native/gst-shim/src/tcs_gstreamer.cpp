@@ -2295,6 +2295,11 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     p->path = utf8_path;
     p->paused = paused != 0;
     p->lastGoodProfile = idx;
+    /* The rebuilt pipeline starts at rate 1.0 (the seek above used 1.0). Keep
+     * the saved value in sync so a later coarse seek cannot reuse a rate left
+     * over from a correction that the owner already reset. Plain scalar write,
+     * control thread only; no GStreamer call here. */
+    p->rate = 1.0;
     if (p->decode_mode == TCS_DECODE_MODE_SOFTWARE && idx >= 0 && !profile_is_software (idx))
       LOG ("software decode requested but no CPU decoder was usable; "
           "using hardware profile %s", g_profiles[idx].name);
