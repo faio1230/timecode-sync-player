@@ -1368,6 +1368,25 @@ build_video_chain_static (TcsPlayer* p, int idx)
   return TRUE;
 }
 
+/* V11-g measurement switch: appsink max-buffers. Unset keeps the shipped 4.
+ * 0 is passed through as GStreamer's "unlimited" and is only useful for
+ * experiments; it is not a supported product configuration. */
+static uint32_t
+appsink_max_buffers ()
+{
+  char buf[16];
+  DWORD n = GetEnvironmentVariableA ("TCS_APPSINK_MAX_BUFFERS", buf, sizeof (buf));
+  if (n == 0 || n >= sizeof (buf))
+    return 4u;
+  int value = atoi (buf);
+  if (value < 0)
+    {
+      LOG ("appsink max-buffers: invalid value '%s' -> 4", buf);
+      return 4u;
+    }
+  return (uint32_t) value;
+}
+
 /* Create appsink + capsfilter for the tail. d3d selects D3D11Memory BGRA. */
 static void
 create_appsink_tail (TcsPlayer* p, gboolean d3d)
@@ -1382,8 +1401,11 @@ create_appsink_tail (TcsPlayer* p, gboolean d3d)
   GstAppSinkCallbacks cbs = {};
   cbs.new_sample = on_new_sample;
   gst_app_sink_set_callbacks (GST_APP_SINK (p->appsink), &cbs, p, nullptr);
+  uint32_t max_buffers = appsink_max_buffers ();
   g_object_set (p->appsink, "emit-signals", TRUE, "sync", sync_pacing, "drop", FALSE,
-      "max-buffers", 4, nullptr);
+      "max-buffers", (guint) max_buffers, nullptr);
+  if (max_buffers != 4u)
+    LOG ("appsink max-buffers: %u (TCS_APPSINK_MAX_BUFFERS)", (unsigned) max_buffers);
   GstPad* sinkpad = gst_element_get_static_pad (p->appsink, "sink");
   if (sinkpad) {
     gst_pad_add_probe (sinkpad,
