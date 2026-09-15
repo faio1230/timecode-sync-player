@@ -10,6 +10,13 @@
   B3 = compose.acquire → compose.publish（同一 scheduledQpc の合成）
   B4 = compose.publish → accuracy sample の frameTicks（完全一致結合。新ログでは 0）
 
+符号の定義:
+  signedErrorMs = 表示中の絵の PTS − LTC が期待する素材位置（負 = 絵が遅れ）
+  delta         = LTC − playback（正 = 再生位置が遅れ）
+  絵の遅れ       = signedErrorMs + delta（負 = 絵が報告位置より遅れ）
+  −(signedError + delta) − 合計 は、報告位置から絵までの遅れが B1〜B4 の内訳で
+  閉じているかを見る列（0 に近いほど閉じている）。
+
 標本は status=measured / excludedReason 空 / black-sweep 以外。中央値と p95 を
 run ごと・フェーズ別・全 run 結合で出す。判定はしない。
 
@@ -37,10 +44,19 @@ def fnum(row, key):
     return float(value)
 
 
-def gap_ref(record):
+def picture_delay(record):
+    """絵の遅れ（signedErrorMs + delta）。負 = 絵が報告位置より遅れ。"""
     if record["signed_ms"] is None or record["delta_ms"] is None:
         return None
-    return record["signed_ms"] - record["delta_ms"]
+    return record["signed_ms"] + record["delta_ms"]
+
+
+def closure_ref(record):
+    """−(絵の遅れ) − 合計。B1〜B4 の内訳で閉じているかを見る列。"""
+    delay = picture_delay(record)
+    if delay is None or record["sum"] is None:
+        return None
+    return -delay - record["sum"]
 
 
 def load_jsonl(path):
@@ -212,6 +228,14 @@ def fmt(values):
     return f"{median:.1f} / {p95:.1f} (n={len(clean)})"
 
 
+def describe(values):
+    clean = [v for v in values if v is not None]
+    if not clean:
+        return "-"
+    return (f"中央値 {statistics.median(clean):.1f} / p5 {percentile(clean, 5):.1f} / "
+            f"p95 {percentile(clean, 95):.1f} / 平均 {statistics.fmean(clean):.1f} (n={len(clean)})")
+
+
 def mean_of(values):
     clean = [v for v in values if v is not None]
     return statistics.fmean(clean) if clean else None
@@ -231,15 +255,19 @@ def report_run(run, records, misses, stage_counts):
              f"| **合計 B1+B2+B3+B4** | {fmt([r['sum'] for r in records])} |",
              f"| 参考 delta（ltc−playback） | {fmt([r['delta_ms'] for r in records])} |",
              f"| 参考 signedErrorMs | {fmt([r['signed_ms'] for r in records])} |",
-             f"| 参考 signedErrorMs−delta | {fmt([gap_ref(r) for r in records])} |",
+             f"| 参考 絵の遅れ（signedError+delta） | {fmt([picture_delay(r) for r in records])} |",
+             f"| 参考 −(絵の遅れ)−合計 | {fmt([closure_ref(r) for r in records])} |",
+             "",
+             f"- 絵の遅れ（signedError+delta）: {describe([picture_delay(r) for r in records])}",
+             f"- −(絵の遅れ)−合計: {describe([closure_ref(r) for r in records])}",
              ""]
     return "\n".join(lines)
 
 
 def report_combined(runs):
     lines = ["## 全 run 結合（run 名は --run の順）", "",
-             "| phase | n | B1 | B2 | B3 | B4 | 合計 | delta | signedError | signedError−delta |",
-             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+             "| phase | n | B1 | B2 | B3 | B4 | 合計 | delta | signedError | 絵の遅れ（signedError+delta） | −(絵の遅れ)−合計 |",
+             "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for phase in PHASES:
         rows = [r for run in runs for r in run[1] if r["phase"] == phase]
         if not rows:
@@ -248,19 +276,27 @@ def report_combined(runs):
             f"| {phase} | {len(rows)} | {fmt([r['b1'] for r in rows])} | {fmt([r['b2'] for r in rows])} | "
             f"{fmt([r['b3'] for r in rows])} | {fmt([r['b4'] for r in rows])} | "
             f"{fmt([r['sum'] for r in rows])} | {fmt([r['delta_ms'] for r in rows])} | "
-            f"{fmt([r['signed_ms'] for r in rows])} | {fmt([gap_ref(r) for r in rows])} |")
+            f"{fmt([r['signed_ms'] for r in rows])} | {fmt([picture_delay(r) for r in rows])} | "
+            f"{fmt([closure_ref(r) for r in rows])} |")
     all_rows = [r for run in runs for r in run[1]]
     lines.append(
         f"| **全体** | {len(all_rows)} | {fmt([r['b1'] for r in all_rows])} | {fmt([r['b2'] for r in all_rows])} | "
         f"{fmt([r['b3'] for r in all_rows])} | {fmt([r['b4'] for r in all_rows])} | "
         f"{fmt([r['sum'] for r in all_rows])} | {fmt([r['delta_ms'] for r in all_rows])} | "
-        f"{fmt([r['signed_ms'] for r in all_rows])} | {fmt([gap_ref(r) for r in all_rows])} |")
+        f"{fmt([r['signed_ms'] for r in all_rows])} | {fmt([picture_delay(r) for r in all_rows])} | "
+        f"{fmt([closure_ref(r) for r in all_rows])} |")
     lines.append("")
     mean_delta = mean_of([r["delta_ms"] for r in all_rows])
     mean_signed = mean_of([r["signed_ms"] for r in all_rows])
+    mean_delay = mean_of([picture_delay(r) for r in all_rows])
+    mean_closure = mean_of([closure_ref(r) for r in all_rows])
     if mean_delta is not None and mean_signed is not None:
         lines.append(f"- 平均: delta={mean_delta:+.1f}ms signedErrorMs={mean_signed:+.1f}ms "
-                     f"差={mean_signed - mean_delta:+.1f}ms（n={len(all_rows)}）")
+                     f"絵の遅れ={mean_delay:+.1f}ms（n={len(all_rows)}）")
+    if mean_closure is not None:
+        lines.append(f"- 平均: −(絵の遅れ)−合計={mean_closure:+.1f}ms")
+    lines.append(f"- 絵の遅れ（signedError+delta）: {describe([picture_delay(r) for r in all_rows])}")
+    lines.append(f"- −(絵の遅れ)−合計: {describe([closure_ref(r) for r in all_rows])}")
     lines.append("")
     return "\n".join(lines)
 
