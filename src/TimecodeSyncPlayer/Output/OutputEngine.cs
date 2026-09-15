@@ -28,6 +28,12 @@ internal sealed class OutputEngineSettings
     public OutputTrace Trace { get; init; } = OutputTrace.Disabled;
     public Action<PreviewFrame>? PreviewFrameReady { get; init; }
 
+    /// <summary>
+    /// GPU worker。source.acquire が Ready になったときの (QPC, 世代, ソース sequence)。
+    /// D7-a の先行補償が「新しい世代の最初のフレーム」を識別するために使う。
+    /// </summary>
+    public Action<long, int, long>? SourceFrameReady { get; init; }
+
     /// <summary>試験フック: GPU worker が指定時刻（起動からの秒）に GpuDeviceLostException を投げる。</summary>
     public IReadOnlyList<double> SimulatedDeviceLossSeconds { get; init; } = Array.Empty<double>();
 
@@ -951,6 +957,8 @@ internal sealed class OutputEngine : IDisposable
             settings.Trace.Add("source.acquire", "GPU", scheduled,
                 new ImageStamp(gst.Stamp.Sequence, gst.Stamp.DecodedQpc), status.ToString(),
                 (long)Math.Round(position * 1_000_000));
+            if (status == SourceStatus.Ready)
+                settings.SourceFrameReady?.Invoke(acquireEndedQpc, (int)gst.Stamp.Generation, gst.Stamp.Sequence);
             if (status == SourceStatus.Ended)
                 settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceEnded", value: 1);
             else if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
@@ -970,6 +978,8 @@ internal sealed class OutputEngine : IDisposable
                     (acquireEndedQpc - acquireStartedQpc) * 1_000_000 / Stopwatch.Frequency));
             settings.Trace.Add("source.acquire", "GPU", scheduled, acquiredStamp, status.ToString(),
                 (long)Math.Round(position * 1_000_000));
+            if (status == SourceStatus.Ready)
+                settings.SourceFrameReady?.Invoke(acquireEndedQpc, lease?.Stamp.Generation ?? 0, acquiredStamp.Id);
             if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
                 settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceNotReady", value: 1);
             if (lease != null)

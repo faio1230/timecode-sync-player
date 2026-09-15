@@ -76,13 +76,12 @@ internal sealed class LtcSignalPlayer : IDisposable
 
     public void Play(
         LtcTimecode start,
-        int fps,
+        double fps,
         TimeSpan duration,
         LtcTestSignalGenerator.Options? options = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (fps <= 0)
-            throw new ArgumentOutOfRangeException(nameof(fps));
+        ValidateFps(fps);
         if (duration <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(duration));
 
@@ -96,15 +95,14 @@ internal sealed class LtcSignalPlayer : IDisposable
 
     public void PlayWithSilence(
         LtcTimecode start,
-        int fps,
+        double fps,
         TimeSpan signalBefore,
         TimeSpan silence,
         TimeSpan signalAfter,
         LtcTestSignalGenerator.Options? options = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (fps <= 0)
-            throw new ArgumentOutOfRangeException(nameof(fps));
+        ValidateFps(fps);
         if (signalBefore <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(signalBefore));
         if (silence <= TimeSpan.Zero)
@@ -139,7 +137,7 @@ internal sealed class LtcSignalPlayer : IDisposable
         PlaySamples(monoSamples);
     }
 
-    public void PlayHeld(double seconds, int fps, TimeSpan duration)
+    public void PlayHeld(double seconds, double fps, TimeSpan duration)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         float[] samples = BuildHeldSamples(seconds, fps, duration, SampleRate);
@@ -147,17 +145,18 @@ internal sealed class LtcSignalPlayer : IDisposable
         PlaySamples(samples);
     }
 
-    internal static float[] BuildHeldSamples(double seconds, int fps, TimeSpan duration, int sampleRate)
+    internal static float[] BuildHeldSamples(double seconds, double fps, TimeSpan duration, int sampleRate)
     {
         if (!double.IsFinite(seconds) || seconds < 1 || seconds >= 24 * 3600)
             throw new ArgumentOutOfRangeException(nameof(seconds));
-        if (fps is not (24 or 25 or 30))
+        if (!IsSupportedFps(fps))
             throw new ArgumentOutOfRangeException(nameof(fps));
         if (duration < TimeSpan.FromSeconds(1))
             throw new ArgumentOutOfRangeException(nameof(duration));
         if (sampleRate <= 0)
             throw new ArgumentOutOfRangeException(nameof(sampleRate));
-        int targetFrame = (int)Math.Round(seconds * fps);
+        int nominalFps = NominalFps(fps);
+        int targetFrame = (int)Math.Round(seconds * nominalFps);
         var frames = new List<LtcTimecode>();
         // A short advancing prelude reacquires a jumped signal, followed by duplicate
         // timecodes. Settings changes must not depend on another accepted frame.
@@ -166,8 +165,29 @@ internal sealed class LtcSignalPlayer : IDisposable
         return LtcTestSignalGenerator.Generate(frames, fps: fps, sampleRate: sampleRate);
     }
 
-    private static LtcTimecode FromFrame(int frame, int fps) => new(
-        frame / (fps * 3600), frame / (fps * 60) % 60, frame / fps % 60, frame % fps, false);
+    private static LtcTimecode FromFrame(int frame, double fps)
+    {
+        int nominalFps = NominalFps(fps);
+        return new(
+            frame / (nominalFps * 3600), frame / (nominalFps * 60) % 60, frame / nominalFps % 60, frame % nominalFps, false);
+    }
+
+    /// <summary>
+    /// LTC の fps は 24 / 25 / 29.97(30000/1001) / 30 のみ。
+    /// 29.97 のタイムコード番号はノンドロップのノミナル 30 で進む。
+    /// </summary>
+    internal static void ValidateFps(double fps)
+    {
+        if (!IsSupportedFps(fps))
+            throw new ArgumentOutOfRangeException(nameof(fps));
+    }
+
+    private static bool IsSupportedFps(double fps) =>
+        Math.Abs(fps - 24.0) < 0.01 || Math.Abs(fps - 25.0) < 0.01 ||
+        Math.Abs(fps - 30.0) < 0.01 || Math.Abs(fps - (30000.0 / 1001.0)) < 0.01;
+
+    private static int NominalFps(double fps) =>
+        Math.Abs(fps - (30000.0 / 1001.0)) < 0.01 ? 30 : (int)Math.Round(fps);
 
     private void PlaySamples(float[] monoSamples)
     {
@@ -235,20 +255,20 @@ internal sealed class LtcSignalPlayer : IDisposable
 
     internal static IReadOnlyList<LtcTimecode> BuildContinuousTimecodes(
         LtcTimecode start,
-        int fps,
+        double fps,
         int frameCount)
     {
-        if (fps <= 0)
-            throw new ArgumentOutOfRangeException(nameof(fps));
+        ValidateFps(fps);
         if (frameCount <= 0)
             throw new ArgumentOutOfRangeException(nameof(frameCount));
 
+        int nominalFps = NominalFps(fps);
         var frames = new List<LtcTimecode>(frameCount);
         LtcTimecode current = start;
         for (int i = 0; i < frameCount; i++)
         {
             frames.Add(current);
-            current = LtcTestSignalGenerator.Increment(current, fps);
+            current = LtcTestSignalGenerator.Increment(current, nominalFps);
         }
 
         return frames;
@@ -256,17 +276,17 @@ internal sealed class LtcSignalPlayer : IDisposable
 
     internal static LtcTimecode AdvanceTimecode(
         LtcTimecode start,
-        int fps,
+        double fps,
         int frameCount)
     {
-        if (fps <= 0)
-            throw new ArgumentOutOfRangeException(nameof(fps));
+        ValidateFps(fps);
         if (frameCount < 0)
             throw new ArgumentOutOfRangeException(nameof(frameCount));
 
+        int nominalFps = NominalFps(fps);
         LtcTimecode current = start;
         for (int i = 0; i < frameCount; i++)
-            current = LtcTestSignalGenerator.Increment(current, fps);
+            current = LtcTestSignalGenerator.Increment(current, nominalFps);
 
         return current;
     }

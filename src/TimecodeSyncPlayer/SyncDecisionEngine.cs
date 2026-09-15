@@ -6,15 +6,22 @@ namespace TimecodeSyncPlayer;
 internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 {
     private readonly SyncDecisionOptions _options;
+    private readonly SeekLatencyCompensator? _latencyCompensator;
 
     public SyncDecisionEngine()
-        : this(new SyncDecisionOptions())
+        : this(new SyncDecisionOptions(), null)
     {
     }
 
     public SyncDecisionEngine(SyncDecisionOptions options)
+        : this(options, null)
+    {
+    }
+
+    public SyncDecisionEngine(SyncDecisionOptions options, SeekLatencyCompensator? latencyCompensator)
     {
         _options = options;
+        _latencyCompensator = latencyCompensator;
     }
 
     public SyncDecision Decide(double ltcSeconds, SyncPlaybackState state)
@@ -53,19 +60,27 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             return SyncDecision.NoneWith(fps, toleranceSeconds);
         }
 
+        // 行き先だけを先行補償する。シーク可否（delta と tolerance）は補償前の値で判定する。
+        double compensatedTarget = _latencyCompensator is null
+            ? target
+            : _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds);
+        long decideQpc = traceEnabled || _latencyCompensator != null ? Stopwatch.GetTimestamp() : 0;
+        _latencyCompensator?.MarkSeekDecision(decideQpc);
+
         // 計測専用（出力トレース有効時のみ）。シークを決めた時刻 a を同じ QPC で残す。
+        // value は seek.issue と同じ補償後のターゲットに揃える（解析側の decide/issue 対応付けを維持）。
         if (traceEnabled)
         {
             RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "seek");
-            OutputTrace.Current.Record(new("seek.decide", "SYNC", Stopwatch.GetTimestamp(),
-                Value: (long)Math.Round(target * 1_000_000.0),
+            OutputTrace.Current.Record(new("seek.decide", "SYNC", decideQpc,
+                Value: (long)Math.Round(compensatedTarget * 1_000_000.0),
                 Detail: FormattableString.Invariant(
-                    $"delta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6}")));
+                    $"delta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6} compensation={_latencyCompensator?.CompensationSeconds ?? 0.0:F6}")));
         }
 
         return new SyncDecision(
             SyncActionType.Seek,
-            target,
+            compensatedTarget,
             delta,
             toleranceSeconds,
             fps.VideoFps,

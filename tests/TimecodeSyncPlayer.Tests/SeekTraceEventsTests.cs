@@ -68,6 +68,22 @@ public class SeekTraceEventsTests
     }
 
     [Fact]
+    public void Decide_SeekWithLearnedCompensation_RecordsCompensatedTarget()
+    {
+        var compensator = new SeekLatencyCompensator();
+        compensator.MarkSeekDecision(1_000);
+        compensator.MarkSeekSent();
+        compensator.ObserveFrameReady(1_000 + (long)(0.2 * Stopwatch.Frequency), generation: 1, sourceSequence: 1); // L = 0.2
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
+
+        List<JsonElement> events = Capture(() => engine.Decide(77.25, SeekYieldingState(0.0)));
+
+        // seek.issue は補償後のターゲットで出るため、seek.decide の value も補償後で揃える。
+        Events(events, "seek.decide").Should().ContainSingle()
+            .Which.GetProperty("value").GetInt64().Should().Be(77_450_000);
+    }
+
+    [Fact]
     public void Decide_None_DoesNotRecordSeekDecide()
     {
         // |delta| = 0.1 秒 < tolerance 0.2 秒（6 フレーム @30fps）で None。

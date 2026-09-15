@@ -8,13 +8,20 @@ public record LtcTimecode(int Hours, int Minutes, int Seconds, int Frames, bool 
 
     /// <summary>
     /// タイムコードを実時間（秒）に変換する。
-    /// 実時間 = H×3600 + M×60 + S + F÷fps
-    /// DropFrame (29.97) の場合は fps = 30000/1001 を使用する。
+    /// 総フレーム数 = ((H×60+M)×60+S)×nominalFps + F（nominalFps は actualFps の四捨五入）。
+    /// DropFrame のときは 2×(総分数 − 総分数/10) を引く。実秒 = 総フレーム数 ÷ actualFps。
+    /// 24/25/30 は nominal=actual・DF なしなので従来式 (H×3600+M×60+S+F÷fps) と一致する。
+    /// 29.97 NDF はタイムコードの 1 秒が実時間 1.001 秒のため、H:M:S をそのまま実秒にしてはいけない。
     /// </summary>
     public double ToRealSeconds(double fps)
     {
         double actualFps = DropFrame ? 30000.0 / 1001.0 : fps;
-        return Hours * 3600.0 + Minutes * 60.0 + Seconds + Frames / actualFps;
+        int nominalFps = (int)Math.Round(actualFps);
+        int totalMinutes = (Hours * 60) + Minutes;
+        int totalFrames = (((totalMinutes * 60) + Seconds) * nominalFps) + Frames;
+        if (DropFrame)
+            totalFrames -= 2 * (totalMinutes - (totalMinutes / 10));
+        return totalFrames / actualFps;
     }
 
     /// <summary>実時間を秒表記（例: 10376.480 s）にフォーマットする</summary>

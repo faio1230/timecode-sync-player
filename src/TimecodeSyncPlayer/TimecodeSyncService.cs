@@ -5,6 +5,7 @@ public sealed class TimecodeSyncService
     private readonly ISyncDecisionEngine _engine;
     private readonly ITimecodeSyncSeekState _seekState;
     private readonly TimeProvider _timeProvider;
+    private readonly SeekLatencyCompensator _latencyCompensator;
 
     private DateTime _lastSyncSeekAt = DateTime.MinValue;
     private volatile bool _isLoadingFile;
@@ -24,10 +25,20 @@ public sealed class TimecodeSyncService
         ISyncDecisionEngine engine,
         ITimecodeSyncSeekState seekState,
         TimeProvider? timeProvider = null)
+        : this(engine, seekState, timeProvider, null)
+    {
+    }
+
+    internal TimecodeSyncService(
+        ISyncDecisionEngine engine,
+        ITimecodeSyncSeekState seekState,
+        TimeProvider? timeProvider,
+        SeekLatencyCompensator? latencyCompensator)
     {
         _engine = engine;
         _seekState = seekState;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _latencyCompensator = latencyCompensator ?? new SeekLatencyCompensator();
     }
 
     public SyncDecision EvaluateDecision(double ltcSeconds, SyncPlaybackState state)
@@ -76,15 +87,24 @@ public sealed class TimecodeSyncService
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _lastSyncSeekAt = now;
+        _latencyCompensator.MarkSeekSent();
         _seekState.BeginSeek(targetSeconds, now);
     }
 
     /// <summary>
     /// LoadFile 発行時に呼ぶ。シーク状態をクリアしロード中フラグを立てる。
     /// リファクタリング前の LoadFile 時 Clear() 動作を復元する。
+    /// あわせて先行補償の着地測定を arm する（issuedQpc は LoadFile 発行直前の QPC、0 は現在時刻）。
     /// </summary>
     public void BeginFileLoad(double startPositionSeconds, long renderedFrameCount)
+        => BeginFileLoad(startPositionSeconds, renderedFrameCount, loadIssuedQpc: 0);
+
+    /// <summary>
+    /// LoadFile 発行時に呼ぶ。loadIssuedQpc は LoadFile を発行した QPC（計測開始点）。
+    /// </summary>
+    internal void BeginFileLoad(double startPositionSeconds, long renderedFrameCount, long loadIssuedQpc)
     {
+        _latencyCompensator.MarkLoadSent(loadIssuedQpc);
         _isLoadingFile = true;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _fileLoadStartedAt = now;
@@ -129,6 +149,9 @@ public sealed class TimecodeSyncService
     }
 
     public ITimecodeSyncSeekState SeekState => _seekState;
+
+    /// <summary>先行補償の学習状態（トラックの引き当てとフレーム Ready 通知に使う）。</summary>
+    internal SeekLatencyCompensator LatencyCompensator => _latencyCompensator;
 
     private void LogDecisionIfNeeded(SyncDecision decision, double ltcSeconds, double playbackSeconds)
     {

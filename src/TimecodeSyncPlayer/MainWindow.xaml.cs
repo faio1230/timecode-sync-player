@@ -223,6 +223,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Environment.GetEnvironmentVariable(OutputEngineSettings.SimulateDeviceLossEnvironmentVariable)),
                 GpuStatusChanged = OnGpuStatusChanged,
                 GStreamerRebindRequested = OnGStreamerRebindRequested,
+                SourceFrameReady = (qpc, generation, sequence) =>
+                    _syncService.LatencyCompensator.ObserveFrameReady(qpc, generation, sequence),
             });
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
@@ -296,7 +298,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 {
                     _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
                     ApplyPauseState(false);
-                }),
+                },
+                GetCorrectionMode: () => _vm.Sync.SyncCorrectionMode,
+                GetPlaybackSeconds: () => ReadMpvTimePos(),
+                ApplyRateInstant: rate => _mpvApi.SetRateInstant(_mpv, rate) == 0,
+                SeekTo: target => SeekTo(target),
+                SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
@@ -314,6 +321,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         ApplyAudioControlUi(audioState.Snapshot);
         _vm.Sync.SyncModeIndex = ProjectSyncSelectionMapper.GetSyncModeIndex(settingsManager.Current.SyncMode);
         _vm.Sync.GapBehaviorIndex = ProjectSyncSelectionMapper.GetGapBehaviorIndex(settingsManager.Current.GapBehavior);
+        _vm.Sync.SyncCorrectionModeIndex =
+            settingsManager.Current.SyncCorrectionMode == SyncCorrectionMode.Jump ? 1 : 0;
         _vm.Sync.LtcSignalLossModeIndex =
             settingsManager.Current.LtcSignalLossMode == LtcSignalLossMode.Stop ? 1 : 0;
         _playlistDragDropCoordinator = new PlaylistDragDropCoordinator(new PlaylistDragDropEffects(
@@ -416,6 +425,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 case nameof(SyncViewModel.LtcFpsMode):
                     _ltcSyncController.FpsModeChanged();
                     Log.Information("LTC fps mode changed mode={Mode}", _vm.Sync.LtcFpsMode);
+                    break;
+                case nameof(SyncViewModel.SyncCorrectionMode):
+                    _ = _settingsManager.UpdateAsync(settings => settings with
+                    {
+                        SyncCorrectionMode = _vm.Sync.SyncCorrectionMode,
+                    });
+                    Log.Information("Sync correction mode changed mode={Mode}", _vm.Sync.SyncCorrectionMode);
                     break;
                 case nameof(SyncViewModel.LtcSignalLossMode):
                     _ = _settingsManager.UpdateAsync(settings => settings with
@@ -1120,6 +1136,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// </summary>
     private void SetLoadedTrack(Guid? id)
     {
+        // 着地遅延 L はトラック単位で保持する。切替では消さず、対象トラックの学習値へ引き当てる。
+        if (id != _loadedTrackId)
+            _syncService.LatencyCompensator.SelectTrack(id);
         _loadedTrackId = id;
         if (_timelinePanel != null)
             _timelinePanel.LoadedTrackId = id;

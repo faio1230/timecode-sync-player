@@ -39,11 +39,15 @@ FUNC = re.compile(r'^([A-Za-z_]\w*)\s*\([^;]*$')
 # the dedicated bus thread (bus_loop), and the sync bus handler takes no lock.
 # tcs_player_set_decode_mode (V11) is control-thread-only and makes no
 # GStreamer call while holding the lock (it writes one scalar).
+# tcs_player_set_rate_instant (T5) reads paused under state_mutex to decide
+# whether the instant-rate seek may be sent; the seek itself goes out with no
+# lock held.
 STATE_MUTEX_HOLDERS = {
     'pump_arm',
     'pump_preroll_tick',
     'tcs_player_set_paused',
     'tcs_player_set_decode_mode',
+    'tcs_player_set_rate_instant',
 }
 
 STREAMING_LOCKS = {'frame_lock'}
