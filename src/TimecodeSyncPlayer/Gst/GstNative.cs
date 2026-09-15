@@ -283,7 +283,11 @@ internal static class GstNativeLibraryResolver
         finally
         {
             // 呼び出し元(App)が設定した BaseDirectory 検索を復元する。
-            if (originalApplied)
+            // ただし同梱ランタイムでは、後から読み込まれるプラグインの依存 DLL
+            // （avcodec や gstaudio 等。dist\gstreamer\lib ではなく bin にある）も
+            // 同梱 bin から解決させる必要があるため、復元せず検索パスに残す
+            // （アプリのディレクトリは既定で検索される）。
+            if (originalApplied && root.Value.Source != GstRootSource.Bundled)
                 SetDllDirectory(AppContext.BaseDirectory);
         }
     }

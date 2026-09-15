@@ -114,7 +114,7 @@ function Copy-GStreamerBundle([string]$root, [string]$staging) {
         }
         $licenseTarget = Join-Path $staging "gstreamer\share\licenses\$component"
         New-Item -ItemType Directory -Path $licenseTarget -Force | Out-Null
-        Copy-Item -LiteralPath (Join-Path $licenseSource "*") -Destination $licenseTarget
+        Copy-Item -Path (Join-Path $licenseSource "*") -Destination $licenseTarget
     }
 }
 
