@@ -130,6 +130,36 @@ class AccuracyTests(unittest.TestCase):
         self.assertEqual(rows[0]["status"], "phase-unmatched")
         self.assertEqual(rows[1]["phaseElapsedMs"], 0)
 
+    def test_phase_start_accepts_restart_frames_lost_while_the_decoder_relocks(self):
+        # 0.04 = 1 frame lost, 0.12 = 3 frames lost (observed run-to-run jitter).
+        for first in (0.04, 0.12):
+            with self.subTest(first=first):
+                events = [frame(999, 72), ltc(1000, 30), ltc(1040, first), ltc(1080, first + .04)]
+                _, rows = self.analyze(events, phase("black-sweep", 0, 35))
+                self.assertEqual(rows[0]["status"], "phase-unmatched")
+                self.assertEqual(rows[1]["phaseElapsedMs"], 0)
+                self.assertEqual(rows[2]["phaseElapsedMs"], 40)
+
+    def test_phase_start_ignores_continuous_stale_previous_phase_frames(self):
+        events = [frame(999, 72), ltc(960, 34.92), ltc(1000, 34.96), ltc(1040, 0.04), ltc(1080, 0.08)]
+        _, rows = self.analyze(events, phase("black-sweep", 0, 35))
+        self.assertEqual(rows[1]["status"], "phase-unmatched")
+        self.assertEqual(rows[2]["phaseElapsedMs"], 0)
+        self.assertEqual(rows[3]["phaseElapsedMs"], 40)
+
+    def test_phase_start_accepts_a_forward_jump_start(self):
+        events = [frame(999, 72), ltc(1000, 7.96), ltc(1040, 15.04), ltc(1080, 15.08)]
+        _, rows = self.analyze(events, phase("seek-b", 15, 5))
+        self.assertEqual(rows[0]["status"], "phase-unmatched")
+        self.assertEqual(rows[1]["phaseElapsedMs"], 0)
+
+    def test_phase_start_not_found_is_reported_when_the_restart_is_too_far(self):
+        events = [frame(999, 72), ltc(1000, 30), ltc(1040, 0.24), ltc(1080, 0.28)]
+        summary, rows = self.analyze(events, phase("black-sweep", 0, 35))
+        self.assertEqual([row["status"] for row in rows], ["phase-unmatched"] * 3)
+        self.assertEqual(rows[-1]["excludedReason"], "phase-start-not-found")
+        self.assertIn("phase-start-not-found:black-sweep", summary["incompleteReasons"])
+
     def test_input_gap_does_not_claim_seconds_of_threshold_exceedance(self):
         summary, rows = self.analyze([frame(999, 0), ltc(1000, 0), ltc(1040, .04), ltc(3040, 2.04)])
         self.assertEqual(rows[1]["weightMs"], 0)
