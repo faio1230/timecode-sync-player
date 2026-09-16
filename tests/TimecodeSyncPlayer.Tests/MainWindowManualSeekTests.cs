@@ -52,18 +52,14 @@ public sealed class MainWindowManualSeekTests
                         .Invoke(window, [null, new TimelineSeekEventArgs(2.5, 0)]);
                     break;
             }
-            if (entry == "timeline")
+            double expectedSeek = entry switch
             {
-                // タイムラインのシークは型付き API（PlaybackOperationsCoordinator）へ移行済み。
-                playbackApi.Seeks.Should().ContainSingle().Which.Should().Be(2.5);
-                playbackApi.SetPausedCalls.Should().Contain(paused);
-            }
-            else
-            {
-                // 相対シークは順序 4 まで文字列経路のまま。
-                api.Commands.Should().ContainSingle();
-                api.Properties.Should().Contain(("pause", paused ? "yes" : "no"));
-            }
+                "back" => -10,
+                "forward" => 10,
+                _ => 2.5,
+            };
+            playbackApi.Seeks.Should().ContainSingle().Which.Should().Be(expectedSeek);
+            playbackApi.SetPausedCalls.Should().Contain(paused);
             h.AdvancePlayback(2.5, 2);
             for (int i = 0; i < 20; i++)
             {
@@ -81,6 +77,7 @@ public sealed class MainWindowManualSeekTests
     {
         public List<string> Commands { get; } = [];
         public List<(string, string)> Properties { get; } = [];
+        // MainWindow は DI 解決のために IMpvApi を要求し続ける（順序 5 で削除）。
         public IntPtr Create() => new(1);
         public int Initialize(IntPtr ctx) => 0;
         public void TerminateDestroy(IntPtr ctx) { }

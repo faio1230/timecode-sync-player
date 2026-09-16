@@ -145,7 +145,6 @@ internal sealed class ContinueOnTrackCoordinator
             _effects.ResumeMpvPause();
             _effects.ApplyPauseState(false);
         }
-        _effects.ShowOsdBar();
         _effects.UpdateCurrentTrackLabel();
     }
 
@@ -182,7 +181,6 @@ internal sealed record ContinueOnTrackEffects(
     Func<double, bool> SeekTo,
     Action ResumeMpvPause,
     Action<bool> ApplyPauseState,
-    Action ShowOsdBar,
     Action UpdateCurrentTrackLabel,
     Func<Guid?> GetLoadedTrackId,
     Action<Guid> SetLoadedTrackId,

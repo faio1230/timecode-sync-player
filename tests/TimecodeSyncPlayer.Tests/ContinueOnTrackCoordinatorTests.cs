@@ -74,7 +74,6 @@ public class ContinueOnTrackCoordinatorTests
             SeekTo: target => { Calls.Add("SeekTo"); SeekTargets.Add(target); return SeekResult; },
             ResumeMpvPause: () => Calls.Add("ResumeMpvPause"),
             ApplyPauseState: paused => Calls.Add($"ApplyPauseState({paused})"),
-            ShowOsdBar: () => Calls.Add("ShowOsdBar"),
             UpdateCurrentTrackLabel: () => Calls.Add("UpdateCurrentTrackLabel"),
             GetLoadedTrackId: () => { Calls.Add("GetLoadedTrackId"); return LoadedTrackId; },
             SetLoadedTrackId: id => { Calls.Add("SetLoadedTrackId"); SetLoadedTrackIds.Add(id); LoadedTrackId = id; },
@@ -193,7 +192,6 @@ public class ContinueOnTrackCoordinatorTests
             "DecideGapExit",
             "ResumeMpvPause",
             "ApplyPauseState(False)",
-            "ShowOsdBar",
             "UpdateCurrentTrackLabel");
         rec.SeekTargets.Should().ContainSingle().Which.Should().Be(42.0);
         // 他分岐（トラック判定・LoadFile・GetTimePos）には進まない
@@ -220,7 +218,6 @@ public class ContinueOnTrackCoordinatorTests
                 SeekTo: target => { rec.Calls.Add("SeekTo"); rec.SeekTargets.Add(target); return true; },
                 ResumeMpvPause: () => rec.Calls.Add("ResumeMpvPause"),
                 ApplyPauseState: paused => rec.Calls.Add($"ApplyPauseState({paused})"),
-                ShowOsdBar: () => rec.Calls.Add("ShowOsdBar"),
                 UpdateCurrentTrackLabel: () => rec.Calls.Add("UpdateCurrentTrackLabel"),
                 GetLoadedTrackId: () => rec.LoadedTrackId,
                 SetLoadedTrackId: id => rec.LoadedTrackId = id,
@@ -234,7 +231,6 @@ public class ContinueOnTrackCoordinatorTests
         rec.Calls.Should().Equal(
             "SeekTo",
             "DecideGapExit",
-            "ShowOsdBar",
             "UpdateCurrentTrackLabel");
         rec.SeekTargets.Should().ContainSingle().Which.Should().Be(42.0);
     }

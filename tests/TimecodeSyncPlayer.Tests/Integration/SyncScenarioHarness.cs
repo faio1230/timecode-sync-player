@@ -66,11 +66,6 @@ internal sealed class SyncScenarioHarness
                     Operations.Add(new("mpv-resume", Text: "no"));
                 },
                 ApplyPauseState: SetPaused,
-                ShowOsdBar: () =>
-                {
-                    RecordMpvProperty("osd-bar", "yes");
-                    Operations.Add(new("osd-bar", Text: "yes"));
-                },
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
                 GetLoadedTrackId: () => _loadedTrackId,
                 SetLoadedTrackId: id => _loadedTrackId = id,
