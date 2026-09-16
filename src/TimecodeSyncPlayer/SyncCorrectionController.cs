@@ -36,7 +36,7 @@ public sealed record SyncCorrectionDecision(
 /// T5: 粗いデッドゾーン（6 フレーム）の内側で残差 e = effectiveLtc - playback を見る補正。
 /// Smooth は比例制御 rate = 1 + clamp(e / T, -0.10, +0.10)（T=1.0s）でシークを発行しない。
 /// T9: 着地直後の 1.0 秒だけ上限を ±0.20 に上げ、1 秒以内の収束を狙う。
-/// Jump はデッドバンドを超えたら補正シーク（連続 3 回で諦め）。
+/// Jump はしきい値（T8: 80ms）を超えたら補正シーク（連続 3 回で諦め、残差が 1 秒留まったら再開）。
 /// Smooth 失敗（shim 非対応・効かない）は状態として公開し、アプリが操作者に見せる。
 /// </summary>
 internal sealed class SyncCorrectionController
@@ -63,9 +63,25 @@ internal sealed class SyncCorrectionController
     /// </summary>
     public static readonly TimeSpan LandingWindow = TimeSpan.FromSeconds(1.0);
 
+    /// <summary>
+    /// T8: Jump がシークするしきい値。LTC 25fps の 40ms フレームが音声コールバック
+    /// （50ms ごと）で届くため、ずれていなくても残差に ±20〜40ms の揺れが乗る。
+    /// 揺れの幅を越える最小の値として 80ms（LTC 2 フレーム分）にする。
+    /// Smooth のデッドバンド（20ms）とは別の値・別の名前。
+    /// </summary>
+    public const double JumpSeekThresholdSeconds = 0.080;
+
+    /// <summary>
+    /// T8: 残差がしきい値の内側にこれだけ留まったら連続シーク回数を 0 に戻す。
+    /// 一瞬内側に入っただけで戻すと、揺れがしきい値を跨ぐたびに上限 3 回が無効化され、
+    /// 250〜300ms ごとのシークが続く。揺れ 1 周期（40〜50ms）より十分長い 1.0 秒を初期値にする。
+    /// </summary>
+    public static readonly TimeSpan JumpSettleTime = TimeSpan.FromSeconds(1.0);
+
     private bool _rateActive;
     private bool _smoothDisabled;
     private int _consecutiveJumpSeeks;
+    private DateTime _jumpInsideSince = DateTime.MinValue;
     private DateTime _windowStartedAt = DateTime.MinValue;
     private double _windowStartAbsResidual = double.NaN;
     private DateTime _landingAt = DateTime.MinValue;
@@ -91,7 +107,7 @@ internal sealed class SyncCorrectionController
             return SyncCorrectionDecision.Idle("invalid");
 
         return mode == SyncCorrectionMode.Jump
-            ? EvaluateJump(residualSeconds, targetSeconds)
+            ? EvaluateJump(residualSeconds, targetSeconds, now)
             : EvaluateSmooth(residualSeconds, smoothAvailable, now);
     }
 
@@ -108,19 +124,26 @@ internal sealed class SyncCorrectionController
         _rateActive = false;
         _smoothDisabled = false;
         _consecutiveJumpSeeks = 0;
+        _jumpInsideSince = DateTime.MinValue;
         _landingAt = DateTime.MinValue;
         _landingLimitActive = false;
         ClearWindow();
     }
 
-    private SyncCorrectionDecision EvaluateJump(double residualSeconds, double targetSeconds)
+    private SyncCorrectionDecision EvaluateJump(double residualSeconds, double targetSeconds, DateTime now)
     {
         double abs = Math.Abs(residualSeconds);
-        if (abs <= DeadbandSeconds)
+        if (abs <= JumpSeekThresholdSeconds)
         {
-            _consecutiveJumpSeeks = 0;
+            // T8: 一瞬内側に入っただけでは連続回数を戻さない。内側に留まり続けた時間で戻す。
+            if (_jumpInsideSince == DateTime.MinValue)
+                _jumpInsideSince = now;
+            else if (now - _jumpInsideSince >= JumpSettleTime)
+                _consecutiveJumpSeeks = 0;
             return SyncCorrectionDecision.Idle("jump-idle");
         }
+
+        _jumpInsideSince = DateTime.MinValue;
 
         if (_consecutiveJumpSeeks >= MaxConsecutiveJumpSeeks)
             return SyncCorrectionDecision.Idle("jump-limit");
