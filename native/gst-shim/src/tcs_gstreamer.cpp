@@ -656,6 +656,9 @@ ensure_ring_locked (TcsPlayer* p, int width, int height)
 
   int old_w = p->ring_width, old_h = p->ring_height;
   bool rebuilt = p->ring_ready;
+  uint32_t next_epoch = p->ring_epoch + 1;  /* destroy_ring resets it to 0 */
+  if (next_epoch == 0)
+    next_epoch = 1;                         /* 0 is reserved for "no ring" */
   if (rebuilt)
   {
     /* Frames queued for the old ring can no longer be handed out through it.
@@ -725,9 +728,7 @@ ensure_ring_locked (TcsPlayer* p, int width, int height)
   p->ring_width = width;
   p->ring_height = height;
   p->ring_ready = true;
-  p->ring_epoch++;
-  if (p->ring_epoch == 0)
-    p->ring_epoch = 1;  /* 0 is reserved for "no ring" */
+  p->ring_epoch = next_epoch;
   if (rebuilt)
     LOG ("ring: recreated %dx%d epoch=%u (was %dx%d)",
         width, height, p->ring_epoch, old_w, old_h);
