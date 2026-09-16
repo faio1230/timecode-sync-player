@@ -593,7 +593,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private static string ResolveOutputSenderName()
     {
         string? fromEnv = Environment.GetEnvironmentVariable(SpoutSender.SenderNameEnvironmentVariable);
-        return string.IsNullOrWhiteSpace(fromEnv) ? SpoutOutput.DefaultSenderName : fromEnv;
+            return string.IsNullOrWhiteSpace(fromEnv) ? SpoutDefaults.DefaultSenderName : fromEnv;
     }
 
     // OutputEngine の GPU worker から呼ばれる。UI は Dispatcher に投げるだけで待たない。

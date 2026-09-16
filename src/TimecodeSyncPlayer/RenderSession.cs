@@ -46,9 +46,9 @@ internal sealed class RenderSession : IDisposable
     private bool _fullscreenActive;
     private readonly Func<SyncAccuracyTrace, PreviewFramePresenter> _createPreview;
     private IntPtr _context;
-    private MpvRenderNative.MpvRenderParam[]? _parameters;
+    private RenderParam[]? _parameters;
     // Native code does not root delegates. Retain this until RenderContextFree has returned.
-    private MpvRenderNative.MpvRenderUpdateFn? _updateCallback;
+    private RenderUpdateFn? _updateCallback;
     private long _frameSequence;
     // UI-owned: a callback lease can resume after a newer explicit redraw/capture.
     private long _lastAppliedSequence;
@@ -184,7 +184,7 @@ internal sealed class RenderSession : IDisposable
         };
         _thread.InvokeAsync(() =>
         {
-            _parameters = new MpvRenderNative.MpvRenderParam[5];
+            _parameters = new RenderParam[5];
             new StartupBufferInitializer(_nativeBuffers).Initialize("bgr0");
             _api.RenderContextSetUpdateCallback(_context, _updateCallback, IntPtr.Zero);
         })

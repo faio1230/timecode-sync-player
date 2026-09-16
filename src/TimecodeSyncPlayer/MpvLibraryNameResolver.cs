@@ -1,8 +1,9 @@
-using System.Reflection;
-using System.Runtime.InteropServices;
-
 namespace TimecodeSyncPlayer;
 
+/// <summary>
+/// mpv の候補 DLL 名（段 2 の後半で削除予定）。GStreamer の振り分けは
+/// <see cref="NativeLibraryResolver"/> が持つ。
+/// </summary>
 internal static class MpvLibraryNameResolver
 {
     internal const string ImportedLibraryName = "mpv-2.dll";
@@ -11,28 +12,4 @@ internal static class MpvLibraryNameResolver
         string.Equals(libraryName, ImportedLibraryName, StringComparison.Ordinal)
             ? [ImportedLibraryName, "libmpv-2.dll"]
             : [];
-}
-
-internal static class MpvNativeLibraryResolver
-{
-    public static void Register() =>
-        NativeLibrary.SetDllImportResolver(typeof(App).Assembly, Resolve);
-
-    private static IntPtr Resolve(
-        string libraryName,
-        Assembly assembly,
-        DllImportSearchPath? searchPath)
-    {
-        if (TimecodeSyncPlayer.Gst.GstNative.IsGstLibrary(libraryName))
-            return TimecodeSyncPlayer.Gst.GstNativeLibraryResolver.ResolveLibrary(
-                libraryName, assembly, searchPath);
-
-        foreach (string candidate in MpvLibraryNameResolver.GetCandidates(libraryName))
-        {
-            if (NativeLibrary.TryLoad(candidate, assembly, searchPath, out IntPtr handle))
-                return handle;
-        }
-
-        return IntPtr.Zero;
-    }
 }

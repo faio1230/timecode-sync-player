@@ -11,7 +11,7 @@ public class RenderContextParameterBuilderTests
         var api = new FakeMpvRenderApi();
         IntPtr sw = new(123);
 
-        MpvRenderNative.MpvRenderParam[] parameters = RenderContextParameterBuilder.BuildSoftwareBackendParams(api, sw);
+        RenderParam[] parameters = RenderContextParameterBuilder.BuildSoftwareBackendParams(api, sw);
 
         parameters.Should().HaveCount(2);
         parameters[0].Type.Should().Be(api.MpvRenderParamApiType);
@@ -29,14 +29,14 @@ public class RenderContextParameterBuilderTests
         public int MpvRenderParamSwPointer => 20;
         public string MpvRenderApiTypeSw => "sw";
         public ulong MpvRenderUpdateFrame => 1;
-        public int RenderContextCreate(out IntPtr res, IntPtr mpv, MpvRenderNative.MpvRenderParam[] parameters)
+        public int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters)
         {
             res = IntPtr.Zero;
             return 0;
         }
         public ulong RenderContextUpdate(IntPtr ctx) => 0;
-        public int RenderContextRender(IntPtr ctx, MpvRenderNative.MpvRenderParam[] parameters) => 0;
-        public void RenderContextSetUpdateCallback(IntPtr ctx, MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx) { }
+        public int RenderContextRender(IntPtr ctx, RenderParam[] parameters) => 0;
+        public void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx) { }
         public void RenderContextFree(IntPtr ctx) { }
     }
 }

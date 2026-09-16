@@ -4,18 +4,18 @@ namespace TimecodeSyncPlayer;
 
 internal static class RenderContextParameterBuilder
 {
-    public static MpvRenderNative.MpvRenderParam[] BuildSoftwareBackendParams(
+    public static RenderParam[] BuildSoftwareBackendParams(
         IMpvRenderApi mpvRenderApi,
         IntPtr apiTypeString)
     {
         return
         [
-            new MpvRenderNative.MpvRenderParam
+            new RenderParam
             {
                 Type = mpvRenderApi.MpvRenderParamApiType,
                 Data = apiTypeString
             },
-            new MpvRenderNative.MpvRenderParam
+            new RenderParam
             {
                 Type = 0,
                 Data = IntPtr.Zero

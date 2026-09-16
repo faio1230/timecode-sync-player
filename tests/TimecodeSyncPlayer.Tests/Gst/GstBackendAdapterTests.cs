@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Runtime.InteropServices;
 using FluentAssertions;
+using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Gst;
 
 namespace TimecodeSyncPlayer.Tests.Gst;
@@ -254,16 +255,16 @@ public class GstMpvApiAdapterTests
 
 public class GstMpvRenderApiAdapterTests
 {
-    private static MpvRenderNative.MpvRenderParam[] BuildParams(
+    private static RenderParam[] BuildParams(
         IntPtr sizePtr, IntPtr stridePtr, IntPtr formatPtr, IntPtr pixelPtr)
     {
         return
         [
-            new MpvRenderNative.MpvRenderParam { Type = 17, Data = sizePtr },
-            new MpvRenderNative.MpvRenderParam { Type = 18, Data = formatPtr },
-            new MpvRenderNative.MpvRenderParam { Type = 19, Data = stridePtr },
-            new MpvRenderNative.MpvRenderParam { Type = 20, Data = pixelPtr },
-            new MpvRenderNative.MpvRenderParam { Type = 0, Data = IntPtr.Zero },
+            new RenderParam { Type = 17, Data = sizePtr },
+            new RenderParam { Type = 18, Data = formatPtr },
+            new RenderParam { Type = 19, Data = stridePtr },
+            new RenderParam { Type = 20, Data = pixelPtr },
+            new RenderParam { Type = 0, Data = IntPtr.Zero },
         ];
     }
 

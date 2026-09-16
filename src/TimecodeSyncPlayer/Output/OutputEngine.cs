@@ -22,7 +22,7 @@ internal sealed class OutputEngineSettings
     public double ComposeLeadMs { get; init; } = 3;
     public double SendPhaseMs { get; init; } = 4;
     public long? AdapterLuid { get; init; }
-    public string SenderName { get; init; } = SpoutOutput.DefaultSenderName;
+    public string SenderName { get; init; } = SpoutDefaults.DefaultSenderName;
     public bool SpoutEnabled { get; init; }
     public bool TestCardEnabled { get; init; }
     public OutputTrace Trace { get; init; } = OutputTrace.Disabled;

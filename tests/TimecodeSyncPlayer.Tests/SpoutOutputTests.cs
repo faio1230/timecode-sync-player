@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -102,7 +103,7 @@ public class SpoutOutputTests
             "Validate",
             "Create",
             $"Open:{native.Object}:0",
-            $"SetName:{native.Object}:{SpoutOutput.DefaultSenderName}",
+            $"SetName:{native.Object}:{SpoutDefaults.DefaultSenderName}",
             "CreateTransfer",
             "Validate");
     }
@@ -145,7 +146,7 @@ public class SpoutOutputTests
             "Validate",
             "Create",
             $"Open:{native.Object}:0",
-            $"SetName:{native.Object}:{SpoutOutput.DefaultSenderName}",
+            $"SetName:{native.Object}:{SpoutDefaults.DefaultSenderName}",
             $"Destroy:{native.Object}");
     }
 
