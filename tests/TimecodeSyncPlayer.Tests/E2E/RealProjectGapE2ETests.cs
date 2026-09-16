@@ -37,15 +37,22 @@ public sealed class RealProjectGapE2ETests
             ConfigureSync(app);
 
             // Independent interval expectations from the original project file, retaining row priority.
+            // 開始境界の手前は 2 フレーム（25fps で 80ms）を使う。T2 のサンプル時計（既定 on）は
+            // フレーム終端からの経過（通常 40〜60ms、上限 0.5s）を同期値に足すため、1 フレーム手前
+            // （40ms）では受信時点の実時間が既に境界を越えていることがあり、アプリが次のトラックへ
+            // 入るのが正しい挙動になる。境界ちょうどの checkpoint が移行後の確認を兼ねる。
+            // 終端側は手前チェックを置かない: 保持 LTC でも age の分だけ実時間が先行し、
+            // メディアが EOF に達してギャップへ入る（「まだ現トラック」は安定して観測できない）。
             var checkpoints = new SortedSet<double> { 1 };
             foreach (TrackData track in project.Tracks.Where(t => t.IsEnabled))
             {
-                foreach (double boundary in new[] { track.TimelineOffset.TotalSeconds, End(track) })
-                {
-                    double nextFrame = Math.Ceiling(boundary * 25) / 25;
-                    if (nextFrame - 0.04 >= 1) checkpoints.Add(Math.Round(nextFrame - 0.04, 2));
-                    if (nextFrame >= 1) checkpoints.Add(nextFrame);
-                }
+                double start = track.TimelineOffset.TotalSeconds;
+                double startFrame = Math.Ceiling(start * 25) / 25;
+                if (startFrame - 0.08 >= 1) checkpoints.Add(Math.Round(startFrame - 0.08, 2));
+                if (startFrame >= 1) checkpoints.Add(startFrame);
+
+                double endFrame = Math.Ceiling(End(track) * 25) / 25;
+                if (endFrame >= 1) checkpoints.Add(endFrame);
             }
             foreach (double seconds in checkpoints)
             {
@@ -157,9 +164,10 @@ public sealed class RealProjectGapE2ETests
         TrackData media = source.Tracks.First(t => t.Name == "Substitute_A");
         string localMedia = Path.Combine(report, "freeze-anchor.mp4");
         File.Copy(media.FilePath, localMedia);
+        TimeSpan trimmedMediaOut = TimeSpan.FromSeconds(10);
         var playlist = new PlaylistState();
         playlist.Tracks.Add(new PlaylistTrack(media.Id, localMedia, media.Name,
-            TimeSpan.Zero, TimeSpan.FromSeconds(10), TimeSpan.Zero,
+            TimeSpan.Zero, trimmedMediaOut, TimeSpan.Zero,
             media.MediaDuration, TimeSpan.Zero, media.FrameRate, true));
         string fixturePath = Path.Combine(report, "visible-freeze.tsp");
         await ProjectSerializer.SaveAsync(fixturePath, playlist, SyncMode.Continue, GapBehavior.Black,
@@ -188,13 +196,15 @@ public sealed class RealProjectGapE2ETests
         app.Combo("SyncModeCombo").Select(1);
         Wait(app, () => app.Text("CurrentTrackLabel").Contains("Gap: Black"), "Silent Continue restores gap");
         AssertBlackImage(app, report, "trimmed-continue-restored", journal);
-        // Rewinding after mpv's keep-open EOF pause must restore the intended playback state.
+        // Rewinding after the EOF pause must restore the intended playback state.
+        // Single モードの EOF はクリップの実効終端（MediaOut=10 秒）で判定する。
+        // ファイル長（MediaDuration）まで再生するのは mpv 実装依存の旧挙動だった。
         app.Combo("SyncModeCombo").Select(0);
         if (app.Button("BtnPlay").Name == "▶") app.Button("BtnPlay").Invoke();
         double beyondEnd = Math.Ceiling(media.MediaDuration.TotalSeconds) + 2;
         signal.PlayHeld(beyondEnd, 25, TimeSpan.FromSeconds(15));
         WaitForHeld(app, beyondEnd);
-        Wait(app, () => PlaybackSeconds(app) >= media.MediaDuration.TotalSeconds - 0.15, "Single reaches EOF");
+        Wait(app, () => PlaybackSeconds(app) >= trimmedMediaOut.TotalSeconds - 0.15, "Single reaches EOF");
         signal.PlayHeld(5, 25, TimeSpan.FromSeconds(15));
         WaitForHeld(app, 5);
         signal.Stop();

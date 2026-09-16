@@ -107,7 +107,7 @@ public sealed class GStreamerBackendE2ETests
                 "受信側の再起動をまたいで GPU 公開フレーム数が増えている");
 
             // GPU デコーダが選択されたことがアプリログに残る
-            string appLog = WaitForLog(exePath, "プレイヤー生成", TimeSpan.FromSeconds(10));
+            string appLog = WaitForLog(exePath, "プレイヤー生成", runStartedLocal, TimeSpan.FromSeconds(10));
             appLog.Should().Contain("GstBackendState: プレイヤー生成");
             appLog.Should().MatchRegex(@"FetchMetadata: 1280x720 .*V:d3d11h264dec");
         }
@@ -148,7 +148,7 @@ public sealed class GStreamerBackendE2ETests
 
             // ログは run をまたいで追記されるため、この run の開始時刻以降の行だけを見る（過去 run を拾わない）。
             DateTime runStartedLocal = runner.Process.StartTime;
-            int failuresBefore = CountInLog(exePath, "loadfile 失敗");
+            int failuresBefore = CountInLog(exePath, "load 失敗", runStartedLocal);
 
             Button next = Button(runner, "BtnNextTrack");
             Button prev = Button(runner, "BtnPreviousTrack");
@@ -177,7 +177,7 @@ public sealed class GStreamerBackendE2ETests
             runner.Process.HasExited.Should().BeFalse("切り替え反復後もアプリは動作継続している");
             ContainsInOrder(actualIndices, expectedIndices).Should().BeTrue(
                 $"期待するロード順 [{string.Join(",", expectedIndices)}] に対して実際は [{string.Join(",", actualIndices)}]");
-            CountInLog(exePath, "loadfile 失敗").Should().Be(failuresBefore,
+            CountInLog(exePath, "load 失敗", runStartedLocal).Should().Be(failuresBefore,
                 "全トラックのロードが成功している");
         }
         finally
@@ -203,7 +203,10 @@ public sealed class GStreamerBackendE2ETests
             runner = E2EAppRunner.Start(
                 exePath, $"--open \"{media}\"", settingsPath, pausePlaybackIfNeeded: false);
 
-            WaitForLog(exePath, "first frame displayed", TimeSpan.FromSeconds(15));
+            // 出荷構成（GStreamer + Gpu）の公開フレーム数で再生開始を待つ。
+            // 「first frame displayed」は段 3 で消えたため使わない。
+            DateTime runStartedLocal = runner.Process.StartTime;
+            WaitForGpuPublishedFrame(exePath, runStartedLocal, TimeSpan.FromSeconds(15));
             Thread.Sleep(1000); // 再生が数フレーム進む
 
             runner.MainWindow.Close();
@@ -290,26 +293,66 @@ public sealed class GStreamerBackendE2ETests
             ? bin : null;
     }
 
-    private static string WaitForLog(string exePath, string needle, TimeSpan timeout)
+    /// <summary>
+    /// sinceLocal 以降の行だけを返す。ログは run をまたいで追記されるため、
+    /// 過去 run の同じ文言を拾って偽合格しないようにする。
+    /// </summary>
+    private static IEnumerable<string> LinesSince(string text, DateTime sinceLocal)
+    {
+        foreach (string line in text.Split('\n'))
+        {
+            Match t = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+            if (!t.Success ||
+                !DateTime.TryParse(t.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime at) ||
+                at < sinceLocal)
+                continue;
+            yield return line;
+        }
+    }
+
+    private static string WaitForLog(string exePath, string needle, DateTime sinceLocal, TimeSpan timeout)
     {
         string exeDir = Path.GetDirectoryName(exePath)!;
         DateTime deadline = DateTime.UtcNow + timeout;
-        string text = "";
+        string scoped = "";
         while (DateTime.UtcNow < deadline)
         {
-            text = ReadNewestLog(exeDir);
-            if (text.Contains(needle, StringComparison.Ordinal)) return text;
+            string text = ReadNewestLog(exeDir);
+            scoped = string.Join('\n', LinesSince(text, sinceLocal));
+            if (scoped.Contains(needle, StringComparison.Ordinal)) return scoped;
             Thread.Sleep(400);
         }
-        text.Should().Contain(needle, $"アプリログに '{needle}' が記録されるはず");
-        return text;
+        scoped.Should().Contain(needle, $"この run のアプリログに '{needle}' が記録されるはず");
+        return scoped;
     }
 
-    private static int CountInLog(string exePath, string needle)
+    private static int CountInLog(string exePath, string needle, DateTime sinceLocal)
     {
-        string exeDir = Path.GetDirectoryName(exePath)!;
-        string text = ReadNewestLog(exeDir);
-        return Regex.Matches(text, Regex.Escape(needle)).Count;
+        string text = ReadNewestLog(Path.GetDirectoryName(exePath)!);
+        return LinesSince(text, sinceLocal).Sum(line => Regex.Matches(line, Regex.Escape(needle)).Count);
+    }
+
+    /// <summary>
+    /// この run の Playback perf 行で gpuPublishedFrames が 0 を超えるまで待つ。
+    /// 「first frame displayed」は段 3（CPU 合成の除去）で製品から消えたため、
+    /// 出荷構成（GStreamer + Gpu）の公開フレーム数で再生開始を判定する。
+    /// </summary>
+    private static void WaitForGpuPublishedFrame(string exePath, DateTime sinceLocal, TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        long published = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            published = GpuPublishSamples(exePath)
+                .Where(sample => sample.At >= sinceLocal)
+                .Select(sample => sample.Published)
+                .DefaultIfEmpty(0)
+                .Max();
+            if (published > 0) return;
+            Thread.Sleep(400);
+        }
+        published.Should().BeGreaterThan(0,
+            "この run で GPU 公開フレーム数が 0 を超えている（再生が始まっている）");
     }
 
     /// <summary>

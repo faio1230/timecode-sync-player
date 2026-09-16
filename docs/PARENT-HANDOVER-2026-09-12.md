@@ -2,6 +2,10 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-17 04:10 更新（16 回目）**: 段 5 後半（文書・CHANGELOG 0.4.0・バージョン 0.4.0・配布物確認）は agent-b `f787393` で完了報告、統合待ち（E2E 全件 63/63 の確認後）。
+> Q3 統合済み（`093de7e`）、main の E2E 全件 59/0/10（親のツリー）。V5 シーク連打 合格。V4 は代替プロジェクトでテストの期待値（境界 − 1 フレーム）がサンプル時計と衝突 → 境界 − 2 フレームへ直して再実行中。
+> 残り: V4 再実行 → 除去担当の E2E 全件 → V6 60 分 → 段 5 後半の統合 → リリース手順（`docs/RELEASE-PROCEDURE-0.4.md`）。
+>
 > **2026-09-17 02:30 更新（15 回目）**: **段 4 完了・統合（`72d0ebb`）。v0.4 の本体作業（mpv 除去・CPU 合成除去・型付き API）は main で完了。** 残りは段 5 後半（文書・配布物・リリースノート、`docs/prompts/2026-09-17-STAGE5B-docs-release.md`、`w5:p6`）。
 > テスト側の欠陥 Q3（`ClosesGracefullyDuringPlayback` が段 3 で消えたログ行を待ち、古いログで偽合格）を `w5:p3` が修正中。`LtcHardwareLoop` の 1 件は全件でだけ落ちる不安定さの疑い（要観察）。Q2（一時ファイルの分離）と H1、D10 も統合済み。
 >
