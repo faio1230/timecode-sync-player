@@ -374,6 +374,7 @@ struct TcsPlayer {
   /* stream info (frame_lock) */
   std::string path;
   std::string decoder_name;
+  std::string decoder_element_name;       /* D16-b: adapter-matched decoder class for this attempt */
   std::string last_error;
   std::string last_bus_error;             /* O1: last GST_MESSAGE_ERROR text of this load */
   double fps = 0.0;
@@ -620,6 +621,28 @@ create_or_adopt_device (TcsPlayer* p, ID3D11Device* external)
     return FALSE;
   }
   return TRUE;
+}
+
+/* Adapter LUID of a D3D11 device (0:0 when it cannot be read). Used by the
+ * D16 diagnostics to name both devices in one log line. */
+static bool
+device_luid (ID3D11Device* dev, LUID* out)
+{
+  out->HighPart = 0;
+  out->LowPart = 0;
+  IDXGIDevice* dxgi = nullptr;
+  if (!dev || FAILED (dev->QueryInterface (__uuidof(IDXGIDevice), (void**) &dxgi)) || !dxgi)
+    return false;
+  IDXGIAdapter* adapter = nullptr;
+  HRESULT hr = dxgi->GetAdapter (&adapter);
+  dxgi->Release ();
+  if (FAILED (hr) || !adapter)
+    return false;
+  DXGI_ADAPTER_DESC desc = {};
+  adapter->GetDesc (&desc);
+  adapter->Release ();
+  *out = desc.AdapterLuid;
+  return true;
 }
 
 static void
@@ -1102,6 +1125,34 @@ on_new_sample (GstAppSink* sink, gpointer user)
     else
       src_tex = nullptr;  /* legacy sample path handles the flatten later */
   }
+  /* D16 defense: never pass a foreign-device resource to p->context (or to the
+   * compositor). A hybrid GPU decoder can create its own device on another
+   * adapter; fail the load instead of crashing in the driver. */
+  if (src_tex && p->device) {
+    ID3D11Device* src_dev = nullptr;
+    src_tex->GetDevice (&src_dev);
+    if (!src_dev || src_dev != p->device) {
+      LUID src_luid = {}, shim_luid = {};
+      device_luid (src_dev, &src_luid);
+      device_luid (p->device, &shim_luid);
+      if (src_dev)
+        src_dev->Release ();
+      src_tex->Release ();
+      if (d3d_mapped)
+        gst_memory_unmap (mem, &d3d_map);
+      {
+        std::lock_guard<std::mutex> g (p->frame_lock);
+        p->failed = true;
+      }
+      set_error (p, "on_new_sample: decoder memory is on another adapter "
+          "(src_luid=%08lx:%08lx shim_luid=%08lx:%08lx)",
+          (unsigned long) src_luid.HighPart, (unsigned long) src_luid.LowPart,
+          (unsigned long) shim_luid.HighPart, (unsigned long) shim_luid.LowPart);
+      gst_sample_unref (sample);
+      return GST_FLOW_OK;
+    }
+    src_dev->Release ();
+  }
   const GstSegment* seg = gst_sample_get_segment (sample);
   bool has_buffer_pts = buf && GST_BUFFER_PTS (buf) != GST_CLOCK_TIME_NONE;
   guint64 raw_pts = has_buffer_pts
@@ -1402,6 +1453,117 @@ profile_matches_caps (const VideoProfile* prof, GstCaps* caps)
   return FALSE;
 }
 
+/* D16: the GPU profiles must decode on the shim's own device (the ring
+ * device). On a hybrid GPU the d3d11 decoder can create its own device on
+ * another adapter for a codec the shim adapter cannot decode (AV1 on an AMD
+ * iGPU) and then hand foreign-device memory to p->context. Query the decoder
+ * profiles of the shim adapter and skip such GPU profiles before building
+ * their chain. CPU profiles return true (no adapter restriction).
+ * The GUID values are the SDK's D3D11_DECODER_PROFILE_* constants (the
+ * d3d11.lib does not export the symbols, so they are repeated here). */
+static const GUID kGuidH264VldNofgt = {
+  0x1b81be68, 0xa0c7, 0x11d3, { 0xb9, 0x84, 0x00, 0xc0, 0x4f, 0x2e, 0x73, 0xc5 } };
+static const GUID kGuidHevcVldMain = {
+  0x5b11d51b, 0x2f4c, 0x4452, { 0xbc, 0xc3, 0x09, 0xf2, 0xa1, 0x16, 0x0c, 0xc0 } };
+static const GUID kGuidVp9VldProfile0 = {
+  0x463707f8, 0xa1d0, 0x4585, { 0x87, 0x6d, 0x83, 0xaa, 0x6d, 0x60, 0xb8, 0x9e } };
+static const GUID kGuidAv1VldProfile0 = {
+  0xb8be4ccb, 0xcf53, 0x46ba, { 0x8d, 0x59, 0xd6, 0xb8, 0xa6, 0xda, 0x5d, 0x2a } };
+
+static const GUID*
+profile_decoder_guid (int idx)
+{
+  if (idx < 0 || idx >= kProfileCount)
+    return nullptr;
+  const char* dec = g_profiles[idx].dec;
+  if (dec == nullptr)
+    return nullptr;
+  if (g_strcmp0 (dec, "d3d11h264dec") == 0)
+    return &kGuidH264VldNofgt;
+  if (g_strcmp0 (dec, "d3d11h265dec") == 0)
+    return &kGuidHevcVldMain;
+  if (g_strcmp0 (dec, "d3d11vp9dec") == 0)
+    return &kGuidVp9VldProfile0;
+  if (g_strcmp0 (dec, "d3d11av1dec") == 0)
+    return &kGuidAv1VldProfile0;
+  return nullptr;
+}
+
+static bool
+adapter_supports_profile (TcsPlayer* p, int idx)
+{
+  const GUID* want = profile_decoder_guid (idx);
+  if (!want)
+    return true;
+  if (env_flag ("TCS_FORCE_DECODER_ADAPTER_MISMATCH"))
+    return false;  /* test hook: exercise the CPU fallback */
+  ID3D11VideoDevice* vd = nullptr;
+  if (!p->device ||
+      FAILED (p->device->QueryInterface (__uuidof(ID3D11VideoDevice), (void**) &vd)) || !vd)
+    return true;   /* cannot tell: keep the previous behavior */
+  const UINT n = vd->GetVideoDecoderProfileCount ();
+  bool found = false;
+  for (UINT i = 0; i < n && !found; i++) {
+    GUID g;
+    if (SUCCEEDED (vd->GetVideoDecoderProfile (i, &g)) &&
+        memcmp (&g, want, sizeof (GUID)) == 0)
+      found = true;
+  }
+  vd->Release ();
+  return found;
+}
+
+/* D16-b: d3d11 decoder classes are registered per adapter at plugin load
+ * (d3d11h264dec = the first enumerated adapter, d3d11h264deviceNdec = the
+ * N-th). The class adapter-luid decides which device the element creates, and
+ * a context on another adapter is rejected, so a decoder whose class LUID
+ * differs from the ring device never uses our device. Pick the class that
+ * matches; otherwise report the mismatch so the GPU profile is skipped. */
+static bool
+decoder_matches_shim_adapter (TcsPlayer* p, int idx, std::string* name_out)
+{
+  if (idx < 0 || idx >= kProfileCount || profile_is_software (idx))
+    return true;   /* CPU profile: no adapter restriction */
+  const char* base = g_profiles[idx].dec;
+  if (!base)
+    return true;
+  *name_out = base;
+  LUID luid = {};
+  if (!device_luid (p->device, &luid))
+    return true;   /* cannot tell: keep the previous behavior */
+  const gint64 want = gst_d3d11_luid_to_int64 (&luid);
+  const bool force = env_flag ("TCS_FORCE_DECODER_LUID_MISMATCH");
+  char candidate[64];
+  for (int i = 0; i < 8; i++) {
+    if (i == 0) {
+      if (strlen (base) >= sizeof (candidate))
+        return true;
+      snprintf (candidate, sizeof (candidate), "%s", base);
+    } else {
+      size_t prefix = strlen (base) >= 3 ? strlen (base) - 3 : 0;
+      if (prefix + 16 >= sizeof (candidate))
+        return true;
+      snprintf (candidate, sizeof (candidate), "%.*sdevice%ddec", (int) prefix, base, i);
+    }
+    GstElement* el = gst_element_factory_make (candidate, nullptr);
+    if (!el)
+      continue;
+    gint64 actual = 0;
+    g_object_get (el, "adapter-luid", &actual, nullptr);
+    gst_object_unref (el);
+    if (!force && actual == want) {
+      *name_out = candidate;
+      LOG ("decoder class: %s luid=%016llx matches shim device", candidate,
+          (unsigned long long) actual);
+      return true;
+    }
+    LOG ("decoder class: %s luid=%016llx shim=%016llx%s", candidate,
+        (unsigned long long) actual, (unsigned long long) want,
+        force ? " (forced mismatch)" : "");
+  }
+  return false;
+}
+
 /* V11-e measurement switch: feed avdec_* the multithreading properties from the
  * environment. Unset (the default) leaves the properties untouched, so the
  * shipped behavior is unchanged. Properties that the element does not have are
@@ -1528,7 +1690,9 @@ build_video_chain_static (TcsPlayer* p, int idx)
   GstElement* head = nullptr;
   p->vqueue = gst_element_factory_make ("queue", nullptr);
   p->vparse = prof->parse ? gst_element_factory_make (prof->parse, nullptr) : nullptr;
-  p->vdec = prof->dec ? gst_element_factory_make (prof->dec, nullptr) : nullptr;
+  const char* dec_name = (!profile_is_software (idx) && !p->decoder_element_name.empty ())
+      ? p->decoder_element_name.c_str () : prof->dec;
+  p->vdec = dec_name ? gst_element_factory_make (dec_name, nullptr) : nullptr;
   apply_decode_thread_env (p->vdec);
   p->vconvert = gst_element_factory_make (prof->conv, nullptr);
   /* CPU profiles decode to sysmem; d3d11upload moves it to the shim device and
@@ -2251,6 +2415,31 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     teardown_pipeline (p);
     teardown_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     t_anchor = qpc_now ();
+    /* D16: a GPU profile whose decoder is not available on the shim adapter
+     * would run on a foreign device (hybrid GPU). Skip it so the order falls
+     * through to the CPU profile. */
+    if (!adapter_supports_profile (p, idx)) {
+      LUID luid = {};
+      device_luid (p->device, &luid);
+      LOG ("load.skip path=%s attempt=%d profile=%s reason=adapter-lacks-decoder "
+          "adapter_luid=%08lx:%08lx",
+          utf8_path, attempt, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
+          (unsigned long) luid.HighPart, (unsigned long) luid.LowPart);
+      log_attempt ("skipped-adapter-unsupported");
+      continue;
+    }
+    /* D16-b: the decoder class must be registered for the shim adapter; the
+     * per-adapter variants are tried by the helper. */
+    if (!decoder_matches_shim_adapter (p, idx, &p->decoder_element_name)) {
+      LUID luid = {};
+      device_luid (p->device, &luid);
+      LOG ("load.skip path=%s attempt=%d profile=%s reason=decoder-adapter-mismatch "
+          "shim_luid=%08lx:%08lx",
+          utf8_path, attempt, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
+          (unsigned long) luid.HighPart, (unsigned long) luid.LowPart);
+      log_attempt ("skipped-decoder-adapter");
+      continue;
+    }
     /* Method 5 applies to the tsdemux container only (other demuxers keep
      * the accurate seek). */
     p->mpegts = g_strcmp0 (container, "tsdemux") == 0;
