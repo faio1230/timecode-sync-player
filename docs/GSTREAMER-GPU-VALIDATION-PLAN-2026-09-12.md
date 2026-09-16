@@ -2646,3 +2646,9 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - 運用の罠 2 件（親の記録。引き継ぎの罠 7・8）: 他ツリーの素材を相対パスで渡すとアプリが読めずハーネスが止まる／`Invoke-AppGpuTrial.ps1 -SeekAtSeconds` はランナーが返らない（H1 として同期担当が切り分け中）。
   いずれの停止も親がアプリの PID を止めて復旧した。あわせて、param 内の `$PSScriptRoot` が空になる件（親の scrub で入れた既定値）をスクリプト本体で解決するよう直した
 
+## H1: 実機ハーネス `Invoke-AppGpuTrial.ps1` の seek 指定でアプリが残る件の修正（2026-09-17 00:30〜01:20、同期担当、親の確認）
+
+- 原因: アプリの SeekBar は 0..1 の正規化値。`-SeekAtSeconds "5:15"` の 15 をそのまま `RangeValuePattern.SetValue` に渡して例外 → 大きな try/catch が終了シーケンス（全画面解除 → WM_CLOSE → 終了待ち）ごと飛ばし、アプリが残って呼び出し側が待ち続けた
+- 修正 `666b0f8`: 仕様を「秒:正規化位置 0..1」と明記して起動前に値域を検証、`Set-Slider` は Min/Max で clamp して steps に記録、mark ごとに try/catch、finally で所有アプリ（PID+開始時刻）が残っていれば WM_CLOSE → 5 秒で Kill、`-OverallTimeoutSeconds`（既定 Seconds+90）
+- 実機: 0.5 で target 15.000 のシークが success・exit 0、範囲外は起動前エラー（プロセス起動 0）、clamp は VolumeSlider 200 → 100 で記録、全体タイムアウト 1 秒では `app killed by H1 cleanup after 5 s` と runner-result.json が残る
+
