@@ -213,7 +213,7 @@ internal sealed class OutputEngine : IDisposable
     /// UI スレッド。GStreamer プレイヤーをソースとして接続する（Gpu 出力時）。
     /// 以降、合成 tick は CPU アップロードではなく shim のリースを取得してエンジン slot へ GPU コピーする。
     /// </summary>
-    public void AttachGStreamerSource(IntPtr player, TimecodeSyncPlayer.Gst.IGstNativeApi native)
+    public void AttachGStreamerSource(IntPtr player, TimecodeSyncPlayer.Gst.IGstNativeApi native, Action? onEnded = null)
         => Enqueue(() =>
         {
             if (player == IntPtr.Zero || gpu == null)
@@ -228,7 +228,8 @@ internal sealed class OutputEngine : IDisposable
             // 合成デバイスはリングを開いてフェンス待ちに使う（この gpu を渡す）。
             gstSource = new GStreamerSource(new GstNativeLeasePlayer(native, player),
                 gpu.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture), gpu,
-                onRingOpened: () => leadSuspension.OnSharedRingOpened());
+                onRingOpened: () => leadSuspension.OnSharedRingOpened(),
+                onEnded: onEnded);
             gstNative = native;
             gstPlayer = player;
             lastGstSequence = -1;

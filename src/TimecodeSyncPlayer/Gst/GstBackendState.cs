@@ -25,11 +25,12 @@ internal sealed class GstBackendState : IDisposable
     private RenderUpdateFn? _renderCallback;
     private IntPtr _renderCallbackCtx;
 
-    public GstBackendState(IGstNativeApi native, AppSettingsManager? settingsManager = null)
+    public GstBackendState(IGstNativeApi native, AppSettingsManager? settingsManager = null,
+        TimeProvider? timeProvider = null)
     {
         _native = native;
         _settingsManager = settingsManager;
-        Seeking = new GstSeekingTracker(this);
+        Seeking = new GstSeekingTracker(this, timeProvider);
     }
 
     public IGstNativeApi Native => _native;

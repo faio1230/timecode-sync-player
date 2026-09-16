@@ -2,6 +2,16 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-17 06:10 更新（18 回目）**: V6（60 分）を `w5:p3` が 00:47:55 開始（終了予定 01:49）。リリースノート本文 `docs/release-notes/v0.4.0.md`、手順 `docs/RELEASE-PROCEDURE-0.4.md`。
+> Inno Setup は `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`（package-release.ps1 が自動検出）。V6 の後: `package-release.ps1` → SHA-256 記録 → 展開して起動確認 → `git tag v0.4.0` → `gh release create --prerelease`。
+>
+> **2026-09-17 05:40 更新（17 回目）**: **段 5 後半・D11・F1 を統合（`85f855b`）。バージョン 0.4.0。E2E 全件 63/63（agent-b の環境）、V4・V5 合格。** 残りは V6 60 分（`w5:p3` が実行中）→ 配布物作成（`scripts/package-release.ps1`）→ タグ・公開（`docs/RELEASE-PROCEDURE-0.4.md`）。
+> V6 の間はビルド・実機を止める。
+>
+> **2026-09-17 04:10 更新（16 回目）**: 段 5 後半（文書・CHANGELOG 0.4.0・バージョン 0.4.0・配布物確認）は agent-b `f787393` で完了報告、統合待ち（E2E 全件 63/63 の確認後）。
+> Q3 統合済み（`093de7e`）、main の E2E 全件 59/0/10（親のツリー）。V5 シーク連打 合格。V4 は代替プロジェクトでテストの期待値（境界 − 1 フレーム）がサンプル時計と衝突 → 境界 − 2 フレームへ直して再実行中。
+> 残り: V4 再実行 → 除去担当の E2E 全件 → V6 60 分 → 段 5 後半の統合 → リリース手順（`docs/RELEASE-PROCEDURE-0.4.md`）。
+>
 > **2026-09-17 02:30 更新（15 回目）**: **段 4 完了・統合（`72d0ebb`）。v0.4 の本体作業（mpv 除去・CPU 合成除去・型付き API）は main で完了。** 残りは段 5 後半（文書・配布物・リリースノート、`docs/prompts/2026-09-17-STAGE5B-docs-release.md`、`w5:p6`）。
 > テスト側の欠陥 Q3（`ClosesGracefullyDuringPlayback` が段 3 で消えたログ行を待ち、古いログで偽合格）を `w5:p3` が修正中。`LtcHardwareLoop` の 1 件は全件でだけ落ちる不安定さの疑い（要観察）。Q2（一時ファイルの分離）と H1、D10 も統合済み。
 >
@@ -260,8 +270,8 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 | ペイン | 作業 | 状態 |
 | --- | --- | --- |
-| `w5:p3`（同期担当） | H1・Q2 は統合済み。**Q3**（E2E のログ待ちマーカー修正と棚卸し） | 実装中 |
-| `w5:p6`（除去担当） | 段 4 は完了・統合済み（`72d0ebb`）。**段 5 後半: 文書・配布物・リリースノート**（`docs/prompts/2026-09-17-STAGE5B-docs-release.md`） | 着手 |
+| `w5:p3`（同期担当、新セッション） | Q3・V5・V4 は統合済み。**V6 60 分**を実行中 | 実機使用中 |
+| `w5:p6`（除去担当） | 段 5 後半・D11・F1 は統合済み（`85f855b`）。次は V6 の後に配布物作成 | 待機（V6 中はビルド禁止） |
 
 **実機は 1 つ。親が順番を管理する。** エージェントには「実機を使う前に一報」を毎回指示している。
 利用者にも、実機を使う間は PC に触らないよう都度お願いしている。
@@ -303,6 +313,10 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
    親は 1 時間監視の watcher が切れてから気づいた。**ハーネスの `-Seconds` を過ぎても runner が返らないときは、まずアプリログの loadfile を見る**
 8. ~~**`Invoke-AppGpuTrial.ps1 -SeekAtSeconds` はランナーが返らない**~~ **H1 で修正（`666b0f8`、main 統合済み）**: SeekBar は 0..1 の正規化値なので 15 を渡すと UIA の SetValue が例外になり、終了シーケンスが飛んでアプリが残っていた。今は起動前に値域を検証し、mark ごとに try/catch、finally で所有アプリを必ず閉じ、`-OverallTimeoutSeconds`（既定 Seconds+90）で打ち切る。旧記述:（2026-09-16 21:57 の run、素材読込は成功・アプリは一時停止のまま・`harness.jsonl` 空のまま 38 分）。
    `-ClickPlay` なしで起動した一時停止中のアプリに対する seek の UIA 操作で固まる見込み（未調査。親のスクリプト）。当面 `-SeekAtSeconds` は使わない
+9. **`Invoke-AppGpuTrial.ps1 -ClickPlay` は「再生を保証」ではなく BtnPlay のトグル**（`PlayPauseCommand.TogglePlayPause`）。`--open` で読み込んだアプリは即再生するので、
+   `-ClickPlay` を付けると約 10 秒後に**一時停止**する（V6 の 1〜2 回目、2026-09-17 00:47〜01:06。perf 行が 2 本で止まり、読み取りバイトが 9 分間 0）。
+   V5 の 1 回目と D10 の 1080p run も一時停止状態だった疑い（シーク着地の証拠は有効、公開継続の証拠は無効）。V5 は `-ClickPlay` なしでやり直す。
+   ハーネス側は「ボタンの状態を見て再生を保証する」に直す（H2、V6 の後）
 
 1. **指標の符号**: `delta`（LTC − 再生位置）と `signedErrorMs`（絵 − LTC）は向きが逆。**足す**のが正しい。
    差で計算して「74ms のずれ」を作り、T5 の結論・max-buffers 掃引・T6 の設計をその上に積んでいた

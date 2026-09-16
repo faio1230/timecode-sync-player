@@ -2674,3 +2674,93 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - **判定: 段 4 は完了。** mpv・CPU 合成・mpv 文法の文字列経路はすべて main から消え、再生は `IPlaybackApi` / `GstPlaybackApi` の型付き API のみ
 - 同時に統合: Q2 `8035861`（テストの一時ファイルを作業ツリー単位に分離。3 ツリーが `%TEMP%` の同じ `test_clip.mp4` を共有していた）、H1 `666b0f8`、D10 `4e16c92`
 
+## E2E 全件（Q3 統合後 main `093de7e`、2026-09-16 23:44〜23:50、親のツリー）
+
+- 69 検出・59 合格・**0 失敗**・10 スキップ（5 分 29 秒）。スキップの内訳: opt-in 6 件（Monkey / RealProjectGap / SpoutDecodeComparison / SyncAccuracy / SyncSeekResync / D8 ハーネス）と、
+  親のツリーに Spout 受信ツール（`tcs-gst-proto.exe`）が無いための 4 件（D5 の 3 件、`PlaysAndPublishesGpuFramesToSpout`）。この 4 件は実装側の作業ツリーで実行・合格している
+- `LtcHardwareLoopE2ETests` は全 14 件合格（実装側の段 4 全件で 2 回落ちた 1 件も合格）。**要観察のまま**
+- 完了の定義 3「全 E2E 成功」は、受信ツールのある作業ツリーで 63/63 を 1 回確認して締める（段 5 後半のあと、除去担当の作業ツリーで実施）
+
+## V5 のシーク連打と V4 の代替プロジェクト（2026-09-16 23:50〜2026-09-17 00:10、同期担当の実機、親の確認）
+
+### V5: シーク連打（`TestResults/gpu-app/20260916T145142Z-v5-2d2e5af`、agent-a のツリー）
+
+- 1 秒間隔で 10 回のシーク（0.2 / 0.8 / 0.1 / 0.9 / 0.5 / 0.3 / 0.7 / 0.05 / 0.95 / 0.5）: `Seek command sent ... success=true` 10/10
+- **各シーク後の最初のフレーム pts が目標ちょうど（delta 0.0ms、10/10）**。D10 の stream time 写像が効いている（フォールバック 0）
+- compose.publish 3139 件・59.99/秒、間隔 p99 17.56ms・最大 45.74ms、dropped 0、error なし、デバイス消失 0、exit 0
+- **判定: 合格。** V5 はこれで切替・シーク連打とも合格
+
+### V4: 代替プロジェクト（`TestResults/v4-real-project-2d2e5af`）— 1 回目は期待値の衝突で失敗（製品の欠陥ではない）
+
+- 構成: A（1080p60、0:10〜）→ Black ギャップ → B（720p25、MediaIn 2 秒・SyncOffset +0.5 秒）→ ギャップ → 無効トラック D → C。Continue、Black
+- TC 1.00 のギャップは通過（黒判定 fraction 0）。**TC 9.96（境界 − 1 フレーム）で「Gap: Black」を期待する Wait が失敗**: アプリは `sync.apply ltc=10.015 → OnTrack mediaPos=0.015` で次トラックに入っていた
+- 原因: T2 の既定 on では、9.96 の LTC フレームを受信した時点の実時間が 9.96 + age（約 55ms）= 10.015 で境界を越えている。**アプリの挙動は正しく、テストの期待値（境界 − 1 フレームはまだギャップ）がサンプル時計と衝突**
+- 親の決定: テストの境界前チェックポイントを境界 − 2 フレーム（25fps で 80ms）に変え、理由をコメントに残す。製品コードは変えない。直して再実行する（同期担当）
+
+### V4 の 2〜3 回目（2026-09-17 04:00〜04:20、テスト側の修正 `f298270` 後）
+
+- 境界前チェックを境界 − 2 フレーム（80ms）へ、終端手前の「まだ現トラック」チェックは削除（保持 LTC 39.92 でも実時間は 40.04 で正しくギャップへ入るため安定観測できない）
+- r3: **境界 10/10 通過**（1, 9.92, 10, 40, 49.92, 50, 68, 75.92, 76, 106）、ギャップの黒判定すべて 0、held 切替（Black→Freeze→Black、Continue↔Single、Sync ON/OFF）通過、LTC 再開の復帰通過、trimmed Freeze 通過
+- 残る 1 件「Single reaches EOF」: テストが作る trimmed フィクスチャ（MediaOut 10 秒の 30 秒素材）で、期待がファイル長 30 秒、アプリは 10 秒（MediaOut）で EOF。
+  **親の決定: Single モードでも MediaOut を終端として扱う現行挙動を仕様とする**（mpv 時代の「ファイル長まで再生」は実装依存だった扱い。リリースノートの Changed に記載）。テストの期待値を実効終端基準へ変更して再実行
+- 代替プロジェクトは `tests/TimecodeSyncPlayer.Tests/Fixtures/v4-substitute.tsp`（素材名だけの相対参照）としてコミット。実素材が来たら `TIMECODE_REAL_PROJECT_PATH` で同じテストを追試する
+
+## D11: Single モードで EOF へシークした後、seeking が解除されず巻き戻しのシークが出ない（2026-09-17 04:35、V4 r4 で発見）
+
+- 事実（同期担当のコード確認）: `GstSeekingTracker.IsSeeking` は「シーク発行後に新しい配信が 1 枚来るまで true」。EOF へのシーク後はフレームが来ないので pending が解除されず `seeking=yes` のまま固定。
+  `SingleModeSyncCoordinator.Apply` が以後すべて Deferred になり、LTC を 5.0 へ戻してもシークが出ない（`RealProjectGapE2ETests` の `VerifyVisibleFreeze`、実測 time 0:00:10:10 のまま）
+- 段 4 でトラッカーを共有化したが、判定規則自体は旧 `GstMpvApiAdapter` と同じ（到着数の増加で解除）。EOF 後に配信が無い場合の解除が無いのは以前からの穴と見られる
+- 親の決定: **製品側を直す**（テストの期待値は緩めない）。`GstSeekingTracker` は (a) shim の ended / EOS 通知（`TryAcquire` の `Ended`）で pending を解除、(b) 安全網としてシーク発行から 2 秒で解除（ログ 1 行）。スカラのフラグ操作のみで I13 のロック規則には触れない。非E2E で固定し、V4（`RealProjectGapE2ETests`）で確認。担当: 除去担当
+
+## V4 の判定: **合格**（2026-09-17 00:20、除去担当の実機、D11 修正 `3a6e9af` 後、親の確認）
+
+- `RealProjectGapE2ETests` を代替プロジェクト（`artifacts/media/v4-substitute.tsp`、`V4SubstituteProjectTests` が Fixtures から複写）で 1 回: **合格**（24 秒）
+- 通過項目: 境界 10/10（1 / 9.92 / 10 / 40 / 49.92 / 50 / 68 / 75.92 / 76 / 106 秒。ギャップの黒判定すべて 0）、held 切替（Black→Freeze→Black、Continue→Single→Continue、Sync ON 再評価）、
+  LTC 再開の復帰（20 秒へ、recovered-video 1）、trimmed Freeze（trimmed-freeze 1・stable 1・black-restored 0・continue-restored 0）、**single-eof-recovery（D11 の対象。EOF 到達 → 巻き戻し → 進行）**、source-integrity 一致
+- 限定: 実素材ではなく代替プロジェクト。実素材が来たら `TIMECODE_REAL_PROJECT_PATH` で追試する（v0.4.1 候補）
+- D11 の修正: `GstSeekingTracker.NotifyEnded`（shim の Ended で解除）と発行から 2 秒の安全網。非E2E 1671（+4）
+
+### E2E 全件（agent-b `3a6e9af`、00:10〜00:17）: 62 合格・1 失敗・6 スキップ
+
+- 失敗は `LtcHardwareLoopE2ETests.CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately`（**agent-b の全件実行で 3 回連続**。単体・クラス単位・親の全件では合格）。
+  親の全件では Spout 受信依存の 4 件（`GStreamerBackendE2ETests` の Spout テスト、D5 の 3 件）がスキップされる点が違う → **直前の Spout 受信テストが残す状態が疑わしい**。F1 として切り分け中（除去担当）
+
+## F1: `LtcHardwareLoop` の 1 件が全件実行でだけ落ちる件の切り分け（2026-09-17 00:25〜00:40、除去担当、親の確認）
+
+- 環境残留説（直前の Spout 受信テスト）は棄却: 受信プロセスの残留なし、失敗した 1 回は Spout テストの実行前、2 クラス連続・単体は合格
+- 再生側の遅れではない: 失敗回のログで、シーク判断 → 位置つきロード復帰（39ms）→ `Timecode sync enabled` → ネイティブ位置 14.574 の観測まで **40ms**。5 秒の予算は十分
+- 残る筋: **表示（`TimeLabel`）の更新が位置つきロード後のフレーム通知に依存し、全件実行の負荷下で反映されないことがある**（UIA の読み取りは表示を見ている）。ログには表示更新の有無が出ないため推定
+- 親の決定: 製品側で、位置つきロード成功直後に位置表示（ラベルとシークバー）を 1 回明示更新する（`UpdatePerFrameUI` は使わない小さな helper）。UX 上も「一時停止で位置合わせした直後、表示が古いまま」が消える。テストの期待値・予算は変えない。修正後に E2E 全件で 63/63 を確認する
+
+### F1 の修正と「全 E2E 成功」の門（2026-09-17 00:45〜01:10、除去担当 `bda7e5f`、親の確認。main `85f855b` で統合）
+
+- 修正: `MainWindow.LoadFile` の位置つきロード成功時に `RefreshPositionDisplayAfterLocatedLoad` を 1 回呼び、`TryGetTimePos`（未取得や 0 なら要求開始位置）で `TimeLabel` とシークバーだけを更新。`UpdatePerFrameUI` は呼ばない。非E2E +1
+- 実装側: `LtcHardwareLoopE2ETests` 単体 14/14、**E2E 全件 63 合格・0 失敗・6 スキップ**（opt-in 6 件。Spout 受信ツールのある作業ツリー）
+- 親の独立確認（`bda7e5f`）: ビルド 0/0、ロック規則 PASS、FileVersion 0.4.0.0、grep 0、E2E 一部 5/5（F1 の対象テストを含む）。非E2E は detached の 1 回目が 1 件失敗（一過性、名前は未取得）、統合後の再実行で 1672/1672
+- **判定: 完了の定義 3「全 E2E 成功」を満たす。** 同時に段 5 後半（文書・CHANGELOG 0.4.0・バージョン 0.4.0・配布物確認）と D11 も統合
+
+## V6 の 1〜2 回目の中止と、ハーネス `-ClickPlay` の罠（2026-09-17 00:47〜01:07、同期担当の切り分け、親の確認）
+
+- `-ClickPlay` は `BtnPlay`（`PlayPauseCommand.TogglePlayPause`）を押すだけで、`--open` で読み込んだアプリは既に再生中のため**一時停止に反転**する。
+  証拠: perf 行が 00:56:32/34 の 2 本で止まり、アプリのファイル読み取りが 12.8MB（約 9 秒分）のまま 9 分間 0 増。UIA で `BtnPlay` を再送すると 30 秒で +40MB と perf 行が再開
+- 影響: **V5 の 1 回目（`20260916T145142Z-v5`）と D10 の 1080p run（`20260916T133715Z-d10`）は一時停止状態で走っていた疑い。** シークの着地（delta 0.0ms）の証拠は有効だが、「公開が止まらない」「59.97/秒」の証拠は Held の再公開を数えていた可能性があり無効とする。
+  段 3 の 1080p run（`-ClickPlay` なし）は有効
+- 対処: V5 を `-ClickPlay` なしでやり直し、V6 も `-ClickPlay` なしで実施（01:10 再開）。ハーネスは V6 の後に「状態を見て再生を保証」へ直す（H2）
+
+## V6（60 分連続再生）と V5 のやり直し: **合格**（2026-09-17 01:08〜02:14、同期担当の実機、親の確認）
+
+条件: main `85f855b` 相当（agent-a `20d7af5` + main 統合）、GStreamer × GPU 合成 × Spout、`-ClickPlay` なし、`-NoOutputTrace`、素材は 30 秒の 1080p60 を `-stream_loop` で 3720 秒に連結。
+
+| 項目 | 実測 |
+| --- | --- |
+| 再生ウィンドウ | 01:12:33〜02:13:33（3660 秒）、appExit 0、completedNormally、receiverExit 0、残プロセス 0 |
+| 公開フレーム | 2 秒窓 1820 本で総公開 219,534（期待 219,547、差 -13）。落ち区間 1（02:01:39、116 フレーム = 57.5fps）。fps 最小 57.5 / 最大 60.5 |
+| playbackRate | 全区間 1.000 |
+| メモリ | working set 83.8MiB（起動）→ 277.1MiB（5 分）→ 278.9MiB（終了）: 5 分以降 **+1.8MiB**。private 328.0 → 337.9MiB（+9.9MiB） |
+| エラー | ERR/FTL 0、デバイス消失 0、`ring: recreated` 0 |
+| Spout 受信 | サンプル 14 本すべて alive、最大間隔 300.3 秒（5 分スケジュールどおり、欠落なし） |
+
+- **判定: V6 合格。** 部分合格だった「フレーム単位の確認」を、トレース無しの perf 行で 60 分全区間について確認した
+- V5 のやり直し（`20260916T160819Z-v5-seek-nc`、`-ClickPlay` なし）: 10 回のシーク着地 delta 0.00ms、`compose.publish` の最長無公開 51.3ms、ERR 0、exit 0。**判定: V5 合格**
+- 証跡: `TestResults/gpu-app/20260916T161217Z-v6-soak`、`.../20260916T160819Z-v5-seek-nc`（agent-a の作業ツリー）
+

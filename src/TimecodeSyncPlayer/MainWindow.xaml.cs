@@ -651,7 +651,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Log.Error("GPU 復旧: GStreamer player の再生成に失敗");
                     return;
                 }
-                _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi);
+                _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
+                    _gstBackendState.Seeking.NotifyEnded);
                 PlaylistTrack? track = _playlist.Current;
                 if (track != null)
                     LoadFile(track.FilePath, position);
@@ -695,7 +696,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (initialized)
         {
             // プレイヤー生成後にエンジンへソースを接続する。
-            _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi);
+            _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
+                _gstBackendState.Seeking.NotifyEnded);
             RefreshDisplaySelection(_settingsManager.Current.FullscreenDisplayDeviceName);
         }
         return initialized;
@@ -1315,7 +1317,32 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private bool LoadFile(string path, double? startPosition = null)
-        => IsPlaybackAvailable && CreatePlaybackOperationsCoordinator().LoadFile(path, startPosition);
+    {
+        if (!IsPlaybackAvailable) return false;
+        if (!CreatePlaybackOperationsCoordinator().LoadFile(path, startPosition)) return false;
+        // F1 の切り分け: 位置つきロードは、表示がフレーム通知待ちのまま残ることがある。
+        // 成功直後に表示位置を 1 回だけ明示更新する（UpdatePerFrameUI は自動送り等の副作用を持つため呼ばない）。
+        if (startPosition.HasValue)
+            RefreshPositionDisplayAfterLocatedLoad(startPosition.Value);
+        return true;
+    }
+
+    /// <summary>
+    /// F1: 位置つきロード直後の表示更新。ネイティブの位置がまだ読めない/0 のときは要求した開始位置を使う。
+    /// ラベルとシークバーだけを更新し、自動送り・統計・世代には触れない。
+    /// </summary>
+    private void RefreshPositionDisplayAfterLocatedLoad(double requestedPosition)
+    {
+        double position = requestedPosition;
+        if (_playbackApi.TryGetTimePos(out double native) && double.IsFinite(native) && native > 0)
+            position = native;
+        if (position < 0)
+            position = 0;
+
+        SetSeekBarValueFromPlayer(SeekBarUpdateState.ToSliderValue(position, _duration, SeekBar.Value));
+        _vm.Player.TimeLabel =
+            $"{PlaybackTimeFormatter.FormatFrames(position, _fps)} / {PlaybackTimeFormatter.FormatFrames(_duration, _fps)}";
+    }
 
     private bool LoadFilePaused(string path)
         => IsPlaybackAvailable && CreatePlaybackOperationsCoordinator().LoadFilePaused(path);

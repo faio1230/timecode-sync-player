@@ -112,6 +112,7 @@ internal sealed class GStreamerSource : IVideoSource
     private readonly IGstLeasePlayer player;
     private readonly string gpu;
     private readonly Action? onRingOpened;
+    private readonly Action? onEnded;
     private readonly IGstRingResourcesFactory ringFactory;
     private GpuDevice? device;
     private SharedLease? active;
@@ -123,13 +124,14 @@ internal sealed class GStreamerSource : IVideoSource
     private bool ringOutsideLogged;
 
     public GStreamerSource(IGstLeasePlayer player, string gpu = "", GpuDevice? device = null, Action? onRingOpened = null,
-        IGstRingResourcesFactory? ringFactory = null)
+        IGstRingResourcesFactory? ringFactory = null, Action? onEnded = null)
     {
         this.player = player;
         this.gpu = gpu;
         this.device = device;
         this.onRingOpened = onRingOpened;
         this.ringFactory = ringFactory ?? new GpuRingResourcesFactory();
+        this.onEnded = onEnded;
     }
 
     /// <summary>shim が保持する現在世代（合成層の generation と対応付ける）。</summary>
@@ -154,7 +156,12 @@ internal sealed class GStreamerSource : IVideoSource
             return SourceStatus.Ready;
         }
         int acquired = player.Acquire((ulong)generation, out GstLeaseFrameInfo info);
-        if (acquired == TimecodeSyncPlayer.Gst.GstNative.TcsErrEnded) return SourceStatus.Ended;
+        if (acquired == TimecodeSyncPlayer.Gst.GstNative.TcsErrEnded)
+        {
+            // D11: EOF を観測したらシーク保留を解除する（EOF 後は新しい配信が来ない）。
+            onEnded?.Invoke();
+            return SourceStatus.Ended;
+        }
         if (acquired != 1) { notReady++; return SourceStatus.NotReady; }
         if (info.Generation != (ulong)generation || info.Width <= 0 || info.Height <= 0)
         {

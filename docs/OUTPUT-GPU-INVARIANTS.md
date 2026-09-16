@@ -11,9 +11,9 @@
 | I3 | **届く vblank は飛ばさない**: 目標時刻（vblank−margin）を過ぎても vblank まで lead(1ms) 以上あれば即時 Present。合成期限より表示を優先。 | vblank 第2回、S3-2 |
 | I4 | **Spout OFF は無コスト**: Spout が無効のとき合成 tick にコピー・待ち・ロックを一切足さない。 | 段階 3 |
 | I5 | **GPU 完了は tick の外**: アップロード／コピーの GPU 完了待ちを合成の fence 待ちに含めない（専用クエリで完了確認後に Ready）。 | F |
-| I6 | **UI と GPU worker は互いに同期待ちしない**: 受け渡しは不変レコードの mailbox と有限 queue。mpv／GStreamer のコールバックスレッドでもブロックしない。 | C、shim 契約 |
+| I6 | **UI と GPU worker は互いに同期待ちしない**: 受け渡しは不変レコードの mailbox と有限 queue。GStreamer shim のコールバックスレッドでもブロックしない。 | C、shim 契約 |
 | I7 | **世代排除**: 旧世代の画像は返さず、NotReady/Ended で黒を出さない（Held を使う）。 | ソース契約 |
-| I8 | **停止順序**: 新規受付停止 → RenderSession.Stop → OutputEngine.Stop（worker join、lease 返却）→ 全画面閉 → mpv／shim destroy → OutputEngine.Dispose → Spout → バッファ。lease は shim destroy より先に返す。 | 段階 6 |
+| I8 | **停止順序**: 新規受付停止 → RenderSession.Stop → OutputEngine.Stop（worker join、lease 返却）→ 全画面閉 → player（shim）destroy → OutputEngine.Dispose → Spout → バッファ。lease は shim destroy より先に返す。 | 段階 6 |
 | I9 | **時間超過は資源解放の理由にしない**: GPU 完了待ちの期限超過は fault として記録し新規処理を止めるが、使用中資源を破棄しない。デバイス消失と、ソースの寸法変更（共有リングの作り直し。D8、2026-09-16）だけが再作成の根拠。 | 設計 |
 | I10 | **lead は上げ急・下げ緩**: p99＋1ms で即時に上げ、下げは 5 秒連続で 0.5ms 刻み。起動後 3 秒は学習しない。 | F、段階 3 |
 | I11 | **計測は同じ時計**: 新しい経路は `events.jsonl` に同じ QPC で記録し、`analyze_probe.py`／`gst_delivery_check.py` で親が読める形にする。公開頻度だけで合否を判断しない。 | 全段階 |
@@ -92,7 +92,7 @@ Wait/Unknown 3、Wait/EventPairLow 1）で CPU を消費せず、5 例中 4 例�
 ## 依頼プロンプトの型
 
 ```
-基点 <SHA>、worktree <path>（cwd 固定）。不変条件: docs/OUTPUT-GPU-INVARIANTS.md（I1〜I12 を守る。触れる変更は質問）。
+基点 <SHA>、worktree <path>（cwd 固定）。不変条件: docs/OUTPUT-GPU-INVARIANTS.md（I1〜I13。I12 は失効。触れる変更は質問）。
 仕様: <段階の仕様文書>。変更ファイル・契約・管理テスト・実機の合格条件: <列挙>。
 実機は 1 プロセスずつ、自分の PID のみ、開始前に時刻を報告。報告は コミット／変更ファイル／非E2E 件数／実機の指標／設計差異／未検証。
 ```

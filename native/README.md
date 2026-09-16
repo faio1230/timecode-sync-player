@@ -35,8 +35,8 @@ powershell -File native\gst-shim\build-shim.ps1 -Config Debug
 配布zip／インストーラーには`SpoutDX.dll`を同梱します。zip版の利用者が別途用意する必要はありません。
 
 ソースからビルドする場合のみ、[Spout2](https://github.com/leadedge/Spout2)のSDKから
-x64版`SpoutDX.dll`を用意し、このフォルダへ配置してください。DLLが無い場合は
-Spout出力ボタンが無効になるだけで、動画再生やLTC同期は利用できます。
+x64版`SpoutDX.dll`を用意し、このフォルダへ配置してください。DLLが無い場合、Spout を有効にすると
+送信 worker の起動に失敗します。有効にしなければ動画再生やLTC同期は通常どおり動作します。
 
 ## 配置例
 

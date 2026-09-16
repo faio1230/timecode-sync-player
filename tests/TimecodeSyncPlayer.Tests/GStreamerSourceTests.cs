@@ -1,6 +1,8 @@
 using FluentAssertions;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Gst;
 using TimecodeSyncPlayer.Output;
+using TimecodeSyncPlayer.Tests.Gst;
 using Vortice.Direct3D11;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -103,6 +105,25 @@ public class GStreamerSourceTests
         var source = new GStreamerSource(player, "gpu");
         source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ended);
         lease.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryAcquire_OnEnded_ClearsSeekPendingThroughOnEndedCallback()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1), DeliveryArrivals = 10 };
+        var state = new GstBackendState(native);
+        state.EnsurePlayer().Should().BeTrue();
+        var api = new GstPlaybackApi(state);
+        api.Seek(5.0).Success.Should().BeTrue();
+        api.IsSeeking().Should().BeTrue();
+
+        var player = new FakeLeasePlayer { HasFrame = false, Ended = true };
+        var source = new GStreamerSource(player, "gpu", onEnded: state.Seeking.NotifyEnded);
+
+        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ended);
+        lease.Should().BeNull();
+
+        api.IsSeeking().Should().BeFalse("EOF の Ended を観測したらシーク保留を解除する");
     }
 
     [Fact]

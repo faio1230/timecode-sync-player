@@ -27,7 +27,7 @@ VB-CABLEで25fpsのLTCを送り、アプリが受信した時刻と、映像をW
 
 ## 再実行と準備
 
-Windowsの操作可能なデスクトップ、.NET 8、PowerShell 7.2以降、Python 3、ffmpeg/ffprobe、mpv DLL、VB-CABLEが必要。このPCでは利用可能。試験中は対象アプリを操作せず、PCをロック・スリープさせない。既存のプロジェクトや動画を準備し直す必要はない。
+Windowsの操作可能なデスクトップ、.NET 8、PowerShell 7.2以降、Python 3、ffmpeg/ffprobe、`tcs_gstreamer.dll` と GStreamer ランタイム（v0.4 で mpv DLL から置き換え）、VB-CABLEが必要。このPCでは利用可能。試験中は対象アプリを操作せず、PCをロック・スリープさせない。既存のプロジェクトや動画を準備し直す必要はない。
 
 ```powershell
 ./scripts/run-timecodesyncplayer-accuracy.ps1
