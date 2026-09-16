@@ -2652,3 +2652,25 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - 修正 `666b0f8`: 仕様を「秒:正規化位置 0..1」と明記して起動前に値域を検証、`Set-Slider` は Min/Max で clamp して steps に記録、mark ごとに try/catch、finally で所有アプリ（PID+開始時刻）が残っていれば WM_CLOSE → 5 秒で Kill、`-OverallTimeoutSeconds`（既定 Seconds+90）
 - 実機: 0.5 で target 15.000 のシークが success・exit 0、範囲外は起動前エラー（プロセス起動 0）、clamp は VolumeSlider 200 → 100 で記録、全体タイムアウト 1 秒では `app killed by H1 cleanup after 5 s` と runner-result.json が残る
 
+## 段 4（型付き再生 API と名前の整理）の結果と統合（2026-09-17 00:10〜02:30、親の独立確認）
+
+実装（agent-b）: 順序 1 `6262fd7`、順序 2 `39b0a0a`、順序 3 `3cebdb1`、順序 4 `0909ceb`（**main `9ef7913`**）、順序 5 `f0eb0fc` / `d9efcb3` / `971aeef`（**main `72d0ebb`。段 4 完了**）。
+決定は `docs/V04-STAGE4-TYPED-API-SURVEY-2026-09-16.md` 10 節。
+
+| 項目 | 実装側 | 親の独立確認 |
+| --- | --- | --- |
+| ビルド | 0/0 | 0/0 |
+| 非E2E | 1709（順序 4）→ 1666（順序 5。旧 mpv 系テスト削除） | 1709 → 1666（アイドル時） |
+| grep（`IMpvApi` ほか 11 トークン、大文字 `Mpv`、ファイル名 `Mpv`） | 0 | 0 |
+| ロック規則 | PASS | PASS |
+| E2E 一部（各段） | 8/8 | 順序 4 で 11/11、順序 5 で 9/9 相当 |
+| E2E 全件（順序 5） | 62 合格・**1 失敗**（`LtcHardwareLoopE2ETests.CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately`、2 回とも。単体は合格）・6 スキップ | 58 合格・**1 失敗**（`GStreamerBackend_ClosesGracefullyDuringPlayback`）・10 スキップ。`LtcHardwareLoop` はクラス単位 14/14 ×2 で再現せず |
+| V3 1 本 | sample 平均 -27.0 / p95-p5 37.5 / 収束 最大 171ms（段 3 -28.9 / 38.3） | （実装側の結果を採用） |
+
+- **Q3（テスト側の既存欠陥、段 3 由来）**: `GStreamerBackend_ClosesGracefullyDuringPlayback` は `first frame displayed` のログ行を待つが、その行は段 3（`a10ea62`、CPU 描画の除去）で製品から消えた。
+  `WaitForLog` が当日のログ全体を読むため、agent-b の作業ツリーでは朝の古い行（13:24 以前、38 件）を拾って**偽合格**し、親のツリーでは 15 秒待って失敗（単体でも再現）。
+  段 3 の「E2E 全件 63/63」はこの 1 件について偽合格だった。同期担当が修正中（現行マーカーへ変更、起動行以降だけを読む、他の needle の棚卸し）
+- **`LtcHardwareLoop` の 1 件**: 実装側の全件 2 回で失敗、単体・クラス単位・親の全件では合格。負荷か順序に依存する不安定さの疑い。**要観察**（次の全件で再発したら D として切り分ける）
+- **判定: 段 4 は完了。** mpv・CPU 合成・mpv 文法の文字列経路はすべて main から消え、再生は `IPlaybackApi` / `GstPlaybackApi` の型付き API のみ
+- 同時に統合: Q2 `8035861`（テストの一時ファイルを作業ツリー単位に分離。3 ツリーが `%TEMP%` の同じ `test_clip.mp4` を共有していた）、H1 `666b0f8`、D10 `4e16c92`
+
