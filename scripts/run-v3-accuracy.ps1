@@ -66,9 +66,9 @@ foreach ($backend in $Backends) {
         $report = Join-Path $LogRoot $name
         if (Test-Path $report) { Remove-Item $report -Recurse -Force }
         New-Item -ItemType Directory -Force $report | Out-Null
-        $backendValue = if ($backend -eq 'gst') { 1 } else { 0 }
         $correctionValue = if ($SyncCorrectionMode -eq 'jump') { 1 } else { 0 }
-        ('{"backend":' + $backendValue + ',"outputBackend":' + $OutputBackend + ',"syncCorrectionMode":' + $correctionValue + '}') |
+        # 段 3: backend キーは廃止した（書くと起動ログに警告が出る）。outputBackend は残す。
+        ('{"outputBackend":' + $OutputBackend + ',"syncCorrectionMode":' + $correctionValue + '}') |
             Set-Content (Join-Path $report 'settings.json') -Encoding UTF8
 
         Write-Output ('=== {0} {1} ltcFps={2} mode={3} correction={4}' -f (Get-Date).ToString('HH:mm:ss'), $name, $LtcFps, $LtcFpsMode, $SyncCorrectionMode)
