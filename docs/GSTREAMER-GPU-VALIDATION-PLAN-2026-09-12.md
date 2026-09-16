@@ -2674,3 +2674,10 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - **判定: 段 4 は完了。** mpv・CPU 合成・mpv 文法の文字列経路はすべて main から消え、再生は `IPlaybackApi` / `GstPlaybackApi` の型付き API のみ
 - 同時に統合: Q2 `8035861`（テストの一時ファイルを作業ツリー単位に分離。3 ツリーが `%TEMP%` の同じ `test_clip.mp4` を共有していた）、H1 `666b0f8`、D10 `4e16c92`
 
+## E2E 全件（Q3 統合後 main `093de7e`、2026-09-16 23:44〜23:50、親のツリー）
+
+- 69 検出・59 合格・**0 失敗**・10 スキップ（5 分 29 秒）。スキップの内訳: opt-in 6 件（Monkey / RealProjectGap / SpoutDecodeComparison / SyncAccuracy / SyncSeekResync / D8 ハーネス）と、
+  親のツリーに Spout 受信ツール（`tcs-gst-proto.exe`）が無いための 4 件（D5 の 3 件、`PlaysAndPublishesGpuFramesToSpout`）。この 4 件は実装側の作業ツリーで実行・合格している
+- `LtcHardwareLoopE2ETests` は全 14 件合格（実装側の段 4 全件で 2 回落ちた 1 件も合格）。**要観察のまま**
+- 完了の定義 3「全 E2E 成功」は、受信ツールのある作業ツリーで 63/63 を 1 回確認して締める（段 5 後半のあと、除去担当の作業ツリーで実施）
+
