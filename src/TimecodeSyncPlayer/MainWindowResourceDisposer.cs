@@ -10,7 +10,7 @@ internal sealed record ResourceCleanupStage(string StepName, bool RunsOffUiThrea
 internal sealed class MainWindowResourceDisposer
 {
     public const string StopAcceptingStepName = "新規受付停止";
-    public const string StopPlaybackStepName = "mpv／GStreamer 停止";
+    public const string StopPlaybackStepName = "GStreamer 停止";
     public const string StopOutputStepName = "出力停止（Spout 完了待ち）";
     public const string CloseFullscreenStepName = "全画面終了";
     public const string ReleaseResourcesStepName = "資源解放";
@@ -28,7 +28,7 @@ internal sealed class MainWindowResourceDisposer
     private readonly Action? _stopAcceptingNewWork;
     private readonly Action _disposeTimer;
     private readonly Action _disposeRenderContext;
-    private readonly Action _disposeMpv;
+    private readonly Action _disposePlayer;
     private readonly Action _disposeLtc;
     private readonly Action _disposeSpout;
     private readonly Action _disposeTimeline;
@@ -48,7 +48,7 @@ internal sealed class MainWindowResourceDisposer
     public MainWindowResourceDisposer(
         Action disposeTimer,
         Action disposeRenderContext,
-        Action disposeMpv,
+        Action disposePlayer,
         Action disposeLtc,
         Action disposeSpout,
         Action disposeTimeline,
@@ -61,7 +61,7 @@ internal sealed class MainWindowResourceDisposer
     {
         _disposeTimer = disposeTimer;
         _disposeRenderContext = disposeRenderContext;
-        _disposeMpv = disposeMpv;
+        _disposePlayer = disposePlayer;
         _disposeLtc = disposeLtc;
         _disposeSpout = disposeSpout;
         _disposeTimeline = disposeTimeline;
@@ -72,7 +72,7 @@ internal sealed class MainWindowResourceDisposer
         _disposeOutput = disposeOutput;
         _stopAcceptingNewWork = stopAcceptingNewWork;
 
-        // I8: 新規受付停止 → RenderSession.Stop → OutputEngine.Stop → 全画面閉 → mpv/shim destroy
+        // I8: 新規受付停止 → RenderSession.Stop → OutputEngine.Stop → 全画面閉 → player destroy
         // → OutputEngine.Dispose → Spout → バッファ。従来の順序をそのまま段階へ分割する。
         _stages =
         [
@@ -87,7 +87,7 @@ internal sealed class MainWindowResourceDisposer
             new(ReleaseResourcesStepName, RunsOffUiThread: true, () =>
             {
                 _contextFreed = _stopped && TryCleanup(_disposeRenderContext);
-                if (_contextFreed) TryCleanup(_disposeMpv);
+                if (_contextFreed) TryCleanup(_disposePlayer);
             }),
             new(ReleaseResourcesStepName, RunsOffUiThread: false, () => TryCleanup(_disposeLtc)),
             new(ReleaseResourcesStepName, RunsOffUiThread: true, () =>

@@ -27,13 +27,9 @@ public partial class App : Application
         services.AddSingleton<GstNativeApi>();
         services.AddSingleton<IGstNativeApi>(sp => sp.GetRequiredService<GstNativeApi>());
         services.AddSingleton<GstBackendState>();
-        services.AddSingleton<GstMpvApiAdapter>();
-        services.AddSingleton<GstMpvRenderApiAdapter>();
         services.AddSingleton<GstPlaybackApi>();
         services.AddSingleton<GstRenderUpdateSource>();
         services.AddSingleton<GstSpoutOutput>();
-        services.AddSingleton<IMpvApi>(sp => sp.GetRequiredService<GstMpvApiAdapter>());
-        services.AddSingleton<IMpvRenderApi>(sp => sp.GetRequiredService<GstMpvRenderApiAdapter>());
         services.AddSingleton<IPlaybackApi>(sp => sp.GetRequiredService<GstPlaybackApi>());
         services.AddSingleton<IRenderUpdateSource>(sp => sp.GetRequiredService<GstRenderUpdateSource>());
 
@@ -54,18 +50,15 @@ public partial class App : Application
         services.AddSingleton<PlaylistDurationBackfillService>();
         services.AddSingleton<PlaylistLoadCoordinator>();
         services.AddSingleton<GapPlaybackCommandExecutor>();
-        services.AddSingleton<MpvStartupPropertyApplier>();
         services.AddSingleton<ITimecodeFpsSelector, TimecodeFpsSelector>();
         services.AddSingleton<TimecodeFrameDiagnostics>();
         services.AddSingleton<LtcFrameProcessor>();
         services.AddSingleton<GapFreezeHandler>();
-        services.AddSingleton<MpvSessionInitializer>();
         services.AddSingleton<ProjectLoadApplicator>();
 
         // State & utilities
         services.AddSingleton(_ => AppSettingsManager.Instance);
         services.AddSingleton(_ => new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)));
-        services.AddSingleton(_ => new OsdUpdateState(TimeSpan.FromMilliseconds(250)));
         services.AddSingleton<ISeekBarUpdateState, SeekBarUpdateState>();
         services.AddSingleton<ISpoutOutput>(sp => sp.GetRequiredService<GstSpoutOutput>());
         services.AddSingleton<OutputBackendState>();

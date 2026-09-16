@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Gst;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -17,7 +18,7 @@ public class DiRegistrationTests
 
     [Theory]
     [InlineData(typeof(GapFreezeHandler))]
-    [InlineData(typeof(MpvSessionInitializer))]
+    [InlineData(typeof(GstPlaybackApi))]
     [InlineData(typeof(ProjectLoadApplicator))]
     [InlineData(typeof(IPlaybackApi))]
     [InlineData(typeof(IRenderUpdateSource))]

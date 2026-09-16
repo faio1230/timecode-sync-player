@@ -3,6 +3,8 @@ using System.Windows.Threading;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Gst;
+using TimecodeSyncPlayer.Tests.Gst;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -64,8 +66,7 @@ public sealed class MainWindowGapFreezeRetryTests
     private sealed class Fixture : IDisposable
     {
         private readonly ServiceProvider _provider;
-        public readonly NativeApi Api = new();
-        public readonly RenderApi RenderApi = new();
+        public readonly RenderApi RenderUpdateSource = new();
         public readonly SpoutOutput Spout = new();
         public readonly FakePlaybackApi PlaybackApi = new() { Path = "C:/clip.mp4", Paused = true, TimePos = 9.9 };
         public MainWindow Window { get; }
@@ -76,8 +77,9 @@ public sealed class MainWindowGapFreezeRetryTests
         {
             var services = new ServiceCollection();
             App.ConfigureServices(services);
-            services.AddSingleton<IMpvApi>(Api);
-            services.AddSingleton<IMpvRenderApi>(RenderApi);
+            var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1) };
+            services.AddSingleton<IGstNativeApi>(native);
+            services.AddSingleton<IRenderUpdateSource>(RenderUpdateSource);
             services.AddSingleton<ISpoutOutput>(Spout);
             services.AddSingleton<IPlaybackApi>(PlaybackApi);
             _provider = services.BuildServiceProvider();
@@ -85,8 +87,8 @@ public sealed class MainWindowGapFreezeRetryTests
             Handler = _provider.GetRequiredService<GapFreezeHandler>();
             Session = (RenderSession)typeof(MainWindow)
                 .GetField("_renderSession", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Window)!;
-            typeof(MainWindow).GetField("_mpv", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .SetValue(Window, new IntPtr(1));
+            GstBackendState backend = _provider.GetRequiredService<GstBackendState>();
+            backend.EnsurePlayer().Should().BeTrue();
             typeof(MainWindow).GetField("_fps", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .SetValue(Window, 30d);
             Session.Create(new IntPtr(1)).Should().BeTrue();
@@ -106,35 +108,14 @@ public sealed class MainWindowGapFreezeRetryTests
         }
     }
 
-    private sealed class NativeApi : IMpvApi
+    private sealed class RenderApi : IRenderUpdateSource
     {
-        // MainWindow は DI 解決のために IMpvApi を要求し続ける（順序 5 で削除）。
-        public IntPtr Create() => new(1);
-        public int Initialize(IntPtr ctx) => 0;
-        public void TerminateDestroy(IntPtr ctx) { }
-        public int SetPropertyString(IntPtr ctx, string name, string value) => 0;
-        public int GetProperty(IntPtr ctx, string name, int format, out double result)
-        { result = 0; return 0; }
-        public string GetPropertyString(IntPtr ctx, string name) => "";
-        public int CommandString(IntPtr ctx, string args) => 0;
-        public void Free(IntPtr data) { }
-        public int FormatDouble => 5;
-    }
-
-    private sealed class RenderApi : IMpvRenderApi
-    {
-        public int MpvRenderParamApiType => 1;
-        public int MpvRenderParamSwSize => 17;
-        public int MpvRenderParamSwFormat => 18;
-        public int MpvRenderParamSwStride => 19;
-        public int MpvRenderParamSwPointer => 20;
-        public string MpvRenderApiTypeSw => "sw";
-        public ulong MpvRenderUpdateFrame => 1;
-        public int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters)
-        { res = new IntPtr(2); return 0; }
-        public ulong RenderContextUpdate(IntPtr ctx) => 0; // 一時停止中: 後続の FRAME 仕事はない。
-        public void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx) { }
-        public void RenderContextFree(IntPtr ctx) { }
+        public ulong FrameUpdateFlag => 1;
+        public bool TryCreateContext(IntPtr player, out IntPtr context)
+        { context = new IntPtr(2); return true; }
+        public ulong ConsumeUpdate(IntPtr ctx) => 0; // 一時停止中: 後続の FRAME 仕事はない。
+        public void SetUpdateCallback(IntPtr ctx, RenderUpdateFn? callback) { }
+        public void FreeContext(IntPtr ctx) { }
     }
 
     private sealed class SpoutOutput : ISpoutOutput

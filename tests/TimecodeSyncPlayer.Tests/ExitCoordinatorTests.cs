@@ -75,7 +75,7 @@ public class ExitCoordinatorTests
         => new(
             disposeTimer: () => calls?.Add("timer"),
             disposeRenderContext: () => calls?.Add("render"),
-            disposeMpv: () => calls?.Add("mpv"),
+            disposePlayer: () => calls?.Add("player"),
             disposeLtc: () => calls?.Add("ltc"),
             disposeSpout: () => calls?.Add("spout"),
             disposeTimeline: () => calls?.Add("timeline"),
@@ -141,7 +141,7 @@ public class ExitCoordinatorTests
 
         await WaitUntilAsync(() => completed);
         coordinator.Phase.Should().Be(ExitPhase.Exited);
-        calls.Should().Equal("accept", "stop", "timer", "render", "mpv", "ltc", "spout", "timeline", "buffer");
+        calls.Should().Equal("accept", "stop", "timer", "render", "player", "ltc", "spout", "timeline", "buffer");
         host.ProgressShown.Should().Be(1);
         host.Closed.Should().Be(1);
         host.LastStep.Should().Be(MainWindowResourceDisposer.ReleaseResourcesStepName);

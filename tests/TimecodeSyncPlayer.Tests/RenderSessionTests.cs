@@ -159,7 +159,7 @@ public sealed class RenderSessionTests
         fixture.Api.FreeFailure = failure;
         var calls = new List<string>();
         var disposer = new MainWindowResourceDisposer(
-            () => calls.Add("timer"), fixture.Session.FreeContext, () => calls.Add("mpv"),
+            () => calls.Add("timer"), fixture.Session.FreeContext, () => calls.Add("player"),
             () => calls.Add("ltc"), () => calls.Add("spout"), () => calls.Add("timeline"),
             () => { calls.Add("buffers"); fixture.Session.Dispose(); },
             stopRender: fixture.Session.Stop);
@@ -190,7 +190,7 @@ public sealed class RenderSessionTests
         using var fixture = new Fixture(initialize: false);
         if (phase == 1)
         {
-            fixture.Api.CreateReturnCode = -1;
+            fixture.Api.CreateSucceeds = false;
             fixture.Session.Create(new IntPtr(1)).Should().BeFalse();
         }
         if (phase == 2)
@@ -251,7 +251,7 @@ public sealed class RenderSessionTests
         public void Dispose() => Session.Dispose();
     }
 
-    private sealed class FakeApi : IMpvRenderApi
+    private sealed class FakeApi : IRenderUpdateSource
     {
         public readonly ConcurrentQueue<(string Operation, int Thread)> Calls = new();
         public WeakReference<RenderUpdateFn>? Callback;
@@ -259,37 +259,35 @@ public sealed class RenderSessionTests
         public ManualResetEventSlim? UpdateRelease;
         public Exception? FreeFailure;
         public Exception? CallbackFailure;
-        public int CreateReturnCode;
+        public bool CreateSucceeds = true;
 
-        public int MpvRenderParamApiType => 1;
-        public int MpvRenderParamSwSize => 17;
-        public int MpvRenderParamSwFormat => 18;
-        public int MpvRenderParamSwStride => 19;
-        public int MpvRenderParamSwPointer => 20;
-        public string MpvRenderApiTypeSw => "sw";
-        public ulong MpvRenderUpdateFrame => 1;
+        public ulong FrameUpdateFlag => 1;
 
         private void Record(string name) => Calls.Enqueue((name, Environment.CurrentManagedThreadId));
 
-        public int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters)
-        { Record("create"); res = new IntPtr(2); return CreateReturnCode; }
+        public bool TryCreateContext(IntPtr player, out IntPtr context)
+        {
+            Record("create");
+            context = new IntPtr(2);
+            return CreateSucceeds;
+        }
 
-        public ulong RenderContextUpdate(IntPtr ctx)
+        public ulong ConsumeUpdate(IntPtr ctx)
         {
             Record("update");
             UpdateStarted.TrySetResult();
             UpdateRelease?.Wait();
-            return MpvRenderUpdateFrame;
+            return FrameUpdateFlag;
         }
 
-        public void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx)
+        public void SetUpdateCallback(IntPtr ctx, RenderUpdateFn? callback)
         {
             Record("callback");
-            Callback = new(callback);
+            Callback = new(callback!);
             if (CallbackFailure != null) throw CallbackFailure;
         }
 
-        public void RenderContextFree(IntPtr ctx)
+        public void FreeContext(IntPtr ctx)
         {
             Record("free");
             if (FreeFailure != null) throw FreeFailure;

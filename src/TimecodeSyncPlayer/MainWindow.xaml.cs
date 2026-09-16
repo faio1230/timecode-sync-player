@@ -17,8 +17,7 @@ namespace TimecodeSyncPlayer;
 
 public partial class MainWindow : Window, IDisposable, IPlaybackController
 {
-    // ── mpv ──────────────────────────────────────────────────────
-    private IntPtr            _mpv             = IntPtr.Zero;
+    // ── 再生 ──────────────────────────────────────────────────────
     private DispatcherTimer?  _timer;
     private readonly PlaybackControlState _playbackControl = new();
     private readonly SeekBarInteractionController _seekBarInteraction = new();
@@ -39,14 +38,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly PlaylistDurationBackfillService _playlistDurationBackfillService;
     private readonly PlaylistDurationBackfillCoordinator _playlistDurationBackfillCoordinator;
     private readonly PlaylistLoadCoordinator _playlistLoadCoordinator;
-    private readonly MpvStartupPropertyApplier _mpvStartupPropertyApplier;
-    private readonly MpvSessionInitializer _mpvSessionInitializer;
     private readonly ProjectLoadApplicator _projectLoadApplicator;
     private readonly ProjectSaveExecutor _projectSaveExecutor;
     private readonly ProjectFileCoordinator _projectFileCoordinator;
-    private readonly IMpvApi _mpvApi;
-    // 段 4: 型付き再生 API。呼び出し側ごとに段階移行する（順序 2 はギャップ経路）。
     private readonly IPlaybackApi _playbackApi;
+    private readonly GstPlaybackApi _gstPlaybackApi;
     private readonly AudioControlCoordinator _audioControlCoordinator;
 
     // ── Spout ─────────────────────────────────────────────────────
@@ -142,15 +138,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         IMediaDurationReader mediaDurationReader,
         PlaylistDurationBackfillService playlistDurationBackfillService,
         PlaylistLoadCoordinator playlistLoadCoordinator,
-        MpvStartupPropertyApplier mpvStartupPropertyApplier,
-        MpvSessionInitializer mpvSessionInitializer,
         ProjectLoadApplicator projectLoadApplicator,
         ISeekBarUpdateState seekState,
         PlaybackPerformanceStats playbackPerformanceStats,
         OutputBackendState outputBackendState,
-        IServiceProvider services,
-        IMpvApi mpvApi,
-        IMpvRenderApi mpvRenderApi)
+        IServiceProvider services)
     {
         _ltcMonitor = ltcMonitor;
         _playlist = playlist;
@@ -158,13 +150,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _gapPlaybackCommandExecutor = gapPlaybackCommandExecutor;
         _gapFreezeHandler = gapFreezeHandler;
         _settingsManager = settingsManager;
-        _showDebugOsd = settingsManager.Current.ShowDebugOsd;
         _spoutOutput = spoutOutput;
         _mediaDurationReader = mediaDurationReader;
         _playlistDurationBackfillService = playlistDurationBackfillService;
         _playlistLoadCoordinator = playlistLoadCoordinator;
-        _mpvStartupPropertyApplier = mpvStartupPropertyApplier;
-        _mpvSessionInitializer = mpvSessionInitializer;
         _projectLoadApplicator = projectLoadApplicator;
         _projectSaveExecutor = new ProjectSaveExecutor(SaveProjectAsync);
         _seekState = seekState;
@@ -173,9 +162,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _gstBackendState = services.GetRequiredService<GstBackendState>();
         _gstNativeApi = services.GetRequiredService<IGstNativeApi>();
         _playbackApi = services.GetRequiredService<IPlaybackApi>();
+        _gstPlaybackApi = services.GetRequiredService<GstPlaybackApi>();
         if (!outputBackendState.PlaybackAvailable)
             _playbackAvailability.MarkUnavailable(outputBackendState.Decision.Detail);
-        _mpvApi = mpvApi;
 
         _vm = new MainViewModel();
         _vm.Player   = new PlayerViewModel(this);
@@ -183,7 +172,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
         _vm.Output   = new OutputControlViewModel();
         _vm.Output.InitializeTestCard(OutputEngineSettings.TestCardRequested());
-        _renderSession = new RenderSession(mpvRenderApi, _playbackPerformanceStats,
+        _renderSession = new RenderSession(services.GetRequiredService<IRenderUpdateSource>(),
+            _playbackPerformanceStats,
             action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action));
         _renderSession.FrameUpdate = ProcessRenderFrameUpdateAsync;
         if (outputBackendState.IsInitialized && outputBackendState.PlaybackAvailable)
@@ -470,7 +460,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // GPU 検出失敗・GPU ワーカー初期化失敗・player 生成失敗は EnterPlaybackUnavailable に集約する。
     // 再生・シーク・LTC 同期の開始は IsPlaybackAvailable / IsPlayerReady だけを見て止める。
     private bool IsPlaybackAvailable => _playbackAvailability.IsAvailable;
-    private bool IsPlayerReady => IsPlaybackAvailable && _mpv != IntPtr.Zero;
+    private bool IsPlayerReady => IsPlaybackAvailable && _gstBackendState.Player != IntPtr.Zero;
 
     private void EnterPlaybackUnavailable(string detail, bool gpuHardwareRequired)
     {
@@ -495,7 +485,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         Path.Combine(AppContext.BaseDirectory, "logs", $"timecodesyncplayer-{DateTime.Now:yyyyMMdd}.log");
 
     private readonly AppSettingsManager _settingsManager;
-    private readonly bool _showDebugOsd;
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
         => CreateWindowLoadedCoordinator().Initialize();
@@ -693,10 +682,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             setButtonEnabled: enabled => BtnSpout.IsEnabled = enabled,
             setToggleLabel: label => _vm.Sync.SpoutToggleLabel = label);
         var sessionInitializer = new WindowLoadedSessionInitializer(
-            initializeMpvSession: () => _mpvSessionInitializer.Initialize(_showDebugOsd),
-            assignMpv: mpv => _mpv = mpv,
+            initializePlayback: () => _gstPlaybackApi.Initialize(),
             applyAudioSettings: _audioControlCoordinator.ApplyStartup,
-            createRenderContext: () => _renderSession.Create(_mpv),
+            createRenderContext: () => _renderSession.Create(_gstBackendState.Player),
             // GPU 構成では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
             initializeSpout: () => SpoutStartupState.FromInitializationResult(true),
             applySpoutStartupState: spoutUiApplicator.Apply,
@@ -739,9 +727,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // 見せ方は GPU 利用不可と同じ 1 か所に集約する。生成・初期化の失敗は確認先を示す。
         string detail = error switch
         {
-            WindowLoadedSessionInitializationError.MpvCreateFailed =>
-                "再生エンジンの生成に失敗しました。GStreamer ランタイムと tcs_gstreamer.dll を確認してください。",
-            WindowLoadedSessionInitializationError.MpvInitializeFailed =>
+            WindowLoadedSessionInitializationError.PlaybackInitializeFailed =>
                 "再生エンジンの初期化に失敗しました。GStreamer ランタイムと tcs_gstreamer.dll を確認してください。",
             WindowLoadedSessionInitializationError.RenderContextCreateFailed =>
                 "レンダーコンテキストの作成に失敗しました。",
@@ -1336,8 +1322,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // ── Playback helpers ───────────────────────────────────────────
 
-    private bool SeekTo(double seconds, bool suppressOsd = true)
-        => IsPlaybackAvailable && CreatePlaybackOperationsCoordinator().SeekTo(seconds, suppressOsd);
+    private bool SeekTo(double seconds)
+        => IsPlaybackAvailable && CreatePlaybackOperationsCoordinator().SeekTo(seconds);
 
     // ── IPlaybackController ────────────────────────────────────────────────
     void IPlaybackController.TogglePlayPause()
@@ -1788,7 +1774,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (!_metadataFetched && _duration > 0)
             FetchMetadata();
 
-        // Gap 状態では mpv のレンダーコールバックが止まるため、
+        // Gap 状態ではレンダーコールバックが止まるため、
         // タイマーでタイムライン位置を更新する
         if (!_gapFreezeHandler.IsInactive
             && _vm.Sync.SyncMode == SyncMode.Continue
@@ -1930,7 +1916,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         string raw;
         bool seeking;
-        if (_mpv == IntPtr.Zero)
+        if (_gstBackendState.Player == IntPtr.Zero)
         {
             raw = "<null>";
             seeking = true;
@@ -2055,14 +2041,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             }
         },
         disposeRenderContext: _renderSession.FreeContext,
-        disposeMpv: () =>
-        {
-            if (_mpv != IntPtr.Zero)
-            {
-                _mpvApi.TerminateDestroy(_mpv);
-                _mpv = IntPtr.Zero;
-            }
-        },
+        disposePlayer: _gstBackendState.DisposePlayer,
         disposeLtc: () =>
         {
             _ltcMonitor.FrameReceived -= LtcMonitor_FrameReceived;

@@ -7,7 +7,7 @@ namespace TimecodeSyncPlayer.Gst;
 
 /// <summary>
 /// IPlaybackApi の GStreamer 実装。shim（IGstNativeApi）を直接呼び、
-/// 文字列コマンドの生成と再解析（GstCommandTranslator）を経由しない。
+/// 文字列コマンドの生成と再解析を経由しない。
 /// seeking は既存の文字列経路と同じ <see cref="GstSeekingTracker"/> を共有する。
 /// </summary>
 internal sealed class GstPlaybackApi : IPlaybackApi
@@ -20,6 +20,38 @@ internal sealed class GstPlaybackApi : IPlaybackApi
     }
 
     private IntPtr Player => _state.Player;
+
+    /// <summary>
+    /// セッション初期化: player を生成し、開始状態（pause=yes 相当）を整える。
+    /// 旧 mpv 経路のセッション生成と開始プロパティ適用の役割をここへ集約する。
+    /// </summary>
+    public PlaybackResult Initialize()
+    {
+        if (!_state.EnsurePlayer())
+        {
+            string error = string.IsNullOrEmpty(_state.LastError)
+                ? "player create failed"
+                : _state.LastError;
+            Log.Error("GstPlaybackApi: プレイヤー生成失敗 {Error}", error);
+            return PlaybackResult.Fail(error);
+        }
+
+        IntPtr player = _state.Player;
+        _state.IsPaused = true;
+        try
+        {
+            int rc = _state.Native.SetPaused(player, true);
+            if (rc != 0)
+                Log.Warning("GstPlaybackApi: 初期 pause 設定に失敗 rc={Rc}", rc);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "GstPlaybackApi.Initialize 失敗");
+            return PlaybackResult.Fail(ex.Message);
+        }
+        Log.Information("GstPlaybackApi: プレイヤー初期化完了 sender='{Sender}'", _state.SenderName);
+        return PlaybackResult.Ok;
+    }
 
     public PlaybackResult Load(string path, double? startSeconds, bool paused)
     {

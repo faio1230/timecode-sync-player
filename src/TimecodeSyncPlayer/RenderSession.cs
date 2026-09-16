@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
 
@@ -11,7 +10,7 @@ namespace TimecodeSyncPlayer;
 /// </summary>
 internal sealed class RenderSession : IDisposable
 {
-    private readonly IMpvRenderApi _api;
+    private readonly IRenderUpdateSource _api;
     private readonly PlaybackPerformanceStats _stats;
     private readonly Action<Action> _scheduleUpdate;
     private readonly RenderThreadExecutor _thread = new();
@@ -26,7 +25,7 @@ internal sealed class RenderSession : IDisposable
     private volatile bool _stopped;
     private bool _disposed;
 
-    public RenderSession(IMpvRenderApi api, PlaybackPerformanceStats stats, Action<Action> scheduleUpdate)
+    public RenderSession(IRenderUpdateSource api, PlaybackPerformanceStats stats, Action<Action> scheduleUpdate)
     {
         _api = api;
         _stats = stats;
@@ -41,25 +40,19 @@ internal sealed class RenderSession : IDisposable
     public void ResetUpdateStats() => _scheduler.Reset();
     public RenderUpdateSchedulerStats ConsumeUpdateStats() => _scheduler.ConsumeStats();
 
-    public bool Create(IntPtr mpv)
+    public bool Create(IntPtr player)
     {
         ObjectDisposedException.ThrowIf(_stopped, this);
-        IntPtr sw = Marshal.StringToHGlobalAnsi(_api.MpvRenderApiTypeSw);
-        var initParameters = RenderContextParameterBuilder.BuildSoftwareBackendParams(_api, sw);
-        (int ReturnCode, IntPtr Context) created;
-        try
+        (bool Created, IntPtr Context) created = _thread.InvokeAsync(() =>
         {
-            created = _thread.InvokeAsync(() =>
-            {
-                int rc = _api.RenderContextCreate(out IntPtr context, mpv, initParameters);
-                return (rc, context);
-            }).GetAwaiter().GetResult();
-        }
-        finally { Marshal.FreeHGlobal(sw); }
+            bool created = _api.TryCreateContext(player, out IntPtr context);
+            return (created, context);
+        }).GetAwaiter().GetResult();
+        // 作成に失敗しても実装が返した context は保持する（部分的に確保された資源の解放に使う）。
         _context = created.Context;
-        if (!RenderContextCreateResult.FromReturnCode(_context, created.ReturnCode).Success)
+        if (!created.Created)
         {
-            Log.Error("mpv_render_context_create 失敗: rc={Rc}", created.ReturnCode);
+            Log.Error("レンダーコンテキストの作成に失敗");
             return false;
         }
         _updateCallback = callbackContext =>
@@ -71,9 +64,9 @@ internal sealed class RenderSession : IDisposable
                 _ = DrainNativeUpdatesAsync();
             }
         };
-        _thread.InvokeAsync(() => _api.RenderContextSetUpdateCallback(_context, _updateCallback, IntPtr.Zero))
+        _thread.InvokeAsync(() => _api.SetUpdateCallback(_context, _updateCallback))
             .GetAwaiter().GetResult();
-        Log.Information("mpv SW レンダーコンテキスト作成完了");
+        Log.Information("SW レンダーコンテキスト作成完了");
         return true;
     }
 
@@ -112,8 +105,8 @@ internal sealed class RenderSession : IDisposable
     private (int Generation, bool HasFrame) ReadNativeUpdate()
     {
         int generation = CaptureGeneration();
-        ulong flags = _api.RenderContextUpdate(_context);
-        return (generation, (flags & _api.MpvRenderUpdateFrame) != 0);
+        ulong flags = _api.ConsumeUpdate(_context);
+        return (generation, (flags & _api.FrameUpdateFlag) != 0);
     }
 
     private async void OnRenderUpdate()
@@ -179,7 +172,7 @@ internal sealed class RenderSession : IDisposable
     {
         Stop();
         if (_context == IntPtr.Zero) return;
-        _thread.InvokeAsync(() => _api.RenderContextFree(_context)).GetAwaiter().GetResult();
+        _thread.InvokeAsync(() => _api.FreeContext(_context)).GetAwaiter().GetResult();
         _context = IntPtr.Zero;
         _updateCallback = null;
     }

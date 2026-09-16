@@ -3,6 +3,8 @@ using System.Windows.Threading;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Gst;
+using TimecodeSyncPlayer.Tests.Gst;
 using TimecodeSyncPlayer.Tests.Helpers;
 using TimecodeSyncPlayer.Tests.Integration;
 
@@ -29,17 +31,18 @@ public sealed class MainWindowManualSeekTests
         h.Operations.Clear();
 
         // Exercise the real Window entry points without showing it or starting native/audio I/O.
-        var api = new RecordingMpvApi();
         var playbackApi = new FakePlaybackApi();
         var services = new ServiceCollection();
         App.ConfigureServices(services);
-        services.AddSingleton<IMpvApi>(api);
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1) };
+        services.AddSingleton<IGstNativeApi>(native);
         services.AddSingleton<IPlaybackApi>(playbackApi);
         using var provider = services.BuildServiceProvider();
         var window = provider.GetRequiredService<MainWindow>();
         try
         {
-            typeof(MainWindow).GetField("_mpv", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, new IntPtr(1));
+            GstBackendState backend = provider.GetRequiredService<GstBackendState>();
+            backend.EnsurePlayer().Should().BeTrue();
             typeof(MainWindow).GetField("_ltcSyncController", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, h.Controller);
             var playback = (PlaybackControlState)typeof(MainWindow).GetField("_playbackControl", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
             playback.SetPaused(paused);
@@ -72,22 +75,6 @@ public sealed class MainWindowManualSeekTests
         finally { window.Dispose(); window.Close(); }
         return Task.CompletedTask;
     });
-
-    private sealed class RecordingMpvApi : IMpvApi
-    {
-        public List<string> Commands { get; } = [];
-        public List<(string, string)> Properties { get; } = [];
-        // MainWindow は DI 解決のために IMpvApi を要求し続ける（順序 5 で削除）。
-        public IntPtr Create() => new(1);
-        public int Initialize(IntPtr ctx) => 0;
-        public void TerminateDestroy(IntPtr ctx) { }
-        public int SetPropertyString(IntPtr ctx, string name, string value) { Properties.Add((name, value)); return 0; }
-        public int GetProperty(IntPtr ctx, string name, int format, out double result) { result = 0; return 0; }
-        public string GetPropertyString(IntPtr ctx, string name) => "";
-        public int CommandString(IntPtr ctx, string args) { Commands.Add(args); return 0; }
-        public void Free(IntPtr data) { }
-        public int FormatDouble => 5;
-    }
 
     private static Task OnUi(Func<Task> action)
     {

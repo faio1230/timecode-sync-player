@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -9,13 +10,12 @@ public sealed class WindowLoadedSessionInitializerTests
     {
         var calls = new List<string>();
         SpoutStartupState? appliedSpoutState = null;
-        IntPtr mpv = new(100);
         var initializer = CreateInitializer(
             calls,
-            initializeMpvSession: () =>
+            initializePlayback: () =>
             {
-                calls.Add("mpv-session");
-                return new MpvSessionInitializationResult(true, mpv, MpvSessionInitializationFailure.None);
+                calls.Add("playback");
+                return PlaybackResult.Ok;
             },
             createRenderContext: () =>
             {
@@ -38,8 +38,7 @@ public sealed class WindowLoadedSessionInitializerTests
 
         result.Should().BeTrue();
         calls.Should().Equal(
-            "mpv-session",
-            "assign-mpv:100",
+            "playback",
             "audio-settings",
             "render-context",
             "spout",
@@ -50,13 +49,13 @@ public sealed class WindowLoadedSessionInitializerTests
     }
 
     [Fact]
-    public void Initialize_StopsAfterMpvCreateFailure()
+    public void Initialize_StopsAfterPlaybackInitializeFailure()
     {
         var calls = new List<string>();
         WindowLoadedSessionInitializationError? error = null;
         var initializer = CreateInitializer(
             calls,
-            initializeMpvSession: () => new MpvSessionInitializationResult(false, IntPtr.Zero, MpvSessionInitializationFailure.CreateFailed),
+            initializePlayback: () => PlaybackResult.Fail("player create failed"),
             showError: e =>
             {
                 calls.Add($"error:{e}");
@@ -66,29 +65,8 @@ public sealed class WindowLoadedSessionInitializerTests
         bool result = initializer.Initialize();
 
         result.Should().BeFalse();
-        error.Should().Be(WindowLoadedSessionInitializationError.MpvCreateFailed);
-        calls.Should().Equal("assign-mpv:0", "error:MpvCreateFailed");
-    }
-
-    [Fact]
-    public void Initialize_StopsAfterMpvInitializeFailure()
-    {
-        var calls = new List<string>();
-        WindowLoadedSessionInitializationError? error = null;
-        var initializer = CreateInitializer(
-            calls,
-            initializeMpvSession: () => new MpvSessionInitializationResult(false, IntPtr.Zero, MpvSessionInitializationFailure.InitializeFailed),
-            showError: e =>
-            {
-                calls.Add($"error:{e}");
-                error = e;
-            });
-
-        bool result = initializer.Initialize();
-
-        result.Should().BeFalse();
-        error.Should().Be(WindowLoadedSessionInitializationError.MpvInitializeFailed);
-        calls.Should().Equal("assign-mpv:0", "error:MpvInitializeFailed");
+        error.Should().Be(WindowLoadedSessionInitializationError.PlaybackInitializeFailed);
+        calls.Should().Equal("error:PlaybackInitializeFailed");
     }
 
     [Fact]
@@ -98,7 +76,7 @@ public sealed class WindowLoadedSessionInitializerTests
         WindowLoadedSessionInitializationError? error = null;
         var initializer = CreateInitializer(
             calls,
-            initializeMpvSession: () => new MpvSessionInitializationResult(true, new IntPtr(300), MpvSessionInitializationFailure.None),
+            initializePlayback: () => PlaybackResult.Ok,
             createRenderContext: () =>
             {
                 calls.Add("render-context");
@@ -114,13 +92,12 @@ public sealed class WindowLoadedSessionInitializerTests
 
         result.Should().BeFalse();
         error.Should().Be(WindowLoadedSessionInitializationError.RenderContextCreateFailed);
-        calls.Should().Equal("assign-mpv:300", "audio-settings", "render-context", "error:RenderContextCreateFailed");
+        calls.Should().Equal("audio-settings", "render-context", "error:RenderContextCreateFailed");
     }
 
     private static WindowLoadedSessionInitializer CreateInitializer(
         List<string> calls,
-        Func<MpvSessionInitializationResult>? initializeMpvSession = null,
-        Action<IntPtr>? assignMpv = null,
+        Func<PlaybackResult>? initializePlayback = null,
         Action? applyAudioSettings = null,
         Func<bool>? createRenderContext = null,
         Func<SpoutStartupState>? initializeSpout = null,
@@ -130,8 +107,7 @@ public sealed class WindowLoadedSessionInitializerTests
         Action<WindowLoadedSessionInitializationError>? showError = null)
     {
         return new WindowLoadedSessionInitializer(
-            initializeMpvSession ?? (() => new MpvSessionInitializationResult(true, IntPtr.Zero, MpvSessionInitializationFailure.None)),
-            assignMpv ?? (mpv => calls.Add($"assign-mpv:{mpv.ToInt64()}")),
+            initializePlayback ?? (() => PlaybackResult.Ok),
             applyAudioSettings ?? (() => calls.Add("audio-settings")),
             createRenderContext ?? (() => true),
             initializeSpout ?? (() => new SpoutStartupState(false, "Spout OFF")),

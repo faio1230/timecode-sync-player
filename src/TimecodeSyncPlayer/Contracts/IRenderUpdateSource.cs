@@ -1,7 +1,7 @@
 namespace TimecodeSyncPlayer.Contracts;
 
 /// <summary>
-/// フレーム更新通知とコンテキスト寿命の境界（IMpvRenderApi の後継）。
+/// フレーム更新通知とコンテキスト寿命の境界。
 /// <see cref="RenderUpdateFn"/> の契約は変えない（デリゲートは呼び出し側が保持する）。
 /// 実装は GStreamer バックエンド（GstRenderUpdateSource）。
 /// </summary>

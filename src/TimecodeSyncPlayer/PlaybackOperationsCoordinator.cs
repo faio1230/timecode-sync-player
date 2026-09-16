@@ -98,20 +98,17 @@ internal sealed class PlaybackOperationsCoordinator
         return true;
     }
 
-    public bool SeekTo(double seconds, bool suppressOsd = true)
+    public bool SeekTo(double seconds)
     {
         // U1 計測: この呼び出しは UI スレッドから同期で shim に入る。
         long started = Stopwatch.GetTimestamp();
         try
         {
-            // suppressOsd は GStreamer では意味を持たない（OSD 無し）。トレースの互換のため
-            // 従来と同じ detail を残す。
             bool trace = OutputTrace.Current.IsEnabled;
             if (trace)
             {
                 OutputTrace.Current.Record(new("seek.issue", "PLAYER", Stopwatch.GetTimestamp(),
-                    Value: (long)Math.Round(seconds * 1_000_000.0),
-                    Detail: suppressOsd ? "no-osd" : "osd"));
+                    Value: (long)Math.Round(seconds * 1_000_000.0)));
             }
             PlaybackResult seek;
             try
