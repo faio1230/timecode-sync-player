@@ -4,6 +4,7 @@ using FluentAssertions;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -21,7 +22,7 @@ public class ProjectSerializerCanvasTests : IDisposable
 
     public ProjectSerializerCanvasTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), "TimecodeSyncPlayer.Tests", "ProjectSerializer");
+        _tempDir = TestTempPaths.Combine("ProjectSerializer");
         Directory.CreateDirectory(_tempDir);
     }
 

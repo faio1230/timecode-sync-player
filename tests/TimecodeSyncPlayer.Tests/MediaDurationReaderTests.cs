@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -32,10 +33,7 @@ public class MediaDurationReaderTests
     [Fact]
     public async Task ReadDurationAsync_EmptyFile_ReturnsNull()
     {
-        string emptyFile = System.IO.Path.Combine(
-            System.IO.Path.GetTempPath(),
-            "TimecodeSyncPlayer.Tests",
-            "empty_video.mp4");
+        string emptyFile = TestTempPaths.Combine("empty_video.mp4");
 
         System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(emptyFile)!);
         System.IO.File.WriteAllBytes(emptyFile, Array.Empty<byte>());

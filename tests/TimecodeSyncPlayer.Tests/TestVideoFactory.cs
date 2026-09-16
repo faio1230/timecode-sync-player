@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -44,7 +45,7 @@ internal static class TestVideoFactory
             if (_videoPath != null && File.Exists(_videoPath))
                 return _videoPath;
 
-            string dir  = Path.Combine(Path.GetTempPath(), "TimecodeSyncPlayer.Tests");
+            string dir  = TestTempPaths.Root;
             Directory.CreateDirectory(dir);
             string path = Path.Combine(dir, "test_clip.mp4");
 
@@ -90,7 +91,7 @@ internal static class TestVideoFactory
             if (string.IsNullOrWhiteSpace(safeName))
                 safeName = "variant";
 
-            string dir = Path.Combine(Path.GetTempPath(), "TimecodeSyncPlayer.Tests");
+            string dir = TestTempPaths.Root;
             Directory.CreateDirectory(dir);
             string path = Path.Combine(dir, $"test_clip_{safeName}.mp4");
 
