@@ -253,16 +253,13 @@ public sealed class RealProjectGapE2ETests
     }
     private static double CaptureImage(E2EAppRunner app, string report, string name, MonkeyJournal journal)
     {
-        var image = app.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("VideoImage"));
-        Assert.NotNull(image);
-        app.MainWindow.Focus();
-        using var capture = FlaUI.Core.Capturing.Capture.Element(image);
-        capture.ToFile(Path.Combine(report, name + ".png"));
+        // 読み戻しの経路は LtcScenarioFrameProbe と共用する（既存の判定は 80% 領域のまま）。
+        using var bitmap = LtcScenarioFrameProbe.CaptureVideoImage(app, report, name);
         int bright = 0, count = 0;
-        for (int y = capture.Bitmap.Height / 10; y < capture.Bitmap.Height * 9 / 10; y += 8)
-        for (int x = capture.Bitmap.Width / 10; x < capture.Bitmap.Width * 9 / 10; x += 8)
+        for (int y = bitmap.Height / 10; y < bitmap.Height * 9 / 10; y += 8)
+        for (int x = bitmap.Width / 10; x < bitmap.Width * 9 / 10; x += 8)
         {
-            var pixel = capture.Bitmap.GetPixel(x, y);
+            var pixel = bitmap.GetPixel(x, y);
             if (pixel.R > 12 || pixel.G > 12 || pixel.B > 12) bright++;
             count++;
         }
