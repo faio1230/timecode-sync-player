@@ -250,11 +250,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             _renderSession.PreviewBitmapChanged += bitmap => VideoImage.Source = bitmap;
         }
-        // D4: CPU 合成は WriteableBitmap の描画数（現行）、GPU 合成は OutputEngine の公開数。
-        // GPU 合成ではビットマップを描かないため、CPU の数だけを見るとゲートが 5 秒開かない。
+        // D4: 表示経路に到達したフレーム数は GPU 合成の公開数だけを見る。
         _syncGateRenderedFrames = new RenderedFrameCounter(
-            gpuCompositing: _effectiveOutputBackend == OutputBackend.Gpu,
-            cpuRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames,
             gpuPublishedFrames: () => _outputEngine?.PublishedFrameCount ?? 0);
         _ltcSyncController = new LtcSyncController(
             _playlist, _gapFreezeHandler, _syncService, ltcFrameProcessor,
@@ -732,10 +729,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             applyAudioSettings: _audioControlCoordinator.ApplyStartup,
             createRenderContext: () => _renderSession.Create(_mpv),
             allocateRenderParameters: _renderSession.AllocateParameters,
-            // Gpu backend では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
-            initializeSpout: () => SpoutStartupState.FromInitializationResult(
-                _effectiveOutputBackend == OutputBackend.Gpu
-                || (SpoutOutputPolicy.InitializeCpuSpout(_effectiveOutputBackend) && _spoutOutput.TryInitialize())),
+            // GPU 構成では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
+            initializeSpout: () => SpoutStartupState.FromInitializationResult(true),
             applySpoutStartupState: spoutUiApplicator.Apply,
             initializeFrameRenderer: _renderSession.InitializeFrameRenderer,
             startTimer: () => _timer = StartupTimerFactory.CreateStartedTimer(TimeSpan.FromMilliseconds(TimerIntervalMs), OnTick),

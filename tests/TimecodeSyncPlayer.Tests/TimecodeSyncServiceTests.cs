@@ -249,14 +249,9 @@ public class TimecodeSyncServiceTests
     [Fact]
     public void TryMarkFileLoaded_GpuCompositing_OpensOnPublishedFrames_WithoutWaitingForCpuBitmaps()
     {
-        // GPU 合成相当: WriteableBitmap の描画数（cpu）は 0 のまま、表示経路（OutputEngine）の
-        // 公開数だけが進む。修正前は CPU の数だけを見ていたため、この条件では 5 秒開かなかった。
-        long cpuRenderedFrames = 0;
+        // 出荷構成（GPU 合成）: 表示経路（OutputEngine）の公開数だけが進む。
         long publishedFrames = 0;
-        var counter = new RenderedFrameCounter(
-            gpuCompositing: true,
-            cpuRenderedFrames: () => cpuRenderedFrames,
-            gpuPublishedFrames: () => publishedFrames);
+        var counter = new RenderedFrameCounter(gpuPublishedFrames: () => publishedFrames);
 
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();

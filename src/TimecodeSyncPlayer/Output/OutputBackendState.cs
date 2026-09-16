@@ -16,10 +16,7 @@ internal static class OutputBackendResolver
         OutputBackend requested,
         Func<D3D11CapabilityResult> probe)
     {
-        if (requested == OutputBackend.Cpu)
-            return new(requested, OutputBackend.Cpu, true, "Cpu が指定されています。");
-
-        // Gpu が使えないときに Cpu へ黙って落とさない。再生可否は PlaybackAvailable で伝え、
+        // Gpu が使えないときに黙って落とす先はもう無い。再生可否は PlaybackAvailable で伝え、
         // 見せ方は MainWindow が 1 か所で決める（R1 1-2）。
         D3D11CapabilityResult capability = probe();
         return new(requested, OutputBackend.Gpu, capability.Supported, capability.Detail);
@@ -35,8 +32,10 @@ public sealed class OutputBackendState
     /// <summary>E2E・検証用の注入。設定項目は増やさない（R1 1-2）。</summary>
     internal const string ForceUnavailableEnvironmentVariable = "TIMECODE_SYNC_PLAYER_FORCE_GPU_UNAVAILABLE";
 
+    // 初期化前は再生不可として扱う（MainWindow を初期化せず構築する単体テストでも
+    // GPU 出力を開始しない）。
     public OutputBackendDecision Decision { get; private set; } =
-        new(OutputBackend.Gpu, OutputBackend.Cpu, true, "未初期化");
+        new(OutputBackend.Gpu, OutputBackend.Gpu, false, "未初期化");
 
     public OutputBackend Effective => Decision.Effective;
 
@@ -67,13 +66,9 @@ public sealed class OutputBackendState
                 "OutputBackend: Gpu 出力を利用できないため再生を無効にします: {Detail}",
                 Decision.Detail);
         }
-        else if (Decision.Effective == OutputBackend.Gpu)
-        {
-            Log.Information("OutputBackend: Gpu（{Detail}）", Decision.Detail);
-        }
         else
         {
-            Log.Information("OutputBackend: Cpu（{Detail}）", Decision.Detail);
+            Log.Information("OutputBackend: Gpu（{Detail}）", Decision.Detail);
         }
     }
 
