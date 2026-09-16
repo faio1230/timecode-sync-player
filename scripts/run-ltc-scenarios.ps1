@@ -3,7 +3,9 @@
 #
 #   powershell -File scripts\run-ltc-scenarios.ps1 -AppExe <path to TimecodeSyncPlayer.exe>
 #   powershell -File scripts\run-ltc-scenarios.ps1 -Filter "FullyQualifiedName~NoSuchTest"   # dry run
-#   powershell -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder>             # real media
+#   powershell -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-KeepProject]
+#       (the project .tsp is generated under the report directory, never in the
+#        media folder, and is removed after the run unless -KeepProject is set)
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg, .NET SDK, the
 # target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
@@ -23,6 +25,7 @@ param(
     [int]$Cycles = 0,
     [string]$Filter = '',
     [string]$MediaDir = '',
+    [switch]$KeepProject,
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -136,7 +139,7 @@ $projectPath = ''
 if ($MediaDir) {
     if (-not (Test-Path -LiteralPath $MediaDir)) { throw "MediaDir not found: $MediaDir" }
     $MediaDir = (Resolve-Path -LiteralPath $MediaDir).Path
-    $projectPath = Join-Path $MediaDir 'ltc-scenario.tsp'
+    $projectPath = Join-Path $ReportDir 'ltc-scenario.tsp'
     & $makeProject -MediaDir $MediaDir -Out $projectPath *> (Join-Path $ReportDir 'make-ltc-scenario-project.log')
     if (-not $?) { throw "make-ltc-scenario-project.ps1 failed" }
     if (-not (Test-Path -LiteralPath $projectPath)) { throw "project not generated: $projectPath" }
@@ -255,6 +258,14 @@ Write-Output ('SUMMARY passed=' + $passed + ' failed=' + $failed + ' skipped=' +
     ' err_ftl=' + $errFtl + ' leftover=' + $leftover.Count + ' report=' + $ReportDir)
 foreach ($name in $failedNames) { Write-Output ('FAILED ' + $name) }
 Write-Output ('app_logs=' + (($copiedLogs | Sort-Object) -join ','))
+
+if ($projectPath) {
+    if ($KeepProject) {
+        Write-Output ('project_kept=' + $projectPath)
+    } else {
+        Remove-Item -LiteralPath $projectPath -Force -ErrorAction SilentlyContinue
+    }
+}
 
 if ($failed -gt 0 -or $testExit -ne 0) { exit 1 }
 exit 0
