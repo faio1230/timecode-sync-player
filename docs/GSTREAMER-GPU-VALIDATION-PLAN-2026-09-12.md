@@ -2820,4 +2820,12 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 証跡: `TestResults/gpu-app/20260916T210501Z-d12-v5-seek`、`TestResults/v3/d12-after-v3-ltc25-gst`（agent-a の作業ツリー）
 - **統合**: agent-a `8a706d6` → main `60d0b44`、agent-b `e5014d4` → main `061419f`。統合後の main で親が Debug の shim を再ビルドし、非E2E 1672 合格、44.1kHz 素材のロード 169.7ms（attempt=0）、`logs	cs-gst-20260917.log` の生成（13 行）、残プロセス 0 を確認（`TestResults/gpu-app/20260916T213018Z-aud441-merged` 相当）
 
-（続き: 除去担当の E2E 全件（統合後）→ バージョン 0.4.1 → 配布物 → 検証機）
+### 除去担当の E2E 全件（統合後 main `44c98c9` 相当、新セッション、shim は自ツリーで再ビルド `248813D9…`、2026-09-17 06:45〜06:55、親が trx を確認）
+
+- 音声付き 2 本: **2 合格 / 0 失敗**（`e2e-audio-prefix.trx`）
+- 全件: **65 合格 / 0 失敗 / 6 スキップ**（opt-in 6 件。基準 63 + 追加 2、`e2e-all.trx`）、6 分 51 秒、残プロセス 0
+- `logs	cs-gst-20260917.log` 190KB 生成（E2E 全件分の shim ログ）
+- 証跡: `TestResults/v041-removal-b/`（agent-b の作業ツリー）
+- **判定: v0.4.1 の完了条件 1（開発機の修正前後 4 本）と 2（E2E 全件）は合格。** バージョン 0.4.1 は main `514b4a0`
+
+（続き: 配布物 → 起動確認 → 検証機の AV1 実素材 → 公開）
