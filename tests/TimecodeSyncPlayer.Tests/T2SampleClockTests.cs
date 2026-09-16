@@ -6,8 +6,9 @@ using TimecodeSyncPlayer.Tests.Integration;
 namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
-/// T2 段 2: フレーム終端から受信ハンドラまでの経過（age）を同期値に足す切替
-/// （TCS_LTC_SAMPLE_CLOCK、既定 off）。Single モードのシーク先（= 同期目標）で観測する。
+/// T2 段 2/3: フレーム終端から受信ハンドラまでの経過（age）を同期値に足す切替
+/// （TCS_LTC_SAMPLE_CLOCK、段 3 で既定 on。off 指定時だけ無効）。
+/// Single モードのシーク先（= 同期目標）で観測する。
 /// </summary>
 public class T2SampleClockTests
 {
@@ -25,14 +26,15 @@ public class T2SampleClockTests
     }
 
     [Theory]
-    [InlineData(null, false)]
-    [InlineData("", false)]
+    [InlineData(null, true)]
+    [InlineData("", true)]
     [InlineData("on", true)]
     [InlineData("ON", true)]
-    [InlineData(" on ", true)]
+    [InlineData(" off ", false)]
     [InlineData("off", false)]
-    [InlineData("true", false)]
-    public void IsSampleClockEnabled_OnlyOnEnables(string? value, bool expected)
+    [InlineData("OFF", false)]
+    [InlineData("true", true)]
+    public void IsSampleClockEnabled_OnlyOffDisables(string? value, bool expected)
         => LtcSyncController.IsSampleClockEnabled(value).Should().Be(expected);
 
     [Fact]

@@ -47,7 +47,7 @@ internal sealed record LtcSyncEffects(
 /// </summary>
 internal sealed class LtcSyncController
 {
-    /// <summary>T2: サンプル時計（フレーム終端から受信ハンドラまでの経過を同期値に足す）の切替。</summary>
+    /// <summary>T2: サンプル時計（フレーム終端から受信ハンドラまでの経過を同期値に足す）の切替。既定 on。</summary>
     internal const string SampleClockEnvironmentVariable = "TCS_LTC_SAMPLE_CLOCK";
 
     /// <summary>T2: age として受け付ける上限。停止や時計の不一致を同期値へ持ち込まない。</summary>
@@ -104,7 +104,7 @@ internal sealed class LtcSyncController
             Environment.GetEnvironmentVariable(SampleClockEnvironmentVariable));
         _getQpc = getQpc ?? Stopwatch.GetTimestamp;
         Log.Information(
-            "LTC sample clock: {State}（{Variable} は on のときだけ有効）",
+            "LTC sample clock: {State}（{Variable}=off のときだけ無効）",
             _sampleClockEnabled ? "有効" : "無効", SampleClockEnvironmentVariable);
         _syncService.SeekIssued += OnSeekIssued;
     }
@@ -112,9 +112,11 @@ internal sealed class LtcSyncController
     public double LastLtcSeconds { get; private set; }
     public double LastTimecodeFps => _frames.LastTimecodeFps;
 
-    /// <summary>環境変数の解釈。null・空・on 以外は無効、"on"（大文字小文字不問）のときだけ有効。</summary>
+    /// <summary>
+    /// 環境変数の解釈（T2 段 3: 既定 on）。明示的な off（大文字小文字不問）のときだけ無効。
+    /// </summary>
     internal static bool IsSampleClockEnabled(string? value)
-        => value is not null && value.Trim().Equals("on", StringComparison.OrdinalIgnoreCase);
+        => value is null || !value.Trim().Equals("off", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>テスト・診断用: 直近フレームの Continue 補正文脈（フレーム先頭で捨てる）。</summary>
     internal ContinueFrameContext? LastContinueFrame => _lastContinueFrame;
