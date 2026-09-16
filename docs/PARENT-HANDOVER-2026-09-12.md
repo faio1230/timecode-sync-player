@@ -313,6 +313,10 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
    親は 1 時間監視の watcher が切れてから気づいた。**ハーネスの `-Seconds` を過ぎても runner が返らないときは、まずアプリログの loadfile を見る**
 8. ~~**`Invoke-AppGpuTrial.ps1 -SeekAtSeconds` はランナーが返らない**~~ **H1 で修正（`666b0f8`、main 統合済み）**: SeekBar は 0..1 の正規化値なので 15 を渡すと UIA の SetValue が例外になり、終了シーケンスが飛んでアプリが残っていた。今は起動前に値域を検証し、mark ごとに try/catch、finally で所有アプリを必ず閉じ、`-OverallTimeoutSeconds`（既定 Seconds+90）で打ち切る。旧記述:（2026-09-16 21:57 の run、素材読込は成功・アプリは一時停止のまま・`harness.jsonl` 空のまま 38 分）。
    `-ClickPlay` なしで起動した一時停止中のアプリに対する seek の UIA 操作で固まる見込み（未調査。親のスクリプト）。当面 `-SeekAtSeconds` は使わない
+9. **`Invoke-AppGpuTrial.ps1 -ClickPlay` は「再生を保証」ではなく BtnPlay のトグル**（`PlayPauseCommand.TogglePlayPause`）。`--open` で読み込んだアプリは即再生するので、
+   `-ClickPlay` を付けると約 10 秒後に**一時停止**する（V6 の 1〜2 回目、2026-09-17 00:47〜01:06。perf 行が 2 本で止まり、読み取りバイトが 9 分間 0）。
+   V5 の 1 回目と D10 の 1080p run も一時停止状態だった疑い（シーク着地の証拠は有効、公開継続の証拠は無効）。V5 は `-ClickPlay` なしでやり直す。
+   ハーネス側は「ボタンの状態を見て再生を保証する」に直す（H2、V6 の後）
 
 1. **指標の符号**: `delta`（LTC − 再生位置）と `signedErrorMs`（絵 − LTC）は向きが逆。**足す**のが正しい。
    差で計算して「74ms のずれ」を作り、T5 の結論・max-buffers 掃引・T6 の設計をその上に積んでいた
