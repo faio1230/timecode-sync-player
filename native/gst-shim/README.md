@@ -116,6 +116,17 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 - 登録解除は destroy 前（fn=NULL）。コールバック時点の世代を渡すので、合成側で
   現在世代と比較して古ければ無視する。
 
+### タイムスタンプ（D10、2026-09-17）
+
+- `pts_ns`（リース情報・frame ログ・delivery イベント）と `tcs_player_get_time_pos` は
+  **生の buffer PTS ではなく、segment で写像した stream time**
+  （`gst_segment_to_stream_time()`、`include/tcs_time_mapping.h`）を使う。
+  qtdemux の accurate シークは B フレームあり素材で `segment.start` と `segment.time` が
+  先頭 DTS 分ずれる（例: start=15.0333 / time=15.000）ため、生 PTS をそのまま使うと
+  アプリが実際より進んだ位置にいると誤認する。
+- `running_ns`（`gst_segment_to_running_time()`）は表示スケジューリング用に従来の意味のまま。
+- segment が無い／`GST_CLOCK_TIME_NONE` のときは生 PTS へフォールバックする。
+
 ### 保持枚数と破棄規則
 
 - 未配信キューは容量 4。GPU 経路は最大 3 アイテムが共有リング slot（3 枚のいずれか）を
@@ -182,13 +193,14 @@ shim と契約の差はアダプター側で次のように吸収する（契約
 - **世代**: shim 側の値を観測して対応付け（load/seek の自動 +1 をトレース
   `gst.generation:` に記録）。世代変更時は合成層の Held を手放し、古い世代を返さない。
 
-本体配線（段階 6 / 6b、2026-09-11。段 3 で CPU 合成を除去）:
+本体配線（段階 6 / 6b、2026-09-11。段 3 で CPU 合成を除去、段 4 で型付き API へ）:
 
 - 出荷構成は GStreamer + GPU 合成。`OutputEngine` の起動直後に
   `GstBackendState.SetExternalDevice()` で合成デバイスのポインタを渡す。
   **段階 6b 以降 `tcs_player_create` はこれを Adopt せず、アダプター LUID の読み取りに
-  のみ使う**（合成デバイス/context は shim から触らない）。CPU 合成（`LeasedCpuCopy` の
-  経路）は段 3 で除去した。
+  のみ使う**（合成デバイス/context は shim から触らない）。
+- アプリ側の呼び出しは `GstPlaybackApi`（`IPlaybackApi`）と `GstRenderUpdateSource`
+  （`IRenderUpdateSource`）に集約されている。文字列コマンドの生成・解析経路は段 4 で削除した。
 - `GStreamerSource` は slot >= 0 のリースで `tcs_player_ring_info` の 3 枚を
   `OpenSharedResource1` / 共有フェンスを `OpenSharedFence` で一度だけ開いて保持する。
   `OutputEngine` は新規 `seq` に対してだけ `Context4.Wait(fence, seq)` を発行する。
@@ -371,13 +383,16 @@ Spout 受信側の目視検証は proto の recv モード
   ライセンス表記はリポジトリ直下の `THIRD-PARTY-NOTICES.md` を参照。
 - 再現ビルド: `native/gst-shim/get-spout.ps1`（Spout2 をタグ 2.007.017 / コミット固定で取得）
   → `native/gst-shim/build-shim.ps1`。GStreamer SDK は上記ランタイムに同梱の SDK を使用。
-- アプリの設定は `backend`（`0` = mpv / `1` = GStreamer）と
-  `outputBackend`（`0` = Cpu / `1` = Gpu）。`outputBackend=1` は D3D11.4 が必要で、
-  使えない場合は起動時に Cpu へフォールバックする。既定はどちらも `0`。
+- アプリの設定は `outputBackend`（`1` = Gpu）と `decodeMode`（`hardware` / `software`）。
+  `outputBackend=1` は D3D11.4 が必要で、使えない場合は起動時にダイアログを出して
+  **再生だけを無効**にする（Cpu へのフォールバックは無い）。v0.3 の `backend` と
+  `outputBackend=0` は無視して警告ログを出す（[docs/SETUP.md](../../docs/SETUP.md)）。
 
-## mpv 互換アダプタとの関係
+## アプリ側 API との関係
 
-GStreamer バックエンドでは `IMpvApi` / `IMpvRenderApi` / `ISpoutOutput` を
-`GstMpvApiAdapter` / `GstMpvRenderApiAdapter` / `GstSpoutOutput` へ差し替える。
-段 3 以降の出荷構成は GPU 合成だけで、合成層が `tcs_player_ring_info` の共有リングを
-直接ソースにし、互換アダプタの CPU コピーと Spout 直接送信は使わない。
+アプリは `GstPlaybackApi`（`IPlaybackApi`）で再生操作（`load` / `seek` / `pause` /
+`set_rate` / 音量 / 取得系）を、`GstRenderUpdateSource`（`IRenderUpdateSource`）で
+フレーム通知とレンダーコンテキスト寿命を扱う。`GstBackendState` がプレイヤーハンドル・
+pause ミラー・通知デリゲートの寿命を所有し、`GstSpoutOutput` は Spout の有効/無効状態だけを持つ。
+合成層は `tcs_player_ring_info` の共有リングを直接ソースにし、shim の CPU コピーや
+Spout 直接送信は使わない（送信は `OutputEngine` の Spout worker が行う）。
