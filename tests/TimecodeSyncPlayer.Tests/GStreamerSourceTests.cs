@@ -55,28 +55,25 @@ public class GStreamerSourceTests
     }
 
     [Fact]
-    public void TryAcquire_ReturnsTheCurrentGenerationFrameAndSharesTheLeaseWhileHeld()
+    public void SharedLease_KeepsTheShimLeaseUntilTheLastRetainIsDisposed()
     {
         var player = new FakeLeasePlayer();
         var source = new GStreamerSource(player, "gpu");
-        source.TryAcquire(1, 0, out var first).Should().Be(SourceStatus.Ready);
-        first!.Stamp.Generation.Should().Be(1);
+        var shared = new GStreamerSource.SharedLease(source,
+            new GstLeaseFrameInfo(1, 1, 0, 1920, 1080, true, 0), IntPtr.Zero, 0);
+        var first = shared.Retain();
+        var second = shared.Retain();
+        first.Stamp.Generation.Should().Be(1);
         first.Stamp.Sequence.Should().Be(1);
         first.Width.Should().Be(1920);
         first.Height.Should().Be(1080);
         first.Texture.Should().BeNull();
         first.Format.Should().Be(SourceImageFormat.Bgra8);
 
-        // リース保持中の再取得は同じリース（同じ Stamp）を返す。shim のセマンティクスを吸収する。
-        source.TryAcquire(1, 0, out var second).Should().Be(SourceStatus.Ready);
-        second!.Stamp.Should().Be(first.Stamp);
-        player.Releases.Should().Be(0);
-
         first.Dispose();
         player.Releases.Should().Be(0);
         second.Dispose();
         player.Releases.Should().Be(1);
-        source.TryDispose().Should().BeTrue();
     }
 
     [Fact]
@@ -96,32 +93,14 @@ public class GStreamerSourceTests
     }
 
     [Fact]
-    public void Dispose_WaitsForOutstandingLeases()
+    public void SetGeneration_MakesOlderImagesUnavailable()
     {
         var player = new FakeLeasePlayer();
         var source = new GStreamerSource(player);
-        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ready);
-        source.TryDispose().Should().BeFalse();
-        FluentActions.Invoking(() => source.Dispose()).Should().Throw<InvalidOperationException>();
-        source.TryAcquire(1, 0, out var same).Should().Be(SourceStatus.Ready);
-        lease!.Dispose();
-        same!.Dispose();
-        source.TryDispose().Should().BeTrue();
-        source.Dispose();
-        player.Releases.Should().Be(1);
-    }
-
-    [Fact]
-    public void SetGeneration_MakesOlderImagesUnavailableAndKeepsTheShimLeaseAlive()
-    {
-        var player = new FakeLeasePlayer();
-        var source = new GStreamerSource(player);
-        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ready);
         source.SetGeneration(2);
         source.TryAcquire(1, 0, out _).Should().Be(SourceStatus.NotReady);
-        source.TryAcquire(2, 0, out _).Should().Be(SourceStatus.NotReady);
-        lease!.Dispose();
-        player.Releases.Should().Be(1);
+        source.TryAcquire(2, 0, out _).Should().Be(SourceStatus.NotReady); // HasFrame=false after switch.
+        player.Generation.Should().Be(2);
         source.Diagnostics.Decoder.Should().Be("d3d11h264dec");
         source.Diagnostics.Format.Should().Be("BGRA8_UNORM");
         source.TryDispose().Should().BeTrue();
@@ -144,11 +123,13 @@ public class GStreamerSourceTests
     {
         var player = new FakeLeasePlayer();
         var source = new GStreamerSource(player);
-        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ready);
-        FluentActions.Invoking(() => lease!.CompleteGpuUse()).Should().Throw<InvalidOperationException>();
-        lease!.BeginGpuUse();
+        var shared = new GStreamerSource.SharedLease(source,
+            new GstLeaseFrameInfo(1, 1, 0, 1920, 1080, true, 0), IntPtr.Zero, 0);
+        var lease = shared.Retain();
+        FluentActions.Invoking(() => lease.CompleteGpuUse()).Should().Throw<InvalidOperationException>();
+        lease.BeginGpuUse();
         FluentActions.Invoking(() => lease.BeginGpuUse()).Should().Throw<InvalidOperationException>();
-        FluentActions.Invoking(() => lease!.Dispose()).Should().Throw<InvalidOperationException>();
+        FluentActions.Invoking(() => lease.Dispose()).Should().Throw<InvalidOperationException>();
         lease.CompleteGpuUse();
         lease.Dispose();
         lease.Dispose();
@@ -170,13 +151,16 @@ public class GStreamerSourceTests
     }
 
     [Fact]
-    public void TryAcquire_LegacyLeaseExposesSlotMinusOne()
+    public void TryAcquire_SlotMinusOne_ReturnsNotReadyAndReleasesTheLease()
     {
+        // D8: リング外（旧サンプル経路）のテクスチャは shim デバイスの非共有資源で、
+        // GPU 合成では描けない。リースは返して NotReady にする（合成は Held を描く）。
         var player = new FakeLeasePlayer();
         var source = new GStreamerSource(player);
-        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.Ready);
-        ((GStreamerSource.Lease)lease!).Slot.Should().Be(-1);
-        lease!.Dispose();
+        source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.NotReady);
+        lease.Should().BeNull();
+        player.Releases.Should().Be(1);
+        source.RingOutsideFrames.Should().Be(1);
         source.TryDispose().Should().BeTrue();
     }
 }

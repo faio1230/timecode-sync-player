@@ -213,6 +213,9 @@ internal sealed class OutputEngine : IDisposable
     /// </summary>
     internal long PublishedFrameCount => Interlocked.Read(ref publishedFrameCount);
 
+    /// <summary>D8: リング外（旧サンプル経路）で拒否したフレーム数。2 秒ごとの統計に出す。</summary>
+    internal long GstRingOutsideFrames => gstSource?.RingOutsideFrames ?? 0;
+
     /// <summary>
     /// UI スレッド。GStreamer プレイヤーをソースとして接続する（PlayerBackend=Gstreamer かつ Gpu 出力時）。
     /// 以降、合成 tick は CPU アップロードではなく shim のリースを取得してエンジン slot へ GPU コピーする。
@@ -1217,7 +1220,7 @@ internal sealed class OutputEngine : IDisposable
     // GStreamer shim の最新リースを取得し、直接描画できる形で返す。
     // shim は「リース保持中は同じ画像を返す」ため、リースは compose 後に毎回返す（呼び出し側が Dispose）。
     // ステージ 6b: slot>=0 のリースは共有リング Surface を使い、描画前に共有フェンスを GPU キューで待つ
-    // （CPU は待たない）。旧サンプル経路は従来どおり per-lease Surface（AddRef 所有）を作る。
+    // （CPU は待たない）。D8: リング外のリースは GStreamerSource が拒否するためここには来ない。
     private GstFrameAcquire AcquireGStreamer(double position)
     {
         int generation = gstSource!.Generation;
@@ -1260,14 +1263,9 @@ internal sealed class OutputEngine : IDisposable
             var ringImage = new LayerImage(ringView!, ringTexture!.NativePointer, lease.Width, lease.Height, null, null);
             return new(status, lease, ringImage, stamp);
         }
-        var texture = gstLease.OpenTexture();
-        if (texture == null) return new(status, lease, null, stamp);
-        Surface surface;
-        try { surface = new Surface(gpu!, texture, false, SourceSharing.None); }
-        catch { texture.Dispose(); throw; }
-        // Lease は LayerImage に持たせない（毎 tick 返す）。テクスチャ/SRV は AddRef 済みで保持される。
-        var image = new LayerImage(surface.View, surface.Texture.NativePointer, lease.Width, lease.Height, null, surface);
-        return new(status, lease, image, stamp);
+        // D8: リング外のリースを GPU 合成で描かない（GStreamerSource が Reject する）。
+        // ここに来るのはリング未接続・範囲外などで、画像無し（Held）として返す。
+        return new(status, lease, null, stamp);
     }
 
     // GPU worker 専用: 空き slot のテクスチャを必要サイズへ作り直してアップロードする。

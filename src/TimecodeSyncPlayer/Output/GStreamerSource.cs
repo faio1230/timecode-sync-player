@@ -49,6 +49,8 @@ internal sealed class GStreamerSource : IVideoSource
     private bool ringOpenFailedLogged;
     private long notReady, ready, generationRejected;
     private int peakLeases;
+    private long ringOutsideFrames;
+    private bool ringOutsideLogged;
 
     public GStreamerSource(IGstLeasePlayer player, string gpu = "", GpuDevice? device = null, Action? onRingOpened = null)
     {
@@ -89,28 +91,17 @@ internal sealed class GStreamerSource : IVideoSource
             return SourceStatus.NotReady;
         }
         IntPtr texture;
-        if (info.Slot >= 0)
+        // slot<0（旧サンプル経路）ではリングを開きに行かない。既に開いていれば寸法をログに使うだけ。
+        RingResources? resources = info.Slot >= 0 ? EnsureRing() : ring;
+        if (GstRingPolicy.Decide(info.Slot, resources?.Count ?? 0, resources != null) != GstRingLeasePlan.UseRing)
         {
-            // 共有リング: slot の Surface はリングとして一度だけ開いて保持する。
-            RingResources? resources = EnsureRing();
-            if (GstRingPolicy.Decide(info.Slot, resources?.Count ?? 0, resources != null) != GstRingLeasePlan.UseRing)
-            {
-                player.Release();
-                notReady++;
-                return SourceStatus.NotReady;
-            }
-            texture = resources!.Textures[info.Slot].NativePointer;
+            if (info.Slot < 0)
+                RecordRingOutsideFrame(info);
+            player.Release();
+            notReady++;
+            return SourceStatus.NotReady;
         }
-        else
-        {
-            // 旧サンプル経路: リースごとのテクスチャを開く。
-            if (!player.TryGetLeasedTexture(out texture, out _, out uint dxgiFormat) || dxgiFormat != 87)
-            {
-                player.Release();
-                notReady++;
-                return SourceStatus.NotReady;
-            }
-        }
+        texture = resources!.Textures[info.Slot].NativePointer;
         active = new SharedLease(this, info, texture, positionSeconds);
         ready++;
         peakLeases = Math.Max(peakLeases, active.References);
@@ -130,6 +121,24 @@ internal sealed class GStreamerSource : IVideoSource
     }
 
     public bool TryDispose() => active == null;
+
+    /// <summary>D8: リング外（旧サンプル経路）で返ってきたフレーム数。2 秒ごとの統計に出す。</summary>
+    internal long RingOutsideFrames => Interlocked.Read(ref ringOutsideFrames);
+
+    /// <summary>
+    /// D8: shim が解像度不一致などでリング外のリースを返したときの記録。
+    /// 最初の 1 回だけ警告し、以後は <see cref="RingOutsideFrames"/> に数えるだけ。
+    /// </summary>
+    private void RecordRingOutsideFrame(GstLeaseFrameInfo info)
+    {
+        Interlocked.Increment(ref ringOutsideFrames);
+        if (ringOutsideLogged) return;
+        ringOutsideLogged = true;
+        RingResources? resources = ring;
+        string ringSize = resources == null ? "未接続" : $"{resources.Width}x{resources.Height}";
+        Log.Warning("GStreamerSource: リング外のフレームを受け取りました {W}x{H}（リングは {Ring}）。GPU 合成では使いません",
+            info.Width, info.Height, ringSize);
+    }
 
     /// <summary>
     /// 段階 5.2: デバイス消失後の再オープン。shim は別デバイスなので player は destroy しない。
