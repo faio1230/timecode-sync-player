@@ -2,6 +2,11 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-17 02:35 更新（19 回目）**: **v0.4.0 を GitHub に Pre-release として公開した**（タグ `v0.4.0`、main `6c7909d`、タイトル `v0.4.0 (beta)`、zip と setup.exe を添付。SHA-256 は `docs/release-0.4-plan.md` 2.5 節）。
+> 直前に H2（`-ClickPlay` を再生保証へ、agent-a `a8fb411`）を統合（`d2a8a88`）、配布ビルドの起動確認 2 本（60fps、`already playing`、exit 0）を親が実施。main の bin は Debug の shim に戻してある。
+> **v0.4 の作業はすべて完了。** 両ペインは待機中。残りは利用者の判断待ち（現場素材の一覧、V4 の実素材追試、D9、decodeMode の設定形式）で v0.4.1 の候補として `docs/release-0.4-plan.md` 4 節に残す。
+> 後任が次に何かするなら、現場からの不具合報告か上記の判断が来てから。
+>
 > **2026-09-17 06:10 更新（18 回目）**: V6（60 分）を `w5:p3` が 00:47:55 開始（終了予定 01:49）。リリースノート本文 `docs/release-notes/v0.4.0.md`、手順 `docs/RELEASE-PROCEDURE-0.4.md`。
 > Inno Setup は `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`（package-release.ps1 が自動検出）。V6 の後: `package-release.ps1` → SHA-256 記録 → 展開して起動確認 → `git tag v0.4.0` → `gh release create --prerelease`。
 >
