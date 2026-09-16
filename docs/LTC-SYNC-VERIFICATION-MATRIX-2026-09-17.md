@@ -58,7 +58,7 @@
 - 新テストは **素材を固定しない**。プロジェクトは環境変数 `TIMECODE_LTC_SCENARIO_PROJECT`（`.tsp` のパス）で差し替えられ、未設定なら 2 節の色素材の `ltc-scenario.tsp` を使う
 - 実素材では色が分からないので、**参照フレームをテストの最初に自分で採る**: 各トラックについて、一時停止で「冒頭フレーム」（MediaIn）と「最終フレーム」（MediaOut または尺 − 1 フレーム）へシークし、画面の読み戻しを参照画像として保存する。以後の判定は「参照画像との一致」（中央 60% 領域の平均色の距離 < 60、かつ他の参照との距離の方が大きい。加えて画素差分の平均 < 12/255）で行う。色素材でもこの方式で判定し、既知の色は目視用にジャーナルへ書くだけにする（判定経路を 1 本にする）
 - 「再生中」の判定は色ではなく、**位置（`TimeLabel`）が進む** ことと、参照画像のどれかに近い（＝そのトラックの絵が出ている）ことで行う
-- プロジェクトの生成: `scripts/make-ltc-scenario-project.ps1 -MediaDir <素材フォルダ> -Out <.tsp> [-Tracks 3] [-SegmentSeconds 20]`。フォルダ内の動画（拡張子 mp4 / mov / mkv / mxf / ts）を名前順に先頭から `-Tracks` 本、各 `MediaIn 0`・`MediaOut SegmentSeconds`、先頭オフセット 5 秒、ギャップ 5 秒で並べる。`ffprobe` で尺を読み、`SegmentSeconds` より短い素材は尺どおり。相対パスではなく `MediaDir` からの相対で書く（`.tsp` を `MediaDir` 直下に置く）
+- プロジェクトの生成: `scripts/make-ltc-scenario-project.ps1 -MediaDir <素材フォルダ> -Out <.tsp> [-Tracks 3] [-SegmentSeconds 20]`。フォルダ内の動画（拡張子 mp4 / mov / mkv / mxf / ts）を名前順に先頭から `-Tracks` 本、各 `MediaIn 0`・`MediaOut SegmentSeconds`、先頭オフセット 5 秒、ギャップ 5 秒で並べる。`ffprobe` で尺を読み、`SegmentSeconds` より短い素材は尺どおり。**`.tsp` は素材フォルダに書かない**（検証機の指摘 2026-09-17 10:45: 素材フォルダは利用者が管理する読み取り専用の場所で、ファイル名が残る `.tsp` を置くと素材と一緒に持ち出される）。`-Out` は `ReportDir` 配下（git-ignore 済み）に置き、素材は**絶対パス**で参照する。ランナーは実行後に `.tsp` を消す（`-KeepProject` で残せる）
 - 検証機での運用: ランナーに `-MediaDir` を渡すと上のスクリプトでプロジェクトを作り、`TIMECODE_LTC_SCENARIO_PROJECT` に設定して回す。あわせて `RealProjectGapE2ETests`（`TIMECODE_REAL_PROJECT_PATH`）にも同じ `.tsp` を渡して V4 相当を実素材で回す
 
 ## 3. 新テスト（`tests/TimecodeSyncPlayer.Tests/E2E/LtcScenarioE2ETests.cs`、VB-CABLE が無ければ Skip）
