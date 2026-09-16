@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FluentAssertions;
 using NAudio.Wave;
 using TimecodeSyncPlayer.Tests.Helpers;
@@ -168,5 +169,94 @@ public class LtcAudioSampleProcessorTests
         var bytes = new byte[samples.Length * sizeof(float)];
         Buffer.BlockCopy(samples, 0, bytes, 0, bytes.Length);
         return bytes;
+    }
+
+    // ── T2: コールバック時刻とサンプル位置からのフレーム終端時刻 ─────
+
+    [Fact]
+    public void Process_FrameEndTimestamp_IsAnchorPlusSampleOffset()
+    {
+        const int sampleRate = 48000;
+        const int fps = 25;
+        const int chunkSamples = 2400;   // 50ms。25fps の 1 フレーム（40ms）より長い
+        const int frameCount = 8;
+        float[] samples = LtcTestSignalGenerator.Generate(
+            BuildContinuousFrames(new LtcTimecode(0, 0, 0, 0, false), fps, frameCount), fps, sampleRate);
+        long ticksPerChunk = SamplesToTicks(chunkSamples, sampleRate);
+        long baseOffset = 987_654_321;
+        long now = baseOffset + ticksPerChunk;
+        var processor = new LtcAudioSampleProcessor(new LtcDecoder(sampleRate, fps), () => now);
+        WaveFormat format = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1);
+
+        LtcAudioSampleProcessingResult first = processor.Process(
+            ToBytes(samples[..chunkSamples]), chunkSamples * sizeof(float), format);
+        now = baseOffset + (2 * ticksPerChunk);
+        LtcAudioSampleProcessingResult second = processor.Process(
+            ToBytes(samples[chunkSamples..(2 * chunkSamples)]), chunkSamples * sizeof(float), format);
+
+        first.Frames.Should().NotBeEmpty();
+        second.Frames.Should().NotBeEmpty("2 回目のコールバックの中で次のフレームが終端する");
+        foreach (LtcFrameReceivedEventArgs frame in first.Frames)
+        {
+            frame.CallbackTimestamp.Should().Be(baseOffset + ticksPerChunk);
+            frame.FrameEndTimestamp.Should().Be(baseOffset + SamplesToTicks(frame.EndSampleIndex, sampleRate));
+        }
+        foreach (LtcFrameReceivedEventArgs frame in second.Frames)
+        {
+            frame.CallbackTimestamp.Should().Be(baseOffset + (2 * ticksPerChunk));
+            frame.FrameEndTimestamp.Should().Be(baseOffset + SamplesToTicks(frame.EndSampleIndex, sampleRate));
+        }
+    }
+
+    [Fact]
+    public void AnchorFilter_LateCallback_DoesNotMoveAnchor()
+    {
+        const int sampleRate = 48000;
+        var filter = new LtcAnchorFilter(sampleRate, windowSeconds: 2.0);
+        long baseOffset = 5_000_000;
+
+        filter.Add(baseOffset + SamplesToTicks(2400, sampleRate), 2400);
+        filter.Add(baseOffset + SamplesToTicks(4800, sampleRate), 4800);
+        long normalAnchor = filter.AnchorTicks;
+        normalAnchor.Should().Be(baseOffset);
+
+        // 60ms 遅れて届いたコールバックは最小値を動かさない。
+        long lateQpc = baseOffset + SamplesToTicks(7200, sampleRate) + SamplesToTicks(2880, sampleRate);
+        filter.Add(lateQpc, 7200);
+
+        filter.AnchorTicks.Should().Be(normalAnchor);
+        filter.SpreadTicks.Should().Be(SamplesToTicks(2880, sampleRate));
+    }
+
+    [Fact]
+    public void AnchorFilter_EvictedMinimum_UpdatesToNextMinimum()
+    {
+        const int sampleRate = 48000;
+        var filter = new LtcAnchorFilter(sampleRate, windowSeconds: 0.5);
+        long firstOffset = 5_000_000;
+        long secondOffset = firstOffset + 1000;   // 時計ドリフト相当
+
+        for (int k = 1; k <= 20; k++)
+            filter.Add(firstOffset + SamplesToTicks(k * 2400, sampleRate), k * 2400);
+        filter.AnchorTicks.Should().Be(firstOffset);
+
+        for (int k = 21; k <= 25; k++)
+            filter.Add(secondOffset + SamplesToTicks(k * 2400, sampleRate), k * 2400);
+        filter.AnchorTicks.Should().Be(firstOffset, "古い最小値がまだ窓に残っている");
+
+        for (int k = 26; k <= 40; k++)
+            filter.Add(secondOffset + SamplesToTicks(k * 2400, sampleRate), k * 2400);
+        filter.AnchorTicks.Should().Be(secondOffset, "窓から抜けたら残りの最小値へ更新される");
+    }
+
+    private static long SamplesToTicks(long samples, int sampleRate) =>
+        (long)Math.Round(samples * (double)Stopwatch.Frequency / sampleRate);
+
+    private static List<LtcTimecode> BuildContinuousFrames(LtcTimecode first, int fps, int count)
+    {
+        var frames = new List<LtcTimecode> { first };
+        for (int i = 1; i < count; i++)
+            frames.Add(LtcTestSignalGenerator.Increment(frames[^1], fps));
+        return frames;
     }
 }

@@ -86,7 +86,10 @@ internal sealed class SyncAccuracyTrace : IDisposable
         // 計測用の参照 fps はハーネス（V3 LTC fps マトリクス）が与える。デコーダの過渡推定や
         // アプリが独立に解決した同期 fps の代用はしない（記録の一貫性を崩さないため）。
         // 換算はアプリ本体と同じ LtcTimecode.ToRealSeconds を使い、29.97 の総フレーム換算も揃える。
-        Enqueue(new LtcEvent("ltc", ticks, frame.Timecode.ToRealSeconds(_referenceLtcFps), _referenceLtcFps));
+        // T2: sampleTicks / callbackTicks はサンプル位置から出したフレーム終端 QPC と、
+        // そのコールバック入口の QPC。ticks は従来どおり受信ハンドラの QPC（古い run には無い項目）。
+        Enqueue(new LtcEvent("ltc", ticks, frame.Timecode.ToRealSeconds(_referenceLtcFps), _referenceLtcFps,
+            frame.FrameEndTimestamp, frame.CallbackTimestamp, frame.AnchorSpreadMs));
     }
 
     internal long AllocateRenderSessionId() => IsEnabled ? Interlocked.Increment(ref _renderSessions) : 0;
@@ -206,7 +209,8 @@ internal sealed class SyncAccuracyTrace : IDisposable
         catch (Exception ex) { Log.Error(ex, "Sync accuracy trace close failed; measurement is incomplete"); }
     }
 
-    private sealed record LtcEvent(string Type, long Ticks, double Seconds, double Fps);
+    private sealed record LtcEvent(string Type, long Ticks, double Seconds, double Fps,
+        long SampleTicks, long CallbackTicks, double AnchorSpreadMs);
     private sealed record FrameEvent(string Type, long Ticks, string Kind, int Width, int Height,
         int? ClipId, int? FrameIndex, bool IsBlack, bool MarkerValid, long ProbeTicks);
     private sealed record RenderStageEvent(string Type, long Ticks, long SessionId, long? AttemptId,

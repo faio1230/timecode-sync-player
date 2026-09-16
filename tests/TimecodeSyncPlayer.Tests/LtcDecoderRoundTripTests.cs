@@ -27,9 +27,9 @@ public class LtcDecoderRoundTripTests
     private static List<LtcTimecode> Drain(LtcDecoder decoder)
     {
         var result = new List<LtcTimecode>();
-        LtcTimecode? tc;
-        while ((tc = decoder.Read()) != null)
-            result.Add(tc);
+        LtcDecodedFrame? frame;
+        while ((frame = decoder.Read()) != null)
+            result.Add(frame.Timecode);
         return result;
     }
 
