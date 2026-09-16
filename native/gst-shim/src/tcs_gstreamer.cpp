@@ -374,6 +374,7 @@ struct TcsPlayer {
   /* stream info (frame_lock) */
   std::string path;
   std::string decoder_name;
+  std::string decoder_element_name;       /* D16-b: adapter-matched decoder class for this attempt */
   std::string last_error;
   std::string last_bus_error;             /* O1: last GST_MESSAGE_ERROR text of this load */
   double fps = 0.0;
@@ -1512,6 +1513,57 @@ adapter_supports_profile (TcsPlayer* p, int idx)
   return found;
 }
 
+/* D16-b: d3d11 decoder classes are registered per adapter at plugin load
+ * (d3d11h264dec = the first enumerated adapter, d3d11h264deviceNdec = the
+ * N-th). The class adapter-luid decides which device the element creates, and
+ * a context on another adapter is rejected, so a decoder whose class LUID
+ * differs from the ring device never uses our device. Pick the class that
+ * matches; otherwise report the mismatch so the GPU profile is skipped. */
+static bool
+decoder_matches_shim_adapter (TcsPlayer* p, int idx, std::string* name_out)
+{
+  if (idx < 0 || idx >= kProfileCount || profile_is_software (idx))
+    return true;   /* CPU profile: no adapter restriction */
+  const char* base = g_profiles[idx].dec;
+  if (!base)
+    return true;
+  *name_out = base;
+  LUID luid = {};
+  if (!device_luid (p->device, &luid))
+    return true;   /* cannot tell: keep the previous behavior */
+  const gint64 want = gst_d3d11_luid_to_int64 (&luid);
+  const bool force = env_flag ("TCS_FORCE_DECODER_LUID_MISMATCH");
+  char candidate[64];
+  for (int i = 0; i < 8; i++) {
+    if (i == 0) {
+      if (strlen (base) >= sizeof (candidate))
+        return true;
+      snprintf (candidate, sizeof (candidate), "%s", base);
+    } else {
+      size_t prefix = strlen (base) >= 3 ? strlen (base) - 3 : 0;
+      if (prefix + 16 >= sizeof (candidate))
+        return true;
+      snprintf (candidate, sizeof (candidate), "%.*sdevice%ddec", (int) prefix, base, i);
+    }
+    GstElement* el = gst_element_factory_make (candidate, nullptr);
+    if (!el)
+      continue;
+    gint64 actual = 0;
+    g_object_get (el, "adapter-luid", &actual, nullptr);
+    gst_object_unref (el);
+    if (!force && actual == want) {
+      *name_out = candidate;
+      LOG ("decoder class: %s luid=%016llx matches shim device", candidate,
+          (unsigned long long) actual);
+      return true;
+    }
+    LOG ("decoder class: %s luid=%016llx shim=%016llx%s", candidate,
+        (unsigned long long) actual, (unsigned long long) want,
+        force ? " (forced mismatch)" : "");
+  }
+  return false;
+}
+
 /* V11-e measurement switch: feed avdec_* the multithreading properties from the
  * environment. Unset (the default) leaves the properties untouched, so the
  * shipped behavior is unchanged. Properties that the element does not have are
@@ -1638,7 +1690,9 @@ build_video_chain_static (TcsPlayer* p, int idx)
   GstElement* head = nullptr;
   p->vqueue = gst_element_factory_make ("queue", nullptr);
   p->vparse = prof->parse ? gst_element_factory_make (prof->parse, nullptr) : nullptr;
-  p->vdec = prof->dec ? gst_element_factory_make (prof->dec, nullptr) : nullptr;
+  const char* dec_name = (!profile_is_software (idx) && !p->decoder_element_name.empty ())
+      ? p->decoder_element_name.c_str () : prof->dec;
+  p->vdec = dec_name ? gst_element_factory_make (dec_name, nullptr) : nullptr;
   apply_decode_thread_env (p->vdec);
   p->vconvert = gst_element_factory_make (prof->conv, nullptr);
   /* CPU profiles decode to sysmem; d3d11upload moves it to the shim device and
@@ -2372,6 +2426,18 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
           utf8_path, attempt, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
           (unsigned long) luid.HighPart, (unsigned long) luid.LowPart);
       log_attempt ("skipped-adapter-unsupported");
+      continue;
+    }
+    /* D16-b: the decoder class must be registered for the shim adapter; the
+     * per-adapter variants are tried by the helper. */
+    if (!decoder_matches_shim_adapter (p, idx, &p->decoder_element_name)) {
+      LUID luid = {};
+      device_luid (p->device, &luid);
+      LOG ("load.skip path=%s attempt=%d profile=%s reason=decoder-adapter-mismatch "
+          "shim_luid=%08lx:%08lx",
+          utf8_path, attempt, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
+          (unsigned long) luid.HighPart, (unsigned long) luid.LowPart);
+      log_attempt ("skipped-decoder-adapter");
       continue;
     }
     /* Method 5 applies to the tsdemux container only (other demuxers keep
