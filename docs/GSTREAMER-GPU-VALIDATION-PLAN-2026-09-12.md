@@ -2497,3 +2497,28 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - 平均（sample）は 57 → 35ms。残りの内訳: デッドバンド内の残差 約 10ms、LTC の 1 フレーム定数 40ms（足していない。利用者の判断待ち）、映像側の遅れ
 - 起動直後に 1 回だけ age 範囲外の警告（約 1.5 秒）。以降 0 件。段 3 で原因を確かめる
 - **判定: 段 2 は狙いどおり。既定を on にし、段 3（デッドバンド 5ms・戻り 2ms・「効かない」判定は 30ms 以上でだけ）へ進む**（指示書 5 節）
+
+## D8 修正 2（リングを寸法に追従、epoch）の結果と統合（2026-09-16 14:45〜18:45、親の独立確認）
+
+実装 `d44481f`（shim: 寸法不一致で `destroy_ring` → 再作成、`ring_epoch`、旧 epoch の FIFO 破棄、`TcsFrameInfo.ring_epoch`、`tcs_player_ring_epoch`。
+アプリ: `IGstRingResourcesFactory` の seam、epoch 不一致で開き直し、旧リングは未返却リース（Held 含む）が返るまで参照数で生かす）、
+`ceed70f`（再作成で epoch が常に 1 になる誤りを shim 実素材テストが検出 → 修正）、`5842b5a` / `30b5aac`（テスト側）。**main へ `45534a9` で統合。**
+
+| 項目 | 実装側 | 親の独立確認（main の作業ツリー、`30b5aac` → 統合後 `45534a9`） |
+| --- | --- | --- |
+| ビルド | 0 警告 0 エラー | 同（shim Debug ビルド OK、C4819 のみ） |
+| shim テスト | `--policy-only` failures=0（epoch 6 ケース含む）、実素材 `--ring-epoch` recreated 2・epoch 1→2→3・lease_outstanding 0・failures 0 | `--policy-only` failures=0 |
+| ロック規則 | PASS | PASS |
+| 非E2E | 1989 | 1989（統合後も 1989） |
+| D8 ハーネス change | 消失 0、`recreated 1280x720 epoch=2` 1 回、720p 各クリップで slot>=0 のリース（18 / 18 / 1000）、`gstRingOutsideFrames` 0、rate 1.000、exit 0 | 消失 0、`recreated 1280x720 epoch=2`、exit 0（ハーネス `passed`） |
+| D8 ハーネス same | recreated 0、slot リース 1997、消失 0、rate 1.000 | （実装側の結果を採用） |
+| D6 の向き（720p → 1080p、Spout 受信） | Passed ×2、137 フレームすべて黒比率 0.00 | Spout 受信ツールが親の作業ツリーに無くスキップ（実装側の結果を採用） |
+| `GStreamerBackend_SurvivesRepeatedTrackSwitches` | Passed、recreated 2（1080p → 720p → 1080p） | **Passed 8 秒、recreated 2**（統合後も合格） |
+| E2E 全件（出荷構成） | 68 検出・62 実行・61 合格・失敗 1・スキップ 6 | 68・56 実行・55 合格・失敗 1・スキップ 12（素材未配置ぶん。配置後に D8 関連 2 件を個別に合格確認） |
+
+- 失敗 1 はどちらも `SystemScenarioE2ETests.ProjectRoundTrip_RestoresPlaylistOrderOffsetModeAndPlayback`（main 基準でも失敗する既存の件。未調査、P3）
+- **判定: D8（= D6）は修正された。** 解像度が変わる切替でデバイス消失は起きず、切替先の実フレームが公開される。R1 の (b) 2 件も同時に統合
+- 親の罠: 同じ `TIMECODE_ACCURACY_REPORT_DIR` を複数テストの実行に使い回すと、2 本目のアプリが `phases.jsonl` の CreateNew で落ちてテストが 55ms で失敗する。
+  run ごとに別ディレクトリにするか、変数を設定しない。孤児になったアプリは自分の PID だけ止めた（2388）
+- D9（本物の TDR からの shim 復旧）は未実装・利用者の判断待ち
+

@@ -2,6 +2,9 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-16 18:50 更新（6 回目）**: **D8（= D6）を修正し main `45534a9` へ統合**（安全網 `795c7ff` + リング epoch `d44481f`、R1 の (b) も同時）。
+> T2 は段 3（既定 on・デッドバンド 5ms）を実装中、実機測定待ち。**公開リポジトリのため、文書にローカルの絶対パスを書かない**（`be1e61a` で除去。実体は gitignore の `docs/local/LOCAL-PATHS.md`）。
+>
 > **2026-09-16 14:40 更新（5 回目、3 代目の親）**: D8 の原因を判定（D6 と同一）し修正方針を承認。修正 1（安全網 `795c7ff`）は実機で確認済み、修正 2（リング epoch）を実装中。
 > T2 段 1（`7b49187`）は測定で妥当と判定し、段 2 を実装中。「7. いま走っているもの」を書き換えた。詳細は検証記録の末尾 2 節。
 >
@@ -149,7 +152,8 @@ powershell -File native\gst-shimuild-shim.ps1 -Config Debug
 
 ```powershell
 # V3（LTC 同期精度）。素材は run ごとに自動生成、VB-CABLE のループが要る
-powershell -File scriptsun-v3-accuracy.ps1 -Backends gst -Label <名前> [-Repeats 3] `
+powershell -File scripts
+un-v3-accuracy.ps1 -Backends gst -Label <名前> [-Repeats 3] `
   [-LtcFps 24|25|29.97|30] [-LtcFpsMode auto|fixed] [-SyncCorrectionMode smooth|jump]
 #   出力先: <repo>\TestResults3\<名前>-ltc<fps>-gst[-n]#   アプリは同じ作業ツリーの Debug ビルドを自動で使う（TIMECODE_SYNC_PLAYER_E2E_APP_PATH 未設定時）
 
@@ -223,7 +227,7 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 | ペイン | 作業 | 状態 |
 | --- | --- | --- |
 | `w5:p3`（同期担当） | **T2 段 2**（`TCS_LTC_SAMPLE_CLOCK`、既定 off。指示書 `docs/prompts/2026-09-16-T2-ltc-sample-clock.md` 3 節） | 実装中（基点 `ee3de1f`）。実機は on 3 本 + off 1 本、親の合図後 |
-| `w5:p6`（除去担当） | **D8 修正 2**（shim がリングを寸法不一致で作り直し epoch、アプリは epoch で開き直し。`docs/prompts/2026-09-16-D8-fix-ring-follows-dimensions.md`） | 実装中（修正 1 `795c7ff` は実機確認済み）。テスト seam は承認済み。実機は D8 ハーネス change/same + D6 の向き + E2E 全件 |
+| `w5:p6`（除去担当） | D8 は完了・統合済み（`45534a9`）。**次は段 2 の移設部分**（`docs/prompts/2026-09-16-STAGE2-mpv-relocation.md`） | 指示待ち → 着手 |
 
 **実機は 1 つ。親が順番を管理する。** エージェントには「実機を使う前に一報」を毎回指示している。
 利用者にも、実機を使う間は PC に触らないよう都度お願いしている。
