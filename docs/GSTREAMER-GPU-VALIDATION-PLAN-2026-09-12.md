@@ -2603,3 +2603,30 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - 次: SH1-b として `GST_DEBUG`（qtdemux / h264parse / videodecoder / d3d11h264dec）で落ちる要素を確定する（shim は変えない）。原因が素材のエディットリストや
   合成オフセットなら、テストの期待値の方を直す
 
+## 段 3（CPU 合成の除去）の結果と統合（2026-09-16 21:30〜2026-09-17 00:05、親の独立確認）
+
+実装 `80dd18f` / `a10ea62` / `4771d6b` / `a2fc8f4`、U1 との競合解消 `15ef420`（agent-b）。**main へ `d5af2a6` で統合。**
+
+| 項目 | 実装側 | 親の独立確認 |
+| --- | --- | --- |
+| ビルド | 0/0 | 0/0（shim Debug も OK） |
+| 非E2E | 1680（段 2 後半 1977 → -297、削除 27 ファイル）→ U1 統合後 1684 | 1680 → 1684 |
+| grep（`OutputBackend.Cpu` / `FallbackApplied` / `FrameRenderer` / `RenderFrameWorker` / `RenderedFrameSnapshot` / `LeasedCpuCopy` / `tcs_player_leased_cpu_copy`） | 0 | 0 |
+| shim テスト | `--policy-only` failures=0。実素材は既存の 1 件（SH1 → D10） | `--policy-only` failures=0 |
+| ロック規則 | PASS | PASS |
+| E2E 全件 | 合格（詳細件数は実装側の証跡 `TestResults/s3-a2fc8f4/e2e.trx`） | 一部 11/11 → 統合前 9/9 |
+| V3 1 本 | sample 平均 -28.9 / p95-p5 38.3 / 収束 最大 121ms。**freeze-sweep のギャップ 3 件すべて mode=freeze・observed**（決定 2 の実機確認） | （実装側の結果を採用） |
+| 1080p 単発 | compose.publish 60.05/秒、error 0、exit 0 | （同） |
+
+- 決定 2（ギャップの Freeze は GPU の frozen で判定）が実機で確認できた。計画 1-3 の「GPU 構成で Freeze が Hold になる」は解消
+- 統合時に `GapEnterCoordinator.cs` で U1 の計測ログと競合 → 実装側が解消（`15ef420`）。**親は競合したマージを abort して実装側に解消させた**（親はコードを書かない）
+- 積み残し: V3 の `seek-back` が `input-discontinuity` で INCOMPLETE 表記になる件（入力側の受信間隔 91ms が 1 件。集計値は算出済み）
+
+## D10: MP4（B フレームあり）の accurate シーク後に qtdemux のタイムスタンプが先頭 DTS 分ずれる（2026-09-17 00:05、SH1-b で確定）
+
+- `test_1080p60.mp4`（先頭 DTS −0.0333）を 15.000 へシークすると、qtdemux は正しい IDR を push しつつ pts=15.0333、segment start=15.0333 / time=15.000 を送る。以後の全サンプルが +2 フレーム。
+  decoder / sink は落としていない。**中身は正しく、ラベルだけがずれる**
+- shim は生 PTS を `pts_ns` と時刻位置に使うため、アプリはシーク後に 2 フレーム進んだ位置にいると思い込む。**B フレームあり素材でシーク・切替ごとに 1〜2 フレームの同期バイアス**
+- V3 の素材（`-preset ultrafast`、B フレーム無し）では起きないので、V3 の数字は影響を受けていない
+- 対処（親の決定）: shim は `gst_segment_to_stream_time` で写像した値を `pts_ns` と時刻位置に使う。指示書 `docs/prompts/2026-09-17-D10-qtdemux-seek-timestamp-shift.md`（同期担当）
+
