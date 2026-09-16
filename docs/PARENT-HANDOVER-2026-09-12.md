@@ -2,6 +2,9 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-17 06:10 更新（18 回目）**: V6（60 分）を `w5:p3` が 00:47:55 開始（終了予定 01:49）。リリースノート本文 `docs/release-notes/v0.4.0.md`、手順 `docs/RELEASE-PROCEDURE-0.4.md`。
+> Inno Setup は `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`（package-release.ps1 が自動検出）。V6 の後: `package-release.ps1` → SHA-256 記録 → 展開して起動確認 → `git tag v0.4.0` → `gh release create --prerelease`。
+>
 > **2026-09-17 05:40 更新（17 回目）**: **段 5 後半・D11・F1 を統合（`85f855b`）。バージョン 0.4.0。E2E 全件 63/63（agent-b の環境）、V4・V5 合格。** 残りは V6 60 分（`w5:p3` が実行中）→ 配布物作成（`scripts/package-release.ps1`）→ タグ・公開（`docs/RELEASE-PROCEDURE-0.4.md`）。
 > V6 の間はビルド・実機を止める。
 >
