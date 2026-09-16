@@ -32,6 +32,13 @@ powershell -File scripts\package-release.ps1            # Version は csproj か
 - 配布物に `libmpv-2.dll` / `mpv-2.dll` が含まれていないこと、`tcs_gstreamer.dll` と GStreamer のプラグイン閉包が含まれていることを確認する（`Expand-Archive` して一覧）
 - 別のディレクトリに展開して起動し、**素材 2 本（うち音声付き AAC 44.1kHz を 1 本。`scripts\make-e2e-media.ps1` の `test_720p30_aac44k.mp4`）の再生と Spout 送信、LTC 同期 1 本（V3 ハーネスではなく手動でよい）**を確認する。ログの `=== TimecodeSyncPlayer v0.4.0 起動 ===` を見る
 
+## 1.5 クリーンな検証機で確認する（公開の前。2026-09-17 追加、利用者の指示）
+
+- 配布物は **公開前に**別マシンのクリーン環境（GStreamer 未導入、setup.exe のみ）で確認する。検証用のビルドを GitHub のリリースに出さない（v0.4.1 で一度だけ例外にした）
+- 受け渡しは同じアカウントのプライベートネットワーク経由（`docs/local/LOCAL-PATHS.md` の「検証機」。公開文書にホスト名を書かない）
+- 見るもの: exe の FileVersion、`logs	cs-gst-YYYYMMDD.log` の `load.summary`（profile と total_ms）、`all video profiles failed` が 0、**音声付き素材（44.1kHz と 48kHz、映像トラック先頭）**と現場の実素材、残プロセス 0
+- 合格してから 2 節へ進む
+
 ## 2. タグと公開
 
 ```powershell
