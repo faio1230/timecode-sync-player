@@ -26,12 +26,8 @@ public sealed class ExitDialogE2ETests
         return dir;
     }
 
-    private static string WriteGpuSettings(string workDir)
-    {
-        string settingsPath = Path.Combine(workDir, "settings.json");
-        File.WriteAllText(settingsPath, "{\"outputBackend\":1}");
-        return settingsPath;
-    }
+    private static string ShippingSettingsPath(string workDir) =>
+        Path.Combine(workDir, "settings.json");
 
     private static double ParsePositionSeconds(string timeLabelText)
     {
@@ -77,7 +73,7 @@ public sealed class ExitDialogE2ETests
         E2EAppRunner? runner = null;
         try
         {
-            string settingsPath = WriteGpuSettings(workDir);
+            string settingsPath = ShippingSettingsPath(workDir);
             string media = TestVideoFactory.GetOrCreate();
             runner = E2EAppRunner.Start(exePath, $"--open \"{media}\"", settingsPath, pausePlaybackIfNeeded: false);
 
@@ -121,7 +117,7 @@ public sealed class ExitDialogE2ETests
         E2EAppRunner? runner = null;
         try
         {
-            string settingsPath = WriteGpuSettings(workDir);
+            string settingsPath = ShippingSettingsPath(workDir);
             string media = TestVideoFactory.GetOrCreate();
             string exeDir = Path.GetDirectoryName(exePath)!;
             string logPath = NewestLogPath(exeDir);
@@ -158,7 +154,7 @@ public sealed class ExitDialogE2ETests
         E2EAppRunner? runner = null;
         try
         {
-            string settingsPath = WriteGpuSettings(workDir);
+            string settingsPath = ShippingSettingsPath(workDir);
             string media = TestVideoFactory.GetOrCreate();
             runner = E2EAppRunner.Start(exePath, $"--open \"{media}\"", settingsPath, pausePlaybackIfNeeded: false);
 

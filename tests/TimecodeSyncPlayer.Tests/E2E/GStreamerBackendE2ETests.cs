@@ -37,7 +37,6 @@ public sealed class GStreamerBackendE2ETests
 
         string workDir = NewTempDir("tcs-gst-e2e");
         string settingsPath = Path.Combine(workDir, "settings.json");
-        File.WriteAllText(settingsPath, "{\"backend\":1}");
 
         string sender = $"TCSGstE2E-{Environment.ProcessId}-{DateTime.UtcNow.Ticks}";
         Environment.SetEnvironmentVariable(SenderEnvVar, sender);
@@ -132,7 +131,6 @@ public sealed class GStreamerBackendE2ETests
 
         string workDir = NewTempDir("tcs-gst-e2e-switch");
         string settingsPath = Path.Combine(workDir, "settings.json");
-        File.WriteAllText(settingsPath, "{\"backend\":1}");
 
         E2EAppRunner? runner = null;
         try
@@ -190,7 +188,6 @@ public sealed class GStreamerBackendE2ETests
 
         string workDir = NewTempDir("tcs-gst-e2e-close");
         string settingsPath = Path.Combine(workDir, "settings.json");
-        File.WriteAllText(settingsPath, "{\"backend\":1}");
 
         E2EAppRunner? runner = null;
         try

@@ -81,7 +81,6 @@ public sealed class D5BlackAfterSwitchReproE2ETests
         string workDir = NewTempDir("tcs-d5-repro");
         string recvDir = NewTempDir("tcs-d5-recv");
         string settingsPath = Path.Combine(workDir, "settings.json");
-        File.WriteAllText(settingsPath, "{\"backend\":1,\"outputBackend\":1}");
         string sender = $"TCSD5-{Environment.ProcessId}-{DateTime.UtcNow.Ticks}";
 
         E2EAppRunner? runner = null;

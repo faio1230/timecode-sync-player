@@ -11,7 +11,7 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 /// 段階 4.6 の E2E（Gpu backend）。
 ///  - 再生中のテストカード ON/OFF で TimeLabel が進み続け、BtnPlay の状態が変わらない
 ///  - 4K キャンバスのプロジェクトを開くとログに canvas=3840x2160 が出る
-/// Gpu が使えない環境（Cpu フォールバック）ではスキップする。実行は依頼者が行う場合がある。
+/// Gpu が使えない環境（再生無効）ではスキップする。実行は依頼者が行う場合がある。
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection("E2E")]
@@ -24,12 +24,8 @@ public sealed class CanvasTestCardE2ETests
         return dir;
     }
 
-    private static string WriteGpuSettings(string workDir)
-    {
-        string settingsPath = Path.Combine(workDir, "settings.json");
-        File.WriteAllText(settingsPath, "{\"outputBackend\":1}");
-        return settingsPath;
-    }
+    private static string ShippingSettingsPath(string workDir) =>
+        Path.Combine(workDir, "settings.json");
 
     private static double ParsePositionSeconds(string timeLabelText)
     {
@@ -85,12 +81,12 @@ public sealed class CanvasTestCardE2ETests
         E2EAppRunner? runner = null;
         try
         {
-            string settingsPath = WriteGpuSettings(workDir);
+            string settingsPath = ShippingSettingsPath(workDir);
             string media = TestVideoFactory.GetOrCreate();
             runner = E2EAppRunner.Start(exePath, $"--open \"{media}\"", settingsPath, pausePlaybackIfNeeded: false);
 
             Button testCard = runner.Button("BtnTestCard");
-            Skip.If(!testCard.IsEnabled, "GPU 出力バックエンドが利用できない（Cpu フォールバック）");
+            Skip.If(!testCard.IsEnabled, "GPU 出力が利用できない（再生は無効）");
 
             Button play = runner.Button("BtnPlay");
             if (play.Name != "⏸")
@@ -139,7 +135,7 @@ public sealed class CanvasTestCardE2ETests
         E2EAppRunner? runner = null;
         try
         {
-            string settingsPath = WriteGpuSettings(workDir);
+            string settingsPath = ShippingSettingsPath(workDir);
             string sourceMedia = TestVideoFactory.GetOrCreate();
             string media = Path.Combine(workDir, Path.GetFileName(sourceMedia));
             File.Copy(sourceMedia, media, overwrite: true);

@@ -233,6 +233,12 @@ internal sealed class E2EAppRunner : IDisposable
         return found!;
     }
 
+    /// <summary>デスクトップ上のトップレベルウィンドウをタイトルで探す（ネイティブダイアログ等）。</summary>
+    public Window? FindWindowByName(string name)
+        => _automation.GetDesktop()
+            .FindFirstDescendant(cf => cf.ByName(name))
+            ?.AsWindow();
+
     public ComboBox Combo(string automationId)
         => MainWindow.FindFirstDescendant(cf => cf.ByAutomationId(automationId)).AsComboBox();
 

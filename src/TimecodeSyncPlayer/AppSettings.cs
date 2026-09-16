@@ -10,14 +10,14 @@ public enum LtcSignalLossMode
     Stop
 }
 
-/// <summary>再生バックエンド。既定は mpv（GStreamer 経路は検証用）。</summary>
+/// <summary>再生バックエンド。既定は Gstreamer（出荷構成）。mpv は v0.4 で除去予定。</summary>
 public enum PlayerBackend
 {
     Mpv,
     Gstreamer
 }
 
-/// <summary>映像出力バックエンド。既定は Cpu（Gpu 経路は段階導入中）。</summary>
+/// <summary>映像出力バックエンド。既定は Gpu（出荷構成）。Cpu は v0.4 で除去予定。</summary>
 public enum OutputBackend
 {
     Cpu,
@@ -52,8 +52,8 @@ public sealed record AppSettings
     public string FullscreenDisplayDeviceName { get; init; } = "";
     public bool IsMuted { get; init; }
     public double Volume { get; init; } = 100;
-    public PlayerBackend Backend { get; init; } = PlayerBackend.Mpv;
-    public OutputBackend OutputBackend { get; init; } = OutputBackend.Cpu;
+    public PlayerBackend Backend { get; init; } = PlayerBackend.Gstreamer;
+    public OutputBackend OutputBackend { get; init; } = OutputBackend.Gpu;
     /// <summary>"hardware"（既定）/ "software"。不正値は hardware として扱い警告する。変更には再起動が必要。</summary>
     public string DecodeMode { get; init; } = DecodeModePolicy.HardwareValue;
     /// <summary>T5: 同期補正モード。既定はフィードバック（レート微調整）。</summary>
@@ -174,9 +174,9 @@ public sealed class AppSettingsManager
         if (!Enum.IsDefined(settings.LtcSignalLossMode))
             settings = settings with { LtcSignalLossMode = LtcSignalLossMode.RunThrough };
         if (!Enum.IsDefined(settings.Backend))
-            settings = settings with { Backend = PlayerBackend.Mpv };
+            settings = settings with { Backend = AppSettings.Default.Backend };
         if (!Enum.IsDefined(settings.OutputBackend))
-            settings = settings with { OutputBackend = OutputBackend.Cpu };
+            settings = settings with { OutputBackend = AppSettings.Default.OutputBackend };
         if (!Enum.IsDefined(settings.SyncCorrectionMode))
             settings = settings with { SyncCorrectionMode = SyncCorrectionMode.Smooth };
         if (SyncOffsetPolicy.IsOutOfRange(settings.SyncOffsetMs))

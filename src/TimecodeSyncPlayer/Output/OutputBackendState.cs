@@ -6,7 +6,7 @@ namespace TimecodeSyncPlayer.Output;
 public readonly record struct OutputBackendDecision(
     OutputBackend Requested,
     OutputBackend Effective,
-    bool FallbackApplied,
+    bool PlaybackAvailable,
     string Detail);
 
 /// <summary>設定値と D3D11.4 の検出結果から実際に使う出力バックエンドを決める。</summary>
@@ -17,36 +17,54 @@ internal static class OutputBackendResolver
         Func<D3D11CapabilityResult> probe)
     {
         if (requested == OutputBackend.Cpu)
-            return new(requested, OutputBackend.Cpu, false, "Cpu が指定されています。");
+            return new(requested, OutputBackend.Cpu, true, "Cpu が指定されています。");
 
+        // Gpu が使えないときに Cpu へ黙って落とさない。再生可否は PlaybackAvailable で伝え、
+        // 見せ方は MainWindow が 1 か所で決める（R1 1-2）。
         D3D11CapabilityResult capability = probe();
-        return capability.Supported
-            ? new(requested, OutputBackend.Gpu, false, capability.Detail)
-            : new(requested, OutputBackend.Cpu, true, capability.Detail);
+        return new(requested, OutputBackend.Gpu, capability.Supported, capability.Detail);
     }
 }
 
 /// <summary>
 /// 起動時に検出した有効な出力バックエンドを保持する。設定の要求値とは独立で、
-/// フォールバック時も設定ファイルは書き換えない。
+/// 利用不可でも設定ファイルは書き換えない。
 /// </summary>
 public sealed class OutputBackendState
 {
+    /// <summary>E2E・検証用の注入。設定項目は増やさない（R1 1-2）。</summary>
+    internal const string ForceUnavailableEnvironmentVariable = "TIMECODE_SYNC_PLAYER_FORCE_GPU_UNAVAILABLE";
+
     public OutputBackendDecision Decision { get; private set; } =
-        new(OutputBackend.Cpu, OutputBackend.Cpu, false, "未初期化");
+        new(OutputBackend.Gpu, OutputBackend.Cpu, true, "未初期化");
 
     public OutputBackend Effective => Decision.Effective;
 
-    public void Initialize(OutputBackend requested)
-        => Initialize(requested, D3D11CapabilityProbe.Detect);
+    /// <summary>false のときは再生（ロード・シーク・LTC 同期）を行わない。</summary>
+    public bool PlaybackAvailable => Decision.PlaybackAvailable;
+
+    public void Initialize(OutputBackend requested) => Initialize(
+        requested,
+        D3D11CapabilityProbe.Detect,
+        IsForcedUnavailable(Environment.GetEnvironmentVariable(ForceUnavailableEnvironmentVariable)));
 
     internal void Initialize(OutputBackend requested, Func<D3D11CapabilityResult> probe)
+        => Initialize(requested, probe, forceUnavailable: false);
+
+    internal void Initialize(
+        OutputBackend requested,
+        Func<D3D11CapabilityResult> probe,
+        bool forceUnavailable)
     {
-        Decision = OutputBackendResolver.Resolve(requested, probe);
-        if (Decision.FallbackApplied)
+        Decision = forceUnavailable
+            ? new OutputBackendDecision(requested, OutputBackend.Gpu, false,
+                "検証用の注入: " + ForceUnavailableEnvironmentVariable + " により GPU 出力を利用不可にしました。")
+            : OutputBackendResolver.Resolve(requested, probe);
+
+        if (!Decision.PlaybackAvailable)
         {
-            Log.Warning(
-                "OutputBackend: Gpu を指定されましたが利用できないため Cpu へフォールバックします: {Detail}",
+            Log.Error(
+                "OutputBackend: Gpu 出力を利用できないため再生を無効にします: {Detail}",
                 Decision.Detail);
         }
         else if (Decision.Effective == OutputBackend.Gpu)
@@ -58,4 +76,8 @@ public sealed class OutputBackendState
             Log.Information("OutputBackend: Cpu（{Detail}）", Decision.Detail);
         }
     }
+
+    internal static bool IsForcedUnavailable(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Trim().ToLowerInvariant() is not ("0" or "false" or "no");
 }
