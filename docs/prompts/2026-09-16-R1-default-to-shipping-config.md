@@ -79,3 +79,60 @@ E2E で自動操作しているとダイアログが残るとテストが止ま�
 3. 合否判定は書かない。親が出す
 4. 実機は直列に 1 本ずつ。自分が起動した PID だけ終了する。プロセス名での kill はしない
 5. main への書き込みはしない。自分のブランチにコミットする
+
+---
+
+## 実装側メモ（2026-09-16、agent-b。後任が同じことを調べ直さないための記録）
+
+### 実装コミットと変更ファイル
+
+- 実装コミット: `1e9bf866a612ca15b5e9330cd9a5d0ae6ec75987`（短縮 `1e9bf86`、branch `agent-b`）
+- 変更 14 ファイル（新規 2）:
+  - src: `AppSettings.cs`（既定と不正値補正）、`App.xaml.cs`（コメントのみ）、`MainWindow.xaml` / `MainWindow.xaml.cs`、
+    `Output/OutputBackendState.cs`、`Output/PlaybackAvailabilityState.cs`（新規）
+  - tests: `AppSettingsTests.cs`、`OutputBackendStateTests.cs`、`Helpers/E2EAppRunner.cs`、
+    `E2E/PlaybackUnavailableE2ETests.cs`（新規）、`E2E/CanvasTestCardE2ETests.cs`、
+    `E2E/D5BlackAfterSwitchReproE2ETests.cs`、`E2E/ExitDialogE2ETests.cs`、`E2E/GStreamerBackendE2ETests.cs`
+
+### 再生可否の状態と 2 つのゲート
+
+- `PlaybackAvailabilityState`（`TimecodeSyncPlayer.Output`、public）が唯一の状態。`IsAvailable` と
+  **最初に記録した** `Detail` を保持する（UI スレッドからのみ更新）
+- MainWindow のゲートは 2 つだけ:
+  - `IsPlaybackAvailable`: 再生**開始**のゲート（LoadFile / LoadFilePaused / SeekTo / TogglePlayPause /
+    SeekRelative / CycleSpeed / ファイルを開く・追加 / タイムラインシーク / シークバー確定 /
+    signal-loss resume / gap resume）
+  - `IsPlayerReady` = `IsPlaybackAvailable && _mpv != IntPtr.Zero`: player を使う処理のゲート
+    （LTC 同期コンテキストの IsMpvReady、フレーム毎 UI、OSD、ミュート・音量、各 effect の IsMpvReady）
+- 利用不可にする経路（すべて `MainWindow.EnterPlaybackUnavailable` に集約）:
+  1. 起動時検出失敗: `OutputBackendState.PlaybackAvailable == false` → MainWindow ctor で取り込み、
+     `InitializeWindowLoadedSession` が即 false。player 生成と OutputEngine の生成/開始を行わない
+  2. 実行中の GPU ワーカー fault: `OnTick` が `_outputEngine.Faulted` を検知 → 同じ経路（タイマー停止）
+  3. player 生成失敗: `ShowWindowLoadedSessionInitializationError` → 同じ経路（文言から mpv 等のランタイム名を除去）
+- `OutputBackendResolver` は Cpu へフォールバックしない。`Effective` は要求値（Gpu）のままで
+  `PlaybackAvailable=false` を返す。`FallbackApplied` は削除した
+
+### E2E の注入手段と追加テスト
+
+- 環境変数 `TIMECODE_SYNC_PLAYER_FORCE_GPU_UNAVAILABLE`（`1`/`true`/`yes` で検出をスキップして利用不可。
+  `0`/`false`/`no`/空/未設定は無効）。製品の設定項目は増やしていない
+- 追加 E2E: `PlaybackUnavailableE2ETests.GpuUnavailable_ShowsDialogOnceAndKeepsAppOpenWithPlaybackDisabled`
+  （ダイアログ 1 回 → OK → 利用不可表示のままアプリ継続 → 再生ボタンでクラッシュしない → ダイアログ再出なし）
+- そのために `E2EAppRunner.FindWindowByName`（デスクトップをタイトルで探す）を追加
+
+### 未検証の点（実機で確認する）
+
+- ネイティブ MessageBox をタイトル一致で探す `E2EAppRunner.FindWindowByName` は実機未検証。
+  見つからない場合は FlaUI の `MainWindow.ModalWindows` 経由などに切り替える
+- 起動ダイアログは Loaded 後に `Dispatcher.BeginInvoke(DispatcherPriority.Background)` で出している
+  （UIA の起動待ちをモーダルでブロックしないため）。このタイミングで E2E が拾えるかは実機で確認
+- `OutputBackendState` の初期化前プレースホルダは `Effective = Cpu` のまま。MainWindow を初期化せず
+  構築する単体テストが GPU を起動しないための措置。**段 3（CPU 合成の除去）で必ず引っかかる**ので、
+  そのときは初期化必須にするか、テスト側を直す
+
+### 検証状況
+
+- 非E2E: 1954 件成功・失敗 0（`--filter "Category!=E2E"`）
+- `check-shim-lock-rule.py`: PASS（**shim は未変更**）
+- ビルド: アプリ・テストとも 警告 0・エラー 0。削除はしていない
+- E2E: 未実行。合図後に「変更前 main（`149025f`）の基準取り → agent-b で全件」の順で実施する
