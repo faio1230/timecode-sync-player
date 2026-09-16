@@ -67,8 +67,7 @@ timecode-sync-player/
 │   ├── Contracts/                  # DI インターフェース
 │   ├── Strategies/                 # Strategyパターン実装
 │   ├── FrameRenderer.cs            # WriteableBitmap 保持・レンダリング
-│   ├── Mpv.cs                      # libmpv P/Invoke
-│   ├── MpvRenderNative.cs          # mpv SW render API P/Invoke
+│   ├── Gst/                        # GStreamer shim アダプタ（再生・レンダー契約）
 │   ├── LtcDecoder.cs               # libltc 不使用・純C# LTC デコーダ
 │   ├── LtcAudioMonitor.cs          # NAudio WASAPI 録音 + LTC デコード
 │   ├── SyncDecisionEngine.cs       # LTC秒→シーク判定ロジック
@@ -79,7 +78,7 @@ timecode-sync-player/
 │   ├── PlaylistTrack.cs            # トラックモデル（record）
 │   ├── SeekBarUpdateState.cs       # シークバーUI状態管理
 │   ├── SpoutNative.cs              # SpoutDX P/Invoke
-│   ├── SpoutOutput.cs              # Spout送信ライフサイクル管理
+│   ├── GstSpoutOutput.cs           # Spout送信（GStreamer shim 経由）
 │   ├── PcmSampleConverter.cs       # PCM→モノラルfloat変換
 │   ├── TimecodeDisplayFormatter.cs # タイムコード表示文字列生成
 │   ├── TimecodeFpsSelector.cs      # FPS自動検出・固定選択
@@ -105,20 +104,19 @@ timecode-sync-player/
                                              ↓
                                    SyncDecisionEngine.Decide()
                                              ↓ （Seek / None）
-                              MainWindow（UIスレッド）→ mpv_command("seek")
+                              MainWindow（UIスレッド）→ GStreamer 再生制御
                                              ↓
-                              mpv SW render context
-                              （MPV_RENDER_API_TYPE_SW）
+                              shim の共有リング（GPU テクスチャ）
                                              ↓
-                              WriteableBitmap → Image コントロール
+                              GPU 合成（共有フェンス + SRV）
                                              ↓
-                              SpoutOutput.SendFrame() → SpoutDX.dll
+                              GstSpoutOutput → SpoutDX.dll
 ```
 
 **スレッドモデル:**
 - UI スレッド: WPF メインスレッド（シーク発行・描画更新）
 - オーディオスレッド: NAudio WASAPI コールバック（`LtcAudioMonitor`）
-- mpv 内部スレッド: レンダー更新コールバック（`DispatcherPriority.Background` で UI へ投げる）
+- shim 内部スレッド（GStreamer）: レンダー更新コールバック（`DispatcherPriority.Background` で UI へ投げる）
 
 詳細な構造・主要コンポーネントの役割は `docs/ARCHITECTURE.md` を参照。
 
@@ -129,22 +127,14 @@ timecode-sync-player/
 ### System.IO の明示的 using が必要
 WPF プロジェクトのグローバル using に `System.IO` が含まれていないため、`Path`・`File`・`Directory` を使うファイルには `using System.IO;` が必要。
 
-### vo=libmpv が必須
-`vo=libmpv` を設定しないと mpv が自前ウィンドウを開いてしまう。
-`vo=null` は破棄用 VO のため再生は進んでも WriteableBitmap へフレームが来ない。
-
-### mpv SW render param 定数
-`MPV_RENDER_PARAM_SW_SIZE=17`, `SW_FORMAT=18`, `SW_STRIDE=19`, `SW_POINTER=20`。
-（古いドキュメントに 6-9 と記載されている場合があるが誤り）
-
-### MpvRenderParam の明示的パディング
+### RenderParam の明示的パディング
 ```csharp
-struct MpvRenderParam { int Type; int _padding; IntPtr Data; }  // 16バイト
+struct RenderParam { int Type; int _padding; IntPtr Data; }  // 16バイト
 ```
 `_padding` を省略すると x64 ABI でアライメントがずれてクラッシュする。
 
 ### レンダー更新コールバックのデリゲート保持
-`mpv_render_context_set_update_callback` に渡したデリゲートはフィールドで保持すること。
+レンダー更新コールバックを登録する API に渡したデリゲートはフィールドで保持すること。
 ローカル変数のみで保持すると GC に回収されクラッシュする。
 
 ---
@@ -155,7 +145,9 @@ struct MpvRenderParam { int Type; int _padding; IntPtr Data; }  // 16バイト
 
 | ファイル | 用途 | 入手方法 |
 |---------|------|---------|
-| `libmpv-2.dll` | libmpv（動画再生）。`scripts/get-mpv.ps1`で上流名のまま配置（従来名`mpv-2.dll`も互換対応） | https://mpv.io/installation/ |
+| `tcs_gstreamer.dll` | 映像ソース（GStreamer shim）。`native/gst-shim/build-shim.ps1` でビルド | `native/gst-shim/README.md` |
 | `SpoutDX.dll` | Spout2送信（オプション） | https://github.com/leadedge/Spout2 |
+
+GStreamer ランタイム（`GSTREAMER_1_0_ROOT_MSVC_X86_64` または `Program Files\gstreamer`）が必要です。
 
 詳細は [native/README.md](native/README.md) および [docs/SETUP.md](docs/SETUP.md) を参照。

@@ -29,10 +29,17 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
         string exePath = LocateExe();
         string exeDir  = Path.GetDirectoryName(exePath)!;
 
-        if (!HasMpvLibrary(exeDir))
+        if (!File.Exists(Path.Combine(exeDir, "tcs_gstreamer.dll")))
         {
             Skipped    = true;
-            SkipReason = $"mpv-2.dll / libmpv-2.dll が見つかりません: {exeDir}";
+            SkipReason = $"tcs_gstreamer.dll が見つかりません（build-shim を実行してください）: {exeDir}";
+            return;
+        }
+
+        if (GstRuntimeBinDirectory() is null)
+        {
+            Skipped    = true;
+            SkipReason = "GStreamer ランタイムが見つかりません（GSTREAMER_1_0_ROOT_MSVC_X86_64 を確認してください）。";
             return;
         }
 
@@ -205,9 +212,20 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
             "TimecodeSyncPlayer.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
     }
 
-    private static bool HasMpvLibrary(string directory) =>
-        File.Exists(Path.Combine(directory, "mpv-2.dll")) ||
-        File.Exists(Path.Combine(directory, "libmpv-2.dll"));
+    private static string? GstRuntimeBinDirectory()
+    {
+        string? root = Environment.GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64");
+        if (string.IsNullOrEmpty(root))
+        {
+            root = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "gstreamer", "1.0", "msvc_x86_64");
+        }
+        string bin = Path.Combine(root, "bin");
+        return File.Exists(Path.Combine(bin, "gstreamer-1.0-0.dll")) ||
+               File.Exists(Path.Combine(bin, "gstreamer-1.0.dll"))
+            ? bin : null;
+    }
 
     private async Task PausePlaybackIfNeeded()
     {

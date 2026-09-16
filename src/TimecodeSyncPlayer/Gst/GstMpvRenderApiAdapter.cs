@@ -8,7 +8,7 @@ namespace TimecodeSyncPlayer.Gst;
 /// IMpvRenderApi の GStreamer 実装。SW レンダー（bgr0 CPU バッファ）と同じ形に
 /// 最新のリースフレームをコピーし、WPF/Freeze 経路を無改造で動かす暫定プレビュー通路。
 /// 定数値は mpv の SW レンダー API と同じ番号を使い、呼び出し側の生成する
-/// MpvRenderParam 配列をそのまま解釈できるようにする。
+/// RenderParam 配列をそのまま解釈できるようにする。
 /// </summary>
 internal sealed class GstMpvRenderApiAdapter : IMpvRenderApi
 {

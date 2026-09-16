@@ -29,18 +29,4 @@
     <ProjectReference Include="..\..\src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj" />
   </ItemGroup>
 
-  <!-- mpv-2.dll が native/ にあれば出力にコピー -->
-  <ItemGroup>
-    <Content Include="..\..\native\mpv-2.dll"
-             Condition="Exists('..\..\native\mpv-2.dll')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>mpv-2.dll</Link>
-    </Content>
-    <Content Include="..\..\native\libmpv-2.dll"
-             Condition="Exists('..\..\native\libmpv-2.dll')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>libmpv-2.dll</Link>
-    </Content>
-  </ItemGroup>
-
 </Project>
