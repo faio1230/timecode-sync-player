@@ -25,7 +25,8 @@ public partial class App : Application
     {
         // Native wrappers. The concrete interfaces are selected by
         // settings (AppSettingsManager.Current) at resolution time, which
-        // happens after settings load (MainWindow construction). Default stays mpv.
+        // happens after settings load (MainWindow construction). Default is the
+        // shipping configuration (GStreamer + Gpu).
         services.AddSingleton<MpvApi>();
         services.AddSingleton<MpvRenderApi>();
         services.AddSingleton<GstNativeApi>();

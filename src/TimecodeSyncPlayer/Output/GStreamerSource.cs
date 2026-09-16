@@ -5,13 +5,13 @@ using Vortice.Direct3D11;
 namespace TimecodeSyncPlayer.Output;
 
 /// <summary>shim のリース API のうち、ソース契約に必要な部分。Slot=-1 は旧サンプル経路。</summary>
-internal readonly record struct GstLeaseFrameInfo(ulong Generation, ulong Sequence, long PtsNs, int Width, int Height, bool IsGpu, int Slot = -1);
+internal readonly record struct GstLeaseFrameInfo(ulong Generation, ulong Sequence, long PtsNs, int Width, int Height, bool IsGpu, int Slot = -1, uint RingEpoch = 0);
 
 /// <summary>shim の配信トレース集計（問題 H）。replaced は latest 置換回数。</summary>
 internal readonly record struct GstDeliveryStatsInfo(ulong Arrivals, ulong LatestReplaced, ulong QosEvents, ulong DecoderOut, ulong RingDropped);
 
-/// <summary>ステージ 6b: shim の共有リング記述。ハンドルは shim 所有。</summary>
-internal readonly record struct GstRingInfo(int Width, int Height, IntPtr FenceHandle, IntPtr[] TextureHandles);
+/// <summary>ステージ 6b: shim の共有リング記述。ハンドルは shim 所有。Epoch は D8 のリング世代。</summary>
+internal readonly record struct GstRingInfo(int Width, int Height, IntPtr FenceHandle, IntPtr[] TextureHandles, uint Epoch = 0);
 
 internal interface IGstLeasePlayer
 {
@@ -26,6 +26,75 @@ internal interface IGstLeasePlayer
 
     /// <summary>共有リングが準備できていればそのハンドル集合を返す（未作成は false）。</summary>
     bool TryGetRingInfo(out GstRingInfo info);
+}
+
+/// <summary>D8: 合成デバイス上に開いたリング資源の抽象（テストでは実 D3D 無しの偽物を差し込む）。</summary>
+internal interface IGstRingResources : IDisposable
+{
+    int Width { get; }
+    int Height { get; }
+    int Count { get; }
+    uint Epoch { get; }
+    IntPtr TexturePointer(int slot);
+    bool TryGetSurface(int slot, out ID3D11Texture2D? texture, out ID3D11ShaderResourceView? view);
+    bool IsFenceComplete(ulong value);
+    void WaitFence(ID3D11DeviceContext4 context, ulong value);
+    /// <summary>このリングを参照するリースを 1 本増やす。</summary>
+    void AddLeaseReference();
+    /// <summary>リースを 1 本返す。参照が 0 になったら破棄する。</summary>
+    void ReleaseLeaseReference();
+    /// <summary>現行リングから降ろす。参照が 0 になったら破棄する（未返却リースが残っていれば後で）。</summary>
+    void ReleaseCurrentReference();
+}
+
+/// <summary>D8: リング資源の生成口。製品実装は GpuDevice で開き、テストは偽物を返す。</summary>
+internal interface IGstRingResourcesFactory
+{
+    IGstRingResources? Open(GstRingInfo info, GpuDevice? device);
+}
+
+/// <summary>
+/// D8: リング資源の寿命。参照数 = 未返却リース数 + (現行なら 1)。
+/// 解像度が変わって現行から降ろしても、旧リングのリース（Held を含む）が
+/// 全部返るまで Surface / フェンスを破棄しない。
+/// </summary>
+internal abstract class RingResourcesLifetime : IGstRingResources
+{
+    private int references = 1;
+    private int disposed;
+
+    public bool IsDisposed => Volatile.Read(ref disposed) != 0;
+
+    public abstract int Width { get; }
+    public abstract int Height { get; }
+    public abstract int Count { get; }
+    public abstract uint Epoch { get; }
+    public abstract IntPtr TexturePointer(int slot);
+    public abstract bool TryGetSurface(int slot, out ID3D11Texture2D? texture, out ID3D11ShaderResourceView? view);
+    public abstract bool IsFenceComplete(ulong value);
+    public abstract void WaitFence(ID3D11DeviceContext4 context, ulong value);
+
+    public void AddLeaseReference() => Interlocked.Increment(ref references);
+
+    public void ReleaseLeaseReference()
+    {
+        if (Interlocked.Decrement(ref references) == 0)
+            Dispose();
+    }
+
+    public void ReleaseCurrentReference()
+    {
+        if (Interlocked.Decrement(ref references) == 0)
+            Dispose();
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        DisposeCore();
+    }
+
+    protected abstract void DisposeCore();
 }
 
 /// <summary>
@@ -43,19 +112,24 @@ internal sealed class GStreamerSource : IVideoSource
     private readonly IGstLeasePlayer player;
     private readonly string gpu;
     private readonly Action? onRingOpened;
+    private readonly IGstRingResourcesFactory ringFactory;
     private GpuDevice? device;
     private SharedLease? active;
-    private RingResources? ring;
+    private IGstRingResources? ring;
     private bool ringOpenFailedLogged;
     private long notReady, ready, generationRejected;
     private int peakLeases;
+    private long ringOutsideFrames;
+    private bool ringOutsideLogged;
 
-    public GStreamerSource(IGstLeasePlayer player, string gpu = "", GpuDevice? device = null, Action? onRingOpened = null)
+    public GStreamerSource(IGstLeasePlayer player, string gpu = "", GpuDevice? device = null, Action? onRingOpened = null,
+        IGstRingResourcesFactory? ringFactory = null)
     {
         this.player = player;
         this.gpu = gpu;
         this.device = device;
         this.onRingOpened = onRingOpened;
+        this.ringFactory = ringFactory ?? new GpuRingResourcesFactory();
     }
 
     /// <summary>shim が保持する現在世代（合成層の generation と対応付ける）。</summary>
@@ -88,30 +162,24 @@ internal sealed class GStreamerSource : IVideoSource
             notReady++;
             return SourceStatus.NotReady;
         }
-        IntPtr texture;
-        if (info.Slot >= 0)
+        if (info.Slot < 0)
         {
-            // 共有リング: slot の Surface はリングとして一度だけ開いて保持する。
-            RingResources? resources = EnsureRing();
-            if (GstRingPolicy.Decide(info.Slot, resources?.Count ?? 0, resources != null) != GstRingLeasePlan.UseRing)
-            {
-                player.Release();
-                notReady++;
-                return SourceStatus.NotReady;
-            }
-            texture = resources!.Textures[info.Slot].NativePointer;
+            // D8: 旧サンプル経路のテクスチャは shim デバイスの非共有資源で、合成デバイスでは描けない。
+            RecordRingOutsideFrame(info);
+            player.Release();
+            notReady++;
+            return SourceStatus.NotReady;
         }
-        else
+        // D8: リースの epoch が現行リングと違えば（解像度変更で shim が作り直した）開き直す。
+        IGstRingResources? resources = EnsureRing(info.RingEpoch);
+        if (resources == null || GstRingPolicy.Decide(info.Slot, resources.Count, true) != GstRingLeasePlan.UseRing)
         {
-            // 旧サンプル経路: リースごとのテクスチャを開く。
-            if (!player.TryGetLeasedTexture(out texture, out _, out uint dxgiFormat) || dxgiFormat != 87)
-            {
-                player.Release();
-                notReady++;
-                return SourceStatus.NotReady;
-            }
+            player.Release();
+            notReady++;
+            return SourceStatus.NotReady;
         }
-        active = new SharedLease(this, info, texture, positionSeconds);
+        resources.AddLeaseReference();
+        active = new SharedLease(this, info, resources.TexturePointer(info.Slot), positionSeconds, resources);
         ready++;
         peakLeases = Math.Max(peakLeases, active.References);
         lease = active.Retain();
@@ -131,6 +199,24 @@ internal sealed class GStreamerSource : IVideoSource
 
     public bool TryDispose() => active == null;
 
+    /// <summary>D8: リング外（旧サンプル経路）で返ってきたフレーム数。2 秒ごとの統計に出す。</summary>
+    internal long RingOutsideFrames => Interlocked.Read(ref ringOutsideFrames);
+
+    /// <summary>
+    /// D8: shim が解像度不一致などでリング外のリースを返したときの記録。
+    /// 最初の 1 回だけ警告し、以後は <see cref="RingOutsideFrames"/> に数えるだけ。
+    /// </summary>
+    private void RecordRingOutsideFrame(GstLeaseFrameInfo info)
+    {
+        Interlocked.Increment(ref ringOutsideFrames);
+        if (ringOutsideLogged) return;
+        ringOutsideLogged = true;
+        IGstRingResources? resources = ring;
+        string ringSize = resources == null ? "未接続" : $"{resources.Width}x{resources.Height}（epoch {resources.Epoch}）";
+        Log.Warning("GStreamerSource: リング外のフレームを受け取りました {W}x{H}（リングは {Ring}）。GPU 合成では使いません",
+            info.Width, info.Height, ringSize);
+    }
+
     /// <summary>
     /// 段階 5.2: デバイス消失後の再オープン。shim は別デバイスなので player は destroy しない。
     /// 合成側のリング Surface・共有フェンスを新デバイスで開き直す。開き直せなければ false（player 再生成へ）。
@@ -138,18 +224,16 @@ internal sealed class GStreamerSource : IVideoSource
     internal bool TryReopenOn(GpuDevice newDevice)
     {
         if (active != null) return false;
-        ring?.Dispose();
-        ring = null;
+        RetireCurrentRing();
         ringOpenFailedLogged = false;
         device = newDevice;
-        return EnsureRing() != null;
+        return EnsureRing(requiredEpoch: null) != null;
     }
 
     /// <summary>復旧の第 1 段: 旧デバイス上のリング資源を手放す（player は触らない）。</summary>
     internal void DropRingResourcesForRecovery()
     {
-        ring?.Dispose();
-        ring = null;
+        RetireCurrentRing();
         if (active != null)
         {
             active = null;
@@ -161,8 +245,15 @@ internal sealed class GStreamerSource : IVideoSource
     {
         if (!TryDispose()) throw new InvalidOperationException("GStreamerSource: a lease is still outstanding; release it before disposing.");
         // 共有リングのリソースは、worker 停止・GPU ドレイン後にここで解放する。
-        ring?.Dispose();
+        RetireCurrentRing();
+    }
+
+    /// <summary>現行リングを降ろす。未返却リースが残っていれば最後の返却時に破棄される（D8）。</summary>
+    private void RetireCurrentRing()
+    {
+        IGstRingResources? previous = ring;
         ring = null;
+        previous?.ReleaseCurrentReference();
     }
 
     /// <summary>slot のリング Surface（SRV + テクスチャ）を返す。owner は GStreamerSource。</summary>
@@ -170,51 +261,64 @@ internal sealed class GStreamerSource : IVideoSource
     {
         texture = null;
         view = null;
-        RingResources? resources = ring;
-        if (resources == null || GstRingPolicy.Decide(slot, resources.Count, true) != GstRingLeasePlan.UseRing)
-            return false;
-        texture = resources.Textures[slot];
-        view = resources.Views[slot];
-        return true;
+        // D8: 描いているリースの世代のリングを使う（現行リングとは限らない）。
+        IGstRingResources? resources = active?.Ring ?? ring;
+        return resources != null && resources.TryGetSurface(slot, out texture, out view);
     }
 
     /// <summary>描画前の GPU キュー待ち（CPU は待たない）。slot>=0 のリースでのみ使う。</summary>
     internal void WaitRingFence(ulong value)
     {
-        if (device == null || ring == null) return;
-        device.Context4.Wait(ring.Fence, value);
+        IGstRingResources? resources = active?.Ring ?? ring;
+        if (device == null || resources == null) return;
+        resources.WaitFence(device.Context4, value);
     }
 
     /// <summary>
     /// I1/I5: リング slot のコピー完了（フェンス値＝seq）を CPU 側で確認する。
     /// 完了前のフレームを合成の GPU フェンス待ちに含めないための専用クエリ。
     /// </summary>
-    internal bool IsRingFenceComplete(long sequence) => ring != null && ring.Fence.CompletedValue >= (ulong)sequence;
-
-    /// <summary>合成デバイス上にリングを一度だけ開く（未作成/未接続は null で毎 tick 再試行）。</summary>
-    private RingResources? EnsureRing()
+    internal bool IsRingFenceComplete(long sequence)
     {
-        if (ring != null) return ring;
-        if (device == null) return null;
+        IGstRingResources? resources = active?.Ring ?? ring;
+        return resources != null && resources.IsFenceComplete((ulong)sequence);
+    }
+
+    /// <summary>
+    /// 合成デバイス上にリングを開く（未作成/未接続/世代不一致は null で毎 tick 再試行）。
+    /// D8: 解像度変更で shim がリングを作り直すと epoch が変わるため開き直す。
+    /// 旧リングは、それを参照するリース（Held を含む）が返るまで破棄しない。
+    /// </summary>
+    private IGstRingResources? EnsureRing(uint? requiredEpoch)
+    {
+        if (ring != null && (!requiredEpoch.HasValue || ring.Epoch == requiredEpoch.Value))
+            return ring;
         if (!player.TryGetRingInfo(out GstRingInfo info)) return null;
+        if (requiredEpoch.HasValue && info.Epoch != requiredEpoch.Value) return null;
+        IGstRingResources? opened;
         try
         {
-            ring = RingResources.Open(device, info);
+            opened = ringFactory.Open(info, device);
         }
         catch (Exception ex)
         {
             if (!ringOpenFailedLogged)
             {
                 ringOpenFailedLogged = true;
-                Log.Warning(ex, "GStreamerSource: 共有リングのオープンに失敗（旧経路へフォールバック、再試行は継続）");
+                Log.Warning(ex, "GStreamerSource: 共有リングのオープンに失敗（再試行は継続）");
             }
             return null;
         }
-        if (ring != null)
-        {
-            Log.Information("GStreamerSource: 共有リングを開きました {W}x{H} slots={Count}", ring.Width, ring.Height, ring.Count);
-            onRingOpened?.Invoke();
-        }
+        if (opened == null) return null;
+        ringOpenFailedLogged = false;
+        IGstRingResources? previous = ring;
+        ring = opened;
+        previous?.ReleaseCurrentReference();
+        if (previous != null)
+            Log.Information("GStreamerSource: 共有リングを開き直しました {W}x{H} epoch={Epoch}", opened.Width, opened.Height, opened.Epoch);
+        else
+            Log.Information("GStreamerSource: 共有リングを開きました {W}x{H} slots={Count} epoch={Epoch}", opened.Width, opened.Height, opened.Count, opened.Epoch);
+        onRingOpened?.Invoke();
         return ring;
     }
 
@@ -222,30 +326,35 @@ internal sealed class GStreamerSource : IVideoSource
     {
         if (ReferenceEquals(active, shared)) active = null;
         player.Release();
+        shared.Ring?.ReleaseLeaseReference();
     }
 
-    /// <summary>合成デバイスが開いたリング 3 面 + 共有フェンス。GStreamerSource が所有する。</summary>
-    private sealed class RingResources : IDisposable
+    /// <summary>合成デバイスが開いたリング 3 面 + 共有フェンス（D8: 世代付き）。</summary>
+    private sealed class GpuRingResources : RingResourcesLifetime
     {
-        public ID3D11Texture2D[] Textures { get; }
-        public ID3D11ShaderResourceView[] Views { get; }
-        public ID3D11Fence Fence { get; }
-        public int Width { get; }
-        public int Height { get; }
-        public int Count => Textures.Length;
+        private readonly ID3D11Texture2D[] textures;
+        private readonly ID3D11ShaderResourceView[] views;
+        private readonly ID3D11Fence fence;
 
-        private RingResources(ID3D11Texture2D[] textures, ID3D11ShaderResourceView[] views,
-            ID3D11Fence fence, int width, int height)
+        public override int Width { get; }
+        public override int Height { get; }
+        public override int Count => textures.Length;
+        public override uint Epoch { get; }
+
+        private GpuRingResources(ID3D11Texture2D[] textures, ID3D11ShaderResourceView[] views,
+            ID3D11Fence fence, int width, int height, uint epoch)
         {
-            Textures = textures;
-            Views = views;
-            Fence = fence;
+            this.textures = textures;
+            this.views = views;
+            this.fence = fence;
             Width = width;
             Height = height;
+            Epoch = epoch;
         }
 
-        public static RingResources? Open(GpuDevice gpu, GstRingInfo info)
+        public static GpuRingResources? Open(GpuDevice? gpu, GstRingInfo info)
         {
+            if (gpu == null) return null;
             if (info.TextureHandles.Length == 0 || info.FenceHandle == IntPtr.Zero) return null;
             var textures = new ID3D11Texture2D[info.TextureHandles.Length];
             var views = new ID3D11ShaderResourceView[textures.Length];
@@ -258,7 +367,7 @@ internal sealed class GStreamerSource : IVideoSource
                     textures[i] = gpu.Device1.OpenSharedResource1<ID3D11Texture2D>(info.TextureHandles[i]);
                     views[i] = gpu.Device.CreateShaderResourceView(textures[i]);
                 }
-                return new RingResources(textures, views, fence, info.Width, info.Height);
+                return new GpuRingResources(textures, views, fence, info.Width, info.Height, info.Epoch);
             }
             catch
             {
@@ -272,12 +381,34 @@ internal sealed class GStreamerSource : IVideoSource
             }
         }
 
-        public void Dispose()
+        public override IntPtr TexturePointer(int slot) => textures[slot].NativePointer;
+
+        public override bool TryGetSurface(int slot, out ID3D11Texture2D? texture, out ID3D11ShaderResourceView? view)
         {
-            foreach (ID3D11ShaderResourceView view in Views) view.Dispose();
-            foreach (ID3D11Texture2D texture in Textures) texture.Dispose();
-            Fence.Dispose();
+            texture = null;
+            view = null;
+            if (slot < 0 || slot >= textures.Length) return false;
+            texture = textures[slot];
+            view = views[slot];
+            return true;
         }
+
+        public override bool IsFenceComplete(ulong value) => fence.CompletedValue >= value;
+
+        public override void WaitFence(ID3D11DeviceContext4 context, ulong value) => context.Wait(fence, value);
+
+        protected override void DisposeCore()
+        {
+            foreach (ID3D11ShaderResourceView view in views) view.Dispose();
+            foreach (ID3D11Texture2D texture in textures) texture.Dispose();
+            fence.Dispose();
+        }
+    }
+
+    /// <summary>製品経路: GpuDevice 上に NT ハンドルを開く。</summary>
+    private sealed class GpuRingResourcesFactory : IGstRingResourcesFactory
+    {
+        public IGstRingResources? Open(GstRingInfo info, GpuDevice? device) => GpuRingResources.Open(device, info);
     }
 
     /// <summary>shim の1リースを複数の利用者へ共有する参照カウント holder。最後の Dispose で shim へ返す。</summary>
@@ -288,14 +419,18 @@ internal sealed class GStreamerSource : IVideoSource
         public GstLeaseFrameInfo Info { get; }
         public IntPtr TexturePointer { get; }
         public double FallbackPositionSeconds { get; }
+        /// <summary>D8: このリースが参照するリング世代。最後の Dispose で参照を返す。</summary>
+        public IGstRingResources? Ring { get; }
         public int References => Volatile.Read(ref references);
 
-        public SharedLease(GStreamerSource owner, GstLeaseFrameInfo info, IntPtr texture, double positionSeconds)
+        public SharedLease(GStreamerSource owner, GstLeaseFrameInfo info, IntPtr texture, double positionSeconds,
+            IGstRingResources? ring = null)
         {
             this.owner = owner;
             Info = info;
             TexturePointer = texture;
             FallbackPositionSeconds = positionSeconds;
+            Ring = ring;
         }
 
         public Lease Retain()
@@ -378,7 +513,7 @@ internal sealed class GstNativeLeasePlayer(TimecodeSyncPlayer.Gst.IGstNativeApi 
             info = default;
             return code;
         }
-        info = new GstLeaseFrameInfo(frame.Generation, frame.Seq, frame.PtsNs, frame.Width, frame.Height, frame.IsGpu != 0, frame.Slot);
+        info = new GstLeaseFrameInfo(frame.Generation, frame.Seq, frame.PtsNs, frame.Width, frame.Height, frame.IsGpu != 0, frame.Slot, frame.RingEpoch);
         return 1;
     }
 
@@ -410,7 +545,9 @@ internal sealed class GstNativeLeasePlayer(TimecodeSyncPlayer.Gst.IGstNativeApi 
         }
         if (count != handles.Length)
             Array.Resize(ref handles, (int)count);
-        info = new GstRingInfo(width, height, fence, handles);
+        uint epoch = 0;
+        _ = native.GetRingEpoch(player, out epoch);
+        info = new GstRingInfo(width, height, fence, handles, epoch);
         return true;
     }
 }

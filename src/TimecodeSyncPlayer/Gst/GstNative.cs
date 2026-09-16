@@ -29,6 +29,8 @@ internal static class GstNative
         public int IsGpu;
         /// <summary>ステージ 6b: 共有リング slot (0..2)。-1 = 旧サンプルリース経路。</summary>
         public int Slot;
+        /// <summary>D8: slot が属するリング世代。0 = リング外（旧サンプルリース）。</summary>
+        public uint RingEpoch;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -168,6 +170,10 @@ internal static class GstNative
         internal static extern int tcs_player_ring_info(
             IntPtr player, [Out] IntPtr[] outHandles, uint capacity, out uint outCount,
             out IntPtr outFence, out int outWidth, out int outHeight);
+
+        // D8: リングの世代。リングは解像度が変わると作り直され、epoch が +1 される。
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_ring_epoch(IntPtr player, out uint outEpoch);
     }
 }
 

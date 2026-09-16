@@ -71,23 +71,30 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 - `subresource` は **0**。デコーダ配列テクスチャ等は shim 所有の単一サブリソース
   テクスチャへ平坦化してから返す（pool 由来テクスチャのポインタはリース中のみ有効、
   平坦化テクスチャは player と同時に破棄）。
+- `ring_epoch` はこの slot が属するリングの世代（0 = リング外）。リングは解像度が
+  変わると作り直され、epoch が +1 される。合成側は `TcsFrameInfo.ring_epoch` と
+  `tcs_player_ring_epoch` を比べ、違えばハンドルを開き直す。
 - 返したポインタは **借用**（AddRef しない）。release 後・destroy 後に使用してはならない。
 - 共有リング経路の合成側はこの API を使わず `tcs_player_ring_info` の NT ハンドルを
   `OpenSharedResource1` する（per-frame の Surface を作らない）。
 
 ### `tcs_player_ring_info(player, out_handles, capacity, out_count, out_fence, out_width, out_height)` → 0 = 成功
 
-- 段階 6b の共有リング。最初の GPU sample 到着時に一度だけ作成される。
+- 段階 6b の共有リング。最初の GPU sample 到着時に作成され、**解像度が変わると
+  作り直される**（D8。NT ハンドルと共有フェンスは毎回新しい）。
 - `out_handles` は BGRA テクスチャ 3 枚の **NT 共有ハンドル**、`out_fence` は
   共有フェンスの NT ハンドル。**すべて shim 所有**で `CloseHandle` 禁止。
-  `tcs_player_destroy` まで有効。
+  古い世代のハンドルは合成側が開いている間だけ割当が生き、合成側が解放すれば消える。
 - 合成側は `ID3D11Device1::OpenSharedResource1` と
-  `ID3D11Device5::OpenSharedFence` で一度だけ開き、acquire の `seq` を
+  `ID3D11Device5::OpenSharedFence` で開き、acquire の `seq` を
   `ID3D11DeviceContext4::Wait(fence, seq)` で **GPU キュー待ち**してから描く
   （CPU はポーリングしない）。
+- リング世代は `tcs_player_ring_epoch` で取得できる。`TcsFrameInfo.ring_epoch` と
+  違えば `tcs_player_ring_info` から開き直す（旧世代のテクスチャは、その世代の
+  リースを全部返すまで合成側で保持する）。
 - リング未作成（load 前）は `TCS_ERR_NO_FRAME`、`capacity < 3` は
-  `TCS_ERR_SIZE`。解像度**または形式**がリングと一致しない GPU フレームは旧サンプル
-  経路（slot=-1）へ落ちる。
+  `TCS_ERR_SIZE`。GPU フレームの形式が BGRA でない場合は旧サンプル経路（slot=-1）へ
+  落ちる（解像度差では作り直すため落ちない）。
 
 ### `tcs_player_leased_cpu_copy(player, dst, dst_stride)` → 0 = 成功
 

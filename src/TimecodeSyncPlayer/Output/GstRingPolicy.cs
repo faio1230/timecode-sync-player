@@ -3,13 +3,14 @@ namespace TimecodeSyncPlayer.Output;
 /// <summary>共有リングのリース選択（ステージ 6b）。</summary>
 internal enum GstRingLeasePlan
 {
-    /// <summary>slot &lt; 0: 旧サンプル経路（per-lease Surface）を使う。</summary>
-    UseLegacy,
-
     /// <summary>slot 0..2: リング Surface を使い、描画前にフェンス待ちを出す。</summary>
     UseRing,
 
-    /// <summary>slot があるのにリング未接続/範囲外: リースを返して NotReady。</summary>
+    /// <summary>
+    /// slot &lt; 0（旧サンプル経路）やリング未接続/範囲外: リースを返して NotReady。
+    /// D8: shim の旧サンプル経路のテクスチャは shim デバイス上の非共有資源で、
+    /// 合成デバイスでは描けないため、GPU 合成はリング外のリースを使わない。
+    /// </summary>
     Reject,
 }
 
@@ -21,7 +22,7 @@ internal static class GstRingPolicy
 {
     public static GstRingLeasePlan Decide(int slot, int ringCount, bool ringOpen)
     {
-        if (slot < 0) return GstRingLeasePlan.UseLegacy;
+        if (slot < 0) return GstRingLeasePlan.Reject;
         if (!ringOpen || slot >= ringCount) return GstRingLeasePlan.Reject;
         return GstRingLeasePlan.UseRing;
     }

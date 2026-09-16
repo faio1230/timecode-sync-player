@@ -29,8 +29,8 @@ public class AppSettingsTests
         settings.FullscreenDisplayDeviceName.Should().BeEmpty();
         settings.IsMuted.Should().BeFalse();
         settings.Volume.Should().Be(100);
-        settings.Backend.Should().Be(PlayerBackend.Mpv);
-        settings.OutputBackend.Should().Be(OutputBackend.Cpu);
+        settings.Backend.Should().Be(PlayerBackend.Gstreamer);
+        settings.OutputBackend.Should().Be(OutputBackend.Gpu);
     }
 
     [Theory]
@@ -115,7 +115,17 @@ public class AppSettingsTests
 
         AppSettings result = AppSettingsManager.ValidateSettings(settings);
 
-        result.OutputBackend.Should().Be(OutputBackend.Cpu);
+        result.OutputBackend.Should().Be(OutputBackend.Gpu);
+    }
+
+    [Fact]
+    public void ValidateSettings_RejectsInvalidBackend()
+    {
+        var settings = AppSettings.Default with { Backend = (PlayerBackend)99 };
+
+        AppSettings result = AppSettingsManager.ValidateSettings(settings);
+
+        result.Backend.Should().Be(PlayerBackend.Gstreamer);
     }
 
     [Fact]
@@ -286,8 +296,8 @@ public class AppSettingsTests
         deserialized.LtcSignalResumeFrames.Should().Be(5);
         deserialized.ShowDebugOsd.Should().BeFalse();
         deserialized.FullscreenDisplayDeviceName.Should().BeEmpty();
-        deserialized.Backend.Should().Be(PlayerBackend.Mpv);
-        deserialized.OutputBackend.Should().Be(OutputBackend.Cpu);
+        deserialized.Backend.Should().Be(PlayerBackend.Gstreamer);
+        deserialized.OutputBackend.Should().Be(OutputBackend.Gpu);
     }
 
     [Fact]

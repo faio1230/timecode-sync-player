@@ -55,10 +55,24 @@
 
         <!-- 映像エリア（SW レンダーの WriteableBitmap を表示） -->
         <Border Grid.Row="1" Grid.Column="0" Background="Black">
-            <Image x:Name="VideoImage"
-                   AutomationProperties.AutomationId="VideoImage"
-                   Stretch="Uniform"
-                   RenderOptions.BitmapScalingMode="HighQuality"/>
+            <Grid>
+                <Image x:Name="VideoImage"
+                       AutomationProperties.AutomationId="VideoImage"
+                       Stretch="Uniform"
+                       RenderOptions.BitmapScalingMode="HighQuality"/>
+                <!-- R1 1-2: GPU 出力が使えないときはここに理由を表示し、再生は行わない -->
+                <StackPanel x:Name="PlaybackUnavailablePanel"
+                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Visibility="Collapsed">
+                    <TextBlock Text="映像出力を利用できません"
+                               AutomationProperties.AutomationId="PlaybackUnavailableText"
+                               Foreground="#DDDDDD" FontSize="16" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="PlaybackUnavailableDetailText"
+                               AutomationProperties.AutomationId="PlaybackUnavailableDetailText"
+                               Foreground="#888888" FontSize="11" TextWrapping="Wrap"
+                               MaxWidth="640" Margin="0,10,0,0" TextAlignment="Center"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- シークバー -->

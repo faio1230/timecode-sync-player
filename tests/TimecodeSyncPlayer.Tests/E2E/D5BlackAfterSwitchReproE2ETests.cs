@@ -71,8 +71,9 @@ public sealed class D5BlackAfterSwitchReproE2ETests
         bool forceGapBlackOnSwitch = false)
     {
         (string exePath, string repoRoot) = PrepareEnvironment();
-        string media = Path.Combine(repoRoot, "artifacts", "media", "d1-60s.mp4");
-        string nextMedia = Path.Combine(repoRoot, "artifacts", "media", "d1-60s.mp4");
+        // D8 検証: 解像度の向き（720p → 1080p など）を env で差し替えられる。既定は従来どおり。
+        string media = ResolveMedia(repoRoot, "TIMECODE_D5_MEDIA", "d1-60s.mp4");
+        string nextMedia = ResolveMedia(repoRoot, "TIMECODE_D5_NEXT_MEDIA", "d1-60s.mp4");
         string recvExe = Path.Combine(repoRoot, "native", "gst-shim", "proto", "build-debug", "tcs-gst-proto.exe");
         Skip.If(!File.Exists(media), $"テスト動画が無い: {media}");
         Skip.If(!File.Exists(nextMedia), $"テスト動画が無い: {nextMedia}");
@@ -81,7 +82,6 @@ public sealed class D5BlackAfterSwitchReproE2ETests
         string workDir = NewTempDir("tcs-d5-repro");
         string recvDir = NewTempDir("tcs-d5-recv");
         string settingsPath = Path.Combine(workDir, "settings.json");
-        File.WriteAllText(settingsPath, "{\"backend\":1,\"outputBackend\":1}");
         string sender = $"TCSD5-{Environment.ProcessId}-{DateTime.UtcNow.Ticks}";
 
         E2EAppRunner? runner = null;
@@ -142,6 +142,7 @@ public sealed class D5BlackAfterSwitchReproE2ETests
                               $"appStartUtc={runner.Process.StartTime.ToUniversalTime():HH:mm:ss.fff} lastSaveUtc={lastSave} " +
                               $"frames: {Describe(observed)}");
             Console.WriteLine($"[D5] output trace: {summary}");
+            WriteObservationReport(forceGapBlackOnSwitch, switchAtMs, receiverSeconds, media, nextMedia, observed, summary);
             return new Observation(observed, summary);
         }
         finally
@@ -152,6 +153,21 @@ public sealed class D5BlackAfterSwitchReproE2ETests
             TryDeleteDir(workDir);
             TryDeleteDir(recvDir);
         }
+    }
+
+    /// <summary>D8 検証: TIMECODE_D5_REPORT_DIR があれば観測結果（黒比率）をファイルに残す。</summary>
+    private static void WriteObservationReport(bool hook, double switchAtMs, double receiverSeconds,
+        string media, string nextMedia, List<(string Name, double BlackRatio)> observed, string trace)
+    {
+        string? reportDir = Environment.GetEnvironmentVariable("TIMECODE_D5_REPORT_DIR");
+        if (string.IsNullOrWhiteSpace(reportDir)) return;
+        Directory.CreateDirectory(reportDir);
+        string path = Path.Combine(reportDir, $"d5-observation-{DateTime.Now:HHmmss}.txt");
+        File.WriteAllText(path,
+            $"hook={hook} switchAtMs={switchAtMs} receiverSeconds={receiverSeconds}\n" +
+            $"media={media}\nnext={nextMedia}\n" +
+            $"frames: {Describe(observed)}\n" +
+            $"trace: {trace}\n");
     }
 
     /// <summary>直近 3 秒（トレース末尾基準）の取得・合成の件数と、取得 imageId の固着を要約する。</summary>
@@ -278,6 +294,15 @@ public sealed class D5BlackAfterSwitchReproE2ETests
         string dir = Path.Combine(Path.GetTempPath(), prefix, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         return dir;
+    }
+
+    /// <summary>D8 検証: env（絶対パス or artifacts/media 内の名前）で素材を差し替える。</summary>
+    private static string ResolveMedia(string repoRoot, string variable, string defaultName)
+    {
+        string? value = Environment.GetEnvironmentVariable(variable);
+        if (string.IsNullOrWhiteSpace(value))
+            return Path.Combine(repoRoot, "artifacts", "media", defaultName);
+        return Path.IsPathFullyQualified(value) ? value : Path.Combine(repoRoot, "artifacts", "media", value);
     }
 
     private static string FindRepoRoot()

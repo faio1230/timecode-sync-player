@@ -96,6 +96,12 @@ env_int (const char* name, int fallback)
 /* diagnostics: dump every delivered sample (pacing analysis) */
 static bool frame_log = env_flag ("TCS_FRAME_LOG");
 
+/* D8 diagnostics: log lease acquire/release and the ring dimension fallback.
+ * Off by default; the D8 measurement sets TCS_LEASE_LOG=1. Logs are emitted
+ * with no lock held (state changes are recorded under frame_lock and printed
+ * after release). */
+static bool lease_log = env_flag ("TCS_LEASE_LOG");
+
 /* The owner enables the output trace (events.jsonl) by setting the app's
  * TIMECODE_SYNC_PLAYER_OUTPUT_TRACE. tcs_player_get_time_pos appends a
  * position snapshot to the delivery ring only when that variable was set at
@@ -219,6 +225,7 @@ struct TcsPlayer {
     uint64_t arrival_qpc;                 /* H-3: for the age-based backlog rule */
     bool gpu;
     int32_t slot;                         /* stage 6b: shared ring slot; -1 = sample lease */
+    uint32_t ring_epoch;                  /* D8: epoch of the ring holding `slot` (0 = sample) */
   };
   static const uint32_t kFrameQueueCapacity = 4;
   std::deque<FrameSlot> frames;
@@ -232,13 +239,15 @@ struct TcsPlayer {
   TcsFrameInfo lease_info = {};
   bool pending_update = false;
 
-  /* shared texture ring (stage 6b, frame_lock). Created once, on the first
-   * GPU sample whose dimensions are known; the compositor opens the NT
-   * handles once via tcs_player_ring_info(). */
+  /* shared texture ring (stage 6b, frame_lock). D8: follows the frame
+   * dimensions. Rebuilt when a GPU frame with different dimensions arrives;
+   * the compositor opens the NT handles via tcs_player_ring_info() and compares
+   * the epoch via tcs_player_ring_epoch() to detect a rebuild. */
   static const uint32_t kRingSlots = 3;
   bool ring_ready = false;
   int ring_width = 0;
   int ring_height = 0;
+  uint32_t ring_epoch = 0;                /* 0 = no ring; +1 on every build */
   ID3D11Texture2D* ring_texture[kRingSlots] = {};
   HANDLE ring_handle[kRingSlots] = {};
   ID3D11Fence* ring_fence = nullptr;
@@ -628,21 +637,50 @@ destroy_ring (TcsPlayer* p)
   if (p->ring_fence) { p->ring_fence->Release (); p->ring_fence = nullptr; }
   p->ring_ready = false;
   p->ring_width = p->ring_height = 0;
+  p->ring_epoch = 0;
 }
 
-/* Create the 3-slot BGRA ring + shared fence on first use (caller holds
- * frame_lock). Created once: dimension changes fall back to the legacy sample
- * path instead of rebuilding (the compositor's opened handles stay valid for
- * the whole player lifetime). */
+/* Create the 3-slot BGRA ring + shared fence. D8: rebuilt whenever the
+ * requested dimensions differ from the current ring; the epoch increments on
+ * every build so the compositor can detect the change and reopen the handles.
+ * Caller holds frame_lock. */
 static bool
 ensure_ring_locked (TcsPlayer* p, int width, int height)
 {
-  if (p->ring_ready)
-    return p->ring_width == width && p->ring_height == height;
+  if (p->ring_ready && p->ring_width == width && p->ring_height == height)
+    return true;
   if (!p->device5 || !p->context4)
     return false;
   if (width <= 0 || height <= 0)
     return false;
+
+  int old_w = p->ring_width, old_h = p->ring_height;
+  bool rebuilt = p->ring_ready;
+  uint32_t next_epoch = p->ring_epoch + 1;  /* destroy_ring resets it to 0 */
+  if (next_epoch == 0)
+    next_epoch = 1;                         /* 0 is reserved for "no ring" */
+  if (rebuilt)
+  {
+    /* Frames queued for the old ring can no longer be handed out through it.
+     * Their samples keep the decoder pool alive, so unref them and count the
+     * drop as a replacement. */
+    for (auto it = p->frames.begin (); it != p->frames.end (); )
+    {
+      if (it->slot >= 0)
+      {
+        gst_sample_unref (it->sample);
+        it = p->frames.erase (it);
+        p->delivery_replaced++;
+      }
+      else
+      {
+        ++it;
+      }
+    }
+    /* The compositor's opened handles keep the old allocations alive; the shim
+     * drops its own references. */
+    destroy_ring (p);
+  }
 
   D3D11_TEXTURE2D_DESC d = {};
   d.Width = (UINT) width;
@@ -690,7 +728,13 @@ ensure_ring_locked (TcsPlayer* p, int width, int height)
   p->ring_width = width;
   p->ring_height = height;
   p->ring_ready = true;
-  LOG ("ring: created %dx%d BGRA slots=%u", width, height, TcsPlayer::kRingSlots);
+  p->ring_epoch = next_epoch;
+  if (rebuilt)
+    LOG ("ring: recreated %dx%d epoch=%u (was %dx%d)",
+        width, height, p->ring_epoch, old_w, old_h);
+  else
+    LOG ("ring: created %dx%d BGRA slots=%u epoch=%u",
+        width, height, TcsPlayer::kRingSlots, p->ring_epoch);
   return true;
 }
 
@@ -700,11 +744,11 @@ static int32_t
 pick_free_ring_slot_locked (TcsPlayer* p)
 {
   uint8_t used[TcsPlayer::kRingSlots] = {};
-  if (p->leased_slot >= 0 && p->leased_slot < (int32_t) TcsPlayer::kRingSlots)
-    used[p->leased_slot] = 1;
+  tcs_ring_mark_occupied (used, TcsPlayer::kRingSlots, p->leased_slot,
+      p->lease_info.ring_epoch, p->ring_epoch);
   for (const TcsPlayer::FrameSlot& f : p->frames)
-    if (f.slot >= 0 && f.slot < (int32_t) TcsPlayer::kRingSlots)
-      used[f.slot] = 1;
+    tcs_ring_mark_occupied (used, TcsPlayer::kRingSlots, f.slot,
+        f.ring_epoch, p->ring_epoch);
   return tcs_ring_pick_slot (used, TcsPlayer::kRingSlots);
 }
 
@@ -1122,8 +1166,11 @@ on_new_sample (GstAppSink* sink, gpointer user)
 
       /* Stage 6b: GPU samples go through the shared ring. If every slot is
        * busy, evict the oldest undelivered frame first (latest-first catch-up,
-       * counted as replaced / flags bit0). */
+       * counted as replaced / flags bit0). D8: ensure_ring_locked rebuilds the
+       * ring when the dimensions changed, so a frame never falls back to the
+       * legacy sample path because of a resolution change. */
       int32_t ring_slot = -1;
+      uint32_t ring_slot_epoch = 0;
       if (gpu && src_tex && cw > 0 && ch > 0 && ensure_ring_locked (p, cw, ch) &&
           (int) src_desc.Width == p->ring_width && (int) src_desc.Height == p->ring_height &&
           src_desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
@@ -1138,6 +1185,7 @@ on_new_sample (GstAppSink* sink, gpointer user)
           p->context4->Signal (p->ring_fence, p->latest_seq);
           p->context->Flush ();  /* submit copy+signal (no wait here) */
           ring_slot = slot;
+          ring_slot_epoch = p->ring_epoch;
         }
       }
       if (ring_slot < 0 && p->frames.size() >= TcsPlayer::kFrameQueueCapacity) {
@@ -1147,7 +1195,7 @@ on_new_sample (GstAppSink* sink, gpointer user)
         p->delivery_replaced++;
       }
       p->frames.push_back (TcsPlayer::FrameSlot{sample, p->generation, p->latest_seq, pts,
-          (uint64_t) arrival.QuadPart, gpu, ring_slot});
+          (uint64_t) arrival.QuadPart, gpu, ring_slot, ring_slot_epoch});
       p->pending_update = true;
       p->delivery_arrivals++;
       p->delivery_last_qpc = (uint64_t) arrival.QuadPart;
@@ -2399,8 +2447,14 @@ static ID3D11Texture2D*
 texture_of_lease (TcsPlayer* p, guint* sub_out)
 {
   *sub_out = 0;
-  if (p->leased_slot >= 0 && p->leased_slot < (int32_t) TcsPlayer::kRingSlots)
+  if (p->leased_slot >= 0 && p->leased_slot < (int32_t) TcsPlayer::kRingSlots) {
+    /* D8: an old-epoch ring lease refers to a ring the shim already rebuilt.
+     * The compositor draws it from its own opened resources, so the shim has
+     * no texture to hand out for it. */
+    if (p->lease_info.ring_epoch != p->ring_epoch)
+      return nullptr;
     return p->ring_texture[p->leased_slot];
+  }
   if (!p->leased)
     return nullptr;
   GstBuffer* buf = gst_sample_get_buffer (p->leased);
@@ -2513,6 +2567,10 @@ tcs_player_destroy (TcsPlayer* player)
   teardown_pipeline (p);
   /* ring handles belong to the shim (CreateSharedHandle); close them before
    * the device goes away. The compositor's opened references stay alive. */
+  if (p->ring_ready)
+    LOG ("ring: destroyed %dx%d BGRA slots=%u lease_outstanding=%d",
+        p->ring_width, p->ring_height, TcsPlayer::kRingSlots,
+        (p->leased || p->leased_slot >= 0) ? 1 : 0);
   destroy_ring (p);
   if (p->staging_read) p->staging_read->Release ();
   if (p->single_tex) p->single_tex->Release ();
@@ -2896,7 +2954,7 @@ TCS_GST_API int
 tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_info)
 {
   if (!player || !out_info) return 0;
-  std::lock_guard<std::mutex> g (player->frame_lock);
+  std::unique_lock<std::mutex> g (player->frame_lock);
   TcsPlayer* p = player;
 
   /* TS seek stall diagnostics: if the gate has been waiting for seconds,
@@ -2940,8 +2998,15 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
   }
   /* Drop a lease from an older generation? No: the compositor owns it until
    * it releases. If a lease is still held, refuse silently (none). */
-  if (p->leased || p->leased_slot >= 0)
+  if (p->leased || p->leased_slot >= 0) {
+    int32_t held_slot = p->leased_slot;
+    uint64_t held_gen = p->lease_info.generation;
+    g.unlock ();
+    if (lease_log)
+      LOG ("lease: acquire refused (lease held) want_gen=%llu held_gen=%llu slot=%d",
+          (unsigned long long) generation, (unsigned long long) held_gen, held_slot);
     return 0;
+  }
 
   /* Deliver with bounded latency (problem H-2/H-3): drop older/other
    * generations, then apply the pure delivery policy to the backlog. */
@@ -2949,8 +3014,14 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
     gst_sample_unref (p->frames.front().sample);
     p->frames.pop_front();
   }
-  if (p->frames.empty())
-    return p->eos ? TCS_ERR_ENDED : 0;
+  if (p->frames.empty()) {
+    int rc = p->eos ? TCS_ERR_ENDED : 0;
+    g.unlock ();
+    if (lease_log)
+      LOG ("lease: acquire none (no frame) gen=%llu rc=%d",
+          (unsigned long long) generation, rc);
+    return rc;
+  }
 
   /* H-3: an n==2 backlog older than 1.25 frames is steady clock drift and
    * loses its oldest frame instead of waiting for a fixed streak. */
@@ -2966,8 +3037,15 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
     p->frames.pop_front();
     p->delivery_replaced++;
   }
-  if (!plan.lease || p->frames.empty())
-    return p->eos ? TCS_ERR_ENDED : 0;
+  if (!plan.lease || p->frames.empty()) {
+    int rc = p->eos ? TCS_ERR_ENDED : 0;
+    uint32_t backlog = (uint32_t) p->frames.size ();
+    g.unlock ();
+    if (lease_log)
+      LOG ("lease: acquire none (policy) gen=%llu rc=%d backlog=%u drop_oldest=%u",
+          (unsigned long long) generation, rc, backlog, plan.drop_oldest);
+    return rc;
+  }
 
   TcsPlayer::FrameSlot slot = p->frames.front();
   p->frames.pop_front();
@@ -2981,7 +3059,21 @@ tcs_player_acquire (TcsPlayer* player, uint64_t generation, TcsFrameInfo* out_in
   p->lease_info.height = p->height;
   p->lease_info.is_gpu = slot.gpu ? 1 : 0;
   p->lease_info.slot = slot.slot;
+  p->lease_info.ring_epoch = slot.ring_epoch;
   *out_info = p->lease_info;
+  {
+    uint64_t leased_gen = p->lease_info.generation;
+    uint64_t leased_seq = p->lease_info.seq;
+    int32_t leased_slot = p->lease_info.slot;
+    int is_gpu = p->lease_info.is_gpu;
+    int w = p->lease_info.width, h = p->lease_info.height;
+    uint32_t backlog = (uint32_t) p->frames.size ();
+    g.unlock ();
+    if (lease_log)
+      LOG ("lease: acquire gen=%llu seq=%llu slot=%d gpu=%d %dx%d backlog=%u",
+          (unsigned long long) leased_gen, (unsigned long long) leased_seq,
+          leased_slot, is_gpu, w, h, backlog);
+  }
   return 1;
 }
 
@@ -3066,13 +3158,26 @@ TCS_GST_API void
 tcs_player_release (TcsPlayer* player)
 {
   if (!player) return;
-  std::lock_guard<std::mutex> g (player->frame_lock);
-  if (player->leased) {
-    gst_sample_unref (player->leased);   /* returns the pool texture */
-    player->leased = nullptr;
+  int32_t released_slot;
+  uint64_t released_seq, released_gen;
+  bool had_sample;
+  {
+    std::lock_guard<std::mutex> g (player->frame_lock);
+    had_sample = player->leased != nullptr;
+    released_slot = player->leased_slot;
+    released_seq = player->lease_info.seq;
+    released_gen = player->lease_info.generation;
+    if (player->leased) {
+      gst_sample_unref (player->leased);   /* returns the pool texture */
+      player->leased = nullptr;
+    }
+    /* free the ring slot last: the compositor has finished with it. */
+    player->leased_slot = -1;
   }
-  /* free the ring slot last: the compositor has finished with it. */
-  player->leased_slot = -1;
+  if (lease_log)
+    LOG ("lease: release gen=%llu seq=%llu slot=%d sample=%d",
+        (unsigned long long) released_gen, (unsigned long long) released_seq,
+        released_slot, had_sample ? 1 : 0);
 }
 
 /* Stage 6b: NT handles + shared fence of the ring (shim-owned handles). */
@@ -3094,6 +3199,17 @@ tcs_player_ring_info (TcsPlayer* player, void** out_handles, uint32_t capacity,
   return TCS_OK;
 }
 
+/* D8: current ring epoch. The compositor reopens the ring when the epoch
+ * stamped in TcsFrameInfo differs from this value. */
+TCS_GST_API int
+tcs_player_ring_epoch (TcsPlayer* player, uint32_t* out_epoch)
+{
+  if (!player || !out_epoch) return TCS_ERR_INVALID_ARG;
+  std::lock_guard<std::mutex> g (player->frame_lock);
+  *out_epoch = player->ring_epoch;
+  return TCS_OK;
+}
+
 /* ---- verification layer ---- */
 
 TCS_GST_API int
@@ -3105,6 +3221,10 @@ tcs_player_publish_spout (TcsPlayer* player)
   bool ok = false;
 
   if (player->leased_slot >= 0) {
+    /* D8: a ring lease from an older epoch cannot be published through the
+     * rebuilt ring (verification layer only). */
+    if (player->lease_info.ring_epoch != player->ring_epoch)
+      return TCS_ERR_NO_FRAME;
     /* ring lease: send the shared ring texture on the shim device */
     ID3D11Texture2D* tex = player->ring_texture[player->leased_slot];
     if (tex)

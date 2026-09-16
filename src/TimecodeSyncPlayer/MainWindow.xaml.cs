@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Threading;
 using System.Windows;
 using System.Windows.Media;
@@ -58,6 +59,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly IGstNativeApi _gstNativeApi;
     private readonly bool _gstGpuCombo;
     private readonly OutputBackend _effectiveOutputBackend;
+    // R1 1-2: 再生可否の唯一の判定元。GPU 検出失敗・ワーカー初期化失敗・player 生成失敗を集約する。
+    private readonly PlaybackAvailabilityState _playbackAvailability = new();
+    private bool _playbackUnavailableDialogShown;
     // D4: ロード安定ゲートが数える「表示経路に到達したフレーム数」の供給元。
     private readonly RenderedFrameCounter _syncGateRenderedFrames;
     private WriteableBitmap? _outputPreviewBitmap;
@@ -191,6 +195,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _gstGpuCombo = settingsManager.Current.Backend == PlayerBackend.Gstreamer
             && outputBackendState.Effective == OutputBackend.Gpu;
         _effectiveOutputBackend = outputBackendState.Effective;
+        if (!outputBackendState.PlaybackAvailable)
+            _playbackAvailability.MarkUnavailable(outputBackendState.Decision.Detail);
         _mpvApi = mpvApi;
 
         _vm = new MainViewModel();
@@ -205,7 +211,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action),
             isGapFreezeConfirmed: () => _gapFreezeHandler.CachedTrackId.HasValue);
         _renderSession.FrameUpdate = ProcessRenderFrameUpdateAsync;
-        if (outputBackendState.Effective == OutputBackend.Gpu)
+        if (outputBackendState.Effective == OutputBackend.Gpu && outputBackendState.PlaybackAvailable)
         {
             // Gpu backend: プレビューは OutputEngine の読み戻しで更新し、CPU 経路のプレビューは接続しない。
             OutputTrace outputTrace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable));
@@ -262,7 +268,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             settingsManager.Current.LtcSignalLossTimeoutMs, settingsManager.Current.LtcSignalResumeFrames,
             new LtcSyncEffects(
                 GetContext: () => new LtcSyncContext(
-                    _mpv != IntPtr.Zero, _vm.Sync.SyncEnabled, _vm.Sync.SyncMode,
+                    IsPlayerReady, _vm.Sync.SyncEnabled, _vm.Sync.SyncMode,
                     _seekBarInteraction.IsSeeking, _vm.Sync.IsLtcRunning, _playbackControl.IsPaused,
                     _vm.Sync.LtcSignalLossMode, _vm.Sync.LtcFpsMode, _vm.Sync.GapBehavior,
                     _loadedTrackId, _fps, _duration,
@@ -281,6 +287,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 SetMonitoring: running => _vm.Sync.IsLtcRunning = running,
                 SetSignalLossPaused: paused =>
                 {
+                    if (!IsPlaybackAvailable) return;
                     _mpvApi.SetPropertyString(_mpv, "pause", paused ? MpvValueYes : MpvValueNo);
                     ApplyPauseState(paused);
                 },
@@ -296,6 +303,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 RenderGapFreeze: () => _renderSession.QueueGapFrame(GapRenderFrameDecision.GapFreeze),
                 ResumeGapPause: () =>
                 {
+                    if (!IsPlaybackAvailable) return;
                     _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
                     ApplyPauseState(false);
                 },
@@ -496,6 +504,34 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     internal MainViewModel ViewModel => _vm;
 
+    // ── R1 1-2: 再生可否の判定はここだけ ────────────────────────────
+    // GPU 検出失敗・GPU ワーカー初期化失敗・player 生成失敗は EnterPlaybackUnavailable に集約する。
+    // 再生・シーク・LTC 同期の開始は IsPlaybackAvailable / IsPlayerReady だけを見て止める。
+    private bool IsPlaybackAvailable => _playbackAvailability.IsAvailable;
+    private bool IsPlayerReady => IsPlaybackAvailable && _mpv != IntPtr.Zero;
+
+    private void EnterPlaybackUnavailable(string detail, bool gpuHardwareRequired)
+    {
+        _playbackAvailability.MarkUnavailable(detail);
+        PlaybackUnavailablePanel.Visibility = Visibility.Visible;
+        PlaybackUnavailableDetailText.Text = _playbackAvailability.Detail ?? "";
+        if (_playbackUnavailableDialogShown)
+            return;
+        _playbackUnavailableDialogShown = true;
+        string condition = gpuHardwareRequired
+            ? "\n\n必要な条件: Direct3D 11.4 に対応した GPU とドライバ"
+            : "";
+        MessageBox.Show(
+            "映像出力を開始できません。再生はできません。\n\n原因: " +
+            (_playbackAvailability.Detail ?? "原因を特定できませんでした。") + condition +
+            "\n\nログ: " + ResolveLogFilePath(),
+            "映像出力を利用できません", MessageBoxButton.OK, MessageBoxImage.Warning);
+        Log.Error("Playback unavailable: {Detail}", _playbackAvailability.Detail);
+    }
+
+    private static string ResolveLogFilePath() =>
+        Path.Combine(AppContext.BaseDirectory, "logs", $"timecodesyncplayer-{DateTime.Now:yyyyMMdd}.log");
+
     private readonly AppSettingsManager _settingsManager;
     private readonly bool _showDebugOsd;
 
@@ -681,6 +717,19 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private bool InitializeWindowLoadedSession()
     {
+        if (!IsPlaybackAvailable)
+        {
+            // ダイアログは起動処理の完了後に出す（Show() 中のモーダルで UIA の起動待ちを阻害しない）。
+            string detail = _playbackAvailability.Detail ?? "";
+            bool gpuHardwareRequired = _effectiveOutputBackend == OutputBackend.Gpu;
+            PlaybackUnavailablePanel.Visibility = Visibility.Visible;
+            PlaybackUnavailableDetailText.Text = detail;
+            Dispatcher.BeginInvoke(
+                new Action(() => EnterPlaybackUnavailable(detail, gpuHardwareRequired)),
+                DispatcherPriority.Background);
+            return false;
+        }
+
         var spoutUiApplicator = new SpoutStartupUiApplicator(
             setButtonEnabled: enabled => BtnSpout.IsEnabled = enabled,
             setToggleLabel: label => _vm.Sync.SpoutToggleLabel = label);
@@ -732,20 +781,21 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         launchActionScheduler.Schedule(launchActionPlan, launchActionExecutor, TimeSpan.FromMilliseconds(SaveProjectDelayMs));
     }
 
-    private static void ShowWindowLoadedSessionInitializationError(WindowLoadedSessionInitializationError error)
+    private void ShowWindowLoadedSessionInitializationError(WindowLoadedSessionInitializationError error)
     {
-        string message = error switch
+        // ランタイム名（mpv 等）を含めない。見せ方は GPU 利用不可と同じ 1 か所に集約する。
+        string detail = error switch
         {
             WindowLoadedSessionInitializationError.MpvCreateFailed =>
-                "mpv_create 失敗。mpv-2.dll を確認してください。",
+                "再生エンジンの生成に失敗しました。",
             WindowLoadedSessionInitializationError.MpvInitializeFailed =>
-                "mpvの初期化に失敗しました。",
+                "再生エンジンの初期化に失敗しました。",
             WindowLoadedSessionInitializationError.RenderContextCreateFailed =>
-                "mpv レンダーコンテキストの作成に失敗しました。",
+                "レンダーコンテキストの作成に失敗しました。",
             _ => "初期化に失敗しました。"
         };
 
-        MessageBox.Show(message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        EnterPlaybackUnavailable(detail, gpuHardwareRequired: false);
     }
 
     private async Task LoadProjectFromLaunchAsync(string path)
@@ -798,7 +848,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void BtnOpen_Click(object sender, RoutedEventArgs e)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlaybackAvailable) return;
 
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
@@ -811,7 +861,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private async void BtnAddToPlaylist_Click(object sender, RoutedEventArgs e)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlaybackAvailable) return;
 
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
@@ -981,7 +1031,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 int rc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double duration);
                 return (rc, duration);
             },
-            IsMpvReady: () => _mpv != IntPtr.Zero,
+            IsMpvReady: () => IsPlayerReady,
             LoadPausedAt: (path, target) => _gapPlaybackCommandExecutor.LoadPausedAt(_mpv, path, target),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
             GetLoadedTrackId: () => _loadedTrackId,
@@ -997,7 +1047,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void RefreshCurrentVideoFrame()
     {
         // Re-seek the current position to redraw immediately after leaving a black/frozen gap.
-        if (_mpv != IntPtr.Zero &&
+        if (IsPlayerReady &&
             _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double currentPos) == 0)
             SeekTo(currentPos);
     }
@@ -1312,20 +1362,20 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private bool LoadFile(string path, double? startPosition = null)
-        => CreatePlaybackOperationsCoordinator().LoadFile(path, startPosition);
+        => IsPlaybackAvailable && CreatePlaybackOperationsCoordinator().LoadFile(path, startPosition);
 
     private bool LoadFilePaused(string path)
-        => CreatePlaybackOperationsCoordinator().LoadFilePaused(path);
+        => IsPlaybackAvailable && CreatePlaybackOperationsCoordinator().LoadFilePaused(path);
 
     // ── Playback helpers ───────────────────────────────────────────
 
     private bool SeekTo(double seconds, bool suppressOsd = true)
-        => CreatePlaybackOperationsCoordinator().SeekTo(seconds, suppressOsd);
+        => IsPlaybackAvailable && CreatePlaybackOperationsCoordinator().SeekTo(seconds, suppressOsd);
 
     // ── IPlaybackController ────────────────────────────────────────────────
     void IPlaybackController.TogglePlayPause()
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlayerReady) return;
         // T7: 操作者の再生・一時停止で補正状態を捨てる。
         _ltcSyncController.CorrectionReset();
         _projectRestorePauseState.Clear();
@@ -1337,6 +1387,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void ResumeProjectRestorePauseForSyncIfNeeded()
     {
+        if (!IsPlaybackAvailable)
+            return;
         if (!_projectRestorePauseState.TryConsume())
             return;
 
@@ -1347,7 +1399,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     void IPlaybackController.SeekRelative(double seconds)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlayerReady) return;
         _ltcSyncController.CancelPendingSync();
         if (_mpvApi.CommandString(_mpv, $"seek {seconds} {MpvSeekModeRelative}") == 0)
             _mpvApi.SetPropertyString(_mpv, "pause", _playbackControl.IsPaused ? MpvValueYes : MpvValueNo);
@@ -1355,7 +1407,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     void IPlaybackController.CycleSpeed()
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlayerReady) return;
         PlaybackSpeedChange change = _playbackControl.CycleSpeed();
         _mpvApi.SetPropertyString(_mpv, "speed", change.Speed.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _vm.Player.SpeedLabel = change.Label;
@@ -1363,7 +1415,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void BtnMute_Click(object sender, RoutedEventArgs e)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlayerReady) return;
         _audioControlCoordinator.ToggleMute();
     }
 
@@ -1371,7 +1423,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         object sender,
         RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlayerReady) return;
         _audioControlCoordinator.SetVolume(e.NewValue);
     }
 
@@ -1386,7 +1438,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private PlaybackOperationsCoordinator CreatePlaybackOperationsCoordinator() =>
         _playbackOperationsCoordinator ??= new(_playbackControl, new PlaybackOperationsEffects(
-            IsMpvReady: () => _mpv != IntPtr.Zero,
+            IsMpvReady: () => IsPlayerReady,
             CommandString: command => _mpvApi.CommandString(_mpv, command),
             SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
@@ -1522,7 +1574,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private string GetSelectedFitId()
         => (CanvasFitCombo.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? FitHeight.FitId;
 
-    private bool IsPlaying() => _mpv != IntPtr.Zero && !_playbackControl.IsPaused;
+    private bool IsPlaying() => IsPlayerReady && !_playbackControl.IsPaused;
 
     private bool IsLtcFollowing() => _vm.Sync.SyncEnabled;
 
@@ -1719,7 +1771,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void TimelinePanel_TimelineSeekRequested(object? sender, TimelineSeekEventArgs e)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlaybackAvailable) return;
 
         _ltcSyncController.CancelPendingSync();
         _syncService.ClearSeekState();
@@ -1763,7 +1815,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void OnTick(object? sender, EventArgs e)
     {
-        if (_disposed || _mpv == IntPtr.Zero) return;
+        if (_disposed) return;
+        // GPU ワーカーが資源初期化で停止した場合も、起動時検出と同じ見せ方にそろえる（R1 1-2）。
+        if (_outputEngine is { Faulted: true } faultedEngine)
+        {
+            EnterPlaybackUnavailable(
+                faultedEngine.FirstFault ?? "GPU 出力ワーカーが停止しました。",
+                gpuHardwareRequired: true);
+            _timer?.Stop();
+            return;
+        }
+        if (!IsPlayerReady) return;
 
         SubmitOutputState();
         UpdateCanvasUiState();
@@ -1989,7 +2051,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// </summary>
     private void UpdatePerFrameUI()
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlayerReady) return;
 
         int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double pos);
 
@@ -2165,7 +2227,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void UpdateOsd(double pos)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlayerReady) return;
         if (!DebugOsdPolicy.ShouldWrite(_showDebugOsd)) return;
         int frame = _fps > 0 ? (int)(pos * _fps) : (int)pos;
         if (!_osdUpdateState.ShouldUpdate(frame, DateTime.UtcNow)) return;
@@ -2211,7 +2273,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void CommitSeekBarSeek(double sliderValue, string source)
     {
-        if (_mpv == IntPtr.Zero) return;
+        if (!IsPlaybackAvailable) return;
 
         SeekBarCommit commit = _seekBarInteraction.CreateCommit(sliderValue, SeekBar.Minimum, SeekBar.Maximum, _duration);
         if (!commit.ShouldCommit) return;
@@ -2248,14 +2310,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         RenderUpdateSchedulerStats renderStats = _renderSession.ConsumeUpdateStats();
 
         Log.Information(
-            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} frameBoundary=full-resolution-bitmap",
+            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} gpuPublishedFrames={GpuPublishedFrames} gstRingOutsideFrames={GstRingOutsideFrames} frameBoundary=full-resolution-bitmap",
             snapshot.Elapsed.TotalSeconds, _fps, snapshot.PlaybackRate,
             snapshot.DisplayedFps, snapshot.TickCount, renderStats.Requests,
             renderStats.CoalescedRequests, snapshot.RenderUpdates,
             snapshot.FrameUpdates, snapshot.RenderedFrames, snapshot.AvgRenderMs,
             snapshot.MaxRenderMs, snapshot.AvgBitmapMs, snapshot.MaxBitmapMs,
             snapshot.AvgSpoutMs, snapshot.MaxSpoutMs, snapshot.Width,
-            snapshot.Height, snapshot.SpoutEnabled);
+            snapshot.Height, snapshot.SpoutEnabled, _outputEngine?.PublishedFrameCount ?? 0,
+            _outputEngine?.GstRingOutsideFrames ?? 0);
 
         if (PlaybackPerformanceWarningPolicy.ShouldWarnDisplayedFps(snapshot, _fps))
         {

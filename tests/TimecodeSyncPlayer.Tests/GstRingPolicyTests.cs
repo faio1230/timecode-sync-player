@@ -7,14 +7,14 @@ namespace TimecodeSyncPlayer.Tests;
 public class GstRingPolicyTests
 {
     [Theory]
-    [InlineData(-1, 3, true, (int)GstRingLeasePlan.UseLegacy)]
-    [InlineData(-1, 0, false, (int)GstRingLeasePlan.UseLegacy)]
+    [InlineData(-1, 3, true, (int)GstRingLeasePlan.Reject)]   // D8: 旧サンプル経路は GPU 合成で使わない
+    [InlineData(-1, 0, false, (int)GstRingLeasePlan.Reject)]
     [InlineData(0, 3, true, (int)GstRingLeasePlan.UseRing)]
     [InlineData(2, 3, true, (int)GstRingLeasePlan.UseRing)]
     [InlineData(3, 3, true, (int)GstRingLeasePlan.Reject)]
     [InlineData(0, 3, false, (int)GstRingLeasePlan.Reject)]
     [InlineData(0, 0, false, (int)GstRingLeasePlan.Reject)]
-    public void Decide_SelectsRingLegacyOrReject(int slot, int ringCount, bool ringOpen, int expected)
+    public void Decide_SelectsRingOrReject(int slot, int ringCount, bool ringOpen, int expected)
         => GstRingPolicy.Decide(slot, ringCount, ringOpen).Should().Be((GstRingLeasePlan)expected);
 
     [Theory]
