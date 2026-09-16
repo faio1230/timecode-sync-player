@@ -2,6 +2,10 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-17 00:45 更新（13 回目）**: D10 を統合（`b5af872`）。段 4 は順序 1〜3 をコミット済み（`6262fd7` / `39b0a0a` / `3cebdb1`、非E2E 1709、各段の E2E 一部合格）、順序 4 は実装済みで E2E 待ち。
+> 順序 5（削除・改名）の前に `w5:p6` のセッションを新しくする（コンテキスト 71%）。`w5:p3` は H1（`Invoke-AppGpuTrial.ps1 -SeekAtSeconds` の例外でアプリが残る）の修正中。
+> 親の罠: .ps1 を Python で書き換えると LF 化・制御文字混入で壊れる（メモリ `ps-script-edits-crlf-and-escapes`）。
+>
 > **2026-09-17 00:10 更新（12 回目）**: **段 3 完了・統合（`d5af2a6`）。mpv も CPU 合成も main から消えた。** `w5:p6` は段 4（型付き再生 API、`docs/prompts/2026-09-16-STAGE4-typed-playback-api.md`）に着手。
 > SH1-b で **D10** を確定（B フレームあり MP4 の accurate シーク後、qtdemux が PTS を先頭 DTS 分ずらす。shim は stream time を使うべき）。`w5:p3` が D10 を shim 側で修正中（`docs/prompts/2026-09-17-D10-qtdemux-seek-timestamp-shift.md`）。
 > 残りは段 4 → 段 5 後半（文書・配布物・リリースノート）。
@@ -250,8 +254,8 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 | ペイン | 作業 | 状態 |
 | --- | --- | --- |
-| `w5:p3`（同期担当） | U1・S4・段 5 前半・SH1 は完了。**D10**（shim の PTS を stream time に。`docs/prompts/2026-09-17-D10-qtdemux-seek-timestamp-shift.md`） | 着手 |
-| `w5:p6`（除去担当） | 段 3 は完了・統合済み（`d5af2a6`）。**段 4: 型付き再生 API**（`docs/prompts/2026-09-16-STAGE4-typed-playback-api.md`） | 着手 |
+| `w5:p3`（同期担当） | D10 は完了・統合済み（`b5af872`）。**H1**（ハーネスの seek 例外でアプリが残る件の修正） | 実装中 |
+| `w5:p6`（除去担当） | **段 4** 順序 1〜3 コミット済み、順序 4 は E2E 待ち。順序 5 は新セッションで | 実行中 |
 
 **実機は 1 つ。親が順番を管理する。** エージェントには「実機を使う前に一報」を毎回指示している。
 利用者にも、実機を使う間は PC に触らないよう都度お願いしている。
