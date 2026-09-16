@@ -164,9 +164,10 @@ public sealed class RealProjectGapE2ETests
         TrackData media = source.Tracks.First(t => t.Name == "Substitute_A");
         string localMedia = Path.Combine(report, "freeze-anchor.mp4");
         File.Copy(media.FilePath, localMedia);
+        TimeSpan trimmedMediaOut = TimeSpan.FromSeconds(10);
         var playlist = new PlaylistState();
         playlist.Tracks.Add(new PlaylistTrack(media.Id, localMedia, media.Name,
-            TimeSpan.Zero, TimeSpan.FromSeconds(10), TimeSpan.Zero,
+            TimeSpan.Zero, trimmedMediaOut, TimeSpan.Zero,
             media.MediaDuration, TimeSpan.Zero, media.FrameRate, true));
         string fixturePath = Path.Combine(report, "visible-freeze.tsp");
         await ProjectSerializer.SaveAsync(fixturePath, playlist, SyncMode.Continue, GapBehavior.Black,
@@ -195,13 +196,15 @@ public sealed class RealProjectGapE2ETests
         app.Combo("SyncModeCombo").Select(1);
         Wait(app, () => app.Text("CurrentTrackLabel").Contains("Gap: Black"), "Silent Continue restores gap");
         AssertBlackImage(app, report, "trimmed-continue-restored", journal);
-        // Rewinding after mpv's keep-open EOF pause must restore the intended playback state.
+        // Rewinding after the EOF pause must restore the intended playback state.
+        // Single モードの EOF はクリップの実効終端（MediaOut=10 秒）で判定する。
+        // ファイル長（MediaDuration）まで再生するのは mpv 実装依存の旧挙動だった。
         app.Combo("SyncModeCombo").Select(0);
         if (app.Button("BtnPlay").Name == "▶") app.Button("BtnPlay").Invoke();
         double beyondEnd = Math.Ceiling(media.MediaDuration.TotalSeconds) + 2;
         signal.PlayHeld(beyondEnd, 25, TimeSpan.FromSeconds(15));
         WaitForHeld(app, beyondEnd);
-        Wait(app, () => PlaybackSeconds(app) >= media.MediaDuration.TotalSeconds - 0.15, "Single reaches EOF");
+        Wait(app, () => PlaybackSeconds(app) >= trimmedMediaOut.TotalSeconds - 0.15, "Single reaches EOF");
         signal.PlayHeld(5, 25, TimeSpan.FromSeconds(15));
         WaitForHeld(app, 5);
         signal.Stop();
