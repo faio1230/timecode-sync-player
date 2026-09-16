@@ -53,6 +53,16 @@
   GStreamer ランタイムと `tcs_gstreamer.dll` を反映する（**P1 として調査中**、
   `docs/prompts/2026-09-15-P1-gstreamer-packaging.md`）
 
+## 2.5 配布物（2026-09-17 02:20、親が `scripts/package-release.ps1` で作成。main `720a74c` 相当のコード = `85f855b`）
+
+| ファイル | SHA-256 | サイズ |
+| --- | --- | ---: |
+| `TimecodeSyncPlayer-v0.4.0-setup.exe` | `6FF3EFA7144289087E351D9B078881BDB363A6D35834C3ED430E9F11186BD0F0` | 38,032,197 |
+| `TimecodeSyncPlayer-v0.4.0-win-x64.zip` | `0A4CB9C0F9A61D29D7887B0FE2445C93C83702CB962BD124C7F9F37713F193FD` | 16,852,184 |
+
+- shim は Release ビルド（`native/gst-shim/build-shim.ps1 -Config Release`）を `native/tcs_gstreamer.dll` に置いてからパッケージし、終了後に外した（Debug の shim に戻す）
+- GStreamer ランタイムの閉包とライセンス文書、VC++ 2015-2022 再配布（14.44.35211.0、署名検証済み）を同梱。mpv の DLL は含まない（スクリプトが検査）
+
 ## 3. リリースノート草案（v0.4.0）
 > **既知の仕様として記載すること**: 全画面表示中、40 秒あたり数回 1 枚だけ提示機会を飛ばす
 > （連続しない、飛ぶのは常に 1 枚）。原因は OS のスケジューリングで、mpv でも同様に起きる。
