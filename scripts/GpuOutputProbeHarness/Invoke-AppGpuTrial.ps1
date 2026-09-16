@@ -33,13 +33,18 @@ param(
     # and write audio-rms.csv / audio-probe.txt into the run directory.
     # V5/V6: build a playlist (--open MediaPath --playlist p1 p2 ...) and drive it.
     # NextTrackAtSeconds / PrevTrackAtSeconds take a comma list of seconds.
-    # SeekAtSeconds takes "seconds:position" pairs where position is the SeekBar value.
+    # SeekAtSeconds takes "seconds:normalizedPosition" pairs where the position
+    # is the app SeekBar value: 0..1 (the SeekBar is normalized by duration, not
+    # seconds). Out-of-range values fail before the app starts.
     # Semicolon separated, NOT an array: array parameters do not survive
     # "powershell -File" invocation (same trap as Run-V1Matrix's -Only).
     [string]$PlaylistPaths = '',
     [string]$NextTrackAtSeconds = '',
     [string]$PrevTrackAtSeconds = '',
     [string]$SeekAtSeconds = '',
+    # H1: overall wall-clock deadline in seconds. 0 = Seconds + 90. When exceeded,
+    # the owned processes are cleaned up and the run is reported as an error.
+    [int]$OverallTimeoutSeconds = 0,
     # V10: a project without Canvas opens CanvasSelectDialog before the main window is usable.
     [ValidateSet('', 'Ok', 'Cancel')][string]$CanvasDialog = '',
     [switch]$AudioProbe,
@@ -51,6 +56,26 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe' }
 if (-not $LogRoot) { $LogRoot = Join-Path $repoRoot 'TestResults\gpu-app' }
+if ($OverallTimeoutSeconds -le 0) { $OverallTimeoutSeconds = $Seconds + 90 }
+
+# H1: validate -SeekAtSeconds before any process starts. The app SeekBar is
+# normalized (0..1, see SeekBarUpdateState.ToSliderValue); a raw seconds value
+# is out of range and UIA SetValue would throw mid-run. No ffprobe conversion.
+foreach ($tok in ($SeekAtSeconds -split ',')) {
+    if (-not $tok.Trim()) { continue }
+    $pair = $tok.Trim() -split ':'
+    if ($pair.Count -ne 2) { throw "SeekAtSeconds wants 'seconds:normalized 0..1' pairs, got '$tok'" }
+    [int]$atSec = 0
+    [double]$position = 0.0
+    $parsed = [int]::TryParse($pair[0].Trim(), [ref]$atSec) -and
+        [double]::TryParse($pair[1].Trim(), [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture, [ref]$position)
+    if (-not $parsed) { throw "SeekAtSeconds is not numeric: '$tok'" }
+    if ($position -lt 0.0 -or $position -gt 1.0) {
+        throw "SeekAtSeconds position must be in 0..1 (SeekBar is normalized), got '$($pair[1].Trim())'"
+    }
+}
+$script:h1deadline = (Get-Date).AddSeconds($OverallTimeoutSeconds)
 Set-StrictMode -Version Latest
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 if (-not ('AppTrialNative' -as [type])) {
@@ -127,6 +152,9 @@ $app = $null; $recv = $null
 function Find-Button([int]$processId, [string]$automationId, [int]$timeoutSec) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $deadline) {
+        if ((Get-Date) -gt $script:h1deadline) {
+            throw "overall timeout ($OverallTimeoutSeconds s) exceeded while waiting for $automationId"
+        }
         $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $processId)
         # The process owns several top-level windows once fullscreen is open; search each for the button.
         $wins = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)
@@ -159,7 +187,15 @@ function Add-ReceiverSample($proc, $startedUtc) {
 }
 # VolumeSlider is a Slider, not a Button; Find-Button locates any element by AutomationId.
 function Set-Slider($found, [double]$value) {
-    ($found.Button.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern)).SetValue($value)
+    # H1: clamp to the element's current RangeValue.Minimum/Maximum instead of
+    # throwing when a mark is outside the range. Returns a note when clamped.
+    $range = $found.Button.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern)
+    $min = $range.Current.Minimum
+    $max = $range.Current.Maximum
+    $applied = [Math]::Min([Math]::Max($value, $min), $max)
+    $range.SetValue($applied)
+    if ($applied -ne $value) { return "clamped to $applied (range $min..$max)" }
+    return $null
 }
 $audio = $null
 try {
@@ -241,7 +277,7 @@ $null = $app.Handle
         foreach ($tok in ($SeekAtSeconds -split ',')) {
             if ($tok.Trim()) {
                 $pair = $tok.Trim() -split ':'
-                if ($pair.Count -ne 2) { throw "SeekAtSeconds wants 'seconds:position' pairs, got '$tok'" }
+                if ($pair.Count -ne 2) { throw "SeekAtSeconds wants 'seconds:normalized 0..1' pairs, got '$tok'" }
                 $marks += @{ at=[int]$pair[0]; kind='seek'; value=[double]$pair[1] }
             }
         }
@@ -255,8 +291,14 @@ $null = $app.Handle
         }
         foreach ($m in ($marks | Sort-Object { $_.at })) {
             if ($m.at -le $elapsed -or $m.at -ge $Seconds) { continue }
+            if ((Get-Date) -gt $script:h1deadline) {
+                throw "overall timeout ($OverallTimeoutSeconds s) exceeded before mark $($m.kind) at $($m.at)s"
+            }
             Start-Sleep -Seconds ($m.at - $elapsed); $elapsed = $m.at
             if ($recv) { [void](Add-ReceiverSample $recv $result.receiver.startUtc) }
+            # H1: one failing mark records and continues; it must not skip the
+            # exit sequence and leave the app running.
+            try {
             if ($m.kind -eq 'shot') {
                 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
                 $scr = [System.Windows.Forms.Screen]::AllScreens | Where-Object { $_.DeviceName -eq $DisplayDeviceName } | Select-Object -First 1
@@ -281,16 +323,26 @@ $null = $app.Handle
                 Add-ActionStamp 'BtnPreviousTrack'
                 $result.steps += "BtnPreviousTrack invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
             } elseif ($m.kind -eq 'seek') {
-                $sb = Find-Button $app.Id 'SeekBar' 10; Set-Slider $sb $m.value
-                $result.steps += "SeekBar set to $($m.value) at $((Get-Date).ToString('HH:mm:ss.fff'))"
+                $sb = Find-Button $app.Id 'SeekBar' 10
+                $clampNote = Set-Slider $sb $m.value
+                $stepText = "SeekBar set to $($m.value) at $((Get-Date).ToString('HH:mm:ss.fff'))"
+                if ($clampNote) { $stepText += " ($clampNote)" }
+                $result.steps += $stepText
             } elseif ($m.kind -eq 'speed') {
                 $spd = Find-Button $app.Id 'BtnSpeed' 10; Invoke-Button $spd
                 $result.steps += "BtnSpeed invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
             } elseif ($m.kind -eq 'volume') {
-                $vol = Find-Button $app.Id 'VolumeSlider' 10; Set-Slider $vol $m.value
-                $result.steps += "VolumeSlider set to $($m.value) at $((Get-Date).ToString('HH:mm:ss.fff'))"
+                $vol = Find-Button $app.Id 'VolumeSlider' 10
+                $clampNote = Set-Slider $vol $m.value
+                $stepText = "VolumeSlider set to $($m.value) at $((Get-Date).ToString('HH:mm:ss.fff'))"
+                if ($clampNote) { $stepText += " ($clampNote)" }
+                $result.steps += $stepText
             } elseif ($m.kind -eq 'cardOn' -or $m.kind -eq 'cardOff') {
                 $card = Find-Button $app.Id 'BtnTestCard' 10; Invoke-Button $card; $result.steps += "BtnTestCard ($($m.kind)) invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+            }
+            } catch {
+                if ($_.Exception.Message -like 'overall timeout*') { throw }
+                $result.steps += "mark $($m.kind) at $($m.at)s failed: $($_.Exception.Message)"
             }
         }
         Start-Sleep -Seconds ($Seconds - $elapsed)
@@ -317,6 +369,27 @@ $null = $app.Handle
     else { $result.appExit = $app.ExitCode; $result.steps += "app exited code $($app.ExitCode) at $((Get-Date).ToString('HH:mm:ss.fff'))" }
 } catch { $result.error = $_.Exception.Message }
 finally {
+    # H1: never leave the app running. It is closed even when an exception
+    # skipped the normal exit sequence. The normal path (app already exited)
+    # is unchanged; only our own process (PID + start time) is touched.
+    if ($app) {
+        try {
+            if (-not $app.HasExited) {
+                $live = Get-Process -Id $app.Id -ErrorAction SilentlyContinue
+                if ($live -and $live.StartTime.ToUniversalTime().ToString('o') -eq $result.app.startUtc) {
+                    [void][AppTrialNative]::CloseOwned([uint32]$app.Id)
+                    if (-not $app.WaitForExit(5000)) {
+                        $result.steps += "app killed by H1 cleanup after 5 s"
+                        $app.Kill()
+                        $app.WaitForExit(5000) | Out-Null
+                    } else {
+                        $result.steps += "app closed by H1 cleanup"
+                    }
+                }
+            }
+            if ($app.HasExited -and $null -eq $result.appExit) { $result.appExit = $app.ExitCode }
+        } catch { $result.error = "$($result.error) app cleanup: $($_.Exception.Message)" }
+    }
     if ($recv) {
         try {
             if (-not $recv.HasExited) {
