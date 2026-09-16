@@ -43,9 +43,12 @@ param(
     # V10: a project without Canvas opens CanvasSelectDialog before the main window is usable.
     [ValidateSet('', 'Ok', 'Cancel')][string]$CanvasDialog = '',
     [switch]$AudioProbe,
-    [string]$AudioProbeExe = (Join-Path $PSScriptRoot '..\AudioLoopbackProbe\bin\Debug\net8.0-windows\AudioLoopbackProbe.exe')
+    [string]$AudioProbeExe = ''
 )
 $ErrorActionPreference = 'Stop'
+# $PSScriptRoot is not reliable inside the param() block under Windows PowerShell 5.1 (-File), so resolve here.
+if (-not $AudioProbeExe) { $AudioProbeExe = Join-Path $PSScriptRoot '..\AudioLoopbackProbein\Debug
+et8.0-windows\AudioLoopbackProbe.exe' }
 
 # Repo-relative defaults: any worktree runs its own build and writes its own TestResults.
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent

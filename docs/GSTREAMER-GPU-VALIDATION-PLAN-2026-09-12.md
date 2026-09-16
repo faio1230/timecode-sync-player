@@ -2630,3 +2630,19 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - V3 の素材（`-preset ultrafast`、B フレーム無し）では起きないので、V3 の数字は影響を受けていない
 - 対処（親の決定）: shim は `gst_segment_to_stream_time` で写像した値を `pts_ns` と時刻位置に使う。指示書 `docs/prompts/2026-09-17-D10-qtdemux-seek-timestamp-shift.md`（同期担当）
 
+### D10 の修正と結果（2026-09-16 22:55〜23:50、同期担当の実装、親の確認。main `b5af872` で統合）
+
+修正 `4e16c92`（agent-a）: shim は `gst_segment_to_stream_time` で写像した値を `pts_ns`（リース・frame ログ・delivery）と位置報告に使う。running time と keyunit ゲートは生 PTS。segment 無しは生 PTS へフォールバック（1 回ログ）。
+
+| 項目 | 実装側 | 親の独立確認 |
+| --- | --- | --- |
+| shim 実素材テスト（`test_1080p60.mp4`） | post-seek lease 15.000（delta 0.0ms）、failures=0（修正前 15.033、failures=1） | 同（`PASS: D10: post-seek stream time maps back to the seek target`） |
+| shim `--policy-only` / ロック規則 | failures=0（写像 5 ケース）/ PASS | failures=0 / PASS |
+| 非E2E | 1684 | 1684（統合後も 1684） |
+| V3 1 本（B フレーム無し素材、sample） | 平均 -29.2ms、p95-p5 36.7ms、収束 最大 120ms（段 3 の -28.9 / 38.3 と同等） | （実装側の結果を採用） |
+| 1080p 単発（B フレームあり素材、`-ClickPlay`） | compose.publish 59.97/秒、dropped 0、error 0、exit 0 | （同） |
+| `GStreamerBackend_SurvivesRepeatedTrackSwitches` | 合格 | （同） |
+
+- 運用の罠 2 件（親の記録。引き継ぎの罠 7・8）: 他ツリーの素材を相対パスで渡すとアプリが読めずハーネスが止まる／`Invoke-AppGpuTrial.ps1 -SeekAtSeconds` はランナーが返らない（H1 として同期担当が切り分け中）。
+  いずれの停止も親がアプリの PID を止めて復旧した。あわせて、param 内の `$PSScriptRoot` が空になる件（親の scrub で入れた既定値）をスクリプト本体で解決するよう直した
+
