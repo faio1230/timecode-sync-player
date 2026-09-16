@@ -81,6 +81,7 @@ internal sealed class SyncCorrectionController
     private bool _rateActive;
     private bool _smoothDisabled;
     private int _consecutiveJumpSeeks;
+    private bool _jumpLimitReachedLogged;
     private DateTime _jumpInsideSince = DateTime.MinValue;
     private DateTime _windowStartedAt = DateTime.MinValue;
     private double _windowStartAbsResidual = double.NaN;
@@ -124,6 +125,7 @@ internal sealed class SyncCorrectionController
         _rateActive = false;
         _smoothDisabled = false;
         _consecutiveJumpSeeks = 0;
+        _jumpLimitReachedLogged = false;
         _jumpInsideSince = DateTime.MinValue;
         _landingAt = DateTime.MinValue;
         _landingLimitActive = false;
@@ -146,8 +148,18 @@ internal sealed class SyncCorrectionController
         _jumpInsideSince = DateTime.MinValue;
 
         if (_consecutiveJumpSeeks >= MaxConsecutiveJumpSeeks)
+        {
+            if (!_jumpLimitReachedLogged)
+            {
+                // 測定用（T8）: 上限に達した遷移を数えられるように、1 エピソード 1 行だけ出す。
+                _jumpLimitReachedLogged = true;
+                Log.Information(
+                    "Jump correction limit reached consecutiveSeeks={Count}", _consecutiveJumpSeeks);
+            }
             return SyncCorrectionDecision.Idle("jump-limit");
+        }
 
+        _jumpLimitReachedLogged = false;
         _consecutiveJumpSeeks++;
         return SyncCorrectionDecision.Seek(targetSeconds, "jump");
     }
