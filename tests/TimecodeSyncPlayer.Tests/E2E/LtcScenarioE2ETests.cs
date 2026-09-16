@@ -1,0 +1,1089 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Text.RegularExpressions;
+using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Input;
+using FluentAssertions;
+using TimecodeSyncPlayer.Tests.Helpers;
+using Xunit;
+
+namespace TimecodeSyncPlayer.Tests.E2E;
+
+/// <summary>
+/// LTC 同期の検証行列（docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md）3 節の E2E シナリオ。
+/// VB-CABLE ループが無い環境ではスキップする。
+///
+/// 素材は固定しない: プロジェクトは TIMECODE_LTC_SCENARIO_PROJECT（.tsp）で差し替えられ、
+/// 未設定なら色素材の Fixtures/ltc-scenario.tsp を artifacts/media へコピーして使う。
+/// 判定は既知の色ではなく、テスト最初に一時停止シークで採った参照フレーム（各トラックの
+/// 冒頭・最終）との一致で行う。中間位置は「位置が目標 ±0.3 秒に入り、進行する」だけを要求し、
+/// 期待色などの観測値はジャーナルに残す。黒/冒頭/最終/Freeze/トラック境界/ギャップは
+/// 参照一致（距離 &lt; 60・最近傍・画素差分 &lt; 12/255）または黒判定（平均輝度 &lt; 8/255 かつ
+/// 黒画素 >= 99%）を要求する。
+///
+/// 実素材のファイル名・作品名はジャーナル・参照画像名に出さない。トラックは位置で
+/// A/B/C（既定プロジェクト）または M1..M7（TIMECODE_LTC_SCENARIO_PROJECT）と呼ぶ。
+/// 証跡は artifacts/ltc-scenarios/&lt;testId&gt;-&lt;timestamp&gt;/（TIMECODE_LTC_SCENARIO_REPORT_DIR で上書き可）。
+/// ストレスの周回数は TIMECODE_LTC_SCENARIO_CYCLES で上書きできる。
+/// </summary>
+[Trait("Category", "E2E")]
+[Collection("E2E")]
+public sealed class LtcScenarioE2ETests
+{
+    private const int LtcFps = 25;
+    private const string ProjectVariable = "TIMECODE_LTC_SCENARIO_PROJECT";
+    private const string ReportVariable = "TIMECODE_LTC_SCENARIO_REPORT_DIR";
+    private const string CyclesVariable = "TIMECODE_LTC_SCENARIO_CYCLES";
+    private const double PositionToleranceSeconds = 0.3;
+
+    // ---- S: 単発・fps ----
+
+    [SkippableFact(Timeout = 180_000)]
+    public void S1_Continue_FollowsLtcAtNormalFrameRate() => Run("S-1", continueMode: true, blackGap: true, scenario =>
+    {
+        double start = scenario.A.Start + 3;
+        scenario.SetSync(true);
+        scenario.Play(start, 12);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(start)) <= PositionToleranceSeconds,
+            10, "LTC 追従に入る");
+
+        Thread.Sleep(1500);
+        DateTime windowStart = DateTime.Now;
+        Thread.Sleep(10_000);
+
+        IReadOnlyList<PerfSegment> segments = scenario.PerfSegmentsSince(windowStart);
+        foreach (PerfSegment segment in segments)
+            scenario.Journal.Write("fps-segment", details: new { at = segment.At, elapsed = segment.ElapsedSeconds, frameUpdates = segment.FrameUpdates });
+
+        segments.Should().HaveCountGreaterThanOrEqualTo(3, "10 秒の観測で 2 秒区間が 3 本以上取れる");
+        foreach (PerfSegment segment in segments)
+            segment.FrameUpdates.Should().BeInRange(55, 65,
+                $"frameUpdates={segment.FrameUpdates} が 30fps 素材の 2 秒区間として正常");
+    });
+
+    [SkippableFact(Timeout = 360_000)]
+    public void S2_Single_RepeatedLtcJumps_LandWithinTolerance() => Run("S-2", continueMode: false, blackGap: true, scenario =>
+    {
+        int cycles = scenario.StressCycles(10);
+        double low = scenario.A.Start + 3;
+        double high = Math.Min(scenario.A.Start + 15, scenario.A.End - 0.5);
+        scenario.SetSync(true);
+
+        int holds = 0;
+        int seeksBefore = scenario.CountLogMatches(@"Timecode sync seek .*success=True");
+        for (int cycle = 0; cycle < cycles; cycle++)
+        {
+            foreach (double target in new[] { low, high })
+            {
+                holds++;
+                scenario.CheckHold($"s2-{holds:D2}", target, scenario.A, scenario.A.SingleTarget(target),
+                    scenario.Expectation(target == low ? "red (body)" : "red (body)"), holdSeconds: 2.5);
+            }
+        }
+
+        holds.Should().Be(cycles * 2);
+        int successfulSeeks = scenario.CountLogMatches(@"Timecode sync seek .*success=True") - seeksBefore;
+        scenario.Journal.Write("seek-summary", details: new { holds, successfulSeeks });
+        successfulSeeks.Should().BeGreaterThanOrEqualTo(cycles * 2, "各保持で同期シークが成功する");
+    });
+
+    [SkippableFact(Timeout = 180_000)]
+    public void S3_Single_OutOfRangeLtc_StopsAtTrackEnd() => Run("S-3", continueMode: false, blackGap: true, scenario =>
+    {
+        // Single は LTC をメディア位置へ絶対マップする（0..尺へクランプ）。範囲外は終端で止まる。
+        double outOfRange = scenario.A.End + 15;
+        scenario.SetSync(true);
+        scenario.Hold(outOfRange, 6);
+
+        double expectedEnd = scenario.A.SingleTarget(outOfRange);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - expectedEnd) <= scenario.OneFrame,
+            6, "範囲外 LTC で A の終端に止まる");
+        scenario.WaitReference("s3-tail", scenario.A.Symbol, "tail", 2.5, "終端フレームは A の最終フレーム");
+
+        scenario.Hold(scenario.A.Start + 5, 6);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.SingleTarget(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            6, "LTC を戻すと復帰する");
+        scenario.Journal.Write("recovered", details: new { ltc = scenario.LtcSeconds(), position = scenario.Position() });
+    });
+
+    [SkippableFact(Timeout = 240_000)]
+    public void S4_Single_PlaylistSwitch_ShowsSelectedTrack() => Run("S-4", continueMode: false, blackGap: true, scenario =>
+    {
+        double ltc = scenario.B.Start + 5;
+        scenario.SetSync(true);
+        scenario.Hold(ltc, 30);
+
+        scenario.PlaylistLoad(scenario.B.Index, scenario.B.Symbol);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.B.SingleTarget(ltc)) <= PositionToleranceSeconds,
+            10, $"B ロード後に位置が {scenario.B.SingleTarget(ltc):F3} 付近");
+        scenario.WaitTrackPicture("s4-b", scenario.B, 3, "B の絵が出ている（B 以外の参照・黒でない）");
+
+        scenario.PlaylistLoad(scenario.C.Index, scenario.C.Symbol);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.C.SingleTarget(ltc)) <= PositionToleranceSeconds,
+            10, $"C ロード後に位置が {scenario.C.SingleTarget(ltc):F3} 付近");
+        scenario.WaitTrackPicture("s4-c", scenario.C, 3, "C の絵が出ている（C 以外の参照・黒でない）");
+    });
+
+    [SkippableFact(Timeout = 180_000)]
+    public void S5_Single_OutOfRangeLtc_DoesNotSwitchToOtherTrack() => Run("S-5", continueMode: false, blackGap: true, scenario =>
+    {
+        // A をアクティブにしたまま LTC を B の範囲へ 5 秒保持しても、B へ切り替わらない。
+        scenario.LoadTrack(scenario.A.Index);
+        scenario.EnsurePlaying();
+        scenario.SetSync(true);
+        DateTime holdStartedAt = DateTime.Now;
+        scenario.Hold(scenario.B.Start + 5, 6);
+
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.SingleTarget(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            6, "A 側の位置のまま");
+        scenario.WaitTrackPicture("s5-a", scenario.A, 3, "A の絵のまま（B/C の参照・黒でない）");
+
+        int loadedOther = scenario.CountLogMatchesSince(@"Playlist track loaded index=[12]", holdStartedAt);
+        scenario.Journal.Write("switch-observation", details: new { loadedOther, loadedIndex = scenario.LoadedTrackIndex() });
+        loadedOther.Should().Be(0, "Single ではアクティブ以外へ切り替わらない");
+    });
+
+    // ---- C: Continue のジャンプ ----
+
+    [SkippableFact(Timeout = 360_000)]
+    public void C1_Continue_RepeatedJumpsWithinOneTrack_LandWithinTolerance() => Run("C-1", continueMode: true, blackGap: true, scenario =>
+    {
+        int cycles = scenario.StressCycles(10);
+        double low = scenario.A.Start + 3;
+        double high = Math.Min(scenario.A.Start + 15, scenario.A.End - 0.5);
+        scenario.SetSync(true);
+
+        int holds = 0;
+        for (int cycle = 0; cycle < cycles; cycle++)
+        {
+            foreach (double target in new[] { low, high })
+            {
+                holds++;
+                scenario.CheckHold($"c1-{holds:D2}", target, scenario.A,
+                    scenario.A.TimelineToMedia(target), scenario.Expectation("red (body)"), holdSeconds: 2.5);
+            }
+        }
+
+        holds.Should().Be(cycles * 2);
+    });
+
+    [SkippableFact(Timeout = 420_000)]
+    public void C2_Continue_RepeatedJumpsAcrossTracks_LandWithinTolerance() => Run("C-2", continueMode: true, blackGap: true, scenario =>
+    {
+        int cycles = scenario.StressCycles(10);
+        double inA = scenario.A.Start + 7;
+        double inB = scenario.B.Start + 10;
+        scenario.SetSync(true);
+
+        int holds = 0;
+        for (int cycle = 0; cycle < cycles; cycle++)
+        {
+            holds++;
+            scenario.CheckHold($"c2-{holds:D2}", inA, scenario.A,
+                scenario.A.TimelineToMedia(inA), scenario.Expectation("red (body)"), holdSeconds: 2.5);
+            holds++;
+            scenario.CheckHold($"c2-{holds:D2}", inB, scenario.B,
+                scenario.B.TimelineToMedia(inB), scenario.Expectation("green (body)"), holdSeconds: 3.5);
+        }
+
+        holds.Should().Be(cycles * 2);
+    });
+
+    // ---- G: Continue + Black のギャップ ----
+
+    [SkippableFact(Timeout = 180_000)]
+    public void G1_ContinueBlack_LtcCrossesTrackEnd_ShowsBlack() => Run("G-1", continueMode: true, blackGap: true, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Play(scenario.A.End - 2, 10);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.End - 0.05, 8, "LTC が A の終端を通過");
+        scenario.WaitBlack("g1-black", 1.0, "終端通過後 1 秒以内に黒");
+    });
+
+    [SkippableFact(Timeout = 180_000)]
+    public void G2_ContinueBlack_LtcEntersNextTrack_LeavesBlack() => Run("G-2", continueMode: true, blackGap: true, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Play(scenario.A.End - 2, 14);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.B.Start - 0.05, 8, "LTC が B の先頭を通過");
+        // 冒頭 1 秒は B の先頭フレーム（色素材ではマゼンタ）。参照一致するなら B の参照であること。
+        scenario.WaitForFrame("g2-enter", TimeSpan.FromSeconds(1.0),
+            (signature, match) => !signature.IsBlack && (!match.IsMatch || match.MatchesTrack(scenario.B.Symbol)),
+            "1 秒以内に黒から B の絵へ");
+
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.B.Start + 1.5, 3, "B の冒頭を通過");
+        double before = scenario.Position();
+        scenario.WaitUntil(() => scenario.Position() > before + 0.15, 3, "B の再生が進む");
+        scenario.WaitTrackPicture("g2-play", scenario.B, 2, "B の再生中");
+    });
+
+    [SkippableFact(Timeout = 180_000)]
+    public void G3_ContinueBlack_JumpIntoGap_ShowsBlack() => Run("G-3", continueMode: true, blackGap: true, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Play(scenario.A.Start + 3, 10);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            8, "A の再生中");
+
+        scenario.Hold(scenario.A.End + 2, 6);
+        scenario.WaitBlack("g3-black", 1.5, "ジャンプでギャップへ入ったら黒");
+    });
+
+    [SkippableFact(Timeout = 180_000)]
+    public void G4_ContinueBlack_JumpFromGapIntoNextTrack_Recovers() => Run("G-4", continueMode: true, blackGap: true, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Hold(scenario.A.End + 2, 6);
+        scenario.WaitBlack("g4-black", 1.5, "先にギャップの黒を確認");
+
+        scenario.Hold(scenario.B.Start + 10, 8);
+        DateTime observed = DateTime.Now;
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.B.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            6, "B の途中の位置へ復帰");
+        scenario.WaitTrackPicture("g4-play", scenario.B, 3, "B の絵へ復帰（黒でない）");
+        scenario.Journal.Write("gap-exit", details: new { elapsedMs = (DateTime.Now - observed).TotalMilliseconds });
+    });
+
+    [SkippableFact(Timeout = 600_000)]
+    public void G5_ContinueBlack_JumpCycleAroundTracksAndGaps_KeepsExpectedPictures() => Run("G-5", continueMode: true, blackGap: true, scenario =>
+    {
+        int cycles = scenario.StressCycles(5);
+        scenario.SetSync(true);
+
+        int holds = 0;
+        for (int cycle = 0; cycle < cycles; cycle++)
+        {
+            holds++;
+            scenario.CheckHold($"g5-{holds:D2}", scenario.A.Start + 7, scenario.A,
+                scenario.A.TimelineToMedia(scenario.A.Start + 7), scenario.Expectation("red (body)"), holdSeconds: 3.0);
+            holds++;
+            scenario.CheckGap($"g5-{holds:D2}", scenario.A.End + 2);
+            holds++;
+            scenario.CheckHold($"g5-{holds:D2}", scenario.B.Start + 10, scenario.B,
+                scenario.B.TimelineToMedia(scenario.B.Start + 10), scenario.Expectation("green (body)"), holdSeconds: 3.0);
+            holds++;
+            scenario.CheckGap($"g5-{holds:D2}", scenario.B.End + 2);
+            holds++;
+            scenario.CheckHold($"g5-{holds:D2}", scenario.C.Start + 5, scenario.C,
+                scenario.C.TimelineToMedia(scenario.C.Start + 5), scenario.Expectation("blue (body)"), holdSeconds: 3.0);
+        }
+
+        holds++;
+        scenario.CheckHold($"g5-{holds:D2}", scenario.A.Start + 7, scenario.A,
+            scenario.A.TimelineToMedia(scenario.A.Start + 7), scenario.Expectation("red (body)"), holdSeconds: 3.0);
+        scenario.Journal.Write("cycle-summary", details: new { cycles, holds });
+    });
+
+    [SkippableFact(Timeout = 180_000)]
+    public void G6_ContinueBlack_LtcBeforeFirstTrack_ShowsBlack() => Run("G-6", continueMode: true, blackGap: true, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Play(1, 10);
+        scenario.WaitUntil(() => scenario.LtcSeconds() is >= 1.5 and <= 3.5, 8, "先頭オフセット内の LTC");
+        scenario.WaitBlack("g6-black", 2.0, "先頭オフセット領域は黒");
+
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.Start + 0.3, 4, "A の先頭を通過");
+        scenario.WaitForFrame("g6-enter", TimeSpan.FromSeconds(2.0),
+            (signature, match) => !signature.IsBlack && (!match.IsMatch || match.MatchesTrack(scenario.A.Symbol)),
+            "A の先頭フレームで黒から復帰");
+
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.Start + 1.5, 4, "A の冒頭を通過");
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            4, "A の再生位置が追従");
+    });
+
+    // ---- F: Continue + Freeze のギャップ ----
+
+    [SkippableFact(Timeout = 180_000)]
+    public void F1_ContinueFreeze_LtcCrossesTrackEnd_HoldsLastFrame() => Run("F-1", continueMode: true, blackGap: false, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Play(scenario.A.End - 2, 10);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.End - 0.05, 8, "LTC が A の終端を通過");
+        scenario.WaitReference("f1-tail", scenario.A.Symbol, "tail", 2.0, "終端通過後は A の最終フレーム");
+
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.End + 3.5, 6, "ギャップの後半まで保持");
+        scenario.WaitReference("f1-tail-hold", scenario.A.Symbol, "tail", 2.0, "ギャップの間は A の最終フレームのまま");
+    });
+
+    [SkippableFact(Timeout = 180_000)]
+    public void F2_ContinueFreeze_JumpIntoGap_HoldsLastFrame() => Run("F-2", continueMode: true, blackGap: false, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Play(scenario.A.Start + 3, 10);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            8, "A の再生中");
+
+        scenario.Hold(scenario.A.End + 2, 6);
+        scenario.WaitReference("f2-tail", scenario.A.Symbol, "tail", 2.0, "ジャンプでギャップへ入ったら A の最終フレーム");
+    });
+
+    [SkippableFact(Timeout = 240_000)]
+    public void F3_ContinueFreeze_JumpBetweenGaps_UpdatesHeldFrame() => Run("F-3", continueMode: true, blackGap: false, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Hold(scenario.A.End + 2, 8);
+        scenario.WaitReference("f3-tail-a", scenario.A.Symbol, "tail", 2.5, "A の後のギャップは A の最終フレーム");
+
+        scenario.Hold(scenario.B.End + 2, 10);
+        scenario.WaitReference("f3-tail-b", scenario.B.Symbol, "tail", 4.0, "B の後のギャップは B の最終フレームへ更新");
+    });
+
+    [SkippableFact(Timeout = 600_000)]
+    public void F4_ContinueFreeze_JumpCycleAroundTracksAndGaps_KeepsExpectedPictures() => Run("F-4", continueMode: true, blackGap: false, scenario =>
+    {
+        int cycles = scenario.StressCycles(5);
+        scenario.SetSync(true);
+
+        int holds = 0;
+        for (int cycle = 0; cycle < cycles; cycle++)
+        {
+            holds++;
+            scenario.CheckHold($"f4-{holds:D2}", scenario.A.Start + 7, scenario.A,
+                scenario.A.TimelineToMedia(scenario.A.Start + 7), scenario.Expectation("red (body)"), holdSeconds: 3.0);
+            holds++;
+            scenario.CheckFreeze($"f4-{holds:D2}", scenario.A.End + 2, scenario.A);
+            holds++;
+            scenario.CheckHold($"f4-{holds:D2}", scenario.B.Start + 10, scenario.B,
+                scenario.B.TimelineToMedia(scenario.B.Start + 10), scenario.Expectation("green (body)"), holdSeconds: 3.0);
+            holds++;
+            scenario.CheckFreeze($"f4-{holds:D2}", scenario.B.End + 2, scenario.B);
+            holds++;
+            scenario.CheckHold($"f4-{holds:D2}", scenario.C.Start + 5, scenario.C,
+                scenario.C.TimelineToMedia(scenario.C.Start + 5), scenario.Expectation("blue (body)"), holdSeconds: 3.0);
+        }
+
+        holds++;
+        scenario.CheckHold($"f4-{holds:D2}", scenario.A.Start + 7, scenario.A,
+            scenario.A.TimelineToMedia(scenario.A.Start + 7), scenario.Expectation("red (body)"), holdSeconds: 3.0);
+        scenario.Journal.Write("cycle-summary", details: new { cycles, holds });
+    });
+
+    [SkippableFact(Timeout = 180_000)]
+    public void F5_ContinueFreeze_LtcBeforeFirstTrack_HoldsFirstFrame() => Run("F-5", continueMode: true, blackGap: false, scenario =>
+    {
+        scenario.SetSync(true);
+        scenario.Play(1, 10);
+        scenario.WaitUntil(() => scenario.LtcSeconds() is >= 1.5 and <= 3.5, 8, "先頭オフセット内の LTC");
+        scenario.WaitReference("f5-head", scenario.A.Symbol, "head", 2.5, "先頭オフセット領域は A の冒頭フレーム");
+
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.Start + 0.3, 4, "A の先頭を通過");
+        scenario.WaitReference("f5-head-enter", scenario.A.Symbol, "head", 2.5, "再生開始直後も A の冒頭フレーム");
+
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.Start + 1.5, 4, "A の冒頭を通過");
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            4, "A の再生位置が追従");
+        scenario.Journal.Write("after-head", details: new { ltc = scenario.LtcSeconds(), position = scenario.Position() });
+    });
+
+    // ---- harness ----
+
+    private static void Run(string testId, bool continueMode, bool blackGap, Action<Scenario> body)
+    {
+        using var scenario = Scenario.Start(testId, continueMode, blackGap);
+        try
+        {
+            body(scenario);
+            scenario.VerifyAndExit();
+        }
+        catch (Exception error)
+        {
+            scenario.Journal.Write("failure", details: new { error = error.ToString() });
+            throw;
+        }
+    }
+
+    private sealed record TrackInfo(
+        int Index, string Symbol, TimeSpan TimelineOffset, TimeSpan MediaIn, TimeSpan MediaOut,
+        TimeSpan Duration, double FrameRate)
+    {
+        public double Start => TimelineOffset.TotalSeconds;
+        public double End => Start + (MediaOut - MediaIn).TotalSeconds;
+        public double Used => (MediaOut - MediaIn).TotalSeconds;
+
+        /// <summary>Continue: タイムライン秒 → メディア位置。</summary>
+        public double TimelineToMedia(double ltcSeconds) => ltcSeconds - Start + MediaIn.TotalSeconds;
+
+        /// <summary>Single: LTC 秒はそのままメディア位置（0..尺へクランプ）。</summary>
+        public double SingleTarget(double ltcSeconds) => Math.Clamp(ltcSeconds, 0, Duration.TotalSeconds);
+    }
+
+    private sealed record PerfSegment(DateTime At, double ElapsedSeconds, int FrameUpdates);
+
+    private sealed class Scenario : IDisposable
+    {
+        private readonly string _exePath;
+        private readonly DateTime _startedAt;
+        private bool _exited;
+
+        private Scenario(
+            string exePath, string repoRoot, string reportDir, bool isDefaultProject,
+            ProjectData project, IReadOnlyList<TrackInfo> tracks, DateTime startedAt)
+        {
+            _exePath = exePath;
+            ReportDir = reportDir;
+            IsDefaultProject = isDefaultProject;
+            Tracks = tracks;
+            Journal = new MonkeyJournal(Path.Combine(reportDir, "harness.jsonl"), 0);
+            _startedAt = startedAt;
+        }
+
+        public E2EAppRunner App { get; private set; } = null!;
+        public LtcSignalPlayer Signal { get; private set; } = null!;
+        public MonkeyJournal Journal { get; }
+        public string ReportDir { get; }
+        public bool IsDefaultProject { get; }
+        public IReadOnlyList<TrackInfo> Tracks { get; }
+        public ReferenceSet References { get; } = new();
+        public TrackInfo A => Tracks[0];
+        public TrackInfo B => Tracks[1];
+        public TrackInfo C => Tracks[2];
+        public double OneFrame => 1.0 / (Tracks[0].FrameRate > 0 ? Tracks[0].FrameRate : 30.0);
+
+        public static Scenario Start(string testId, bool continueMode, bool blackGap)
+        {
+            (string exePath, string? skipReason) = E2EAppRunner.ResolvePrereqs();
+            Skip.If(!string.IsNullOrEmpty(skipReason), skipReason ?? "");
+            string repoRoot = FindRepoRoot();
+            string mediaDir = Path.Combine(repoRoot, "artifacts", "media");
+
+            bool isDefaultProject = string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable(ProjectVariable));
+            string projectPath;
+            if (isDefaultProject)
+            {
+                string[] mediaNames = ["ltc_a.mp4", "ltc_b.mp4", "ltc_c.mp4"];
+                Skip.If(mediaNames.Any(name => !File.Exists(Path.Combine(mediaDir, name))),
+                    "色素材が無い（scripts/make-e2e-media.ps1）");
+                string fixture = Path.Combine(repoRoot, "tests", "TimecodeSyncPlayer.Tests",
+                    "Fixtures", "ltc-scenario.tsp");
+                Skip.If(!File.Exists(fixture), "Fixtures/ltc-scenario.tsp が無い");
+                projectPath = Path.Combine(mediaDir, "ltc-scenario.tsp");
+                File.Copy(fixture, projectPath, overwrite: true);
+            }
+            else
+            {
+                projectPath = Environment.GetEnvironmentVariable(ProjectVariable)!;
+                Skip.If(!File.Exists(projectPath), $"{ProjectVariable} の .tsp が無い");
+            }
+
+            ProjectData? project = ProjectSerializer.LoadAsync(projectPath).GetAwaiter().GetResult();
+            Skip.If(project is null, "プロジェクトを読み込めない");
+            List<TrackInfo> tracks = BuildTracks(project!, isDefaultProject);
+            Skip.If(tracks.Count < 3, "検証には有効トラックが 3 本必要");
+
+            Skip.If(LtcSignalPlayer.FindCableCaptureDeviceName() is null,
+                "有効な VB-CABLE 録音デバイス（CABLE Output）が見つかりません。");
+            bool cableOk = LtcSignalPlayer.TryCreateCablePlayer(out LtcSignalPlayer? signal, out string? cableReason);
+            Skip.If(!cableOk || signal is null, cableReason ?? "CABLE Input を利用できません。");
+
+            string? reportBase = Environment.GetEnvironmentVariable(ReportVariable);
+            string baseDir = string.IsNullOrWhiteSpace(reportBase)
+                ? Path.Combine(repoRoot, "artifacts", "ltc-scenarios")
+                : Path.GetFullPath(reportBase);
+            string reportDir = Path.Combine(baseDir, $"{testId}-{DateTime.Now:yyyyMMdd-HHmmss}");
+            Directory.CreateDirectory(reportDir);
+
+            var scenario = new Scenario(exePath, repoRoot, reportDir, isDefaultProject, project!, tracks, DateTime.Now);
+            try
+            {
+                scenario.Signal = signal!;
+                scenario.Journal.Write("scenario-start", details: new
+                {
+                    testId, continueMode, blackGap, isDefaultProject,
+                    tracks = tracks.Select(t => new { t.Symbol, t.Start, t.End, t.Used, t.MediaIn, t.MediaOut, t.Duration, t.FrameRate }),
+                });
+                scenario.StartApp(projectPath);
+                scenario.ConfigureLtc();
+                scenario.CaptureReferences();
+                scenario.PrepareForTest(continueMode, blackGap);
+                return scenario;
+            }
+            catch
+            {
+                scenario.Dispose();
+                throw;
+            }
+        }
+
+        private static List<TrackInfo> BuildTracks(ProjectData project, bool isDefaultProject)
+        {
+            var tracks = new List<TrackInfo>();
+            foreach (TrackData track in project.Tracks.Where(t => t.IsEnabled))
+            {
+                int index = tracks.Count;
+                string symbol = isDefaultProject
+                    ? index < 3 ? ((char)('A' + index)).ToString() : $"M{index + 1}"
+                    : $"M{index + 1}";
+                TimeSpan mediaOut = track.MediaOut ?? track.MediaDuration;
+                tracks.Add(new TrackInfo(index, symbol, track.TimelineOffset, track.MediaIn, mediaOut,
+                    track.MediaDuration, track.FrameRate ?? 30.0));
+            }
+
+            return tracks;
+        }
+
+        private void StartApp(string projectPath)
+        {
+            App = E2EAppRunner.Start(_exePath, $"--load-project \"{projectPath}\"",
+                Path.Combine(ReportDir, "settings.json"), pausePlaybackIfNeeded: false);
+            MonkeyJson.WriteAppProcessMarker(Path.Combine(ReportDir, "app-process.json"), App.Process);
+
+            DateTime? appStartedAt = null;
+            try { appStartedAt = App.Process.StartTime; } catch (InvalidOperationException) { }
+            Journal.Write("app-started", details: new { appStartedAt });
+
+            WaitUntil(() => LoadedTrackIndex() >= 0, 20, "プロジェクトの初回ロード");
+        }
+
+        private void ConfigureLtc()
+        {
+            App.Button("BtnRefreshLtcDevices").Invoke();
+            ComboBox devices = App.Combo("LtcDeviceCombo");
+            int index = -1;
+            WaitUntil(() =>
+            {
+                index = Array.FindIndex(devices.Items,
+                    item => item.Name.Contains("CABLE Output", StringComparison.OrdinalIgnoreCase));
+                return index >= 0;
+            }, 8, "CABLE Output の列挙");
+            devices.Select(index);
+            App.Combo("LtcFpsModeCombo").Select(2);
+            WaitUntil(() => App.Combo("LtcFpsModeCombo").SelectedItem?.Name.Contains("25", StringComparison.Ordinal) == true,
+                3, "LTC 25fps 固定");
+            App.Combo("LtcSignalLossModeCombo").Select(0);
+        }
+
+        /// <summary>
+        /// 参照フレーム: 各トラックを読み込み、一時停止で MediaIn と MediaOut-1 フレームへ
+        /// シークして画面を読み戻す（2.5 節）。同期 OFF・LTC 送信前に行う。
+        /// </summary>
+        private void CaptureReferences()
+        {
+            SetSync(false);
+            for (int i = 0; i < 3; i++)
+            {
+                TrackInfo track = Tracks[i];
+                LoadTrack(track.Index);
+                Pause();
+                Seek(track.MediaIn.TotalSeconds);
+                References.Add(track.Symbol, "head", $"ref_{track.Symbol}_head",
+                    LtcScenarioFrameProbe.Capture(App, ReportDir, $"ref_{track.Symbol}_head", Journal));
+
+                double tail = Math.Max(0, track.MediaOut.TotalSeconds - OneFrame);
+                Seek(tail);
+                References.Add(track.Symbol, "tail", $"ref_{track.Symbol}_tail",
+                    LtcScenarioFrameProbe.Capture(App, ReportDir, $"ref_{track.Symbol}_tail", Journal));
+                Journal.Write("reference-captured", details: new
+                {
+                    symbol = track.Symbol,
+                    tailTarget = tail,
+                    tailObserved = Position(),
+                });
+            }
+        }
+
+        private void PrepareForTest(bool continueMode, bool blackGap)
+        {
+            LoadTrack(A.Index);
+            EnsurePlaying();
+            SetSyncMode(continueMode);
+            if (continueMode) SetGapBehavior(blackGap);
+            if (App.Button("BtnStartLtc").IsEnabled) App.Button("BtnStartLtc").Invoke();
+            Journal.Write("test-ready", details: new { continueMode, blackGap, loadedIndex = LoadedTrackIndex() });
+        }
+
+        // ---- LTC ----
+
+        public void Play(double startSeconds, double durationSeconds) =>
+            Signal.Play(ToTimecode(startSeconds), LtcFps, TimeSpan.FromSeconds(durationSeconds));
+
+        public void Hold(double targetSeconds, double durationSeconds = 2.5)
+        {
+            Signal.PlayHeld(targetSeconds, LtcFps, TimeSpan.FromSeconds(Math.Max(2.5, durationSeconds)));
+            WaitUntil(() => Math.Abs(LtcSeconds() - targetSeconds) <= 0.05, 6, $"保持 LTC {targetSeconds:F2} の受信");
+            Journal.Write("hold", details: new { target = targetSeconds, observed = LtcSeconds() });
+        }
+
+        private static LtcTimecode ToTimecode(double seconds)
+        {
+            int frame = (int)Math.Round(seconds * LtcFps);
+            return new LtcTimecode(
+                frame / (LtcFps * 3600), frame / (LtcFps * 60) % 60, frame / LtcFps % 60, frame % LtcFps, false);
+        }
+
+        // ---- UI ----
+
+        public void SetSync(bool enabled)
+        {
+            Button button = App.Button("BtnToggleSync");
+            if (button.Name.Contains("ON", StringComparison.OrdinalIgnoreCase) != enabled)
+                button.Invoke();
+            string expected = enabled ? "ON" : "OFF";
+            WaitUntil(() => App.Button("BtnToggleSync").Name.Contains(expected, StringComparison.OrdinalIgnoreCase),
+                5, $"同期 {expected}");
+        }
+
+        private void SetSyncMode(bool continueMode)
+        {
+            ComboBox combo = App.Combo("SyncModeCombo");
+            combo.Select(continueMode ? 1 : 0);
+            string expected = continueMode ? "Continue" : "Single";
+            WaitUntil(() => combo.SelectedItem?.Name.Contains(expected, StringComparison.Ordinal) == true,
+                5, $"同期モード {expected}");
+        }
+
+        private void SetGapBehavior(bool black)
+        {
+            ComboBox combo = App.Combo("GapBehaviorCombo");
+            WaitUntil(() => combo.IsEnabled, 3, "ギャップ動作の選択可");
+            combo.Select(black ? 0 : 1);
+            string expected = black ? "Black" : "Freeze";
+            WaitUntil(() => combo.SelectedItem?.Name.Contains(expected, StringComparison.Ordinal) == true,
+                5, $"ギャップ動作 {expected}");
+        }
+
+        private void Pause()
+        {
+            if (App.Button("BtnPlay").Name == "⏸") App.Button("BtnPlay").Invoke();
+            WaitUntil(() => App.Button("BtnPlay").Name == "▶", 3, "一時停止");
+        }
+
+        public void EnsurePlaying()
+        {
+            if (App.Button("BtnPlay").Name == "▶") App.Button("BtnPlay").Invoke();
+            WaitUntil(() => App.Button("BtnPlay").Name == "⏸", 3, "再生中");
+        }
+
+        /// <summary>
+        /// SeekBar は 0..1 の比率スライダー（UIA の Maximum も 1）。コミットは
+        /// 「値 * 尺」なので、秒ではなく比率を入れる。同じ値だと ValueChanged が
+        /// 発火せずコミットされないため、一度揺らしてから目的値へ入れる。
+        /// </summary>
+        private void Seek(double seconds)
+        {
+            double target = Math.Max(0, seconds);
+            double last = double.NaN;
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                WaitMediaReady();
+                double duration = PlaybackDuration();
+                if (!double.IsFinite(duration) || duration <= 0)
+                {
+                    Thread.Sleep(250);
+                    continue;
+                }
+
+                var range = App.Slider("SeekBar").Patterns.RangeValue.Pattern;
+                double ratio = Math.Clamp(target / duration, 0, 1);
+                if (Math.Abs(range.Value - ratio) < 1e-4)
+                {
+                    double nudged = Math.Clamp(ratio + (ratio < 0.5 ? 0.01 : -0.01), 0, 1);
+                    range.SetValue(nudged);
+                }
+
+                range.SetValue(ratio);
+                if (TryWaitPosition(target, 0.2, 4)) return;
+                last = Position();
+                Thread.Sleep(200);
+            }
+
+            throw new TimeoutException(
+                $"シーク {target:F3} に到達しない last={last:F3}; ltc={LtcSeconds():F3}; loaded={LoadedTrackIndex()}");
+        }
+
+        private bool TryWaitPosition(double expected, double tolerance, double timeoutSeconds)
+        {
+            try
+            {
+                E2EAssert.WaitUntil(
+                    () => !App.Process.HasExited && Math.Abs(Position() - expected) <= tolerance,
+                    TimeSpan.FromSeconds(timeoutSeconds));
+                return true;
+            }
+            catch (TimeoutException)
+            {
+                return false;
+            }
+        }
+
+        private void WaitMediaReady(double? maxPosition = null) =>
+            WaitUntil(() =>
+            {
+                double position = Position();
+                double duration = PlaybackDuration();
+                if (!double.IsFinite(position) || !double.IsFinite(duration) || duration <= 0) return false;
+                return maxPosition is null || position <= maxPosition;
+            }, 15, "メディア読み込み完了");
+
+        private double PlaybackDuration()
+        {
+            string[] parts = App.Text("TimeLabel").Split('/');
+            return parts.Length == 2 ? ParseClock(parts[1].Trim(), MediaFps()) : double.NaN;
+        }
+
+        public void LoadTrack(int index)
+        {
+            for (int guard = 0; guard < 12; guard++)
+            {
+                int current = LoadedTrackIndex();
+                if (current < 0)
+                {
+                    WaitUntil(() => LoadedTrackIndex() >= 0, 10, "初回ロードの完了");
+                    continue;
+                }
+
+                if (current == index)
+                {
+                    WaitMediaReady();
+                    return;
+                }
+
+                DateTime issuedAt = DateTime.Now;
+                if (current < index) App.Button("BtnNextTrack").Invoke();
+                else App.Button("BtnPreviousTrack").Invoke();
+                int expectedNext = current + Math.Sign(index - current);
+                WaitUntil(() => LoadedTrackIndex() == expectedNext, 10,
+                    $"トラック {current} → {expectedNext} のロード");
+                WaitForMetadataSince(issuedAt, expectedNext);
+                WaitMediaReady(maxPosition: 3.0);
+            }
+
+            throw new TimeoutException($"トラック {index} をロードできない (loaded={LoadedTrackIndex()})");
+        }
+
+        /// <summary>新しいトラックの FetchMetadata 行が出るまで待つ（ロード完了の目印）。</summary>
+        private void WaitForMetadataSince(DateTime issuedAt, int index) =>
+            WaitUntil(
+                () => RunLogLinesSince(issuedAt).Any(line => line.Contains("FetchMetadata:", StringComparison.Ordinal)),
+                15, $"トラック {index} のメタデータ取得");
+
+
+        /// <summary>プレイリストで項目を選択してダブルクリックで読み込む（S-4 の「選択」）。</summary>
+        public void PlaylistLoad(int index, string symbol)
+        {
+            ListBox playlist = App.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList"))!.AsListBox();
+            WaitUntil(() => playlist.Items.Length > index, 5, "プレイリスト項目の表示");
+            AutomationElement item = playlist.Items[index];
+            DateTime issuedAt = DateTime.Now;
+            try
+            {
+                item.Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView();
+                item.Focus();
+                App.MainWindow.Focus();
+                Mouse.DoubleClick(item.GetClickablePoint(), MouseButton.Left);
+            }
+            catch (Exception ex)
+            {
+                Journal.Write("playlist-load", details: new { index, symbol, error = ex.Message });
+                throw;
+            }
+
+            WaitUntil(() => LoadedTrackIndex() == index, 15, $"プレイリストから {symbol} のロード");
+            WaitForMetadataSince(issuedAt, index);
+            WaitMediaReady();
+            Journal.Write("playlist-load", details: new { index, symbol, loadedIndex = LoadedTrackIndex() });
+        }
+
+        // ---- readings ----
+
+        public double Position()
+        {
+            string current = App.Text("TimeLabel").Split('/')[0].Trim();
+            return ParseClock(current, MediaFps());
+        }
+
+        public double LtcSeconds() => ParseClock(App.Text("LtcTimecodeText"), LtcFps);
+
+        private double MediaFps()
+        {
+            Match rate = Regex.Match(App.Text("MetaLineText"), @"(\d+(?:\.\d+)?)\s*fps");
+            if (rate.Success) return double.Parse(rate.Groups[1].Value, CultureInfo.InvariantCulture);
+            return Tracks[0].FrameRate;
+        }
+
+        private static double ParseClock(string value, double fps)
+        {
+            string[] parts = value.Split(':');
+            if (parts.Length != 4) return double.NaN;
+            if (!parts.All(p => double.TryParse(p, NumberStyles.Number, CultureInfo.InvariantCulture, out _)))
+                return double.NaN;
+            double[] n = parts.Select(p => double.Parse(p, CultureInfo.InvariantCulture)).ToArray();
+            return n[0] * 3600 + n[1] * 60 + n[2] + n[3] / fps;
+        }
+
+        /// <summary>この run の "Playlist track loaded index=N" の最新値。</summary>
+        public int LoadedTrackIndex()
+        {
+            int index = -1;
+            foreach (string line in RunLogLines())
+            {
+                Match match = Regex.Match(line, @"Playlist track loaded index=(\d+)");
+                if (match.Success) index = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+            }
+
+            return index;
+        }
+
+        public int CountLogMatches(string pattern) => RunLogLines().Sum(line => Regex.Matches(line, pattern).Count);
+
+        public int CountLogMatchesSince(string pattern, DateTime sinceLocal) =>
+            RunLogLinesSince(sinceLocal).Sum(line => Regex.Matches(line, pattern).Count);
+
+        // ---- waits / probes ----
+
+        public void WaitUntil(Func<bool> condition, double timeoutSeconds, string description)
+        {
+            try
+            {
+                E2EAssert.WaitUntil(() => !App.Process.HasExited && condition(), TimeSpan.FromSeconds(timeoutSeconds));
+            }
+            catch (TimeoutException ex)
+            {
+                throw new TimeoutException(
+                    $"{description}; ltc={LtcSeconds():F3}; position={Position():F3}; loaded={LoadedTrackIndex()}", ex);
+            }
+        }
+
+        public FrameSignature Capture(string imageName) =>
+            LtcScenarioFrameProbe.Capture(App, ReportDir, imageName, Journal);
+
+        public FrameSignature WaitForFrame(
+            string imageName, TimeSpan timeout, Func<FrameSignature, ReferenceMatch, bool> predicate, string description)
+        {
+            DateTime deadline = DateTime.UtcNow + timeout;
+            FrameSignature last = default;
+            ReferenceMatch lastMatch = default;
+            int attempt = 0;
+            while (true)
+            {
+                attempt++;
+                last = Capture($"{imageName}-{attempt:D2}");
+                lastMatch = References.Match(last);
+                Journal.Write("probe", details: new
+                {
+                    name = imageName,
+                    attempt,
+                    isBlack = last.IsBlack,
+                    meanLuminance = Math.Round(last.MeanLuminance, 1),
+                    best = Describe(lastMatch),
+                    ltc = Math.Round(LtcSeconds(), 3),
+                    position = Math.Round(Position(), 3),
+                });
+                if (predicate(last, lastMatch)) return last;
+                if (DateTime.UtcNow >= deadline) break;
+                Thread.Sleep(60);
+            }
+
+            throw new TimeoutException(
+                $"{description}; isBlack={last.IsBlack} mean=({last.MeanR:F0},{last.MeanG:F0},{last.MeanB:F0}) " +
+                $"blackFraction={last.BlackFraction:P1} best={Describe(lastMatch)} ltc={LtcSeconds():F3} position={Position():F3}");
+        }
+
+        public void WaitBlack(string name, double timeoutSeconds, string description) =>
+            WaitForFrame(name, TimeSpan.FromSeconds(timeoutSeconds), (signature, _) => signature.IsBlack, description);
+
+        public void WaitReference(string name, string symbol, string? kind, double timeoutSeconds, string description) =>
+            WaitForFrame(name, TimeSpan.FromSeconds(timeoutSeconds),
+                (_, match) => match.MatchesTrack(symbol) && (kind is null || match.Reference!.Kind == kind),
+                description);
+
+        /// <summary>黒でなく、参照に一致するなら期待トラックの参照であること（中間位置は参照なしを許容）。</summary>
+        public void WaitTrackPicture(string name, TrackInfo track, double timeoutSeconds, string description) =>
+            WaitForFrame(name, TimeSpan.FromSeconds(timeoutSeconds),
+                (signature, match) => !signature.IsBlack && (!match.IsMatch || match.MatchesTrack(track.Symbol)),
+                description);
+
+        /// <summary>保持ジャンプの共通判定: 位置が期待に入り、進行し、絵が期待トラック側であること。</summary>
+        public void CheckHold(
+            string name, double ltcTarget, TrackInfo track, double expectedPosition,
+            string matrixExpectation, double holdSeconds)
+        {
+            Hold(ltcTarget, holdSeconds);
+            WaitUntil(() => Math.Abs(Position() - expectedPosition) <= PositionToleranceSeconds, holdSeconds + 2,
+                $"{name}: 位置が {expectedPosition:F3} ± {PositionToleranceSeconds:F1} に入る");
+            double observed = Position();
+            FrameSignature signature = Capture($"hold-{name}");
+            ReferenceMatch match = References.Match(signature);
+            Journal.Write("hold-observation", details: new
+            {
+                name,
+                symbol = track.Symbol,
+                ltcTarget,
+                expectedPosition,
+                observedPosition = observed,
+                matrixExpectation = Expectation(matrixExpectation),
+                isBlack = signature.IsBlack,
+                nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
+                best = Describe(match),
+            });
+            signature.IsBlack.Should().BeFalse($"{name}: トラックの保持中に黒にならない");
+            if (match.IsMatch)
+                match.MatchesTrack(track.Symbol).Should().BeTrue(
+                    $"{name}: 参照に一致するなら {track.Symbol} の参照であること（実際: {Describe(match)}）");
+        }
+
+        public void CheckGap(string name, double ltcTarget)
+        {
+            Hold(ltcTarget, 3.0);
+            FrameSignature signature = WaitForFrame($"{name}-gap", TimeSpan.FromSeconds(1.5),
+                (frame, _) => frame.IsBlack, $"{name}: ギャップの保持で黒");
+            Journal.Write("gap-observation", details: new
+            {
+                name,
+                ltcTarget,
+                isBlack = signature.IsBlack,
+                meanLuminance = Math.Round(signature.MeanLuminance, 1),
+            });
+        }
+
+        public void CheckFreeze(string name, double ltcTarget, TrackInfo previousTrack)
+        {
+            Hold(ltcTarget, 3.5);
+            FrameSignature signature = WaitForFrame($"{name}-freeze", TimeSpan.FromSeconds(3.0),
+                (_, match) => match.MatchesTrack(previousTrack.Symbol) && match.Reference!.Kind == "tail",
+                $"{name}: Freeze は {previousTrack.Symbol} の最終フレーム");
+            Journal.Write("freeze-observation", details: new
+            {
+                name,
+                ltcTarget,
+                symbol = previousTrack.Symbol,
+                nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
+            });
+        }
+
+        public string Expectation(string defaultProjectLabel) =>
+            IsDefaultProject ? defaultProjectLabel : "実素材: 位置のみ";
+
+        private static string Describe(ReferenceMatch match) => match.Reference is null
+            ? "no-reference"
+            : $"{match.Reference.TrackSymbol}/{match.Reference.Kind} d={match.ColorDistance:F1} px={match.PixelDifference:F2} match={match.IsMatch}";
+
+        public IReadOnlyList<PerfSegment> PerfSegmentsSince(DateTime sinceLocal)
+        {
+            var segments = new List<PerfSegment>();
+            foreach (string line in RunLogLinesSince(sinceLocal))
+            {
+                if (!line.Contains("Playback perf", StringComparison.Ordinal)) continue;
+                Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+                Match elapsed = Regex.Match(line, @"elapsed=([\d.]+)s");
+                Match frames = Regex.Match(line, @"frameUpdates=(\d+)");
+                if (!timestamp.Success || !elapsed.Success || !frames.Success) continue;
+                if (!DateTime.TryParse(timestamp.Groups[1].Value, CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out DateTime at)) continue;
+                segments.Add(new PerfSegment(at,
+                    double.Parse(elapsed.Groups[1].Value, CultureInfo.InvariantCulture),
+                    int.Parse(frames.Groups[1].Value, CultureInfo.InvariantCulture)));
+            }
+
+            return segments;
+        }
+
+        public int StressCycles(int defaultValue)
+        {
+            string? raw = Environment.GetEnvironmentVariable(CyclesVariable);
+            return int.TryParse(raw, out int parsed) ? Math.Clamp(parsed, 1, 100) : defaultValue;
+        }
+
+        // ---- exit / evidence ----
+
+        public void VerifyAndExit()
+        {
+            bool exited = App.ExitNormally(TimeSpan.FromSeconds(15));
+            int? exitCode = null;
+            if (exited)
+            {
+                try { exitCode = App.Process.ExitCode; } catch (InvalidOperationException) { }
+            }
+
+            _exited = exited;
+            Journal.Write("app-exit", details: new { exited, exitCode });
+            exited.Should().BeTrue("この run でアプリが正常終了する");
+            exitCode.Should().Be(0);
+
+            string[] errors = RunLogLines()
+                .Where(line => line.Contains(" [ERR] ", StringComparison.Ordinal) ||
+                               line.Contains(" [FTL] ", StringComparison.Ordinal))
+                .ToArray();
+            Journal.Write("err-scan", details: new { errFtl = errors.Length, sample = errors.Take(5).ToArray() });
+            errors.Should().BeEmpty("この run のアプリログに ERR/FTL が無い");
+
+            Process[] leftovers = FindResidualProcesses();
+            Journal.Write("residual-processes", details: leftovers.Select(p => p.Id).ToArray());
+            leftovers.Should().BeEmpty("この run が起動したアプリの残プロセスが無い");
+        }
+
+        private Process[] FindResidualProcesses() =>
+            Process.GetProcessesByName("TimecodeSyncPlayer")
+                .Where(process =>
+                {
+                    try { return process.StartTime >= _startedAt.AddSeconds(-2); }
+                    catch { return false; }
+                })
+                .ToArray();
+
+        public void Dispose()
+        {
+            try { Signal?.Stop(); } catch { /* 破棄は失敗しても続ける */ }
+            try { Signal?.Dispose(); } catch { /* 破棄は失敗しても続ける */ }
+            if (!_exited)
+            {
+                try { App?.ExitNormally(TimeSpan.FromSeconds(10)); } catch { /* Dispose が kill する */ }
+            }
+
+            App?.Dispose();
+            Journal.Dispose();
+        }
+
+        // ---- log access ----
+
+        private IEnumerable<string> RunLogLines() => RunLogLinesSince(_startedAt);
+
+        private IEnumerable<string> RunLogLinesSince(DateTime sinceLocal)
+        {
+            string logDir = Path.Combine(Path.GetDirectoryName(_exePath)!, "logs");
+            if (!Directory.Exists(logDir)) yield break;
+            FileInfo? newest = new DirectoryInfo(logDir).GetFiles("timecodesyncplayer-*.log")
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .FirstOrDefault();
+            if (newest is null) yield break;
+
+            string text;
+            using (var stream = new FileStream(newest.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(stream))
+                text = reader.ReadToEnd();
+
+            foreach (string line in text.Split('\n'))
+            {
+                Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+                if (!timestamp.Success ||
+                    !DateTime.TryParse(timestamp.Groups[1].Value, CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out DateTime at) ||
+                    at < sinceLocal)
+                    continue;
+                yield return line;
+            }
+        }
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TimecodeSyncPlayer.slnx")))
+            dir = dir.Parent;
+        if (dir is null) throw new InvalidOperationException("リポジトリルートが見つかりません。");
+        return dir.FullName;
+    }
+}
