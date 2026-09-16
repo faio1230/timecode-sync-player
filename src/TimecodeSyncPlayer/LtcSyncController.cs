@@ -215,8 +215,8 @@ internal sealed class LtcSyncController
         long started = Stopwatch.GetTimestamp();
         SyncRequestResult result = ApplySync(effectiveSeconds);
         _pendingSyncSeconds = result == SyncRequestResult.Deferred ? effectiveSeconds : null;
-        Log.Debug("sync.apply: elapsedMs={ElapsedMs:F1} result={Result}",
-            Stopwatch.GetElapsedTime(started).TotalMilliseconds, result);
+        Log.Debug("sync.apply: elapsedMs={ElapsedMs:F1} result={Result} ltc={Ltc:F3}",
+            Stopwatch.GetElapsedTime(started).TotalMilliseconds, result, effectiveSeconds);
     }
 
     /// <summary>
