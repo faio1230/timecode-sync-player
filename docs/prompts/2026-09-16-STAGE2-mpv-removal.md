@@ -45,3 +45,66 @@
 - 実機を使う前に一報。同期担当が Q1 で E2E を回すので、順番は親が決める
 - main への書き込みはしない。コミットは `agent-b`、日本語。大きいので **2〜3 コミットに分けてよい**（例: OutputEngine の経路置換 / mpv 実装と DI の削除 / 設定互換と文書）
 - 報告: コミット、削除ファイル一覧、非E2E の増減、grep の結果、E2E 全件の件数（失敗の名前）、設計差異、未検証。合否は書かない
+
+---
+
+## 実装側メモ（2026-09-16、agent-b。後任が同じことを調べ直さないための記録）
+
+### コミットと検証結果
+
+- `c9d62ee` refactor: mpv の再生経路・実装・DI を削除し、未接続中は明示的な NotReady にする
+- `0f1fd09` feat: v0.3 の backend/outputBackend 設定を無視して出荷構成で起動する
+- `da1600c` merge: main（Q1 修正 `ffc2dde` 含む）取り込み
+- 検証: ビルド 0 警告 0 エラー / 非E2E 1977 成功・失敗 0 / `check-shim-lock-rule.py` PASS /
+  E2E 全件 69 検出・63 実行・63 合格・失敗 0・スキップ 6（opt-in 5 + D8 ハーネス）/
+  V3 1 本 `s2-da1600c-ltc25-gst`（sample 平均 -28.5ms・p95-p5 35.0ms、receipt 平均 +8.6ms・p95-p5 62.7ms、
+  ロード完了 10/10、デバイス消失 0）。V3 の analysis / analysis-receipt はどちらも INCOMPLETE 表記
+  （同レポートに "Accuracy acceptance limits are not defined" の注記）
+
+### 段 2 で気づいた注意点
+
+1. 未接続中は `ComposeTick` の else 節が明示的な NotReady。trace は `compose.acquire`（ImageId=0）と
+   `source.acquire`（detail=NotReady）、skip は **`compose.sourceNotConnected`**（従来の
+   `compose.sourceNotReady` とは別 detail）。起動直後・player 再生成待ちの解析はこの detail を見る
+2. `VblankWaitTimer.WaitUntilOrStopOrSignal` と `LoopWaitResult` を削除し、GPU ループは
+   `WaitUntilOrStop` のみ（signal は `SnapshotInputMailbox.ReadyHandle` だった）
+3. `RenderSession.GpuFrameSink` / `PositionSecondsProvider` / `mpv.frame` トレースは削除。
+   `MpvRenderFrameExecutor` と `IMpvRenderApi` 経路は残置
+4. E2E の前提を `tcs_gstreamer.dll` + GStreamer ランタイムに変更（`E2EAppRunner.ResolvePrereqs` /
+   `TimecodeSyncPlayerFixture`）。**bin に古い `libmpv-2.dll` が残っていても前提は通る**（csproj はコピーしない）
+5. `SpoutOutput.cs` と同時に `ISpoutNativeApi` が消え、`SpoutFrameTransfer` / `SpoutGpuCompletion` は
+   製品コードから参照ゼロ（`SpoutFrameTransferTests` だけが触る）。段 3 の CPU Spout 除去対象
+6. 設定互換は生 JSON を `JsonDocument` で見る: `backend` は**キーの存在**で警告、`outputBackend==0` は
+   Gpu へ上書き、ファイルは書き換えない。`OutputBackend.Cpu` の enum・`OutputBackendResolver`・
+   `OutputBackendState` は I12 のため残置（設定からは到達不能。`OutputBackendState` は初期化前
+   プレースホルダ `Effective=Cpu` のまま）
+7. `scripts/run-v3-accuracy.ps1` は今も `{"backend":1,...}` を書くため、V3 の起動ログに廃止キー警告が
+   1 行出る（動作に影響なし。段 3/5 でキーを落としてよい）
+8. `MpvStartupPropertyApplier` の `vo=libmpv` 1 行は段 4 まで存置（親の指示）
+9. 削除テスト 38 ケース: `MpvRenderNativeTests` 1 / `MpvSnapshotSourceTests` 7 /
+   `MpvLibraryNameResolverTests` 3 / `SpoutOutputTests` 26（Fact 15 + Theory 11）/
+   `AppSettingsTests.ValidateSettings_RejectsInvalidBackend` 1。追加 3: `AppSettingsCompatibilityTests` 2 /
+   `LegacySettingsE2ETests` 1。非E2E 2013 → 1977
+10. `MpvLibraryNameResolver` を削除し `NativeLibraryResolver` は GStreamer 専用に。
+    `App.xaml.cs` の DI は GStreamer 実装を直接解決
+
+### 段 3 で引っかかりそうな箇所
+
+1. **D4 ロード安定ゲート**: `RenderedFrameCounter` が CPU=WriteableBitmap 数 /
+   GPU=`PublishedFrameCount` の 2 経路。CPU 合成を消すときは GPU 固定にし、`gpuCompositing=false`
+   分岐と関連テスト（`RenderedFrameCounterTests`、`TimecodeSyncServiceTests` の `gpuPublishedFrames`）を整理する
+2. `RenderSession.PublishSnapshot` から段 2 で GpuFrameSink の早期 return を消した。CPU 経路
+   （snapshot → `FrameRenderer` → `PreviewFramePresenter` / Spout、フリーズバッファ）を消しても、
+   **フレーム通知の駆動と寿命管理**（`NativeCallback_*` / `Callback_*` / `Dispose_*`）、
+   世代・sequence 逆行防止、`afterFrameProcessed`、`SourceFrameReady`（D4 の `ObserveFrameReady`）の
+   呼び出し元は残す
+3. `OutputBackendState` の初期化前プレースホルダ `Effective = Cpu`（MainWindow を初期化せず構築する
+   単体テスト用）は段 3 で必ず引っかかる。初期化必須にするか、テスト側を直す
+4. shim の `tcs_player_leased_cpu_copy` 削除（C ABI・I13 の管轄）の参照箇所:
+   `native/gst-shim/include/tcs_gstreamer.h`、`src/tcs_gstreamer.cpp`、`test/shim_test.cpp`、`README.md`、
+   `GstNative.Imports`、`IGstNativeApi.LeasedCpuCopy`、`GstNativeApi.LeasedCpuCopy`、
+   `GstBackendState`（`RenderInto` 経由）
+5. CPU Spout 系（`SpoutFrameTransfer` / `SpoutGpuCompletion` / `SpoutOutputPolicy.InitializeCpuSpout`）は
+   製品から参照ゼロ。計画 3 節の一覧と合わせて削除単位を決める
+6. `ExitDialogE2ETests.ForceExit_WhileFullscreenAndSpout_ExitsWithCodeTwo` は Spout 有効が前提
+   （無効環境は Skip）。段 3 で Spout 経路を触ったらこのテストの前提を再確認する

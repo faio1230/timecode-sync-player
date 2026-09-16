@@ -88,10 +88,7 @@ internal sealed class OutputEngine : IDisposable
     private readonly ScanoutTracker scanout = new(16);
     private readonly ScheduleOffset scheduleOffset = new();
     private readonly ComposeAlignGate align;
-    private readonly SnapshotInputMailbox snapshotInput = new();
     private readonly TimelineOutputMailbox timelineInput = new();
-    private readonly UploadSlot?[] uploadSlots = new UploadSlot?[4];
-    private MpvSnapshotSource<int>? mpvSource;
     private ComposeLayer? layer;
     private ComposeLeadController? composeLead;
     private TimelineOutputState? lastTimelineState;
@@ -193,10 +190,6 @@ internal sealed class OutputEngine : IDisposable
         recoveryRetry.Set();
     }
 
-    /// <summary>UI スレッド。Retain 済みの mpv スナップショットを GPU worker へ渡す（所有権も移す）。</summary>
-    public void SubmitFrame(RenderedFrameSnapshot frame, int generation, double positionSeconds)
-        => snapshotInput.Publish(frame, generation, positionSeconds);
-
     /// <summary>UI スレッド。タイムライン状態（ギャップ・カード・世代・位置）を GPU worker へ渡す。</summary>
     public void SubmitTimelineState(TimelineOutputState state)
         => timelineInput.Publish(state);
@@ -217,7 +210,7 @@ internal sealed class OutputEngine : IDisposable
     internal long GstRingOutsideFrames => gstSource?.RingOutsideFrames ?? 0;
 
     /// <summary>
-    /// UI スレッド。GStreamer プレイヤーをソースとして接続する（PlayerBackend=Gstreamer かつ Gpu 出力時）。
+    /// UI スレッド。GStreamer プレイヤーをソースとして接続する（Gpu 出力時）。
     /// 以降、合成 tick は CPU アップロードではなく shim のリースを取得してエンジン slot へ GPU コピーする。
     /// </summary>
     public void AttachGStreamerSource(IntPtr player, TimecodeSyncPlayer.Gst.IGstNativeApi native)
@@ -545,7 +538,6 @@ internal sealed class OutputEngine : IDisposable
             gpuLoopTimerHighResolution = gpuLoopTimer.HighResolution;
         }
         CreatePreviewTargets(gpu);
-        CreateMpvSnapshotSource();
         layer = new ComposeLayer(gpu, shaders, canvas);
         composeLead = new ComposeLeadController(Stopwatch.Frequency, settings.ComposeLeadMs);
         leadSuspension.Attach(composeLead);
@@ -555,15 +547,6 @@ internal sealed class OutputEngine : IDisposable
             Log.Information("OutputEngine: 初期化完了 canvas={W}x{H} adapterLuid={Luid}",
                 canvas.Width, canvas.Height, gpu.Luid);
         }
-    }
-
-    private void CreateMpvSnapshotSource()
-    {
-        var slotIndices = new List<int> { 0, 1, 2, 3 };
-        mpvSource = new MpvSnapshotSource<int>(slotIndices, UploadToSlot,
-            index => new SourceImageDescription(uploadSlots[index]?.Surface?.Texture,
-                uploadSlots[index]?.Width ?? 0, uploadSlots[index]?.Height ?? 0, SourceImageFormat.Bgra8),
-            "mpv-bgra", gpu!.Luid.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     // ── デバイス消失復旧（段階 5.2） ─────────────────────────────
@@ -695,17 +678,6 @@ internal sealed class OutputEngine : IDisposable
     {
         recoveryDisplayHwnd = target?.Hwnd ?? IntPtr.Zero;
         DisposeQuietly(layer); layer = null;
-        if (mpvSource != null)
-        {
-            try { mpvSource.DrainPendingForStop(); } catch (Exception e) { Log.Warning(e, "OutputEngine: 復旧時の pending 解放に失敗"); }
-            DisposeQuietly(mpvSource); mpvSource = null;
-        }
-        foreach (UploadSlot? slot in uploadSlots)
-        {
-            if (slot == null) continue;
-            DisposeQuietly(slot.Surface);
-            slot.Surface = null;
-        }
         DisposeCanvasGenerationForRecovery(current);
         foreach (RetiredGeneration entry in retired) DisposeCanvasGenerationForRecovery(entry.Generation);
         retired.Clear();
@@ -738,7 +710,6 @@ internal sealed class OutputEngine : IDisposable
             current.Surfaces.Add(new Surface(gpu!, gpu!.Texture(canvas.Width, canvas.Height, SourceSharing.FenceNt), true, SourceSharing.FenceNt));
         sharedFence = new SharedFence(gpu!);
         CreatePreviewTargets(gpu!);
-        CreateMpvSnapshotSource();
         layer = new ComposeLayer(gpu!, shaders, canvas);
         composeLead = new ComposeLeadController(Stopwatch.Frequency, settings.ComposeLeadMs);
         leadSuspension.Attach(composeLead);
@@ -872,15 +843,9 @@ internal sealed class OutputEngine : IDisposable
             if (vblank != null && VblankIdle(lastScheduled, now, due)) continue;
             if (now < due)
             {
-                // 空き時間にリングへアップロードする（合成 tick は取得だけにする）。
-                UploadPendingSnapshot();
-                now = Stopwatch.GetTimestamp();
-                if (now < due)
-                {
-                    if (LoopIdleWait.UseTimer(now, due, frequency))
-                        gpuLoopTimer!.WaitUntilOrStopOrSignal(stop.Token.WaitHandle, snapshotInput.ReadyHandle, now, due, frequency);
-                    else Thread.Yield();
-                }
+                if (LoopIdleWait.UseTimer(now, due, frequency))
+                    gpuLoopTimer!.WaitUntilOrStop(stop.Token.WaitHandle, now, due, frequency);
+                else Thread.Yield();
                 continue;
             }
             var tick = schedule.Take(now);
@@ -970,31 +935,17 @@ internal sealed class OutputEngine : IDisposable
         }
         else
         {
-            // mpv: 完了したアップロードだけを公開してからリングから取得する。
-            long acquireStartedQpc = Stopwatch.GetTimestamp();
-            mpvSource!.PollUploads();
-            status = mpvSource.TryAcquire(Math.Max(generation, 0), position, out lease);
+            // 段 2: mpv 経路は削除。GStreamer ソース未接続（起動〜接続、player 再生成待ち）は
+            // 明示的な NotReady とし、ComposeLayerPolicy が Held（無ければギャップ規則）を描く。
             long acquireEndedQpc = Stopwatch.GetTimestamp();
-            ImageStamp acquiredStamp = lease != null ? new ImageStamp(lease.Stamp.Sequence, lease.Stamp.DecodedQpc) : default;
+            status = SourceStatus.NotReady;
             if (settings.Trace.IsEnabled)
                 settings.Trace.Record(new("compose.acquire", "GPU", acquireEndedQpc, scheduled,
-                    acquiredStamp.Id, acquiredStamp.GeneratedQpc, status.ToString(),
-                    (acquireEndedQpc - acquireStartedQpc) * 1_000_000 / Stopwatch.Frequency,
-                    PtsNs: lease != null ? SourceStampPtsNs(lease.Stamp.PositionSeconds) : 0));
-            settings.Trace.Add("source.acquire", "GPU", scheduled, acquiredStamp, status.ToString(),
+                    0, 0, status.ToString(), 0, PtsNs: 0));
+            settings.Trace.Add("source.acquire", "GPU", scheduled, default, status.ToString(),
                 (long)Math.Round(position * 1_000_000));
-            if (status == SourceStatus.Ready)
-                settings.SourceFrameReady?.Invoke(acquireEndedQpc, lease?.Stamp.Generation ?? 0, acquiredStamp.Id);
-            if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
-                settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceNotReady", value: 1);
-            if (lease != null)
-            {
-                var uploadSlot = uploadSlots[mpvSource.SlotOf(lease)];
-                if (uploadSlot?.Surface != null)
-                    acquired = new LayerImage(uploadSlot.Surface.View, uploadSlot.Surface.Texture.NativePointer,
-                        uploadSlot.Width, uploadSlot.Height, lease, null);
-                else { lease.Dispose(); lease = null; }
-            }
+            if ((effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
+                settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceNotConnected", value: 1);
         }
 
         bool writing = true, inFlight = false, retained = false;
@@ -1127,16 +1078,6 @@ internal sealed class OutputEngine : IDisposable
         }
     }
 
-    private void UploadPendingSnapshot()
-    {
-        if (mpvSource == null) return;
-        if (!snapshotInput.TryTake(out var pending, out int generation, out double position) || pending == null) return;
-        EnsureSourceGeneration(generation);
-        mpvSource.TryUpload(pending, generation, position);
-        // 完了済みのアップロードだけをリングへ公開する（合成のフェンス待ちに含めない）。
-        mpvSource.PollUploads();
-    }
-
     private void UpdateComposeLead(long durationTicks, long nowQpc)
     {
         if (composeLead == null || align == null) return;
@@ -1153,7 +1094,7 @@ internal sealed class OutputEngine : IDisposable
         {
             // GStreamer 接続時は shim 側のデコーダ・世代排除・ready 数をトレースへ出す。
             if (gstSource != null) return gstSource.Diagnostics;
-            return mpvSource?.Diagnostics;
+            return null;
         }
         catch (Exception) { return null; }
     }
@@ -1162,7 +1103,6 @@ internal sealed class OutputEngine : IDisposable
     {
         if (generation < 0 || generation == sourceGeneration) return;
         sourceGeneration = generation;
-        mpvSource!.SetGeneration(generation);
         // GStreamer の世代は shim 側の値を観測して対応付ける（SyncGStreamerGeneration）。
         layer!.ClearFreeze();
         // L-3: 世代変更（load/seek 等）の直後は位相が乱れるため lead 学習を 1 秒除外する。
@@ -1266,53 +1206,6 @@ internal sealed class OutputEngine : IDisposable
         // D8: リング外のリースを GPU 合成で描かない（GStreamerSource が Reject する）。
         // ここに来るのはリング未接続・範囲外などで、画像無し（Held）として返す。
         return new(status, lease, null, stamp);
-    }
-
-    // GPU worker 専用: 空き slot のテクスチャを必要サイズへ作り直してアップロードする。
-    // slot はリングから外れ lease も無いときだけ渡ってくるため、作り直しは安全。
-    // コピー完了は専用の EVENT クエリで確認し、完了まではリングへ公開しない。
-    private IUploadCompletion UploadToSlot(int index, byte[] pixels, int width, int height)
-    {
-        var slot = uploadSlots[index] ??= new UploadSlot();
-        if (slot.Surface == null || slot.Width != width || slot.Height != height)
-        {
-            slot.Surface?.Dispose();
-            slot.Surface = new Surface(gpu!, gpu!.Texture(width, height, SourceSharing.None), false, SourceSharing.None);
-            slot.Width = width;
-            slot.Height = height;
-        }
-        var context = gpu!.Context;
-        context.UpdateSubresource<byte>(pixels.AsSpan(0, width * height * 4), slot.Surface.Texture, 0, (uint)(width * 4), 0);
-        var query = gpu.Device.CreateQuery(new QueryDescription(QueryType.Event));
-        context.End(query);
-        context.Flush();
-        return new UploadCompletion(context, query);
-    }
-
-    private sealed class UploadCompletion(ID3D11DeviceContext context, ID3D11Query query) : IUploadCompletion
-    {
-        private bool disposed;
-
-        public unsafe bool TryComplete()
-        {
-            int done = 0;
-            int hr = context.GetData(query, (IntPtr)(&done), 4, AsyncGetDataFlags.DoNotFlush).Code;
-            return hr == 0 && done != 0;
-        }
-
-        public void Dispose()
-        {
-            if (disposed) return;
-            disposed = true;
-            query.Dispose();
-        }
-    }
-
-    private sealed class UploadSlot
-    {
-        public Surface? Surface;
-        public int Width;
-        public int Height;
     }
 
     /// <summary>キャンバス 1 世代分の合成 pool と共有サーフェス。</summary>
@@ -1604,7 +1497,6 @@ internal sealed class OutputEngine : IDisposable
     private void ReleaseSourceLeases()
     {
         DisposeOwned(layer, "GPU.composeLayer"); layer = null;
-        mpvSource?.DrainPendingForStop();
         if (gstSource != null && !gstSource.TryDispose())
             Log.Warning("OutputEngine: GStreamerSource の lease が停止時に残っています");
     }
@@ -1617,11 +1509,6 @@ internal sealed class OutputEngine : IDisposable
         DisposeOwned(layer, "GPU.composeLayer"); layer = null;
         DisposeOwned(gstSource, "GPU.gstreamerSource"); gstSource = null;
         Volatile.Write(ref devicePointer, IntPtr.Zero);
-        try { mpvSource?.TryDispose(); } catch (Exception e) { Fault("GPU.source: " + e); }
-        DisposeOwned(mpvSource, "GPU.source"); mpvSource = null;
-        foreach (var slot in uploadSlots)
-            DisposeOwned(slot?.Surface, "GPU.uploadSlot");
-        snapshotInput.Dispose();
         DisposeCanvasGeneration(current);
         foreach (var entry in retired) DisposeCanvasGeneration(entry.Generation);
         retired.Clear();

@@ -23,26 +23,15 @@ public partial class App : Application
 
     internal static void ConfigureServices(IServiceCollection services)
     {
-        // Native wrappers. The concrete interfaces are selected by
-        // settings (AppSettingsManager.Current) at resolution time, which
-        // happens after settings load (MainWindow construction). Default is the
-        // shipping configuration (GStreamer + Gpu).
-        services.AddSingleton<MpvApi>();
-        services.AddSingleton<MpvRenderApi>();
+        // Native wrappers. 出荷構成（GStreamer + Gpu）の実装を直接解決する。
         services.AddSingleton<GstNativeApi>();
         services.AddSingleton<IGstNativeApi>(sp => sp.GetRequiredService<GstNativeApi>());
         services.AddSingleton<GstBackendState>();
         services.AddSingleton<GstMpvApiAdapter>();
         services.AddSingleton<GstMpvRenderApiAdapter>();
         services.AddSingleton<GstSpoutOutput>();
-        services.AddSingleton<IMpvApi>(sp =>
-            sp.GetRequiredService<AppSettingsManager>().Current.Backend == PlayerBackend.Gstreamer
-                ? sp.GetRequiredService<GstMpvApiAdapter>()
-                : (IMpvApi)sp.GetRequiredService<MpvApi>());
-        services.AddSingleton<IMpvRenderApi>(sp =>
-            sp.GetRequiredService<AppSettingsManager>().Current.Backend == PlayerBackend.Gstreamer
-                ? sp.GetRequiredService<GstMpvRenderApiAdapter>()
-                : (IMpvRenderApi)sp.GetRequiredService<MpvRenderApi>());
+        services.AddSingleton<IMpvApi>(sp => sp.GetRequiredService<GstMpvApiAdapter>());
+        services.AddSingleton<IMpvRenderApi>(sp => sp.GetRequiredService<GstMpvRenderApiAdapter>());
 
         // Core services
         services.AddSingleton<IMediaDurationReader, MediaDurationReader>();
@@ -74,11 +63,7 @@ public partial class App : Application
         services.AddSingleton(_ => new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)));
         services.AddSingleton(_ => new OsdUpdateState(TimeSpan.FromMilliseconds(250)));
         services.AddSingleton<ISeekBarUpdateState, SeekBarUpdateState>();
-        services.AddSingleton<SpoutOutput>();
-        services.AddSingleton<ISpoutOutput>(sp =>
-            sp.GetRequiredService<AppSettingsManager>().Current.Backend == PlayerBackend.Gstreamer
-                ? sp.GetRequiredService<GstSpoutOutput>()
-                : (ISpoutOutput)sp.GetRequiredService<SpoutOutput>());
+        services.AddSingleton<ISpoutOutput>(sp => sp.GetRequiredService<GstSpoutOutput>());
         services.AddSingleton<OutputBackendState>();
 
         // MainWindow (resolved via DI)

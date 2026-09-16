@@ -11,13 +11,6 @@ public enum LtcSignalLossMode
     Stop
 }
 
-/// <summary>再生バックエンド。既定は Gstreamer（出荷構成）。mpv は v0.4 で除去予定。</summary>
-public enum PlayerBackend
-{
-    Mpv,
-    Gstreamer
-}
-
 /// <summary>映像出力バックエンド。既定は Gpu（出荷構成）。Cpu は v0.4 で除去予定。</summary>
 public enum OutputBackend
 {
@@ -53,7 +46,6 @@ public sealed record AppSettings
     public string FullscreenDisplayDeviceName { get; init; } = "";
     public bool IsMuted { get; init; }
     public double Volume { get; init; } = 100;
-    public PlayerBackend Backend { get; init; } = PlayerBackend.Gstreamer;
     public OutputBackend OutputBackend { get; init; } = OutputBackend.Gpu;
     /// <summary>"hardware"（既定）/ "software"。不正値は hardware として扱い警告する。変更には再起動が必要。</summary>
     public string DecodeMode { get; init; } = DecodeModePolicy.HardwareValue;
@@ -149,10 +141,31 @@ public sealed class AppSettingsManager
 
             string json = await File.ReadAllTextAsync(_settingsFilePath, System.Text.Encoding.UTF8)
                 .ConfigureAwait(false);
+            // v0.3 の設定ファイル互換: backend（mpv=0）と outputBackend=Cpu は v0.4 で廃止した。
+            // 値は無視して出荷構成で起動し、設定ファイルは書き換えない（警告は 1 行）。
+            bool hasLegacyBackendKey = false;
+            bool hasLegacyCpuOutput = false;
+            using (var document = JsonDocument.Parse(json))
+            {
+                hasLegacyBackendKey = document.RootElement.TryGetProperty("backend", out _);
+                hasLegacyCpuOutput =
+                    document.RootElement.TryGetProperty("outputBackend", out JsonElement outputBackend)
+                    && outputBackend.ValueKind == JsonValueKind.Number
+                    && outputBackend.TryGetInt32(out int outputBackendValue)
+                    && outputBackendValue == (int)OutputBackend.Cpu;
+            }
             var loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
             if (loaded != null)
             {
                 Current = ValidateSettings(loaded);
+                if (hasLegacyCpuOutput)
+                    Current = Current with { OutputBackend = OutputBackend.Gpu };
+                if (hasLegacyBackendKey || hasLegacyCpuOutput)
+                {
+                    Serilog.Log.Warning(
+                        "v0.3 の廃止された設定を無視します（backend は GStreamer 固定、outputBackend=Cpu の場合は Gpu を使用）。" +
+                        "設定ファイルは書き換えません");
+                }
             }
         }
         catch (Exception ex)
@@ -174,8 +187,6 @@ public sealed class AppSettingsManager
             settings = settings with { GapBehavior = AppSettings.Default.GapBehavior };
         if (!Enum.IsDefined(settings.LtcSignalLossMode))
             settings = settings with { LtcSignalLossMode = LtcSignalLossMode.RunThrough };
-        if (!Enum.IsDefined(settings.Backend))
-            settings = settings with { Backend = AppSettings.Default.Backend };
         if (!Enum.IsDefined(settings.OutputBackend))
             settings = settings with { OutputBackend = AppSettings.Default.OutputBackend };
         if (!Enum.IsDefined(settings.SyncCorrectionMode))
