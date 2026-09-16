@@ -2712,3 +2712,16 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - 段 4 でトラッカーを共有化したが、判定規則自体は旧 `GstMpvApiAdapter` と同じ（到着数の増加で解除）。EOF 後に配信が無い場合の解除が無いのは以前からの穴と見られる
 - 親の決定: **製品側を直す**（テストの期待値は緩めない）。`GstSeekingTracker` は (a) shim の ended / EOS 通知（`TryAcquire` の `Ended`）で pending を解除、(b) 安全網としてシーク発行から 2 秒で解除（ログ 1 行）。スカラのフラグ操作のみで I13 のロック規則には触れない。非E2E で固定し、V4（`RealProjectGapE2ETests`）で確認。担当: 除去担当
 
+## V4 の判定: **合格**（2026-09-17 00:20、除去担当の実機、D11 修正 `3a6e9af` 後、親の確認）
+
+- `RealProjectGapE2ETests` を代替プロジェクト（`artifacts/media/v4-substitute.tsp`、`V4SubstituteProjectTests` が Fixtures から複写）で 1 回: **合格**（24 秒）
+- 通過項目: 境界 10/10（1 / 9.92 / 10 / 40 / 49.92 / 50 / 68 / 75.92 / 76 / 106 秒。ギャップの黒判定すべて 0）、held 切替（Black→Freeze→Black、Continue→Single→Continue、Sync ON 再評価）、
+  LTC 再開の復帰（20 秒へ、recovered-video 1）、trimmed Freeze（trimmed-freeze 1・stable 1・black-restored 0・continue-restored 0）、**single-eof-recovery（D11 の対象。EOF 到達 → 巻き戻し → 進行）**、source-integrity 一致
+- 限定: 実素材ではなく代替プロジェクト。実素材が来たら `TIMECODE_REAL_PROJECT_PATH` で追試する（v0.4.1 候補）
+- D11 の修正: `GstSeekingTracker.NotifyEnded`（shim の Ended で解除）と発行から 2 秒の安全網。非E2E 1671（+4）
+
+### E2E 全件（agent-b `3a6e9af`、00:10〜00:17）: 62 合格・1 失敗・6 スキップ
+
+- 失敗は `LtcHardwareLoopE2ETests.CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately`（**agent-b の全件実行で 3 回連続**。単体・クラス単位・親の全件では合格）。
+  親の全件では Spout 受信依存の 4 件（`GStreamerBackendE2ETests` の Spout テスト、D5 の 3 件）がスキップされる点が違う → **直前の Spout 受信テストが残す状態が疑わしい**。F1 として切り分け中（除去担当）
+
