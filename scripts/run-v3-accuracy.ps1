@@ -107,4 +107,4 @@ $summarize = Join-Path $PSScriptRoot 'summarize-v3-accuracy.py'
 foreach ($run in $runs) { & python $summarize (Join-Path $run.Report 'analysis\accuracy-samples.csv') $run.Name }
 Write-Output ''
 Write-Output '=== same, legacy receipt reference (analysis-receipt) for comparison with pre-T2 runs ==='
-foreach ($run in $runs) { & python $summarize (Join-Path $run.Report 'analysis-receiptccuracy-samples.csv') ($run.Name + ' [receipt]') }
+foreach ($run in $runs) { & python $summarize (Join-Path $run.Report 'analysis-receipt\accuracy-samples.csv') ($run.Name + ' [receipt]') }
