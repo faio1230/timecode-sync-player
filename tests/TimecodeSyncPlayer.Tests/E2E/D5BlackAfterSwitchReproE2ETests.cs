@@ -142,6 +142,7 @@ public sealed class D5BlackAfterSwitchReproE2ETests
                               $"appStartUtc={runner.Process.StartTime.ToUniversalTime():HH:mm:ss.fff} lastSaveUtc={lastSave} " +
                               $"frames: {Describe(observed)}");
             Console.WriteLine($"[D5] output trace: {summary}");
+            WriteObservationReport(forceGapBlackOnSwitch, switchAtMs, receiverSeconds, media, nextMedia, observed, summary);
             return new Observation(observed, summary);
         }
         finally
@@ -152,6 +153,21 @@ public sealed class D5BlackAfterSwitchReproE2ETests
             TryDeleteDir(workDir);
             TryDeleteDir(recvDir);
         }
+    }
+
+    /// <summary>D8 検証: TIMECODE_D5_REPORT_DIR があれば観測結果（黒比率）をファイルに残す。</summary>
+    private static void WriteObservationReport(bool hook, double switchAtMs, double receiverSeconds,
+        string media, string nextMedia, List<(string Name, double BlackRatio)> observed, string trace)
+    {
+        string? reportDir = Environment.GetEnvironmentVariable("TIMECODE_D5_REPORT_DIR");
+        if (string.IsNullOrWhiteSpace(reportDir)) return;
+        Directory.CreateDirectory(reportDir);
+        string path = Path.Combine(reportDir, $"d5-observation-{DateTime.Now:HHmmss}.txt");
+        File.WriteAllText(path,
+            $"hook={hook} switchAtMs={switchAtMs} receiverSeconds={receiverSeconds}\n" +
+            $"media={media}\nnext={nextMedia}\n" +
+            $"frames: {Describe(observed)}\n" +
+            $"trace: {trace}\n");
     }
 
     /// <summary>直近 3 秒（トレース末尾基準）の取得・合成の件数と、取得 imageId の固着を要約する。</summary>

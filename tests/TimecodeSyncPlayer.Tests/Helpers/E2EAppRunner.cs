@@ -243,13 +243,14 @@ internal sealed class E2EAppRunner : IDisposable
     }
 
     /// <summary>
-    /// デスクトップ直下のトップレベルウィンドウをタイトルで探す（ネイティブダイアログ等）。
-    /// デスクトップ全体の子孫を名前一致で拾うと、同じ文字列を持つテキスト要素などを
-    /// ウィンドウと誤認するため、ControlType=Window の直下要素だけを対象にする。
+    /// トップレベルウィンドウをタイトルで探す（ネイティブダイアログ等）。
+    /// デスクトップ全体の子孫を名前一致だけで拾うと、同じ文字列を持つテキスト要素などを
+    /// ウィンドウと誤認するため、ControlType=Window の要素だけを対象にする。
+    /// 所有ダイアログはデスクトップ直下に現れないことがあるため、子孫全体を検索する。
     /// </summary>
     public Window? FindWindowByName(string name)
         => _automation.GetDesktop()
-            .FindAllChildren(cf => cf.ByControlType(ControlType.Window))
+            .FindAllDescendants(cf => cf.ByControlType(ControlType.Window))
             .FirstOrDefault(window => window.Properties.Name.ValueOrDefault == name)
             ?.AsWindow();
 
