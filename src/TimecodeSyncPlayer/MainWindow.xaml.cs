@@ -393,13 +393,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Log.Information("Sync mode changed to {Mode}", _vm.Sync.SyncMode);
                     break;
                 case nameof(SyncViewModel.GapBehavior):
+                {
+                    // U1 計測: 設定保存の同期開始部とギャップ再評価（Reapply）を分けて記録する。
+                    long settingsStarted = Stopwatch.GetTimestamp();
                     _ = _settingsManager.UpdateAsync(settings => settings with
                     {
                         GapBehavior = _vm.Sync.GapBehavior,
                     });
+                    long settingsReturned = Stopwatch.GetTimestamp();
                     Log.Information("Gap behavior changed to {Behavior}", _vm.Sync.GapBehavior);
                     _ltcSyncController.GapBehaviorChanged();
+                    long reapplyReturned = Stopwatch.GetTimestamp();
+                    Log.Debug("Gap behavior change: settingsStartMs={SettingsMs:F1} ltcReapplyMs={ReapplyMs:F1}",
+                        Stopwatch.GetElapsedTime(settingsStarted, settingsReturned).TotalMilliseconds,
+                        Stopwatch.GetElapsedTime(settingsReturned, reapplyReturned).TotalMilliseconds);
                     break;
+                }
                 case nameof(SyncViewModel.LtcFpsMode):
                     _ltcSyncController.FpsModeChanged();
                     Log.Information("LTC fps mode changed mode={Mode}", _vm.Sync.LtcFpsMode);
@@ -982,7 +991,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             IsPlaybackPaused: () => _playbackControl.IsPaused,
             PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(_mpv),
             ApplyPauseState: paused => ApplyPauseState(paused),
-            ClearGapFreezeFrame: () => _renderSession.Invalidate(),
+            ClearGapFreezeFrame: () => RunTimedGapAction("clearGapFreezeFrame", () => _renderSession.Invalidate()),
             SeekTo: target => SeekTo(target),
             GetMpvDuration: () =>
             {
@@ -1008,6 +1017,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (IsPlayerReady &&
             _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double currentPos) == 0)
             SeekTo(currentPos);
+    }
+
+    // U1 計測: ギャップ切替ハンドラ内で同期実行されるエフェクトの呼び出し所要
+    // （フリーズ画像の世代クリアは同期実行）。
+    private static void RunTimedGapAction(string action, Action work)
+    {
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            work();
+        }
+        finally
+        {
+            Log.Debug("Gap action {Action}: callMs={CallMs:F1}",
+                action, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
     }
 
     private void LtcMonitor_Stopped(object? sender, Exception? exception)

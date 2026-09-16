@@ -31,20 +31,50 @@ internal sealed class GapEnterCoordinator
 
     public void EnterBlackGap()
     {
-        _effects.ResetEndAdvanceTriggered();
-        ApplyGapPause();
-        Log.Information("Continue mode: entered gap, rendering black frame");
+        // U1 計測: Gap 切替時に UI スレッドで同期実行される副作用の所要。
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            _effects.ResetEndAdvanceTriggered();
+            ApplyGapPause();
+            Log.Information("Continue mode: entered gap, rendering black frame");
+        }
+        finally
+        {
+            LogElapsed(nameof(EnterBlackGap), started);
+        }
     }
 
     public void EnterForceBlack()
     {
-        _effects.ResetEndAdvanceTriggered();
-        _effects.ClearGapFreezeFrame();
-        ApplyGapPause();
-        Log.Information("Continue mode: gap, forcing black frame");
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            _effects.ResetEndAdvanceTriggered();
+            _effects.ClearGapFreezeFrame();
+            ApplyGapPause();
+            Log.Information("Continue mode: gap, forcing black frame");
+        }
+        finally
+        {
+            LogElapsed(nameof(EnterForceBlack), started);
+        }
     }
 
     public void StartGapFreezeCaptureForCurrentTrack(TimelineQueryResult result, GapEnterAction action)
+    {
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            StartGapFreezeCaptureCore(result, action);
+        }
+        finally
+        {
+            LogElapsed(nameof(StartGapFreezeCaptureForCurrentTrack), started);
+        }
+    }
+
+    private void StartGapFreezeCaptureCore(TimelineQueryResult result, GapEnterAction action)
     {
         _effects.ResetEndAdvanceTriggered();
         ApplyGapPause();
@@ -81,81 +111,109 @@ internal sealed class GapEnterCoordinator
 
     public void EnterNoTracksFreeze()
     {
-        ApplyGapPause();
-
-        (int durRc, double duration) = _effects.GetMpvDuration();
-        if (durRc == 0 && duration > 0)
+        long started = Stopwatch.GetTimestamp();
+        try
         {
-            double currentFps = _effects.GetFps();
-            double fps = currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps;
-            double frameSeconds = 1.0 / fps;
-            double target = Math.Max(0, duration - frameSeconds);
-            bool seekSuccess = _effects.SeekTo(target);
-            if (seekSuccess)
+            ApplyGapPause();
+
+            (int durRc, double duration) = _effects.GetMpvDuration();
+            if (durRc == 0 && duration > 0)
             {
-                _gapFreezeHandler.EnterFreezeCapture(_effects.GetLoadedTrackId(), target, null);
-                Log.Information("Continue mode: no tracks, entering gap freeze target={Target:F3} duration={Duration:F3}", target, duration);
+                double currentFps = _effects.GetFps();
+                double fps = currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps;
+                double frameSeconds = 1.0 / fps;
+                double target = Math.Max(0, duration - frameSeconds);
+                bool seekSuccess = _effects.SeekTo(target);
+                if (seekSuccess)
+                {
+                    _gapFreezeHandler.EnterFreezeCapture(_effects.GetLoadedTrackId(), target, null);
+                    Log.Information("Continue mode: no tracks, entering gap freeze target={Target:F3} duration={Duration:F3}", target, duration);
+                }
+                else
+                {
+                    _gapFreezeHandler.CurrentState = GapState.ForceBlack;
+                    Log.Warning("Continue mode: no tracks, gap freeze seek failed");
+                }
             }
             else
             {
                 _gapFreezeHandler.CurrentState = GapState.ForceBlack;
-                Log.Warning("Continue mode: no tracks, gap freeze seek failed");
             }
+            Log.Information("Continue mode: no tracks, freezing last frame");
         }
-        else
+        finally
         {
-            _gapFreezeHandler.CurrentState = GapState.ForceBlack;
+            LogElapsed(nameof(EnterNoTracksFreeze), started);
         }
-        Log.Information("Continue mode: no tracks, freezing last frame");
     }
 
     public void LoadPreviousTrackFinalFrameForGapFreeze(PlaylistTrack previousTrack, double target, double duration, double fps)
     {
-        _effects.ResetEndAdvanceTriggered();
-        if (!_effects.IsMpvReady())
-            return;
-
-        _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
-
-        GapLoadCommandResult commandResult = _effects.LoadPausedAt(previousTrack.FilePath, target);
-
-        if (commandResult.LoadRc != 0)
+        long started = Stopwatch.GetTimestamp();
+        try
         {
-            Log.Warning(
-                "Continue mode: gap freeze previous-track load failed track={Track} target={Target:F3} loadRc={LoadRc} pauseRc={PauseRc}",
-                previousTrack.Name, target, commandResult.LoadRc, commandResult.PauseRc);
-            _gapFreezeHandler.ForceFreezeComplete();
-            return;
+            _effects.ResetEndAdvanceTriggered();
+            if (!_effects.IsMpvReady())
+                return;
+
+            _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
+
+            GapLoadCommandResult commandResult = _effects.LoadPausedAt(previousTrack.FilePath, target);
+
+            if (commandResult.LoadRc != 0)
+            {
+                Log.Warning(
+                    "Continue mode: gap freeze previous-track load failed track={Track} target={Target:F3} loadRc={LoadRc} pauseRc={PauseRc}",
+                    previousTrack.Name, target, commandResult.LoadRc, commandResult.PauseRc);
+                _gapFreezeHandler.ForceFreezeComplete();
+                return;
+            }
+
+            _effects.SetLoadedTrackId(previousTrack.Id);
+
+            _effects.ApplyPauseState(true);
+            _effects.ResetPlayerStateForNewTrack();
+            _effects.SetDuration(duration);
+            _effects.SetFps(fps);
+            _gapFreezeHandler.EnterFreezeCaptureWithReload(previousTrack.Id, target, previousTrack.FilePath);
+
+            Log.Information(
+                "Continue mode: loading previous track final frame for gap freeze track={Track} target={Target:F3} duration={Duration:F3} fps={Fps:F3} loadRc={LoadRc} pauseRc={PauseRc}",
+                previousTrack.Name, target, duration, fps, commandResult.LoadRc, commandResult.PauseRc);
         }
-
-        _effects.SetLoadedTrackId(previousTrack.Id);
-
-        _effects.ApplyPauseState(true);
-        _effects.ResetPlayerStateForNewTrack();
-        _effects.SetDuration(duration);
-        _effects.SetFps(fps);
-        _gapFreezeHandler.EnterFreezeCaptureWithReload(previousTrack.Id, target, previousTrack.FilePath);
-
-        Log.Information(
-            "Continue mode: loading previous track final frame for gap freeze track={Track} target={Target:F3} duration={Duration:F3} fps={Fps:F3} loadRc={LoadRc} pauseRc={PauseRc}",
-            previousTrack.Name, target, duration, fps, commandResult.LoadRc, commandResult.PauseRc);
+        finally
+        {
+            LogElapsed(nameof(LoadPreviousTrackFinalFrameForGapFreeze), started);
+        }
     }
 
     public void HandleNoTracks()
     {
-        var action = _gapFreezeHandler.DecideNoTracksEnter(_effects.GetGapBehavior(), _effects.GetLoadedTrackId());
-
-        switch (action.Type)
+        long started = Stopwatch.GetTimestamp();
+        try
         {
-            case GapEnterActionType.EnterFreezeFromLastTrack:
-                EnterNoTracksFreeze();
-                break;
-            case GapEnterActionType.ForceBlack:
-                EnterForceBlack();
-                break;
+            var action = _gapFreezeHandler.DecideNoTracksEnter(_effects.GetGapBehavior(), _effects.GetLoadedTrackId());
+
+            switch (action.Type)
+            {
+                case GapEnterActionType.EnterFreezeFromLastTrack:
+                    EnterNoTracksFreeze();
+                    break;
+                case GapEnterActionType.ForceBlack:
+                    EnterForceBlack();
+                    break;
+            }
+            _effects.UpdateCurrentTrackLabel();
         }
-        _effects.UpdateCurrentTrackLabel();
+        finally
+        {
+            LogElapsed(nameof(HandleNoTracks), started);
+        }
     }
+
+    private static void LogElapsed(string action, long started) =>
+        Log.Debug("GapEnter {Action}: elapsedMs={ElapsedMs:F1}",
+            action, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
 
     private void ApplyGapPause()
     {

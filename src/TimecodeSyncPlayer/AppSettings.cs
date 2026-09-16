@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -221,17 +222,27 @@ public sealed class AppSettingsManager
 
     public async Task SaveAsync(AppSettings settings)
     {
+        // U1 計測: コンボ変更ハンドラから呼ばれる設定保存。直列化と書き込みの呼び出しは
+        // UI スレッド側で走り得るため、両区間を分けて記録する。
+        long started = Stopwatch.GetTimestamp();
         try
         {
             string directory = Path.GetDirectoryName(Path.GetFullPath(_settingsFilePath))!;
             Directory.CreateDirectory(directory);
+            long serializeStarted = Stopwatch.GetTimestamp();
             string json = JsonSerializer.Serialize(settings, JsonOptions);
+            double serializeMs = Stopwatch.GetElapsedTime(serializeStarted).TotalMilliseconds;
+            long writeStarted = Stopwatch.GetTimestamp();
             await AtomicFileWriter.WriteAllTextAsync(
                 _settingsFilePath,
                 json,
                 System.Text.Encoding.UTF8,
                 _fileOperations);
             Current = settings;
+            Serilog.Log.Debug(
+                "settings.save: serializeMs={SerializeMs:F1} writeMs={WriteMs:F1} totalMs={TotalMs:F1}",
+                serializeMs, Stopwatch.GetElapsedTime(writeStarted).TotalMilliseconds,
+                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
         catch (Exception ex)
         {
@@ -246,6 +257,8 @@ public sealed class AppSettingsManager
 
     public async Task UpdateAsync(Func<AppSettings, AppSettings> modifier)
     {
+        // U1 計測: WaitAsync の同期待ち＋保存完了までの合計（UI スレッドの占有時間を含む）。
+        long started = Stopwatch.GetTimestamp();
         await _updateSemaphore.WaitAsync();
         try
         {
@@ -256,5 +269,7 @@ public sealed class AppSettingsManager
         {
             _updateSemaphore.Release();
         }
+        Serilog.Log.Debug("settings.update: totalMs={TotalMs:F1}",
+            Stopwatch.GetElapsedTime(started).TotalMilliseconds);
     }
 }

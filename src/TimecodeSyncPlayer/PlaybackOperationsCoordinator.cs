@@ -109,6 +109,8 @@ internal sealed class PlaybackOperationsCoordinator
 
     public bool SeekTo(double seconds, bool suppressOsd = true)
     {
+        // U1 計測: この呼び出しは UI スレッドから同期で mpv/shim に入る。
+        long started = Stopwatch.GetTimestamp();
         try
         {
             var prefix = suppressOsd ? MpvCommandNoOsd : "";
@@ -140,6 +142,8 @@ internal sealed class PlaybackOperationsCoordinator
 
             // keep-open may pause mpv at EOF without changing the user's play intent.
             _effects.SetPropertyString("pause", _playbackControl.IsPaused ? MpvValueYes : MpvValueNo);
+            Log.Debug("SeekTo target={Target:F3} rc={Rc} totalMs={TotalMs:F1}",
+                seconds, rc, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             return true;
         }
         catch (Exception ex)

@@ -10,7 +10,7 @@
 ## 事前準備
 
 - [ ] Debugビルド最新化: `dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj`
-- [ ] `scripts/get-mpv.ps1`で`native/libmpv-2.dll`を配置済みか確認（Spout確認も行う場合は`SpoutDX.dll`も）
+- [ ] `native/tcs_gstreamer.dll`とGStreamerランタイムを配置済みか確認（[SETUP.md](SETUP.md)。Spout確認も行う場合は`SpoutDX.dll`も）
 - [ ] LTC音源の準備。**重要: ループしないLTCソースを使うこと**（ループすると最終EOFを踏めない）。
   - 推奨: LTC音声ファイル（WAV）を用意し、プレイリスト全体の TimelineOut を**十分に越える長さ**まで再生できるようにする
   - LTCジェネレータを使う場合は、最終トラック終端を越えても巻き戻らずに進み続ける設定にする
@@ -66,26 +66,29 @@
 GPU経路はrunner（親worktree `TestResults\gpu-mutex-retry-session-20260910T0752Z\Invoke-AppGpuTrial.ps1`）で
 1プロセスずつ実行する。オプションの意味・結果ディレクトリの構成・集計スクリプトは
 [HANDOVER-GPU-OUTPUT-2026-09-12.md](HANDOVER-GPU-OUTPUT-2026-09-12.md) を参照。
+GStreamer×Gpu の検証項目（V1〜V11）の定義と結果は
+[GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md](GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md) を参照。
+この節の G1〜G7 は V1〜V9 の実機確認を日常手順に落としたもので、数値の合否は V の表に従う。
 
 ### 事前準備（GPU）
 
-- [ ] `settings.json`に`"outputBackend": 1`（GStreamer経路は`"backend": 1`も）
-- [ ] GStreamer経路はGStreamer 1.28.2と`native\tcs_gstreamer.dll`を配置（[SETUP.md](SETUP.md)）
+- [ ] `settings.json`は既定の`"outputBackend": 1`のままでよい（v0.4 の再生バックエンドは GStreamer 固定。v0.3 の`"backend"`キーは無視され、警告ログが 1 行出ます）
+- [ ] `native\tcs_gstreamer.dll`とGStreamer 1.28.2ランタイムを配置（[SETUP.md](SETUP.md)）
 - [ ] Spout確認は`native\SpoutDX.dll`と公式WinSpoutDXreceiverを用意
 - [ ] consoleセッション（`query session`で`>console`）で、他にTimecodeSyncPlayer／WinSpoutDXreceiver／
       GpuOutputProbe／gst-launch-1.0／tcs-shim-testが動いていないこと
 - [ ] 4K確認は4K表示先（例: `\\.\DISPLAY2`）をrunnerの`-DisplayDeviceName`へ指定
 
-### ケース G1: 1080p・60秒（mpv×Gpu、Spout受信機あり）
+### ケース G1: 1080p・60秒（GStreamer×Gpu、Spout受信機あり）
 
-- [ ] runner: `-MediaPath <1080p60素材> -Label app-1080p -Seconds 60 -PlayerBackend Mpv`
+- [ ] runner: `-MediaPath <1080p60素材> -Label app-1080p -Seconds 60 -PlayerBackend Gstreamer`
 - [ ] `app\events.jsonl`の`compose.publish` / `present.return` / `send.publish`が60Hz相当で継続
 - [ ] `app\summary.json`の`validPerformanceResult`が`true`、`errors`0、`present.status`失敗0
 - [ ] 受信側（WinSpoutDXreceiver）でフレーム更新が途切れない
 
-### ケース G2: 4K・32秒（mpv×Gpu）と受信機断
+### ケース G2: 4K・32秒（GStreamer×Gpu）と受信機断
 
-- [ ] runner: `-MediaPath <4K素材> -Label app-4k -Seconds 32 -PlayerBackend Mpv`
+- [ ] runner: `-MediaPath <4K素材> -Label app-4k -Seconds 32 -PlayerBackend Gstreamer`
 - [ ] 合成・表示・Spoutが60Hz、表示落ち・画像飛び0
 - [ ] `-KillReceiverAfterSeconds 10`で受信機を強制終了しても、アプリが故障せず送信を継続し、
       保持画像の再送で復帰する（`send.acquire.end`の`abandoned`は正常扱い）
@@ -114,7 +117,7 @@ GPU経路はrunner（親worktree `TestResults\gpu-mutex-retry-session-20260910T0
 
 - [ ] `-ExitDialog None`: ×／Alt+F4で確認ダイアログが表示され、再生・LTC・出力が継続する。
       runnerは無操作のため60秒後に未終了をerrorとして記録する（想定内）。確認後は手動で終了する
-- [ ] `-ExitDialog Normal`: `BtnExitNormal`で5手順（新規受付停止→mpv／GStreamer停止→出力停止→
+- [ ] `-ExitDialog Normal`: `BtnExitNormal`で5手順（新規受付停止→再生停止（ダイアログ表示は「mpv／GStreamer 停止」）→出力停止→
       全画面終了→資源解放）が進み、終了コード0でプロセスが残らない
 - [ ] `-ExitDialog Force`: `BtnExitForce`で追加確認なしに終了する（終了コード2）。プロセスが残らない
 
