@@ -237,7 +237,7 @@ public class SeekTraceEventsTests
     private static PlaybackOperationsEffects Effects(
         Func<double, PlaybackResult>? seek = null,
         Func<string, double?, bool, PlaybackResult>? load = null) => new(
-        IsMpvReady: () => true,
+        IsPlayerReady: () => true,
         Load: load ?? ((_, _, _) => PlaybackResult.Ok),
         Seek: seek ?? (_ => PlaybackResult.Ok),
         Stop: () => PlaybackResult.Ok,

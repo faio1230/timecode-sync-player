@@ -72,7 +72,7 @@ public class ContinueOnTrackCoordinatorTests
             ClearGapFreezeFrame: () => { },
             DecideGapExit: () => { Calls.Add("DecideGapExit"); return new GapExitAction(GapExit); },
             SeekTo: target => { Calls.Add("SeekTo"); SeekTargets.Add(target); return SeekResult; },
-            ResumeMpvPause: () => Calls.Add("ResumeMpvPause"),
+            ResumePlayback: () => Calls.Add("ResumePlayback"),
             ApplyPauseState: paused => Calls.Add($"ApplyPauseState({paused})"),
             UpdateCurrentTrackLabel: () => Calls.Add("UpdateCurrentTrackLabel"),
             GetLoadedTrackId: () => { Calls.Add("GetLoadedTrackId"); return LoadedTrackId; },
@@ -154,7 +154,7 @@ public class ContinueOnTrackCoordinatorTests
         rec.LoadedTrackId.Should().Be(track.Id);
         rec.Calls.Should().NotContain("GetTimePos");
         if (exitingGap)
-            rec.Calls.IndexOf("LoadFile").Should().BeLessThan(rec.Calls.IndexOf("ResumeMpvPause"));
+            rec.Calls.IndexOf("LoadFile").Should().BeLessThan(rec.Calls.IndexOf("ResumePlayback"));
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public class ContinueOnTrackCoordinatorTests
         coordinator.Handle(OnTrack(track, 12.5), 12.5).Should().Be(SyncRequestResult.Complete);
 
         rec.SeekTargets.Should().Equal(12.5);
-        rec.Calls.Should().Contain("ResumeMpvPause");
+        rec.Calls.Should().Contain("ResumePlayback");
         rec.Calls.Should().NotContain("GetTimePos");
     }
 
@@ -190,7 +190,7 @@ public class ContinueOnTrackCoordinatorTests
             "GetLoadedTrackId",
             "SeekTo",
             "DecideGapExit",
-            "ResumeMpvPause",
+            "ResumePlayback",
             "ApplyPauseState(False)",
             "UpdateCurrentTrackLabel");
         rec.SeekTargets.Should().ContainSingle().Which.Should().Be(42.0);
@@ -216,7 +216,7 @@ public class ContinueOnTrackCoordinatorTests
                     return new GapExitAction(GapExitActionType.ResumePlayback, ShouldResumePlayback: false);
                 },
                 SeekTo: target => { rec.Calls.Add("SeekTo"); rec.SeekTargets.Add(target); return true; },
-                ResumeMpvPause: () => rec.Calls.Add("ResumeMpvPause"),
+                ResumePlayback: () => rec.Calls.Add("ResumePlayback"),
                 ApplyPauseState: paused => rec.Calls.Add($"ApplyPauseState({paused})"),
                 UpdateCurrentTrackLabel: () => rec.Calls.Add("UpdateCurrentTrackLabel"),
                 GetLoadedTrackId: () => rec.LoadedTrackId,

@@ -32,6 +32,6 @@ internal sealed class PlaybackControlState
         new(speed, speed == 1.0 ? "1×" : $"{speed}×");
 }
 
-internal sealed record PlaybackPauseChange(bool IsPaused, string MpvPauseValue, string PlayPauseIcon);
+internal sealed record PlaybackPauseChange(bool IsPaused, string PauseValue, string PlayPauseIcon);
 
 internal sealed record PlaybackSpeedChange(double Speed, string Label);

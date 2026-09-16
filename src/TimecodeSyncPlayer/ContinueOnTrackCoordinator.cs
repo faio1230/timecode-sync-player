@@ -142,7 +142,7 @@ internal sealed class ContinueOnTrackCoordinator
         _effects.ClearGapFreezeFrame();
         if (exitAction.ShouldResumePlayback)
         {
-            _effects.ResumeMpvPause();
+            _effects.ResumePlayback();
             _effects.ApplyPauseState(false);
         }
         _effects.UpdateCurrentTrackLabel();
@@ -179,7 +179,7 @@ internal sealed record ContinueOnTrackEffects(
     Func<bool> IsPlaybackPaused,
     Action ClearGapFreezeFrame,
     Func<double, bool> SeekTo,
-    Action ResumeMpvPause,
+    Action ResumePlayback,
     Action<bool> ApplyPauseState,
     Action UpdateCurrentTrackLabel,
     Func<Guid?> GetLoadedTrackId,

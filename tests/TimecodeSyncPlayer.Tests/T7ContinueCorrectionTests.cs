@@ -304,7 +304,7 @@ public class T7ContinueCorrectionTests
             ClearGapFreezeFrame: () => { },
             DecideGapExit: () => new GapExitAction(GapExit),
             SeekTo: _ => true,
-            ResumeMpvPause: () => { },
+            ResumePlayback: () => { },
             ApplyPauseState: _ => { },
             UpdateCurrentTrackLabel: () => { },
             GetLoadedTrackId: () => LoadedTrackId,

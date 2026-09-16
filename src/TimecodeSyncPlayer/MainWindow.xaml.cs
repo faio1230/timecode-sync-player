@@ -932,7 +932,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     _renderSession.Invalidate();
                 },
                 SeekTo: target => SeekTo(target),
-                ResumeMpvPause: () => _playbackApi.SetPaused(false),
+                ResumePlayback: () => _playbackApi.SetPaused(false),
                 ApplyPauseState: paused => ApplyPauseState(paused),
                 UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel(),
                 GetLoadedTrackId: () => _loadedTrackId,
@@ -963,13 +963,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             ApplyPauseState: paused => ApplyPauseState(paused),
             ClearGapFreezeFrame: () => RunTimedGapAction("clearGapFreezeFrame", () => _renderSession.Invalidate()),
             SeekTo: target => SeekTo(target),
-            GetMpvDuration: () =>
+            GetPlayerDuration: () =>
             {
                 return _playbackApi.TryGetDuration(out double duration)
                     ? (0, duration)
                     : (-1, 0.0);
             },
-            IsMpvReady: () => IsPlayerReady,
+            IsPlayerReady: () => IsPlayerReady,
             LoadPausedAt: (path, target) => _gapPlaybackCommandExecutor.LoadPausedAt(path, target),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
             GetLoadedTrackId: () => _loadedTrackId,
@@ -1399,7 +1399,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private PlaybackOperationsCoordinator CreatePlaybackOperationsCoordinator() =>
         _playbackOperationsCoordinator ??= new(_playbackControl, new PlaybackOperationsEffects(
-            IsMpvReady: () => IsPlayerReady,
+            IsPlayerReady: () => IsPlayerReady,
             Load: (path, start, paused) => _playbackApi.Load(path, start, paused),
             Seek: seconds => _playbackApi.Seek(seconds),
             Stop: () => _playbackApi.Stop(),
