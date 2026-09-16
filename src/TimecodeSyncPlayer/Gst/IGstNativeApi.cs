@@ -60,4 +60,7 @@ internal interface IGstNativeApi
     /// </summary>
     int GetRingInfo(IntPtr player, IntPtr[] handles, uint capacity, out uint count,
         out IntPtr fence, out int width, out int height);
+
+    /// <summary>D8: 現在のリング世代（0 = リング無し）。解像度変更でリングが作り直されると +1 される。</summary>
+    int GetRingEpoch(IntPtr player, out uint epoch);
 }

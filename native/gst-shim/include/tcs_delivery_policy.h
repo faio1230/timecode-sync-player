@@ -62,6 +62,21 @@ tcs_ring_pick_slot (const uint8_t* used, uint32_t slots)
   return -1;
 }
 
+/* D8: mark a ring slot as occupied only when the item belongs to the current
+ * ring epoch. Items from an older epoch referenced the ring the shim already
+ * destroyed (the compositor keeps its own opened resources alive), so they
+ * must not block slots of the rebuilt ring. */
+static inline void
+tcs_ring_mark_occupied (uint8_t* used, uint32_t slots, int32_t slot,
+                        uint32_t item_epoch, uint32_t current_epoch)
+{
+  if (!used || slot < 0 || (uint32_t) slot >= slots)
+    return;
+  if (item_epoch != current_epoch || current_epoch == 0)
+    return;
+  used[slot] = 1;
+}
+
 /* Index (oldest first) of the oldest undelivered item that occupies a ring
  * slot (item_slots[i] >= 0), or -1 when the queue has no GPU item. */
 static inline int32_t

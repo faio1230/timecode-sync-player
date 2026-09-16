@@ -199,6 +199,83 @@ run_load_bench (int argc, char** argv)
   return failures ? 1 : 0;
 }
 
+/* --ring-epoch <file...>: D8. Loads each file and checks that the shared ring
+ * follows the frame dimensions: the ring is rebuilt (epoch +1) whenever the
+ * dimensions change, leases for the new file carry slot >= 0 and the current
+ * epoch, and tcs_player_ring_info reports the frame dimensions. Give files
+ * whose consecutive resolutions differ (e.g. 1080p, 720p, 1080p). */
+static int
+run_ring_epoch_tests (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --ring-epoch <file...>\n");
+    return 2;
+  }
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimRingEpoch", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (ring epoch)");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+
+  uint32_t expected_epoch = 0;
+  int last_w = 0, last_h = 0;
+  int loads = 0;
+  for (int f = 0; f < argc - 2; f++) {
+    const char* file = argv[2 + f];
+    tcs_player_release (p);
+    int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+    check (rc == TCS_OK, "ring-epoch: load");
+    if (rc != TCS_OK) {
+      printf ("RING-EPOCH file=%s result=LOAD-FAIL err=%s\n", file, err);
+      continue;
+    }
+
+    uint64_t gen = tcs_player_get_generation (p);
+    TcsFrameInfo info = {};
+    int got = 0;
+    auto deadline = std::chrono::steady_clock::now () + std::chrono::seconds (5);
+    while (std::chrono::steady_clock::now () < deadline) {
+      if (tcs_player_acquire (p, gen, &info) == 1) { got = 1; break; }
+      std::this_thread::sleep_for (std::chrono::milliseconds (10));
+    }
+    check (got == 1, "ring-epoch: acquire");
+    if (!got) {
+      printf ("RING-EPOCH file=%s result=NO-FRAME\n", file);
+      continue;
+    }
+
+    uint32_t epoch = 0;
+    check (tcs_player_ring_epoch (p, &epoch) == TCS_OK, "ring-epoch: epoch query");
+    if (last_w == 0 || info.width != last_w || info.height != last_h)
+      expected_epoch++;
+    last_w = info.width;
+    last_h = info.height;
+
+    check (info.slot >= 0 && info.slot < 3, "ring-epoch: lease uses a ring slot");
+    check (info.ring_epoch == epoch && epoch == expected_epoch,
+        "ring-epoch: lease epoch matches the rebuilt ring");
+
+    void* handles[4] = {};
+    void* fence = nullptr;
+    uint32_t count = 0, rw = 0, rh = 0;
+    int ring_rc = tcs_player_ring_info (p, handles, 4, &count, &fence, &rw, &rh);
+    check (ring_rc == TCS_OK, "ring-epoch: ring info");
+    check (count == 3, "ring-epoch: ring has 3 slots");
+    check ((int) rw == info.width && (int) rh == info.height,
+        "ring-epoch: ring dimensions follow the frame");
+
+    printf ("RING-EPOCH file=%s frame=%dx%d slot=%d epoch=%u expected=%u\n",
+        file, info.width, info.height, info.slot, info.ring_epoch, expected_epoch);
+    fflush (stdout);
+    tcs_player_release (p);
+    loads++;
+    std::this_thread::sleep_for (std::chrono::milliseconds (150));
+  }
+  printf ("RING-EPOCH loads=%d expected_epoch=%u failures=%d\n",
+      loads, expected_epoch, failures);
+  tcs_player_destroy (p);
+  return failures ? 1 : 0;
+}
+
 /* Problem H-3: pure delivery policy (no media, no GPU).
  * age_limit = 21 ms in QPC ticks; the tests use 10 MHz ticks for clarity. */
 static void
@@ -262,6 +339,23 @@ run_delivery_policy_tests ()
   const int32_t single[1] = { 0 };
   check (tcs_ring_evict_index (single, 1) == 0, "ring evict: first item");
   check (tcs_ring_evict_index (single, 0) == -1, "ring evict: empty -> -1");
+
+  /* D8: epoch-aware occupancy. Slots of the current ring epoch only. */
+  uint8_t occ[3] = { 0, 0, 0 };
+  tcs_ring_mark_occupied (occ, 3, 1, 7, 7);
+  check (occ[1] == 1, "ring epoch: current-epoch item occupies the slot");
+  tcs_ring_mark_occupied (occ, 3, 2, 6, 7);
+  check (occ[2] == 0, "ring epoch: old-epoch item does not occupy a slot");
+  tcs_ring_mark_occupied (occ, 3, 3, 7, 7);
+  check (occ[0] == 0 && occ[2] == 0, "ring epoch: out-of-range slot is ignored");
+  tcs_ring_mark_occupied (occ, 3, 0, 7, 0);
+  check (occ[0] == 0, "ring epoch: no ring (epoch 0) marks nothing");
+  tcs_ring_mark_occupied (occ, 3, -1, 7, 7);
+  check (occ[1] == 1, "ring epoch: sample lease (slot -1) marks nothing");
+  uint8_t pick_after_rebuild[3] = { 0, 0, 0 };
+  tcs_ring_mark_occupied (pick_after_rebuild, 3, 2, 1, 2);
+  check (tcs_ring_pick_slot (pick_after_rebuild, 3) == 0,
+      "ring epoch: old-epoch occupancy leaves slot 0 pickable");
 
   /* V11: decode profile order (pure). 4 GPU profiles then 5 CPU profiles,
    * mirroring the shim's table shape (9 profiles + decodebin fallback).
@@ -738,6 +832,11 @@ main (int argc, char** argv)
     return run_stress (argc, argv);
   if (strcmp (argv[1], "--load-bench") == 0) {
     int rc = run_load_bench (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--ring-epoch") == 0) {
+    int rc = run_ring_epoch_tests (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }

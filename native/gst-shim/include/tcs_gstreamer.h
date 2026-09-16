@@ -73,6 +73,7 @@ typedef struct TcsFrameInfo {
   int32_t height;
   int32_t is_gpu;        /* 1: D3D11 texture; 0: system-memory buffer */
   int32_t slot;          /* stage 6b: shared ring slot 0..2; -1 = legacy sample lease */
+  uint32_t ring_epoch;   /* D8: epoch of the ring this slot belongs to; 0 = no ring lease */
 } TcsFrameInfo;
 
 typedef struct TcsStats {
@@ -130,6 +131,13 @@ TCS_GST_API int tcs_player_get_delivery_stats(TcsPlayer* player,
  * value is the frame seq (see TcsFrameInfo.seq). The compositor opens the
  * handles once, then waits for `seq` on the GPU queue (ID3D11DeviceContext4)
  * before drawing. acquire() reports the slot through TcsFrameInfo.slot.
+ *
+ * D8: the ring follows the frame dimensions. When a GPU frame with different
+ * dimensions arrives, the shim rebuilds the ring (handles and fence are new)
+ * and increments the ring epoch. The compositor compares
+ * TcsFrameInfo.ring_epoch with tcs_player_ring_epoch() and reopens the handles
+ * when it changed; opened handles keep the old ring allocations alive until
+ * the compositor releases them.
  * Handles are owned by the shim: do NOT CloseHandle them, they stay valid
  * until tcs_player_destroy. Returns TCS_ERR_NO_FRAME before the first GPU
  * frame (or on the CPU path) and TCS_ERR_SIZE when capacity < the ring size. */
@@ -137,6 +145,11 @@ TCS_GST_API int tcs_player_ring_info(TcsPlayer* player, void** out_handles,
                                      uint32_t capacity, uint32_t* out_count,
                                      void** out_fence, uint32_t* out_width,
                                      uint32_t* out_height);
+
+/* D8: current shared-ring epoch (0 = no ring). Incremented on every
+ * (re)build; the compositor reopens the ring when the epoch in
+ * TcsFrameInfo.ring_epoch differs from this value. */
+TCS_GST_API int tcs_player_ring_epoch(TcsPlayer* player, uint32_t* out_epoch);
 
 /* Create the player.
  * external_d3d11_device: ID3D11Device* to share with the compositor;

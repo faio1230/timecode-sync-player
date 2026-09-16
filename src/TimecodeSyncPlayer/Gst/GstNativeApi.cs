@@ -121,6 +121,9 @@ internal sealed class GstNativeApi : IGstNativeApi
         out IntPtr fence, out int width, out int height)
         => GstNative.Imports.tcs_player_ring_info(player, handles, capacity, out count, out fence, out width, out height);
 
+    public int GetRingEpoch(IntPtr player, out uint epoch)
+        => GstNative.Imports.tcs_player_ring_epoch(player, out epoch);
+
     private static string DecodeUtf8Z(byte[] buf)
     {
         int len = Array.IndexOf(buf, (byte)0);

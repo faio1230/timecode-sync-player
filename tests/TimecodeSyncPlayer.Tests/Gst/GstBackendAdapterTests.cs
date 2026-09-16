@@ -664,4 +664,10 @@ file sealed class FakeGstNative : IGstNativeApi
         height = 0;
         return -3; // TCS_ERR_NO_FRAME: ring not created.
     }
+
+    public int GetRingEpoch(IntPtr player, out uint epoch)
+    {
+        epoch = 0;
+        return 0;
+    }
 }
