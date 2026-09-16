@@ -38,6 +38,7 @@ powershell -File scripts\package-release.ps1            # Version は csproj か
 - 受け渡しは同じアカウントのプライベートネットワーク経由（`docs/local/LOCAL-PATHS.md` の「検証機」。公開文書にホスト名を書かない）
 - 見るもの: exe の FileVersion、`logs	cs-gst-YYYYMMDD.log` の `load.summary`（profile と total_ms）、`all video profiles failed` が 0、**音声付き素材（44.1kHz と 48kHz、映像トラック先頭）**と現場の実素材、残プロセス 0
 - 合格してから 2 節へ進む
+- **版番号は直ってから上げる（2026-09-17、利用者の方針）**: 検証機との往復の途中ビルドは csproj の `Version` を変えない。ビルドの識別は `ProductVersion` の `+<コミット SHA>` と配布物の SHA-256 で行い、記録にはその 2 つを書く。完了条件がすべて合格してから次の版番号に上げ、CHANGELOG・リリースノートをまとめてタグと公開を行う
 
 ## 2. タグと公開
 
