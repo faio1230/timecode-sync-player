@@ -7,7 +7,7 @@
 - `C:\Users\<user>\Videos\20260518_test.tsp` — Continue / Freeze
 - `C:\Users\<user>\Videos\20260518_test_2.tsp` — Continue / Black
 
-参照動画はすべて1080p H.264。A=`Substitute_A`（24fps）、B=`素材B`（60fps）、C=`素材C`（30000/1001fps）。以下は秒表記。区間は開始を含み、終了を含まない。
+参照動画はすべて1080p H.264。A=素材A（24fps）、B=素材B（60fps）、C=素材C（30000/1001fps）。以下は秒表記。区間は開始を含み、終了を含まない。
 
 | ファイル | 行順 | 開始 | 終了 | 実際に選ばれる区間 |
 | --- | --- | ---: | ---: | --- |
