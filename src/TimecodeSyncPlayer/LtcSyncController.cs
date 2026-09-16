@@ -142,7 +142,14 @@ internal sealed class LtcSyncController
         ReapplyLastAcceptedFrame();
     }
 
-    public void GapBehaviorChanged() => ReapplyLastAcceptedFrame();
+    public void GapBehaviorChanged()
+    {
+        // U1 計測: コンボ変更ハンドラから同期で入る再適用（age 警告の発生元になり得る）。
+        long started = Stopwatch.GetTimestamp();
+        ReapplyLastAcceptedFrame();
+        Log.Debug("Gap behavior reapply: elapsedMs={ElapsedMs:F1}",
+            Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+    }
 
     private void ReapplyLastAcceptedFrame()
     {
@@ -150,7 +157,12 @@ internal sealed class LtcSyncController
         LtcSyncContext state = _effects.GetContext();
         if (_lastAcceptedLtcSeconds is not null && state.IsMonitoring &&
             state.SyncEnabled && !state.IsSeeking && !_signalLoss.ShouldSuppressSync)
-            RequestSync(_lastAcceptedRawSeconds, _lastAcceptedFrameEndTimestamp);
+        {
+            if (_sampleClockEnabled && _lastAcceptedFrameEndTimestamp > 0)
+                Log.Debug("LTC sample clock: reapply ageMs={AgeMs:F1}",
+                    (_getQpc() - _lastAcceptedFrameEndTimestamp) * 1000.0 / Stopwatch.Frequency);
+            RequestSync(_lastAcceptedRawSeconds, _lastAcceptedFrameEndTimestamp, "reapply");
+        }
     }
 
     public void CancelPendingSync()
@@ -190,25 +202,30 @@ internal sealed class LtcSyncController
             _rateRestorePending = true;
     }
 
-    private void RequestSync(double rawSeconds, long frameEndTimestamp)
+    private void RequestSync(double rawSeconds, long frameEndTimestamp, string source = "frame")
     {
         _pendingSyncRawSeconds = rawSeconds;
         _pendingSyncFrameEndTimestamp = frameEndTimestamp;
-        RequestSyncEffective(EffectiveSeconds(rawSeconds, frameEndTimestamp));
+        RequestSyncEffective(EffectiveSeconds(rawSeconds, frameEndTimestamp, source));
     }
 
     private void RequestSyncEffective(double effectiveSeconds)
     {
-        _pendingSyncSeconds = ApplySync(effectiveSeconds) == SyncRequestResult.Deferred ? effectiveSeconds : null;
+        // U1 計測: コンボ変更・フレーム受信からギャップ状態再評価までの所要。
+        long started = Stopwatch.GetTimestamp();
+        SyncRequestResult result = ApplySync(effectiveSeconds);
+        _pendingSyncSeconds = result == SyncRequestResult.Deferred ? effectiveSeconds : null;
+        Log.Debug("sync.apply: elapsedMs={ElapsedMs:F1} result={Result}",
+            Stopwatch.GetElapsedTime(started).TotalMilliseconds, result);
     }
 
     /// <summary>
     /// T2: 同期に使う値。サンプル時計が有効なら、フレーム終端からここまでの経過（age）を
     /// 生の LTC 秒に足してから、T3 のオフセットを 1 回だけ適用する。
     /// </summary>
-    private double EffectiveSeconds(double rawSeconds, long frameEndTimestamp)
+    private double EffectiveSeconds(double rawSeconds, long frameEndTimestamp, string source)
     {
-        double seconds = rawSeconds + SampleClockAgeSeconds(frameEndTimestamp);
+        double seconds = rawSeconds + SampleClockAgeSeconds(frameEndTimestamp, source);
         return SyncOffsetPolicy.Apply(
             seconds, _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
     }
@@ -217,7 +234,7 @@ internal sealed class LtcSyncController
     /// フレーム終端からハンドラが動くまでの経過。0〜0.5 秒の外は足さず、1 回だけ警告する
     /// （時計の不一致や停止の取り違えを同期値へ持ち込まない）。
     /// </summary>
-    private double SampleClockAgeSeconds(long frameEndTimestamp)
+    private double SampleClockAgeSeconds(long frameEndTimestamp, string source)
     {
         if (!_sampleClockEnabled || frameEndTimestamp <= 0)
             return 0.0;
@@ -228,8 +245,8 @@ internal sealed class LtcSyncController
             {
                 _sampleClockAgeWarned = true;
                 Log.Warning(
-                    "LTC sample clock: age={AgeMs:F1}ms は範囲外（0〜{MaxMs:F0}ms）のため同期値に足しません",
-                    age * 1000.0, MaxSampleClockAgeSeconds * 1000.0);
+                    "LTC sample clock: age={AgeMs:F1}ms は範囲外（0〜{MaxMs:F0}ms）のため同期値に足しません source={Source}",
+                    age * 1000.0, MaxSampleClockAgeSeconds * 1000.0, source);
             }
             return 0.0;
         }
@@ -305,7 +322,7 @@ internal sealed class LtcSyncController
         // T2: サンプル時計が有効なら、ここでフレーム終端からの経過（age）を足す。
         double rawSeconds = processed.ResolvedSeconds;
         long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
-        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp);
+        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "frame");
         _lastAcceptedLtcSeconds = effectiveSeconds;
         _lastAcceptedRawSeconds = rawSeconds;
         _lastAcceptedFrameEndTimestamp = frameEndTimestamp;
@@ -443,7 +460,7 @@ internal sealed class LtcSyncController
             // T2: サンプル時計が有効なら、保留値は生値とフレーム終端を持ち、
             // 使う時点の age で実効値を取り直す（off は従来どおり実効値を再送する）。
             if (_sampleClockEnabled && _pendingSyncFrameEndTimestamp > 0)
-                RequestSync(_pendingSyncRawSeconds, _pendingSyncFrameEndTimestamp);
+                RequestSync(_pendingSyncRawSeconds, _pendingSyncFrameEndTimestamp, "tick");
             else
                 RequestSyncEffective(pending);
         }
