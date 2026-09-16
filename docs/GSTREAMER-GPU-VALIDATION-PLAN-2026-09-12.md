@@ -2808,4 +2808,16 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - `GStreamerBackend_PlaysAac48kVideoFirstMedia`: Passed（227.9ms でロード）
 - 証跡: `TestResults/v041-d15/e2e-prefix-audio.trx`、`e2e-prefix-evidence.txt`（agent-b の作業ツリー）
 
-（続き: V5・V3・E2E 一部 → 統合 → 除去担当の E2E 再実行 → 配布物 → 検証機）
+### 同期担当の回帰（新 DLL、2026-09-17 06:05〜06:20、親の確認済み）
+
+| 項目 | 実測 |
+| --- | --- |
+| V5 シーク連打（`-ClickPlay`、H2） | `already playing` で押さず継続。Seek 10/10 success、着地 first_pts が目標値と一致 10/10。`compose.publish` n=3142 平均 16.67ms、最長無公開 47.5ms。ERR/FTL 0、ring recreated 0、受信 12/12 alive、exit 0 |
+| V3（Smooth、LTC25、`run-v3-accuracy.ps1`） | 19 テスト合格。sample 基準 平均 -25.3ms、p5 -47.9、p95 -8.3、**p95-p5 39.5ms**（参考 -28.9 / 38.3。差は 1 フレーム未満）。summary JSON: meanSigned -27.6ms、n=1225 |
+| E2E 一部 | GStreamerBackend / SystemScenario 6 合格 / 1 スキップ（Spout 受信）/ 0 失敗 |
+| shim 実素材テスト | 既存 6 + d12 4 の計 10 素材 failures=0、`check-shim-lock-rule.py` PASS |
+
+- 証跡: `TestResults/gpu-app/20260916T210501Z-d12-v5-seek`、`TestResults/v3/d12-after-v3-ltc25-gst`（agent-a の作業ツリー）
+- **統合**: agent-a `8a706d6` → main `60d0b44`、agent-b `e5014d4` → main `061419f`。統合後の main で親が Debug の shim を再ビルドし、非E2E 1672 合格、44.1kHz 素材のロード 169.7ms（attempt=0）、`logs	cs-gst-20260917.log` の生成（13 行）、残プロセス 0 を確認（`TestResults/gpu-app/20260916T213018Z-aud441-merged` 相当）
+
+（続き: 除去担当の E2E 全件（統合後）→ バージョン 0.4.1 → 配布物 → 検証機）
