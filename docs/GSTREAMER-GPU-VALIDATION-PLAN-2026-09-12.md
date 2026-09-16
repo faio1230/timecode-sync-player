@@ -2917,4 +2917,43 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **D17-a（必須、小）**: state 待ちループの打ち切り条件に `p->capsMismatch` と `p->rejected` を加える。不一致 1 件が pad-added までの時間（0.1〜0.3 秒）で返るはず → AV1 は 7 件で 1〜2 秒
 - **D17-b（任意）**: 最初の試行で読んだ demux の caps でプロファイル候補を絞る（同期担当の設計済み）。D17-a で十分なら 0.4.2 には入れない
 
-（続き: D17-a → 統合 → Taildrop で検証機（ロード時間の再確認）→ 合格なら 0.4.2）
+### D17-a（agent-a `3112e4d`、2026-09-17 08:30、親のレビュー済み）
+
+- 変更: D14 の 100ms 刻み state 待ちループの打ち切り条件を `p->failed || p->capsMismatch || p->rejected`（frame_lock の下）に。9 行
+- 開発機（AV1 720p30、libaom 生成、GPU が AV1 対応のため attempt=3 av1-gpu で ok）: 修正前 load.summary 160.8ms（h264-gpu の不一致 129.5ms）→ 修正後 67.6ms（35.1ms）。開発機では不一致が bus エラーで元々速く返るため効果は小さい。**検証機（不一致 1 件 3.0 秒）での再確認が本番**
+- 回帰: 実素材 10 本 failures=0、lock rule PASS、残プロセス 0。証跡 `TestResults/gpu-app/20260916T225007Z-d17-before` / `…225105Z-d17-after`（agent-a の作業ツリー）
+
+### D17-a の統合と検証機向けビルド（2026-09-17 08:40、親）
+
+- 統合: main `00a4dad`（docs 込みの HEAD は `1ea6dca`）。Debug shim 再ビルド、lock rule PASS、非E2E 1674 合格、44.1kHz 素材ロード 170.9ms、残プロセス 0
+- 検証機向けビルド（0.4.1 のまま、ProductVersion `0.4.1+1ea6dca…`、Release shim ハッシュ一致、プラグイン 19）:
+
+| ファイル | SHA-256 | サイズ |
+| --- | --- | ---: |
+| `TimecodeSyncPlayer-v0.4.1-1ea6dca-setup.exe` | `3A6D40FB30C4622CA45F41891355B0CD6804D1C411D65D092835D49588D51E5B` | 38,656,664 |
+| `TimecodeSyncPlayer-v0.4.1-1ea6dca-win-x64.zip` | `AC1A9C2F4700AE6E29963AAC84CAE5B350641CDD7142328E50DD892A7E7AD255` | 17,731,572 |
+
+- Taildrop で検証機へ送付（08:42）。公開せず
+
+### 検証機での LTC 同期テスト（計画、2026-09-17 08:50、利用者が VB-CABLE を導入）
+
+- 対象: インストール済みアプリ（`TIMECODE_SYNC_PLAYER_E2E_APP_PATH` で指定、`GSTREAMER_1_0_ROOT_MSVC_X86_64` は同梱の gstreamer フォルダ）。テストはリポジトリの `LtcHardwareLoopE2ETests`（14 件: 進行・信号断・同期シーク・ノイズ/低振幅/反転・停止/継続モード・ギャップ）をそのまま使う
+- 依存: .NET 8 SDK、ffmpeg（素材生成）、VB-CABLE（`CABLE Input` に LTC を流し、アプリは `CABLE Output` から受ける）
+- 次段の候補: `SyncAccuracyE2ETests`（V3 相当。`AudioLoopbackProbe` のビルドと解析スクリプトが要る）
+
+### 検証機での D17-a ビルド（`0.4.1+1ea6dca`）の確認（2026-09-17 08:00〜08:05、`TSP-TestMachine`、親の判定）
+
+| 素材 | load.summary total_ms（前回 d153cf5） | 経路 |
+| --- | ---: | --- |
+| AV1 M6（起動直後の 1 本目） | 2197.7（18794.8） | attempt=7 av1-cpu |
+| AV1 M5 / M7 | 987.7 / 977.8（18586.5 / 18588.7） | av1-cpu |
+| AV1 複製 44k / 48k / 48k 音声先頭 | 969.6 / 973.0 / 1040.8（18577〜18662） | av1-cpu |
+| ProRes HQ 4K60 | 1173.7（21737.4） | attempt=8 prores-cpu |
+
+- 不一致 1 件の所要: 100〜310ms（1 本目の h264-gpu だけ 757ms。プラグイン初回ロード）。`result` 文字列は不一致でも `preroll-timeout` のまま（表示の改善は任意）
+- クラッシュ 0（id 1000 = 0 件）、残プロセス 0、AV1 の `frameUpdates` 48〜51 / 2 秒（24fps 維持）
+- WM_CLOSE の後に出る「終了」ウィンドウは**アプリの終了確認ダイアログ**（`ExitDialog`、想定どおり）。検証スクリプトが応答しないため 10 秒で強制終了になっていただけで欠陥ではない。ダイアログ表示中も再生継続（1 区間だけ 27 フレーム = ダイアログ表示の瞬間）
+- 検証中に既定の音声出力が Realtek → VB-Audio に変わっていたのは、利用者が同時刻に VB-CABLE を導入したため（検証には影響なし）
+- **判定: D16・D17 とも検証機で解消。v0.4.2 の完了条件 (1) 合格。** 次は検証機の LTC 同期 E2E（`LtcHardwareLoopE2ETests` 14 件）→ 0.4.2 に上げて公開
+
+（続き: LTC 同期 E2E（検証機）→ 0.4.2（`docs/prompts/2026-09-17-V042-version-and-notes.md`）→ 配布物 → 公開）
