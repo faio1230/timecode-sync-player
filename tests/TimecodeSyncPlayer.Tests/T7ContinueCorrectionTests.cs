@@ -55,10 +55,10 @@ public class T7ContinueCorrectionTests
         harness.CorrectionMode = SyncCorrectionMode.Jump;
         harness.Operations.Clear();
 
-        harness.SupplyLtc(12.5);
+        harness.SupplyLtc(12.6);                                  // 素材 0.600、残差 +150ms（T8 のしきい値 80ms 超）
 
         var seek = harness.Operations.Should().ContainSingle(o => o.Name == "seek").Subject;
-        seek.Value.Should().BeApproximately(0.5, 1e-9);
+        seek.Value.Should().BeApproximately(0.6, 1e-9);
     }
 
     [Fact]

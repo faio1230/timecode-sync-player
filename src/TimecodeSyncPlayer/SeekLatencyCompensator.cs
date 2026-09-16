@@ -17,7 +17,10 @@ internal sealed class SeekLatencyCompensator
     public const double EmaAlpha = 0.25;
     public const double MaxCompensationSeconds = 0.4;
 
-    /// <summary>TCS_SEEK_LATENCY_COMPENSATION=off で補償を無効化する（L は常に 0、測定も行わない）。</summary>
+    /// <summary>
+    /// T9: 補償を有効にする環境変数。既定は無効。`on`（大文字小文字不問）を指定したときだけ
+    /// 有効になる（無効時は L は常に 0、測定も行わない）。
+    /// </summary>
     public const string EnvironmentVariable = "TCS_SEEK_LATENCY_COMPENSATION";
 
     private readonly object gate = new();
@@ -41,13 +44,14 @@ internal sealed class SeekLatencyCompensator
     internal SeekLatencyCompensator(bool enabled)
     {
         _enabled = enabled;
-        if (!enabled)
-            Log.Information("Seek latency compensator: 無効化されています（{Variable}=off）", EnvironmentVariable);
+        Log.Information(
+            "Seek latency compensator: {State}（{Variable} は on のときだけ有効）",
+            enabled ? "有効" : "無効", EnvironmentVariable);
     }
 
-    /// <summary>環境変数値の解釈。null・空・"on" は有効、"off"（大文字小文字不問）で無効。</summary>
+    /// <summary>環境変数値の解釈。null・空・on 以外は無効、"on"（大文字小文字不問）のときだけ有効。</summary>
     internal static bool IsCompensationEnabled(string? value)
-        => value is null || !value.Equals("off", StringComparison.OrdinalIgnoreCase);
+        => value is not null && value.Trim().Equals("on", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>現在のトラックの補償値（未学習は 0）。</summary>
     public double CompensationSeconds

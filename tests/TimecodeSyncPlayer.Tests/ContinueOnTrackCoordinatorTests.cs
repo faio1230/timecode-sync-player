@@ -5,8 +5,14 @@ namespace TimecodeSyncPlayer.Tests;
 
 public class ContinueOnTrackCoordinatorTests
 {
-    private static TimecodeSyncService CreateService() =>
-        new(new SyncDecisionEngine(), new TimecodeSyncSeekState());
+    private static TimecodeSyncService CreateService()
+    {
+        // T9: 製品既定は無効のため、先行補償を使うテストは明示的に有効化した共有インスタンスを渡す。
+        var compensator = new SeekLatencyCompensator(enabled: true);
+        return new TimecodeSyncService(
+            new SyncDecisionEngine(new SyncDecisionOptions(), compensator),
+            new TimecodeSyncSeekState(), null, compensator);
+    }
 
     private static FileLoadStabilityLogState CreateLogState() =>
         new(TimeSpan.FromSeconds(1));
