@@ -82,6 +82,8 @@ public partial class App : Application
 
         string logDir  = Path.Combine(AppContext.BaseDirectory, "logs");
         Directory.CreateDirectory(logDir);
+        // D15/O1: shim の LOG 出力先（TCS_LOG_FILE）を同じ logs ディレクトリへ固定する（GStreamer 初期化前）。
+        GstNativeLibraryResolver.ConfigureLogFile(logDir);
         string logPath = Path.Combine(logDir, "timecodesyncplayer-.log");
 
 #if DEBUG

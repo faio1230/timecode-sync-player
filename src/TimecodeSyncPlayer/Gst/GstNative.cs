@@ -231,7 +231,51 @@ internal static class GstNativeLibraryResolver
     }
 
     /// <summary>
-    /// 同梱ランタイムを使うときだけ、プラグイン探索とレジストリキャッシュを同梱ディレクトリへ固定する。
+    /// D15/O1: shim（tcs_gstreamer.dll）の LOG 出力先（TCS_LOG_FILE）を logs ディレクトリへ設定する。
+    /// GStreamer を初期化する前に呼ぶ。利用者が既に設定していれば上書きしない。
+    /// ログの肥大を避けるため、7 日より古い tcs-gst-*.log を消す。
+    /// </summary>
+    public static void ConfigureLogFile(string logsDirectory)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TCS_LOG_FILE")))
+            {
+                System.IO.Directory.CreateDirectory(logsDirectory);
+                Environment.SetEnvironmentVariable("TCS_LOG_FILE",
+                    System.IO.Path.Combine(logsDirectory, $"tcs-gst-{DateTime.Now:yyyyMMdd}.log"));
+            }
+
+            PruneOldLogFiles(logsDirectory, TimeSpan.FromDays(7));
+        }
+        catch (Exception)
+        {
+            // ログ出力先の設定に失敗しても起動は止めない。
+        }
+    }
+
+    private static void PruneOldLogFiles(string logsDirectory, TimeSpan retention)
+    {
+        if (!System.IO.Directory.Exists(logsDirectory))
+            return;
+
+        DateTime cutoffUtc = DateTime.UtcNow - retention;
+        foreach (string path in System.IO.Directory.EnumerateFiles(logsDirectory, "tcs-gst-*.log"))
+        {
+            try
+            {
+                if (System.IO.File.GetLastWriteTimeUtc(path) < cutoffUtc)
+                    System.IO.File.Delete(path);
+            }
+            catch (Exception)
+            {
+                // 使用中などで消せないファイルは残す。
+            }
+        }
+    }
+
+    /// <summary>
+    /// 同梱ランタイムを使うとき、プラグイン探索とレジストリキャッシュを同梱ディレクトリへ固定する。
     /// システムに別の GStreamer があっても混ざらない（版の固定が配布物の正しさの要件のため）。
     /// 失敗しても再生経路は止めない。
     /// </summary>
