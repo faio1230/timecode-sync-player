@@ -11,7 +11,7 @@
 1. Windowsの対話デスクトップで実行してください。実行中はテスト用アプリを操作せず、ロック・スリープを避けてください。他のE2Eテストとの同時実行も避けます。
 2. VB-CABLEの再生デバイス **CABLE Input** と録音デバイス **CABLE Output** が有効であることを確認してください。テストは送信先・受信元を名前で明示選択するので、Windowsの既定デバイスを変更する必要はありません。VB-CABLEは入力された音声を出力側へ運ぶ仮想ドライバーです。[公式配布・説明](https://vb-audio.com/Cable/)
 3. 同じCABLE Inputへ別の音楽やLTCを送信しているアプリは止めてください。今回のテスト自身がLTCを生成するため、外部送信ソフトは不要です。
-4. .NET 8 SDK、PowerShell 7.2以上（`pwsh`）、ffmpeg、`native/`内のmpv DLLが必要です。動画はテスト用の720p/30fps/H.264素材を自動生成します。通常の準備は[SETUP.md](SETUP.md)も参照してください。
+4. .NET 8 SDK、PowerShell 7.2以上（`pwsh`）、ffmpeg、`native/`の`tcs_gstreamer.dll`とGStreamerランタイム（Spout出力を使う場合は`SpoutDX.dll`）が必要です。動画はテスト用の720p/30fps/H.264素材を自動生成します。通常の準備は[SETUP.md](SETUP.md)も参照してください。
 
 2026-09-07のこの開発PCでは、既存の実機テストでVB-CABLE受信・進行・停止を確認済みです。
 
