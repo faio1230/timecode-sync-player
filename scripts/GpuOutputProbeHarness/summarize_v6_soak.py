@@ -25,6 +25,15 @@ def step_time(prefix):
 
 btnplay = step_time("BtnPlay invoked")
 seconds = result.get("seconds") or 0
+marks = sorted(s for s in steps if s.startswith("VolumeSlider set to "))
+if marks:
+    last = re.search(r"at (\d{2}:\d{2}:\d{2}\.\d{3})", marks[-1])
+    if last:
+        btnplay = datetime.strptime(last.group(1), "%H:%M:%S.%f") - timedelta(seconds=300 * len(marks))
+if btnplay is None:
+    close = step_time("WM_CLOSE posted")
+    if close is not None:
+        btnplay = close - timedelta(seconds=seconds)
 
 if not log_path:
     for cand in ("app-log-full.txt", "app-log-tail.txt"):
@@ -78,14 +87,14 @@ print("PERF lines=%d first=%s last=%s" % (len(perfs), perfs[0][0].strftime("%H:%
 if perfs:
     ivs, gaps = [], []
     for (t0, e0, r0, g0), (t1, e1, r1, g1) in zip(perfs, perfs[1:]):
-        dt, df = e1 - e0, g1 - g0
+        dt, df = (t1 - t0).total_seconds(), g1 - g0
         if dt <= 0 or dt > 5:
             gaps.append((t1, dt))
             continue
         ivs.append((t1, dt, df, df / dt))
     bad = [iv for iv in ivs if abs(iv[2] - 60.0 * iv[1]) > iv[1]]
     total = perfs[-1][3] - perfs[0][3]
-    span = perfs[-1][1] - perfs[0][1]
+    span = (perfs[-1][0] - perfs[0][0]).total_seconds()
     print("DELTAS intervals=%d gaps=%d dropped=%d totalPublished=%d span=%.2fs expected=%.0f diff=%+.0f fpsMin=%.3f fpsMax=%.3f" % (
         len(ivs), len(gaps), len(bad), total, span, 60.0 * span, total - 60.0 * span,
         min(iv[3] for iv in ivs) if ivs else 0, max(iv[3] for iv in ivs) if ivs else 0))
