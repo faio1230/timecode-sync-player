@@ -2902,4 +2902,19 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - 公開せず、Tailscale（Taildrop）で検証機へ送付（08:05）。配布物は親のスクラッチ領域に保管（`artifacts/release` には置かない）
 
-（続き: 検証機で AV1 6 本 + ProRes → 合格なら 0.4.2 に上げて公開）
+### 検証機での D16 修正ビルド（`0.4.1+d153cf5`）の確認（2026-09-17 07:29〜07:36、`TSP-TestMachine`、親の判定）
+
+- 導入: Taildrop 受信、SHA-256 一致、上書きインストール終了コード 0、ProductVersion `0.4.1+d153cf5…`、decodeMode=hardware、環境変数なし
+- **AV1 6 本 + ProRes の 7 本すべてクラッシュなし**（Windows アプリケーションログ id 1000 = 0 件、残プロセス 0）
+- AV1: attempt 3 で `load.skip … profile=av1-gpu reason=adapter-lacks-decoder adapter_luid=…123e7`（= 74727 = OutputEngine と同じ AMD）、attempt 7 `av1-cpu` `dav1ddec 3840x2160@24` で ok。h264/h265/vp9 の GPU クラスは `decoder class: … matches shim device`（アダプタ 0 の要素が ring と一致）
+- 再生: 追加の 35 秒実行で `frameUpdates` が 2 秒あたり 48〜49（≒ 24fps を維持）、`gpuPublishedFrames` は 120〜123 / 2 秒（合成の 60Hz。ソースの fps ではない）
+- **ロード時間: AV1 18.6〜18.8 秒、ProRes 21.7 秒**（不一致プロファイル 1 件あたり `preroll-timeout` 3.0 秒 × AV1 7 件 / ProRes 8 件）
+- 終了: 検証スクリプトの WM_CLOSE 後 10 秒で終了せず強制終了（7 本とも）。終了確認ダイアログが出ている可能性（ハーネスの `-ExitDialog` 相当の操作なし）。次回、ダイアログの有無を確認する
+- **判定: D16 は解消（完了条件 3 の「落ちない」は満たす）。ただし D17 のロード 18〜22 秒はライブ用途で許容できず、0.4.2 の前に直す。** 原因（親の確認）: `pad caps mismatch` は pad-added 時点で `capsMismatch` に立つが、D14 の 100ms 刻みの state 待ちループが `p->failed` しか見ておらず、caps 不一致でも 3 秒（30 × 100ms）待ってから次の試行へ進む（`tcs_gstreamer.cpp` の「D14: poll in 100 ms slices」ループ）。開発機で速かったのは音声の bus エラーが state 変更を失敗させていたため
+
+## D17（続き）: 修正方針（2026-09-17 08:15、親）
+
+- **D17-a（必須、小）**: state 待ちループの打ち切り条件に `p->capsMismatch` と `p->rejected` を加える。不一致 1 件が pad-added までの時間（0.1〜0.3 秒）で返るはず → AV1 は 7 件で 1〜2 秒
+- **D17-b（任意）**: 最初の試行で読んだ demux の caps でプロファイル候補を絞る（同期担当の設計済み）。D17-a で十分なら 0.4.2 には入れない
+
+（続き: D17-a → 統合 → Taildrop で検証機（ロード時間の再確認）→ 合格なら 0.4.2）
