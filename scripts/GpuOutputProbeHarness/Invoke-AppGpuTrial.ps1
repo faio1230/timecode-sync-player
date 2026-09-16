@@ -19,6 +19,10 @@ param(
     [int]$ScreenshotAtSeconds = 0,
     [int]$TestCardOnAtSeconds = 0,
     [int]$TestCardOffAtSeconds = 0,
+    # H2: guarantee playing instead of blind-toggling. The button toggles Play/Pause and an
+    # --open load already starts playing, so the click is skipped when the button shows the
+    # pause icon (U+23F8) or its ToggleState is On. Steps record "play invoked (was paused)"
+    # or "already playing".
     [switch]$ClickPlay,
     [ValidateSet('None','Normal','Force')][string]$ExitDialog = 'Normal',
     [string]$SimulateDeviceLoss = '',
@@ -268,7 +272,34 @@ $null = $app.Handle
         $result.receiverKilledDeliberately = $true
         Start-Sleep -Seconds ($Seconds - $KillReceiverAfterSeconds)
     } else {
-        if ($ClickPlay) { $play = Find-Button $app.Id 'BtnPlay' 10; Invoke-Button $play; $result.steps += "BtnPlay invoked at $((Get-Date).ToString('HH:mm:ss.fff'))" }
+        if ($ClickPlay) {
+            # H2: only press when the UI is not already playing; a blind click would pause
+            # a run that the --open load already started.
+            $play = Find-Button $app.Id 'BtnPlay' 10
+            $playName = ''
+            try { $playName = [string]$play.Button.Current.Name } catch { }
+            $playing = $playName.IndexOf([string][char]0x23F8) -ge 0
+            if (-not $playing) {
+                try {
+                    $toggle = $play.Button.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+                    $playing = $toggle.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On
+                } catch { }
+            }
+            if (-not $playing -and -not $playName) {
+                # Unknown button name: fall back to an advancing TimeLabel.
+                $t1 = Find-Button $app.Id 'TimeLabel' 5
+                $before = [string]$t1.Button.Current.Name
+                Start-Sleep -Milliseconds 1500
+                $t2 = Find-Button $app.Id 'TimeLabel' 5
+                $playing = $before -and (([string]$t2.Button.Current.Name) -ne $before)
+            }
+            if ($playing) {
+                $result.steps += "already playing at $((Get-Date).ToString('HH:mm:ss.fff')) (play button name '$playName')"
+            } else {
+                Invoke-Button $play
+                $result.steps += "play invoked (was paused) at $((Get-Date).ToString('HH:mm:ss.fff')) (play button name '$playName')"
+            }
+        }
         $elapsed = 0
         $marks = @()
         if ($ScreenshotAtSeconds -gt 0) { $marks += @{ at=$ScreenshotAtSeconds; kind='shot' } }
