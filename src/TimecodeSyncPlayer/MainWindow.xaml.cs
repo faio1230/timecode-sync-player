@@ -27,9 +27,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private double            _duration        = 0;
     private double            _fps             = 0;
     private bool              _metadataFetched = false;
-    private string            _metaLine        = "";
-    private readonly OsdUpdateState _osdUpdateState;
-    private DateTime          _lastSeekTickLogAt = DateTime.MinValue;
 
     // ── SW レンダー ────────────────────────────────────────────────
     private readonly RenderSession _renderSession;
@@ -48,6 +45,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly ProjectSaveExecutor _projectSaveExecutor;
     private readonly ProjectFileCoordinator _projectFileCoordinator;
     private readonly IMpvApi _mpvApi;
+    // 段 4: 型付き再生 API。呼び出し側ごとに段階移行する（順序 2 はギャップ経路）。
+    private readonly IPlaybackApi _playbackApi;
     private readonly AudioControlCoordinator _audioControlCoordinator;
 
     // ── Spout ─────────────────────────────────────────────────────
@@ -90,20 +89,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // ── Constants ──────────────────────────────────────────────────
 
     // Seek debounce timing
-    private const double SeekDebounceMs = 250.0;
     private const double LoadfileReloadDebounceMs = 1000.0;
-
-    // MPV command strings
-    private const string MpvSeekModeAbsolute = "absolute+exact";
-    private const string MpvSeekModeRelative = "relative+exact";
-    // MPV property values
-    private const string MpvValueYes = "yes";
-    private const string MpvValueNo = "no";
-
-    // OSD settings
-    private const string MpvPropertyOsdBar = "osd-bar";
-    private const string MpvPropertyOsdLevel = "osd-level";
-    private const string MpvPropertyOsdFontSize = "osd-font-size";
 
     // Playback icons
     private const string IconPause = "⏸";
@@ -112,7 +98,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private const int TimerIntervalMs = 100;
 
     // Additional repeated strings
-    private const string MpvCommandNoOsd = "no-osd";
     private const string TimelineOnLabel = "Timeline ON";
     private const string TimelineOffLabel = "Timeline OFF";
     private const string SyncOnLabel = "Sync ON";
@@ -161,7 +146,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         MpvSessionInitializer mpvSessionInitializer,
         ProjectLoadApplicator projectLoadApplicator,
         ISeekBarUpdateState seekState,
-        OsdUpdateState osdUpdateState,
         PlaybackPerformanceStats playbackPerformanceStats,
         OutputBackendState outputBackendState,
         IServiceProvider services,
@@ -184,11 +168,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _projectLoadApplicator = projectLoadApplicator;
         _projectSaveExecutor = new ProjectSaveExecutor(SaveProjectAsync);
         _seekState = seekState;
-        _osdUpdateState = osdUpdateState;
         _playbackPerformanceStats = playbackPerformanceStats;
         // GStreamer 内部型は公開せず、DI 経由で取得する（Gpu 出力時のみ使用）。
         _gstBackendState = services.GetRequiredService<GstBackendState>();
         _gstNativeApi = services.GetRequiredService<IGstNativeApi>();
+        _playbackApi = services.GetRequiredService<IPlaybackApi>();
         if (!outputBackendState.PlaybackAvailable)
             _playbackAvailability.MarkUnavailable(outputBackendState.Decision.Detail);
         _mpvApi = mpvApi;
@@ -261,7 +245,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 SetSignalLossPaused: paused =>
                 {
                     if (!IsPlaybackAvailable) return;
-                    _mpvApi.SetPropertyString(_mpv, "pause", paused ? MpvValueYes : MpvValueNo);
+                    _playbackApi.SetPaused(paused);
                     ApplyPauseState(paused);
                 },
                 ResumeProjectRestorePause: ResumeProjectRestorePauseForSyncIfNeeded,
@@ -272,12 +256,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 ResumeGapPause: () =>
                 {
                     if (!IsPlaybackAvailable) return;
-                    _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
+                    _playbackApi.SetPaused(false);
                     ApplyPauseState(false);
                 },
                 GetCorrectionMode: () => _vm.Sync.SyncCorrectionMode,
-                GetPlaybackSeconds: () => ReadMpvTimePos(),
-                ApplyRateInstant: rate => _mpvApi.SetRateInstant(_mpv, rate) == 0,
+                GetPlaybackSeconds: () => ReadPlaybackTimePos(),
+                ApplyRateInstant: rate => _playbackApi.SetRateInstant(rate).Success,
                 SeekTo: target => SeekTo(target),
                 SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text,
                 GetSyncOffsetMilliseconds: () => _vm.Sync.SyncOffsetMs),
@@ -288,7 +272,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _audioControlCoordinator = new AudioControlCoordinator(
             audioState,
             new AudioControlEffects(
-                SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
+                SetVolume: volume => _playbackApi.SetVolume(volume),
+                SetMute: mute => _playbackApi.SetMute(mute),
                 ApplyUi: ApplyAudioControlUi,
                 Persist: snapshot => _ = _settingsManager.UpdateAsync(settings => settings with
                 {
@@ -537,12 +522,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         uiInitializer.Initialize();
     }
 
-    // mpv 専用スレッド（RenderSession の snapshot 生成側）からも呼ばれる。
-    private double? ReadMpvTimePos()
+    /// <summary>現在の再生位置（秒）。取得できないときは null。</summary>
+    private double? ReadPlaybackTimePos()
     {
-        IntPtr mpv = Volatile.Read(ref _mpv);
-        if (mpv == IntPtr.Zero) return null;
-        return _mpvApi.GetProperty(mpv, "time-pos", _mpvApi.FormatDouble, out double pos) == 0 && double.IsFinite(pos)
+        return _playbackApi.TryGetTimePos(out double pos) && double.IsFinite(pos)
             ? pos
             : null;
     }
@@ -564,7 +547,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _vm.Output.TestCardEnabled,
             _projectCanvasState.Current,
             TimelineOutputState.PlacementFor(_playlist.Current),
-            ReadMpvTimePos() ?? 0));
+            ReadPlaybackTimePos() ?? 0));
     }
 
     private static string ResolveOutputSenderName()
@@ -673,7 +656,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             try
             {
                 if (_disposed || _outputEngine == null) return;
-                double position = ReadMpvTimePos() ?? 0;
+                double position = ReadPlaybackTimePos() ?? 0;
                 if (!_gstBackendState.RecreatePlayer(devicePointer))
                 {
                     Log.Error("GPU 復旧: GStreamer player の再生成に失敗");
@@ -933,8 +916,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             new SingleModeSyncEffects(
                 GetTimePos: () =>
                 {
-                    int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
-                    return (rc, playbackSeconds);
+                    return _playbackApi.TryGetTimePos(out double playbackSeconds)
+                        ? (0, playbackSeconds)
+                        : (-1, 0.0);
                 },
                 BuildPlaybackState: playbackSeconds => new SyncPlaybackState(
                     SyncEnabled: _vm.Sync.SyncEnabled,
@@ -962,9 +946,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     _renderSession.Invalidate();
                 },
                 SeekTo: target => SeekTo(target),
-                ResumeMpvPause: () => _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo),
+                ResumeMpvPause: () => _playbackApi.SetPaused(false),
                 ApplyPauseState: paused => ApplyPauseState(paused),
-                ShowOsdBar: () => _mpvApi.SetPropertyString(_mpv, MpvPropertyOsdBar, MpvValueYes),
                 UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel(),
                 GetLoadedTrackId: () => _loadedTrackId,
                 SetLoadedTrackId: id => SetLoadedTrack(id),
@@ -972,8 +955,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
                 GetTimePos: () =>
                 {
-                    int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double playbackSeconds);
-                    return (rc, playbackSeconds);
+                    return _playbackApi.TryGetTimePos(out double playbackSeconds)
+                        ? (0, playbackSeconds)
+                        : (-1, 0.0);
                 },
                 BuildPlaybackState: playbackSeconds => new SyncPlaybackState(
                     SyncEnabled: true,
@@ -989,17 +973,18 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _gapEnterCoordinator ??= new(_gapFreezeHandler, new GapEnterEffects(
             ResetEndAdvanceTriggered: () => _endAdvanceTriggered = false,
             IsPlaybackPaused: () => _playbackControl.IsPaused,
-            PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(_mpv),
+            PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(),
             ApplyPauseState: paused => ApplyPauseState(paused),
             ClearGapFreezeFrame: () => RunTimedGapAction("clearGapFreezeFrame", () => _renderSession.Invalidate()),
             SeekTo: target => SeekTo(target),
             GetMpvDuration: () =>
             {
-                int rc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double duration);
-                return (rc, duration);
+                return _playbackApi.TryGetDuration(out double duration)
+                    ? (0, duration)
+                    : (-1, 0.0);
             },
             IsMpvReady: () => IsPlayerReady,
-            LoadPausedAt: (path, target) => _gapPlaybackCommandExecutor.LoadPausedAt(_mpv, path, target),
+            LoadPausedAt: (path, target) => _gapPlaybackCommandExecutor.LoadPausedAt(path, target),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
             GetLoadedTrackId: () => _loadedTrackId,
             SetLoadedTrackId: id => SetLoadedTrack(id),
@@ -1014,8 +999,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void RefreshCurrentVideoFrame()
     {
         // Re-seek the current position to redraw immediately after leaving a black/frozen gap.
-        if (IsPlayerReady &&
-            _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double currentPos) == 0)
+        if (IsPlayerReady && _playbackApi.TryGetTimePos(out double currentPos))
             SeekTo(currentPos);
     }
 
@@ -1363,7 +1347,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _ltcSyncController.CorrectionReset();
         _projectRestorePauseState.Clear();
         PlaybackPauseChange change = _playbackControl.TogglePlayPause();
-        _mpvApi.SetPropertyString(_mpv, "pause", change.MpvPauseValue);
+        _playbackApi.SetPaused(change.IsPaused);
         ResetPlaybackPerformanceStats();
         _vm.Player.PlayPauseIcon = change.PlayPauseIcon;
     }
@@ -1375,7 +1359,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (!_projectRestorePauseState.TryConsume())
             return;
 
-        _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo);
+        _playbackApi.SetPaused(false);
         ApplyPauseState(false);
         Log.Information("Project restore pause released by on-track sync");
     }
@@ -1384,15 +1368,23 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (!IsPlayerReady) return;
         _ltcSyncController.CancelPendingSync();
-        if (_mpvApi.CommandString(_mpv, $"seek {seconds} {MpvSeekModeRelative}") == 0)
-            _mpvApi.SetPropertyString(_mpv, "pause", _playbackControl.IsPaused ? MpvValueYes : MpvValueNo);
+        // 決定 5: 相対シークはクライアント計算（Seek(absolute) へ加算）。
+        if (!_playbackApi.TryGetTimePos(out double current))
+        {
+            Log.Warning("SeekRelative: time-pos が取得できず相対シークを中断 seconds={Seconds}", seconds);
+            return;
+        }
+        if (_playbackApi.Seek(current + seconds).Success)
+            _playbackApi.SetPaused(_playbackControl.IsPaused);
     }
 
     void IPlaybackController.CycleSpeed()
     {
         if (!IsPlayerReady) return;
         PlaybackSpeedChange change = _playbackControl.CycleSpeed();
-        _mpvApi.SetPropertyString(_mpv, "speed", change.Speed.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        PlaybackResult result = _playbackApi.SetRate(change.Speed);
+        if (!result.Success)
+            Log.Warning("CycleSpeed: rate 設定に失敗 speed={Speed} error={Error}", change.Speed, result.Error);
         _vm.Player.SpeedLabel = change.Label;
     }
 
@@ -1422,8 +1414,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private PlaybackOperationsCoordinator CreatePlaybackOperationsCoordinator() =>
         _playbackOperationsCoordinator ??= new(_playbackControl, new PlaybackOperationsEffects(
             IsMpvReady: () => IsPlayerReady,
-            CommandString: command => _mpvApi.CommandString(_mpv, command),
-            SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
+            Load: (path, start, paused) => _playbackApi.Load(path, start, paused),
+            Seek: seconds => _playbackApi.Seek(seconds),
+            Stop: () => _playbackApi.Stop(),
+            SetPaused: paused => _playbackApi.SetPaused(paused),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
             ClearLoadedTrackId: () => _loadedTrackId = null,
             HasTimelinePanel: () => _timelinePanel != null,
@@ -1759,7 +1753,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (preview.HasValue)
         {
             _vm.Player.TimeLabel = $"{PlaybackTimeFormatter.FormatFrames(preview.PositionSeconds, _fps)} / {PlaybackTimeFormatter.FormatFrames(_duration, _fps)}";
-            UpdateOsd(preview.PositionSeconds);
             return;
         }
 
@@ -1788,7 +1781,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         UpdateCanvasUiState();
         _ltcSyncController.Tick(Environment.TickCount64);
 
-        int durationRc = _mpvApi.GetProperty(_mpv, "duration", _mpvApi.FormatDouble, out double dur);
+        int durationRc = _playbackApi.TryGetDuration(out double dur) ? 0 : -1;
         if (durationRc == 0 && SeekBarUpdateState.IsUsableDuration(dur))
             _duration = dur;
 
@@ -1900,14 +1893,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private async Task TryCompleteGapFreezeAsync(int renderGeneration, bool hasFrame, bool allowRedraw = false)
     {
         if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze && !IsNativeSeeking() &&
-            _mpvApi.GetPropertyString(_mpv, "pause") == MpvValueYes)
+            _playbackApi.IsPaused())
         {
-            int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double actualPos);
+            bool hasPosition = _playbackApi.TryGetTimePos(out double actualPos);
             GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
                 _gapFreezeHandler.CurrentState,
                 hasFrame,
-                IsCurrentMpvPathExpectedForGapFreeze(),
-                timePosRc == 0,
+                IsCurrentPathExpectedForGapFreeze(),
+                hasPosition,
                 actualPos,
                 _gapFreezeHandler.PendingTargetSeconds,
                 _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps,
@@ -1935,8 +1928,18 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private bool IsNativeSeeking()
     {
-        string raw = _mpv == IntPtr.Zero ? "<null>" : _mpvApi.GetPropertyString(_mpv, "seeking");
-        bool seeking = _mpv == IntPtr.Zero || raw != MpvValueNo;
+        string raw;
+        bool seeking;
+        if (_mpv == IntPtr.Zero)
+        {
+            raw = "<null>";
+            seeking = true;
+        }
+        else
+        {
+            seeking = _playbackApi.IsSeeking();
+            raw = seeking ? "yes" : "no";
+        }
         _seekingProbe.Record(raw, seeking);
         return seeking;
     }
@@ -1945,23 +1948,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // start and finish during that await without changing the gap capture attempt.
     private bool IsNativeGapFreezeTargetReady()
     {
-        if (IsNativeSeeking() || _mpvApi.GetPropertyString(_mpv, "pause") != MpvValueYes)
+        if (IsNativeSeeking() || !_playbackApi.IsPaused())
             return false;
         if (!string.IsNullOrWhiteSpace(_gapFreezeHandler.PendingPath) &&
             !ContinueModePlaybackPolicy.IsExpectedMediaPath(
-                _mpvApi.GetPropertyString(_mpv, "path"), _gapFreezeHandler.PendingPath))
+                _playbackApi.GetPath(), _gapFreezeHandler.PendingPath))
             return false;
-        int rc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double position);
+        bool hasPosition = _playbackApi.TryGetTimePos(out double position);
         return GapFrameCaptureCoordinator.Decide(_gapFreezeHandler.CurrentState, true, true,
-            rc == 0, position, _gapFreezeHandler.PendingTargetSeconds, _fps) ==
+            hasPosition, position, _gapFreezeHandler.PendingTargetSeconds, _fps) ==
             GapFrameCaptureDecision.RenderAndCapture;
     }
 
-    private bool IsCurrentMpvPathExpectedForGapFreeze()
+    private bool IsCurrentPathExpectedForGapFreeze()
     {
         GapFreezePathCheckResult result = GapFreezePathGuard.Check(
-            _mpvApi,
-            _mpv,
+            _playbackApi,
             _gapFreezeHandler.PendingPath,
             _gapFreezeHandler.PendingTargetSeconds,
             _gapFreezeHandler.LastReloadAt,
@@ -1975,8 +1977,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             _gapFreezeHandler.LastReloadAt = result.LastReloadAt;
             Log.Warning(
-                "Continue mode: ignored stale gap freeze frame currentPath={CurrentPath} expectedPath={ExpectedPath}; reissued load target={Target:F3} loadRc={LoadRc} pauseRc={PauseRc}",
-                result.CurrentPath, _gapFreezeHandler.PendingPath, _gapFreezeHandler.PendingTargetSeconds, result.LoadRc, result.PauseRc);
+                "Continue mode: ignored stale gap freeze frame currentPath={CurrentPath} expectedPath={ExpectedPath}; reissued load target={Target:F3} loadOk={LoadOk} pauseOk={PauseOk}",
+                result.CurrentPath, _gapFreezeHandler.PendingPath, _gapFreezeHandler.PendingTargetSeconds,
+                result.Load?.Success, result.Pause?.Success);
         }
         else
         {
@@ -1996,7 +1999,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (!IsPlayerReady) return;
 
-        int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double pos);
+        bool hasPosition = _playbackApi.TryGetTimePos(out double pos);
 
         double? gapTimelinePosition = PlaybackTimelinePositionPolicy.GetGapTimelinePosition(
             _gapFreezeHandler.IsInactive,
@@ -2005,7 +2008,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (gapTimelinePosition.HasValue)
             _timelinePanel?.UpdatePlaybackPosition(gapTimelinePosition.Value);
 
-        if (timePosRc != 0) return;
+        if (!hasPosition) return;
 
         if (!_playbackControl.IsPaused)
         {
@@ -2019,7 +2022,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             double displayPos = pos;
             SetSeekBarValueFromPlayer(SeekBarUpdateState.ToSliderValue(displayPos, _duration, SeekBar.Value));
             _vm.Player.TimeLabel = $"{PlaybackTimeFormatter.FormatFrames(displayPos, _fps)} / {PlaybackTimeFormatter.FormatFrames(_duration, _fps)}";
-            UpdateOsd(displayPos);
             TryAdvancePlaylistAtEnd(pos);
 
             if (_gapFreezeHandler.IsInactive)
@@ -2132,41 +2134,26 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void FetchMetadata()
     {
-        if (_mpvApi.GetProperty(_mpv, "container-fps", _mpvApi.FormatDouble, out double fps) == 0 && fps > 0)
+        if (_playbackApi.TryGetFps(out double fps) && fps > 0)
             _fps = fps;
 
-        string widthStr  = _mpvApi.GetPropertyString(_mpv, "width");
-        string heightStr = _mpvApi.GetPropertyString(_mpv, "height");
-        string vcodec    = _mpvApi.GetPropertyString(_mpv, "video-codec");
-        string acodec    = _mpvApi.GetPropertyString(_mpv, "audio-codec");
+        string vcodec = _playbackApi.GetVideoCodec();
+        // GStreamer 実装に音声デコーダ名の問い合わせは無い（常に空）。
+        string acodec = "";
 
-        if (!int.TryParse(widthStr, out int width) || width <= 0) return;
-        if (!int.TryParse(heightStr, out int height) || height <= 0) return;
+        if (!_playbackApi.TryGetSize(out int width, out int height) || width <= 0 || height <= 0)
+            return;
 
         _metadataFetched = true;
         Log.Information("FetchMetadata: {W}x{H} {Fps:F3}fps V:{VCodec} A:{ACodec}",
             width, height, _fps, vcodec, acodec);
 
-        _metaLine = MetadataDisplayFormatter.FormatMetadataLine(
+        _vm.Player.MetaLine = MetadataDisplayFormatter.FormatMetadataLine(
             width,
             height,
             _fps,
             vcodec,
             acodec);
-        _vm.Player.MetaLine = _metaLine;
-    }
-
-    // ── OSD ───────────────────────────────────────────────────────
-
-    private void UpdateOsd(double pos)
-    {
-        if (!IsPlayerReady) return;
-        if (!DebugOsdPolicy.ShouldWrite(_showDebugOsd)) return;
-        int frame = _fps > 0 ? (int)(pos * _fps) : (int)pos;
-        if (!_osdUpdateState.ShouldUpdate(frame, DateTime.UtcNow)) return;
-        string timePart = PlaybackTimeFormatter.FormatFrames(pos, _fps);
-        string text = DebugOsdPolicy.FormatText(timePart, _metaLine);
-        _mpvApi.SetPropertyString(_mpv, "osd-msg3", text);
     }
 
     // ── シークバー ────────────────────────────────────────────────
@@ -2215,27 +2202,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Player.SeekBarValue = commit.SliderValue;
         _seekState.MarkSeekSent(commit.TargetSeconds, DateTime.UtcNow);
         bool success = SeekTo(commit.TargetSeconds);
-        int timePosRc = _mpvApi.GetProperty(_mpv, "time-pos", _mpvApi.FormatDouble, out double timePos);
+        _playbackApi.TryGetTimePos(out double timePos);
         Log.Information(
             "Seek command sent source={Source} value={SliderValue:F6} duration={Duration:F3} target={Target:F3} success={Success} immediateTimePos={TimePos:F3}",
             source, commit.SliderValue, _duration, commit.TargetSeconds, success, timePos);
-    }
-
-    private void LogSeekTickIfNeeded(
-        int durationRc, double reportedDuration, int timePosRc,
-        double playerPosition, double displayPosition,
-        double beforeValue, double afterValue)
-    {
-        if (!_seekState.HasPendingSeek) return;
-
-        DateTime now = DateTime.UtcNow;
-        if (now - _lastSeekTickLogAt < TimeSpan.FromMilliseconds(SeekDebounceMs)) return;
-
-        _lastSeekTickLogAt = now;
-        Log.Information(
-            "Seek pending tick durationRc={DurationRc} dur={Dur:F3} timePosRc={TimePosRc} playerPos={PlayerPos:F3} displayPos={DisplayPos:F3} target={Target:F3} sliderBefore={SliderBefore:F6} sliderAfter={SliderAfter:F6}",
-            durationRc, reportedDuration, timePosRc, playerPosition, displayPosition,
-            _seekState.TargetSeconds, beforeValue, afterValue);
     }
 
     private void LogPlaybackPerformance(PlaybackPerformanceSnapshot snapshot)
@@ -2280,8 +2250,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _metadataFetched = false;
         _duration = 0;
         _fps = 0;
-        _metaLine = "";
-        _osdUpdateState.Reset();
         _renderSession.ResetUpdateStats();
         ResetPlaybackPerformanceStats();
         _seekState.Clear();

@@ -28,7 +28,8 @@ public class AudioControlCoordinatorTests
 
         fixture.Coordinator.ApplyStartup();
 
-        fixture.PropertyWrites.Should().Equal(("mute", "yes"), ("volume", "42.5"));
+        fixture.Mutes.Should().Equal(true);
+        fixture.Volumes.Should().Equal(42.5);
         fixture.UiStates.Should().ContainSingle().Which.Should().Be(new AudioControlSnapshot(true, 42.5, "MUTE ON"));
         fixture.PersistedStates.Should().BeEmpty();
     }
@@ -40,7 +41,7 @@ public class AudioControlCoordinatorTests
 
         fixture.Coordinator.ToggleMute();
 
-        fixture.PropertyWrites.Should().ContainSingle().Which.Should().Be(("mute", "yes"));
+        fixture.Mutes.Should().Equal(true);
         fixture.UiStates.Should().ContainSingle().Which.Should().Be(new AudioControlSnapshot(true, 73, "MUTE ON"));
         fixture.PersistedStates.Should().ContainSingle().Which.Should().Be(new AudioControlSnapshot(true, 73, "MUTE ON"));
     }
@@ -52,7 +53,7 @@ public class AudioControlCoordinatorTests
 
         fixture.Coordinator.SetVolume(25);
 
-        fixture.PropertyWrites.Should().ContainSingle().Which.Should().Be(("volume", "25"));
+        fixture.Volumes.Should().Equal(25);
         fixture.Coordinator.State.Should().Be(new AudioControlSnapshot(true, 25, "MUTE ON"));
         fixture.PersistedStates.Should().ContainSingle().Which.Should().Be(fixture.Coordinator.State);
     }
@@ -65,7 +66,8 @@ public class AudioControlCoordinatorTests
         fixture.Coordinator.SetVolume(25);
         fixture.Coordinator.ToggleMute();
 
-        fixture.PropertyWrites.Should().Equal(("volume", "25"), ("mute", "no"));
+        fixture.Volumes.Should().Equal(25);
+        fixture.Mutes.Should().Equal(false);
         fixture.Coordinator.State.Should().Be(new AudioControlSnapshot(false, 25, "MUTE OFF"));
         fixture.PersistedStates.Should().HaveCount(2);
     }
@@ -77,7 +79,8 @@ public class AudioControlCoordinatorTests
 
         fixture.Coordinator.SetVolume(150);
 
-        fixture.PropertyWrites.Should().BeEmpty();
+        fixture.Volumes.Should().BeEmpty();
+        fixture.Mutes.Should().BeEmpty();
         fixture.UiStates.Should().BeEmpty();
         fixture.PersistedStates.Should().BeEmpty();
     }
@@ -89,17 +92,15 @@ public class AudioControlCoordinatorTests
             Coordinator = new AudioControlCoordinator(
                 new AudioControlState(isMuted, volume),
                 new AudioControlEffects(
-                    SetPropertyString: (name, value) =>
-                    {
-                        PropertyWrites.Add((name, value));
-                        return 0;
-                    },
+                    SetVolume: value => Volumes.Add(value),
+                    SetMute: value => Mutes.Add(value),
                     ApplyUi: UiStates.Add,
                     Persist: PersistedStates.Add));
         }
 
         public AudioControlCoordinator Coordinator { get; }
-        public List<(string Name, string Value)> PropertyWrites { get; } = [];
+        public List<double> Volumes { get; } = [];
+        public List<bool> Mutes { get; } = [];
         public List<AudioControlSnapshot> UiStates { get; } = [];
         public List<AudioControlSnapshot> PersistedStates { get; } = [];
     }

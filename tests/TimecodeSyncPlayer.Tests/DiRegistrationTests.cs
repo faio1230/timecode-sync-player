@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -18,6 +19,8 @@ public class DiRegistrationTests
     [InlineData(typeof(GapFreezeHandler))]
     [InlineData(typeof(MpvSessionInitializer))]
     [InlineData(typeof(ProjectLoadApplicator))]
+    [InlineData(typeof(IPlaybackApi))]
+    [InlineData(typeof(IRenderUpdateSource))]
     public void ConfigureServices_RegistersCompositionServiceAsSingleton(Type serviceType)
     {
         var services = new ServiceCollection();

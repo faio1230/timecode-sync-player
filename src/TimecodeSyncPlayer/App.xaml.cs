@@ -29,9 +29,13 @@ public partial class App : Application
         services.AddSingleton<GstBackendState>();
         services.AddSingleton<GstMpvApiAdapter>();
         services.AddSingleton<GstMpvRenderApiAdapter>();
+        services.AddSingleton<GstPlaybackApi>();
+        services.AddSingleton<GstRenderUpdateSource>();
         services.AddSingleton<GstSpoutOutput>();
         services.AddSingleton<IMpvApi>(sp => sp.GetRequiredService<GstMpvApiAdapter>());
         services.AddSingleton<IMpvRenderApi>(sp => sp.GetRequiredService<GstMpvRenderApiAdapter>());
+        services.AddSingleton<IPlaybackApi>(sp => sp.GetRequiredService<GstPlaybackApi>());
+        services.AddSingleton<IRenderUpdateSource>(sp => sp.GetRequiredService<GstRenderUpdateSource>());
 
         // Core services
         services.AddSingleton<IMediaDurationReader, MediaDurationReader>();

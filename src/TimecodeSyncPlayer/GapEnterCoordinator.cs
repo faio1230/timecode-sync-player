@@ -160,11 +160,11 @@ internal sealed class GapEnterCoordinator
 
             GapLoadCommandResult commandResult = _effects.LoadPausedAt(previousTrack.FilePath, target);
 
-            if (commandResult.LoadRc != 0)
+            if (!commandResult.Load.Success)
             {
                 Log.Warning(
-                    "Continue mode: gap freeze previous-track load failed track={Track} target={Target:F3} loadRc={LoadRc} pauseRc={PauseRc}",
-                    previousTrack.Name, target, commandResult.LoadRc, commandResult.PauseRc);
+                    "Continue mode: gap freeze previous-track load failed track={Track} target={Target:F3} error={Error} pauseOk={PauseOk}",
+                    previousTrack.Name, target, commandResult.Load.Error, commandResult.Pause.Success);
                 _gapFreezeHandler.ForceFreezeComplete();
                 return;
             }
@@ -178,8 +178,8 @@ internal sealed class GapEnterCoordinator
             _gapFreezeHandler.EnterFreezeCaptureWithReload(previousTrack.Id, target, previousTrack.FilePath);
 
             Log.Information(
-                "Continue mode: loading previous track final frame for gap freeze track={Track} target={Target:F3} duration={Duration:F3} fps={Fps:F3} loadRc={LoadRc} pauseRc={PauseRc}",
-                previousTrack.Name, target, duration, fps, commandResult.LoadRc, commandResult.PauseRc);
+                "Continue mode: loading previous track final frame for gap freeze track={Track} target={Target:F3} duration={Duration:F3} fps={Fps:F3} loadOk={LoadOk} pauseOk={PauseOk}",
+                previousTrack.Name, target, duration, fps, commandResult.Load.Success, commandResult.Pause.Success);
         }
         finally
         {

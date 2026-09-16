@@ -18,11 +18,11 @@ public sealed class MainWindowGapFreezeRetryTests
     public Task FinalCallbackWhileSeeking_TimerCompletesFreezeWithoutAnotherCallback() => OnUi(async () =>
     {
         using var fixture = new Fixture();
-        fixture.Api.Seeking = true;
+        fixture.PlaybackApi.Seeking = true;
         await fixture.ProcessFinalCallback();
         fixture.Handler.CurrentState.Should().Be(GapState.EnteringFreeze);
 
-        fixture.Api.Seeking = false;
+        fixture.PlaybackApi.Seeking = false;
         fixture.Tick(); // ネイティブシーク完了後にレンダーコールバックは届かない。
         await WaitUntil(() => fixture.Handler.CurrentState == GapState.FreezeComplete);
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
@@ -34,7 +34,7 @@ public sealed class MainWindowGapFreezeRetryTests
     public Task TimerRetry_WhileNativePlaybackUnpaused_DoesNotConfirmMovingFrame() => OnUi(async () =>
     {
         using var fixture = new Fixture();
-        fixture.Api.Paused = false;
+        fixture.PlaybackApi.Paused = false;
         fixture.Tick();
         await fixture.Session.ProcessUpdateAsync((_, _) => Task.CompletedTask);
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
@@ -50,9 +50,9 @@ public sealed class MainWindowGapFreezeRetryTests
     public Task TimerRetry_NativePlaybackChanges_DoesNotConfirmObsoleteFrame(string change) => OnUi(async () =>
     {
         using var fixture = new Fixture();
-        if (change == "resume") fixture.Api.Paused = false;
-        else if (change == "seek") fixture.Api.Seeking = true;
-        else fixture.Api.Position = 9;
+        if (change == "resume") fixture.PlaybackApi.Paused = false;
+        else if (change == "seek") fixture.PlaybackApi.Seeking = true;
+        else fixture.PlaybackApi.TimePos = 9;
         fixture.Tick();
         await fixture.Session.ProcessUpdateAsync((_, _) => Task.CompletedTask);
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
@@ -67,6 +67,7 @@ public sealed class MainWindowGapFreezeRetryTests
         public readonly NativeApi Api = new();
         public readonly RenderApi RenderApi = new();
         public readonly SpoutOutput Spout = new();
+        public readonly FakePlaybackApi PlaybackApi = new() { Path = "C:/clip.mp4", Paused = true, TimePos = 9.9 };
         public MainWindow Window { get; }
         public GapFreezeHandler Handler { get; }
         public RenderSession Session { get; }
@@ -78,6 +79,7 @@ public sealed class MainWindowGapFreezeRetryTests
             services.AddSingleton<IMpvApi>(Api);
             services.AddSingleton<IMpvRenderApi>(RenderApi);
             services.AddSingleton<ISpoutOutput>(Spout);
+            services.AddSingleton<IPlaybackApi>(PlaybackApi);
             _provider = services.BuildServiceProvider();
             Window = _provider.GetRequiredService<MainWindow>();
             Handler = _provider.GetRequiredService<GapFreezeHandler>();
@@ -106,22 +108,14 @@ public sealed class MainWindowGapFreezeRetryTests
 
     private sealed class NativeApi : IMpvApi
     {
-        public bool Seeking;
-        public bool Paused = true;
-        public double Position = 9.9;
+        // MainWindow は DI 解決のために IMpvApi を要求し続ける（順序 5 で削除）。
         public IntPtr Create() => new(1);
         public int Initialize(IntPtr ctx) => 0;
         public void TerminateDestroy(IntPtr ctx) { }
         public int SetPropertyString(IntPtr ctx, string name, string value) => 0;
         public int GetProperty(IntPtr ctx, string name, int format, out double result)
-        { result = name == "duration" ? 10 : Position; return 0; }
-        public string GetPropertyString(IntPtr ctx, string name) => name switch
-        {
-            "seeking" => Seeking ? "yes" : "no",
-            "pause" => Paused ? "yes" : "no",
-            "path" => "C:/clip.mp4",
-            _ => ""
-        };
+        { result = 0; return 0; }
+        public string GetPropertyString(IntPtr ctx, string name) => "";
         public int CommandString(IntPtr ctx, string args) => 0;
         public void Free(IntPtr data) { }
         public int FormatDouble => 5;

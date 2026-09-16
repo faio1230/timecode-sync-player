@@ -7,14 +7,13 @@ internal sealed record GapFreezePathCheckResult(
     bool ReloadIssued,
     DateTime LastReloadAt,
     string CurrentPath,
-    int? LoadRc,
-    int? PauseRc);
+    PlaybackResult? Load,
+    PlaybackResult? Pause);
 
 internal static class GapFreezePathGuard
 {
     public static GapFreezePathCheckResult Check(
-        IMpvApi mpvApi,
-        IntPtr mpv,
+        IPlaybackApi playbackApi,
         string? pendingPath,
         double pendingTargetSeconds,
         DateTime lastReloadAt,
@@ -28,11 +27,11 @@ internal static class GapFreezePathGuard
                 ReloadIssued: false,
                 lastReloadAt,
                 CurrentPath: "",
-                LoadRc: null,
-                PauseRc: null);
+                Load: null,
+                Pause: null);
         }
 
-        string currentPath = mpvApi.GetPropertyString(mpv, "path");
+        string currentPath = playbackApi.GetPath();
         if (ContinueModePlaybackPolicy.IsExpectedMediaPath(currentPath, pendingPath))
         {
             return new GapFreezePathCheckResult(
@@ -40,24 +39,22 @@ internal static class GapFreezePathGuard
                 ReloadIssued: false,
                 lastReloadAt,
                 currentPath,
-                LoadRc: null,
-                PauseRc: null);
+                Load: null,
+                Pause: null);
         }
 
         if (now - lastReloadAt > reloadDebounce)
         {
-            int loadRc = mpvApi.CommandString(
-                mpv,
-                MpvPlaybackCommandBuilder.BuildLoadFileCommand(pendingPath, pendingTargetSeconds));
-            int pauseRc = mpvApi.SetPropertyString(mpv, "pause", "yes");
+            PlaybackResult load = playbackApi.Load(pendingPath, pendingTargetSeconds, paused: true);
+            PlaybackResult pause = playbackApi.SetPaused(true);
 
             return new GapFreezePathCheckResult(
                 IsExpected: false,
                 ReloadIssued: true,
                 now,
                 currentPath,
-                loadRc,
-                pauseRc);
+                load,
+                pause);
         }
 
         return new GapFreezePathCheckResult(
@@ -65,7 +62,7 @@ internal static class GapFreezePathGuard
             ReloadIssued: false,
             lastReloadAt,
             currentPath,
-            LoadRc: null,
-            PauseRc: null);
+            Load: null,
+            Pause: null);
     }
 }

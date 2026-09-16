@@ -45,3 +45,48 @@
 | 最終 | E2E 全件（基準は段 3 の全件合格）、V3 1 本（Smooth。sample 平均 / p95-p5 が段 3 の -28.9 / 38.3 から大きく外れないこと）、`check-shim-lock-rule.py` PASS |
 | grep（最終） | `IMpvApi`、`IMpvRenderApi`、`GstMpv`、`MpvPlaybackCommandBuilder`、`GstCommandTranslator`、`MpvStartupPropertyApplier`、`MpvSessionInitializer`、`MpvRenderFrameExecutor`、`libmpv`、`no-osd`、`absolute+exact` → src / tests で 0 件。型名・ファイル名の `Mpv` → 0 |
 | 報告 | 段ごとのコミット、対応表（旧文字列呼び出し → 新メソッド）、非E2E の増減、E2E、V3、grep、設計差異、未検証。合否は書かない |
+
+---
+
+## 実装側メモ（順序 5 向け。2026-09-16、agent-b）
+
+### コミット系列（agent-b）
+
+- `6262fd7` 順序 1: 型付き API と GStreamer 実装を追加（既存の文字列経路は残す）
+- `39b0a0a` 順序 2: ギャップ経路（`GapPlaybackCommandExecutor` / `GapFreezePathGuard`）を型付き API へ
+- `3cebdb1` 順序 3: `PlaybackOperationsCoordinator` / `AudioControlCoordinator` を型付き API へ
+- `0909ceb` 順序 4: `MainWindow` の読み取り系と残りの操作を型付き API へ
+- 基点: main `d5af2a6`。各段の検証: ビルド 0/0、非E2E 全件、E2E 一部 8 件（`TestResults/s4-order2` / `s4-order3` / `s4-order4` の `e2e-subset.trx`）
+
+### 順序 1〜4 で追加したもの（残す）
+
+- `Contracts/IPlaybackApi.cs`（16 メソッド）、`Contracts/PlaybackResult.cs`（`bool Success, string? Error`）、`Contracts/IRenderUpdateSource.cs`
+- `Gst/GstPlaybackApi.cs`、`Gst/GstRenderUpdateSource.cs`、`Gst/GstSeekingTracker.cs`（`GstBackendState.Seeking` が所有。`GstMpvApiAdapter` 削除後も `GstPlaybackApi` が使う）
+- DI: `IPlaybackApi` / `IRenderUpdateSource` は登録済み。実装は `GstPlaybackApi` / `GstRenderUpdateSource`
+- テスト: `GstPlaybackApiTests` / `GstRenderUpdateSourceTests` / `FakePlaybackApi.cs`（`MainWindow` の DI 差し替え用）。`FakeGstNative` は `internal` 化して共用中（残す）
+- `GstPlaybackApi` は決定 2・4 により `StepFrame` / `SetDecodeMode` を含まない。`GstBackendState.ApplyDecodeMode` は初期化のまま残す
+- `GstPlaybackApi.Load` のログ文言 `Gst loadfile path=...` は SH1 の計測互換で残している（改名するなら計測手順も確認）
+
+### 順序 5 で消す・移す（在処つき）
+
+- `MainWindow`: `_mpvApi` は `disposeMpv` の `TerminateDestroy` のみ。`_mpvStartupPropertyApplier` は代入だけで未使用。player 生成は `_mpvSessionInitializer.Initialize(_showDebugOsd)`。`_mpv` ハンドルは `assignMpv` / `RenderSession.Create` / `IsPlayerReady` / `IsNativeSeeking` の null 判定に残存
+- `DebugOsdPolicy` とそのテストは製品から未参照（決定 1）。`OsdUpdateState` の DI 登録も `MainWindow` 未使用
+- `RenderSession` はまだ `IMpvRenderApi` を使用（`MpvRenderApiTypeSw` / `RenderContextCreate(params)` / `MpvRenderUpdateFrame`）。`IRenderUpdateSource` へ切替後、`RenderContextParameterBuilder`（+Tests）と `RenderTypes.RenderParam` を削除できる。`RenderUpdateFn` は残す
+- `GstBackendAdapterTests` は `GstMpvApiAdapterTests` / `GstMpvRenderApiAdapterTests` / `GstBackendStateTests` が同居。アダプタ削除に合わせて整理する
+- `MpvStartupPropertyApplier` の `vo=libmpv` 行を削除し、`pause=yes` の初期化は `GstPlaybackApi` の初期化へ移す
+- 改名対象の残メンバー例: `ResumeMpvPause`（`ContinueOnTrackEffects`）、`IsMpvReady`（`PlaybackOperations` / `GapEnter` effects）、`WindowLoadedSessionInitializer` の `initializeMpvSession` と `MpvSessionInitialization*`、`PlaybackControlState.MpvPauseValue`。`ReadMpvTimePos` と `IsCurrentMpvPathExpectedForGapFreeze` は順序 4 で改名済み。`MainWindowResourceDisposer` のユーザー可視ラベル「mpv／GStreamer 停止」も改名候補
+
+### 最終検証（順序 5 の完了時に回す）
+
+- E2E 全件: 基準は段 3 の 63/63
+- V3 1 本（Smooth）: 段 3 の実測 sample 平均 **-28.9**、p95-p5 **38.3**（receipt +9.4 / 60.9、seek 収束 120ms、freeze-sweep latency 0・left-censored）
+- 非E2E: 順序 4 終了時点で **1709 件合格**
+- `check-shim-lock-rule.py` PASS
+- E2E 一部（各段と同じ 8 件）: フィルタ `FullyQualifiedName~GStreamerBackend_SurvivesRepeatedTrackSwitches|FullyQualifiedName~ExitDialogE2ETests|FullyQualifiedName~SystemScenarioE2ETests`
+
+### 注意・段外の事象
+
+- shim の C ABI は変えない（同期担当が並行作業）。段 4 では触っていない
+- shim 実素材テストの `lease pts within one frame of the seek target` は段 3 前から失敗（main の既存ビルドでも同一。SH1 の切り分け結果が main にある）。段 5 の対象外
+- 段の切り分けに `git stash` は使わない（利用者の規則）。段ごとに作業して順次コミットするか、別ブランチの WIP コミットで退避する
+- 実機（E2E 全件・V3・単発 run）は一報のうえ親の合図を待つ

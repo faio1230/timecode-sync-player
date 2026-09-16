@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using FluentAssertions;
+using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -36,7 +37,7 @@ public class GapEnterCoordinatorTests
         public bool SeekResult = true;
         public (int rc, double duration) MpvDuration = (0, 120.0);
         public bool MpvReady = true;
-        public GapLoadCommandResult LoadResult = new(LoadRc: 0, PauseRc: 0);
+        public GapLoadCommandResult LoadResult = new(PlaybackResult.Ok, PlaybackResult.Ok);
         public Guid? LoadedTrackId;
         public double Duration = 10.0;
         public double Fps = 25.0;
@@ -285,7 +286,7 @@ public class GapEnterCoordinatorTests
         var (coord, handler, rec) = Build(r =>
         {
             r.LoadedTrackId = existing;
-            r.LoadResult = new GapLoadCommandResult(LoadRc: 1, PauseRc: 0);
+            r.LoadResult = new GapLoadCommandResult(PlaybackResult.Fail("load failed"), PlaybackResult.Ok);
         });
 
         coord.LoadPreviousTrackFinalFrameForGapFreeze(prev, target: 49.9, duration: 50, fps: 30);
@@ -304,7 +305,7 @@ public class GapEnterCoordinatorTests
         var (coord, handler, rec) = Build(r =>
         {
             r.LoadedTrackId = Guid.NewGuid();
-            r.LoadResult = new GapLoadCommandResult(LoadRc: 0, PauseRc: 0);
+            r.LoadResult = new GapLoadCommandResult(PlaybackResult.Ok, PlaybackResult.Ok);
         });
 
         coord.LoadPreviousTrackFinalFrameForGapFreeze(prev, target: 49.9, duration: 50.0, fps: 24.0);

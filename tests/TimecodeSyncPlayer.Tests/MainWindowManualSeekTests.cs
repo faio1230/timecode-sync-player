@@ -30,9 +30,11 @@ public sealed class MainWindowManualSeekTests
 
         // Exercise the real Window entry points without showing it or starting native/audio I/O.
         var api = new RecordingMpvApi();
+        var playbackApi = new FakePlaybackApi();
         var services = new ServiceCollection();
         App.ConfigureServices(services);
         services.AddSingleton<IMpvApi>(api);
+        services.AddSingleton<IPlaybackApi>(playbackApi);
         using var provider = services.BuildServiceProvider();
         var window = provider.GetRequiredService<MainWindow>();
         try
@@ -50,8 +52,14 @@ public sealed class MainWindowManualSeekTests
                         .Invoke(window, [null, new TimelineSeekEventArgs(2.5, 0)]);
                     break;
             }
-            api.Commands.Should().ContainSingle();
-            api.Properties.Should().Contain(("pause", paused ? "yes" : "no"));
+            double expectedSeek = entry switch
+            {
+                "back" => -10,
+                "forward" => 10,
+                _ => 2.5,
+            };
+            playbackApi.Seeks.Should().ContainSingle().Which.Should().Be(expectedSeek);
+            playbackApi.SetPausedCalls.Should().Contain(paused);
             h.AdvancePlayback(2.5, 2);
             for (int i = 0; i < 20; i++)
             {
@@ -69,6 +77,7 @@ public sealed class MainWindowManualSeekTests
     {
         public List<string> Commands { get; } = [];
         public List<(string, string)> Properties { get; } = [];
+        // MainWindow は DI 解決のために IMpvApi を要求し続ける（順序 5 で削除）。
         public IntPtr Create() => new(1);
         public int Initialize(IntPtr ctx) => 0;
         public void TerminateDestroy(IntPtr ctx) { }

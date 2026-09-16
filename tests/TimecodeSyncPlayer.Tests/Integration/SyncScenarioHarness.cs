@@ -1,3 +1,6 @@
+using System.Globalization;
+using TimecodeSyncPlayer.Contracts;
+
 namespace TimecodeSyncPlayer.Tests.Integration;
 
 internal sealed record ScenarioMpvOperation(string Name, double? Value = null, string? Text = null);
@@ -40,11 +43,8 @@ internal sealed class SyncScenarioHarness
         _audioControlCoordinator = new AudioControlCoordinator(
             new AudioControlState(isMuted: false, volume: 100),
             new AudioControlEffects(
-                SetPropertyString: (name, value) =>
-                {
-                    RecordMpvProperty(name, value);
-                    return 0;
-                },
+                SetVolume: volume => RecordMpvProperty("volume", volume.ToString("0.###", CultureInfo.InvariantCulture)),
+                SetMute: mute => RecordMpvProperty("mute", mute ? "yes" : "no"),
                 ApplyUi: _ => { },
                 Persist: _ => { }));
         _continueCoordinator = new ContinueOnTrackCoordinator(
@@ -66,11 +66,6 @@ internal sealed class SyncScenarioHarness
                     Operations.Add(new("mpv-resume", Text: "no"));
                 },
                 ApplyPauseState: SetPaused,
-                ShowOsdBar: () =>
-                {
-                    RecordMpvProperty("osd-bar", "yes");
-                    Operations.Add(new("osd-bar", Text: "yes"));
-                },
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
                 GetLoadedTrackId: () => _loadedTrackId,
                 SetLoadedTrackId: id => _loadedTrackId = id,
@@ -105,7 +100,7 @@ internal sealed class SyncScenarioHarness
                 LoadPausedAt: (path, target) =>
                 {
                     Operations.Add(new("load-paused", target, path));
-                    return new GapLoadCommandResult(0, 0);
+                    return new GapLoadCommandResult(PlaybackResult.Ok, PlaybackResult.Ok);
                 },
                 ResetPlayerStateForNewTrack: () => { },
                 GetLoadedTrackId: () => _loadedTrackId,

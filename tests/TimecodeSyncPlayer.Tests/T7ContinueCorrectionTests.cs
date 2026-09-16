@@ -306,7 +306,6 @@ public class T7ContinueCorrectionTests
             SeekTo: _ => true,
             ResumeMpvPause: () => { },
             ApplyPauseState: _ => { },
-            ShowOsdBar: () => { },
             UpdateCurrentTrackLabel: () => { },
             GetLoadedTrackId: () => LoadedTrackId,
             SetLoadedTrackId: id => LoadedTrackId = id,

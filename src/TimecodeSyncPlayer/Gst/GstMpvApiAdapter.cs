@@ -15,12 +15,6 @@ internal sealed class GstMpvApiAdapter : IMpvApi
 {
     private readonly GstBackendState _state;
 
-    // seeking プロパティ用: シーク発行時点の配信数（on_new_sample 到着数）を基準に、
-    // 新位置のフレームが 1 枚届くまで "yes" を返す（mpv の seeking と同じ意味論）。
-    private readonly object _seekGate = new();
-    private bool _seekPending;
-    private ulong _seekArrivalBaseline;
-
     public GstMpvApiAdapter(GstBackendState state)
     {
         _state = state;
@@ -37,7 +31,7 @@ internal sealed class GstMpvApiAdapter : IMpvApi
 
     public void TerminateDestroy(IntPtr ctx)
     {
-        ClearSeeking();
+        _state.Seeking.Clear();
         _state.DisposePlayer();
     }
 
@@ -120,7 +114,7 @@ internal sealed class GstMpvApiAdapter : IMpvApi
                     // shim は音声デコーダ名の問い合わせを持たない（video-codec のみ）。
                     return string.Empty;
                 case "seeking":
-                    return IsSeeking(ctx) ? "yes" : "no";
+                    return _state.Seeking.IsSeeking(ctx) ? "yes" : "no";
                 case "pause":
                     return _state.Native.IsPaused(ctx) ? "yes" : "no";
                 default:
@@ -144,7 +138,7 @@ internal sealed class GstMpvApiAdapter : IMpvApi
             {
                 case GstLoadFileOperation load:
                     long loadStarted = Stopwatch.GetTimestamp();
-                    ClearSeeking();
+                    _state.Seeking.Clear();
                     int rc = _state.Native.Load(ctx, load.Path, load.StartSeconds ?? -1.0, _state.IsPaused, out string error);
                     // S4 計測: shim 呼び出し 1 回の実時間。shim 側 [tcs-gst] load.attempt の
                     // フェーズ内訳（preroll / first frame 等）と突き合わせて支配側を判定する。
@@ -160,18 +154,12 @@ internal sealed class GstMpvApiAdapter : IMpvApi
                     if (seek.Relative && _state.Native.TryGetTimePos(ctx, out double current))
                         seconds = current + seek.Seconds;
                     // 基準はシーク前の到着数。呼び出し中〜復帰後に届いた新位置フレームで解除する。
-                    ulong arrivals = ReadDeliveryArrivals(ctx);
+                    ulong arrivals = _state.Seeking.ReadArrivalBaseline(ctx);
                     if (_state.Native.Seek(ctx, Math.Max(seconds, 0.0)) != 0)
-                    {
-                        lock (_seekGate)
-                        {
-                            _seekPending = true;
-                            _seekArrivalBaseline = arrivals;
-                        }
-                    }
+                        _state.Seeking.MarkPending(arrivals);
                     return 0;
                 case GstStopOperation:
-                    ClearSeeking();
+                    _state.Seeking.Clear();
                     return _state.Native.Stop(ctx);
                 case GstFrameStepOperation:
                     _state.Native.StepFrame(ctx);
@@ -205,51 +193,5 @@ internal sealed class GstMpvApiAdapter : IMpvApi
     public void Free(IntPtr data)
     {
         // mpv_free 相当は使わない（文字列はマネージ側でコピーして返す）。
-    }
-
-    /// <summary>
-    /// シーク中（= シーク発行後、新位置のフレームがまだ届いていない）なら true。
-    /// 判定は破壊的でない配信統計の到着数のみを使う（配信イベントは消費しない）。
-    /// </summary>
-    private bool IsSeeking(IntPtr ctx)
-    {
-        lock (_seekGate)
-        {
-            if (!_seekPending) return false;
-        }
-        ulong arrivals = ReadDeliveryArrivals(ctx);
-        lock (_seekGate)
-        {
-            if (!_seekPending) return false;
-            if (arrivals > _seekArrivalBaseline)
-            {
-                _seekPending = false;
-                return false;
-            }
-            return true;
-        }
-    }
-
-    private void ClearSeeking()
-    {
-        lock (_seekGate)
-        {
-            _seekPending = false;
-        }
-    }
-
-    private ulong ReadDeliveryArrivals(IntPtr ctx)
-    {
-        try
-        {
-            return _state.Native.GetDeliveryStats(ctx, out GstNative.TcsDeliveryStats stats) == 0
-                ? stats.Arrivals
-                : 0;
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "GstMpvApiAdapter: 配信到着数の取得に失敗");
-            return 0;
-        }
     }
 }
