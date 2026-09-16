@@ -2,6 +2,13 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-16 20:40 更新（9 回目）**: **V3 の基準の時刻は sample 解析が正式**（利用者の決定。数字は変えない。1 フレーム定数は足さず `SyncOffset`）。
+> sample 基準の正式記録（LTC 4 種）を親が揃え、**V3 合格**を再確定（検証記録の末尾）。Q1（`ProjectRoundTrip` の既存失敗）はテスト側の修正で解消し統合（`ffc2dde`）。
+> **E2E 全件の既存失敗は 0 になった見込み**（段 2 後半の E2E 全件で確認する）。`w5:p3` は Q1 完了・次の指示待ち（コンテキスト 82%、次は `/new`）。
+>
+> **2026-09-16 20:00 更新（8 回目）**: 段 2 前半（移設 `10137dc`）を main `74276cf` へ統合（非E2E 2013）。`w5:p6` は段 2 後半（mpv の削除、`docs/prompts/2026-09-16-STAGE2-mpv-removal.md`。未接続中は明示的な NotReady＝案 1）。
+> `w5:p3` は Q1 の単独 3 回実行中。ローカルの旧オブジェクトは reflog expire + gc で削除済み（利用者の指示）。
+>
 > **2026-09-16 19:30 更新（7 回目）**: **履歴を書き換えた**（公開リポジトリからローカルパスを消すため。`git filter-repo`、全コミットの SHA が変更、
 > main と v0.1.0〜v0.3.0 を force push、shim の `build-debug` も履歴から除去）。**この文書や検証記録にある 19:00 以前の SHA は無効**（対応: main `0e87d81`、agent-a `b752e48`、agent-b `76417cf`）。
 > T2 は段 3 まで判定して main へ統合。`w5:p3` は Q1（`ProjectRoundTrip` の既存失敗の切り分け）、`w5:p6` は段 2 前半（移設）。
@@ -230,8 +237,8 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 | ペイン | 作業 | 状態 |
 | --- | --- | --- |
-| `w5:p3`（同期担当） | T2 は完了・統合済み。**次は Q1**（`docs/prompts/2026-09-16-Q1-project-roundtrip-failure.md`、`ProjectRoundTrip` の既存失敗の切り分け） | 指示待ち → 着手 |
-| `w5:p6`（除去担当） | D8 は完了・統合済み（`45534a9`）。**次は段 2 の移設部分**（`docs/prompts/2026-09-16-STAGE2-mpv-relocation.md`） | 指示待ち → 着手 |
+| `w5:p3`（同期担当） | T2・Q1 とも完了・統合済み（`c511d07`、`ffc2dde`） | 次の指示待ち。コンテキスト 82% → 次の作業前に `/new` |
+| `w5:p6`（除去担当） | 段 2 前半は統合済み（`74276cf`）。**段 2 後半: mpv の削除**（`docs/prompts/2026-09-16-STAGE2-mpv-removal.md`） | 着手（ビルドは親の合図後） |
 
 **実機は 1 つ。親が順番を管理する。** エージェントには「実機を使う前に一報」を毎回指示している。
 利用者にも、実機を使う間は PC に触らないよう都度お願いしている。
@@ -262,6 +269,12 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
   既定パスはリポジトリ相対（`8b0e600`）。E2E はアプリの stdout/stderr を run ディレクトリに保存する（`9b82070`）
 
 ### 今日踏んだ罠（繰り返さない）
+
+5. **shim の API を変えたコミットを取り込んだ作業ツリーは、shim を自分で再ビルドするまで E2E が壊れる**（D8 修正 2 の `tcs_player_ring_epoch`）。
+   症状はアプリログの `EntryPointNotFoundException: Unable to find an entry point named 'tcs_player_ring_epoch' in DLL 'tcs_gstreamer.dll'` と、
+   一時停止待ちなどのタイムアウト。他ツリーの DLL は流用せず `build-shim.ps1 -Config Debug` → `dotnet build` で bin を更新する
+6. **E2E を複数まとめて回すとき `TIMECODE_ACCURACY_REPORT_DIR` を共有すると 2 本目が即失敗し、アプリが孤児になって出力パイプを掴む**（親が 3 時間止まった原因）。
+   run ごとに別ディレクトリか、変数を設定しない。孤児は自分が起動した PID だけ止める
 
 1. **指標の符号**: `delta`（LTC − 再生位置）と `signedErrorMs`（絵 − LTC）は向きが逆。**足す**のが正しい。
    差で計算して「74ms のずれ」を作り、T5 の結論・max-buffers 掃引・T6 の設計をその上に積んでいた
