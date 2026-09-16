@@ -8,7 +8,7 @@ namespace TimecodeSyncPlayer.Gst;
 /// <summary>
 /// GStreamer バックエンド単一インスタンスの所有者。
 /// プレイヤーハンドル、再生ポーズ状態のミラー、フレーム更新コールバックの
-/// 配線を here に集約し、IMpvApi / IMpvRenderApi / ISpoutOutput の各アダプタから共有する。
+/// 配線を here に集約し、IPlaybackApi / IRenderUpdateSource / ISpoutOutput の各実装から共有する。
 /// </summary>
 internal sealed class GstBackendState : IDisposable
 {

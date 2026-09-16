@@ -15,6 +15,47 @@ public class GstPlaybackApiTests
     }
 
     [Fact]
+    public void Initialize_CreatesPlayerAndAppliesInitialPause()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1) };
+        var state = new GstBackendState(native);
+        var api = new GstPlaybackApi(state);
+
+        PlaybackResult result = api.Initialize();
+
+        result.Success.Should().BeTrue();
+        state.Player.Should().Be(new IntPtr(1));
+        state.IsPaused.Should().BeTrue();
+        native.SetPausedCalls.Should().Equal(true);
+    }
+
+    [Fact]
+    public void Initialize_WhenPlayerCreateFails_ReturnsErrorWithoutPause()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = IntPtr.Zero, CreateError = "gst missing" };
+        var state = new GstBackendState(native);
+        var api = new GstPlaybackApi(state);
+
+        PlaybackResult result = api.Initialize();
+
+        result.Success.Should().BeFalse();
+        result.Error.Should().Be("gst missing");
+        native.SetPausedCalls.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Initialize_WhenPauseFails_StillSucceedsWithPauseMirror()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(1), SetPausedResult = -1 };
+        var state = new GstBackendState(native);
+        var api = new GstPlaybackApi(state);
+
+        api.Initialize().Success.Should().BeTrue();
+
+        state.IsPaused.Should().BeTrue("pause=yes は開始状態のミラーとして残す");
+    }
+
+    [Fact]
     public void Load_PassesStartAndPaused_AndMirrorsPause()
     {
         var (state, api, native) = Create();

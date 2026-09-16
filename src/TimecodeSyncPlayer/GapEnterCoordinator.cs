@@ -116,7 +116,7 @@ internal sealed class GapEnterCoordinator
         {
             ApplyGapPause();
 
-            (int durRc, double duration) = _effects.GetMpvDuration();
+            (int durRc, double duration) = _effects.GetPlayerDuration();
             if (durRc == 0 && duration > 0)
             {
                 double currentFps = _effects.GetFps();
@@ -153,7 +153,7 @@ internal sealed class GapEnterCoordinator
         try
         {
             _effects.ResetEndAdvanceTriggered();
-            if (!_effects.IsMpvReady())
+            if (!_effects.IsPlayerReady())
                 return;
 
             _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
@@ -231,7 +231,7 @@ internal sealed class GapEnterCoordinator
 
 /// <summary>
 /// <see cref="GapEnterCoordinator"/> が使用する副作用デリゲート群。
-/// MainWindow のフィールド・メソッド（mpv ハンドルを閉じ込めた <see cref="GapPlaybackCommandExecutor"/> 呼び出し・
+/// MainWindow のフィールド・メソッド（player を閉じ込めた <see cref="GapPlaybackCommandExecutor"/> 呼び出し・
 /// フリーズ画像の世代クリア・状態フィールド更新）をフェイク可能な形で注入する。
 /// _endAdvanceTriggered / _loadedTrackId / _duration / _fps の更新は現行タイミングを保つため
 /// デリゲート経由で行う。GapFreezeHandler の状態遷移は具象クラスへ直接委譲する。
@@ -242,8 +242,8 @@ internal sealed record GapEnterEffects(
     Action<bool> ApplyPauseState,
     Action ClearGapFreezeFrame,
     Func<double, bool> SeekTo,
-    Func<(int rc, double duration)> GetMpvDuration,
-    Func<bool> IsMpvReady,
+    Func<(int rc, double duration)> GetPlayerDuration,
+    Func<bool> IsPlayerReady,
     Func<string, double, GapLoadCommandResult> LoadPausedAt,
     Action ResetPlayerStateForNewTrack,
     Func<Guid?> GetLoadedTrackId,

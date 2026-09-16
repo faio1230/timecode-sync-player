@@ -1,16 +1,16 @@
+using TimecodeSyncPlayer.Contracts;
+
 namespace TimecodeSyncPlayer;
 
 internal enum WindowLoadedSessionInitializationError
 {
-    MpvCreateFailed,
-    MpvInitializeFailed,
+    PlaybackInitializeFailed,
     RenderContextCreateFailed
 }
 
 internal sealed class WindowLoadedSessionInitializer
 {
-    private readonly Func<MpvSessionInitializationResult> _initializeMpvSession;
-    private readonly Action<IntPtr> _assignMpv;
+    private readonly Func<PlaybackResult> _initializePlayback;
     private readonly Action _applyAudioSettings;
     private readonly Func<bool> _createRenderContext;
     private readonly Func<SpoutStartupState> _initializeSpout;
@@ -20,8 +20,7 @@ internal sealed class WindowLoadedSessionInitializer
     private readonly Action<WindowLoadedSessionInitializationError> _showError;
 
     public WindowLoadedSessionInitializer(
-        Func<MpvSessionInitializationResult> initializeMpvSession,
-        Action<IntPtr> assignMpv,
+        Func<PlaybackResult> initializePlayback,
         Action applyAudioSettings,
         Func<bool> createRenderContext,
         Func<SpoutStartupState> initializeSpout,
@@ -30,8 +29,7 @@ internal sealed class WindowLoadedSessionInitializer
         Action initializeTimeline,
         Action<WindowLoadedSessionInitializationError> showError)
     {
-        _initializeMpvSession = initializeMpvSession;
-        _assignMpv = assignMpv;
+        _initializePlayback = initializePlayback;
         _applyAudioSettings = applyAudioSettings;
         _createRenderContext = createRenderContext;
         _initializeSpout = initializeSpout;
@@ -43,18 +41,10 @@ internal sealed class WindowLoadedSessionInitializer
 
     public bool Initialize()
     {
-        MpvSessionInitializationResult sessionResult = _initializeMpvSession();
-        _assignMpv(sessionResult.Mpv);
-
-        if (sessionResult.Failure == MpvSessionInitializationFailure.CreateFailed)
+        PlaybackResult session = _initializePlayback();
+        if (!session.Success)
         {
-            _showError(WindowLoadedSessionInitializationError.MpvCreateFailed);
-            return false;
-        }
-
-        if (sessionResult.Failure == MpvSessionInitializationFailure.InitializeFailed)
-        {
-            _showError(WindowLoadedSessionInitializationError.MpvInitializeFailed);
+            _showError(WindowLoadedSessionInitializationError.PlaybackInitializeFailed);
             return false;
         }
 

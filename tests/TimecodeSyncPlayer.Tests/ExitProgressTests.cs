@@ -9,7 +9,7 @@ public class ExitProgressTests
     {
         MainWindowResourceDisposer.StepNames.Should().Equal(
             "新規受付停止",
-            "mpv／GStreamer 停止",
+            "GStreamer 停止",
             "出力停止（Spout 完了待ち）",
             "全画面終了",
             "資源解放");
@@ -59,7 +59,7 @@ public class ExitProgressTests
     private static MainWindowResourceDisposer CreateDisposer() => new(
         disposeTimer: () => { },
         disposeRenderContext: () => { },
-        disposeMpv: () => { },
+        disposePlayer: () => { },
         disposeLtc: () => { },
         disposeSpout: () => { },
         disposeTimeline: () => { },

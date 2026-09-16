@@ -52,7 +52,7 @@ public class SyncScenarioTests
         var harness = CreateTwoTrackHarness();
         harness.ManualPlay();
         harness.Operations.Clear();
-        harness.MpvPropertyWrites.Clear();
+        harness.PlaybackPropertyWrites.Clear();
 
         harness.ReloadProject();
 
@@ -61,8 +61,8 @@ public class SyncScenarioTests
             "project-load",
             "stop-playback",
             "loadfile-paused");
-        harness.MpvPropertyWrites.Should().NotContain(("pause", "no"));
-        harness.MpvPropertyWrites.Should().Contain(("pause", "yes"));
+        harness.PlaybackPropertyWrites.Should().NotContain(("pause", "no"));
+        harness.PlaybackPropertyWrites.Should().Contain(("pause", "yes"));
     }
 
     [Theory]
@@ -74,14 +74,14 @@ public class SyncScenarioTests
         harness.ChangeMode(mode);
         harness.SetSyncEnabled(false);
         harness.ReloadProject();
-        harness.MpvPropertyWrites.Clear();
+        harness.PlaybackPropertyWrites.Clear();
 
         harness.SetSyncEnabled(true);
         harness.SupplyLtc(1);
         harness.SupplyLtc(1.04);
 
         harness.IsPaused.Should().BeFalse();
-        harness.MpvPropertyWrites.Count(write => write == ("pause", "no")).Should().Be(1,
+        harness.PlaybackPropertyWrites.Count(write => write == ("pause", "no")).Should().Be(1,
             "the project-restore pause is released and consumed only once");
     }
 
@@ -96,13 +96,13 @@ public class SyncScenarioTests
         harness.ReloadProject();
         harness.ManualPlay();
         harness.ManualPause();
-        harness.MpvPropertyWrites.Clear();
+        harness.PlaybackPropertyWrites.Clear();
 
         harness.SetSyncEnabled(true);
         harness.SupplyLtc(1);
 
         harness.IsPaused.Should().BeTrue();
-        harness.MpvPropertyWrites.Should().NotContain(("pause", "no"));
+        harness.PlaybackPropertyWrites.Should().NotContain(("pause", "no"));
     }
 
     [Theory]
@@ -114,13 +114,13 @@ public class SyncScenarioTests
         harness.ChangeMode(mode);
         harness.SetSyncEnabled(false);
         harness.ReloadProject();
-        harness.MpvPropertyWrites.Clear();
+        harness.PlaybackPropertyWrites.Clear();
 
         harness.SupplyLtc(1);
         harness.Tick100Milliseconds(5);
 
         harness.IsPaused.Should().BeTrue();
-        harness.MpvPropertyWrites.Should().NotContain(("pause", "no"));
+        harness.PlaybackPropertyWrites.Should().NotContain(("pause", "no"));
     }
 
     public static TheoryData<int> PauseOwnershipCases => new()

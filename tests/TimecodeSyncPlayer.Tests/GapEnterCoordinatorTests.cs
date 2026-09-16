@@ -35,8 +35,8 @@ public class GapEnterCoordinatorTests
 
         public bool EndAdvanceTriggered = true;   // false へ落とされたか観測用（初期 true）
         public bool SeekResult = true;
-        public (int rc, double duration) MpvDuration = (0, 120.0);
-        public bool MpvReady = true;
+        public (int rc, double duration) PlayerDuration = (0, 120.0);
+        public bool PlayerReady = true;
         public GapLoadCommandResult LoadResult = new(PlaybackResult.Ok, PlaybackResult.Ok);
         public Guid? LoadedTrackId;
         public double Duration = 10.0;
@@ -49,8 +49,8 @@ public class GapEnterCoordinatorTests
             ApplyPauseState: paused => Calls.Add($"ApplyPauseState({paused})"),
             ClearGapFreezeFrame: () => Calls.Add("ClearGapFreezeFrame"),
             SeekTo: target => { Calls.Add("SeekTo"); SeekTargets.Add(target); return SeekResult; },
-            GetMpvDuration: () => { Calls.Add("GetMpvDuration"); return MpvDuration; },
-            IsMpvReady: () => { Calls.Add("IsMpvReady"); return MpvReady; },
+            GetPlayerDuration: () => { Calls.Add("GetPlayerDuration"); return PlayerDuration; },
+            IsPlayerReady: () => { Calls.Add("IsPlayerReady"); return PlayerReady; },
             LoadPausedAt: (path, target) => { Calls.Add("LoadPausedAt"); LoadArgs.Add((path, target)); return LoadResult; },
             ResetPlayerStateForNewTrack: () => Calls.Add("ResetPlayerStateForNewTrack"),
             GetLoadedTrackId: () => LoadedTrackId,
@@ -224,7 +224,7 @@ public class GapEnterCoordinatorTests
         var (coord, handler, rec) = Build(r =>
         {
             r.LoadedTrackId = loadedId;
-            r.MpvDuration = (0, 100.0);
+            r.PlayerDuration = (0, 100.0);
             r.Fps = 25.0;
             r.SeekResult = true;
         });
@@ -243,7 +243,7 @@ public class GapEnterCoordinatorTests
     [Fact]
     public void EnterNoTracksFreeze_DurationUnavailable_ForcesBlackState()
     {
-        var (coord, handler, rec) = Build(r => r.MpvDuration = (rc: 1, duration: 0.0));
+        var (coord, handler, rec) = Build(r => r.PlayerDuration = (rc: 1, duration: 0.0));
 
         coord.EnterNoTracksFreeze();
 
@@ -254,7 +254,7 @@ public class GapEnterCoordinatorTests
     [Fact]
     public void EnterNoTracksFreeze_SeekFailure_ForcesBlackState()
     {
-        var (coord, handler, rec) = Build(r => { r.MpvDuration = (0, 100.0); r.SeekResult = false; });
+        var (coord, handler, rec) = Build(r => { r.PlayerDuration = (0, 100.0); r.SeekResult = false; });
 
         coord.EnterNoTracksFreeze();
 
@@ -265,14 +265,14 @@ public class GapEnterCoordinatorTests
     // ---- LoadPreviousTrackFinalFrameForGapFreeze ----
 
     [Fact]
-    public void LoadPreviousTrack_MpvNotReady_ReturnsEarly_AfterResettingEndAdvance()
+    public void LoadPreviousTrack_PlayerNotReady_ReturnsEarly_AfterResettingEndAdvance()
     {
         var prev = CreateTrack(Guid.NewGuid());
-        var (coord, handler, rec) = Build(r => r.MpvReady = false);
+        var (coord, handler, rec) = Build(r => r.PlayerReady = false);
 
         coord.LoadPreviousTrackFinalFrameForGapFreeze(prev, target: 49.9, duration: 50, fps: 30);
 
-        rec.Calls.Should().Equal("ResetEndAdvanceTriggered", "IsMpvReady");
+        rec.Calls.Should().Equal("ResetEndAdvanceTriggered", "IsPlayerReady");
         rec.EndAdvanceTriggered.Should().BeFalse();
         rec.SetLoadedTrackIds.Should().BeEmpty();
         handler.CurrentState.Should().Be(GapState.Inactive);
@@ -332,14 +332,14 @@ public class GapEnterCoordinatorTests
         {
             r.GapBehavior = GapBehavior.Freeze;
             r.LoadedTrackId = loadedId;
-            r.MpvDuration = (0, 100.0);
+            r.PlayerDuration = (0, 100.0);
             r.SeekResult = true;
         });
 
         coord.HandleNoTracks();
 
         // NoTracks freeze パスを通っている
-        rec.Calls.Should().Contain("GetMpvDuration");
+        rec.Calls.Should().Contain("GetPlayerDuration");
         handler.CurrentState.Should().Be(GapState.EnteringFreeze);
         rec.Calls.Last().Should().Be("UpdateCurrentTrackLabel");
     }

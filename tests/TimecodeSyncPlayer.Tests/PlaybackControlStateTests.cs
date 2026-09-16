@@ -5,20 +5,20 @@ namespace TimecodeSyncPlayer.Tests;
 public class PlaybackControlStateTests
 {
     [Fact]
-    public void TogglePlayPause_InvertsPausedStateAndReturnsMpvValueAndIcon()
+    public void TogglePlayPause_InvertsPausedStateAndReturnsPauseValueAndIcon()
     {
         var state = new PlaybackControlState();
 
         PlaybackPauseChange change = state.TogglePlayPause();
 
         change.IsPaused.Should().BeFalse();
-        change.MpvPauseValue.Should().Be("no");
+        change.PauseValue.Should().Be("no");
         change.PlayPauseIcon.Should().Be("⏸");
 
         change = state.TogglePlayPause();
 
         change.IsPaused.Should().BeTrue();
-        change.MpvPauseValue.Should().Be("yes");
+        change.PauseValue.Should().Be("yes");
         change.PlayPauseIcon.Should().Be("▶");
     }
 
@@ -30,7 +30,7 @@ public class PlaybackControlStateTests
         PlaybackPauseChange change = state.SetPaused(false);
 
         state.IsPaused.Should().BeFalse();
-        change.MpvPauseValue.Should().Be("no");
+        change.PauseValue.Should().Be("no");
         change.PlayPauseIcon.Should().Be("⏸");
     }
 

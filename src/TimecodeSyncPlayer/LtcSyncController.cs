@@ -4,7 +4,7 @@ using Serilog;
 namespace TimecodeSyncPlayer;
 
 internal readonly record struct LtcSyncContext(
-    bool IsMpvReady,
+    bool IsPlayerReady,
     bool SyncEnabled,
     SyncMode Mode,
     bool IsSeeking,
@@ -515,7 +515,7 @@ internal sealed class LtcSyncController
 
     private void ApplySignalLossAction(LtcSignalLossAction action)
     {
-        if (action == LtcSignalLossAction.None || !_effects.GetContext().IsMpvReady)
+        if (action == LtcSignalLossAction.None || !_effects.GetContext().IsPlayerReady)
             return;
         bool pause = action == LtcSignalLossAction.Pause;
         _effects.SetSignalLossPaused(pause);
@@ -530,7 +530,7 @@ internal sealed class LtcSyncController
     {
         _lastContinueFrame = null;
         LtcSyncContext state = _effects.GetContext();
-        if (!state.IsMpvReady || !state.IsMonitoring || !state.SyncEnabled ||
+        if (!state.IsPlayerReady || !state.IsMonitoring || !state.SyncEnabled ||
             state.IsSeeking || _signalLoss.ShouldSuppressSync)
             return SyncRequestResult.Complete;
         if (state.Mode != SyncMode.Continue)
@@ -601,7 +601,7 @@ internal sealed class LtcSyncController
             return;
         GapExitAction exit = _gap.DecideGapExit();
         _gap.ResetAll();
-        if (exit.ShouldResumePlayback && !_signalLoss.IsPauseOwned && state.IsMpvReady)
+        if (exit.ShouldResumePlayback && !_signalLoss.IsPauseOwned && state.IsPlayerReady)
             _effects.ResumeGapPause();
         _effects.ClearGapFreezeFrame();
         _effects.RefreshCurrentVideoFrame();

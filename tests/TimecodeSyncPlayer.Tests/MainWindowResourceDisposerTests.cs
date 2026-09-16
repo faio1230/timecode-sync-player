@@ -10,7 +10,7 @@ public class MainWindowResourceDisposerTests
         var calls = new List<string>();
         var failure = new InvalidOperationException("fullscreen");
         var disposer = new MainWindowResourceDisposer(
-            () => calls.Add("timer"), () => calls.Add("render"), () => calls.Add("mpv"),
+            () => calls.Add("timer"), () => calls.Add("render"), () => calls.Add("player"),
             () => calls.Add("ltc"), () => calls.Add("spout"), () => calls.Add("timeline"),
             () => calls.Add("buffer"),
             stopRender: () => calls.Add("stop"),
@@ -19,7 +19,7 @@ public class MainWindowResourceDisposerTests
         Assert.Throws<AggregateException>(disposer.DisposeAll).InnerExceptions.Should().Equal(failure);
         disposer.DisposeAll();
 
-        calls.Should().Equal("stop", "fullscreen", "timer", "render", "mpv", "ltc", "spout", "timeline", "buffer");
+        calls.Should().Equal("stop", "fullscreen", "timer", "render", "player", "ltc", "spout", "timeline", "buffer");
     }
 
     [Fact]
@@ -28,7 +28,7 @@ public class MainWindowResourceDisposerTests
         var calls = new List<string>();
         var failure = new InvalidOperationException("stop");
         var disposer = new MainWindowResourceDisposer(
-            () => calls.Add("timer"), () => calls.Add("render"), () => calls.Add("mpv"),
+            () => calls.Add("timer"), () => calls.Add("render"), () => calls.Add("player"),
             () => calls.Add("ltc"), () => calls.Add("spout"), () => calls.Add("timeline"),
             () => calls.Add("buffer"),
             stopRender: () => { calls.Add("stop"); throw failure; },
@@ -44,12 +44,12 @@ public class MainWindowResourceDisposerTests
     {
         var calls = new List<string>();
         var timerFailure = new InvalidOperationException("timer");
-        var mpvFailure = new InvalidOperationException("mpv");
+        var playerFailure = new InvalidOperationException("player");
         var ltcFailure = new InvalidOperationException("ltc");
         var disposer = new MainWindowResourceDisposer(
             () => { calls.Add("timer"); throw timerFailure; },
             () => calls.Add("render"),
-            () => { calls.Add("mpv"); throw mpvFailure; },
+            () => { calls.Add("player"); throw playerFailure; },
             () => { calls.Add("ltc"); throw ltcFailure; },
             () => calls.Add("spout"),
             () => calls.Add("timeline"),
@@ -57,19 +57,19 @@ public class MainWindowResourceDisposerTests
 
         var error = Assert.Throws<AggregateException>(disposer.DisposeAll);
 
-        calls.Should().Equal("timer", "render", "mpv", "ltc", "spout", "timeline", "buffer");
-        error.InnerExceptions.Should().Equal(timerFailure, mpvFailure, ltcFailure);
+        calls.Should().Equal("timer", "render", "player", "ltc", "spout", "timeline", "buffer");
+        error.InnerExceptions.Should().Equal(timerFailure, playerFailure, ltcFailure);
     }
 
     [Fact]
-    public void DisposeAll_ContextFailurePreservesMpvAndBuffersButReleasesIndependentResources()
+    public void DisposeAll_ContextFailurePreservesPlayerAndBuffersButReleasesIndependentResources()
     {
         var calls = new List<string>();
         var contextFailure = new InvalidOperationException("render");
         var disposer = new MainWindowResourceDisposer(
             () => calls.Add("timer"),
             () => { calls.Add("render"); throw contextFailure; },
-            () => calls.Add("mpv"),
+            () => calls.Add("player"),
             () => calls.Add("ltc"),
             () => calls.Add("spout"),
             () => calls.Add("timeline"),
@@ -88,7 +88,7 @@ public class MainWindowResourceDisposerTests
         var disposer = new MainWindowResourceDisposer(
             disposeTimer: () => calls.Add("timer"),
             disposeRenderContext: () => calls.Add("render"),
-            disposeMpv: () => calls.Add("mpv"),
+            disposePlayer: () => calls.Add("player"),
             disposeLtc: () => calls.Add("ltc"),
             disposeSpout: () => calls.Add("spout"),
             disposeTimeline: () => calls.Add("timeline"),
@@ -96,6 +96,6 @@ public class MainWindowResourceDisposerTests
 
         disposer.DisposeAll();
 
-        calls.Should().Equal("timer", "render", "mpv", "ltc", "spout", "timeline", "buffer");
+        calls.Should().Equal("timer", "render", "player", "ltc", "spout", "timeline", "buffer");
     }
 }

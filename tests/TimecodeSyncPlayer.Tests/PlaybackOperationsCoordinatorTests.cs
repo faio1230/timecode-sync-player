@@ -12,14 +12,14 @@ public class PlaybackOperationsCoordinatorTests
         public readonly List<double> Seeks = new();
         public readonly List<bool> SetPausedCalls = new();
         public int StopCalls;
-        public bool IsMpvReady = true;
+        public bool IsPlayerReady = true;
         public bool HasTimelinePanel = true;
         public PlaybackResult LoadResult = PlaybackResult.Ok;
         public PlaybackResult SeekResult = PlaybackResult.Ok;
         public Exception? SeekException;
 
         public PlaybackOperationsEffects Build() => new(
-            IsMpvReady: () => { Calls.Add("IsMpvReady"); return IsMpvReady; },
+            IsPlayerReady: () => { Calls.Add("IsPlayerReady"); return IsPlayerReady; },
             Load: (path, start, paused) =>
             {
                 Calls.Add($"Load({path},{start?.ToString() ?? "null"},{paused})");
@@ -67,7 +67,7 @@ public class PlaybackOperationsCoordinatorTests
         recorder.Loads.Should().ContainSingle()
             .Which.Should().Be(("C:\\media\\clip.mp4", null, false));
         recorder.Calls.Should().Equal(
-            "IsMpvReady",
+            "IsPlayerReady",
             "Load(C:\\media\\clip.mp4,null,False)",
             "SetPaused(False)",
             "SetPlayPauseIcon(⏸)",
@@ -141,14 +141,14 @@ public class PlaybackOperationsCoordinatorTests
     }
 
     [Fact]
-    public void LoadFile_WhenMpvIsNotReadyReturnsFalseWithoutOtherEffects()
+    public void LoadFile_WhenPlayerIsNotReadyReturnsFalseWithoutOtherEffects()
     {
-        var recorder = new Recorder { IsMpvReady = false };
+        var recorder = new Recorder { IsPlayerReady = false };
         var coordinator = Create(recorder);
 
         coordinator.LoadFile("clip.mp4").Should().BeFalse();
 
-        recorder.Calls.Should().Equal("IsMpvReady");
+        recorder.Calls.Should().Equal("IsPlayerReady");
     }
 
     [Fact]
@@ -160,7 +160,7 @@ public class PlaybackOperationsCoordinatorTests
         coordinator.SeekTo(12.3456).Should().BeTrue();
 
         recorder.Seeks.Should().Equal(12.3456);
-        recorder.Calls.Should().NotContain("IsMpvReady");
+        recorder.Calls.Should().NotContain("IsPlayerReady");
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public class PlaybackOperationsCoordinatorTests
 
         recorder.StopCalls.Should().Be(1);
         recorder.Calls.Should().Equal(
-            "IsMpvReady",
+            "IsPlayerReady",
             "Stop",
             "SetPaused(True)",
             "SetPlayPauseIcon(▶)",
@@ -232,12 +232,12 @@ public class PlaybackOperationsCoordinatorTests
     }
 
     [Fact]
-    public void StopPlayback_WhenMpvIsNotReadyDoesNothingFurther()
+    public void StopPlayback_WhenPlayerIsNotReadyDoesNothingFurther()
     {
-        var recorder = new Recorder { IsMpvReady = false };
+        var recorder = new Recorder { IsPlayerReady = false };
 
         Create(recorder).StopPlayback();
 
-        recorder.Calls.Should().Equal("IsMpvReady");
+        recorder.Calls.Should().Equal("IsPlayerReady");
     }
 }

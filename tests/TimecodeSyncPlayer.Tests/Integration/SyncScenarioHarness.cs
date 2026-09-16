@@ -3,7 +3,7 @@ using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.Tests.Integration;
 
-internal sealed record ScenarioMpvOperation(string Name, double? Value = null, string? Text = null);
+internal sealed record ScenarioPlaybackOperation(string Name, double? Value = null, string? Text = null);
 internal sealed record ScenarioLtcDisplayState(
     string FormatText,
     string TimecodeForeground,
@@ -43,8 +43,8 @@ internal sealed class SyncScenarioHarness
         _audioControlCoordinator = new AudioControlCoordinator(
             new AudioControlState(isMuted: false, volume: 100),
             new AudioControlEffects(
-                SetVolume: volume => RecordMpvProperty("volume", volume.ToString("0.###", CultureInfo.InvariantCulture)),
-                SetMute: mute => RecordMpvProperty("mute", mute ? "yes" : "no"),
+                SetVolume: volume => RecordPlaybackProperty("volume", volume.ToString("0.###", CultureInfo.InvariantCulture)),
+                SetMute: mute => RecordPlaybackProperty("mute", mute ? "yes" : "no"),
                 ApplyUi: _ => { },
                 Persist: _ => { }));
         _continueCoordinator = new ContinueOnTrackCoordinator(
@@ -60,10 +60,10 @@ internal sealed class SyncScenarioHarness
                     return action;
                 },
                 SeekTo: Seek,
-                ResumeMpvPause: () =>
+                ResumePlayback: () =>
                 {
-                    RecordMpvProperty("pause", "no");
-                    Operations.Add(new("mpv-resume", Text: "no"));
+                    RecordPlaybackProperty("pause", "no");
+                    Operations.Add(new("playback-resume", Text: "no"));
                 },
                 ApplyPauseState: SetPaused,
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
@@ -89,14 +89,14 @@ internal sealed class SyncScenarioHarness
                 IsPlaybackPaused: () => IsPaused,
                 PauseForGap: () =>
                 {
-                    RecordMpvProperty("pause", "yes");
+                    RecordPlaybackProperty("pause", "yes");
                     Operations.Add(new("pause-for-gap"));
                 },
                 ApplyPauseState: SetPaused,
                 ClearGapFreezeFrame: () => Operations.Add(new("clear-freeze")),
                 SeekTo: Seek,
-                GetMpvDuration: () => (0, _durationSeconds),
-                IsMpvReady: () => true,
+                GetPlayerDuration: () => (0, _durationSeconds),
+                IsPlayerReady: () => true,
                 LoadPausedAt: (path, target) =>
                 {
                     Operations.Add(new("load-paused", target, path));
@@ -141,7 +141,7 @@ internal sealed class SyncScenarioHarness
                 SetSignalLossPaused: paused =>
                 {
                     Operations.Add(new(paused ? "signal-loss-pause" : "signal-loss-resume"));
-                    RecordMpvProperty("pause", paused ? "yes" : "no");
+                    RecordPlaybackProperty("pause", paused ? "yes" : "no");
                     SetPaused(paused);
                 },
                 ResumeProjectRestorePause: ResumeProjectRestorePauseForSyncIfNeeded,
@@ -154,7 +154,7 @@ internal sealed class SyncScenarioHarness
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
                 ResumeGapPause: () =>
                 {
-                    RecordMpvProperty("pause", "no");
+                    RecordPlaybackProperty("pause", "no");
                     SetPaused(false);
                 },
                 GetSyncOffsetMilliseconds: () => SyncOffsetMilliseconds,
@@ -183,12 +183,12 @@ internal sealed class SyncScenarioHarness
     public string RealTimeText { get; private set; } = "-.--- s";
 
     public PlaylistState Playlist { get; } = new();
-    public List<ScenarioMpvOperation> Operations { get; } = [];
+    public List<ScenarioPlaybackOperation> Operations { get; } = [];
     public List<ScenarioLtcDisplayState> DisplayStates { get; } = [];
     public List<string> CurrentTrackLabels { get; } = [];
-    public List<(string Name, string Value)> MpvPropertyWrites { get; } = [];
+    public List<(string Name, string Value)> PlaybackPropertyWrites { get; } = [];
     public IReadOnlyList<(string Name, string Value)> AudioPropertyWrites =>
-        MpvPropertyWrites.Where(write => write.Name is "mute" or "volume").ToArray();
+        PlaybackPropertyWrites.Where(write => write.Name is "mute" or "volume").ToArray();
     public AudioControlSnapshot AudioState => _audioControlCoordinator.State;
     public SyncMode Mode { get; private set; } = SyncMode.Continue;
     public bool SyncEnabled { get; private set; } = true;
@@ -291,14 +291,14 @@ internal sealed class SyncScenarioHarness
     public void ManualPlay()
     {
         _projectRestorePauseState.Clear();
-        RecordMpvProperty("pause", "no");
+        RecordPlaybackProperty("pause", "no");
         SetPaused(false);
     }
 
     public void ManualPause()
     {
         _projectRestorePauseState.Clear();
-        RecordMpvProperty("pause", "yes");
+        RecordPlaybackProperty("pause", "yes");
         SetPaused(true);
     }
     public void ToggleMute() => _audioControlCoordinator.ToggleMute();
@@ -310,7 +310,7 @@ internal sealed class SyncScenarioHarness
     public void StopPlayback()
     {
         Operations.Add(new("stop-playback"));
-        RecordMpvProperty("pause", "yes");
+        RecordPlaybackProperty("pause", "yes");
         SetPaused(true);
     }
 
@@ -409,7 +409,7 @@ internal sealed class SyncScenarioHarness
 
         Operations.Add(new("loadfile-paused", current.MediaIn.TotalSeconds, current.FilePath));
         _loadedTrackId = current.Id;
-        RecordMpvProperty("pause", "yes");
+        RecordPlaybackProperty("pause", "yes");
         SetPaused(true);
         _projectRestorePauseState.MarkPending();
         _playbackSeconds = current.MediaIn.TotalSeconds;
@@ -420,7 +420,7 @@ internal sealed class SyncScenarioHarness
         if (!_projectRestorePauseState.TryConsume())
             return;
 
-        RecordMpvProperty("pause", "no");
+        RecordPlaybackProperty("pause", "no");
         SetPaused(false);
         Operations.Add(new("project-restore-resume"));
     }
@@ -448,8 +448,8 @@ internal sealed class SyncScenarioHarness
         Operations.Add(new("pause", Text: paused ? "yes" : "no"));
     }
 
-    private void RecordMpvProperty(string name, string value) =>
-        MpvPropertyWrites.Add((name, value));
+    private void RecordPlaybackProperty(string name, string value) =>
+        PlaybackPropertyWrites.Add((name, value));
 
     private void RecordLtcDisplayState(LtcDisplayState display, string pauseReason)
     {

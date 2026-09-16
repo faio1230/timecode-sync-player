@@ -27,7 +27,7 @@ internal sealed class PlaybackOperationsCoordinator
 
     public void StopPlayback()
     {
-        if (!_effects.IsMpvReady()) return;
+        if (!_effects.IsPlayerReady()) return;
 
         _effects.Stop();
         _effects.SetPaused(true);
@@ -45,7 +45,7 @@ internal sealed class PlaybackOperationsCoordinator
 
     public bool LoadFile(string path, double? startPosition = null)
     {
-        if (!_effects.IsMpvReady()) return false;
+        if (!_effects.IsPlayerReady()) return false;
         bool keepPaused = startPosition.HasValue && _playbackControl.IsPaused;
 
         PlaybackResult load;
@@ -80,7 +80,7 @@ internal sealed class PlaybackOperationsCoordinator
 
     public bool LoadFilePaused(string path)
     {
-        if (!_effects.IsMpvReady()) return false;
+        if (!_effects.IsPlayerReady()) return false;
 
         PlaybackResult load = TracedLoad(() => _effects.Load(path, null, true));
         PlaybackResult pause = _effects.SetPaused(true);
@@ -98,20 +98,17 @@ internal sealed class PlaybackOperationsCoordinator
         return true;
     }
 
-    public bool SeekTo(double seconds, bool suppressOsd = true)
+    public bool SeekTo(double seconds)
     {
         // U1 計測: この呼び出しは UI スレッドから同期で shim に入る。
         long started = Stopwatch.GetTimestamp();
         try
         {
-            // suppressOsd は GStreamer では意味を持たない（OSD 無し）。トレースの互換のため
-            // 従来と同じ detail を残す。
             bool trace = OutputTrace.Current.IsEnabled;
             if (trace)
             {
                 OutputTrace.Current.Record(new("seek.issue", "PLAYER", Stopwatch.GetTimestamp(),
-                    Value: (long)Math.Round(seconds * 1_000_000.0),
-                    Detail: suppressOsd ? "no-osd" : "osd"));
+                    Value: (long)Math.Round(seconds * 1_000_000.0)));
             }
             PlaybackResult seek;
             try
@@ -129,7 +126,7 @@ internal sealed class PlaybackOperationsCoordinator
                 return false;
             }
 
-            // keep-open may pause at EOF without changing the user's play intent.
+            // EOF の一時停止がユーザーの再生意思と異なる場合があるため、意図した状態を明示し直す。
             _effects.SetPaused(_playbackControl.IsPaused);
             Log.Debug("SeekTo target={Target:F3} ok={Ok} totalMs={TotalMs:F1}",
                 seconds, seek.Success, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
@@ -173,7 +170,7 @@ internal sealed class PlaybackOperationsCoordinator
 }
 
 internal sealed record PlaybackOperationsEffects(
-    Func<bool> IsMpvReady,
+    Func<bool> IsPlayerReady,
     Func<string, double?, bool, PlaybackResult> Load,
     Func<double, PlaybackResult> Seek,
     Func<PlaybackResult> Stop,

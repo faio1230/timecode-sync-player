@@ -5,7 +5,7 @@ namespace TimecodeSyncPlayer.Gst;
 /// <summary>
 /// 「シーク発行後、新位置のフレームが 1 枚届くまで」の判定。
 /// 基準はシーク前の配信到着数（on_new_sample 到着数）で、配信イベントは消費しない。
-/// 文字列経路と型付き経路が同じ状態を見るよう GstBackendState が 1 つ所有する。
+/// GstPlaybackApi と Gap 経路が同じ状態を見るよう GstBackendState が 1 つ所有する。
 /// </summary>
 internal sealed class GstSeekingTracker
 {
