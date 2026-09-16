@@ -7,13 +7,20 @@ using System.Text.Json;
 namespace TimecodeSyncPlayer.Tests.Helpers;
 
 internal sealed record AccuracyClip(int Id, string Name, int FpsNumerator, int FpsDenominator,
-    int FrameCount, double TimelineOffset, double MediaIn, double MediaOut, string Path);
+    int FrameCount, double TimelineOffset, double MediaIn, double MediaOut, string Path,
+    int KeyframeIntervalFrames, double KeyframeIntervalSeconds);
 
 internal sealed record AccuracyFixture(string ProjectPath, IReadOnlyList<AccuracyClip> Clips);
 
 /// <summary>Generates a fresh, independently decode-verified 1080p fixture in the report directory.</summary>
 internal static class AccuracyVideoFixture
 {
+    /// <summary>
+    /// T11: キーフレーム間隔（フレーム数）の上書き。未設定なら 1 秒ぶん。
+    /// 記録用に長い間隔（例 250）でも生成できるようにする。
+    /// </summary>
+    public const string GopOverrideEnvironmentVariable = "TCS_V3_GOP";
+
     public static async Task<AccuracyFixture> CreateAsync(
         string reportDirectory,
         Action<string>? progress = null,
@@ -25,9 +32,11 @@ internal static class AccuracyVideoFixture
         var playlist = new PlaylistState();
         foreach (var spec in new[] { (Id: 1, Num: 24, Den: 1), (Id: 2, Num: 30000, Den: 1001), (Id: 3, Num: 60, Den: 1) })
         {
+            int keyframeIntervalFrames = ResolveKeyframeIntervalFrames(spec.Num, spec.Den);
             var clip = new AccuracyClip(spec.Id, $"accuracy-{spec.Id}-{spec.Num}-{spec.Den}", spec.Num, spec.Den,
                 (int)Math.Ceiling(12.0 * spec.Num / spec.Den), (spec.Id - 1) * 12, 0, 10,
-                Path.Combine(directory, $"clip-{spec.Id}.mp4"));
+                Path.Combine(directory, $"clip-{spec.Id}.mp4"),
+                keyframeIntervalFrames, keyframeIntervalFrames * spec.Den / (double)spec.Num);
             progress?.Invoke($"encode-{clip.Id}");
             await EncodeAsync(clip);
             progress?.Invoke($"verify-{clip.Id}");
@@ -45,6 +54,25 @@ internal static class AccuracyVideoFixture
         await File.WriteAllTextAsync(Path.Combine(directory, "fixture.json"),
             BuildFixtureJson(ltcFps, clips), new UTF8Encoding(false));
         return new AccuracyFixture(projectPath, clips);
+    }
+
+    /// <summary>
+    /// T11: キーフレーム間隔（フレーム数）。既定は 1 秒ぶん（現場で一般的な間隔）。
+    /// fps をそのままフレーム数にするため四捨五入し、24 → 24、29.97 → 30、60 → 60 にする
+    /// （29.97 は 29 だと 0.97 秒になり 1 秒から外れるため、最寄りの 30 を選ぶ）。
+    /// </summary>
+    internal static int ResolveKeyframeIntervalFrames(int fpsNumerator, int fpsDenominator)
+    {
+        string? overrideValue = Environment.GetEnvironmentVariable(GopOverrideEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(overrideValue))
+        {
+            if (!int.TryParse(overrideValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int overrideFrames) ||
+                overrideFrames < 1)
+                throw new InvalidOperationException(
+                    $"{GopOverrideEnvironmentVariable} は 1 以上のフレーム数で指定してください: '{overrideValue}'");
+            return overrideFrames;
+        }
+        return (int)Math.Round(fpsNumerator / (double)fpsDenominator, MidpointRounding.AwayFromZero);
     }
 
     /// <summary>fixture.json の中身。ltcFps は V3 の LTC fps マトリクス（24/25/29.97/30）で変わる。</summary>
@@ -69,11 +97,16 @@ internal static class AccuracyVideoFixture
     private static async Task EncodeAsync(AccuracyClip clip)
     {
         string rate = $"{clip.FpsNumerator}/{clip.FpsDenominator}";
+        string keyframeInterval = clip.KeyframeIntervalFrames.ToString(CultureInfo.InvariantCulture);
         using var process = NewProcess("ffmpeg", "-hide_banner", "-loglevel", "error", "-n",
             "-f", "lavfi", "-i", $"testsrc2=size=1920x1080:rate={rate}",
             "-f", "rawvideo", "-pixel_format", "gray", "-video_size", "768x32", "-framerate", rate, "-i", "pipe:0",
             "-filter_complex", "[0:v][1:v]overlay=32:32:shortest=1", "-an", "-frames:v", clip.FrameCount.ToString(CultureInfo.InvariantCulture),
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "4", clip.Path);
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p",
+            // T11: キーフレーム間隔を固定する。-sc_threshold 0 で内容による挿入を止め、
+            // -keyint_min も同じ値にして、指定どおりの間隔だけにする。
+            "-g", keyframeInterval, "-keyint_min", keyframeInterval, "-sc_threshold", "0",
+            "-threads", "4", clip.Path);
         process.StartInfo.RedirectStandardInput = true;
         process.Start();
         Task<string> stderr = process.StandardError.ReadToEndAsync();
@@ -122,6 +155,8 @@ internal static class AccuracyVideoFixture
         }
         await File.WriteAllTextAsync(clip.Path + ".probe.json", metadata);
 
+        await VerifyKeyframesAsync(clip, timeout.Token);
+
         // Read every encoded frame. This decoder does not call the generator or app marker decoder.
         using var decoder = NewProcess("ffmpeg", "-hide_banner", "-loglevel", "error", "-i", clip.Path,
             "-vf", "crop=768:32:32:32", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1");
@@ -161,6 +196,58 @@ internal static class AccuracyVideoFixture
             if (decoded != clip.FrameCount) throw new InvalidDataException($"Expected {clip.FrameCount} markers; decoded {decoded}.");
         }
         catch { E2EAppRunner.KillProcess(decoder); throw; }
+    }
+
+    /// <summary>
+    /// T11: 生成したクリップのキーフレーム位置を ffprobe で確認する。先頭が 0 で、
+    /// 隣り合うキーフレームの間隔が指定（<see cref="AccuracyClip.KeyframeIntervalFrames"/>）と
+    /// すべて一致し、本数も期待どおりでなければ例外にする。
+    /// </summary>
+    private static async Task VerifyKeyframesAsync(AccuracyClip clip, CancellationToken token)
+    {
+        using var probe = NewProcess("ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-skip_frame", "nokey", "-show_entries", "frame=key_frame,pts_time", "-of", "csv=p=0", clip.Path);
+        probe.Start();
+        Task<string> error = probe.StandardError.ReadToEndAsync();
+        Task<string> outputTask = probe.StandardOutput.ReadToEndAsync();
+        try
+        {
+            await probe.WaitForExitAsync(token);
+        }
+        catch
+        {
+            E2EAppRunner.KillProcess(probe);
+            throw;
+        }
+        string output = await outputTask;
+        if (probe.ExitCode != 0)
+            throw new InvalidOperationException($"ffprobe (keyframes) failed: {await error}");
+        await error;
+
+        double fps = clip.FpsNumerator / (double)clip.FpsDenominator;
+        var keyframeFrames = new List<int>();
+        foreach (string line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] fields = line.Trim().Split(',');
+            if (fields.Length < 2 || fields[0] != "1")
+                continue;
+            if (double.TryParse(fields[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double ptsSeconds))
+                keyframeFrames.Add((int)Math.Round(ptsSeconds * fps, MidpointRounding.AwayFromZero));
+        }
+
+        int expectedCount = (clip.FrameCount - 1) / clip.KeyframeIntervalFrames + 1;
+        if (keyframeFrames.Count != expectedCount || keyframeFrames.Count == 0 || keyframeFrames[0] != 0)
+            throw new InvalidDataException(
+                $"キーフレームの本数・位置が想定外です: clip {clip.Id} 期待 {expectedCount} 本（先頭 0、間隔 {clip.KeyframeIntervalFrames} フレーム）、" +
+                $"実際 {keyframeFrames.Count} 本 [{string.Join(", ", keyframeFrames)}]");
+        for (int i = 1; i < keyframeFrames.Count; i++)
+        {
+            int interval = keyframeFrames[i] - keyframeFrames[i - 1];
+            if (interval != clip.KeyframeIntervalFrames)
+                throw new InvalidDataException(
+                    $"キーフレーム間隔が指定と違います: clip {clip.Id} 期待 {clip.KeyframeIntervalFrames}、" +
+                    $"実際 {interval}（位置: {string.Join(", ", keyframeFrames)}）");
+        }
     }
 
     private static Process NewProcess(string executable, params string[] arguments)

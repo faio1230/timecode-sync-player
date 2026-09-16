@@ -191,6 +191,11 @@ internal sealed class E2EAppRunner : IDisposable
             startInfo.Environment[AppSettingsManager.SettingsPathEnvironmentVariable] = fullSettingsPath;
         }
 
+        // T10: 精度測定の run では shim の内訳ログ（stderr）を残す。
+        bool captureStreams = AppStreamCapture.IsEnabled;
+        if (captureStreams)
+            AppStreamCapture.Configure(startInfo);
+
         Process process;
         try
         {
@@ -202,6 +207,9 @@ internal sealed class E2EAppRunner : IDisposable
             E2ESettingsIsolation.Delete(settingsDirectory);
             throw;
         }
+
+        if (captureStreams)
+            AppStreamCapture.Attach(process);
 
         if (settingsDirectory != null)
         {

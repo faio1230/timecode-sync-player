@@ -27,4 +27,46 @@ public sealed class AccuracyVideoFixtureTests
     [InlineData(1, 65536)]
     public void MarkerPanel_RejectsUnrepresentableIdentity(int clipId, int frameIndex) =>
         Assert.Throws<ArgumentOutOfRangeException>(() => AccuracyVideoFixture.CreateMarkerPanel(clipId, frameIndex));
+
+    [Theory]
+    [InlineData(24, 1, 24)]
+    [InlineData(30000, 1001, 30)]
+    [InlineData(60, 1, 60)]
+    public void ResolveKeyframeIntervalFrames_DefaultsToOneSecondRounded(int numerator, int denominator, int expected)
+    {
+        WithGopOverride(null, () =>
+            Assert.Equal(expected, AccuracyVideoFixture.ResolveKeyframeIntervalFrames(numerator, denominator)));
+    }
+
+    [Fact]
+    public void ResolveKeyframeIntervalFrames_EnvironmentOverrideWins()
+    {
+        WithGopOverride("250", () =>
+            Assert.Equal(250, AccuracyVideoFixture.ResolveKeyframeIntervalFrames(60, 1)));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("abc")]
+    public void ResolveKeyframeIntervalFrames_RejectsInvalidOverride(string value)
+    {
+        WithGopOverride(value, () =>
+            Assert.Throws<InvalidOperationException>(() => AccuracyVideoFixture.ResolveKeyframeIntervalFrames(60, 1)));
+    }
+
+    private static void WithGopOverride(string? value, Action action)
+    {
+        string variable = AccuracyVideoFixture.GopOverrideEnvironmentVariable;
+        string? previous = Environment.GetEnvironmentVariable(variable);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, value);
+            action();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variable, previous);
+        }
+    }
 }
