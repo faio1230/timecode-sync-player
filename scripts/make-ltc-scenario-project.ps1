@@ -3,15 +3,18 @@
 # The scenario tests never embed media file names: tracks are referred to as
 # M1..M7 by position, and this script writes those symbols as the track names.
 #
-#   powershell -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media
-#   powershell -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out D:\media\ltc-scenario.tsp -Tracks 3 -SegmentSeconds 20
+#   powershell -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out C:\reports\ltc-scenario.tsp
+#
+# -Out is written wherever it points (the runner puts it under its report
+# directory). Media files are referenced by absolute path so the media folder is
+# never modified: it is user-managed and read-only on the test machine, and a
+# .tsp must not be left there. The runner deletes the generated project after
+# the run (-KeepProject keeps it).
 #
 # Videos (mp4 / mov / mkv / mxf / ts) are taken in name order from the top of the
 # folder. Every track uses MediaIn 0 and MediaOut = min(SegmentSeconds, duration),
 # so material shorter than SegmentSeconds is used as-is. The timeline starts with
-# a 5 s offset and keeps a 5 s gap after every track. The .tsp and the media must
-# live in the same directory (the app resolves track paths relative to the project
-# file and rejects paths outside of it).
+# a 5 s offset and keeps a 5 s gap after every track.
 #
 # NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
 # repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page, so
@@ -20,7 +23,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$MediaDir,
-    [string]$Out = '',
+    [Parameter(Mandatory = $true)]
+    [string]$Out,
     [int]$Tracks = 3,
     [double]$SegmentSeconds = 20,
     [string]$FfmpegDir = 'C:\Program Files\ffmpeg\bin'
@@ -38,13 +42,13 @@ if ($SegmentSeconds -le 0) {
     throw 'SegmentSeconds must be positive'
 }
 
-if ([string]::IsNullOrWhiteSpace($Out)) {
-    $Out = Join-Path $MediaDir 'ltc-scenario.tsp'
-}
 $Out = [System.IO.Path]::GetFullPath($Out)
+if (Test-Path -LiteralPath $Out -PathType Container) {
+    throw 'Out must be a file path'
+}
 $outDir = [System.IO.Path]::GetDirectoryName($Out)
-if (-not [string]::Equals($outDir.TrimEnd('\'), $MediaDir.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Out must be placed directly under MediaDir (the app resolves tracks relative to the project file)'
+if (-not (Test-Path -LiteralPath $outDir -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 }
 
 if (Test-Path $FfmpegDir) { $env:PATH = "$env:PATH;$FfmpegDir" }
@@ -77,7 +81,7 @@ foreach ($file in $files) {
 
     $trackList += [ordered]@{
         id             = ('aaaaaaaa-0000-0000-0000-{0:d12}' -f $index)
-        filePath       = $file.Name
+        filePath       = $file.FullName
         name           = ('M' + $index)
         mediaIn        = ([TimeSpan]::Zero).ToString('c')
         mediaOut       = ([TimeSpan]::FromSeconds($used)).ToString('c')
