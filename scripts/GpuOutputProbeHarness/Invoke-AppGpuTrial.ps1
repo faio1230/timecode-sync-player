@@ -5,8 +5,10 @@ param(
     [Parameter(Mandatory)][string]$Label,
     [int]$Seconds = 32,
     [string]$DisplayDeviceName = '\\.\DISPLAY2',
-    [string]$AppExe = 'C:\Users\<user>\Documents\timecode-sync-player-wt-verify-oe-20260911-1344\src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe',
-    [string]$LogRoot = 'C:\Users\<user>\Documents\timecode-sync-player\.superpowers\worktrees\session-refactor\TestResults\gpu-app-20260911',
+    # Empty defaults resolve to this repository (see below). The old absolute paths
+    # pointed at worktrees deleted in the 2026-09-16 cleanup.
+    [string]$AppExe = '',
+    [string]$LogRoot = '',
     [switch]$NoFullscreen,
     [int]$KillReceiverAfterSeconds = 0,
     [ValidateSet('Mpv','Gstreamer')][string]$PlayerBackend = 'Mpv',
@@ -44,6 +46,11 @@ param(
     [string]$AudioProbeExe = 'C:\Users\<user>\Documents\timecode-sync-player\scripts\AudioLoopbackProbe\bin\Debug\net8.0-windows\AudioLoopbackProbe.exe'
 )
 $ErrorActionPreference = 'Stop'
+
+# Repo-relative defaults: any worktree runs its own build and writes its own TestResults.
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe' }
+if (-not $LogRoot) { $LogRoot = Join-Path $repoRoot 'TestResults\gpu-app' }
 Set-StrictMode -Version Latest
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 if (-not ('AppTrialNative' -as [type])) {

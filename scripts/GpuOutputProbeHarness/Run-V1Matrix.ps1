@@ -1,9 +1,11 @@
 # V1: run the generated codec matrix through the main app (GStreamer x Gpu), one clip at a time.
 [CmdletBinding()]
 param(
-    [string]$MediaDir = 'C:\Users\<user>\Documents\timecode-sync-player-wt-integrate-20260912\artifacts\media\v1',
-    [string]$AppExe = 'C:\Users\<user>\Documents\timecode-sync-player-wt-integrate-20260912\src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe',
-    [string]$LogRoot = 'C:\Users\<user>\Documents\timecode-sync-player-wt-integrate-20260912\TestResults\v1',
+    # Empty defaults resolve below. The V1 codec set is NOT in the repository: copy it from
+    # <archive>\media\v1-set\v1 (23 files) into <repo>\artifacts\media\v1, or pass -MediaDir.
+    [string]$MediaDir = '',
+    [string]$AppExe = '',
+    [string]$LogRoot = '',
     [int]$Seconds = 50,
     [string[]]$Only = @(),
     # V11: '' = hardware 既定（decodeMode を settings に入れない）、software = decodeMode=software で回す。
@@ -12,6 +14,11 @@ param(
     [string]$LabelPrefix = 'v1'
 )
 $ErrorActionPreference = 'Continue'
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+if (-not $MediaDir) { $MediaDir = Join-Path $repoRoot 'artifacts\media\v1' }
+if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe' }
+if (-not $LogRoot) { $LogRoot = Join-Path $repoRoot 'TestResults\v1' }
+if (-not (Test-Path $MediaDir)) { throw "MediaDir not found: $MediaDir. Copy the V1 set from <archive>\media\v1-set\v1 or pass -MediaDir." }
 $runner = Join-Path $PSScriptRoot 'Invoke-AppGpuTrial.ps1'
 $clips = Get-ChildItem $MediaDir -File | Where-Object { $_.Extension -in '.mp4','.mov','.ts','.mxf','.mkv' } | Sort-Object Name
 if ($Only.Count -gt 0) { $clips = $clips | Where-Object { $Only -contains $_.Name } }

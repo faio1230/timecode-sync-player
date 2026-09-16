@@ -107,6 +107,66 @@ ative-dll` → 各作業ツリーの `native/` へ複写済み |
 
 **文書中の旧パス `...-wt-integrate-20260912rtifacts\media1` は失効している。** 素材は E: を使うこと。
 
+## 3.5 素材・DLL・実機ハーネスの置き場（2026-09-16 14:50 追記）
+
+**「アプリや素材が見つからない」で止まらないための一覧。** `artifacts/` と `native/` と `vendor/` は
+gitignore なので、**作業ツリーごとに実体が要る**。
+
+### 現在の実体（2026-09-16 14:50 時点）
+
+| もの | 置き場 | main | wt-a | wt-b |
+| --- | --- | :-: | :-: | :-: |
+| アプリ（Debug ビルド） | `<worktree>\src\TimecodeSyncPlayerin\Debug
+et8.0-windows\TimecodeSyncPlayer.exe` | あり | あり | あり |
+| shim | `<worktree>
+ative\gst-shimuild-debug	cs_gstreamer.dll`（`build-shim.ps1 -Config Debug` で生成。csproj が bin へコピー） | あり | あり | あり |
+| `SpoutDX.dll` / `libmpv-2.dll` | `<worktree>
+ative\` | あり | あり | あり |
+| Spout のソース（shim のビルドに必須） | `<worktree>endor\Spout2` | あり | あり | あり |
+| **E2E 用の素材 6 本** | `<worktree>rtifacts\media\`（`test_1080p60.mp4` ほか） | あり | **無し** | あり |
+| **V1 のコーデック素材 23 ファイル** | **`E:	cs-archive\media1-set1`（522MB）**。使う作業ツリーの `artifacts\media1` へコピーする | 無し | 無し | 無し |
+| V11 の追加素材（4K H.264） | `E:	cs-archive\media11-extra`（12MB） | 無し | 無し | 無し |
+| GStreamer ランタイム | `C:\Program Files\gstreamer.0\msvc_x86_64`（環境変数 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 設定済み） | 共通 | | |
+| ffmpeg / ffprobe | `C:\Program Filesfmpegin` | 共通 | | |
+| 過去の測定の証跡 | `E:	cs-archive	estresults\<worktree 名>\` | | | |
+
+**C: の空きは 19GB しかない。** 素材をコピーするときは使う作業ツリー 1 つだけにすること。
+
+### 足りないものの作り方
+
+```powershell
+# E2E 用の素材 6 本（wt-a に無い。ffmpeg が要る）
+powershell -File scripts\make-e2e-media.ps1            # <repo>rtifacts\media へ出す
+
+# V1 のコーデック素材（生成はしない。アーカイブからコピーする）
+robocopy E:	cs-archive\media1-set1 <repo>rtifacts\media1 /E
+
+# shim（vendor\Spout2 が無いと CMake が失敗する。無ければ E:	cs-archiveuild-depsendor から取る）
+powershell -File native\gst-shimuild-shim.ps1 -Config Debug
+```
+
+### 実機ハーネスの呼び方（既定は全部リポジトリ相対。2026-09-16 に直した）
+
+```powershell
+# V3（LTC 同期精度）。素材は run ごとに自動生成、VB-CABLE のループが要る
+powershell -File scriptsun-v3-accuracy.ps1 -Backends gst -Label <名前> [-Repeats 3] `
+  [-LtcFps 24|25|29.97|30] [-LtcFpsMode auto|fixed] [-SyncCorrectionMode smooth|jump]
+#   出力先: <repo>\TestResults3\<名前>-ltc<fps>-gst[-n]#   アプリは同じ作業ツリーの Debug ビルドを自動で使う（TIMECODE_SYNC_PLAYER_E2E_APP_PATH 未設定時）
+
+# V1 / V11（コーデック行列）。-MediaDir 未指定なら <repo>rtifacts\media1 を見る
+powershell -File scripts\GpuOutputProbeHarness\Run-V1Matrix.ps1 [-MediaDir ...] [-DecodeMode software] [-Only ...]
+
+# 単発の実機 run
+powershell -File scripts\GpuOutputProbeHarness\Invoke-AppGpuTrial.ps1 -MediaPath <素材> -Label <名前> [-PlayerBackend Gstreamer]
+
+# E2E（アプリのパスは env 未設定なら同じ作業ツリーの Debug ビルドを探す）
+dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj -c Debug --filter "Category=E2E"
+```
+
+**罠**: `Run-V1Matrix.ps1` と `Invoke-AppGpuTrial.ps1` の既定パスは、2026-09-16 の整理で消した作業ツリー
+（`wt-integrate-20260912` / `wt-verify-oe-20260911-1344`）を指したままだった。同日に**リポジトリ相対へ直した**。
+**古い絶対パスが残っていないかは `grep -rn "wt-" scripts/` で確認できる。**
+
 ## 4. 実機試験の規則（利用者の指示、厳守）
 
 - 直列に 1 本ずつ。OpenCode が GPU 試験中（報告に開始時刻が出る）は親は走らせない。逆も同じ（親の試験中は指示を送らない）。
