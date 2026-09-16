@@ -2855,4 +2855,66 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - 開発機では不一致が 0.1〜0.2 秒で返る（D14 の修正で bus エラーを即拾う）が、検証機では `preroll-timeout` の 3.0 秒まで待つ。案: 最初の試行で読んだ demux の caps でプロファイル候補を絞る。設計は D16 の指示の 4 節、実装は親の合図後
 
-（続き: D16 の調査 → 修正 → Release ビルドを Tailscale で検証機へ → v0.4.2）
+### D16 の切り分け（検証機、2026-09-17 07:07〜07:15、利用者の承認のもと実施）
+
+| 試験 | 結果 |
+| --- | --- |
+| (b) `decodeMode=software`、v0.4.1、環境変数なし | AV1 元素材: attempt=3 `av1-cpu` ok、`dav1ddec` 3840x2160@24 mem=d3d11、total 9.58 秒、20 秒走って早期終了なし。44.1kHz 複製も同様（first_frame 189.6ms、total 9.51 秒）。クラッシュ 0 |
+| (a) v0.4.0 setup に戻して 48k 音声先頭の複製、環境変数なし | **v0.4.0 でも同じクラッシュ**（`atidxx64.dll` 同一オフセット 0x9544f4、0xC0000005）。前回の「v0.4.0 は落ちない」は `GST_DEBUG=2` 下の観測だった |
+
+- 結論: **D16 は v0.4.1 の回帰ではなく、v0.4.0 から存在するハイブリッド GPU の欠陥**。CPU デコード → `d3d11upload` の経路は同じ機で正常なので、修正方針（GPU プロファイルを skip して CPU へ）は検証機の事実と整合する
+- クラッシュダンプ: 検証機の `%LOCALAPPDATA%\CrashDumps` に 10 個以上（50〜73MB）。解析は任意（修正方針はダンプに依存しない）
+- 検証機は v0.4.1・`decodeMode=hardware` に戻し済み（設定ファイルのハッシュ一致を確認）
+
+### D16 の修正（agent-a `60f04ba`、2026-09-17 07:40、親のレビュー済み）
+
+- `adapter_supports_profile`: GPU プロファイル 4 種のデコーダ GUID（H264 VLD NOFGT / HEVC Main / VP9 Profile0 / AV1 Profile0。SDK 値と一致を親が確認）を shim デバイスの `ID3D11VideoDevice::GetVideoDecoderProfile` で照会し、無ければ試行前に skip（`load.skip … reason=adapter-lacks-decoder`）→ 既存順序で CPU プロファイルへ
+- `on_new_sample` 入口の防御: テクスチャの `GetDevice` が `p->device` と違えば両 LUID をログして `set_error`（落ちずに失敗）
+- テストフック `TCS_FORCE_DECODER_ADAPTER_MISMATCH=1`: 開発機で GPU 4 種が skip → `h264-cpu` attempt=4 で ok。通常は h264-gpu attempt=0、実素材 10 本 failures=0、lock rule PASS。バージョンは 0.4.1 のまま
+- **残る穴（D16-b、追加指示済み）**: 合成デバイスがアダプタ 0 でない構成（外部出力が dGPU 直結）では、GUID 判定を通ったあと `d3d11h264dec`（アダプタ 0 の要素）が別デバイスになり、防御で load が失敗して CPU へ落ちない。デコーダ要素の `adapter-luid` を比べ、別アダプタ要素名（`d3d11h264device1dec` …）を試す
+- 設計上の注意: この方針では、内蔵 GPU が対応しないコーデック（AV1 ほか）は dGPU があっても CPU デコードになる。dGPU で合成まで行う選択肢（合成アダプタを dGPU にする）は別途の検討事項として残す
+
+### D16 の回帰（agent-a `60f04ba`、同期担当の実機、2026-09-17 07:10〜07:25、親が証跡を確認）
+
+| 項目 | 実測 |
+| --- | --- |
+| V5 シーク連打 | Seek 10/10 success、ERR 0、exit 0（`TestResults/gpu-app/20260916T221035Z-d16-v5-seek`） |
+| V3（Smooth、LTC25） | sample 基準 n=1968、平均 **-30.9ms**、p5 -52.3、p95 -10.3、**p95-p5 42.0ms**（D12 後の同条件 -27.6 / 38.7、基準 -28.9 / 38.3）。steady 平均 -28.9、interval 平均 -4.0 / p95 16.7（`TestResults/v3/d16-v3-ltc25-gst`） |
+
+- 判定: V3 は基準より約 3ms 外側だが 1 フレーム（40ms）の 1/4 未満で、D16 はロード時のデコーダ選択のみの変更（再生経路に触れない）。**許容**とし、次の V3 で同じ方向にずれていれば原因を調べる
+
+### D16-b（agent-a `464c314`、2026-09-17 07:45、親のレビュー済み）
+
+- GStreamer 1.28 の事実（同期担当の調査、根拠行つき）: d3d11 デコーダのクラスは登録時にアダプタ LUID を持ち（`d3d11h264dec` = 最初のアダプタ、`d3d11h264device{N}dec` = N 番目）、`adapter-luid` は読み取り専用、別アダプタのコンテキストは黙って拒否される。アプリから強制できるのは「一致するクラスを選ぶ」ことだけ
+- 実装: ring デバイスの LUID を取り、`d3d11h264dec` → `…device1dec` … `device7dec` の順に要素を作って `adapter-luid` を比較し、一致したクラス名をその試行に使う。無ければ `load.skip … reason=decoder-adapter-mismatch` で GPU プロファイルを skip → CPU。GUID の早期 skip と `on_new_sample` の防御は維持。フック `TCS_FORCE_DECODER_LUID_MISMATCH=1`
+- 開発機（アダプタ 1 枚）: 通常は `d3d11h264dec` が一致、強制不一致で h264-cpu へ、実素材 10 本 failures=0。**変種（deviceNdec）が選ばれる側の経路は開発機では検証不能**（検証機のハイブリッド構成で確認）
+
+### D16 / D16-b の統合と検証機向けビルド（2026-09-17 07:55〜08:05、親）
+
+- E2E 一部（464c314、同期担当）: 6 合格 / 3 スキップ（音声素材なし 2、Spout 受信 1）/ 0 失敗
+- 統合: main `d153cf5`。Debug の shim を再ビルド、lock rule PASS、非E2E 1674 合格、44.1kHz 素材のロード 167.5ms（`decoder class: d3d11h264dec … matches shim device`）、残プロセス 0
+- 検証機向けビルド（**バージョン 0.4.1 のまま**、ProductVersion `0.4.1+d153cf5…`、Release の shim とハッシュ一致、プラグイン 19）:
+
+| ファイル | SHA-256 | サイズ |
+| --- | --- | ---: |
+| `TimecodeSyncPlayer-v0.4.1-d153cf5-setup.exe` | `3052093134183A966F253749C19D6CCC74972E9364EA540DE90F9C8C64D03AFC` | 38,649,229 |
+| `TimecodeSyncPlayer-v0.4.1-d153cf5-win-x64.zip` | `81CFAF9538EEF87290AE5F4CD42E01891A65EFC9109B0746F9BD76AAADF25F27` | 17,731,531 |
+
+- 公開せず、Tailscale（Taildrop）で検証機へ送付（08:05）。配布物は親のスクラッチ領域に保管（`artifacts/release` には置かない）
+
+### 検証機での D16 修正ビルド（`0.4.1+d153cf5`）の確認（2026-09-17 07:29〜07:36、`TSP-TestMachine`、親の判定）
+
+- 導入: Taildrop 受信、SHA-256 一致、上書きインストール終了コード 0、ProductVersion `0.4.1+d153cf5…`、decodeMode=hardware、環境変数なし
+- **AV1 6 本 + ProRes の 7 本すべてクラッシュなし**（Windows アプリケーションログ id 1000 = 0 件、残プロセス 0）
+- AV1: attempt 3 で `load.skip … profile=av1-gpu reason=adapter-lacks-decoder adapter_luid=…123e7`（= 74727 = OutputEngine と同じ AMD）、attempt 7 `av1-cpu` `dav1ddec 3840x2160@24` で ok。h264/h265/vp9 の GPU クラスは `decoder class: … matches shim device`（アダプタ 0 の要素が ring と一致）
+- 再生: 追加の 35 秒実行で `frameUpdates` が 2 秒あたり 48〜49（≒ 24fps を維持）、`gpuPublishedFrames` は 120〜123 / 2 秒（合成の 60Hz。ソースの fps ではない）
+- **ロード時間: AV1 18.6〜18.8 秒、ProRes 21.7 秒**（不一致プロファイル 1 件あたり `preroll-timeout` 3.0 秒 × AV1 7 件 / ProRes 8 件）
+- 終了: 検証スクリプトの WM_CLOSE 後 10 秒で終了せず強制終了（7 本とも）。終了確認ダイアログが出ている可能性（ハーネスの `-ExitDialog` 相当の操作なし）。次回、ダイアログの有無を確認する
+- **判定: D16 は解消（完了条件 3 の「落ちない」は満たす）。ただし D17 のロード 18〜22 秒はライブ用途で許容できず、0.4.2 の前に直す。** 原因（親の確認）: `pad caps mismatch` は pad-added 時点で `capsMismatch` に立つが、D14 の 100ms 刻みの state 待ちループが `p->failed` しか見ておらず、caps 不一致でも 3 秒（30 × 100ms）待ってから次の試行へ進む（`tcs_gstreamer.cpp` の「D14: poll in 100 ms slices」ループ）。開発機で速かったのは音声の bus エラーが state 変更を失敗させていたため
+
+## D17（続き）: 修正方針（2026-09-17 08:15、親）
+
+- **D17-a（必須、小）**: state 待ちループの打ち切り条件に `p->capsMismatch` と `p->rejected` を加える。不一致 1 件が pad-added までの時間（0.1〜0.3 秒）で返るはず → AV1 は 7 件で 1〜2 秒
+- **D17-b（任意）**: 最初の試行で読んだ demux の caps でプロファイル候補を絞る（同期担当の設計済み）。D17-a で十分なら 0.4.2 には入れない
+
+（続き: D17-a → 統合 → Taildrop で検証機（ロード時間の再確認）→ 合格なら 0.4.2）
