@@ -92,11 +92,19 @@ public sealed class GStreamerBackendE2ETests
             // 受信 #2 の時間帯にアプリが描画・Spout 公開を続けたことを検証する。
             recvLog2.Should().MatchRegex(@"got=[1-9]\d*\s+new=[1-9]\d*\s+rc=0",
                 $"受信側再起動後も接続・受信できるべき。recv2 log:\n{recvLog2}");
-            (string? lastPerfLine, DateTime? lastPerfAt) = LastPerfLine(exePath);
-            lastPerfAt.Should().NotBeNull("Playback perf ログが存在する");
-            lastPerfAt!.Value.Should().BeAfter(recv2StartedAt.AddSeconds(-3),
+            DateTime runStartedLocal = runner.Process.StartTime;
+            List<(DateTime At, long Published)> samples = GpuPublishSamples(exePath)
+                .Where(sample => sample.At >= runStartedLocal)
+                .ToList();
+            samples.Should().NotBeEmpty("Playback perf ログが存在する");
+            samples.Should().Contain(sample => sample.At <= recv2StartedAt,
+                "受信側再起動の前にも Playback perf 行がある");
+            (DateTime At, long Published) beforeRestart = samples.Last(sample => sample.At <= recv2StartedAt);
+            (DateTime At, long Published) afterRestart = samples[^1];
+            afterRestart.At.Should().BeAfter(recv2StartedAt.AddSeconds(-3),
                 "受信側再起動中もアプリが描画・公開を継続している");
-            lastPerfLine!.Should().Contain("spoutEnabled=true");
+            afterRestart.Published.Should().BeGreaterThan(beforeRestart.Published,
+                "受信側の再起動をまたいで GPU 公開フレーム数が増えている");
 
             // GPU デコーダが選択されたことがアプリログに残る
             string appLog = WaitForLog(exePath, "プレイヤー生成", TimeSpan.FromSeconds(10));
@@ -360,23 +368,21 @@ public sealed class GStreamerBackendE2ETests
         return string.Join('\n', all.Skip(Math.Max(0, all.Length - lines)));
     }
 
-    /// <summary>最新の Playback perf 行とそのタイムスタンプ (ローカル時刻)。</summary>
-    private static (string? Line, DateTime? At) LastPerfLine(string exePath)
+    /// <summary>Playback perf 行から GPU 合成の公開フレーム数を時系列で取り出す（ローカル時刻）。</summary>
+    private static List<(DateTime At, long Published)> GpuPublishSamples(string exePath)
     {
-        string text = ReadNewestLog(Path.GetDirectoryName(exePath)!);
-        string? last = null;
-        DateTime? at = null;
-        foreach (string line in text.Split('\n'))
+        var samples = new List<(DateTime, long)>();
+        foreach (string line in ReadNewestLog(Path.GetDirectoryName(exePath)!).Split('\n'))
         {
             if (!line.Contains("Playback perf", StringComparison.Ordinal)) continue;
-            last = line;
-            Match m = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
-            if (m.Success &&
-                DateTime.TryParse(m.Groups[1].Value, CultureInfo.InvariantCulture,
-                    DateTimeStyles.None, out DateTime ts))
-                at = ts;
+            Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+            Match frames = Regex.Match(line, @"gpuPublishedFrames=(\d+)");
+            if (!timestamp.Success || !frames.Success) continue;
+            if (DateTime.TryParse(timestamp.Groups[1].Value, CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out DateTime at))
+                samples.Add((at, long.Parse(frames.Groups[1].Value, CultureInfo.InvariantCulture)));
         }
-        return (last, at);
+        return samples;
     }
 
     private static string NewTempDir(string prefix)
