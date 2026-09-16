@@ -2889,4 +2889,17 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 実装: ring デバイスの LUID を取り、`d3d11h264dec` → `…device1dec` … `device7dec` の順に要素を作って `adapter-luid` を比較し、一致したクラス名をその試行に使う。無ければ `load.skip … reason=decoder-adapter-mismatch` で GPU プロファイルを skip → CPU。GUID の早期 skip と `on_new_sample` の防御は維持。フック `TCS_FORCE_DECODER_LUID_MISMATCH=1`
 - 開発機（アダプタ 1 枚）: 通常は `d3d11h264dec` が一致、強制不一致で h264-cpu へ、実素材 10 本 failures=0。**変種（deviceNdec）が選ばれる側の経路は開発機では検証不能**（検証機のハイブリッド構成で確認）
 
-（続き: E2E 一部（464c314）→ 統合 → Release ビルド（0.4.1 のまま、SHA で識別）を Tailscale で検証機へ → 合格後に 0.4.2）
+### D16 / D16-b の統合と検証機向けビルド（2026-09-17 07:55〜08:05、親）
+
+- E2E 一部（464c314、同期担当）: 6 合格 / 3 スキップ（音声素材なし 2、Spout 受信 1）/ 0 失敗
+- 統合: main `d153cf5`。Debug の shim を再ビルド、lock rule PASS、非E2E 1674 合格、44.1kHz 素材のロード 167.5ms（`decoder class: d3d11h264dec … matches shim device`）、残プロセス 0
+- 検証機向けビルド（**バージョン 0.4.1 のまま**、ProductVersion `0.4.1+d153cf5…`、Release の shim とハッシュ一致、プラグイン 19）:
+
+| ファイル | SHA-256 | サイズ |
+| --- | --- | ---: |
+| `TimecodeSyncPlayer-v0.4.1-d153cf5-setup.exe` | `3052093134183A966F253749C19D6CCC74972E9364EA540DE90F9C8C64D03AFC` | 38,649,229 |
+| `TimecodeSyncPlayer-v0.4.1-d153cf5-win-x64.zip` | `81CFAF9538EEF87290AE5F4CD42E01891A65EFC9109B0746F9BD76AAADF25F27` | 17,731,531 |
+
+- 公開せず、Tailscale（Taildrop）で検証機へ送付（08:05）。配布物は親のスクラッチ領域に保管（`artifacts/release` には置かない）
+
+（続き: 検証機で AV1 6 本 + ProRes → 合格なら 0.4.2 に上げて公開）
