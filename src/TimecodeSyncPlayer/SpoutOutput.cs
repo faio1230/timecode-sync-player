@@ -1,4 +1,5 @@
 using Serilog;
+using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer;
 
@@ -9,8 +10,6 @@ namespace TimecodeSyncPlayer;
 /// </summary>
 public sealed class SpoutOutput : ISpoutOutput
 {
-    public const string DefaultSenderName = "TimecodeSyncPlayer";
-
     private IntPtr _obj = IntPtr.Zero;
     private bool   _initialized;
     private bool   _disposed;
@@ -56,7 +55,7 @@ public sealed class SpoutOutput : ISpoutOutput
                 return false;
             }
 
-            if (!_native.SetSenderName(_obj, DefaultSenderName))
+            if (!_native.SetSenderName(_obj, SpoutDefaults.DefaultSenderName))
             {
                 Log.Warning("SpoutOutput: SetSenderName 失敗");
                 _native.Destroy(_obj);
@@ -66,7 +65,7 @@ public sealed class SpoutOutput : ISpoutOutput
 
             _transfer = _native.CreateFrameTransfer(_obj);
             _initialized = true;
-            Log.Information("SpoutOutput: 初期化完了 sender='{Name}'", DefaultSenderName);
+            Log.Information("SpoutOutput: 初期化完了 sender='{Name}'", SpoutDefaults.DefaultSenderName);
             return true;
         }
         catch (DllNotFoundException ex)
@@ -105,7 +104,7 @@ public sealed class SpoutOutput : ISpoutOutput
 
             if (_sendCount == 1)
                 Log.Information("SpoutOutput: 送信開始 {W}x{H} pitch={Pitch} sender='{Name}'",
-                    width, height, pitchBytes, DefaultSenderName);
+                    width, height, pitchBytes, SpoutDefaults.DefaultSenderName);
             else if (_sendCount % 300 == 0)
                 Log.Debug("SpoutOutput: 送信中 {Count} フレーム送信済み ({W}x{H} pitch={Pitch})",
                     _sendCount, width, height, pitchBytes);

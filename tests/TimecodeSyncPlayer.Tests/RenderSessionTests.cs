@@ -826,7 +826,7 @@ public sealed class RenderSessionTests
     private sealed class FakeApi : IMpvRenderApi
     {
         public readonly ConcurrentQueue<(string Operation, int Thread)> Calls = new();
-        public WeakReference<MpvRenderNative.MpvRenderUpdateFn>? Callback;
+        public WeakReference<RenderUpdateFn>? Callback;
         public readonly TaskCompletionSource RenderStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource UpdateStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private byte _nextPixel = 73;
@@ -846,11 +846,11 @@ public sealed class RenderSessionTests
         public string MpvRenderApiTypeSw => "sw";
         public ulong MpvRenderUpdateFrame => 1;
         private void Record(string name) => Calls.Enqueue((name, Environment.CurrentManagedThreadId));
-        public int RenderContextCreate(out IntPtr res, IntPtr mpv, MpvRenderNative.MpvRenderParam[] parameters)
+        public int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters)
         { Record("create"); res = new IntPtr(2); return CreateReturnCode; }
         public ulong RenderContextUpdate(IntPtr ctx)
         { Record("update"); UpdateStarted.TrySetResult(); UpdateRelease?.Wait(); return 1; }
-        public int RenderContextRender(IntPtr ctx, MpvRenderNative.MpvRenderParam[] parameters)
+        public int RenderContextRender(IntPtr ctx, RenderParam[] parameters)
         {
             Record("render"); RenderStarted.TrySetResult(); RenderRelease?.Wait();
             Marshal.WriteByte(parameters.Single(p => p.Type == MpvRenderParamSwPointer).Data, _nextPixel++);
@@ -863,7 +863,7 @@ public sealed class RenderSessionTests
             }
             return RenderReturnCode;
         }
-        public void RenderContextSetUpdateCallback(IntPtr ctx, MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx)
+        public void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx)
         { Record("callback"); Callback = new(callback); if (CallbackFailure != null) throw CallbackFailure; }
         public void RenderContextFree(IntPtr ctx)
         { Record("free"); if (FreeFailure != null) throw FreeFailure; }

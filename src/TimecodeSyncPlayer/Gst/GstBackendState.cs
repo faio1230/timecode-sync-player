@@ -14,7 +14,6 @@ internal sealed class GstBackendState : IDisposable
 {
     /// <summary>検証実行時は環境変数で送信者名を分離できる（既定は運用名）。</summary>
     public const string SenderNameEnvVar = "TIMECODE_SYNC_PLAYER_SPOUT_NAME";
-    public const string DefaultSenderName = "TimecodeSyncPlayer";
 
     private readonly IGstNativeApi _native;
     private readonly AppSettingsManager? _settingsManager;
@@ -23,7 +22,7 @@ internal sealed class GstBackendState : IDisposable
     private IntPtr _externalDevice;
     private bool _playerDisposed;
     private GstNative.TcsFrameNotifyDelegate? _thunk;      // ネイティブへ渡すdelegateの寿命保持
-    private MpvRenderNative.MpvRenderUpdateFn? _renderCallback;
+    private RenderUpdateFn? _renderCallback;
     private IntPtr _renderCallbackCtx;
 
     public GstBackendState(IGstNativeApi native, AppSettingsManager? settingsManager = null)
@@ -135,7 +134,7 @@ internal sealed class GstBackendState : IDisposable
         return EnsurePlayer();
     }
 
-    public void AttachRenderCallback(MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx)
+    public void AttachRenderCallback(RenderUpdateFn callback, IntPtr callbackCtx)
     {
         lock (_gate)
         {
@@ -194,12 +193,12 @@ internal sealed class GstBackendState : IDisposable
     internal static string ResolveSenderName()
     {
         string? fromEnv = Environment.GetEnvironmentVariable(SenderNameEnvVar);
-        return string.IsNullOrWhiteSpace(fromEnv) ? DefaultSenderName : fromEnv.Trim();
+        return string.IsNullOrWhiteSpace(fromEnv) ? SpoutDefaults.DefaultSenderName : fromEnv.Trim();
     }
 
     private void OnNativeFrame(IntPtr userData, ulong generation, ulong seq)
     {
-        MpvRenderNative.MpvRenderUpdateFn? cb;
+        RenderUpdateFn? cb;
         IntPtr ctx;
         lock (_gate)
         {

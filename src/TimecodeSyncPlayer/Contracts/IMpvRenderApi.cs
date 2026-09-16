@@ -12,9 +12,9 @@ public interface IMpvRenderApi
     string MpvRenderApiTypeSw { get; }
     ulong MpvRenderUpdateFrame { get; }
 
-    int RenderContextCreate(out IntPtr res, IntPtr mpv, MpvRenderNative.MpvRenderParam[] parameters);
+    int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters);
     ulong RenderContextUpdate(IntPtr ctx);
-    int RenderContextRender(IntPtr ctx, MpvRenderNative.MpvRenderParam[] parameters);
-    void RenderContextSetUpdateCallback(IntPtr ctx, MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx);
+    int RenderContextRender(IntPtr ctx, RenderParam[] parameters);
+    void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx);
     void RenderContextFree(IntPtr ctx);
 }

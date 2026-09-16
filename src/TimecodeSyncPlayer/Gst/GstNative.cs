@@ -181,7 +181,7 @@ internal static class GstNative
 
 /// <summary>
 /// tcs_gstreamer.dll と GStreamer ランタイム DLL の検索経路。
-/// アセンブリ共通の DllImportResolver は MpvNativeLibraryResolver が所有するため、
+/// アセンブリ共通の DllImportResolver は NativeLibraryResolver が所有するため、
 /// ここでは判定と個別ロードだけを提供する。
 /// </summary>
 internal enum GstRootSource

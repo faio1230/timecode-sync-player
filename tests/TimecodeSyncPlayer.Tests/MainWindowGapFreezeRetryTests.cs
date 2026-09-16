@@ -178,10 +178,10 @@ public sealed class MainWindowGapFreezeRetryTests
         public int MpvRenderParamSwPointer => 20;
         public string MpvRenderApiTypeSw => "sw";
         public ulong MpvRenderUpdateFrame => 1;
-        public int RenderContextCreate(out IntPtr res, IntPtr mpv, MpvRenderNative.MpvRenderParam[] parameters)
+        public int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters)
         { res = new IntPtr(2); return 0; }
         public ulong RenderContextUpdate(IntPtr ctx) => 0; // Paused: no later FRAME work.
-        public int RenderContextRender(IntPtr ctx, MpvRenderNative.MpvRenderParam[] parameters)
+        public int RenderContextRender(IntPtr ctx, RenderParam[] parameters)
         {
             Interlocked.Increment(ref RenderCount);
             Started.TrySetResult();
@@ -189,7 +189,7 @@ public sealed class MainWindowGapFreezeRetryTests
             Marshal.WriteByte(parameters.Single(p => p.Type == MpvRenderParamSwPointer).Data, 73);
             return 0;
         }
-        public void RenderContextSetUpdateCallback(IntPtr ctx, MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx) { }
+        public void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx) { }
         public void RenderContextFree(IntPtr ctx) { }
     }
 

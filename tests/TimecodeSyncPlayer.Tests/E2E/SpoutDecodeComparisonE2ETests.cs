@@ -4,6 +4,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests.E2E;
@@ -98,7 +99,7 @@ public sealed class SpoutDecodeComparisonE2ETests
                 syncMode = "Continue",
                 syncEnabled = true,
                 spoutEnabled = true,
-                spoutSender = SpoutOutput.DefaultSenderName,
+                spoutSender = SpoutDefaults.DefaultSenderName,
                 tracePath,
                 phasesPath,
                 settingsPath = Path.Combine(report, "settings.json"),

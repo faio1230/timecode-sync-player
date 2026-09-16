@@ -13,16 +13,16 @@ internal sealed class MpvRenderApi : IMpvRenderApi
     public string MpvRenderApiTypeSw => MpvRenderNative.MPV_RENDER_API_TYPE_SW;
     public ulong MpvRenderUpdateFrame => MpvRenderNative.MPV_RENDER_UPDATE_FRAME;
 
-    public int RenderContextCreate(out IntPtr res, IntPtr mpv, MpvRenderNative.MpvRenderParam[] parameters)
+    public int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters)
         => MpvRenderNative.mpv_render_context_create(out res, mpv, parameters);
 
     public ulong RenderContextUpdate(IntPtr ctx)
         => MpvRenderNative.mpv_render_context_update(ctx);
 
-    public int RenderContextRender(IntPtr ctx, MpvRenderNative.MpvRenderParam[] parameters)
+    public int RenderContextRender(IntPtr ctx, RenderParam[] parameters)
         => MpvRenderNative.mpv_render_context_render(ctx, parameters);
 
-    public void RenderContextSetUpdateCallback(IntPtr ctx, MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx)
+    public void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx)
         => MpvRenderNative.mpv_render_context_set_update_callback(ctx, callback, callbackCtx);
 
     public void RenderContextFree(IntPtr ctx)

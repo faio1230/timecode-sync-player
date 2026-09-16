@@ -33,7 +33,7 @@ internal sealed class GstMpvRenderApiAdapter : IMpvRenderApi
     public string MpvRenderApiTypeSw => "sw";
     public ulong MpvRenderUpdateFrame => 1ul;
 
-    public int RenderContextCreate(out IntPtr res, IntPtr mpv, MpvRenderNative.MpvRenderParam[] parameters)
+    public int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters)
     {
         // 「SW バックエンド」の宣言はこの経路では検証のみ（GStreamer 側は常に sw 互換出力）。
         res = mpv;
@@ -46,7 +46,7 @@ internal sealed class GstMpvRenderApiAdapter : IMpvRenderApi
         return _state.Native.ConsumeUpdate(ctx) != 0 ? MpvRenderUpdateFrame : 0ul;
     }
 
-    public int RenderContextRender(IntPtr ctx, MpvRenderNative.MpvRenderParam[] parameters)
+    public int RenderContextRender(IntPtr ctx, RenderParam[] parameters)
     {
         if (ctx == IntPtr.Zero || parameters is null) return -1;
 
@@ -56,7 +56,7 @@ internal sealed class GstMpvRenderApiAdapter : IMpvRenderApi
         int height = 0;
         string format = "bgr0";
 
-        foreach (MpvRenderNative.MpvRenderParam p in parameters)
+        foreach (RenderParam p in parameters)
         {
             if (p.Type == 0) break;
             switch (p.Type)
@@ -86,7 +86,7 @@ internal sealed class GstMpvRenderApiAdapter : IMpvRenderApi
     }
 
     public void RenderContextSetUpdateCallback(
-        IntPtr ctx, MpvRenderNative.MpvRenderUpdateFn callback, IntPtr callbackCtx)
+        IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx)
     {
         if (callback is null)
             _state.DetachRenderCallback();

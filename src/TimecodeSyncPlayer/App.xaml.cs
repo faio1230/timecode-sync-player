@@ -12,7 +12,7 @@ namespace TimecodeSyncPlayer;
 
 public partial class App : Application
 {
-    static App() => MpvNativeLibraryResolver.Register();
+    static App() => NativeLibraryResolver.Register();
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetDllDirectory(string lpPathName);
