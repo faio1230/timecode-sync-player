@@ -62,25 +62,53 @@
 ### Added
 - GStreamer による再生バックエンドと GPU 合成出力を**既定**にした。D3D11 の共有リングでデコード済み
   テクスチャを直接受け取り、合成・全画面表示・Spout 送信まで GPU 上で完結する
+- 型付きの再生 API（`IPlaybackApi` / `PlaybackResult` / `IRenderUpdateSource`）を追加し、
+  文字列コマンドとプロパティ名をアプリの境界から排除した
 - CPU デコードのコーデック（ProRes ほか）も `d3d11upload` で同じ経路に載せ、リースの扱いを統一
 - 音声付き素材の再生（S1）
 - MPEG-TS のシークを自前のキーフレーム着地＋再基準化で正確にした（S3）
+- LTC の fps モード（Auto / Fixed 24・25・29.97・30）と同期オフセット（`syncOffsetMs`、±1000ms）
+- 同期補正モード（Smooth / Jump）。着地直後 1.0 秒は Smooth の上限を ±20% にして収束を早める（T9）
+- サンプル時計（`TCS_LTC_SAMPLE_CLOCK`、既定 on）。LTC の時刻を音声サンプル位置から出した
+  フレーム終端で評価する（T2）
+- 解像度変更に共有リングを追従させ、世代（ring epoch）で開き直す（D8）
 
 ### Changed
 - **mpv を除去した。** 再生は GStreamer のみになり、`backend` 設定は無くなった。
   退避は `decodeMode`（`hardware` / `software`）で行う
-- ランタイム名を含む型名を中立な名前へ整理した（`IMpvApi` ほか）
-- `outputBackend` の既定が `1`（Gpu）になった
+- **CPU 合成を除去した。** 出力は GPU 合成のみで、`outputBackend` の既定は `1`（Gpu）。
+  `0`（Cpu）は無視して警告ログを出す（設定ファイルは書き換えない）
+- ランタイム名を含む型名を役割名へ整理した（旧 `IMpvApi` ほか）
+- V3（LTC 同期精度）の正式な解析を sample 解析（フレーム終端基準）にした
 - パイプラインクロックをシステムクロックに固定し、音声シンクはそれにスレーブする（S3 の副作用）
+- 終了手順の段名からランタイム名を外した（「GStreamer 停止」）
+
+### Removed
+- mpv バックエンドと `libmpv-2.dll` / `mpv-2.dll` の同梱
+- `backend` 設定キーと `outputBackend=Cpu`（v0.3 の値は起動時に無視して警告）
+- デバッグ OSD（`showDebugOsd` の OSD 表示。設定キーは互換のため残置）
+- 旧 mpv 互換アダプタと文字列コマンド経路（`GstMpvApiAdapter` / `GstCommandTranslator` /
+  `MpvPlaybackCommandBuilder` ほか）
 
 ### Fixed
 - 音声トラック付き MP4 が読み込めなかった（S1）
 - ProRes ほか CPU デコードのコーデックが読み込めなかった（S2）
 - MPEG-TS でシーク後にフレームが数秒届かなかった（S3）
+- 解像度が変わる切替で GPU 復旧後に再生が進まなかった（D8）
+- MP4（B フレームあり）の accurate シーク後、qtdemux のタイムスタンプが先頭 DTS 分ずれ、
+  アプリが実際より進んだ位置にいると思う問題。shim が segment 写像の stream time を使う（D10）
+- ギャップ動作の切替時に、古い LTC フレームの再適用が同期要求を出していた問題（U1）
+- E2E `ProjectRoundTrip` の失敗（テスト側のプレイリスト選択待ち。Q1）
 
-### Known issues（**要判断**、下記 4 参照）
-- 4K 主画面を出力先にすると 40 秒あたり数フレームの落ち（専用ディスプレイ推奨）
+### Known issues
+- **29.97 ノンドロップの LTC は fps モード「Fixed 29.97」の指定が必要**（Auto は 30 と区別できない）
+- **本物の GPU デバイス消失（TDR）からの shim 復旧は未対応（D9）**。v0.4 に含めるかは判断待ち
+- **フレーム 1 枚分の定数は製品では足さない**。現場の遅延は同期オフセット（`syncOffsetMs`）で合わせる
+- 4K 主画面を出力先にすると 40 秒あたり数フレームの落ち（専用ディスプレイ推奨。3.6 節）
 - トラック切替時に稀に 100ms 以下の音切れ（60 分試験で 12 回中 4 回）
+- LTC 実機ループの E2E 1 件（`LtcHardwareLoopE2ETests.CableLoop_ContinueBlackGap_...`）が
+  全件実行で 2 回落ち、単体では合格（要観察）
+- HAP は未対応（専用分岐の実装まで意図的に拒否）
 
 ## 3.5 退避経路（決着済み、2026-09-13 確定・2026-09-15 再確認）
 

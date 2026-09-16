@@ -63,6 +63,25 @@ public sealed class MainWindowGapFreezeRetryTests
         fixture.Handler.CachedTrackId.Should().BeNull();
     });
 
+    [Fact]
+    public Task LocatedLoad_RefreshesPositionDisplayWithoutFrameCallback() => OnUi(() =>
+    {
+        using var fixture = new Fixture();
+        var loadFile = typeof(MainWindow).GetMethod("LoadFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        fixture.PlaybackApi.TimePos = 14.58;
+        ((bool)loadFile.Invoke(fixture.Window, ["C:/clip.mp4", (double?)14.58])!).Should().BeTrue();
+        fixture.Window.ViewModel.Player.TimeLabel.Should().StartWith("0:00:14",
+            "位置つきロード直後はネイティブ位置を 1 回反映する");
+
+        // ネイティブ位置がまだ 0 のときは要求した開始位置で表示する（フレーム通知を待たない）。
+        fixture.PlaybackApi.TimePos = 0;
+        ((bool)loadFile.Invoke(fixture.Window, ["C:/clip.mp4", (double?)14.58])!).Should().BeTrue();
+        fixture.Window.ViewModel.Player.TimeLabel.Should().StartWith("0:00:14");
+
+        return Task.CompletedTask;
+    });
+
     private sealed class Fixture : IDisposable
     {
         private readonly ServiceProvider _provider;

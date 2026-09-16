@@ -1,5 +1,7 @@
 # 出力フレームの生成と公開の分離
 
+> 2026-09-17 追記（v0.4）: 本文書は 2026-09-09 時点の出力フレーム基盤（CPU 合成・WPF Bitmap・mpv 経路）の実装と検証の記録。段 3 で CPU 合成、段 4 で mpv 経路を除去した。現行のパイプラインは [ARCHITECTURE.md](ARCHITECTURE.md) を参照。
+
 ## 目的と今回の範囲
 
 通常動画、Black、Frozen、GapFreeze、Buffered の画像を、寿命が明確な共通の出力フレームとして確定してから各出力へ渡す。画像を選ぶ処理が WPF Bitmap 更新や Spout 送信を直接呼び出す構造を解消する。

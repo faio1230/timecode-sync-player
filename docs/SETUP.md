@@ -46,7 +46,7 @@ timecode-sync-player/
 
 | ファイル | 必須/任意 | 入手方法 |
 |---------|---------|---------|
-| `native/SpoutDX.dll` | 任意 | [Spout2](https://github.com/leadedge/Spout2)のSDK内SpoutDXプロジェクトをビルドして配置します。配布zip／インストーラーには同梱済みです。 |
+| `native/SpoutDX.dll` | Spout 出力を使う場合に必要 | Spout 送信に使います。[Spout2](https://github.com/leadedge/Spout2)のSDK内SpoutDXプロジェクトをビルドして配置します。配布zip／インストーラーには同梱済みです。 |
 | `native/tcs_gstreamer.dll` | **必須** | 動画再生に使います。下記「GStreamer 1.28.2」を参照して`native/gst-shim`からビルドします。 |
 
 詳細は [native/README.md](../native/README.md) を参照してください。
@@ -103,7 +103,7 @@ dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 
 **注意:** `tcs_gstreamer.dll`や`SpoutDX.dll`が無くてもビルド自体は成功します。ただし
 `tcs_gstreamer.dll`とGStreamerランタイムが無い場合は動画再生ができません。`SpoutDX.dll`が無い場合は
-Spout出力ボタンが無効化されるだけで、それ以外は正常に動作します。
+Spout 出力を利用できません（Spout を有効にすると送信 worker の起動に失敗します）。
 
 ---
 

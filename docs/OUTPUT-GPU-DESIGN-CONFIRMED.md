@@ -2,6 +2,8 @@
 
 2026-09-09〜11 の設計議論と独立試作（`scripts/GpuOutputProbe`）で確定した、合成→全画面・Spout・プレビューの設計を1本にまとめる。個別の実証文書は根拠として末尾から参照する。合意済みの製品動作（キャンバス、テストカード、終了、フェード後回し等）は [OUTPUT-PIPELINE-DESIGN.md](OUTPUT-PIPELINE-DESIGN.md) が正で、本文書はその GPU 実装方針を確定させたもの。本体への統合は段階 1〜6b まで完了した（2026-09-12、基点 a9b9349。引き継ぎは [HANDOVER-GPU-OUTPUT-2026-09-12.md](HANDOVER-GPU-OUTPUT-2026-09-12.md)）。
 
+> **2026-09-17 追記（v0.4）**: mpv バックエンドと CPU 合成は段 3・4 で除去した。ソースは GStreamer shim の共有リングのみで、再生操作は型付き API（`IPlaybackApi`）が担う。本文の mpv ソース（`MpvSnapshotSource`）と CPU アップロードの記述は 2026-09-11 時点の確定設計の記録。現行の全体像は [ARCHITECTURE.md](ARCHITECTURE.md)。
+
 ## 構造
 
 ```text
@@ -64,9 +66,9 @@
 
 1. **HAP**: `video/x-hap` 分岐は未実装（[調査](HAP-GSTREAMER-INVESTIGATION-2026-09-11.md)）。GStreamer 経路へ圧縮テクスチャ直受けとして追加する。
 2. **120Hz 表示先と複数画面**: 120Hz の表示・合成整列、複数画面（3面）の画像年齢は未測定。
-3. **mpv×Gpu×Spout の実機**: mpv 実動画を Gpu 出力で再生し、Spout 受信機まで含めた確認は未完了。
+3. ~~**mpv×Gpu×Spout の実機**: mpv 実動画を Gpu 出力で再生し、Spout 受信機まで含めた確認は未完了。~~ mpv 除去（v0.4）により項目ごと消滅。
 4. **実デバイス消失**: 復旧確認は `TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS` による疑似消失のみ。実デバイス消失・ドライバー再起動は未検証。
-5. **素材側**: mpv の CPU 画像アップロード上限と `hwdec=d3d11va-copy` は未着手（GStreamer の D3D11VA は段階 6b で実装済み）。
+5. **素材側**: ~~mpv の CPU 画像アップロード上限と `hwdec=d3d11va-copy` は未着手（GStreamer の D3D11VA は段階 6b で実装済み）。~~ mpv 除去（v0.4）により対象外。GStreamer の D3D11VA は段階 6b で実装済み。
 
 ## 本体統合
 
