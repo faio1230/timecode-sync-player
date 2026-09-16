@@ -103,6 +103,8 @@
 
 - 2026-09-17 10:20 検証機: clone を書き換え後の履歴に付け替え（HEAD `b8cb7ac`、作品名 0 件、旧オブジェクト消滅）。**D18 は解消**（`TIMECODE_SYNC_PLAYER_E2E_APP_PATH` だけで `LtcHardwareLoopE2ETests` 14/14、`ltc-loop-d18-noenv.trx`）。ランナーは `gstreamer=bundled` を認識したが、**D19**: 前提検査が PnP の FriendlyName で VB-CABLE を探すため、再生側がローカライズ名「スピーカー (VB-Audio Virtual Cable)」の検証機で `PREREQ-ERROR` になった（MMDevice 名は「CABLE Input」）。同期担当が MMDevice 名（レジストリ）で検査するよう修正中
 
+- 2026-09-17 10:40 検証機: D19 統合後（main `0be9814`）のランナーをインストール済み v0.4.2 に向けて実行。`prereqs: cable_mm=[render: CABLE Input | capture: CABLE Output] … gstreamer=bundled`、`SUMMARY passed=14 failed=0 skipped=0 err_ftl=0 leftover=0`、終了コード 0、102 秒（ビルド込み）、`TestResults/ltc-scenarios/20260916T234057Z`（検証機）。**環境変数・PATH の補いなしで検証機のランナーが動く（D18・D19 解消）**。次はシナリオ E2E 18 本の統合後に `-MediaDir` で実素材の実行
+
 ## 5. 進め方
 
 1. 除去担当（`w5:p6`）が素材・プロジェクト・色判定ヘルパー・新テストを実装（`docs/prompts/2026-09-17-LTC-scenario-e2e.md`）
