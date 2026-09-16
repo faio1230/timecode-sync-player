@@ -2,6 +2,10 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-16 22:50 更新（11 回目）**: U1 は再適用の古い age が原因（UI の滞りではない）と確定し修正を統合（`49bbd24`）。S4（段 4 の設計調査）を統合し 7 項目を判断済み（`docs/V04-STAGE4-TYPED-API-SURVEY-2026-09-16.md` 10 節。結果型・段階移行・osd 削除ほか）。
+> `w5:p3` は段 5 前半（文書から mpv 前提を外す。`docs/prompts/2026-09-16-STAGE5A-docs-mpv-removal.md`）。`w5:p6` は段 3 実装中（最初のコミット `80dd18f`）。
+> 段 4 の実装指示は段 3 統合後に出す。
+>
 > **2026-09-16 21:30 更新（10 回目）**: **段 2 完了。mpv は main から消えた**（`0943e2f`。再生経路・実装・DI の削除、未接続中は明示的な NotReady、v0.3 設定の互換。E2E 全件 63/63、V3 sample -28.5 / 35.0）。
 > 段 2 前半の移設は `74276cf`。`w5:p6` は新セッションで**段 3（CPU 合成の除去、`docs/prompts/2026-09-16-STAGE3-cpu-compose-removal.md`）**に着手。
 > `w5:p3` は新セッションで U1（コンボ切替時の age 警告 1.5 秒。前セッションの「UI の滞り」説を再適用経路の説で上書きする可能性）。
@@ -242,7 +246,7 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 | ペイン | 作業 | 状態 |
 | --- | --- | --- |
-| `w5:p3`（同期担当、新セッション） | **U1**（`docs/prompts/2026-09-16-U1-ui-stall-on-gap-mode-change.md`） | 裏取りの実機 1 本を実行中 |
+| `w5:p3`（同期担当、新セッション） | U1・S4 は完了・統合済み。**段 5 前半**（`docs/prompts/2026-09-16-STAGE5A-docs-mpv-removal.md`、文書のみ） | 着手 |
 | `w5:p6`（除去担当、新セッション） | 段 2 は完了・統合済み（`0943e2f`）。**段 3: CPU 合成の除去**（`docs/prompts/2026-09-16-STAGE3-cpu-compose-removal.md`） | 着手（ビルドは親の合図後） |
 
 **実機は 1 つ。親が順番を管理する。** エージェントには「実機を使う前に一報」を毎回指示している。
