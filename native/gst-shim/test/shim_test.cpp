@@ -5,6 +5,7 @@
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
+#include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 #include <gst/gstversion.h>
 #include <d3d11.h>
@@ -356,6 +357,42 @@ run_delivery_policy_tests ()
   tcs_ring_mark_occupied (pick_after_rebuild, 3, 2, 1, 2);
   check (tcs_ring_pick_slot (pick_after_rebuild, 3) == 0,
       "ring epoch: old-epoch occupancy leaves slot 0 pickable");
+
+  /* D10: reported positions use stream time, not the raw buffer PTS. The
+   * qtdemux post-seek shape (B-frames, negative first DTS) sends
+   * start=15.033333 / time=15.000 while pushing the 15.000 IDR with a raw PTS
+   * of 15.033333; stream time maps it back to the target. */
+  {
+    GstSegment seg;
+    gst_segment_init (&seg, GST_FORMAT_TIME);
+    seg.start = (guint64) (15.033333333 * GST_SECOND);
+    seg.stop = (guint64) (30.033333333 * GST_SECOND);
+    seg.time = (guint64) (15.000000000 * GST_SECOND);
+    seg.position = seg.start;
+    int fallback = 0;
+    guint64 stream = tcs_stream_time_or_pts (&seg,
+        (guint64) (15.033333333 * GST_SECOND), &fallback);
+    check (fallback == 0, "D10: segment provides stream time");
+    check (stream == (guint64) (15.000000000 * GST_SECOND),
+        "D10: post-seek stream time maps back to the seek target");
+
+    /* Normal playback: start == time means identity. */
+    seg.start = 0;
+    seg.time = 0;
+    seg.stop = 30 * GST_SECOND;
+    seg.position = 0;
+    stream = tcs_stream_time_or_pts (&seg, (guint64) (2.050000000 * GST_SECOND), &fallback);
+    check (fallback == 0 && stream == (guint64) (2.050000000 * GST_SECOND),
+        "D10: normal playback mapping is unchanged");
+
+    /* No segment -> raw PTS with the fallback flag. */
+    stream = tcs_stream_time_or_pts (nullptr, (guint64) (2.050000000 * GST_SECOND), &fallback);
+    check (fallback == 1 && stream == (guint64) (2.050000000 * GST_SECOND),
+        "D10: no segment falls back to the raw PTS");
+    stream = tcs_stream_time_or_pts (nullptr, GST_CLOCK_TIME_NONE, &fallback);
+    check (fallback == 1 && stream == GST_CLOCK_TIME_NONE,
+        "D10: invalid PTS falls back unchanged");
+  }
 
   /* V11: decode profile order (pure). 4 GPU profiles then 5 CPU profiles,
    * mirroring the shim's table shape (9 profiles + decodebin fallback).
