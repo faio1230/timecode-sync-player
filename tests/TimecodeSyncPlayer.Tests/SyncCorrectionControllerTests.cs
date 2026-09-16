@@ -340,6 +340,39 @@ public class SyncCorrectionControllerTests
     }
 
     [Fact]
+    public void Smooth_ResidualGrowsFromSmallToLarge_IsDisabledAfterTwoSecondsWithoutImprovement()
+    {
+        var controller = new SyncCorrectionController();
+
+        // 8ms で補正が始まる（窓の開始は 8ms）。
+        Evaluate(controller, 0.008, secondsAfterStart: 0.0);
+        // 200ms へ悪化。開始値から 10ms 以上なので窓を取り直し、ゲートが開く。
+        Evaluate(controller, 0.200, secondsAfterStart: 0.1);
+        Evaluate(controller, 0.200, secondsAfterStart: 1.1);
+
+        SyncCorrectionDecision giveUp = Evaluate(controller, 0.200, secondsAfterStart: 2.2);
+
+        controller.SmoothDisabled.Should().BeTrue();
+        giveUp.Rate.Should().Be(1.0);
+        giveUp.Reason.Should().Be("smooth-ineffective");
+    }
+
+    [Fact]
+    public void Smooth_LargeResidual_ImprovingWithinTwoSeconds_IsNotDisabled()
+    {
+        var controller = new SyncCorrectionController();
+
+        Evaluate(controller, 0.200, secondsAfterStart: 0.0);
+        // 2 秒以内に 150ms へ改善（10ms 以上の改善で窓を取り直す）。
+        SyncCorrectionDecision improved = Evaluate(controller, 0.150, secondsAfterStart: 0.9);
+        Evaluate(controller, 0.150, secondsAfterStart: 1.5).Action
+            .Should().Be(SyncCorrectionActionType.SetRate);
+
+        controller.SmoothDisabled.Should().BeFalse();
+        improved.Rate.Should().BeApproximately(1.10, 1e-9, "150ms は定常の ±10% でクランプされる");
+    }
+
+    [Fact]
     public void Reset_ClearsSmoothState_SoANewTrackCanTryAgain()
     {
         var controller = new SyncCorrectionController();

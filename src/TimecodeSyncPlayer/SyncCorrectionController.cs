@@ -62,7 +62,10 @@ internal sealed class SyncCorrectionController
     /// <summary>
     /// T2 段 3: 「効かない」判定を行う最小の残差（窓の開始時の |残差|）。
     /// これ未満の残差は 10ms 改善しようがなく、判定すると Smooth を誤って止める。
-    /// この判定は shim がレート変更を拒む場合の検出なので、大きい残差でだけ行う。
+    /// 窓は |残差| が開始値から <see cref="IneffectiveImprovementSeconds"/> 以上動いたとき
+    /// （改善・悪化とも）に取り直すので、小さい残差から始まって大きく育った場合も、
+    /// 育った値で判定できる。この判定は shim がレート変更を拒む場合の検出なので、
+    /// 大きい残差でだけ意味がある。
     /// </summary>
     public const double IneffectiveMinimumResidualSeconds = 0.030;
 
@@ -217,8 +220,12 @@ internal sealed class SyncCorrectionController
             _windowStartedAt = now;
             _windowStartAbsResidual = abs;
         }
-        else if (_windowStartAbsResidual - abs >= IneffectiveImprovementSeconds)
+        else if (_windowStartAbsResidual - abs >= IneffectiveImprovementSeconds ||
+                 abs - _windowStartAbsResidual >= IneffectiveImprovementSeconds)
         {
+            // 改善でも悪化でも、窓の開始値から 10ms 以上動いたら時間を測り直す。
+            // 悪化を無視すると、小さい残差（例 8ms）で窓が始まった後に shim がレートを
+            // 無視して残差が育っても、開始値が小さいままゲートが開かず検出できない。
             _windowStartedAt = now;
             _windowStartAbsResidual = abs;
         }
