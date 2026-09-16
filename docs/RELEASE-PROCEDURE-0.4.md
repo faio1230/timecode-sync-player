@@ -30,7 +30,7 @@ powershell -File scripts\package-release.ps1            # Version は csproj か
 
 - 出力の zip と setup.exe の **SHA-256 を `docs/release-0.4-plan.md` に記録**する
 - 配布物に `libmpv-2.dll` / `mpv-2.dll` が含まれていないこと、`tcs_gstreamer.dll` と GStreamer のプラグイン閉包が含まれていることを確認する（`Expand-Archive` して一覧）
-- 別のディレクトリに展開して起動し、**素材 1 本の再生と Spout 送信、LTC 同期 1 本（V3 ハーネスではなく手動でよい）**を確認する。ログの `=== TimecodeSyncPlayer v0.4.0 起動 ===` を見る
+- 別のディレクトリに展開して起動し、**素材 2 本（うち音声付き AAC 44.1kHz を 1 本。`scripts\make-e2e-media.ps1` の `test_720p30_aac44k.mp4`）の再生と Spout 送信、LTC 同期 1 本（V3 ハーネスではなく手動でよい）**を確認する。ログの `=== TimecodeSyncPlayer v0.4.0 起動 ===` を見る
 
 ## 2. タグと公開
 

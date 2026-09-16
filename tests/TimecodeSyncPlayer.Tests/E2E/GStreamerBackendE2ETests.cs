@@ -224,7 +224,87 @@ public sealed class GStreamerBackendE2ETests
         }
     }
 
+    [SkippableFact(Timeout = 120_000)]
+    public void GStreamerBackend_PlaysAac44kMedia()
+        => AssertAudioMediaPlays("test_720p30_aac44k.mp4", "AAC 44.1kHz (audio track first)");
+
+    [SkippableFact(Timeout = 120_000)]
+    public void GStreamerBackend_PlaysAac48kVideoFirstMedia()
+        => AssertAudioMediaPlays("test_720p30_aac48k_video_first.mp4", "AAC 48kHz (video track first)");
+
     // ---- helpers ----
+
+    /// <summary>
+    /// D15: 音声付き素材が読み込めて再生が進む（位置が 2 回続けて進む）ことを確認する。
+    /// 修正前は shim のプロファイルが全滅し、位置が進まず `all video profiles failed` が残る。
+    /// </summary>
+    private static void AssertAudioMediaPlays(string mediaName, string label)
+    {
+        (string exePath, string repoRoot) = PrepareEnvironment(out _);
+        string media = Path.Combine(repoRoot, "artifacts", "media", mediaName);
+        Skip.If(!File.Exists(media), $"テスト動画が無い: {media} (scripts/make-e2e-media.ps1)");
+
+        string workDir = NewTempDir("tcs-gst-e2e-audio");
+        string settingsPath = Path.Combine(workDir, "settings.json");
+        E2EAppRunner? runner = null;
+        try
+        {
+            runner = E2EAppRunner.Start(exePath, $"--open \"{media}\"", settingsPath, pausePlaybackIfNeeded: false);
+            DateTime runStartedLocal = runner.Process.StartTime;
+
+            double first = double.NaN;
+            E2EAssert.WaitUntil(
+                () => TryReadPosition(runner, out first) && first > 0.5,
+                TimeSpan.FromSeconds(20));
+            E2EAssert.WaitUntil(
+                () => TryReadPosition(runner, out double current) && current > first + 0.3,
+                TimeSpan.FromSeconds(10));
+
+            CountInLogSince(exePath, "all video profiles failed", runStartedLocal)
+                .Should().Be(0, $"{label}: audio-bearing media must load and play");
+        }
+        finally
+        {
+            runner?.Dispose();
+            TryDeleteDir(workDir);
+        }
+    }
+
+    private static bool TryReadPosition(E2EAppRunner runner, out double seconds)
+    {
+        seconds = 0;
+        string[] parts = runner.Text("TimeLabel").Split('/')[0].Trim().Split(':');
+        if (parts.Length != 4 ||
+            !int.TryParse(parts[0], out int hours) ||
+            !int.TryParse(parts[1], out int minutes) ||
+            !int.TryParse(parts[2], out int wholeSeconds) ||
+            !int.TryParse(parts[3], out int frames))
+        {
+            return false;
+        }
+
+        // 素材は 30fps。秒の範囲判定にだけ使う（フレーム精度は要求しない）。
+        seconds = hours * 3600 + minutes * 60 + wholeSeconds + frames / 30.0;
+        return true;
+    }
+
+    /// <summary>sinceLocal 以降のログ行だけから needle を数える（過去 run の行を拾わない）。</summary>
+    private static int CountInLogSince(string exePath, string needle, DateTime sinceLocal)
+    {
+        string text = ReadNewestLog(Path.GetDirectoryName(exePath)!);
+        int count = 0;
+        foreach (string line in text.Split('\n'))
+        {
+            if (!line.Contains(needle, StringComparison.Ordinal)) continue;
+            Match t = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+            if (!t.Success ||
+                !DateTime.TryParse(t.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime at) ||
+                at < sinceLocal)
+                continue;
+            count++;
+        }
+        return count;
+    }
 
     private static (string ExePath, string RepoRoot) PrepareEnvironment(out string exeDir)
     {
