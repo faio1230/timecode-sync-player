@@ -2956,4 +2956,17 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 検証中に既定の音声出力が Realtek → VB-Audio に変わっていたのは、利用者が同時刻に VB-CABLE を導入したため（検証には影響なし）
 - **判定: D16・D17 とも検証機で解消。v0.4.2 の完了条件 (1) 合格。** 次は検証機の LTC 同期 E2E（`LtcHardwareLoopE2ETests` 14 件）→ 0.4.2 に上げて公開
 
-（続き: LTC 同期 E2E（検証機）→ 0.4.2（`docs/prompts/2026-09-17-V042-version-and-notes.md`）→ 配布物 → 公開）
+### 検証機での LTC 同期 E2E（2026-09-17 08:06〜08:11、`TSP-TestMachine`、対象 `0.4.1+1ea6dca`、親の判定）
+
+- 環境: VB-CABLE（CABLE Input / Output とも Active、48kHz）、リポジトリ main `2b65bc5` を HTTPS で取得、tests をビルド（0/0）
+- 1 回目（`TIMECODE_SYNC_PLAYER_E2E_APP_PATH` + `GSTREAMER_1_0_ROOT_MSVC_X86_64`=同梱フォルダ）: **8 合格 / 6 失敗**。失敗 6 件はすべて再生位置を待つテストで、アプリログに `element factory failed (demux qtdemux)` が 296 回（ロード 0 成功）。LTC 受信自体は動作（decoderFps 25.000、peak 0.985）
+- 2 回目（同じ + PATH の先頭に同梱 `gstreamerin`）: **14 合格 / 0 失敗**（81 秒）。`Sync seek` 14 行すべて success、`Gst loadfile` rc=0、残プロセス 0。証跡 `tests/TimecodeSyncPlayer.Tests/TestResults/ltc-loop-pathfix.trx`（検証機）
+- **判定: LTC 同期は検証機（クリーン環境 + インストール済みアプリ）で合格。v0.4.2 の完了条件 (3) 合格**
+
+## D18: テスト環境の欠陥。環境変数が同梱の GStreamer フォルダを指すとアプリが同梱プラグインの環境を適用しない（2026-09-17 08:15、検証機）
+
+- 事実（検証機の読み取り）: `GstNative.cs` の `ResolveLibrary` はルートの出所が環境変数だと `ApplyBundledPluginEnvironment` を呼ばず、shim 読み込み後に `SetDllDirectory` を戻す（戻さないのは `Bundled` のときだけ）。一方 `E2EAppRunner.ResolvePrereqs` は環境変数か Program Files の GStreamer が無いと「GStreamer ランタイムが見つかりません」でスキップする。インストール済みアプリを E2E の対象にすると両者が食い違う
+- 影響: 製品の通常利用（環境変数なし）には無い。E2E をインストール済みアプリに向けるときだけ
+- 対処（v0.4.2 には入れない。除去担当の候補）: `E2EAppRunner.ResolvePrereqs` が `TIMECODE_SYNC_PLAYER_E2E_APP_PATH` の exe と同じディレクトリの `gstreamer` フォルダを同梱ランタイムとして認め、環境変数を要求しない。手順書（`docs/RELEASE-PROCEDURE-0.4.md` 1.5 節）に「LTC 同期 E2E をインストール済みアプリで回すときは PATH の先頭に同梱 `gstreamerin` を足す」を暫定で書く
+
+（続き: 0.4.2 の配布物 → Taildrop で検証機の最終確認 → タグ・公開）
