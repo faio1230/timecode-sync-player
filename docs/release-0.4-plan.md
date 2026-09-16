@@ -262,6 +262,17 @@ MMCSS 中の `GetThreadPriority` は相対 15）も同ブランチにある。
 - 切り分け 3(a) `PauseForGap`・3(b) シーク方式の採否
 - D1・D2 の修正内容の妥当性
 
+## v0.4.1 の配布物（2026-09-17 06:25、親が作成。main `514b4a0` 相当のコード）
+
+| ファイル | SHA-256 | サイズ |
+| --- | --- | ---: |
+| `TimecodeSyncPlayer-v0.4.1-setup.exe` | `1C9633F4317140DD5E3E78E99D3F5CD3673868907EB5578F9F44DA0FBC10815C` | 38,657,097 |
+| `TimecodeSyncPlayer-v0.4.1-win-x64.zip` | `E54D1579C9A1E6A410340712212811B146190A3E971B4C3A6B8343C386D893B0` | 17,730,029 |
+
+- 同梱: プラグイン 19（gstaudioresample / gsttypefindfunctions を含む）、bin に gio-2.0-0.dll、mpv 0、shim は Release ビルドとハッシュ一致
+- 起動確認（06:26、展開した zip、44.1kHz AAC + H.264 720p30、`-ClickPlay`、20 秒）: 起動ログ `v0.4.1`、ロード 183.9ms（attempt=0）、`logs	cs-gst-20260917.log` 13 行、`already playing`、`send.publish` 60/秒、ERR 0、exit 0、残プロセス 0（`TestResults/gpu-app/<UTC>-v041-smoke`）→ **完了条件 4 は開発機側で合格**（検証機側は別途）
+- GitHub にドラフト（非公開）の Pre-release `v0.4.1 (beta)` として置いた（06:27）。公開は検証機の確認後
+
 ## v0.4.1 の完了の定義（2026-09-17、親）
 
 | # | 完了条件 | 結果 |
@@ -269,4 +280,4 @@ MMCSS 中の `GetThreadPriority` は相対 15）も同ブランチにある。
 | 1 | 開発機で修正前後の 4 本（44.1kHz / 48kHz / 音声先頭 / 1080p60）を確認できる | **合格**（06:00、同期担当の実機、親の確認） |
 | 2 | E2E 全件（除去担当） | **合格** 65/0/6（06:55、統合後） |
 | 3 | 検証機で AV1 実素材 3 本 + 複製 2 本がロード・再生できる | |
-| 4 | 配布物の起動確認（44.1kHz 素材を含む） | |
+| 4 | 配布物の起動確認（44.1kHz 素材を含む） | 開発機 **合格**（06:26）。検証機は 3 と一緒に |
