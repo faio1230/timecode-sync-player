@@ -2923,4 +2923,16 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 開発機（AV1 720p30、libaom 生成、GPU が AV1 対応のため attempt=3 av1-gpu で ok）: 修正前 load.summary 160.8ms（h264-gpu の不一致 129.5ms）→ 修正後 67.6ms（35.1ms）。開発機では不一致が bus エラーで元々速く返るため効果は小さい。**検証機（不一致 1 件 3.0 秒）での再確認が本番**
 - 回帰: 実素材 10 本 failures=0、lock rule PASS、残プロセス 0。証跡 `TestResults/gpu-app/20260916T225007Z-d17-before` / `…225105Z-d17-after`（agent-a の作業ツリー）
 
-（続き: 統合 → Taildrop で検証機（ロード時間の再確認）→ 合格なら 0.4.2）
+### D17-a の統合と検証機向けビルド（2026-09-17 08:40、親）
+
+- 統合: main `00a4dad`（docs 込みの HEAD は `1ea6dca`）。Debug shim 再ビルド、lock rule PASS、非E2E 1674 合格、44.1kHz 素材ロード 170.9ms、残プロセス 0
+- 検証機向けビルド（0.4.1 のまま、ProductVersion `0.4.1+1ea6dca…`、Release shim ハッシュ一致、プラグイン 19）:
+
+| ファイル | SHA-256 | サイズ |
+| --- | --- | ---: |
+| `TimecodeSyncPlayer-v0.4.1-1ea6dca-setup.exe` | `3A6D40FB30C4622CA45F41891355B0CD6804D1C411D65D092835D49588D51E5B` | 38,656,664 |
+| `TimecodeSyncPlayer-v0.4.1-1ea6dca-win-x64.zip` | `AC1A9C2F4700AE6E29963AAC84CAE5B350641CDD7142328E50DD892A7E7AD255` | 17,731,572 |
+
+- Taildrop で検証機へ送付（08:42）。公開せず
+
+（続き: 検証機でロード時間・クラッシュ 0・終了ダイアログの確認 → 合格なら 0.4.2 に上げて公開）
