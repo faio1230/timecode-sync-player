@@ -111,8 +111,7 @@ public class SyncAccuracyTraceTests
     }
 
     [Fact]
-    public void ReferenceLtcFps_At29_97_ControlsLtcSecondsAndFpsField()
-    {
+    public void ReferenceLtcFps_At29_97_ControlsLtcSecondsAndFpsField()    {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
         try
         {
@@ -124,6 +123,27 @@ public class SyncAccuracyTraceTests
             // 29.97 NDF は総フレーム換算: (0,0,1,12) は 42 フレーム ÷ 29.97。
             Assert.Equal(42 / (30000.0 / 1001.0), lines[1].GetProperty("seconds").GetDouble(), 6);
             Assert.Equal(30000.0 / 1001.0, lines[1].GetProperty("fps").GetDouble(), 6);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void RecordLtc_WritesSampleClockFields_WithoutChangingTicks()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path))
+                trace.RecordLtc(new(new(0, 0, 1, 12, false), 25, 1.48,
+                    FrameEndTimestamp: 111_000, CallbackTimestamp: 222_000,
+                    EndSampleIndex: 123_456, AnchorSpreadMs: 4.5));
+
+            var lines = Read(path);
+            JsonElement ltc = lines.Single(x => x.GetProperty("type").GetString() == "ltc");
+            Assert.True(ltc.GetProperty("ticks").GetInt64() > 0);
+            Assert.Equal(111_000, ltc.GetProperty("sampleTicks").GetInt64());
+            Assert.Equal(222_000, ltc.GetProperty("callbackTicks").GetInt64());
+            Assert.Equal(4.5, ltc.GetProperty("anchorSpreadMs").GetDouble());
         }
         finally { File.Delete(path); }
     }

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -179,5 +180,67 @@ public class LtcDecoderTests
     public void LtcTimecode_FormatRealTime_HandlesZero()
     {
         LtcTimecode.FormatRealTime(0.0).Should().Be("0.000 s");
+    }
+
+    // ── T2: サンプル通し番号（フレーム終端の位置） ─────────────────
+
+    [Fact]
+    public void Read_EndSampleIndexAdvancesBySamplesPerFrame()
+    {
+        const int sampleRate = 48000;
+        const int fps = 25;
+        var expected = BuildContinuousFrames(new LtcTimecode(0, 0, 0, 0, false), fps, 6);
+        float[] samples = LtcTestSignalGenerator.Generate(expected, fps, sampleRate);
+        var decoder = new LtcDecoder(sampleRate, fps);
+
+        decoder.Write(samples, samples.Length);
+
+        var decoded = new List<LtcDecodedFrame>();
+        while (decoder.Read() is { } frame)
+            decoded.Add(frame);
+        decoded.Count.Should().BeGreaterThanOrEqualTo(4);
+        decoded.Select(f => f.Timecode).Should().OnlyContain(t => expected.Contains(t));
+        for (int i = 1; i < decoded.Count; i++)
+            (decoded[i].EndSampleIndex - decoded[i - 1].EndSampleIndex).Should().Be(sampleRate / fps);
+    }
+
+    [Fact]
+    public void Read_EndSampleIndex_IsIdenticalForAnyWriteChunkSize()
+    {
+        const int sampleRate = 48000;
+        const int fps = 25;
+        var expected = BuildContinuousFrames(new LtcTimecode(1, 2, 3, 4, false), fps, 6);
+        float[] samples = LtcTestSignalGenerator.Generate(expected, fps, sampleRate);
+
+        var single = new LtcDecoder(sampleRate, fps);
+        single.Write(samples, samples.Length);
+        var singleFrames = Drain(single);
+
+        var chunked = new LtcDecoder(sampleRate, fps);
+        for (int offset = 0; offset < samples.Length; offset += 100)
+        {
+            int count = Math.Min(100, samples.Length - offset);
+            chunked.Write(samples[offset..(offset + count)], count);
+        }
+        var chunkedFrames = Drain(chunked);
+
+        singleFrames.Should().NotBeEmpty();
+        chunkedFrames.Should().Equal(singleFrames, "サンプル通し番号は Write の分割に依存しない");
+    }
+
+    private static List<LtcTimecode> BuildContinuousFrames(LtcTimecode first, int fps, int count)
+    {
+        var frames = new List<LtcTimecode> { first };
+        for (int i = 1; i < count; i++)
+            frames.Add(LtcTestSignalGenerator.Increment(frames[^1], fps));
+        return frames;
+    }
+
+    private static List<LtcDecodedFrame> Drain(LtcDecoder decoder)
+    {
+        var decoded = new List<LtcDecodedFrame>();
+        while (decoder.Read() is { } frame)
+            decoded.Add(frame);
+        return decoded;
     }
 }

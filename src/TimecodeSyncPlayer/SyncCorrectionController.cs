@@ -36,18 +36,38 @@ public sealed record SyncCorrectionDecision(
 /// T5: 粗いデッドゾーン（6 フレーム）の内側で残差 e = effectiveLtc - playback を見る補正。
 /// Smooth は比例制御 rate = 1 + clamp(e / T, -0.10, +0.10)（T=1.0s）でシークを発行しない。
 /// T9: 着地直後の 1.0 秒だけ上限を ±0.20 に上げ、1 秒以内の収束を狙う。
+/// T2 段 3: 残差の揺れが 2ms になったため、デッドバンド 5ms・戻りバンド 2ms に狭める。
 /// Jump はしきい値（T8: 80ms）を超えたら補正シーク（連続 3 回で諦め、残差が 1 秒留まったら再開）。
 /// Smooth 失敗（shim 非対応・効かない）は状態として公開し、アプリが操作者に見せる。
 /// </summary>
 internal sealed class SyncCorrectionController
 {
-    public const double DeadbandSeconds = 0.020;
-    public const double RateReturnBandSeconds = 0.010;
+    /// <summary>
+    /// T2 段 3: Smooth が動き出す残差。サンプル時計で揺れが 2ms になり、20ms では
+    /// +10ms 前後の残差がデッドバンドの縁に張り付いて詰められないため 5ms にする。
+    /// </summary>
+    public const double DeadbandSeconds = 0.005;
+
+    /// <summary>
+    /// T2 段 3: 補正中にレートを 1.0 へ戻す残差。デッドバンドと同じ理由で 2ms にする。
+    /// </summary>
+    public const double RateReturnBandSeconds = 0.002;
+
     public const double MaxRateDelta = 0.10;
     public const double TimeConstantSeconds = 1.0;
     public const int MaxConsecutiveJumpSeeks = 3;
     public static readonly TimeSpan IneffectiveWindow = TimeSpan.FromSeconds(2);
     public const double IneffectiveImprovementSeconds = 0.010;
+
+    /// <summary>
+    /// T2 段 3: 「効かない」判定を行う最小の残差（窓の開始時の |残差|）。
+    /// これ未満の残差は 10ms 改善しようがなく、判定すると Smooth を誤って止める。
+    /// 窓は |残差| が開始値から <see cref="IneffectiveImprovementSeconds"/> 以上動いたとき
+    /// （改善・悪化とも）に取り直すので、小さい残差から始まって大きく育った場合も、
+    /// 育った値で判定できる。この判定は shim がレート変更を拒む場合の検出なので、
+    /// 大きい残差でだけ意味がある。
+    /// </summary>
+    public const double IneffectiveMinimumResidualSeconds = 0.030;
 
     /// <summary>
     /// T9: 着地直後の速度上限。V3 の収束基準（1 秒以内に ±80ms）に対し、残差約 100ms を
@@ -67,7 +87,7 @@ internal sealed class SyncCorrectionController
     /// T8: Jump がシークするしきい値。LTC 25fps の 40ms フレームが音声コールバック
     /// （50ms ごと）で届くため、ずれていなくても残差に ±20〜40ms の揺れが乗る。
     /// 揺れの幅を越える最小の値として 80ms（LTC 2 フレーム分）にする。
-    /// Smooth のデッドバンド（20ms）とは別の値・別の名前。
+    /// Smooth のデッドバンド（T2 段 3: 5ms）とは別の値・別の名前。
     /// </summary>
     public const double JumpSeekThresholdSeconds = 0.080;
 
@@ -200,12 +220,17 @@ internal sealed class SyncCorrectionController
             _windowStartedAt = now;
             _windowStartAbsResidual = abs;
         }
-        else if (_windowStartAbsResidual - abs >= IneffectiveImprovementSeconds)
+        else if (_windowStartAbsResidual - abs >= IneffectiveImprovementSeconds ||
+                 abs - _windowStartAbsResidual >= IneffectiveImprovementSeconds)
         {
+            // 改善でも悪化でも、窓の開始値から 10ms 以上動いたら時間を測り直す。
+            // 悪化を無視すると、小さい残差（例 8ms）で窓が始まった後に shim がレートを
+            // 無視して残差が育っても、開始値が小さいままゲートが開かず検出できない。
             _windowStartedAt = now;
             _windowStartAbsResidual = abs;
         }
-        else if (now - _windowStartedAt >= IneffectiveWindow)
+        else if (now - _windowStartedAt >= IneffectiveWindow &&
+                 _windowStartAbsResidual >= IneffectiveMinimumResidualSeconds)
         {
             _smoothDisabled = true;
             _rateActive = false;

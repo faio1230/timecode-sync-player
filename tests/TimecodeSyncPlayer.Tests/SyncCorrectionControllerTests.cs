@@ -4,7 +4,7 @@ namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
 /// T5: 同期補正モード（Smooth = 比例制御のレート微調整 / Jump = フラッシュシーク）。
-/// Smooth: rate = 1 + clamp(e / T, -0.10, +0.10)、T=1.0s、デッドバンド 20ms。
+/// Smooth: rate = 1 + clamp(e / T, -0.10, +0.10)、T=1.0s、デッドバンド 5ms、戻りバンド 2ms（T2 段 3）。
 /// T9: 着地直後の 1.0 秒だけ上限 ±0.20。
 /// T8: Jump はしきい値 80ms を超えたらシーク、連続 3 回で止まり、内側に 1 秒留まると戻る。
 /// Smooth はシークを発行しない。
@@ -53,8 +53,8 @@ public class SyncCorrectionControllerTests
     {
         var controller = new SyncCorrectionController();
 
-        Evaluate(controller, 0.010).Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, -0.010).Action.Should().Be(SyncCorrectionActionType.None);
+        Evaluate(controller, 0.004).Action.Should().Be(SyncCorrectionActionType.None);
+        Evaluate(controller, -0.004).Action.Should().Be(SyncCorrectionActionType.None);
         Evaluate(controller, 0.0).Action.Should().Be(SyncCorrectionActionType.None);
     }
 
@@ -64,9 +64,9 @@ public class SyncCorrectionControllerTests
         var controller = new SyncCorrectionController();
         Evaluate(controller, 0.150).Rate.Should().BeApproximately(1.10, 1e-9);
 
-        // デッドバンド(20ms)内へ入るとヒステリシスで rate 1.0 に戻る。
-        SyncCorrectionDecision settled = Evaluate(controller, 0.005, secondsAfterStart: 0.1);
-        Evaluate(controller, 0.005, secondsAfterStart: 0.2).Action.Should().Be(SyncCorrectionActionType.None);
+        // 戻りバンド(2ms)内へ入るとヒステリシスで rate 1.0 に戻る。
+        SyncCorrectionDecision settled = Evaluate(controller, 0.001, secondsAfterStart: 0.1);
+        Evaluate(controller, 0.001, secondsAfterStart: 0.2).Action.Should().Be(SyncCorrectionActionType.None);
 
         settled.Action.Should().Be(SyncCorrectionActionType.SetRate);
         settled.Rate.Should().Be(1.0);
@@ -79,13 +79,13 @@ public class SyncCorrectionControllerTests
         var controller = new SyncCorrectionController();
         Evaluate(controller, 0.150).Rate.Should().BeApproximately(1.10, 1e-9);
 
-        // 10〜20ms は「補正中なら継続、未補正なら何もしない」。
-        SyncCorrectionDecision active = Evaluate(controller, 0.015, secondsAfterStart: 0.1);
+        // 2〜5ms は「補正中なら継続、未補正なら何もしない」。
+        SyncCorrectionDecision active = Evaluate(controller, 0.004, secondsAfterStart: 0.1);
         var idle = new SyncCorrectionController();
-        SyncCorrectionDecision fresh = Evaluate(idle, 0.015, secondsAfterStart: 0.1);
+        SyncCorrectionDecision fresh = Evaluate(idle, 0.004, secondsAfterStart: 0.1);
 
         active.Action.Should().Be(SyncCorrectionActionType.SetRate);
-        active.Rate.Should().BeApproximately(1.015, 1e-9);
+        active.Rate.Should().BeApproximately(1.004, 1e-9);
         fresh.Action.Should().Be(SyncCorrectionActionType.None);
     }
 
@@ -295,6 +295,81 @@ public class SyncCorrectionControllerTests
         controller.SmoothDisabled.Should().BeFalse();
         decision.Action.Should().Be(SyncCorrectionActionType.SetRate);
         decision.Rate.Should().BeApproximately(1.05, 1e-9);
+    }
+
+    // ── T2 段 3: デッドバンド 5ms・戻り 2ms、「効かない」は 30ms 以上でだけ ──
+
+    [Fact]
+    public void Smooth_SmallResidual_KeepsCorrectingAndIsNotDisabledAfterTwoSeconds()
+    {
+        var controller = new SyncCorrectionController();
+
+        for (int i = 0; i <= 20; i++)
+        {
+            SyncCorrectionDecision decision = Evaluate(controller, 0.008, secondsAfterStart: i * 0.1);
+            decision.Action.Should().Be(SyncCorrectionActionType.SetRate);
+            decision.Rate.Should().BeApproximately(1.008, 1e-9);
+        }
+
+        controller.SmoothDisabled.Should().BeFalse("窓の開始の残差が 30ms 未満では「効かない」と判定しない");
+    }
+
+    [Fact]
+    public void Smooth_FourMsIdles_AndOnePointFiveMsSettlesAtRateOne()
+    {
+        var controller = new SyncCorrectionController();
+
+        Evaluate(controller, 0.004).Action.Should().Be(SyncCorrectionActionType.None);
+
+        Evaluate(controller, 0.100).Rate.Should().BeApproximately(1.10, 1e-9);
+        SyncCorrectionDecision settled = Evaluate(controller, 0.0015, secondsAfterStart: 0.1);
+        settled.Action.Should().Be(SyncCorrectionActionType.SetRate);
+        settled.Rate.Should().Be(1.0);
+        settled.Reason.Should().Be("smooth-settled");
+    }
+
+    [Fact]
+    public void Smooth_LargeResidual_WithoutImprovement_IsStillDisabled()
+    {
+        var controller = new SyncCorrectionController();
+
+        for (int i = 0; i <= 20; i++)
+            Evaluate(controller, 0.100, secondsAfterStart: i * 0.1);
+
+        controller.SmoothDisabled.Should().BeTrue("窓の開始の残差が 30ms 以上なら従来どおり判定する");
+    }
+
+    [Fact]
+    public void Smooth_ResidualGrowsFromSmallToLarge_IsDisabledAfterTwoSecondsWithoutImprovement()
+    {
+        var controller = new SyncCorrectionController();
+
+        // 8ms で補正が始まる（窓の開始は 8ms）。
+        Evaluate(controller, 0.008, secondsAfterStart: 0.0);
+        // 200ms へ悪化。開始値から 10ms 以上なので窓を取り直し、ゲートが開く。
+        Evaluate(controller, 0.200, secondsAfterStart: 0.1);
+        Evaluate(controller, 0.200, secondsAfterStart: 1.1);
+
+        SyncCorrectionDecision giveUp = Evaluate(controller, 0.200, secondsAfterStart: 2.2);
+
+        controller.SmoothDisabled.Should().BeTrue();
+        giveUp.Rate.Should().Be(1.0);
+        giveUp.Reason.Should().Be("smooth-ineffective");
+    }
+
+    [Fact]
+    public void Smooth_LargeResidual_ImprovingWithinTwoSeconds_IsNotDisabled()
+    {
+        var controller = new SyncCorrectionController();
+
+        Evaluate(controller, 0.200, secondsAfterStart: 0.0);
+        // 2 秒以内に 150ms へ改善（10ms 以上の改善で窓を取り直す）。
+        SyncCorrectionDecision improved = Evaluate(controller, 0.150, secondsAfterStart: 0.9);
+        Evaluate(controller, 0.150, secondsAfterStart: 1.5).Action
+            .Should().Be(SyncCorrectionActionType.SetRate);
+
+        controller.SmoothDisabled.Should().BeFalse();
+        improved.Rate.Should().BeApproximately(1.10, 1e-9, "150ms は定常の ±10% でクランプされる");
     }
 
     [Fact]

@@ -34,7 +34,8 @@ internal sealed class SyncScenarioHarness
     private double _videoFps = 25;
     private bool _renderVideoOnNextSeek;
 
-    public SyncScenarioHarness(TimeProvider? timeProvider = null, bool enableCorrection = false)
+    public SyncScenarioHarness(TimeProvider? timeProvider = null, bool enableCorrection = false,
+        bool? sampleClockEnabled = null, Func<long>? getQpc = null)
     {
         _syncService = new(new SyncDecisionEngine(), new TimecodeSyncSeekState(), timeProvider);
         _audioControlCoordinator = new AudioControlCoordinator(
@@ -86,7 +87,8 @@ internal sealed class SyncScenarioHarness
                     playback,
                     _durationSeconds,
                     _videoFps,
-                    TimecodeFps: 25)));
+                    TimecodeFps: 25),
+                IsNativeSeeking: () => NativeSeeking));
 
         _gapCoordinator = new GapEnterCoordinator(
             _gap,
@@ -128,7 +130,8 @@ internal sealed class SyncScenarioHarness
                     SyncEnabled, Playlist.Current != null, IsSeeking, playback,
                     _durationSeconds, _videoFps, 25),
                 SeekTo: Seek,
-                GetTotalRenderedFrames: () => _renderedFrames));
+                GetTotalRenderedFrames: () => _renderedFrames,
+                IsNativeSeeking: () => NativeSeeking));
         Controller = new LtcSyncController(
             Playlist, _gap, _syncService,
             new LtcFrameProcessor(new TimecodeFpsSelector(), new TimecodeFrameDiagnostics()),
@@ -182,7 +185,9 @@ internal sealed class SyncScenarioHarness
                 SeekTo: enableCorrection ? Seek : null,
                 SetCorrectionStatus: enableCorrection ? text => CorrectionStatus = text : null),
             () => single, () => _continueCoordinator, () => _gapCoordinator,
-            getUtcNow: timeProvider is null ? null : () => timeProvider.GetUtcNow().UtcDateTime);
+            getUtcNow: timeProvider is null ? null : () => timeProvider.GetUtcNow().UtcDateTime,
+            sampleClockEnabled: sampleClockEnabled,
+            getQpc: getQpc);
     }
 
     public LtcSyncController Controller { get; }
@@ -238,6 +243,7 @@ internal sealed class SyncScenarioHarness
     public Guid? LoadedTrackId => _loadedTrackId;
     public bool LoadSucceeds { get; set; } = true;
     public bool SeekSucceeds { get; set; } = true;
+    public bool NativeSeeking { get; set; }
     public double PlaybackSeconds => _playbackSeconds;
     public ScenarioRenderSurface RenderSurface { get; private set; } = ScenarioRenderSurface.Video;
 
@@ -258,6 +264,20 @@ internal sealed class SyncScenarioHarness
             "scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
             new TimecodeFrameDiagnosticResult(TimecodeFrameDiagnosticStatus.Normal, 0, 0),
             ShouldApplySync: true, ShouldLogFps: false), _monotonicMilliseconds);
+
+    /// <summary>
+    /// T2: サンプル時計の検証用。フレーム終端 QPC を持つフレームとして渡す（秒は 25fps の
+    /// フレーム境界に合わせる）。
+    /// </summary>
+    public void SupplyLtcFrame(double seconds, long frameEndTimestamp, long callbackTimestamp = 0)
+    {
+        int frame = (int)Math.Round(seconds * 25.0);
+        var timecode = new LtcTimecode(
+            frame / (25 * 3600), (frame / (25 * 60)) % 60, (frame / 25) % 60, frame % 25, false);
+        Controller.ReceiveFrame(
+            new LtcFrameReceivedEventArgs(timecode, 25, seconds, frameEndTimestamp, callbackTimestamp),
+            _monotonicMilliseconds);
+    }
 
     public void Tick100Milliseconds()
     {

@@ -33,6 +33,14 @@ public record LtcTimecode(int Hours, int Minutes, int Seconds, int Frames, bool 
 }
 
 /// <summary>
+/// T2: デコード済みの1フレーム。<see cref="EndSampleIndex"/> は、このフレームの同期ワードの
+/// 最後のビットを確定させた遷移のサンプル通し番号（= フレーム終端のサンプル位置）。
+/// 通し番号は <see cref="LtcDecoder.Write"/> に渡したサンプル数（モノラル）を数えたもので、
+/// デコーダを作り直すたびに 0 から始まる。
+/// </summary>
+public sealed record LtcDecodedFrame(LtcTimecode Timecode, long EndSampleIndex);
+
+/// <summary>
 /// 純粋C# LTCデコーダ。ネイティブDLL不要。
 ///
 /// アルゴリズム:
@@ -57,9 +65,10 @@ public sealed class LtcDecoder
     private ulong  _data;         // ビット 0〜63（LTCデータ部）
     private ushort _syncReg;      // ビット 64〜79（同期ワード検出用）
 
-    private readonly Queue<LtcTimecode> _queue = new();
+    private readonly Queue<LtcDecodedFrame> _queue = new();
     private const int MaxQueueSize = 60; // 最大60フレーム（約2秒@30fps）
     private readonly int _sampleRate;
+    private long _sampleIndex;     // T2: Write で受け取ったサンプルの通し番号（次に処理するサンプルの位置）
 
     /// <param name="sampleRate">オーディオサンプルレート (例: 48000)</param>
     /// <param name="fps">初期フレームレート推定値（適応的に更新される）</param>
@@ -69,6 +78,9 @@ public sealed class LtcDecoder
         // 初期ハーフビット推定: sampleRate / (fps × 80bits × 2)
         _halfPeriod = sampleRate / (fps * 80.0 * 2.0);
     }
+
+    /// <summary>デコーダに渡したオーディオのサンプルレート。</summary>
+    public int SampleRate => _sampleRate;
 
     /// <summary>
     /// ビットクロックから推定したフレームレート。
@@ -98,7 +110,7 @@ public sealed class LtcDecoder
     }
 
     /// <summary>デコード済みフレームを1件取得。なければ null</summary>
-    public LtcTimecode? Read() =>
+    public LtcDecodedFrame? Read() =>
         _queue.Count > 0 ? _queue.Dequeue() : null;
 
     // ── 内部処理 ─────────────────────────────────────────────────
@@ -108,11 +120,12 @@ public sealed class LtcDecoder
         _sinceTrans++;
         // ゼロクロッシング（正負が変わった）＝遷移
         if ((_prev < 0f) != (s < 0f))
-            OnTransition();
+            OnTransition(_sampleIndex);
         _prev = s;
+        _sampleIndex++;
     }
 
-    private void OnTransition()
+    private void OnTransition(long transitionSampleIndex)
     {
         int d = _sinceTrans;
         _sinceTrans = 0;
@@ -127,7 +140,7 @@ public sealed class LtcDecoder
             else
             {
                 _expectMid = false;
-                EmitBit(1);                           // 2本連続 → ビット "1" 確定
+                EmitBit(1, transitionSampleIndex);    // 2本連続 → ビット "1" 確定
             }
             // ハーフビット周期を指数移動平均で更新
             _halfPeriod = _halfPeriod * 0.9 + d * 0.1;
@@ -136,13 +149,13 @@ public sealed class LtcDecoder
         {
             // ロングインターバル: フルビット周期相当 → ビット "0"
             _expectMid = false;
-            EmitBit(0);
+            EmitBit(0, transitionSampleIndex);
             // フルビット周期の半分でハーフ周期を更新
             _halfPeriod = _halfPeriod * 0.9 + d * 0.05;
         }
     }
 
-    private void EmitBit(int b)
+    private void EmitBit(int b, long transitionSampleIndex)
     {
         // _syncReg の LSB(bit0) → _data の MSB(bit63) へ
         bool overflow = (_syncReg & 1) != 0;
@@ -150,10 +163,10 @@ public sealed class LtcDecoder
         _syncReg = (ushort)((_syncReg >> 1) | (b << 15));
 
         if (_syncReg == FwdSync)
-            TryParseFrame();
+            TryParseFrame(transitionSampleIndex);
     }
 
-    private void TryParseFrame()
+    private void TryParseFrame(long endSampleIndex)
     {
         ulong f = _data;
 
@@ -184,6 +197,6 @@ public sealed class LtcDecoder
             _queue.Dequeue();
         }
 
-        _queue.Enqueue(new LtcTimecode(h, m, s, fr, df));
+        _queue.Enqueue(new LtcDecodedFrame(new LtcTimecode(h, m, s, fr, df), endSampleIndex));
     }
 }

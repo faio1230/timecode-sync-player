@@ -16,7 +16,7 @@ public class LtcSignalPlayerTests
         var decoder = new LtcDecoder(48000, fps);
         decoder.Write(samples, samples.Length);
         var decoded = new List<LtcTimecode>();
-        while (decoder.Read() is { } frame) decoded.Add(frame);
+        while (decoder.Read() is { } frame) decoded.Add(frame.Timecode);
         decoded.Count.Should().BeGreaterThanOrEqualTo(fps);
         decoded.TakeLast(fps - 1).Should().OnlyContain(t => t == new LtcTimecode(0, 7, 20, 0, false));
         decoded.Should().Contain(t => t.ToRealSeconds(fps) < 440);
@@ -33,7 +33,7 @@ public class LtcSignalPlayerTests
         var decoder = new LtcDecoder(48000, fps);
         decoder.Write(samples, samples.Length);
         var decoded = new List<LtcTimecode>();
-        while (decoder.Read() is { } frame) decoded.Add(frame);
+        while (decoder.Read() is { } frame) decoded.Add(frame.Timecode);
         decoded.Count.Should().BeGreaterThanOrEqualTo(30);
         decoded.TakeLast(29).Should().OnlyContain(t => t == new LtcTimecode(0, 7, 20, 0, false));
     }

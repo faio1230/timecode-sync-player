@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Serilog;
 
 namespace TimecodeSyncPlayer;
@@ -46,6 +47,12 @@ internal sealed record LtcSyncEffects(
 /// </summary>
 internal sealed class LtcSyncController
 {
+    /// <summary>T2: サンプル時計（フレーム終端から受信ハンドラまでの経過を同期値に足す）の切替。既定 on。</summary>
+    internal const string SampleClockEnvironmentVariable = "TCS_LTC_SAMPLE_CLOCK";
+
+    /// <summary>T2: age として受け付ける上限。停止や時計の不一致を同期値へ持ち込まない。</summary>
+    internal const double MaxSampleClockAgeSeconds = 0.5;
+
     private readonly PlaylistState _playlist;
     private readonly GapFreezeHandler _gap;
     private readonly TimecodeSyncService _syncService;
@@ -59,12 +66,19 @@ internal sealed class LtcSyncController
     private readonly ContinueModeQueryLogState _queryLog = new(TimeSpan.FromSeconds(1), mediaPositionToleranceSeconds: 0.5);
     private readonly SyncCorrectionController _correction = new();
     private readonly Func<DateTime> _getUtcNow;
+    private readonly bool _sampleClockEnabled;
+    private readonly Func<long> _getQpc;
     private ContinueFrameContext? _lastContinueFrame;
     private bool _smoothAvailable = true;
     private double _lastAppliedRate = 1.0;
     private bool _rateRestorePending;
     private double? _lastAcceptedLtcSeconds;
+    private double _lastAcceptedRawSeconds;
+    private long _lastAcceptedFrameEndTimestamp;
     private double? _pendingSyncSeconds;
+    private double _pendingSyncRawSeconds;
+    private long _pendingSyncFrameEndTimestamp;
+    private bool _sampleClockAgeWarned;
     private string _formatText = "LTC 停止中";
 
     public LtcSyncController(
@@ -72,7 +86,9 @@ internal sealed class LtcSyncController
         LtcFrameProcessor frames, int timeoutMilliseconds, int resumeFrames,
         LtcSyncEffects effects, Func<SingleModeSyncCoordinator> single,
         Func<ContinueOnTrackCoordinator> continueOnTrack, Func<GapEnterCoordinator> gapCoordinator,
-        Func<DateTime>? getUtcNow = null)
+        Func<DateTime>? getUtcNow = null,
+        bool? sampleClockEnabled = null,
+        Func<long>? getQpc = null)
     {
         _playlist = playlist;
         _gap = gap;
@@ -84,11 +100,23 @@ internal sealed class LtcSyncController
         _continue = continueOnTrack;
         _gapCoordinator = gapCoordinator;
         _getUtcNow = getUtcNow ?? (() => DateTime.UtcNow);
+        _sampleClockEnabled = sampleClockEnabled ?? IsSampleClockEnabled(
+            Environment.GetEnvironmentVariable(SampleClockEnvironmentVariable));
+        _getQpc = getQpc ?? Stopwatch.GetTimestamp;
+        Log.Information(
+            "LTC sample clock: {State}（{Variable}=off のときだけ無効）",
+            _sampleClockEnabled ? "有効" : "無効", SampleClockEnvironmentVariable);
         _syncService.SeekIssued += OnSeekIssued;
     }
 
     public double LastLtcSeconds { get; private set; }
     public double LastTimecodeFps => _frames.LastTimecodeFps;
+
+    /// <summary>
+    /// 環境変数の解釈（T2 段 3: 既定 on）。明示的な off（大文字小文字不問）のときだけ無効。
+    /// </summary>
+    internal static bool IsSampleClockEnabled(string? value)
+        => value is null || !value.Trim().Equals("off", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>テスト・診断用: 直近フレームの Continue 補正文脈（フレーム先頭で捨てる）。</summary>
     internal ContinueFrameContext? LastContinueFrame => _lastContinueFrame;
@@ -120,9 +148,9 @@ internal sealed class LtcSyncController
     {
         _pendingSyncSeconds = null;
         LtcSyncContext state = _effects.GetContext();
-        if (_lastAcceptedLtcSeconds is double seconds && state.IsMonitoring &&
+        if (_lastAcceptedLtcSeconds is not null && state.IsMonitoring &&
             state.SyncEnabled && !state.IsSeeking && !_signalLoss.ShouldSuppressSync)
-            RequestSync(seconds);
+            RequestSync(_lastAcceptedRawSeconds, _lastAcceptedFrameEndTimestamp);
     }
 
     public void CancelPendingSync()
@@ -162,9 +190,50 @@ internal sealed class LtcSyncController
             _rateRestorePending = true;
     }
 
-    private void RequestSync(double seconds)
+    private void RequestSync(double rawSeconds, long frameEndTimestamp)
     {
-        _pendingSyncSeconds = ApplySync(seconds) == SyncRequestResult.Deferred ? seconds : null;
+        _pendingSyncRawSeconds = rawSeconds;
+        _pendingSyncFrameEndTimestamp = frameEndTimestamp;
+        RequestSyncEffective(EffectiveSeconds(rawSeconds, frameEndTimestamp));
+    }
+
+    private void RequestSyncEffective(double effectiveSeconds)
+    {
+        _pendingSyncSeconds = ApplySync(effectiveSeconds) == SyncRequestResult.Deferred ? effectiveSeconds : null;
+    }
+
+    /// <summary>
+    /// T2: 同期に使う値。サンプル時計が有効なら、フレーム終端からここまでの経過（age）を
+    /// 生の LTC 秒に足してから、T3 のオフセットを 1 回だけ適用する。
+    /// </summary>
+    private double EffectiveSeconds(double rawSeconds, long frameEndTimestamp)
+    {
+        double seconds = rawSeconds + SampleClockAgeSeconds(frameEndTimestamp);
+        return SyncOffsetPolicy.Apply(
+            seconds, _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
+    }
+
+    /// <summary>
+    /// フレーム終端からハンドラが動くまでの経過。0〜0.5 秒の外は足さず、1 回だけ警告する
+    /// （時計の不一致や停止の取り違えを同期値へ持ち込まない）。
+    /// </summary>
+    private double SampleClockAgeSeconds(long frameEndTimestamp)
+    {
+        if (!_sampleClockEnabled || frameEndTimestamp <= 0)
+            return 0.0;
+        double age = (_getQpc() - frameEndTimestamp) / (double)Stopwatch.Frequency;
+        if (age is < 0 or > MaxSampleClockAgeSeconds)
+        {
+            if (!_sampleClockAgeWarned)
+            {
+                _sampleClockAgeWarned = true;
+                Log.Warning(
+                    "LTC sample clock: age={AgeMs:F1}ms は範囲外（0〜{MaxMs:F0}ms）のため同期値に足しません",
+                    age * 1000.0, MaxSampleClockAgeSeconds * 1000.0);
+            }
+            return 0.0;
+        }
+        return age;
     }
 
     public void FpsModeChanged() => _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
@@ -233,11 +302,14 @@ internal sealed class LtcSyncController
         // T3: 同期に使う値だけを入口で 1 回オフセットする。表示用の LastLtcSeconds は
         // 受信した LTC の生値を保つ。ここで作った effective 値を共有することで、
         // 同期判断・シーク・クリップ切替・ギャップ出入りが同じ量だけずれる。
-        double effectiveSeconds = SyncOffsetPolicy.Apply(
-            processed.ResolvedSeconds,
-            _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
+        // T2: サンプル時計が有効なら、ここでフレーム終端からの経過（age）を足す。
+        double rawSeconds = processed.ResolvedSeconds;
+        long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
+        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp);
         _lastAcceptedLtcSeconds = effectiveSeconds;
-        ObserveValidFrame(effectiveSeconds, receivedAtMilliseconds);
+        _lastAcceptedRawSeconds = rawSeconds;
+        _lastAcceptedFrameEndTimestamp = frameEndTimestamp;
+        ObserveValidFrame(rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
         ApplyCorrection(effectiveSeconds);
     }
 
@@ -353,21 +425,28 @@ internal sealed class LtcSyncController
         RefreshDisplay();
     }
 
-    private void ObserveValidFrame(double seconds, long receivedAtMilliseconds)
+    private void ObserveValidFrame(double rawSeconds, long frameEndTimestamp, long receivedAtMilliseconds)
     {
         ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
         RefreshDisplay();
         _pendingSyncSeconds = null;
         if (!_signalLoss.ShouldSuppressSync)
-            RequestSync(seconds);
+            RequestSync(rawSeconds, frameEndTimestamp);
     }
 
     public void Tick(long nowMilliseconds)
     {
         ApplySignalLossAction(_signalLoss.Evaluate(nowMilliseconds, SignalContext()));
         RefreshDisplay();
-        if (_pendingSyncSeconds is double seconds)
-            RequestSync(seconds);
+        if (_pendingSyncSeconds is double pending)
+        {
+            // T2: サンプル時計が有効なら、保留値は生値とフレーム終端を持ち、
+            // 使う時点の age で実効値を取り直す（off は従来どおり実効値を再送する）。
+            if (_sampleClockEnabled && _pendingSyncFrameEndTimestamp > 0)
+                RequestSync(_pendingSyncRawSeconds, _pendingSyncFrameEndTimestamp);
+            else
+                RequestSyncEffective(pending);
+        }
     }
 
     private LtcSignalLossContext SignalContext()
