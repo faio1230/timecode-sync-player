@@ -84,6 +84,7 @@ internal sealed class LtcSyncController
         _continue = continueOnTrack;
         _gapCoordinator = gapCoordinator;
         _getUtcNow = getUtcNow ?? (() => DateTime.UtcNow);
+        _syncService.SeekIssued += OnSeekIssued;
     }
 
     public double LastLtcSeconds { get; private set; }
@@ -129,6 +130,18 @@ internal sealed class LtcSyncController
         _pendingSyncSeconds = null;
         // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
         ResetCorrection();
+    }
+
+    /// <summary>
+    /// T9: 粗い同期シークの発行で、着地直後の Smooth 速度上限（±0.20）の窓を開く。
+    /// Jump の補正シークも ReportSeekSent を通るため、Smooth のときだけ通知する
+    /// （窓を参照するのは Smooth だけだが、無駄な状態更新を避ける）。
+    /// </summary>
+    private void OnSeekIssued()
+    {
+        if (_effects.GetCorrectionMode?.Invoke() != SyncCorrectionMode.Smooth)
+            return;
+        _correction.NotifyLanding(_getUtcNow());
     }
 
     /// <summary>T7: 操作者の再生・一時停止、プロジェクト差し替えで補正状態を捨てる。</summary>
@@ -413,6 +426,9 @@ internal sealed class LtcSyncController
                     // T7: トラック切替（ロード成功）で補正状態を捨て、Smooth を再試行できるようにする。
                     ResetCorrection();
                     _smoothAvailable = true;
+                    // T9: 着地（ロード成立）から 1.0 秒の補正窓を開く。ResetCorrection の後に置くこと
+                    // （Reset は前の窓を捨てる）。
+                    _correction.NotifyLanding(_getUtcNow());
                 }
                 if (frame.ExitedGap)
                     ResetCorrection();

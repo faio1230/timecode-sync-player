@@ -5,6 +5,7 @@ namespace TimecodeSyncPlayer.Tests;
 /// <summary>
 /// T5: 同期補正モード（Smooth = 比例制御のレート微調整 / Jump = フラッシュシーク）。
 /// Smooth: rate = 1 + clamp(e / T, -0.10, +0.10)、T=1.0s、デッドバンド 20ms。
+/// T9: 着地直後の 1.0 秒だけ上限 ±0.20。
 /// Smooth はシークを発行しない。Jump は連続 3 回で諦める。
 /// </summary>
 public class SyncCorrectionControllerTests
@@ -204,5 +205,98 @@ public class SyncCorrectionControllerTests
         controller.SmoothDisabled.Should().BeFalse();
         Evaluate(controller, 0.120, secondsAfterStart: 3.0)
             .Action.Should().Be(SyncCorrectionActionType.SetRate);
+    }
+
+    // ── T9: 着地直後 1.0 秒の速度上限 ±0.20 ────────────────────────────
+
+    [Theory]
+    [InlineData(0.200, 1.20)]
+    [InlineData(-0.200, 0.80)]
+    public void Smooth_InsideLandingWindow_UsesTwentyPercentLimit(double residual, double expectedRate)
+    {
+        var controller = new SyncCorrectionController();
+        controller.NotifyLanding(T0);
+
+        SyncCorrectionDecision decision = Evaluate(controller, residual, secondsAfterStart: 0.5);
+
+        decision.Action.Should().Be(SyncCorrectionActionType.SetRate);
+        decision.Rate.Should().BeApproximately(expectedRate, 1e-9);
+    }
+
+    [Theory]
+    [InlineData(0.200, 1.10)]
+    [InlineData(-0.200, 0.90)]
+    public void Smooth_AfterLandingWindow_UsesTenPercentLimit(double residual, double expectedRate)
+    {
+        var controller = new SyncCorrectionController();
+        controller.NotifyLanding(T0);
+
+        SyncCorrectionDecision decision = Evaluate(controller, residual, secondsAfterStart: 1.5);
+
+        decision.Rate.Should().BeApproximately(expectedRate, 1e-9);
+    }
+
+    [Fact]
+    public void Smooth_InsideLandingWindow_KeepsProportionalLaw()
+    {
+        var controller = new SyncCorrectionController();
+        controller.NotifyLanding(T0);
+
+        Evaluate(controller, 0.050, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.05, 1e-9);
+    }
+
+    [Fact]
+    public void Smooth_LandingWindowEnd_RoundsAppliedRateIntoTenPercentRange()
+    {
+        var controller = new SyncCorrectionController();
+        controller.NotifyLanding(T0);
+        Evaluate(controller, 0.500, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.20, 1e-9);
+
+        SyncCorrectionDecision after = Evaluate(controller, 0.500, secondsAfterStart: 1.5);
+
+        after.Rate.Should().BeApproximately(1.10, 1e-9);
+    }
+
+    [Fact]
+    public void Smooth_NewLandingInsideWindow_RestartsOneSecondWindow()
+    {
+        var controller = new SyncCorrectionController();
+        controller.NotifyLanding(T0);
+        Evaluate(controller, 0.200, secondsAfterStart: 0.9).Rate.Should().BeApproximately(1.20, 1e-9);
+
+        controller.NotifyLanding(T0.AddSeconds(0.9));
+
+        Evaluate(controller, 0.200, secondsAfterStart: 1.5).Rate.Should().BeApproximately(1.20, 1e-9);
+        Evaluate(controller, 0.200, secondsAfterStart: 2.0).Rate.Should().BeApproximately(1.10, 1e-9);
+    }
+
+    [Fact]
+    public void Reset_ClearsLandingWindow()
+    {
+        var controller = new SyncCorrectionController();
+        controller.NotifyLanding(T0);
+        Evaluate(controller, 0.200, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.20, 1e-9);
+
+        controller.Reset();
+
+        Evaluate(controller, 0.200, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.10, 1e-9);
+    }
+
+    [Fact]
+    public void Jump_IgnoresLandingWindow()
+    {
+        var withLanding = new SyncCorrectionController();
+        withLanding.NotifyLanding(T0);
+        var withoutLanding = new SyncCorrectionController();
+
+        foreach (double residual in new[] { 0.010, 0.120, -0.120 })
+        {
+            SyncCorrectionDecision expected = withoutLanding.Evaluate(
+                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5));
+            SyncCorrectionDecision actual = withLanding.Evaluate(
+                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5));
+
+            actual.Should().Be(expected);
+        }
     }
 }

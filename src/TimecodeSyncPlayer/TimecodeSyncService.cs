@@ -21,6 +21,13 @@ public sealed class TimecodeSyncService
     private const long FileLoadRenderedFrameProgress = 2;
     private static readonly TimeSpan FileLoadTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// T9: 粗い同期シークを発行した時点の通知（<see cref="ReportSeekSent"/> と同じ）。
+    /// LtcSyncController が着地直後の Smooth 速度上限の窓を開く。Jump の補正シークも
+    /// このメソッドを通るが、窓は Smooth だけが参照する。
+    /// </summary>
+    internal event Action? SeekIssued;
+
     public TimecodeSyncService(
         ISyncDecisionEngine engine,
         ITimecodeSyncSeekState seekState,
@@ -89,6 +96,7 @@ public sealed class TimecodeSyncService
         _lastSyncSeekAt = now;
         _latencyCompensator.MarkSeekSent();
         _seekState.BeginSeek(targetSeconds, now);
+        SeekIssued?.Invoke();
     }
 
     /// <summary>

@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace TimecodeSyncPlayer;
 
 /// <summary>T5: 同期補正モード。Smooth = レート微調整（既定）、Jump = フラッシュシーク。</summary>
@@ -33,6 +35,7 @@ public sealed record SyncCorrectionDecision(
 /// <summary>
 /// T5: 粗いデッドゾーン（6 フレーム）の内側で残差 e = effectiveLtc - playback を見る補正。
 /// Smooth は比例制御 rate = 1 + clamp(e / T, -0.10, +0.10)（T=1.0s）でシークを発行しない。
+/// T9: 着地直後の 1.0 秒だけ上限を ±0.20 に上げ、1 秒以内の収束を狙う。
 /// Jump はデッドバンドを超えたら補正シーク（連続 3 回で諦め）。
 /// Smooth 失敗（shim 非対応・効かない）は状態として公開し、アプリが操作者に見せる。
 /// </summary>
@@ -46,11 +49,27 @@ internal sealed class SyncCorrectionController
     public static readonly TimeSpan IneffectiveWindow = TimeSpan.FromSeconds(2);
     public const double IneffectiveImprovementSeconds = 0.010;
 
+    /// <summary>
+    /// T9: 着地直後の速度上限。V3 の収束基準（1 秒以内に ±80ms）に対し、残差約 100ms を
+    /// ±0.10 で詰めると約 0.7 秒かかり基準を超えるため、着地直後だけ上限を倍にする。
+    /// 定常状態は <see cref="MaxRateDelta"/> のまま（音程への影響を普段は抑える）。
+    /// </summary>
+    public const double LandingMaxRateDelta = 0.20;
+
+    /// <summary>
+    /// T9: 上限を <see cref="LandingMaxRateDelta"/> に上げる長さ。着地（トラック切替のロード成立・
+    /// 粗い同期シークの発行）からこの間だけ。収束基準の 1 秒と同じ長さにして、窓の間に
+    /// 残差を詰め切れるようにする。
+    /// </summary>
+    public static readonly TimeSpan LandingWindow = TimeSpan.FromSeconds(1.0);
+
     private bool _rateActive;
     private bool _smoothDisabled;
     private int _consecutiveJumpSeeks;
     private DateTime _windowStartedAt = DateTime.MinValue;
     private double _windowStartAbsResidual = double.NaN;
+    private DateTime _landingAt = DateTime.MinValue;
+    private bool _landingLimitActive;
 
     /// <summary>
     /// GStreamer 側で INSTANT_RATE_CHANGE が効かない場合（1.18 未満、またはパイプラインの
@@ -76,12 +95,21 @@ internal sealed class SyncCorrectionController
             : EvaluateSmooth(residualSeconds, smoothAvailable, now);
     }
 
+    /// <summary>
+    /// T9: 着地（トラック切替のロード成立、粗い同期シークの発行）を通知する。着地直後の
+    /// <see cref="LandingWindow"/> だけ Smooth の速度上限を <see cref="LandingMaxRateDelta"/> に
+    /// 上げる。窓の間に再通知されたら、そこから 1.0 秒に取り直す。Jump はこの窓を参照しない。
+    /// </summary>
+    public void NotifyLanding(DateTime now) => _landingAt = now;
+
     /// <summary>トラック切替・モード切替・手動操作で状態を捨てる（次のトラックで再試行できる）。</summary>
     public void Reset()
     {
         _rateActive = false;
         _smoothDisabled = false;
         _consecutiveJumpSeeks = 0;
+        _landingAt = DateTime.MinValue;
+        _landingLimitActive = false;
         ClearWindow();
     }
 
@@ -150,12 +178,24 @@ internal sealed class SyncCorrectionController
             return SyncCorrectionDecision.RateChange(1.0, "smooth-ineffective");
         }
 
-        return SyncCorrectionDecision.RateChange(RateFor(residualSeconds), "smooth");
+        bool landingActive = _landingAt != DateTime.MinValue && now - _landingAt < LandingWindow;
+        if (landingActive != _landingLimitActive)
+        {
+            // 測定用（T9）: 上限が切り替わった回数を数えられるように、切り替わったときだけ出す。
+            _landingLimitActive = landingActive;
+            Log.Information(
+                "Smooth rate limit switched to {Limit:F2} landingWindow={LandingWindow}",
+                landingActive ? LandingMaxRateDelta : MaxRateDelta,
+                landingActive ? "active" : "ended");
+        }
+
+        double maxDelta = landingActive ? LandingMaxRateDelta : MaxRateDelta;
+        return SyncCorrectionDecision.RateChange(RateFor(residualSeconds, maxDelta), "smooth");
     }
 
-    private static double RateFor(double residualSeconds)
+    private static double RateFor(double residualSeconds, double maxRateDelta)
     {
-        double delta = Math.Clamp(residualSeconds / TimeConstantSeconds, -MaxRateDelta, MaxRateDelta);
+        double delta = Math.Clamp(residualSeconds / TimeConstantSeconds, -maxRateDelta, maxRateDelta);
         return 1.0 + delta;
     }
 

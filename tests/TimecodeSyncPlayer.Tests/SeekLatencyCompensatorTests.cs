@@ -41,7 +41,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void CompensateTarget_WithoutLearning_ReturnsCurrentTargetClampedToRange()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
 
         compensator.CompensateTarget(10.0, 100.0).Should().Be(10.0);
         compensator.CompensateTarget(-5.0, 100.0).Should().Be(0.0);
@@ -49,12 +49,16 @@ public class SeekLatencyCompensatorTests
     }
 
     [Theory]
-    [InlineData(null, true)]
-    [InlineData("", true)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
     [InlineData("on", true)]
+    [InlineData("ON", true)]
+    [InlineData(" on ", true)]
     [InlineData("off", false)]
     [InlineData("OFF", false)]
-    public void IsCompensationEnabled_ParsesEnvironmentValue(string? value, bool expected)
+    [InlineData("true", false)]
+    [InlineData("1", false)]
+    public void IsCompensationEnabled_OnlyOnEnables(string? value, bool expected)
         => SeekLatencyCompensator.IsCompensationEnabled(value).Should().Be(expected);
 
     [Fact]
@@ -100,7 +104,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void CompensateTarget_FirstSamplePerTrack_IsAdoptedWithoutEma()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
 
         Learn(compensator, latencySeconds: 0.3, sourceSequence: 1);
@@ -112,7 +116,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void ObserveFrameReady_SecondSampleUsesEma()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.3, sourceSequence: 1);
 
@@ -125,7 +129,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void CompensateTarget_ClampsToDurationAndZero()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
 
@@ -136,7 +140,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void ObserveFrameReady_ClampsCompensationAtUpperBound()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         for (int i = 1; i <= 10; i++)
             Learn(compensator, latencySeconds: 1.0, sourceSequence: i, decisionQpc: i * 10_000);
@@ -148,7 +152,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void TrackSwitch_KeepsLearnedCompensation()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.24, sourceSequence: 1);
 
@@ -162,7 +166,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void TrackSwitch_DoesNotMixTrackCompensations()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.24, sourceSequence: 1);
 
@@ -177,7 +181,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void ObserveFrameReady_IgnoresFramesAtOrBeforeArmSequence()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         compensator.ObserveFrameReady(900, generation: 1, sourceSequence: 5);
 
@@ -197,7 +201,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void ObserveFrameReady_AcceptsNewGenerationEvenWhenSequenceResets()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         compensator.ObserveFrameReady(900, generation: 1, sourceSequence: 10);
 
@@ -211,7 +215,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Measurement_IsArmedOnlyAfterSeekIsSent()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
 
         compensator.MarkSeekDecision(1_000);
         compensator.IsMeasurementArmed.Should().BeFalse();
@@ -223,7 +227,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void MarkLoadSent_ArmsMeasurementAtIssuedQpc()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
 
         compensator.MarkLoadSent(2_000);
@@ -236,7 +240,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void MarkSeekDecision_WhileArmed_KeepsTheArmedMeasurementStart()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         compensator.MarkSeekDecision(1_000);
         compensator.MarkSeekSent();
@@ -251,7 +255,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void MarkSeekSent_PromotesLatestDecisionQpc_ForTheNextSeek()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         compensator.MarkSeekDecision(1_000);
         compensator.MarkSeekSent(); // 1本目（未観測のまま2本目へ）
@@ -266,7 +270,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void MarkSeekSent_WithoutNewDecision_DoesNotReuseTheOldDecisionQpc()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         compensator.MarkSeekDecision(1_000);
         compensator.MarkSeekSent();
@@ -282,7 +286,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Engine_WithoutLearning_KeepsCurrentTargetAndDelta()
     {
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(), new SeekLatencyCompensator());
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(), new SeekLatencyCompensator(enabled: true));
 
         SyncDecision decision = engine.Decide(10.0, SeekYieldingState(4.0));
 
@@ -294,7 +298,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Engine_AfterLearning_AppliesCompensatedTargetButRawDelta()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
@@ -309,7 +313,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Engine_UsesCompensationOfCurrentTrackOnly()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
@@ -323,7 +327,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Engine_KeepsRawErrorDecision_WhenOnlyCompensatedDeltaWouldExceedTolerance()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1); // L = 0.2
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
@@ -338,7 +342,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Engine_ClampsCompensatedTargetToDuration()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
@@ -352,7 +356,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Service_ReportSeekSent_ArmsMeasurementAtDecisionTime()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
         var service = new TimecodeSyncService(engine, new TimecodeSyncSeekState(), null, compensator);
 
@@ -371,7 +375,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Service_BeginFileLoad_KeepsLearnedCompensationAndArmsLoadMeasurement()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.3, sourceSequence: 1);
         var service = new TimecodeSyncService(
@@ -387,7 +391,7 @@ public class SeekLatencyCompensatorTests
     [Fact]
     public void Service_BeginFileLoad_MeasuresFromLoadIssuedQpc()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.3, sourceSequence: 1);
         var service = new TimecodeSyncService(
@@ -414,14 +418,17 @@ public class SeekLatencyCompensatorTests
         var service = provider.GetRequiredService<TimecodeSyncService>();
 
         service.LatencyCompensator.Should().BeSameAs(compensator);
-        Learn(compensator, latencySeconds: 0.2, sourceSequence: 1); // 無選択（null キー）で学習
-        engine.Decide(10.0, SeekYieldingState(4.0)).TargetSeconds.Should().BeApproximately(10.2, 1e-9);
+
+        // T9: 製品既定は無効（TCS_SEEK_LATENCY_COMPENSATION=on のときだけ有効）。学習しても行き先は動かない。
+        Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
+        compensator.CompensationSeconds.Should().Be(0.0);
+        engine.Decide(10.0, SeekYieldingState(4.0)).TargetSeconds.Should().Be(10.0);
     }
 
     [Fact]
     public void SingleModeCoordinator_PendsCompensatedTargetToSeekState()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.SelectTrack(TrackA);
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1); // L = 0.2
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);

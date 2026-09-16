@@ -70,7 +70,7 @@ public class SeekTraceEventsTests
     [Fact]
     public void Decide_SeekWithLearnedCompensation_RecordsCompensatedTarget()
     {
-        var compensator = new SeekLatencyCompensator();
+        var compensator = new SeekLatencyCompensator(enabled: true);
         compensator.MarkSeekDecision(1_000);
         compensator.MarkSeekSent();
         compensator.ObserveFrameReady(1_000 + (long)(0.2 * Stopwatch.Frequency), generation: 1, sourceSequence: 1); // L = 0.2
