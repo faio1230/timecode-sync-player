@@ -96,12 +96,6 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
   `TCS_ERR_SIZE`。GPU フレームの形式が BGRA でない場合は旧サンプル経路（slot=-1）へ
   落ちる（解像度差では作り直すため落ちない）。
 
-### `tcs_player_leased_cpu_copy(player, dst, dst_stride)` → 0 = 成功
-
-- リース中のフレームを CPU BGRA へ行コピーする。staging + Map の **GPU 読み戻し**を
-  含むためプレビュー/デバッグ専用。Spout へは `tcs_player_publish_spout`
-  （GPU テクスチャ送信、検証層）を使う。
-
 ### `tcs_player_release(player)`
 
 - リースを返却し、プールのテクスチャを再利用可能にする。リースが無ければ no-op（冪等）。
@@ -145,8 +139,8 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 - 合成側はリング slot の surface を一度だけ開き、描画前に
   `Context4::Wait(fence, seq)` を GPU キューへ積む（CPU は待たない）。slot は
   CPU lease で保護され、合成が release するまで shim はその slot へ書かない。
-- `leased_cpu_copy` / 検証 Spout 送信はリング経路でも動く（shim デバイス上のリング
-  テクスチャを読み戻し/送信する）。外部プロセスへは Spout（spoutDX の共有）を使う。
+- 検証 Spout 送信（`tcs_player_publish_spout`）はリング経路でも動く（shim デバイス上の
+  リングテクスチャを送信する）。外部プロセスへは Spout（spoutDX の共有）を使う。
 - D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が無い環境ではリングを作らず、
   GPU フレームは従来のサンプルリース経路（slot=-1）へフォールバックする。
 
@@ -188,14 +182,13 @@ shim と契約の差はアダプター側で次のように吸収する（契約
 - **世代**: shim 側の値を観測して対応付け（load/seek の自動 +1 をトレース
   `gst.generation:` に記録）。世代変更時は合成層の Held を手放し、古い世代を返さない。
 
-本体配線（段階 6 / 6b、2026-09-11）:
+本体配線（段階 6 / 6b、2026-09-11。段 3 で CPU 合成を除去）:
 
-- `PlayerBackend=Gstreamer` かつ `OutputBackend=Gpu` のとき、`OutputEngine` の起動直後に
+- 出荷構成は GStreamer + GPU 合成。`OutputEngine` の起動直後に
   `GstBackendState.SetExternalDevice()` で合成デバイスのポインタを渡す。
   **段階 6b 以降 `tcs_player_create` はこれを Adopt せず、アダプター LUID の読み取りに
-  のみ使う**（合成デバイス/context は shim から触らない）。`GstMpvRenderApiAdapter` の
-  `LeasedCpuCopy` と `GstSpoutOutput` の直接送信はこの組み合わせでは使わない
-  （`RenderSession.SuppressFrameSnapshots`）。既定の mpv 経路と GStreamer+Cpu 経路は不変。
+  のみ使う**（合成デバイス/context は shim から触らない）。CPU 合成（`LeasedCpuCopy` の
+  経路）は段 3 で除去した。
 - `GStreamerSource` は slot >= 0 のリースで `tcs_player_ring_info` の 3 枚を
   `OpenSharedResource1` / 共有フェンスを `OpenSharedFence` で一度だけ開いて保持する。
   `OutputEngine` は新規 `seq` に対してだけ `Context4.Wait(fence, seq)` を発行する。
@@ -367,9 +360,6 @@ Spout 受信側の目視検証は proto の recv モード
 - video/x-hap は専用分岐の実装まで意図的に拒否。一致しない video/* は
   `decodebin(sysmem)` → `d3d11upload` の最終退避で CPU デコードする
   （`.mov` の HAP はプロファイル照合時の caps 検査で拒否）。
-- `OutputBackend=Cpu` の GStreamer 経路のプレビュー/表示は互換アダプタの
-  `LeasedCpuCopy`（全解像度の CPU コピー）を使う。Gpu 出力では合成層の 960×540
-  読み戻しになる。
 - 4K/120Hz 表示先、複数画面、実デバイス消失時の復旧は shim 単体では未検証
   （本体側の確認は `docs/verification-checklist.md` の GPU 経路を参照）。
 
@@ -388,9 +378,6 @@ Spout 受信側の目視検証は proto の recv モード
 ## mpv 互換アダプタとの関係
 
 GStreamer バックエンドでは `IMpvApi` / `IMpvRenderApi` / `ISpoutOutput` を
-`GstMpvApiAdapter` / `GstMpvRenderApiAdapter` / `GstSpoutOutput` へ差し替える
-（`PlayerBackend=Gstreamer`）。同じ組み合わせでの `OutputBackend` によって経路が分かれる:
-
-- `OutputBackend=Cpu`: 互換アダプタの既存経路（`LeasedCpuCopy` による CPU コピーを含む）。
-- `OutputBackend=Gpu`: 合成層が `tcs_player_ring_info` の共有リングを直接ソースにし、
-  互換アダプタの CPU コピーと Spout 直接送信は使わない。
+`GstMpvApiAdapter` / `GstMpvRenderApiAdapter` / `GstSpoutOutput` へ差し替える。
+段 3 以降の出荷構成は GPU 合成だけで、合成層が `tcs_player_ring_info` の共有リングを
+直接ソースにし、互換アダプタの CPU コピーと Spout 直接送信は使わない。

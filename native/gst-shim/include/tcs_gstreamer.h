@@ -238,10 +238,6 @@ TCS_GST_API int tcs_player_leased_texture(TcsPlayer* player,
                                           void** out_texture,
                                           uint32_t* out_subresource,
                                           uint32_t* out_dxgi_format);
-/* CPU access to the current lease, row-copied into dst (BGRA, dst_stride).
- * This IS a GPU readback: use for preview/debug only, not for Spout. */
-TCS_GST_API int tcs_player_leased_cpu_copy(TcsPlayer* player, uint8_t* dst,
-                                           int dst_stride);
 TCS_GST_API void tcs_player_release(TcsPlayer* player);
 
 /* ---- verification layer (prototype/Spout receiver tests only) ---- */

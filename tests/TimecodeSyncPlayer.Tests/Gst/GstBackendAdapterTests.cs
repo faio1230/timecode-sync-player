@@ -255,126 +255,6 @@ public class GstMpvApiAdapterTests
 
 public class GstMpvRenderApiAdapterTests
 {
-    private static RenderParam[] BuildParams(
-        IntPtr sizePtr, IntPtr stridePtr, IntPtr formatPtr, IntPtr pixelPtr)
-    {
-        return
-        [
-            new RenderParam { Type = 17, Data = sizePtr },
-            new RenderParam { Type = 18, Data = formatPtr },
-            new RenderParam { Type = 19, Data = stridePtr },
-            new RenderParam { Type = 20, Data = pixelPtr },
-            new RenderParam { Type = 0, Data = IntPtr.Zero },
-        ];
-    }
-
-    [Fact]
-    public void Render_ParsesSwParametersAndCopiesFrame()
-    {
-        var native = new FakeGstNative
-        {
-            PlayerCreateResult = new IntPtr(1),
-            FrameWidth = 640,
-            FrameHeight = 360,
-        };
-        var state = new GstBackendState(native);
-        var api = new GstMpvRenderApiAdapter(state);
-        IntPtr ctx = state.EnsurePlayer() ? state.Player : IntPtr.Zero;
-
-        IntPtr sizeBuf = Marshal.AllocHGlobal(8);
-        IntPtr strideBuf = Marshal.AllocHGlobal(8);
-        IntPtr formatBuf = Marshal.StringToHGlobalAnsi("bgr0");
-        IntPtr pixels = Marshal.AllocHGlobal(4);
-        try
-        {
-            Marshal.WriteInt32(sizeBuf, 640);
-            Marshal.WriteInt32(sizeBuf, 4, 360);
-            Marshal.WriteInt64(strideBuf, 2560);
-
-            int rc = api.RenderContextRender(ctx, BuildParams(sizeBuf, strideBuf, formatBuf, pixels));
-
-            rc.Should().Be(0);
-            native.LastCopyStride.Should().Be(2560);
-            native.LastCopyDst.Should().Be(pixels);
-            native.ReleaseBeforeAcquireOrder.Should().BeTrue();
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(sizeBuf);
-            Marshal.FreeHGlobal(strideBuf);
-            Marshal.FreeHGlobal(formatBuf);
-            Marshal.FreeHGlobal(pixels);
-        }
-    }
-
-    [Fact]
-    public void Render_SizeMismatch_ReturnsErrorWithoutCopy()
-    {
-        var native = new FakeGstNative
-        {
-            PlayerCreateResult = new IntPtr(1),
-            FrameWidth = 1280,
-            FrameHeight = 720,
-        };
-        var state = new GstBackendState(native);
-        var api = new GstMpvRenderApiAdapter(state);
-        state.EnsurePlayer();
-
-        IntPtr sizeBuf = Marshal.AllocHGlobal(8);
-        IntPtr strideBuf = Marshal.AllocHGlobal(8);
-        IntPtr formatBuf = Marshal.StringToHGlobalAnsi("bgr0");
-        try
-        {
-            Marshal.WriteInt32(sizeBuf, 640);
-            Marshal.WriteInt32(sizeBuf, 4, 360);
-            Marshal.WriteInt64(strideBuf, 2560);
-
-            int rc = api.RenderContextRender(state.Player, BuildParams(sizeBuf, strideBuf, formatBuf, new IntPtr(99)));
-
-            rc.Should().Be(-5);
-            native.CpuCopyCalls.Should().Be(0);
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(sizeBuf);
-            Marshal.FreeHGlobal(strideBuf);
-            Marshal.FreeHGlobal(formatBuf);
-        }
-    }
-
-    [Fact]
-    public void Render_NoFrame_ReturnsError()
-    {
-        var native = new FakeGstNative
-        {
-            PlayerCreateResult = new IntPtr(1),
-            AcquireResult = false,
-        };
-        var state = new GstBackendState(native);
-        var api = new GstMpvRenderApiAdapter(state);
-        state.EnsurePlayer();
-
-        IntPtr sizeBuf = Marshal.AllocHGlobal(8);
-        IntPtr strideBuf = Marshal.AllocHGlobal(8);
-        IntPtr formatBuf = Marshal.StringToHGlobalAnsi("bgr0");
-        try
-        {
-            Marshal.WriteInt32(sizeBuf, 64);
-            Marshal.WriteInt32(sizeBuf, 4, 64);
-            Marshal.WriteInt64(strideBuf, 256);
-
-            int rc = api.RenderContextRender(state.Player, BuildParams(sizeBuf, strideBuf, formatBuf, new IntPtr(7)));
-
-            rc.Should().Be(-3);
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(sizeBuf);
-            Marshal.FreeHGlobal(strideBuf);
-            Marshal.FreeHGlobal(formatBuf);
-        }
-    }
-
     [Fact]
     public void Update_ConsumesPendingFlagAsMpvFrameFlag()
     {
@@ -514,15 +394,9 @@ file sealed class FakeGstNative : IGstNativeApi
     public int Width { get; set; }
     public int Height { get; set; }
     public string Decoder { get; set; } = "";
-    public bool AcquireResult { get; set; } = true;
-    public int FrameWidth { get; set; } = 64;
-    public int FrameHeight { get; set; } = 64;
     public bool SpoutReadyValue { get; set; } = true;
     public int ConsumeUpdateResult { get; set; }
     public int ConsumeUpdateCalls { get; private set; }
-    public int CpuCopyCalls { get; private set; }
-    public IntPtr LastCopyDst { get; private set; }
-    public int LastCopyStride { get; private set; }
     public int SetRateInstantResult { get; set; } = -1;
     public List<double> RateInstantCalls { get; } = [];
 
@@ -531,12 +405,6 @@ file sealed class FakeGstNative : IGstNativeApi
         RateInstantCalls.Add(rate);
         return SetRateInstantResult;
     }
-
-    private int _opSeq;
-    private int _lastReleaseOp;
-    private int _lastAcquireOp;
-
-    public bool ReleaseBeforeAcquireOrder => _lastReleaseOp > 0 && _lastReleaseOp < _lastAcquireOp;
 
     public IntPtr PlayerCreate(string senderName, out string error)
         => PlayerCreate(senderName, IntPtr.Zero, out error);
@@ -606,18 +474,17 @@ file sealed class FakeGstNative : IGstNativeApi
 
     public int Acquire(IntPtr player, ulong generation, out GstNative.TcsFrameInfo info)
     {
-        _lastAcquireOp = ++_opSeq;
         info = new GstNative.TcsFrameInfo
         {
             Generation = generation,
             Seq = 1,
             PtsNs = 0,
-            Width = FrameWidth,
-            Height = FrameHeight,
+            Width = 64,
+            Height = 64,
             IsGpu = 1,
             Slot = -1,
         };
-        return AcquireResult ? 1 : 0;
+        return 1;
     }
 
     public bool TryGetLeasedTexture(IntPtr player, out IntPtr texture, out uint subresource, out uint dxgiFormat)
@@ -628,15 +495,7 @@ file sealed class FakeGstNative : IGstNativeApi
         return false;
     }
 
-    public int LeasedCpuCopy(IntPtr player, IntPtr dst, int dstStride)
-    {
-        CpuCopyCalls++;
-        LastCopyDst = dst;
-        LastCopyStride = dstStride;
-        return 0;
-    }
-
-    public void Release(IntPtr player) => _lastReleaseOp = ++_opSeq;
+    public void Release(IntPtr player) { }
 
     public int PublishSpoutVerification(IntPtr player) => 0;
     public int SendImage(IntPtr player, IntPtr bgra, int width, int height, int pitch) => 0;

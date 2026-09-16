@@ -138,9 +138,6 @@ internal static class GstNative
             IntPtr player, out IntPtr outTexture, out uint outSubresource, out uint outDxgiFormat);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int tcs_player_leased_cpu_copy(IntPtr player, IntPtr dst, int dstStride);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void tcs_player_release(IntPtr player);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]

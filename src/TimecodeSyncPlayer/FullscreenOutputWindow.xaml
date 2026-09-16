@@ -19,13 +19,6 @@
         PreviewKeyDown="Window_PreviewKeyDown"
         MouseEnter="Window_MouseEnter">
     <Grid Background="Black" UseLayoutRounding="True" SnapsToDevicePixels="True">
-        <Image x:Name="FullscreenImage"
-               Stretch="Uniform"
-               HorizontalAlignment="Stretch"
-               VerticalAlignment="Stretch"
-               UseLayoutRounding="True"
-               SnapsToDevicePixels="True"
-               RenderOptions.BitmapScalingMode="HighQuality"/>
-        <local:FullscreenD3DHost x:Name="D3DHost" Visibility="Collapsed"/>
+        <local:FullscreenD3DHost x:Name="D3DHost" Visibility="Visible"/>
     </Grid>
 </Window>

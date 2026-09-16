@@ -6,11 +6,6 @@ namespace TimecodeSyncPlayer.Tests;
 public class DiRegistrationTests
 {
     [Theory]
-    [InlineData(typeof(PixelBufferManager))]
-    [InlineData(typeof(SpoutFramePublisher))]
-    [InlineData(typeof(StartupBufferInitializer))]
-    [InlineData(typeof(RenderedFrameFreezeBufferCopier))]
-    [InlineData(typeof(RenderFramePerformanceRecorder))]
     [InlineData(typeof(IRenderUpdateScheduler))]
     public void ConfigureServices_RenderSessionOwnsRenderingHelpers(Type serviceType)
     {

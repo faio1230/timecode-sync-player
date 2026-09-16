@@ -32,7 +32,6 @@ internal sealed class SyncScenarioHarness
     private double _playbackSeconds = 1;
     private double _durationSeconds = 5;
     private double _videoFps = 25;
-    private bool _renderVideoOnNextSeek;
 
     public SyncScenarioHarness(TimeProvider? timeProvider = null, bool enableCorrection = false,
         bool? sampleClockEnabled = null, Func<long>? getQpc = null)
@@ -58,8 +57,6 @@ internal sealed class SyncScenarioHarness
                 DecideGapExit: () =>
                 {
                     GapExitAction action = _gap.DecideGapExit();
-                    if (action.Type == GapExitActionType.ResumePlayback)
-                        RenderSurface = ScenarioRenderSurface.Video;
                     return action;
                 },
                 SeekTo: Seek,
@@ -101,8 +98,6 @@ internal sealed class SyncScenarioHarness
                     Operations.Add(new("pause-for-gap"));
                 },
                 ApplyPauseState: SetPaused,
-                RenderBlack: RenderBlack,
-                RenderGapFreeze: RenderFreeze,
                 ClearGapFreezeFrame: () => Operations.Add(new("clear-freeze")),
                 SeekTo: Seek,
                 GetMpvDuration: () => (0, _durationSeconds),
@@ -158,12 +153,10 @@ internal sealed class SyncScenarioHarness
                 ClearGapFreezeFrame: () => Operations.Add(new("clear-freeze")),
                 RefreshCurrentVideoFrame: () =>
                 {
-                    RenderSurface = ScenarioRenderSurface.Video;
                     Seek(_playbackSeconds);
                 },
                 UpdateTimelinePosition: _ => { },
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
-                RenderGapFreeze: RenderFreeze,
                 ResumeGapPause: () =>
                 {
                     RecordMpvProperty("pause", "no");
@@ -245,7 +238,16 @@ internal sealed class SyncScenarioHarness
     public bool SeekSucceeds { get; set; } = true;
     public bool NativeSeeking { get; set; }
     public double PlaybackSeconds => _playbackSeconds;
-    public ScenarioRenderSurface RenderSurface { get; private set; } = ScenarioRenderSurface.Video;
+    /// <summary>
+    /// 合成層が描く面。段 3 以降は CPU 描画の副作用ではなく Gap 状態から決まる
+    /// （GPU 合成層が出力モードとして描く）。
+    /// </summary>
+    public ScenarioRenderSurface RenderSurface => _gap.CurrentState switch
+    {
+        GapState.BlackFrameActive or GapState.ForceBlack => ScenarioRenderSurface.Black,
+        GapState.FreezeComplete => ScenarioRenderSurface.Freeze,
+        _ => ScenarioRenderSurface.Video,
+    };
 
     public PlaylistTrack AddTrack(string name, double timelineIn, double duration = 5)
     {
@@ -368,18 +370,11 @@ internal sealed class SyncScenarioHarness
     public void CompleteFreezeCapture()
     {
         _gap.OnFreezeComplete(_loadedTrackId);
-        RenderFreeze();
     }
 
     public void ArrangeGapStateForModel(GapState state)
     {
         _gap.CurrentState = state;
-        RenderSurface = state switch
-        {
-            GapState.BlackFrameActive or GapState.ForceBlack => ScenarioRenderSurface.Black,
-            GapState.FreezeComplete => ScenarioRenderSurface.Freeze,
-            _ => ScenarioRenderSurface.Video,
-        };
     }
 
     public IReadOnlyList<string> ValidateInvariants()
@@ -402,8 +397,6 @@ internal sealed class SyncScenarioHarness
         Operations.Add(new("loadfile", start, path));
         if (!LoadSucceeds) return false;
         SetPaused(false);
-        RenderSurface = ScenarioRenderSurface.Video;
-        _renderVideoOnNextSeek = false;
         _playbackSeconds = start;
         var track = Playlist.Tracks.FirstOrDefault(t => t.FilePath == path);
         if (track != null)
@@ -451,24 +444,7 @@ internal sealed class SyncScenarioHarness
         Operations.Add(new("seek", target));
         if (!SeekSucceeds) return false;
         _playbackSeconds = target;
-        if (_renderVideoOnNextSeek)
-        {
-            RenderSurface = ScenarioRenderSurface.Video;
-            _renderVideoOnNextSeek = false;
-        }
         return true;
-    }
-
-    private void RenderBlack()
-    {
-        RenderSurface = ScenarioRenderSurface.Black;
-        Operations.Add(new("render-black"));
-    }
-
-    private void RenderFreeze()
-    {
-        RenderSurface = ScenarioRenderSurface.Freeze;
-        Operations.Add(new("render-freeze"));
     }
 
     private void SetPaused(bool paused)

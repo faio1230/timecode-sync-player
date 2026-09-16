@@ -35,7 +35,6 @@ public class RenderContextParameterBuilderTests
             return 0;
         }
         public ulong RenderContextUpdate(IntPtr ctx) => 0;
-        public int RenderContextRender(IntPtr ctx, RenderParam[] parameters) => 0;
         public void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx) { }
         public void RenderContextFree(IntPtr ctx) { }
     }

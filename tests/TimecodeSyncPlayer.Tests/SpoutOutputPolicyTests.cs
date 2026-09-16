@@ -6,20 +6,6 @@ namespace TimecodeSyncPlayer.Tests;
 public class SpoutOutputPolicyTests
 {
     [Theory]
-    [InlineData(OutputBackend.Cpu, true)]
-    [InlineData(OutputBackend.Gpu, false)]
-    public void InitializeCpuSpout_OnlyForCpuBackend(OutputBackend backend, bool expected)
-        => SpoutOutputPolicy.InitializeCpuSpout(backend).Should().Be(expected);
-
-    [Theory]
-    [InlineData(OutputBackend.Cpu, true, true)]
-    [InlineData(OutputBackend.Cpu, false, false)]
-    [InlineData(OutputBackend.Gpu, true, false)]
-    [InlineData(OutputBackend.Gpu, false, false)]
-    public void SendCpuFrame_OnlyForCpuBackendAndEnabled(OutputBackend backend, bool enabled, bool expected)
-        => SpoutOutputPolicy.SendCpuFrame(backend, enabled).Should().Be(expected);
-
-    [Theory]
     [InlineData(0, 5, (int)SpoutCopyDecision.NoImage)]
     [InlineData(5, 5, (int)SpoutCopyDecision.SameHeld)]
     [InlineData(6, 5, (int)SpoutCopyDecision.Copy)]

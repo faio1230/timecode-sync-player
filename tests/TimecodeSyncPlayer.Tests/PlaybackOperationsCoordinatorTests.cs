@@ -30,8 +30,6 @@ public class PlaybackOperationsCoordinatorTests
                 return 0;
             },
             ResetPlayerStateForNewTrack: () => Calls.Add("ResetPlayerStateForNewTrack"),
-            ResetVideoWidth: () => Calls.Add("ResetVideoWidth"),
-            ResetVideoHeight: () => Calls.Add("ResetVideoHeight"),
             ClearLoadedTrackId: () => Calls.Add("ClearLoadedTrackId"),
             HasTimelinePanel: () => { Calls.Add("HasTimelinePanel"); return HasTimelinePanel; },
             ClearTimelineLoadedTrackId: () => Calls.Add("ClearTimelineLoadedTrackId"),
@@ -61,8 +59,6 @@ public class PlaybackOperationsCoordinatorTests
             "SetPropertyString(pause,no)",
             "SetPlayPauseIcon(⏸)",
             "ResetPlayerStateForNewTrack",
-            "ResetVideoWidth",
-            "ResetVideoHeight",
             "ResetGapFreeze",
             "SetSeekBarValueFromPlayer(0)",
             "SetTimeLabel(0:00 / 0:00)");
@@ -88,8 +84,6 @@ public class PlaybackOperationsCoordinatorTests
         recorder.Calls.Should().ContainInOrder(
             $"SetPlayPauseIcon({(paused ? "▶" : "⏸")})",
             "ResetPlayerStateForNewTrack",
-            "ResetVideoWidth",
-            "ResetVideoHeight",
             "ResetGapFreeze");
     }
 
@@ -205,8 +199,6 @@ public class PlaybackOperationsCoordinatorTests
             "SetPropertyString(pause,yes)",
             "SetPlayPauseIcon(▶)",
             "ResetPlayerStateForNewTrack",
-            "ResetVideoWidth",
-            "ResetVideoHeight",
             "ClearLoadedTrackId",
             "HasTimelinePanel",
             "ClearTimelineLoadedTrackId",

@@ -42,12 +42,9 @@ public sealed class WindowLoadedSessionInitializerTests
             "assign-mpv:100",
             "audio-settings",
             "render-context",
-            "render-params",
             "spout",
             "spout-ui",
-            "frame-renderer",
             "timer",
-            "startup-buffer",
             "timeline");
         appliedSpoutState.Should().Be(new SpoutStartupState(true, "Spout ON"));
     }
@@ -126,12 +123,9 @@ public sealed class WindowLoadedSessionInitializerTests
         Action<IntPtr>? assignMpv = null,
         Action? applyAudioSettings = null,
         Func<bool>? createRenderContext = null,
-        Action? allocateRenderParameters = null,
         Func<SpoutStartupState>? initializeSpout = null,
         Action<SpoutStartupState>? applySpoutStartupState = null,
-        Action? initializeFrameRenderer = null,
         Action? startTimer = null,
-        Action? initializeStartupBuffer = null,
         Action? initializeTimeline = null,
         Action<WindowLoadedSessionInitializationError>? showError = null)
     {
@@ -140,12 +134,9 @@ public sealed class WindowLoadedSessionInitializerTests
             assignMpv ?? (mpv => calls.Add($"assign-mpv:{mpv.ToInt64()}")),
             applyAudioSettings ?? (() => calls.Add("audio-settings")),
             createRenderContext ?? (() => true),
-            allocateRenderParameters ?? (() => calls.Add("render-params")),
             initializeSpout ?? (() => new SpoutStartupState(false, "Spout OFF")),
             applySpoutStartupState ?? (_ => calls.Add("spout-ui")),
-            initializeFrameRenderer ?? (() => calls.Add("frame-renderer")),
             startTimer ?? (() => calls.Add("timer")),
-            initializeStartupBuffer ?? (() => calls.Add("startup-buffer")),
             initializeTimeline ?? (() => calls.Add("timeline")),
             showError ?? (e => calls.Add($"error:{e}")));
     }

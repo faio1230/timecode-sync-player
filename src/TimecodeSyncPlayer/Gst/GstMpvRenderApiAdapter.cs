@@ -1,12 +1,11 @@
 using System;
-using System.Runtime.InteropServices;
 using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.Gst;
 
 /// <summary>
-/// IMpvRenderApi の GStreamer 実装。SW レンダー（bgr0 CPU バッファ）と同じ形に
-/// 最新のリースフレームをコピーし、WPF/Freeze 経路を無改造で動かす暫定プレビュー通路。
+/// IMpvRenderApi の GStreamer 実装。合成は GPU 合成層が shim のリースから直接行い、
+/// ここはフレーム通知（update callback）の生成と寿命管理だけを担う。
 /// 定数値は mpv の SW レンダー API と同じ番号を使い、呼び出し側の生成する
 /// RenderParam 配列をそのまま解釈できるようにする。
 /// </summary>
@@ -44,45 +43,6 @@ internal sealed class GstMpvRenderApiAdapter : IMpvRenderApi
     {
         if (ctx == IntPtr.Zero) return 0;
         return _state.Native.ConsumeUpdate(ctx) != 0 ? MpvRenderUpdateFrame : 0ul;
-    }
-
-    public int RenderContextRender(IntPtr ctx, RenderParam[] parameters)
-    {
-        if (ctx == IntPtr.Zero || parameters is null) return -1;
-
-        IntPtr pointer = IntPtr.Zero;
-        int stride = 0;
-        int width = 0;
-        int height = 0;
-        string format = "bgr0";
-
-        foreach (RenderParam p in parameters)
-        {
-            if (p.Type == 0) break;
-            switch (p.Type)
-            {
-                case SwSizeParam:
-                    width = Marshal.ReadInt32(p.Data);
-                    height = Marshal.ReadInt32(p.Data, 4);
-                    break;
-                case SwStrideParam:
-                    stride = (int)Marshal.ReadInt64(p.Data);
-                    break;
-                case SwPointerParam:
-                    pointer = p.Data;
-                    break;
-                case SwFormatParam:
-                    format = Marshal.PtrToStringAnsi(p.Data) ?? "bgr0";
-                    break;
-            }
-        }
-
-        if (pointer == IntPtr.Zero || stride <= 0 || width <= 0 || height <= 0)
-            return -1;
-        if (format != "bgr0" && format != "bgra")
-            return -1; // shim の出す BGRA 並び (B,G,R,0) と異なる形式には対応しない
-
-        return _state.RenderInto(pointer, stride, width, height);
     }
 
     public void RenderContextSetUpdateCallback(

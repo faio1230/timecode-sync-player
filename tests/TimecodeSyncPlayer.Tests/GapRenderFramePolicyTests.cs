@@ -2,92 +2,52 @@ using FluentAssertions;
 
 namespace TimecodeSyncPlayer.Tests;
 
+/// <summary>
+/// 段 3: Freeze 指定の FreezeComplete は必ず GapFreeze を要求し、最終フレームの保存は
+/// GPU 合成層（ComposeLayer.SaveFreeze）が進入時に行う。
+/// </summary>
 public class GapRenderFramePolicyTests
 {
     [Theory]
-    [InlineData((int)GapState.EnteringFreeze, false)]
-    [InlineData((int)GapState.EnteringFreeze, true)]
-    [InlineData((int)GapState.WaitingForFrameStep, false)]
-    [InlineData((int)GapState.WaitingForFrameStep, true)]
-    [InlineData((int)GapState.FreezeComplete, false)]
-    public void Decide_HoldsCurrentImageUntilConfirmedFreezeExists(int state, bool hasFrame)
+    [InlineData((int)GapState.EnteringFreeze)]
+    [InlineData((int)GapState.WaitingForFrameStep)]
+    public void Decide_HoldsCurrentImage_WhileCaptureIsPending(int state)
     {
-        GapRenderFramePolicy.Decide((GapState)state, GapBehavior.Freeze, hasFrame, 1920, 1080)
+        GapRenderFramePolicy.Decide((GapState)state, GapBehavior.Freeze)
             .Should().Be(GapRenderFrameDecision.Hold);
     }
 
     [Fact]
     public void Decide_ReturnsBlack_ForBlackStates()
     {
-        GapRenderFramePolicy.Decide(
-            GapState.BlackFrameActive,
-            GapBehavior.Freeze,
-            hasConfirmedFrame: true,
-            videoWidth: 1920,
-            videoHeight: 1080).Should().Be(GapRenderFrameDecision.Black);
-
-        GapRenderFramePolicy.Decide(
-            GapState.ForceBlack,
-            GapBehavior.Freeze,
-            hasConfirmedFrame: true,
-            videoWidth: 1920,
-            videoHeight: 1080).Should().Be(GapRenderFrameDecision.Black);
+        GapRenderFramePolicy.Decide(GapState.BlackFrameActive, GapBehavior.Freeze)
+            .Should().Be(GapRenderFrameDecision.Black);
+        GapRenderFramePolicy.Decide(GapState.ForceBlack, GapBehavior.Freeze)
+            .Should().Be(GapRenderFrameDecision.Black);
     }
 
     [Fact]
     public void Decide_ReturnsGapFreeze_ForCompletedFreezeState()
     {
-        GapRenderFramePolicy.Decide(
-            GapState.FreezeComplete,
-            GapBehavior.Freeze,
-            hasConfirmedFrame: true,
-            videoWidth: 1920,
-            videoHeight: 1080).Should().Be(GapRenderFrameDecision.GapFreeze);
+        GapRenderFramePolicy.Decide(GapState.FreezeComplete, GapBehavior.Freeze)
+            .Should().Be(GapRenderFrameDecision.GapFreeze);
     }
 
     [Fact]
-    public void Decide_HoldsPublishedImage_WhileCapturing_EvenWhenOldCacheIsAvailable()
+    public void Decide_ReturnsBlack_ForCompletedFreezeState_WhenBehaviorIsBlack()
     {
-        GapRenderFramePolicy.Decide(
-            GapState.EnteringFreeze,
-            GapBehavior.Freeze,
-            hasConfirmedFrame: true,
-            videoWidth: 1920,
-            videoHeight: 1080).Should().Be(GapRenderFrameDecision.Hold);
-
-        GapRenderFramePolicy.Decide(
-            GapState.WaitingForFrameStep,
-            GapBehavior.Freeze,
-            hasConfirmedFrame: true,
-            videoWidth: 1920,
-            videoHeight: 1080).Should().Be(GapRenderFrameDecision.Hold);
-    }
-
-    [Theory]
-    [InlineData(false, 1920, 1080)]
-    [InlineData(true, 0, 1080)]
-    [InlineData(true, 1920, 0)]
-    public void Decide_HoldsPublishedImage_WhileCapturing_WhenMetadataIsUnavailable(
-        bool hasConfirmedFrame,
-        int videoWidth,
-        int videoHeight)
-    {
-        GapRenderFramePolicy.Decide(
-            GapState.EnteringFreeze,
-            GapBehavior.Freeze,
-            hasConfirmedFrame,
-            videoWidth,
-            videoHeight).Should().Be(GapRenderFrameDecision.Hold);
+        GapRenderFramePolicy.Decide(GapState.FreezeComplete, GapBehavior.Black)
+            .Should().Be(GapRenderFrameDecision.Black);
+        GapRenderFramePolicy.Decide(GapState.EnteringFreeze, GapBehavior.Black)
+            .Should().Be(GapRenderFrameDecision.Black);
+        GapRenderFramePolicy.Decide(GapState.WaitingForFrameStep, GapBehavior.Black)
+            .Should().Be(GapRenderFrameDecision.Black);
     }
 
     [Fact]
     public void Decide_ReturnsNone_WhenGapIsInactive()
     {
-        GapRenderFramePolicy.Decide(
-            GapState.Inactive,
-            GapBehavior.Freeze,
-            hasConfirmedFrame: true,
-            videoWidth: 1920,
-            videoHeight: 1080).Should().Be(GapRenderFrameDecision.None);
+        GapRenderFramePolicy.Decide(GapState.Inactive, GapBehavior.Freeze)
+            .Should().Be(GapRenderFrameDecision.None);
     }
 }

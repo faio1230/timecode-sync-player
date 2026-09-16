@@ -359,8 +359,6 @@ struct TcsPlayer {
   std::thread bus_thread;
 
   /* D3D helpers (frame_lock held) */
-  ID3D11Texture2D* staging_read = nullptr;
-  D3D11_TEXTURE2D_DESC staging_desc = {};
   ID3D11Texture2D* single_tex = nullptr;
   D3D11_TEXTURE2D_DESC single_desc = {};
 };
@@ -2413,31 +2411,6 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
 
 /* ---------------- D3D helpers (frame_lock held) ---------------- */
 
-static ID3D11Texture2D*
-ensure_staging (TcsPlayer* p, const D3D11_TEXTURE2D_DESC* src_desc)
-{
-  if (p->staging_read &&
-      p->staging_desc.Width == src_desc->Width &&
-      p->staging_desc.Height == src_desc->Height &&
-      p->staging_desc.Format == src_desc->Format)
-    return p->staging_read;
-
-  if (p->staging_read) { p->staging_read->Release (); p->staging_read = nullptr; }
-
-  D3D11_TEXTURE2D_DESC d = *src_desc;
-  d.Usage = D3D11_USAGE_STAGING;
-  d.BindFlags = 0;
-  d.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-  d.MiscFlags = 0;
-  d.ArraySize = 1;
-  d.MipLevels = 1;
-  d.SampleDesc.Count = 1;
-  if (FAILED (p->device->CreateTexture2D (&d, nullptr, &p->staging_read)))
-    return nullptr;
-  p->staging_desc = d;
-  return p->staging_read;
-}
-
 /* Borrowed texture of the current lease; valid until tcs_player_release().
  * Ring lease (slot >= 0): the shared ring texture (shim-owned). Legacy sample
  * lease: the pool texture (kept alive by the sample ref) or, for array
@@ -2572,7 +2545,6 @@ tcs_player_destroy (TcsPlayer* player)
         p->ring_width, p->ring_height, TcsPlayer::kRingSlots,
         (p->leased || p->leased_slot >= 0) ? 1 : 0);
   destroy_ring (p);
-  if (p->staging_read) p->staging_read->Release ();
   if (p->single_tex) p->single_tex->Release ();
   if (p->spout) {
     p->spout->ReleaseSender ();
@@ -3092,65 +3064,6 @@ tcs_player_leased_texture (TcsPlayer* player, void** out_texture,
   *out_texture = tex;              /* borrowed; valid until release() */
   if (out_subresource) *out_subresource = sub;
   if (out_dxgi_format) *out_dxgi_format = (uint32_t) desc.Format;
-  return TCS_OK;
-}
-
-TCS_GST_API int
-tcs_player_leased_cpu_copy (TcsPlayer* player, uint8_t* dst, int dst_stride)
-{
-  if (!player || !dst) return TCS_ERR_GENERIC;
-  std::lock_guard<std::mutex> g (player->frame_lock);
-  if (!player->leased && player->leased_slot < 0) return TCS_ERR_NO_FRAME;
-  GstBuffer* buf = player->leased ? gst_sample_get_buffer (player->leased) : nullptr;
-  GstMemory* mem = buf ? gst_buffer_peek_memory (buf, 0) : nullptr;
-  int w = player->lease_info.width, h = player->lease_info.height;
-  if (w <= 0 || h <= 0) return TCS_ERR_NO_FRAME;
-
-  if (player->leased_slot >= 0 || (mem && gst_is_d3d11_memory (mem))) {
-    guint sub = 0;
-    ID3D11Texture2D* tex = texture_of_lease (player, &sub);
-    if (!tex) return TCS_ERR_NO_FRAME;
-    D3D11_TEXTURE2D_DESC desc;
-    tex->GetDesc (&desc);
-    int rc = TCS_ERR_GENERIC;
-    ID3D11Texture2D* staging = ensure_staging (player, &desc);
-    if (staging) {
-      if (desc.ArraySize == 1 && sub == 0)
-        player->context->CopyResource (staging, tex);
-      else {
-        D3D11_BOX box = {};
-        box.right = MIN (desc.Width, (UINT) w);
-        box.bottom = MIN (desc.Height, (UINT) h);
-        box.back = 1;
-        player->context->CopySubresourceRegion (staging, 0, 0, 0, 0, tex, sub, &box);
-      }
-      player->context->Flush ();
-      D3D11_MAPPED_SUBRESOURCE map;
-      if (SUCCEEDED (player->context->Map (staging, 0, D3D11_MAP_READ, 0, &map))) {
-        int row = (int) MIN ((UINT) dst_stride, map.RowPitch);
-        for (int y = 0; y < h; y++)
-          memcpy (dst + (size_t) y * dst_stride,
-              (uint8_t*) map.pData + (size_t) y * map.RowPitch, row);
-        player->context->Unmap (staging, 0);
-        rc = TCS_OK;
-      }
-    }
-    return rc;  /* tex is borrowed */
-  }
-
-  if (!buf || !mem)
-    return TCS_ERR_NO_FRAME;
-
-  GstMapInfo info;
-  if (!gst_buffer_map (buf, &info, GST_MAP_READ))
-    return TCS_ERR_NO_FRAME;
-  gsize src_stride = (gsize) w * 4;
-  GstVideoMeta* meta = gst_buffer_get_video_meta (buf);
-  if (meta) src_stride = meta->stride[0];
-  int row = (int) MIN ((gsize) dst_stride, src_stride);
-  for (int y = 0; y < h; y++)
-    memcpy (dst + (size_t) y * dst_stride, info.data + (size_t) y * src_stride, row);
-  gst_buffer_unmap (buf, &info);
   return TCS_OK;
 }
 

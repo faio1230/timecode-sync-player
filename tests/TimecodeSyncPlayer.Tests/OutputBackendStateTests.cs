@@ -3,27 +3,9 @@ using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer.Tests;
 
-/// <summary>R1 1-1/1-2: 既定は出荷構成（Gpu）。Gpu が使えなくても Cpu へ黙って落とさず、再生不可を伝える。</summary>
+/// <summary>R1 1-1/1-2: 既定は出荷構成（Gpu）。Gpu が使えなくても落とす先が無いため、再生不可を伝える。</summary>
 public class OutputBackendStateTests
 {
-    [Fact]
-    public void Resolve_CpuRequest_DoesNotProbeAndStaysPlayableCpu()
-    {
-        int probeCalls = 0;
-        D3D11CapabilityResult Probe()
-        {
-            probeCalls++;
-            return new(true, "unused");
-        }
-
-        OutputBackendDecision decision = OutputBackendResolver.Resolve(OutputBackend.Cpu, Probe);
-
-        probeCalls.Should().Be(0);
-        decision.Requested.Should().Be(OutputBackend.Cpu);
-        decision.Effective.Should().Be(OutputBackend.Cpu);
-        decision.PlaybackAvailable.Should().BeTrue();
-    }
-
     [Fact]
     public void Resolve_GpuRequest_WhenSupported_StaysGpuAndPlayable()
     {
@@ -50,12 +32,15 @@ public class OutputBackendStateTests
     }
 
     [Fact]
-    public void State_BeforeInitialize_UsesCpuPlaceholder()
+    public void State_BeforeInitialize_IsGpuPlaceholderAndNotInitialized()
     {
         var state = new OutputBackendState();
 
-        state.Effective.Should().Be(OutputBackend.Cpu);
-        state.PlaybackAvailable.Should().BeTrue();
+        state.Effective.Should().Be(OutputBackend.Gpu);
+        state.IsInitialized.Should().BeFalse(
+            "初期化前の MainWindow 構築で GPU 出力を開始しない");
+        state.PlaybackAvailable.Should().BeTrue(
+            "単体テストの UI 状態機械は初期化なしで動く（エンジン生成は IsInitialized で止める）");
     }
 
     [Fact]
@@ -68,6 +53,7 @@ public class OutputBackendStateTests
         state.Effective.Should().Be(OutputBackend.Gpu);
         state.Decision.Requested.Should().Be(OutputBackend.Gpu);
         state.PlaybackAvailable.Should().BeFalse();
+        state.IsInitialized.Should().BeTrue();
         state.Decision.Detail.Should().Be("detect failed");
     }
 
@@ -82,6 +68,14 @@ public class OutputBackendStateTests
         probeCalls.Should().Be(0);
         state.PlaybackAvailable.Should().BeFalse();
         state.Decision.Detail.Should().Contain(OutputBackendState.ForceUnavailableEnvironmentVariable);
+    }
+
+    [Fact]
+    public void OutputBackend_CpuIsRemovedFromEnum()
+    {
+        Enum.IsDefined((OutputBackend)0).Should().BeFalse(
+            "v0.3 の outputBackend=0（Cpu）は設定互換で読み飛ばす値であり、enum には残さない");
+        Enum.GetValues<OutputBackend>().Should().Equal(OutputBackend.Gpu);
     }
 
     [Theory]

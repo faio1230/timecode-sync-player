@@ -14,7 +14,6 @@ public interface IMpvRenderApi
 
     int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters);
     ulong RenderContextUpdate(IntPtr ctx);
-    int RenderContextRender(IntPtr ctx, RenderParam[] parameters);
     void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx);
     void RenderContextFree(IntPtr ctx);
 }

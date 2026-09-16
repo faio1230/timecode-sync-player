@@ -53,12 +53,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // ── Spout ─────────────────────────────────────────────────────
     private readonly ISpoutOutput _spoutOutput;
 
-    // ── GPU 出力（OutputBackend=Gpu 時のみ） ───────────────────────
+    // ── GPU 出力 ──────────────────────────────────────────────────
     private readonly OutputEngine? _outputEngine;
     private readonly GstBackendState _gstBackendState;
     private readonly IGstNativeApi _gstNativeApi;
-    private readonly bool _gstGpuCombo;
-    private readonly OutputBackend _effectiveOutputBackend;
     // R1 1-2: 再生可否の唯一の判定元。GPU 検出失敗・ワーカー初期化失敗・player 生成失敗を集約する。
     private readonly PlaybackAvailabilityState _playbackAvailability = new();
     private bool _playbackUnavailableDialogShown;
@@ -75,9 +73,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // ── キャンバス設定（段階 4、UI スレッド所有） ──────────────────
     private readonly ProjectCanvasState _projectCanvasState = new();
     private Guid? _contextMenuTrackId;
-    private (bool CanChange, string? Tip, bool Gpu)? _canvasUiCache;
+    private (bool CanChange, string? Tip)? _canvasUiCache;
     private bool _isLoadingCanvasInputs;
-    private const string CanvasGpuOnlyTooltip = "GPU 出力でのみ有効";
 
     // ── LTC ───────────────────────────────────────────────────────
     private readonly LtcSyncController _ltcSyncController;
@@ -136,7 +133,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly PlaylistDragDropCoordinator _playlistDragDropCoordinator;
 
     // ── 同期コーディネータ（遅延生成キャッシュ。ラムダは this のフィールドのみを参照するため
-    //    呼び出しごとの再生成は不要。RenderFrameWorker 等と同様、初回呼び出し時に確定する） ──
+    //    呼び出しごとの再生成は不要。初回呼び出し時に確定する） ──
     private SingleModeSyncCoordinator?  _singleModeSyncCoordinator;
     private ContinueOnTrackCoordinator? _continueOnTrackCoordinator;
     private GapEnterCoordinator?        _gapEnterCoordinator;
@@ -192,8 +189,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // GStreamer 内部型は公開せず、DI 経由で取得する（Gpu 出力時のみ使用）。
         _gstBackendState = services.GetRequiredService<GstBackendState>();
         _gstNativeApi = services.GetRequiredService<IGstNativeApi>();
-        _gstGpuCombo = outputBackendState.Effective == OutputBackend.Gpu;
-        _effectiveOutputBackend = outputBackendState.Effective;
         if (!outputBackendState.PlaybackAvailable)
             _playbackAvailability.MarkUnavailable(outputBackendState.Decision.Detail);
         _mpvApi = mpvApi;
@@ -204,15 +199,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
         _vm.Output   = new OutputControlViewModel();
         _vm.Output.InitializeTestCard(OutputEngineSettings.TestCardRequested());
-        _renderSession = new RenderSession(mpvRenderApi, _spoutOutput, _playbackPerformanceStats,
-            () => _gapFreezeHandler.CurrentState,
-            () => _vm.Sync.GapBehavior,
-            action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action),
-            isGapFreezeConfirmed: () => _gapFreezeHandler.CachedTrackId.HasValue);
+        _renderSession = new RenderSession(mpvRenderApi, _playbackPerformanceStats,
+            action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action));
         _renderSession.FrameUpdate = ProcessRenderFrameUpdateAsync;
-        if (outputBackendState.Effective == OutputBackend.Gpu && outputBackendState.PlaybackAvailable)
+        if (outputBackendState.IsInitialized && outputBackendState.PlaybackAvailable)
         {
-            // Gpu backend: プレビューは OutputEngine の読み戻しで更新し、CPU 経路のプレビューは接続しない。
+            // プレビューは OutputEngine の読み戻しで更新する。
             OutputTrace outputTrace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable));
             OutputTrace.Current = outputTrace;
             _outputEngine = new OutputEngine(new OutputEngineSettings
@@ -233,28 +225,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             });
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
-            if (_gstGpuCombo)
-            {
-                // GStreamerGpu: shim は合成デバイスのアダプター LUID だけを使い、自前デバイス +
-                // 共有テクスチャリング（NT ハンドル + 共有フェンス）でリースを直接ソースにする。
-                // 合成デバイスの context は shim から触らない。
-                // CPU の LeasedCpuCopy 経路は使わない（RenderSession の snapshot コピーを抑制）。
-                if (_outputEngine.WaitForDevice(TimeSpan.FromSeconds(5)))
-                    _gstBackendState.SetExternalDevice(_outputEngine.DevicePointer);
-                else
-                    Log.Error("OutputEngine: デバイス初期化がタイムアウトし、GStreamer shim へ Adopt できません");
-                _renderSession.SuppressFrameSnapshots = true;
-            }
+            // shim は合成デバイスのアダプター LUID だけを使い、自前デバイス +
+            // 共有テクスチャリング（NT ハンドル + 共有フェンス）でリースを直接ソースにする。
+            // 合成デバイスの context は shim から触らない。
+            if (_outputEngine.WaitForDevice(TimeSpan.FromSeconds(5)))
+                _gstBackendState.SetExternalDevice(_outputEngine.DevicePointer);
+            else
+                Log.Error("OutputEngine: デバイス初期化がタイムアウトし、GStreamer shim へ Adopt できません");
         }
-        else
-        {
-            _renderSession.PreviewBitmapChanged += bitmap => VideoImage.Source = bitmap;
-        }
-        // D4: CPU 合成は WriteableBitmap の描画数（現行）、GPU 合成は OutputEngine の公開数。
-        // GPU 合成ではビットマップを描かないため、CPU の数だけを見るとゲートが 5 秒開かない。
+        // D4: 表示経路に到達したフレーム数は GPU 合成の公開数だけを見る。
         _syncGateRenderedFrames = new RenderedFrameCounter(
-            gpuCompositing: _effectiveOutputBackend == OutputBackend.Gpu,
-            cpuRenderedFrames: () => _playbackPerformanceStats.TotalRenderedFrames,
             gpuPublishedFrames: () => _outputEngine?.PublishedFrameCount ?? 0);
         _ltcSyncController = new LtcSyncController(
             _playlist, _gapFreezeHandler, _syncService, ltcFrameProcessor,
@@ -285,15 +265,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     ApplyPauseState(paused);
                 },
                 ResumeProjectRestorePause: ResumeProjectRestorePauseForSyncIfNeeded,
-                ClearGapFreezeFrame: () =>
-                {
-                    _renderSession.Invalidate();
-                    _renderSession.ClearGapFreezeFrame();
-                },
+                ClearGapFreezeFrame: () => _renderSession.Invalidate(),
                 RefreshCurrentVideoFrame: RefreshCurrentVideoFrame,
                 UpdateTimelinePosition: seconds => _timelinePanel?.UpdatePlaybackPosition(seconds),
                 UpdateCurrentTrackLabel: UpdateCurrentTrackLabel,
-                RenderGapFreeze: () => _renderSession.QueueGapFrame(GapRenderFrameDecision.GapFreeze),
                 ResumeGapPause: () =>
                 {
                     if (!IsPlaybackAvailable) return;
@@ -576,7 +551,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void SubmitOutputState()
     {
         if (_outputEngine == null || _disposed) return;
-        OutputGapMode gap = _renderSession.GetGapRenderDecision() switch
+        OutputGapMode gap = GapRenderFramePolicy.Decide(_gapFreezeHandler.CurrentState, _vm.Sync.GapBehavior) switch
         {
             GapRenderFrameDecision.Black => OutputGapMode.Black,
             GapRenderFrameDecision.GapFreeze => OutputGapMode.GapFreeze,
@@ -723,11 +698,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             // ダイアログは起動処理の完了後に出す（Show() 中のモーダルで UIA の起動待ちを阻害しない）。
             string detail = _playbackAvailability.Detail ?? "";
-            bool gpuHardwareRequired = _effectiveOutputBackend == OutputBackend.Gpu;
             PlaybackUnavailablePanel.Visibility = Visibility.Visible;
             PlaybackUnavailableDetailText.Text = detail;
             Dispatcher.BeginInvoke(
-                new Action(() => EnterPlaybackUnavailable(detail, gpuHardwareRequired)),
+                new Action(() => EnterPlaybackUnavailable(detail, gpuHardwareRequired: true)),
                 DispatcherPriority.Background);
             return false;
         }
@@ -740,23 +714,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             assignMpv: mpv => _mpv = mpv,
             applyAudioSettings: _audioControlCoordinator.ApplyStartup,
             createRenderContext: () => _renderSession.Create(_mpv),
-            allocateRenderParameters: _renderSession.AllocateParameters,
-            // Gpu backend では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
-            initializeSpout: () => SpoutStartupState.FromInitializationResult(
-                _effectiveOutputBackend == OutputBackend.Gpu
-                || (SpoutOutputPolicy.InitializeCpuSpout(_effectiveOutputBackend) && _spoutOutput.TryInitialize())),
+            // GPU 構成では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
+            initializeSpout: () => SpoutStartupState.FromInitializationResult(true),
             applySpoutStartupState: spoutUiApplicator.Apply,
-            initializeFrameRenderer: _renderSession.InitializeFrameRenderer,
             startTimer: () => _timer = StartupTimerFactory.CreateStartedTimer(TimeSpan.FromMilliseconds(TimerIntervalMs), OnTick),
-            initializeStartupBuffer: _renderSession.InitializeStartupBuffer,
             initializeTimeline: InitializeTimeline,
             showError: ShowWindowLoadedSessionInitializationError);
         bool initialized = sessionInitializer.Initialize();
         if (initialized)
         {
-            // GStreamerGpu: プレイヤー生成後にエンジンへソースを接続する。
-            if (_gstGpuCombo)
-                _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi);
+            // プレイヤー生成後にエンジンへソースを接続する。
+            _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi);
             RefreshDisplaySelection(_settingsManager.Current.FullscreenDisplayDeviceName);
         }
         return initialized;
@@ -992,7 +960,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 {
                     _gapFreezeHandler.ClearCachedFrameInfo();
                     _renderSession.Invalidate();
-                    _renderSession.ClearGapFreezeFrame();
                 },
                 SeekTo: target => SeekTo(target),
                 ResumeMpvPause: () => _mpvApi.SetPropertyString(_mpv, "pause", MpvValueNo),
@@ -1024,9 +991,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             IsPlaybackPaused: () => _playbackControl.IsPaused,
             PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(_mpv),
             ApplyPauseState: paused => ApplyPauseState(paused),
-            RenderBlack: () => RunTimedGapAction("renderBlack", () => _renderSession.QueueGapFrame(GapRenderFrameDecision.Black)),
-            RenderGapFreeze: () => RunTimedGapAction("renderGapFreeze", () => _renderSession.QueueGapFrame(GapRenderFrameDecision.GapFreeze)),
-            ClearGapFreezeFrame: () => RunTimedGapAction("clearGapFreezeFrame", () => _renderSession.ClearGapFreezeFrame()),
+            ClearGapFreezeFrame: () => RunTimedGapAction("clearGapFreezeFrame", () => _renderSession.Invalidate()),
             SeekTo: target => SeekTo(target),
             GetMpvDuration: () =>
             {
@@ -1054,8 +1019,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             SeekTo(currentPos);
     }
 
-    // U1 計測: ギャップ切替ハンドラ内で同期実行されるエフェクトの呼び出し所要（QueueGapFrame は
-    // async void のため、ここで測れるのはゲート実行開始までの同期部分）。
+    // U1 計測: ギャップ切替ハンドラ内で同期実行されるエフェクトの呼び出し所要
+    // （フリーズ画像の世代クリアは同期実行）。
     private static void RunTimedGapAction(string action, Action work)
     {
         long started = Stopwatch.GetTimestamp();
@@ -1460,8 +1425,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             CommandString: command => _mpvApi.CommandString(_mpv, command),
             SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
-            ResetVideoWidth: () => _renderSession.Width = 0,
-            ResetVideoHeight: () => _renderSession.Height = 0,
             ClearLoadedTrackId: () => _loadedTrackId = null,
             HasTimelinePanel: () => _timelinePanel != null,
             ClearTimelineLoadedTrackId: () => _timelinePanel!.LoadedTrackId = null,
@@ -1470,7 +1433,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             SetPlayPauseIcon: value => _vm.Player.PlayPauseIcon = value,
             ResetGapFreezeAll: () => _gapFreezeHandler.ResetAll(),
             ResetGapFreeze: () => _gapFreezeHandler.Reset(),
-            ClearGapFreezeFrame: () => _renderSession.ClearGapFreezeFrame()));
+            ClearGapFreezeFrame: () => _renderSession.Invalidate()));
 
     // ── Spout ─────────────────────────────────────────────────────
 
@@ -1486,7 +1449,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void BtnTestCard_Click(object sender, RoutedEventArgs e)
     {
-        if (_effectiveOutputBackend != OutputBackend.Gpu) return;
         _vm.Output.ToggleTestCard();
         _outputEngine?.SetTestCardEnabled(_vm.Output.TestCardEnabled);
         SubmitOutputState();
@@ -1505,7 +1467,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void BtnApplyCanvas_Click(object sender, RoutedEventArgs e)
     {
-        if (_effectiveOutputBackend != OutputBackend.Gpu) return;
         if (!CanvasChangeGate.CanChange(IsPlaying(), IsLtcFollowing(), IsRenderingFrozenOnly()))
         {
             UpdateCanvasUiState();
@@ -1598,20 +1559,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private bool IsRenderingFrozenOnly() => !_gapFreezeHandler.IsInactive || _projectRestorePauseState.IsPending;
 
-    // 変更可否・GPU バックエンドの状態を UI に反映する。不可のときは入力と適用ボタンを無効化し理由をツールチップに出す。
+    /// <summary>変更可否を UI に反映する。不可のときは入力と適用ボタンを無効化し理由をツールチップに出す。</summary>
     private void UpdateCanvasUiState()
     {
         if (_disposed) return;
-        bool gpu = _effectiveOutputBackend == OutputBackend.Gpu;
         bool isPlaying = IsPlaying();
         bool isLtcFollowing = IsLtcFollowing();
         bool isFrozenOnly = IsRenderingFrozenOnly();
-        bool canChange = gpu && CanvasChangeGate.CanChange(isPlaying, isLtcFollowing, isFrozenOnly);
-        string? tip = gpu
-            ? CanvasChangeGate.DescribeReason(isPlaying, isLtcFollowing, isFrozenOnly)
-            : CanvasGpuOnlyTooltip;
+        bool canChange = CanvasChangeGate.CanChange(isPlaying, isLtcFollowing, isFrozenOnly);
+        string? tip = CanvasChangeGate.DescribeReason(isPlaying, isLtcFollowing, isFrozenOnly);
 
-        var state = (canChange, tip, gpu);
+        var state = (canChange, tip);
         if (_canvasUiCache == state) return;
         _canvasUiCache = state;
 
@@ -1620,9 +1578,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         CanvasHeightBox.IsEnabled = canChange;
         CanvasFitCombo.IsEnabled = canChange;
         BtnApplyCanvas.IsEnabled = canChange;
-        BtnTestCard.IsEnabled = gpu;
+        BtnTestCard.IsEnabled = true;
         System.Windows.Controls.ToolTipService.SetToolTip(CanvasGroup, tip);
-        System.Windows.Controls.ToolTipService.SetToolTip(BtnTestCard, gpu ? null : CanvasGpuOnlyTooltip);
+        System.Windows.Controls.ToolTipService.SetToolTip(BtnTestCard, null);
     }
 
     // ── クリップ配置（右クリックメニュー） ────────────────────────
@@ -1680,55 +1638,36 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         RefreshDisplaySelection(preferredDevice);
         if (DisplayCombo.SelectedItem is not DisplayTarget target)
             return;
-
-        var window = CreateFullscreenOutputWindow(target);
-        window.Closed += FullscreenWindow_Closed;
         if (_outputEngine == null)
-            _renderSession.BitmapChanged += FullscreenFrameRenderer_BitmapChanged;
+            return; // 再生不可（GPU 出力なし）では全画面を開かない。
+
+        var window = new FullscreenOutputWindow(target, _displayCatalog, _outputEngine);
+        window.Closed += FullscreenWindow_Closed;
         _fullscreenWindow = window;
 
         try
         {
             window.Show();
-            _renderSession.SetFullscreenActive(true);
             DisplayCombo.IsEnabled = false;
             BtnFullscreen.Content = FullscreenCloseLabel;
-            var externalBitmap = _renderSession.CurrentExternalBitmap;
             var previewBitmap = VideoImage.Source as BitmapSource;
-            Log.Information("Fullscreen output opened on {Display} externalBitmap={ExternalWidth}x{ExternalHeight} previewBitmap={PreviewWidth}x{PreviewHeight}",
-                target.DeviceName, externalBitmap?.PixelWidth ?? 0, externalBitmap?.PixelHeight ?? 0,
-                previewBitmap?.PixelWidth ?? 0, previewBitmap?.PixelHeight ?? 0);
+            Log.Information("Fullscreen output opened on {Display} previewBitmap={PreviewWidth}x{PreviewHeight}",
+                target.DeviceName, previewBitmap?.PixelWidth ?? 0, previewBitmap?.PixelHeight ?? 0);
         }
         catch
         {
-            if (_outputEngine == null)
-                _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
             window.Closed -= FullscreenWindow_Closed;
             _fullscreenWindow = null;
-            _renderSession.SetFullscreenActive(false);
             throw;
         }
     }
 
-    // Kept independent of VideoImage.Source: that image is a reduced, delayed preview.
-    private FullscreenOutputWindow CreateFullscreenOutputWindow(DisplayTarget target) =>
-        _outputEngine != null
-            ? new FullscreenOutputWindow(target, _displayCatalog, null, _outputEngine)
-            : new FullscreenOutputWindow(target, _displayCatalog, _renderSession.CurrentExternalBitmap);
-
-    private void FullscreenFrameRenderer_BitmapChanged(WriteableBitmap bitmap) =>
-        _fullscreenWindow?.UpdateBitmap(bitmap);
-
     private void FullscreenWindow_Closed(object? sender, EventArgs e)
     {
-        if (_outputEngine == null)
-            _renderSession.BitmapChanged -= FullscreenFrameRenderer_BitmapChanged;
-        else
-            _outputEngine.DetachFullscreen();
+        _outputEngine?.DetachFullscreen();
         if (sender is FullscreenOutputWindow window)
             window.Closed -= FullscreenWindow_Closed;
         _fullscreenWindow = null;
-        _renderSession.SetFullscreenActive(false);
         BtnFullscreen.Content = FullscreenOpenLabel;
         DisplayCombo.IsEnabled = true;
         string? selectedDeviceName = (DisplayCombo.SelectedItem as DisplayTarget)?.DeviceName
@@ -1942,33 +1881,18 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
-    // ── SW レンダーコールバック（フレーム描画） ───────────────────
+    // ── フレーム通知（UI 更新） ───────────────────────────────────
 
     /// <summary>
-    /// mpv のレンダー更新コールバックから Dispatcher 経由で呼ばれる（UI スレッド）。
-    /// Gapのキャプチャ状態を接続し、RenderSessionで描画後にフレームごとのUI更新を行う。
+    /// shim のフレーム通知から Dispatcher 経由で呼ばれる（UI スレッド）。
+    /// Gap のキャプチャ状態を接続し、フレームごとの UI 更新と GPU への状態送信を行う。
+    /// 画像の合成は OutputEngine（GPU worker）が行う。
     /// </summary>
     private async Task ProcessRenderFrameUpdateAsync(int renderGeneration, bool hasFrame)
     {
         await TryCompleteGapFreezeAsync(renderGeneration, hasFrame);
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
         SubmitOutputState();
-        if (hasFrame && _gapFreezeHandler.IsInactive)
-        {
-            await _renderSession.RenderFrameAsync(renderGeneration);
-            if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
-        }
-
-        GapRenderFrameDecision gapRenderDecision = _renderSession.GetGapRenderDecision();
-        if (gapRenderDecision == GapRenderFrameDecision.Black)
-        {
-            await _renderSession.RenderGapAsync(gapRenderDecision);
-        }
-        else if (gapRenderDecision == GapRenderFrameDecision.GapFreeze)
-        {
-            await _renderSession.RenderGapAsync(gapRenderDecision);
-        }
-
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
         UpdatePerFrameUI();
     }
@@ -1999,10 +1923,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 if (captured)
                 {
                     Log.Information("Continue mode: gap freeze activated, final frame captured");
-                    // Timer retries must publish too: a paused decoder may issue no
-                    // further callback after native seek completion becomes visible.
+                    // タイマー経由の再試行でも状態を送る: 一時停止中のデコーダは
+                    // ネイティブシーク完了が観測できた後にコールバックを出さないことがある。
+                    // GPU 合成層は Freeze 進入時のソース画像を自身で保存する（SaveFreeze）。
                     if (!_disposed && _renderSession.IsCurrent(renderGeneration))
-                        await _renderSession.RenderGapAsync(GapRenderFrameDecision.GapFreeze);
+                        SubmitOutputState();
                 }
             }
         }
@@ -2215,26 +2140,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         string vcodec    = _mpvApi.GetPropertyString(_mpv, "video-codec");
         string acodec    = _mpvApi.GetPropertyString(_mpv, "audio-codec");
 
-        // レンダー解像度を設定（SW レンダーはこのサイズで描画する）
-        if (int.TryParse(widthStr,  out int w) && w > 0) _renderSession.Width  = w;
-        if (int.TryParse(heightStr, out int h) && h > 0) _renderSession.Height = h;
-
-        if (_renderSession.Width <= 0 || _renderSession.Height <= 0)
-            return;
+        if (!int.TryParse(widthStr, out int width) || width <= 0) return;
+        if (!int.TryParse(heightStr, out int height) || height <= 0) return;
 
         _metadataFetched = true;
-        // The native pump consumed any early FRAME while dimensions were unknown.
-        // Paused loads need one explicit redraw after metadata becomes available.
-        if (_gapFreezeHandler.IsInactive)
-            _ = AsyncOperationExceptionBoundary.RunAsync(
-                () => _renderSession.RenderFrameAsync(_renderSession.CaptureGeneration()),
-                ex => Log.Error(ex, "Metadata frame redraw failed"));
         Log.Information("FetchMetadata: {W}x{H} {Fps:F3}fps V:{VCodec} A:{ACodec}",
-            _renderSession.Width, _renderSession.Height, _fps, vcodec, acodec);
+            width, height, _fps, vcodec, acodec);
 
         _metaLine = MetadataDisplayFormatter.FormatMetadataLine(
-            _renderSession.Width,
-            _renderSession.Height,
+            width,
+            height,
             _fps,
             vcodec,
             acodec);
@@ -2367,7 +2282,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _fps = 0;
         _metaLine = "";
         _osdUpdateState.Reset();
-        _renderSession.ResetDisplay();
         _renderSession.ResetUpdateStats();
         ResetPlaybackPerformanceStats();
         _seekState.Clear();

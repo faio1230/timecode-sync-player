@@ -17,7 +17,7 @@ internal partial class FullscreenOutputWindow : Window
 
     private readonly DisplayTarget _target;
     private readonly IDisplayCatalog _displayCatalog;
-    private readonly OutputEngine? _outputEngine;
+    private readonly OutputEngine _outputEngine;
     private HwndSource? _source;
     private IntPtr _childHwnd;
     private bool _attached;
@@ -25,31 +25,14 @@ internal partial class FullscreenOutputWindow : Window
     public FullscreenOutputWindow(
         DisplayTarget target,
         IDisplayCatalog displayCatalog,
-        ImageSource? initialImage,
-        OutputEngine? outputEngine = null)
+        OutputEngine outputEngine)
     {
         _target = target;
         _displayCatalog = displayCatalog;
         _outputEngine = outputEngine;
         InitializeComponent();
-        if (_outputEngine != null)
-        {
-            FullscreenImage.Source = null;
-            FullscreenImage.Visibility = Visibility.Collapsed;
-            D3DHost.Visibility = Visibility.Visible;
-            D3DHost.ChildHwndReady += hwnd => { _childHwnd = hwnd; if (IsLoaded) TryAttachOutput(); };
-            D3DHost.SizeChanged += (_, _) => NotifyOutputSize();
-        }
-        else
-        {
-            FullscreenImage.Source = initialImage;
-        }
-    }
-
-    public void UpdateBitmap(ImageSource bitmap)
-    {
-        if (_outputEngine == null)
-            FullscreenImage.Source = bitmap;
+        D3DHost.ChildHwndReady += hwnd => { _childHwnd = hwnd; if (IsLoaded) TryAttachOutput(); };
+        D3DHost.SizeChanged += (_, _) => NotifyOutputSize();
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -66,7 +49,7 @@ internal partial class FullscreenOutputWindow : Window
         if (_attached)
         {
             _attached = false;
-            _outputEngine?.DetachFullscreen();
+            _outputEngine.DetachFullscreen();
         }
         base.OnClosing(e);
     }
@@ -75,7 +58,6 @@ internal partial class FullscreenOutputWindow : Window
     {
         _source?.RemoveHook(WindowProcedure);
         _source = null;
-        FullscreenImage.Source = null;
         base.OnClosed(e);
     }
 
@@ -88,7 +70,7 @@ internal partial class FullscreenOutputWindow : Window
 
     private void TryAttachOutput()
     {
-        if (_outputEngine == null || _attached || _childHwnd == IntPtr.Zero) return;
+        if (_attached || _childHwnd == IntPtr.Zero) return;
         _attached = true;
         _outputEngine.AttachFullscreen(_childHwnd);
         NotifyOutputSize();
@@ -103,7 +85,7 @@ internal partial class FullscreenOutputWindow : Window
     // 子 HWND のクライアント寸法を GPU worker へ伝える（実際に変わったときだけ ResizeBuffers する）。
     private void NotifyOutputSize()
     {
-        if (_outputEngine == null || !D3DHost.TryGetClientSize(out int width, out int height)) return;
+        if (!D3DHost.TryGetClientSize(out int width, out int height)) return;
         _outputEngine.ResizeFullscreen(width, height);
     }
 

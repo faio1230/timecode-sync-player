@@ -11,11 +11,13 @@ public enum LtcSignalLossMode
     Stop
 }
 
-/// <summary>映像出力バックエンド。既定は Gpu（出荷構成）。Cpu は v0.4 で除去予定。</summary>
+/// <summary>
+/// 映像出力バックエンド。Gpu のみ（CPU 合成は v0.4 で除去）。値 1 は v0.3 の
+/// 設定ファイル（Gpu=1）と同じで、0 は廃止した Cpu を表す。
+/// </summary>
 public enum OutputBackend
 {
-    Cpu,
-    Gpu
+    Gpu = 1
 }
 
 /// <summary>
@@ -152,7 +154,7 @@ public sealed class AppSettingsManager
                     document.RootElement.TryGetProperty("outputBackend", out JsonElement outputBackend)
                     && outputBackend.ValueKind == JsonValueKind.Number
                     && outputBackend.TryGetInt32(out int outputBackendValue)
-                    && outputBackendValue == (int)OutputBackend.Cpu;
+                    && outputBackendValue == 0; // v0.3 の Cpu（enum からは除去済み）
             }
             var loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
             if (loaded != null)

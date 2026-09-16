@@ -37,7 +37,6 @@ internal sealed class GapEnterCoordinator
         {
             _effects.ResetEndAdvanceTriggered();
             ApplyGapPause();
-            _effects.RenderBlack();
             Log.Information("Continue mode: entered gap, rendering black frame");
         }
         finally
@@ -54,7 +53,6 @@ internal sealed class GapEnterCoordinator
             _effects.ResetEndAdvanceTriggered();
             _effects.ClearGapFreezeFrame();
             ApplyGapPause();
-            _effects.RenderBlack();
             Log.Information("Continue mode: gap, forcing black frame");
         }
         finally
@@ -90,7 +88,6 @@ internal sealed class GapEnterCoordinator
         {
             Log.Information("Continue mode: gap freeze activated, holding current frame because duration is unavailable");
             _gapFreezeHandler.ForceFreezeComplete();
-            _effects.RenderGapFreeze();
             return;
         }
 
@@ -135,14 +132,12 @@ internal sealed class GapEnterCoordinator
                 else
                 {
                     _gapFreezeHandler.CurrentState = GapState.ForceBlack;
-                    _effects.RenderBlack();
                     Log.Warning("Continue mode: no tracks, gap freeze seek failed");
                 }
             }
             else
             {
                 _gapFreezeHandler.CurrentState = GapState.ForceBlack;
-                _effects.RenderBlack();
             }
             Log.Information("Continue mode: no tracks, freezing last frame");
         }
@@ -237,7 +232,7 @@ internal sealed class GapEnterCoordinator
 /// <summary>
 /// <see cref="GapEnterCoordinator"/> が使用する副作用デリゲート群。
 /// MainWindow のフィールド・メソッド（mpv ハンドルを閉じ込めた <see cref="GapPlaybackCommandExecutor"/> 呼び出し・
-/// FrameRenderer 描画・PixelBufferManager・状態フィールド更新）をフェイク可能な形で注入する。
+/// フリーズ画像の世代クリア・状態フィールド更新）をフェイク可能な形で注入する。
 /// _endAdvanceTriggered / _loadedTrackId / _duration / _fps の更新は現行タイミングを保つため
 /// デリゲート経由で行う。GapFreezeHandler の状態遷移は具象クラスへ直接委譲する。
 /// </summary>
@@ -245,8 +240,6 @@ internal sealed record GapEnterEffects(
     Action ResetEndAdvanceTriggered,
     Action PauseForGap,
     Action<bool> ApplyPauseState,
-    Action RenderBlack,
-    Action RenderGapFreeze,
     Action ClearGapFreezeFrame,
     Func<double, bool> SeekTo,
     Func<(int rc, double duration)> GetMpvDuration,

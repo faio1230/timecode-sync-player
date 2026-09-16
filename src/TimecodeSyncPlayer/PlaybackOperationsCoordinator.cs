@@ -38,8 +38,6 @@ internal sealed class PlaybackOperationsCoordinator
         _effects.SetPropertyString("pause", MpvValueYes);
         ApplyPauseState(true);
         _effects.ResetPlayerStateForNewTrack();
-        _effects.ResetVideoWidth();
-        _effects.ResetVideoHeight();
         _effects.ClearLoadedTrackId();
         if (_effects.HasTimelinePanel())
             _effects.ClearTimelineLoadedTrackId();
@@ -83,8 +81,6 @@ internal sealed class PlaybackOperationsCoordinator
             _effects.SetPropertyString("pause", keepPaused ? MpvValueYes : MpvValueNo);
         ApplyPauseState(keepPaused);
         _effects.ResetPlayerStateForNewTrack();
-        _effects.ResetVideoWidth();
-        _effects.ResetVideoHeight();
         _effects.ResetGapFreeze();
         _effects.SetSeekBarValueFromPlayer(0);
         _effects.SetTimeLabel(DefaultTimeLabel);
@@ -105,8 +101,6 @@ internal sealed class PlaybackOperationsCoordinator
 
         ApplyPauseState(true);
         _effects.ResetPlayerStateForNewTrack();
-        _effects.ResetVideoWidth();
-        _effects.ResetVideoHeight();
         _effects.ResetGapFreeze();
         _effects.SetSeekBarValueFromPlayer(0);
         _effects.SetTimeLabel(DefaultTimeLabel);
@@ -194,8 +188,6 @@ internal sealed record PlaybackOperationsEffects(
     Func<string, int> CommandString,
     Func<string, string, int> SetPropertyString,
     Action ResetPlayerStateForNewTrack,
-    Action ResetVideoWidth,
-    Action ResetVideoHeight,
     Action ClearLoadedTrackId,
     Func<bool> HasTimelinePanel,
     Action ClearTimelineLoadedTrackId,
