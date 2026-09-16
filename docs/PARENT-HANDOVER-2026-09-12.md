@@ -2,6 +2,10 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-17 09:55 更新（20 回目）**: **履歴を再度書き換えた**（素材の作品名・ファイル名の除去。それ以前の SHA は文書中のものも含めて無効。main `adcb6cb`、agent-a `5c61981`、agent-b `0763553`、タグ v0.4.0〜v0.4.2 も付け替え）。素材は記号（実素材 M1〜M7、テスト素材 A〜C）だけで書く（利用者の指示、メモリ `no-media-titles-in-public-repo`）。
+> v0.4.2 (beta) 公開済み（D16 ハイブリッド GPU、D17 ロード時間）。検証機は Remote Control の `TSP-TestMachine`（Tailscale で配布物を渡す。公開は検証後）。版番号は直ってから上げる（利用者の方針）。
+> 進行中: LTC 同期 26 項目の自動検証（`docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md`）。`w5:p6` = シナリオ E2E 19 件 + 参照フレーム判定 + プロジェクト生成、`w5:p3` = ランナー `run-ltc-scenarios.ps1` + D18（実装済み、実機 1 回待ち）。
+>
 > **2026-09-17 02:35 更新（19 回目）**: **v0.4.0 を GitHub に Pre-release として公開した**（タグ `v0.4.0`、main `6c7909d`、タイトル `v0.4.0 (beta)`、zip と setup.exe を添付。SHA-256 は `docs/release-0.4-plan.md` 2.5 節）。
 > 直前に H2（`-ClickPlay` を再生保証へ、agent-a `a8fb411`）を統合（`d2a8a88`）、配布ビルドの起動確認 2 本（60fps、`already playing`、exit 0）を親が実施。main の bin は Debug の shim に戻してある。
 > **v0.4 の作業はすべて完了。** 両ペインは待機中。残りは利用者の判断待ち（現場素材の一覧、V4 の実素材追試、D9、decodeMode の設定形式）で v0.4.1 の候補として `docs/release-0.4-plan.md` 4 節に残す。
