@@ -63,6 +63,18 @@
 - shim は Release ビルド（`native/gst-shim/build-shim.ps1 -Config Release`）を `native/tcs_gstreamer.dll` に置いてからパッケージし、終了後に外した（Debug の shim に戻す）
 - GStreamer ランタイムの閉包とライセンス文書、VC++ 2015-2022 再配布（14.44.35211.0、署名検証済み）を同梱。mpv の DLL は含まない（スクリプトが検査）
 
+### 配布物の起動確認（2026-09-17 02:21 と 02:26、親、実機 console）
+
+zip を別ディレクトリへ展開し、`Invoke-AppGpuTrial.ps1 -AppExe <展開した exe> -PlayerBackend Gstreamer -Seconds 20` を 2 本（2 本目は H2 統合後の `-ClickPlay` 付き）。
+
+| 項目 | 結果 |
+| --- | --- |
+| 起動ログ | `=== TimecodeSyncPlayer v0.4.0 起動 ===`、`ERR` 0 |
+| 同梱物 | mpv の DLL 0、`tcs_gstreamer.dll`（Release ビルドと同一ハッシュ）、`SpoutDX.dll`、GStreamer プラグイン 32 |
+| 出力 | `distinct/sec` と `send.publish/sec` が全区間 60、`compose start->complete` 平均 0.35ms / p99 0.97ms |
+| 終了 | appExit 0、receiverExit 0、completedNormally、残プロセス無し |
+| H2 | 2 本目の steps に `already playing`（`--open` 直後の再生を押し直さない）。合格 |
+
 ## 3. リリースノート草案（v0.4.0）
 > **既知の仕様として記載すること**: 全画面表示中、40 秒あたり数回 1 枚だけ提示機会を飛ばす
 > （連続しない、飛ぶのは常に 1 枚）。原因は OS のスケジューリングで、mpv でも同様に起きる。
