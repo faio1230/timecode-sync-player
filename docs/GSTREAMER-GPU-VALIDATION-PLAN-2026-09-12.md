@@ -2935,4 +2935,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - Taildrop で検証機へ送付（08:42）。公開せず
 
-（続き: 検証機でロード時間・クラッシュ 0・終了ダイアログの確認 → 合格なら 0.4.2 に上げて公開）
+### 検証機での LTC 同期テスト（計画、2026-09-17 08:50、利用者が VB-CABLE を導入）
+
+- 対象: インストール済みアプリ（`TIMECODE_SYNC_PLAYER_E2E_APP_PATH` で指定、`GSTREAMER_1_0_ROOT_MSVC_X86_64` は同梱の gstreamer フォルダ）。テストはリポジトリの `LtcHardwareLoopE2ETests`（14 件: 進行・信号断・同期シーク・ノイズ/低振幅/反転・停止/継続モード・ギャップ）をそのまま使う
+- 依存: .NET 8 SDK、ffmpeg（素材生成）、VB-CABLE（`CABLE Input` に LTC を流し、アプリは `CABLE Output` から受ける）
+- 次段の候補: `SyncAccuracyE2ETests`（V3 相当。`AudioLoopbackProbe` のビルドと解析スクリプトが要る）
+
+（続き: 1ea6dca の検証（ロード時間・終了ダイアログ）→ LTC 同期 E2E → 合格なら 0.4.2 に上げて公開）
