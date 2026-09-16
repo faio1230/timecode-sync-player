@@ -53,6 +53,28 @@
   GStreamer ランタイムと `tcs_gstreamer.dll` を反映する（**P1 として調査中**、
   `docs/prompts/2026-09-15-P1-gstreamer-packaging.md`）
 
+## 2.5 配布物（2026-09-17 02:20、親が `scripts/package-release.ps1` で作成。main `720a74c` 相当のコード = `85f855b`）
+
+| ファイル | SHA-256 | サイズ |
+| --- | --- | ---: |
+| `TimecodeSyncPlayer-v0.4.0-setup.exe` | `6FF3EFA7144289087E351D9B078881BDB363A6D35834C3ED430E9F11186BD0F0` | 38,032,197 |
+| `TimecodeSyncPlayer-v0.4.0-win-x64.zip` | `0A4CB9C0F9A61D29D7887B0FE2445C93C83702CB962BD124C7F9F37713F193FD` | 16,852,184 |
+
+- shim は Release ビルド（`native/gst-shim/build-shim.ps1 -Config Release`）を `native/tcs_gstreamer.dll` に置いてからパッケージし、終了後に外した（Debug の shim に戻す）
+- GStreamer ランタイムの閉包とライセンス文書、VC++ 2015-2022 再配布（14.44.35211.0、署名検証済み）を同梱。mpv の DLL は含まない（スクリプトが検査）
+
+### 配布物の起動確認（2026-09-17 02:21 と 02:26、親、実機 console）
+
+zip を別ディレクトリへ展開し、`Invoke-AppGpuTrial.ps1 -AppExe <展開した exe> -PlayerBackend Gstreamer -Seconds 20` を 2 本（2 本目は H2 統合後の `-ClickPlay` 付き）。
+
+| 項目 | 結果 |
+| --- | --- |
+| 起動ログ | `=== TimecodeSyncPlayer v0.4.0 起動 ===`、`ERR` 0 |
+| 同梱物 | mpv の DLL 0、`tcs_gstreamer.dll`（Release ビルドと同一ハッシュ）、`SpoutDX.dll`、GStreamer プラグイン 32 |
+| 出力 | `distinct/sec` と `send.publish/sec` が全区間 60、`compose start->complete` 平均 0.35ms / p99 0.97ms |
+| 終了 | appExit 0、receiverExit 0、completedNormally、残プロセス無し |
+| H2 | 2 本目の steps に `already playing`（`--open` 直後の再生を押し直さない）。合格 |
+
 ## 3. リリースノート草案（v0.4.0）
 > **既知の仕様として記載すること**: 全画面表示中、40 秒あたり数回 1 枚だけ提示機会を飛ばす
 > （連続しない、飛ぶのは常に 1 枚）。原因は OS のスケジューリングで、mpv でも同様に起きる。
@@ -196,6 +218,9 @@ MMCSS 中の `GetThreadPriority` は相対 15）も同ブランチにある。
 | ~~ディスク残量~~ | **解決**。段階 0〜5 の生 run を E: へ退避し C: の空きが 0.45→10.99GB |
 
 ### 未決（利用者の判断待ち）
+
+> **2026-09-17 05:50 追記: v0.4.1 は判断待ちではなく修正が要る。** 検証機（クリーン環境）で v0.4.0 の setup 版が音声付き素材を 1 本も再生できなかった（D12〜D15、`docs/GSTREAMER-GPU-VALIDATION-PLAN-2026-09-12.md` 末尾）。開発機でも再現。v0.4.1 の範囲 = D12（audioresample）・D13（映像分岐の queue）・D14（プロファイル待ち 6 秒）・D15（同梱 DLL 2 個）・O1（shim ログをファイルへ）と、44.1kHz / 映像先頭の素材を V1・V2・E2E の行列に追加。
+> **2026-09-17 02:35**: v0.4.0 は公開済み（Pre-release）。以下の未決事項（2・4・5 の実素材追試・7）は **v0.4.1 の候補**として残す。判断が来たら着手する。
 
 1. ~~**V8 の「落ち 0」の読み方**~~ — **決着（2026-09-15）**。基準は「40 秒で 5 回以下かつ連続なし」で、
    既定構成（優先度操作なし）が満たしている。3.6 節を参照。MMCSS は入れない。
