@@ -53,6 +53,14 @@
   - 色の同定: 期待色との距離（RGB ユークリッド）< 60、かつ他の候補色との距離の方が大きい
 - LTC は `LtcSignalPlayer`（`Play` / `PlayHeld` / `PlayWithSilence`）。ジャンプは `PlayHeld` か `Play` の開始時刻を変えて送出し直す
 
+### 2.5 現場の実素材で回す（利用者の要望 2026-09-17: 検証機には現場で使う様々な素材があるので、それで現場ベースのテストをする）
+
+- 新テストは **素材を固定しない**。プロジェクトは環境変数 `TIMECODE_LTC_SCENARIO_PROJECT`（`.tsp` のパス）で差し替えられ、未設定なら 2 節の色素材の `ltc-scenario.tsp` を使う
+- 実素材では色が分からないので、**参照フレームをテストの最初に自分で採る**: 各トラックについて、一時停止で「冒頭フレーム」（MediaIn）と「最終フレーム」（MediaOut または尺 − 1 フレーム）へシークし、画面の読み戻しを参照画像として保存する。以後の判定は「参照画像との一致」（中央 60% 領域の平均色の距離 < 60、かつ他の参照との距離の方が大きい。加えて画素差分の平均 < 12/255）で行う。色素材でもこの方式で判定し、既知の色は目視用にジャーナルへ書くだけにする（判定経路を 1 本にする）
+- 「再生中」の判定は色ではなく、**位置（`TimeLabel`）が進む** ことと、参照画像のどれかに近い（＝そのトラックの絵が出ている）ことで行う
+- プロジェクトの生成: `scripts/make-ltc-scenario-project.ps1 -MediaDir <素材フォルダ> -Out <.tsp> [-Tracks 3] [-SegmentSeconds 20]`。フォルダ内の動画（拡張子 mp4 / mov / mkv / mxf / ts）を名前順に先頭から `-Tracks` 本、各 `MediaIn 0`・`MediaOut SegmentSeconds`、先頭オフセット 5 秒、ギャップ 5 秒で並べる。`ffprobe` で尺を読み、`SegmentSeconds` より短い素材は尺どおり。相対パスではなく `MediaDir` からの相対で書く（`.tsp` を `MediaDir` 直下に置く）
+- 検証機での運用: ランナーに `-MediaDir` を渡すと上のスクリプトでプロジェクトを作り、`TIMECODE_LTC_SCENARIO_PROJECT` に設定して回す。あわせて `RealProjectGapE2ETests`（`TIMECODE_REAL_PROJECT_PATH`）にも同じ `.tsp` を渡して V4 相当を実素材で回す
+
 ## 3. 新テスト（`tests/TimecodeSyncPlayer.Tests/E2E/LtcScenarioE2ETests.cs`、VB-CABLE が無ければ Skip）
 
 | ID | 内容 | 合格の観測 |
@@ -83,7 +91,7 @@
 ## 4. 検証機での自動実行（利用者の要望 2026-09-17: テストを書くだけでなく検証機でも自動で回す）
 
 - 1 コマンドで回すランナー `scripts/run-ltc-scenarios.ps1` を用意する（同期担当、`docs/prompts/2026-09-17-LTC-scenario-runner.md`）:
-  - 引数: `-AppExe <インストール済みの exe>`（省略時はリポジトリの Debug ビルド）、`-ReportDir`、`-Cycles`、`-Filter`（既定は `LtcHardwareLoopE2ETests|LtcScenarioE2ETests`）
+  - 引数: `-AppExe <インストール済みの exe>`（省略時はリポジトリの Debug ビルド）、`-ReportDir`、`-Cycles`、`-Filter`（既定は `LtcHardwareLoopE2ETests|LtcScenarioE2ETests`）、**`-MediaDir <実素材フォルダ>`**（2.5 節。指定時は `make-ltc-scenario-project.ps1` でプロジェクトを作り、`LtcScenarioE2ETests` と `RealProjectGapE2ETests` に渡す）
   - 行うこと: 前提の検査（VB-CABLE の CABLE Input / Output、ffmpeg、.NET SDK、対象 exe と同梱 GStreamer）→ 素材生成（`make-e2e-media.ps1`）→ tests のビルド → `dotnet test`（trx）→ 対象アプリの `logs\`（timecodesyncplayer と tcs-gst）とジャーナル・画像を `ReportDir` へ複製 → 要約（合格 / 失敗 / スキップ、失敗テスト名、ERR 行数、残プロセス）を 1 画面に出す
   - **D18 を直す**: `E2EAppRunner.ResolvePrereqs` が `TIMECODE_SYNC_PLAYER_E2E_APP_PATH` の exe と同じディレクトリの `gstreamer` を同梱ランタイムとして認める。ランナーは環境変数を要求しない
 - 検証機の運用: `TSP-TestMachine` に「main を pull → `run-ltc-scenarios.ps1 -AppExe <インストール先>` → 要約と `ReportDir` の場所を報告」を依頼する。配布物を送るたびに同じ依頼を出す（手順書 1.5 節に追記）
