@@ -266,6 +266,12 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 ### 今日踏んだ罠（繰り返さない）
 
+5. **shim の API を変えたコミットを取り込んだ作業ツリーは、shim を自分で再ビルドするまで E2E が壊れる**（D8 修正 2 の `tcs_player_ring_epoch`）。
+   症状はアプリログの `EntryPointNotFoundException: Unable to find an entry point named 'tcs_player_ring_epoch' in DLL 'tcs_gstreamer.dll'` と、
+   一時停止待ちなどのタイムアウト。他ツリーの DLL は流用せず `build-shim.ps1 -Config Debug` → `dotnet build` で bin を更新する
+6. **E2E を複数まとめて回すとき `TIMECODE_ACCURACY_REPORT_DIR` を共有すると 2 本目が即失敗し、アプリが孤児になって出力パイプを掴む**（親が 3 時間止まった原因）。
+   run ごとに別ディレクトリか、変数を設定しない。孤児は自分が起動した PID だけ止める
+
 1. **指標の符号**: `delta`（LTC − 再生位置）と `signedErrorMs`（絵 − LTC）は向きが逆。**足す**のが正しい。
    差で計算して「74ms のずれ」を作り、T5 の結論・max-buffers 掃引・T6 の設計をその上に積んでいた
 2. **統合の検証**: ビルドと非E2E だけで完了にしない。**Debug の実機ロードを 1 本**通すまで完了にしない
