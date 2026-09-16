@@ -43,7 +43,6 @@ internal interface IGstNativeApi
     /// <summary>1 = frame, 0 = none, -6 = Ended, その他負 = error。</summary>
     int Acquire(IntPtr player, ulong generation, out GstNative.TcsFrameInfo info);
     bool TryGetLeasedTexture(IntPtr player, out IntPtr texture, out uint subresource, out uint dxgiFormat);
-    int LeasedCpuCopy(IntPtr player, IntPtr dst, int dstStride);
     void Release(IntPtr player);
     int PublishSpoutVerification(IntPtr player);
     int SendImage(IntPtr player, IntPtr bgra, int width, int height, int pitch);

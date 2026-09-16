@@ -231,8 +231,6 @@ public class SeekTraceEventsTests
         CommandString: commandString,
         SetPropertyString: (_, _) => 0,
         ResetPlayerStateForNewTrack: () => { },
-        ResetVideoWidth: () => { },
-        ResetVideoHeight: () => { },
         ClearLoadedTrackId: () => { },
         HasTimelinePanel: () => false,
         ClearTimelineLoadedTrackId: () => { },

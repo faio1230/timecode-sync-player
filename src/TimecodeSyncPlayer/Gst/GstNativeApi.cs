@@ -91,9 +91,6 @@ internal sealed class GstNativeApi : IGstNativeApi
     public bool TryGetLeasedTexture(IntPtr player, out IntPtr texture, out uint subresource, out uint dxgiFormat) =>
         GstNative.Imports.tcs_player_leased_texture(player, out texture, out subresource, out dxgiFormat) == 0;
 
-    public int LeasedCpuCopy(IntPtr player, IntPtr dst, int dstStride) =>
-        GstNative.Imports.tcs_player_leased_cpu_copy(player, dst, dstStride);
-
     public void Release(IntPtr player) => GstNative.Imports.tcs_player_release(player);
 
     public int PublishSpoutVerification(IntPtr player) => GstNative.Imports.tcs_player_publish_spout(player);

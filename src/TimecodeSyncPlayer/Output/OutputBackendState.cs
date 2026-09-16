@@ -32,10 +32,13 @@ public sealed class OutputBackendState
     /// <summary>E2E・検証用の注入。設定項目は増やさない（R1 1-2）。</summary>
     internal const string ForceUnavailableEnvironmentVariable = "TIMECODE_SYNC_PLAYER_FORCE_GPU_UNAVAILABLE";
 
-    // 初期化前は再生不可として扱う（MainWindow を初期化せず構築する単体テストでも
-    // GPU 出力を開始しない）。
+    // 初期化前は「要求値も有効値も Gpu」のプレースホルダ。エンジン生成は IsInitialized で
+    // 判定するため、MainWindow を初期化せず構築する単体テストでも GPU 出力を開始しない。
     public OutputBackendDecision Decision { get; private set; } =
-        new(OutputBackend.Gpu, OutputBackend.Gpu, false, "未初期化");
+        new(OutputBackend.Gpu, OutputBackend.Gpu, true, "未初期化");
+
+    /// <summary>起動時の Initialize が完了したか。false の間は出力エンジンを生成しない。</summary>
+    public bool IsInitialized { get; private set; }
 
     public OutputBackend Effective => Decision.Effective;
 
@@ -59,6 +62,7 @@ public sealed class OutputBackendState
             ? new OutputBackendDecision(requested, OutputBackend.Gpu, false,
                 "検証用の注入: " + ForceUnavailableEnvironmentVariable + " により GPU 出力を利用不可にしました。")
             : OutputBackendResolver.Resolve(requested, probe);
+        IsInitialized = true;
 
         if (!Decision.PlaybackAvailable)
         {

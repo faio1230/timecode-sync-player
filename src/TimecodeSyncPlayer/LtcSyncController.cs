@@ -31,7 +31,6 @@ internal sealed record LtcSyncEffects(
     Action RefreshCurrentVideoFrame,
     Action<double> UpdateTimelinePosition,
     Action UpdateCurrentTrackLabel,
-    Action RenderGapFreeze,
     Action ResumeGapPause,
     Func<SyncCorrectionMode>? GetCorrectionMode = null,
     Func<double?>? GetPlaybackSeconds = null,
@@ -522,7 +521,7 @@ internal sealed class LtcSyncController
                     state.LoadedTrackId, state.VideoFps, state.DurationSeconds);
                 GapEnterCoordinator coordinator = _gapCoordinator();
                 new GapEnterActionDispatcher(new GapEnterActionHandlers(
-                    coordinator.EnterBlackGap, coordinator.EnterForceBlack, _effects.RenderGapFreeze,
+                    coordinator.EnterBlackGap, coordinator.EnterForceBlack, null,
                     coordinator.StartGapFreezeCaptureForCurrentTrack,
                     coordinator.LoadPreviousTrackFinalFrameForGapFreeze)).Execute(action, result);
                 _effects.UpdateCurrentTrackLabel();

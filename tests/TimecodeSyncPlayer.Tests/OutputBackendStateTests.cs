@@ -32,13 +32,15 @@ public class OutputBackendStateTests
     }
 
     [Fact]
-    public void State_BeforeInitialize_IsGpuAndUnavailable()
+    public void State_BeforeInitialize_IsGpuPlaceholderAndNotInitialized()
     {
         var state = new OutputBackendState();
 
         state.Effective.Should().Be(OutputBackend.Gpu);
-        state.PlaybackAvailable.Should().BeFalse(
+        state.IsInitialized.Should().BeFalse(
             "初期化前の MainWindow 構築で GPU 出力を開始しない");
+        state.PlaybackAvailable.Should().BeTrue(
+            "単体テストの UI 状態機械は初期化なしで動く（エンジン生成は IsInitialized で止める）");
     }
 
     [Fact]
@@ -51,6 +53,7 @@ public class OutputBackendStateTests
         state.Effective.Should().Be(OutputBackend.Gpu);
         state.Decision.Requested.Should().Be(OutputBackend.Gpu);
         state.PlaybackAvailable.Should().BeFalse();
+        state.IsInitialized.Should().BeTrue();
         state.Decision.Detail.Should().Be("detect failed");
     }
 

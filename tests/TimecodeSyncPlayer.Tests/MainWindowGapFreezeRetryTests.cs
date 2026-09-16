@@ -1,7 +1,4 @@
 using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Windows.Controls;
-using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,44 +6,29 @@ using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.Tests;
 
+/// <summary>
+/// Gap フリーズの「キャプチャ完了」は GPU 合成層が進入時にソース画像を保存する（SaveFreeze）。
+/// ここでは、シーク完了後にコールバックが来なくてもタイマー経由で FreezeComplete へ遷移すること、
+/// 再生が動いている間は確定しないことを固定する。
+/// </summary>
 [Collection("WpfWindow")]
 public sealed class MainWindowGapFreezeRetryTests
 {
     [Fact]
-    public Task FinalCallbackWhileSeeking_TimerPublishesFinalPixelsWithoutAnotherCallback() => OnUi(async () =>
+    public Task FinalCallbackWhileSeeking_TimerCompletesFreezeWithoutAnotherCallback() => OnUi(async () =>
     {
         using var fixture = new Fixture();
         fixture.Api.Seeking = true;
         await fixture.ProcessFinalCallback();
         fixture.Handler.CurrentState.Should().Be(GapState.EnteringFreeze);
-        fixture.Spout.Pixels.Clear();
 
         fixture.Api.Seeking = false;
-        fixture.Tick(); // No render callback is delivered after the native seek completes.
+        fixture.Tick(); // ネイティブシーク完了後にレンダーコールバックは届かない。
         await WaitUntil(() => fixture.Handler.CurrentState == GapState.FreezeComplete);
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
 
-        fixture.Spout.Pixels.Should().Contain((byte)73, "timer completion must publish the captured image to Spout");
-        ReadFirstPixel(fixture.Session.CurrentExternalBitmap!).Should().Be(73, "external bitmap publication must not wait for preview");
-        fixture.RenderApi.RenderCount.Should().Be(1);
-        var previewImage = (Image)fixture.Window.FindName("VideoImage");
-        // A Background preview tick can be up to one preview period later; an
-        // ApplicationIdle dispatch alone does not make that timer due. Deliver
-        // no additional OnTick/native callback while awaiting the final pixels.
-        await WaitUntil(() => previewImage.Source is WriteableBitmap pending && ReadFirstPixel(pending) == 73);
-        var bitmap = ((Image)fixture.Window.FindName("VideoImage")).Source.Should().BeOfType<WriteableBitmap>().Which;
-        byte[] pixels = new byte[16];
-        bitmap.CopyPixels(pixels, 8, 0);
-        pixels[0].Should().Be(73, "the WPF output must show the captured image without another callback");
-        fixture.RenderApi.RenderCount.Should().Be(1);
+        fixture.Handler.CurrentState.Should().Be(GapState.FreezeComplete);
     });
-
-    private static byte ReadFirstPixel(WriteableBitmap bitmap)
-    {
-        byte[] pixel = new byte[4];
-        bitmap.CopyPixels(new System.Windows.Int32Rect(0, 0, 1, 1), pixel, 4, 0);
-        return pixel[0];
-    }
 
     [Fact]
     public Task TimerRetry_WhileNativePlaybackUnpaused_DoesNotConfirmMovingFrame() => OnUi(async () =>
@@ -54,41 +36,29 @@ public sealed class MainWindowGapFreezeRetryTests
         using var fixture = new Fixture();
         fixture.Api.Paused = false;
         fixture.Tick();
-        // Flush the native worker and then the UI continuation before checking the result.
         await fixture.Session.ProcessUpdateAsync((_, _) => Task.CompletedTask);
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
 
         fixture.Handler.CurrentState.Should().Be(GapState.EnteringFreeze);
         fixture.Handler.CachedTrackId.Should().BeNull();
-        fixture.Spout.Pixels.Should().BeEmpty();
-        fixture.RenderApi.RenderCount.Should().Be(0);
     });
 
     [Theory]
     [InlineData("resume")]
     [InlineData("seek")]
     [InlineData("completed-seek")]
-    public Task TimerRetry_NativePlaybackChangesWhileRendering_DoesNotCacheOrPublishObsoleteFrame(string change) => OnUi(async () =>
+    public Task TimerRetry_NativePlaybackChanges_DoesNotConfirmObsoleteFrame(string change) => OnUi(async () =>
     {
         using var fixture = new Fixture();
-        using var release = new ManualResetEventSlim();
-        fixture.RenderApi.Release = release;
+        if (change == "resume") fixture.Api.Paused = false;
+        else if (change == "seek") fixture.Api.Seeking = true;
+        else fixture.Api.Position = 9;
         fixture.Tick();
-        try
-        {
-            await fixture.RenderApi.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            if (change == "resume") fixture.Api.Paused = false;
-            else if (change == "seek") fixture.Api.Seeking = true;
-            else fixture.Api.Position = 9;
-        }
-        finally { release.Set(); }
         await fixture.Session.ProcessUpdateAsync((_, _) => Task.CompletedTask);
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
 
         fixture.Handler.CurrentState.Should().NotBe(GapState.FreezeComplete);
         fixture.Handler.CachedTrackId.Should().BeNull();
-        fixture.Buffers.CachedGapFreezeFrameBuffer.Should().BeNull();
-        fixture.Spout.Pixels.Should().BeEmpty();
     });
 
     private sealed class Fixture : IDisposable
@@ -100,8 +70,6 @@ public sealed class MainWindowGapFreezeRetryTests
         public MainWindow Window { get; }
         public GapFreezeHandler Handler { get; }
         public RenderSession Session { get; }
-        public PixelBufferManager Buffers => (PixelBufferManager)typeof(RenderSession)
-            .GetField("_buffers", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Session)!;
 
         public Fixture()
         {
@@ -113,26 +81,19 @@ public sealed class MainWindowGapFreezeRetryTests
             _provider = services.BuildServiceProvider();
             Window = _provider.GetRequiredService<MainWindow>();
             Handler = _provider.GetRequiredService<GapFreezeHandler>();
-            Session = Field<RenderSession>("_renderSession");
-            SetField("_mpv", new IntPtr(1));
-            SetField("_metadataFetched", true);
-            SetField("_fps", 30d);
+            Session = (RenderSession)typeof(MainWindow)
+                .GetField("_renderSession", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Window)!;
+            typeof(MainWindow).GetField("_mpv", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(Window, new IntPtr(1));
+            typeof(MainWindow).GetField("_fps", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(Window, 30d);
             Session.Create(new IntPtr(1)).Should().BeTrue();
-            Session.AllocateParameters();
-            Session.InitializeFrameRenderer();
-            Session.InitializeStartupBuffer();
-            Session.Width = 2;
-            Session.Height = 2;
             Handler.EnterFreezeCapture(Guid.NewGuid(), 9.9, "C:/clip.mp4");
         }
 
         public Task ProcessFinalCallback() => (Task)Method("ProcessRenderFrameUpdateAsync")
             .Invoke(Window, [Session.CaptureGeneration(), true])!;
         public void Tick() => Method("OnTick").Invoke(Window, [null, EventArgs.Empty]);
-        private T Field<T>(string name) => (T)typeof(MainWindow)
-            .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Window)!;
-        private void SetField(string name, object value) => typeof(MainWindow)
-            .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(Window, value);
         private static MethodInfo Method(string name) => typeof(MainWindow)
             .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
         public void Dispose()
@@ -168,9 +129,6 @@ public sealed class MainWindowGapFreezeRetryTests
 
     private sealed class RenderApi : IMpvRenderApi
     {
-        public int RenderCount;
-        public ManualResetEventSlim? Release;
-        public readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int MpvRenderParamApiType => 1;
         public int MpvRenderParamSwSize => 17;
         public int MpvRenderParamSwFormat => 18;
@@ -180,26 +138,16 @@ public sealed class MainWindowGapFreezeRetryTests
         public ulong MpvRenderUpdateFrame => 1;
         public int RenderContextCreate(out IntPtr res, IntPtr mpv, RenderParam[] parameters)
         { res = new IntPtr(2); return 0; }
-        public ulong RenderContextUpdate(IntPtr ctx) => 0; // Paused: no later FRAME work.
-        public int RenderContextRender(IntPtr ctx, RenderParam[] parameters)
-        {
-            Interlocked.Increment(ref RenderCount);
-            Started.TrySetResult();
-            Release?.Wait();
-            Marshal.WriteByte(parameters.Single(p => p.Type == MpvRenderParamSwPointer).Data, 73);
-            return 0;
-        }
+        public ulong RenderContextUpdate(IntPtr ctx) => 0; // 一時停止中: 後続の FRAME 仕事はない。
         public void RenderContextSetUpdateCallback(IntPtr ctx, RenderUpdateFn callback, IntPtr callbackCtx) { }
         public void RenderContextFree(IntPtr ctx) { }
     }
 
     private sealed class SpoutOutput : ISpoutOutput
     {
-        public readonly List<byte> Pixels = [];
         public bool IsEnabled { get; set; } = true;
         public bool IsAvailable => true;
         public bool TryInitialize() => true;
-        public void SendFrame(IntPtr pixels, int width, int height) => Pixels.Add(Marshal.ReadByte(pixels));
         public void Dispose() { }
     }
 

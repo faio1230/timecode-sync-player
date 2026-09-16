@@ -46,8 +46,6 @@ public class GapEnterCoordinatorTests
             ResetEndAdvanceTriggered: () => { Calls.Add("ResetEndAdvanceTriggered"); EndAdvanceTriggered = false; },
             PauseForGap: () => Calls.Add("PauseForGap"),
             ApplyPauseState: paused => Calls.Add($"ApplyPauseState({paused})"),
-            RenderBlack: () => Calls.Add("RenderBlack"),
-            RenderGapFreeze: () => Calls.Add("RenderGapFreeze"),
             ClearGapFreezeFrame: () => Calls.Add("ClearGapFreezeFrame"),
             SeekTo: target => { Calls.Add("SeekTo"); SeekTargets.Add(target); return SeekResult; },
             GetMpvDuration: () => { Calls.Add("GetMpvDuration"); return MpvDuration; },
@@ -80,7 +78,7 @@ public class GapEnterCoordinatorTests
     // ---- EnterBlackGap ----
 
     [Fact]
-    public void EnterBlackGap_PausesThenAppliesPauseThenRendersBlack_AndResetsEndAdvance()
+    public void EnterBlackGap_PausesThenAppliesPause_AndResetsEndAdvance()
     {
         var (coord, _, rec) = Build();
 
@@ -89,23 +87,21 @@ public class GapEnterCoordinatorTests
         rec.Calls.Should().Equal(
             "ResetEndAdvanceTriggered",
             "PauseForGap",
-            "ApplyPauseState(True)",
-            "RenderBlack");
+            "ApplyPauseState(True)");
         rec.EndAdvanceTriggered.Should().BeFalse();
     }
 
     [Fact]
-    public void EnterBlackGap_ComposeBlack_DoesNotPausePlayer_ButKeepsGapStateAndRendersBlack()
+    public void EnterBlackGap_ComposeBlack_DoesNotPausePlayer_ButAppliesGapState()
     {
         var (coord, _, rec) = Build(mode: GapPlayerMode.ComposeBlack);
 
         coord.EnterBlackGap();
 
-        // C1(a): compose-black は PauseForGap を呼ばない。UI のギャップ状態と黒描画は現状どおり。
+        // C1(a): compose-black は PauseForGap を呼ばない。UI のギャップ状態は現状どおり。
         rec.Calls.Should().Equal(
             "ResetEndAdvanceTriggered",
-            "ApplyPauseState(True)",
-            "RenderBlack");
+            "ApplyPauseState(True)");
         rec.EndAdvanceTriggered.Should().BeFalse();
     }
 
@@ -160,15 +156,14 @@ public class GapEnterCoordinatorTests
             "ResetEndAdvanceTriggered",
             "ClearGapFreezeFrame",
             "PauseForGap",
-            "ApplyPauseState(True)",
-            "RenderBlack");
+            "ApplyPauseState(True)");
         rec.EndAdvanceTriggered.Should().BeFalse();
     }
 
     // ---- StartGapFreezeCaptureForCurrentTrack ----
 
     [Fact]
-    public void StartGapFreeze_TargetLeqZero_OnlyFreezeCompleteAndGapFreeze_NoSeek()
+    public void StartGapFreeze_TargetLeqZero_OnlyFreezeComplete_NoSeek()
     {
         var prev = CreateTrack(Guid.NewGuid());
         var loadedId = Guid.NewGuid();
@@ -180,8 +175,7 @@ public class GapEnterCoordinatorTests
         rec.Calls.Should().Equal(
             "ResetEndAdvanceTriggered",
             "PauseForGap",
-            "ApplyPauseState(True)",
-            "RenderGapFreeze");
+            "ApplyPauseState(True)");
         rec.SeekTargets.Should().BeEmpty();
         rec.Calls.Should().NotContain(new[] { "GetDuration", "GetFps" });
         handler.CurrentState.Should().Be(GapState.FreezeComplete);
@@ -246,19 +240,18 @@ public class GapEnterCoordinatorTests
     }
 
     [Fact]
-    public void EnterNoTracksFreeze_DurationUnavailable_ForcesBlackState_AndRendersBlack()
+    public void EnterNoTracksFreeze_DurationUnavailable_ForcesBlackState()
     {
         var (coord, handler, rec) = Build(r => r.MpvDuration = (rc: 1, duration: 0.0));
 
         coord.EnterNoTracksFreeze();
 
         handler.CurrentState.Should().Be(GapState.ForceBlack);
-        rec.Calls.Should().Contain("RenderBlack");
         rec.SeekTargets.Should().BeEmpty();
     }
 
     [Fact]
-    public void EnterNoTracksFreeze_SeekFailure_ForcesBlackState_AndRendersBlack()
+    public void EnterNoTracksFreeze_SeekFailure_ForcesBlackState()
     {
         var (coord, handler, rec) = Build(r => { r.MpvDuration = (0, 100.0); r.SeekResult = false; });
 
@@ -266,7 +259,6 @@ public class GapEnterCoordinatorTests
 
         rec.SeekTargets.Should().ContainSingle();
         handler.CurrentState.Should().Be(GapState.ForceBlack);
-        rec.Calls.Should().Contain("RenderBlack");
     }
 
     // ---- LoadPreviousTrackFinalFrameForGapFreeze ----
@@ -364,7 +356,6 @@ public class GapEnterCoordinatorTests
 
         // DecideNoTracksEnter が ForceBlack を返し EnterForceBlack が呼ばれる
         rec.Calls.Should().Contain("ClearGapFreezeFrame");
-        rec.Calls.Should().Contain("RenderBlack");
         handler.CurrentState.Should().Be(GapState.ForceBlack);
         rec.Calls.Last().Should().Be("UpdateCurrentTrackLabel");
     }

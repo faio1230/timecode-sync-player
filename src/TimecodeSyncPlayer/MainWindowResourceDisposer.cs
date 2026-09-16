@@ -96,7 +96,7 @@ internal sealed class MainWindowResourceDisposer
                 if (_stopped) TryCleanup(_disposeSpout);
             }),
             new(ReleaseResourcesStepName, RunsOffUiThread: false, () => TryCleanup(_disposeTimeline)),
-            // RenderSession.Dispose は UI 所有の PreviewFramePresenter（DispatcherTimer）を解放するため UI スレッド専用。
+            // RenderSession.Dispose（コンテキスト解放とネイティブスレッド join）は UI スレッド専用。
             new(ReleaseResourcesStepName, RunsOffUiThread: false, () => { if (_contextFreed) TryCleanup(_disposeBuffer); }),
         ];
     }

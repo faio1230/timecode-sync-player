@@ -163,31 +163,6 @@ internal sealed class GstBackendState : IDisposable
         _renderCallbackCtx = IntPtr.Zero;
     }
 
-    /// <summary>
-    /// mpv 互換 render の実体。前回リースを返却してから現世代の最新フレームを
-    /// リースし、bgr0 バッファへ CPU コピーする。
-    /// 戻り値は mpv と同様 0 成功 / 負値失敗。
-    /// </summary>
-    public int RenderInto(IntPtr dst, int dstStride, int width, int height)
-    {
-        IntPtr player = Player;
-        if (player == IntPtr.Zero) return -1;
-        try
-        {
-            _native.Release(player);
-            if (_native.Acquire(player, _native.GetGeneration(player), out GstNative.TcsFrameInfo info) != 1)
-                return -3; // none / ended
-            if (info.Width != width || info.Height != height)
-                return -5; // app renders at decoded size
-            return _native.LeasedCpuCopy(player, dst, dstStride);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "GstBackendState.RenderInto 失敗");
-            return -1;
-        }
-    }
-
     public void Dispose() => DisposePlayer();
 
     internal static string ResolveSenderName()

@@ -311,7 +311,7 @@ public class SyncScenarioTests
 
         harness.GapState.Should().Be(GapState.EnteringFreeze);
         harness.Operations.Count(operation => operation.Name == "pause-for-gap").Should().Be(1);
-        harness.Operations.Count(operation => operation.Name == "render-freeze").Should().Be(0);
+        harness.RenderSurface.Should().NotBe(ScenarioRenderSurface.Freeze);
         harness.ValidateInvariants().Should().BeEmpty();
     }
 

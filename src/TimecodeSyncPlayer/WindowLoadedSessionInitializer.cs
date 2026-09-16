@@ -13,12 +13,9 @@ internal sealed class WindowLoadedSessionInitializer
     private readonly Action<IntPtr> _assignMpv;
     private readonly Action _applyAudioSettings;
     private readonly Func<bool> _createRenderContext;
-    private readonly Action _allocateRenderParameters;
     private readonly Func<SpoutStartupState> _initializeSpout;
     private readonly Action<SpoutStartupState> _applySpoutStartupState;
-    private readonly Action _initializeFrameRenderer;
     private readonly Action _startTimer;
-    private readonly Action _initializeStartupBuffer;
     private readonly Action _initializeTimeline;
     private readonly Action<WindowLoadedSessionInitializationError> _showError;
 
@@ -27,12 +24,9 @@ internal sealed class WindowLoadedSessionInitializer
         Action<IntPtr> assignMpv,
         Action applyAudioSettings,
         Func<bool> createRenderContext,
-        Action allocateRenderParameters,
         Func<SpoutStartupState> initializeSpout,
         Action<SpoutStartupState> applySpoutStartupState,
-        Action initializeFrameRenderer,
         Action startTimer,
-        Action initializeStartupBuffer,
         Action initializeTimeline,
         Action<WindowLoadedSessionInitializationError> showError)
     {
@@ -40,12 +34,9 @@ internal sealed class WindowLoadedSessionInitializer
         _assignMpv = assignMpv;
         _applyAudioSettings = applyAudioSettings;
         _createRenderContext = createRenderContext;
-        _allocateRenderParameters = allocateRenderParameters;
         _initializeSpout = initializeSpout;
         _applySpoutStartupState = applySpoutStartupState;
-        _initializeFrameRenderer = initializeFrameRenderer;
         _startTimer = startTimer;
-        _initializeStartupBuffer = initializeStartupBuffer;
         _initializeTimeline = initializeTimeline;
         _showError = showError;
     }
@@ -75,12 +66,9 @@ internal sealed class WindowLoadedSessionInitializer
             return false;
         }
 
-        _allocateRenderParameters();
         SpoutStartupState spoutStartupState = _initializeSpout();
         _applySpoutStartupState(spoutStartupState);
-        _initializeFrameRenderer();
         _startTimer();
-        _initializeStartupBuffer();
         _initializeTimeline();
 
         return true;

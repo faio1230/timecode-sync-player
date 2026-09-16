@@ -3,7 +3,7 @@ namespace TimecodeSyncPlayer;
 internal sealed record GapEnterActionHandlers(
     Action EnterBlackGap,
     Action ForceBlack,
-    Action UseCachedFrame,
+    Action? UseCachedFrame,
     Action<TimelineQueryResult, GapEnterAction> SeekToFinalFrame,
     Action<PlaylistTrack, double, double, double> LoadPreviousTrack);
 
@@ -27,7 +27,7 @@ internal sealed class GapEnterActionDispatcher
                 _handlers.ForceBlack();
                 break;
             case GapEnterActionType.UseCachedFrame:
-                _handlers.UseCachedFrame();
+                _handlers.UseCachedFrame?.Invoke();
                 break;
             case GapEnterActionType.SeekToFinalFrame:
                 _handlers.SeekToFinalFrame(result, action);
