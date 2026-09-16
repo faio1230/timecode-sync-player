@@ -13,6 +13,8 @@ param(
     [int]$KillReceiverAfterSeconds = 0,
     [ValidateSet('Mpv','Gstreamer')][string]$PlayerBackend = 'Mpv',
     [switch]$NoSpout,
+    # V6: long soak runs must not fill the output trace (1,000,000-event cap).
+    [switch]$NoOutputTrace,
     [string]$ProjectPath = '',
     [int]$ScreenshotAtSeconds = 0,
     [int]$TestCardOnAtSeconds = 0,
@@ -224,7 +226,7 @@ $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
     $psi.Environment['TIMECODE_SYNC_PLAYER_SETTINGS_PATH'] = $settings
     $psi.Environment['TIMECODE_SYNC_PLAYER_SPOUT_NAME'] = $sender
-    $psi.Environment['TIMECODE_SYNC_PLAYER_OUTPUT_TRACE'] = $trace
+    if (-not $NoOutputTrace) { $psi.Environment['TIMECODE_SYNC_PLAYER_OUTPUT_TRACE'] = $trace }
     if ($SimulateDeviceLoss) { $psi.Environment['TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS'] = $SimulateDeviceLoss }
 $app = [System.Diagnostics.Process]::Start($psi)
 $null = $app.Handle
