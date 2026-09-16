@@ -55,21 +55,43 @@ if (-not (Test-Path -LiteralPath (Join-Path $appDir 'tcs_gstreamer.dll'))) {
     $problems += "tcs_gstreamer.dll is missing next to the exe (run build-shim): $appDir"
 }
 
-$cableNames = @()
-if (Get-Command Get-PnpDevice -ErrorAction SilentlyContinue) {
-    $endpoints = @(Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue |
-        Where-Object { $_.Status -eq 'OK' })
-    $cableNames = @($endpoints |
-        Where-Object { $_.FriendlyName -match 'CABLE (Input|Output)' } |
-        ForEach-Object { $_.FriendlyName })
-    $hasInput = @($endpoints | Where-Object { $_.FriendlyName -match 'CABLE Input' }).Count -gt 0
-    $hasOutput = @($endpoints | Where-Object { $_.FriendlyName -match 'CABLE Output' }).Count -gt 0
-    if (-not ($hasInput -and $hasOutput)) {
-        $problems += 'VB-CABLE endpoints are not active (need CABLE Input and CABLE Output)'
+# D19: use Core Audio (MMDevice) names for the VB-CABLE check; the PnP endpoint
+# names are localized on some machines (for example a speaker-friendly name that
+# does not contain "CABLE Input").
+# MMDevices registry: FriendlyName {a45c254e-df1c-4efd-8020-67d146a850e0},2,
+# DeviceState 1 = Active.
+function Get-MmDeviceActiveNames([string]$flow) {
+    $names = @()
+    $root = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\$flow"
+    if (-not (Test-Path -LiteralPath $root)) { return $names }
+    foreach ($endpoint in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+        $state = (Get-ItemProperty -LiteralPath $endpoint.PSPath -ErrorAction SilentlyContinue).DeviceState
+        if ($state -ne 1) { continue }
+        $propsPath = Join-Path $endpoint.PSPath 'Properties'
+        $props = Get-ItemProperty -LiteralPath $propsPath -ErrorAction SilentlyContinue
+        if (-not $props) { continue }
+        $friendly = $props.PSObject.Properties['{a45c254e-df1c-4efd-8020-67d146a850e0},2']
+        if ($friendly -and $friendly.Value) { $names += [string]$friendly.Value }
     }
-} else {
-    $problems += 'Get-PnpDevice is not available; cannot check VB-CABLE'
+    return $names
 }
+
+$renderCable = @(Get-MmDeviceActiveNames 'Render' | Where-Object { $_ -match 'CABLE Input' })
+$captureCable = @(Get-MmDeviceActiveNames 'Capture' | Where-Object { $_ -match 'CABLE Output' })
+if ($renderCable.Count -eq 0 -or $captureCable.Count -eq 0) {
+    $problems += 'VB-CABLE endpoints are not active in Core Audio (need Render "CABLE Input" and Capture "CABLE Output")'
+}
+
+$pnpCableNames = @()
+if (Get-Command Get-PnpDevice -ErrorAction SilentlyContinue) {
+    $pnpCableNames = @(Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -eq 'OK' -and $_.FriendlyName -match 'VB-Audio|CABLE' } |
+        ForEach-Object { $_.FriendlyName })
+}
+$pnpOrdered = @($pnpCableNames |
+    Sort-Object @{Expression = { if ($_ -match 'CABLE') { 0 } else { 1 } }}, @{Expression = { $_ } })
+$pnpText = (($pnpOrdered | Select-Object -First 8) -join '; ')
+if ($pnpCableNames.Count -gt 8) { $pnpText = $pnpText + '; ...(+' + ($pnpCableNames.Count - 8) + ')' }
 
 $gstSource = ''
 $bundledBin = Join-Path $appDir 'gstreamer\bin'
@@ -96,7 +118,8 @@ if ($MediaDir -and -not (Test-Path -LiteralPath $makeProject)) {
     $problems += "make-ltc-scenario-project.ps1 is not merged yet (removal team). Drop -MediaDir or run after it is merged."
 }
 
-Write-Output ('prereqs: cable=[' + ($cableNames -join '; ') + '] gstreamer=' + $gstSource)
+Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | capture: ' + ($captureCable -join '; ') +
+    '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource)
 if ($problems.Count -gt 0) {
     foreach ($p in $problems) { Write-Output ('PREREQ-ERROR ' + $p) }
     Write-Output ('SUMMARY prereq_failed=' + $problems.Count + ' report=' + $ReportDir)
