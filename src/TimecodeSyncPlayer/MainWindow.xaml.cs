@@ -651,7 +651,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Log.Error("GPU 復旧: GStreamer player の再生成に失敗");
                     return;
                 }
-                _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi);
+                _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
+                    _gstBackendState.Seeking.NotifyEnded);
                 PlaylistTrack? track = _playlist.Current;
                 if (track != null)
                     LoadFile(track.FilePath, position);
@@ -695,7 +696,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (initialized)
         {
             // プレイヤー生成後にエンジンへソースを接続する。
-            _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi);
+            _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
+                _gstBackendState.Seeking.NotifyEnded);
             RefreshDisplaySelection(_settingsManager.Current.FullscreenDisplayDeviceName);
         }
         return initialized;
