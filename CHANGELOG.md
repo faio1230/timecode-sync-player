@@ -2,6 +2,28 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.4.2 - 2026-09-17
+
+### Changed
+
+- Decoder memory from another adapter is no longer passed to the shim context: the load fails instead of crashing in the driver (`on_new_sample` guard).
+
+### Fixed
+
+- Fixed the crash inside the AMD driver on hybrid GPUs when the ring and a d3d11 decoder ran on different adapters: GPU profiles whose decoder GUID is missing on the shim adapter are skipped in favour of the CPU profile (D16, present since v0.4.0).
+- Fixed the decoder element being taken from the wrong adapter class: the class matching the ring adapter (`d3d11…device{N}dec`) is selected (D16-b).
+- Fixed a 3-second wait per mismatched profile: a pad caps mismatch now ends the attempt at once. AV1 4K load dropped from 18.8 seconds to about 1 second (D17).
+
+### Known limitations
+
+- 29.97 non-drop LTC requires the "Fixed 29.97" fps mode; Auto cannot distinguish it from 30.
+- Recovering the shim from a real GPU device loss (TDR) is not supported in this release (D9).
+- The product does not add a one-frame constant; adjust the sync offset (`syncOffsetMs`) for field delays.
+- 120Hz output targets are not verified. A 4K main display may drop a few frames per 40 seconds (a dedicated display is recommended).
+- Rare audio dropouts of up to 100 ms during track switches (4 of 12 in a 60-minute test).
+- HAP is not supported.
+- Codecs the integrated GPU cannot decode (AV1 and others) fall back to CPU decoding even when a dGPU is present (4K24 held up in the measurement; 4K60 not verified).
+
 ## 0.4.1 - 2026-09-17
 
 ### Added
