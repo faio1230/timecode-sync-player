@@ -667,28 +667,109 @@ public sealed class LtcScenarioE2ETests
             WaitUntil(() => App.Button("BtnPlay").Name == "⏸", 3, "再生中");
         }
 
+        /// <summary>
+        /// SeekBar は 0..1 の比率スライダー（UIA の Maximum も 1）。コミットは
+        /// 「値 * 尺」なので、秒ではなく比率を入れる。同じ値だと ValueChanged が
+        /// 発火せずコミットされないため、一度揺らしてから目的値へ入れる。
+        /// </summary>
         private void Seek(double seconds)
         {
-            App.Slider("SeekBar").Patterns.RangeValue.Pattern.SetValue(seconds);
-            WaitUntil(() => double.IsFinite(Position()) && Math.Abs(Position() - seconds) <= 0.2,
-                6, $"シーク {seconds:F3}");
+            double target = Math.Max(0, seconds);
+            double last = double.NaN;
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                WaitMediaReady();
+                double duration = PlaybackDuration();
+                if (!double.IsFinite(duration) || duration <= 0)
+                {
+                    Thread.Sleep(250);
+                    continue;
+                }
+
+                var range = App.Slider("SeekBar").Patterns.RangeValue.Pattern;
+                double ratio = Math.Clamp(target / duration, 0, 1);
+                if (Math.Abs(range.Value - ratio) < 1e-4)
+                {
+                    double nudged = Math.Clamp(ratio + (ratio < 0.5 ? 0.01 : -0.01), 0, 1);
+                    range.SetValue(nudged);
+                }
+
+                range.SetValue(ratio);
+                if (TryWaitPosition(target, 0.2, 4)) return;
+                last = Position();
+                Thread.Sleep(200);
+            }
+
+            throw new TimeoutException(
+                $"シーク {target:F3} に到達しない last={last:F3}; ltc={LtcSeconds():F3}; loaded={LoadedTrackIndex()}");
+        }
+
+        private bool TryWaitPosition(double expected, double tolerance, double timeoutSeconds)
+        {
+            try
+            {
+                E2EAssert.WaitUntil(
+                    () => !App.Process.HasExited && Math.Abs(Position() - expected) <= tolerance,
+                    TimeSpan.FromSeconds(timeoutSeconds));
+                return true;
+            }
+            catch (TimeoutException)
+            {
+                return false;
+            }
+        }
+
+        private void WaitMediaReady(double? maxPosition = null) =>
+            WaitUntil(() =>
+            {
+                double position = Position();
+                double duration = PlaybackDuration();
+                if (!double.IsFinite(position) || !double.IsFinite(duration) || duration <= 0) return false;
+                return maxPosition is null || position <= maxPosition;
+            }, 15, "メディア読み込み完了");
+
+        private double PlaybackDuration()
+        {
+            string[] parts = App.Text("TimeLabel").Split('/');
+            return parts.Length == 2 ? ParseClock(parts[1].Trim(), MediaFps()) : double.NaN;
         }
 
         public void LoadTrack(int index)
         {
-            for (int guard = 0; guard < 8; guard++)
+            for (int guard = 0; guard < 12; guard++)
             {
                 int current = LoadedTrackIndex();
-                if (current == index) return;
-                if (current < 0) { WaitUntil(() => LoadedTrackIndex() >= 0, 10, "初回ロードの完了"); continue; }
+                if (current < 0)
+                {
+                    WaitUntil(() => LoadedTrackIndex() >= 0, 10, "初回ロードの完了");
+                    continue;
+                }
+
+                if (current == index)
+                {
+                    WaitMediaReady();
+                    return;
+                }
+
+                DateTime issuedAt = DateTime.Now;
                 if (current < index) App.Button("BtnNextTrack").Invoke();
                 else App.Button("BtnPreviousTrack").Invoke();
-                WaitUntil(() => LoadedTrackIndex() == index, 12, $"トラック {index} のロード");
-                return;
+                int expectedNext = current + Math.Sign(index - current);
+                WaitUntil(() => LoadedTrackIndex() == expectedNext, 10,
+                    $"トラック {current} → {expectedNext} のロード");
+                WaitForMetadataSince(issuedAt, expectedNext);
+                WaitMediaReady(maxPosition: 3.0);
             }
 
             throw new TimeoutException($"トラック {index} をロードできない (loaded={LoadedTrackIndex()})");
         }
+
+        /// <summary>新しいトラックの FetchMetadata 行が出るまで待つ（ロード完了の目印）。</summary>
+        private void WaitForMetadataSince(DateTime issuedAt, int index) =>
+            WaitUntil(
+                () => RunLogLinesSince(issuedAt).Any(line => line.Contains("FetchMetadata:", StringComparison.Ordinal)),
+                15, $"トラック {index} のメタデータ取得");
+
 
         /// <summary>プレイリストで項目を選択してダブルクリックで読み込む（S-4 の「選択」）。</summary>
         public void PlaylistLoad(int index, string symbol)
@@ -696,6 +777,7 @@ public sealed class LtcScenarioE2ETests
             ListBox playlist = App.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList"))!.AsListBox();
             WaitUntil(() => playlist.Items.Length > index, 5, "プレイリスト項目の表示");
             AutomationElement item = playlist.Items[index];
+            DateTime issuedAt = DateTime.Now;
             try
             {
                 item.Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView();
@@ -710,6 +792,8 @@ public sealed class LtcScenarioE2ETests
             }
 
             WaitUntil(() => LoadedTrackIndex() == index, 15, $"プレイリストから {symbol} のロード");
+            WaitForMetadataSince(issuedAt, index);
+            WaitMediaReady();
             Journal.Write("playlist-load", details: new { index, symbol, loadedIndex = LoadedTrackIndex() });
         }
 
