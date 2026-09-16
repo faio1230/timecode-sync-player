@@ -43,23 +43,26 @@ $stagingDirectory = Join-Path $OutputDirectory (".package-stage-" + [Guid]::NewG
 
 # v0.4 は GStreamer 1.28.2 の必要 DLL を同梱する（実行環境に GStreamer を要求しない）。
 # 一覧は V1 の 11 素材で実際にロードされたプラグインと、dumpbin で求めた依存閉包の実測
-# （TestResults/p1/closure.json、49 DLL / 38.39MB）。プラグインは lib\gstreamer-1.0、それ以外は bin。
+# （TestResults/p1/closure.json）。v0.4.1（D15）で音声付き素材用に gstaudioresample /
+# gsttypefindfunctions を追加し、gsttypefindfunctions の依存閉包から gio-2.0-0.dll を追加した
+# （プラグイン 19、bin 32）。プラグインは lib\gstreamer-1.0、それ以外は bin。
 $gstCoreDlls = @(
     "avcodec-61.dll", "avfilter-10.dll", "avformat-61.dll", "avutil-59.dll",
-    "bz2.dll", "dav1d.dll", "ffi-7.dll", "glib-2.0-0.dll", "gmodule-2.0-0.dll",
-    "gobject-2.0-0.dll", "gstapp-1.0-0.dll", "gstaudio-1.0-0.dll", "gstbase-1.0-0.dll",
-    "gstcodecparsers-1.0-0.dll", "gstcodecs-1.0-0.dll", "gstd3d11-1.0-0.dll",
-    "gstd3dshader-1.0-0.dll", "gstdxva-1.0-0.dll", "gstmpegts-1.0-0.dll",
-    "gstpbutils-1.0-0.dll", "gstreamer-1.0-0.dll", "gstriff-1.0-0.dll", "gstrtp-1.0-0.dll",
-    "gsttag-1.0-0.dll", "gstvideo-1.0-0.dll", "intl-8.dll", "orc-0.4-0.dll",
-    "pcre2-8-0.dll", "swresample-5.dll", "swscale-8.dll", "z-1.dll"
+    "bz2.dll", "dav1d.dll", "ffi-7.dll", "gio-2.0-0.dll", "glib-2.0-0.dll",
+    "gmodule-2.0-0.dll", "gobject-2.0-0.dll", "gstapp-1.0-0.dll", "gstaudio-1.0-0.dll",
+    "gstbase-1.0-0.dll", "gstcodecparsers-1.0-0.dll", "gstcodecs-1.0-0.dll",
+    "gstd3d11-1.0-0.dll", "gstd3dshader-1.0-0.dll", "gstdxva-1.0-0.dll",
+    "gstmpegts-1.0-0.dll", "gstpbutils-1.0-0.dll", "gstreamer-1.0-0.dll",
+    "gstriff-1.0-0.dll", "gstrtp-1.0-0.dll", "gsttag-1.0-0.dll", "gstvideo-1.0-0.dll",
+    "intl-8.dll", "orc-0.4-0.dll", "pcre2-8-0.dll", "swresample-5.dll", "swscale-8.dll",
+    "z-1.dll"
 )
 $gstPluginDlls = @(
-    "gstapp.dll", "gstaudioconvert.dll", "gstaudioparsers.dll", "gstaudiotestsrc.dll",
-    "gstautodetect.dll", "gstcoreelements.dll", "gstd3d11.dll", "gstdav1d.dll",
-    "gstisomp4.dll", "gstlibav.dll", "gstmpegtsdemux.dll", "gstmxf.dll",
-    "gstplayback.dll", "gstvideoconvertscale.dll", "gstvideoparsersbad.dll",
-    "gstvolume.dll", "gstwasapi2.dll"
+    "gstapp.dll", "gstaudioconvert.dll", "gstaudioparsers.dll", "gstaudioresample.dll",
+    "gstaudiotestsrc.dll", "gstautodetect.dll", "gstcoreelements.dll", "gstd3d11.dll",
+    "gstdav1d.dll", "gstisomp4.dll", "gstlibav.dll", "gstmpegtsdemux.dll", "gstmxf.dll",
+    "gstplayback.dll", "gsttypefindfunctions.dll", "gstvideoconvertscale.dll",
+    "gstvideoparsersbad.dll", "gstvolume.dll", "gstwasapi2.dll"
 )
 $gstLicenseComponents = @(
     "gstreamer-1.0", "gst-plugins-base-1.0", "gst-plugins-bad-1.0", "glib", "ffmpeg",
