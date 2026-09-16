@@ -1,7 +1,9 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using FluentAssertions;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
+using FlaUI.Core.Exceptions;
 using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests.E2E;
@@ -27,7 +29,7 @@ public sealed class SystemScenarioE2ETests
             E2EAssert.WaitUntil(() => playlist.Items.Length == 2, TimeSpan.FromSeconds(8));
             EnsurePaused(app);
 
-            playlist.Items[1].Select();
+            SelectPlaylistItem(playlist, 1, Path.GetFileNameWithoutExtension(alternateCopy));
             app.Button("BtnMoveTrackUp").Invoke();
             E2EAssert.WaitUntil(
                 () => playlist.Items[0].Name.Contains(Path.GetFileNameWithoutExtension(alternateCopy), StringComparison.Ordinal),
@@ -181,6 +183,34 @@ public sealed class SystemScenarioE2ETests
 
     private static ListBox Playlist(E2EAppRunner app) =>
         app.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList"))!.AsListBox();
+
+    /// <summary>
+    /// UIA の SelectionItemPattern.Select は、要素が仮想化・破棄されていると
+    /// 0x80040201 (UIA_E_ELEMENTNOTAVAILABLE) で失敗する。追加直後は duration 補完などで
+    /// 項目が作り直されることがあるため、毎回 Items[index] を取り直して実在と期待名の反映を待ち、
+    /// ScrollIntoView → Focus の後に Select する。Select 自体も同じ条件で再試行する。
+    /// </summary>
+    private static void SelectPlaylistItem(ListBox playlist, int index, string expectedNamePart)
+    {
+        E2EAssert.WaitUntil(() =>
+        {
+            AutomationElement[] items = playlist.Items;
+            if (items.Length <= index || !items[index].Name.Contains(expectedNamePart, StringComparison.Ordinal))
+                return false;
+            AutomationElement item = items[index];
+            try
+            {
+                item.Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView();
+                item.Focus();
+                item.Patterns.SelectionItem.Pattern.Select();
+                return true;
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or COMException)
+            {
+                return false;
+            }
+        }, TimeSpan.FromSeconds(8));
+    }
 
     private static void AddPlaylistFiles(E2EAppRunner app, params string[] paths) =>
         InvokeFileDialog(app, "BtnAddToPlaylist", paths);
