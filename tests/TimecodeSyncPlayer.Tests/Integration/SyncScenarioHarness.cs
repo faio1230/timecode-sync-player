@@ -1,3 +1,5 @@
+using TimecodeSyncPlayer.Contracts;
+
 namespace TimecodeSyncPlayer.Tests.Integration;
 
 internal sealed record ScenarioMpvOperation(string Name, double? Value = null, string? Text = null);
@@ -105,7 +107,7 @@ internal sealed class SyncScenarioHarness
                 LoadPausedAt: (path, target) =>
                 {
                     Operations.Add(new("load-paused", target, path));
-                    return new GapLoadCommandResult(0, 0);
+                    return new GapLoadCommandResult(PlaybackResult.Ok, PlaybackResult.Ok);
                 },
                 ResetPlayerStateForNewTrack: () => { },
                 GetLoadedTrackId: () => _loadedTrackId,

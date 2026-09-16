@@ -67,6 +67,7 @@ public sealed class MainWindowGapFreezeRetryTests
         public readonly NativeApi Api = new();
         public readonly RenderApi RenderApi = new();
         public readonly SpoutOutput Spout = new();
+        public readonly FakePlaybackApi PlaybackApi = new() { Path = "C:/clip.mp4" };
         public MainWindow Window { get; }
         public GapFreezeHandler Handler { get; }
         public RenderSession Session { get; }
@@ -78,6 +79,7 @@ public sealed class MainWindowGapFreezeRetryTests
             services.AddSingleton<IMpvApi>(Api);
             services.AddSingleton<IMpvRenderApi>(RenderApi);
             services.AddSingleton<ISpoutOutput>(Spout);
+            services.AddSingleton<IPlaybackApi>(PlaybackApi);
             _provider = services.BuildServiceProvider();
             Window = _provider.GetRequiredService<MainWindow>();
             Handler = _provider.GetRequiredService<GapFreezeHandler>();

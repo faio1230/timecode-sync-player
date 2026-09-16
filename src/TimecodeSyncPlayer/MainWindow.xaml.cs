@@ -48,6 +48,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly ProjectSaveExecutor _projectSaveExecutor;
     private readonly ProjectFileCoordinator _projectFileCoordinator;
     private readonly IMpvApi _mpvApi;
+    // 段 4: 型付き再生 API。呼び出し側ごとに段階移行する（順序 2 はギャップ経路）。
+    private readonly IPlaybackApi _playbackApi;
     private readonly AudioControlCoordinator _audioControlCoordinator;
 
     // ── Spout ─────────────────────────────────────────────────────
@@ -189,6 +191,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // GStreamer 内部型は公開せず、DI 経由で取得する（Gpu 出力時のみ使用）。
         _gstBackendState = services.GetRequiredService<GstBackendState>();
         _gstNativeApi = services.GetRequiredService<IGstNativeApi>();
+        _playbackApi = services.GetRequiredService<IPlaybackApi>();
         if (!outputBackendState.PlaybackAvailable)
             _playbackAvailability.MarkUnavailable(outputBackendState.Decision.Detail);
         _mpvApi = mpvApi;
@@ -989,7 +992,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _gapEnterCoordinator ??= new(_gapFreezeHandler, new GapEnterEffects(
             ResetEndAdvanceTriggered: () => _endAdvanceTriggered = false,
             IsPlaybackPaused: () => _playbackControl.IsPaused,
-            PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(_mpv),
+            PauseForGap: () => _gapPlaybackCommandExecutor.PauseForGap(),
             ApplyPauseState: paused => ApplyPauseState(paused),
             ClearGapFreezeFrame: () => RunTimedGapAction("clearGapFreezeFrame", () => _renderSession.Invalidate()),
             SeekTo: target => SeekTo(target),
@@ -999,7 +1002,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 return (rc, duration);
             },
             IsMpvReady: () => IsPlayerReady,
-            LoadPausedAt: (path, target) => _gapPlaybackCommandExecutor.LoadPausedAt(_mpv, path, target),
+            LoadPausedAt: (path, target) => _gapPlaybackCommandExecutor.LoadPausedAt(path, target),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
             GetLoadedTrackId: () => _loadedTrackId,
             SetLoadedTrackId: id => SetLoadedTrack(id),
@@ -1960,8 +1963,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private bool IsCurrentMpvPathExpectedForGapFreeze()
     {
         GapFreezePathCheckResult result = GapFreezePathGuard.Check(
-            _mpvApi,
-            _mpv,
+            _playbackApi,
             _gapFreezeHandler.PendingPath,
             _gapFreezeHandler.PendingTargetSeconds,
             _gapFreezeHandler.LastReloadAt,
@@ -1975,8 +1977,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             _gapFreezeHandler.LastReloadAt = result.LastReloadAt;
             Log.Warning(
-                "Continue mode: ignored stale gap freeze frame currentPath={CurrentPath} expectedPath={ExpectedPath}; reissued load target={Target:F3} loadRc={LoadRc} pauseRc={PauseRc}",
-                result.CurrentPath, _gapFreezeHandler.PendingPath, _gapFreezeHandler.PendingTargetSeconds, result.LoadRc, result.PauseRc);
+                "Continue mode: ignored stale gap freeze frame currentPath={CurrentPath} expectedPath={ExpectedPath}; reissued load target={Target:F3} loadOk={LoadOk} pauseOk={PauseOk}",
+                result.CurrentPath, _gapFreezeHandler.PendingPath, _gapFreezeHandler.PendingTargetSeconds,
+                result.Load?.Success, result.Pause?.Success);
         }
         else
         {

@@ -5,66 +5,52 @@ namespace TimecodeSyncPlayer.Tests;
 
 public class GapPlaybackCommandExecutorTests
 {
-    private static readonly IntPtr s_mpv = new(123);
-
     [Fact]
-    public void PauseForGap_SetsPauseYesAndHidesOsdBar()
+    public void PauseForGap_PausesPlayback()
     {
-        var api = new FakeMpvApi();
+        var api = new FakePlaybackApi();
         var executor = new GapPlaybackCommandExecutor(api);
 
-        GapPlaybackCommandResult result = executor.PauseForGap(s_mpv);
+        PlaybackResult result = executor.PauseForGap();
 
-        result.PauseRc.Should().Be(0);
-        result.OsdBarRc.Should().Be(0);
-        api.SetProperties.Should().Equal(
-            ("pause", "yes"),
-            ("osd-bar", "no"));
+        result.Success.Should().BeTrue();
+        api.SetPausedCalls.Should().Equal(true);
     }
 
     [Fact]
-    public void LoadPausedAt_LoadsFileAtTargetAndPausesPlayback()
+    public void PauseForGap_NativeFailure_ReturnsFailure()
     {
-        var api = new FakeMpvApi();
+        var api = new FakePlaybackApi { SetPausedResult = PlaybackResult.Fail("pause failed") };
         var executor = new GapPlaybackCommandExecutor(api);
 
-        GapLoadCommandResult result = executor.LoadPausedAt(s_mpv, @"C:\media\track.mp4", 12.345);
-
-        result.LoadRc.Should().Be(0);
-        result.PauseRc.Should().Be(0);
-        api.Commands.Should().ContainSingle()
-            .Which.Should().Contain("loadfile");
-        api.Commands[0].Should().Contain("start=12.345");
-        api.SetProperties.Should().Equal(("pause", "yes"));
+        executor.PauseForGap().Success.Should().BeFalse();
     }
 
-    private sealed class FakeMpvApi : IMpvApi
+    [Fact]
+    public void LoadPausedAt_LoadsFileAtTargetPaused_ThenPauses()
     {
-        public List<(string Name, string Value)> SetProperties { get; } = [];
-        public List<string> Commands { get; } = [];
+        var api = new FakePlaybackApi();
+        var executor = new GapPlaybackCommandExecutor(api);
 
-        public IntPtr Create() => s_mpv;
-        public int Initialize(IntPtr ctx) => 0;
-        public void TerminateDestroy(IntPtr ctx) { }
-        public int SetPropertyString(IntPtr ctx, string name, string value)
-        {
-            SetProperties.Add((name, value));
-            return 0;
-        }
+        GapLoadCommandResult result = executor.LoadPausedAt(@"C:\media\track.mp4", 12.345);
 
-        public int GetProperty(IntPtr ctx, string name, int format, out double result)
-        {
-            result = 0;
-            return -1;
-        }
+        result.Load.Success.Should().BeTrue();
+        result.Pause.Success.Should().BeTrue();
+        api.Loads.Should().ContainSingle()
+            .Which.Should().Be((@"C:\media\track.mp4", (double?)12.345, true));
+        api.SetPausedCalls.Should().Equal(true);
+    }
 
-        public string GetPropertyString(IntPtr ctx, string name) => "";
-        public int CommandString(IntPtr ctx, string args)
-        {
-            Commands.Add(args);
-            return 0;
-        }
-        public void Free(IntPtr data) { }
-        public int FormatDouble => 4;
+    [Fact]
+    public void LoadPausedAt_NativeLoadFailure_ReturnsFailure()
+    {
+        var api = new FakePlaybackApi { LoadResult = PlaybackResult.Fail("load failed") };
+        var executor = new GapPlaybackCommandExecutor(api);
+
+        GapLoadCommandResult result = executor.LoadPausedAt("C:/missing.mp4", 1.0);
+
+        result.Load.Success.Should().BeFalse();
+        result.Load.Error.Should().Be("load failed");
+        result.Pause.Success.Should().BeTrue();
     }
 }
