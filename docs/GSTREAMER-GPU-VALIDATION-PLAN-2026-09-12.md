@@ -2747,3 +2747,20 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
   段 3 の 1080p run（`-ClickPlay` なし）は有効
 - 対処: V5 を `-ClickPlay` なしでやり直し、V6 も `-ClickPlay` なしで実施（01:10 再開）。ハーネスは V6 の後に「状態を見て再生を保証」へ直す（H2）
 
+## V6（60 分連続再生）と V5 のやり直し: **合格**（2026-09-17 01:08〜02:14、同期担当の実機、親の確認）
+
+条件: main `85f855b` 相当（agent-a `20d7af5` + main 統合）、GStreamer × GPU 合成 × Spout、`-ClickPlay` なし、`-NoOutputTrace`、素材は 30 秒の 1080p60 を `-stream_loop` で 3720 秒に連結。
+
+| 項目 | 実測 |
+| --- | --- |
+| 再生ウィンドウ | 01:12:33〜02:13:33（3660 秒）、appExit 0、completedNormally、receiverExit 0、残プロセス 0 |
+| 公開フレーム | 2 秒窓 1820 本で総公開 219,534（期待 219,547、差 -13）。落ち区間 1（02:01:39、116 フレーム = 57.5fps）。fps 最小 57.5 / 最大 60.5 |
+| playbackRate | 全区間 1.000 |
+| メモリ | working set 83.8MiB（起動）→ 277.1MiB（5 分）→ 278.9MiB（終了）: 5 分以降 **+1.8MiB**。private 328.0 → 337.9MiB（+9.9MiB） |
+| エラー | ERR/FTL 0、デバイス消失 0、`ring: recreated` 0 |
+| Spout 受信 | サンプル 14 本すべて alive、最大間隔 300.3 秒（5 分スケジュールどおり、欠落なし） |
+
+- **判定: V6 合格。** 部分合格だった「フレーム単位の確認」を、トレース無しの perf 行で 60 分全区間について確認した
+- V5 のやり直し（`20260916T160819Z-v5-seek-nc`、`-ClickPlay` なし）: 10 回のシーク着地 delta 0.00ms、`compose.publish` の最長無公開 51.3ms、ERR 0、exit 0。**判定: V5 合格**
+- 証跡: `TestResults/gpu-app/20260916T161217Z-v6-soak`、`.../20260916T160819Z-v5-seek-nc`（agent-a の作業ツリー）
+
