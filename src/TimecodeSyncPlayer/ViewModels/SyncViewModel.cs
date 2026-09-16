@@ -1,6 +1,8 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using Serilog;
 using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.ViewModels;
@@ -121,9 +123,14 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
         get => _gapBehaviorIndex;
         set
         {
+            // U1 計測: バインディング更新から同期ハンドラ（保存・ギャップ再評価）完了までの
+            // UI スレッド所要。UIA のコンボ選択もこの setter を通る。
+            long started = Stopwatch.GetTimestamp();
             _gapBehaviorIndex = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(GapBehavior));
+            Log.Debug("GapBehaviorIndex set: index={Index} elapsedMs={ElapsedMs:F1}",
+                value, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
     }
 
