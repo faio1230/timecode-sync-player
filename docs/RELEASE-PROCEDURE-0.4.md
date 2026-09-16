@@ -18,6 +18,8 @@
 ## 1. 配布物を作る
 
 ```powershell
+# 先に shim の Release ビルド（package-release.ps1 は native\gst-shimuild-release	cs_gstreamer.dll を要求する）
+powershell -File native\gst-shimuild-shim.ps1 -Config Release
 # Release ビルド + zip + setup.exe（Inno Setup、GStreamer ランタイム同梱、VC++ 再配布の連鎖）
 powershell -File scripts\package-release.ps1            # Version は csproj から読む
 #   必要なら -InnoSetupCompiler / -GStreamerRoot / -VcRedistPath を明示
