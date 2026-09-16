@@ -2808,4 +2808,51 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - `GStreamerBackend_PlaysAac48kVideoFirstMedia`: Passed（227.9ms でロード）
 - 証跡: `TestResults/v041-d15/e2e-prefix-audio.trx`、`e2e-prefix-evidence.txt`（agent-b の作業ツリー）
 
-（続き: V5・V3・E2E 一部 → 統合 → 除去担当の E2E 再実行 → 配布物 → 検証機）
+### 同期担当の回帰（新 DLL、2026-09-17 06:05〜06:20、親の確認済み）
+
+| 項目 | 実測 |
+| --- | --- |
+| V5 シーク連打（`-ClickPlay`、H2） | `already playing` で押さず継続。Seek 10/10 success、着地 first_pts が目標値と一致 10/10。`compose.publish` n=3142 平均 16.67ms、最長無公開 47.5ms。ERR/FTL 0、ring recreated 0、受信 12/12 alive、exit 0 |
+| V3（Smooth、LTC25、`run-v3-accuracy.ps1`） | 19 テスト合格。sample 基準 平均 -25.3ms、p5 -47.9、p95 -8.3、**p95-p5 39.5ms**（参考 -28.9 / 38.3。差は 1 フレーム未満）。summary JSON: meanSigned -27.6ms、n=1225 |
+| E2E 一部 | GStreamerBackend / SystemScenario 6 合格 / 1 スキップ（Spout 受信）/ 0 失敗 |
+| shim 実素材テスト | 既存 6 + d12 4 の計 10 素材 failures=0、`check-shim-lock-rule.py` PASS |
+
+- 証跡: `TestResults/gpu-app/20260916T210501Z-d12-v5-seek`、`TestResults/v3/d12-after-v3-ltc25-gst`（agent-a の作業ツリー）
+- **統合**: agent-a `8a706d6` → main `60d0b44`、agent-b `e5014d4` → main `061419f`。統合後の main で親が Debug の shim を再ビルドし、非E2E 1672 合格、44.1kHz 素材のロード 169.7ms（attempt=0）、`logs	cs-gst-20260917.log` の生成（13 行）、残プロセス 0 を確認（`TestResults/gpu-app/20260916T213018Z-aud441-merged` 相当）
+
+### 除去担当の E2E 全件（統合後 main `44c98c9` 相当、新セッション、shim は自ツリーで再ビルド `248813D9…`、2026-09-17 06:45〜06:55、親が trx を確認）
+
+- 音声付き 2 本: **2 合格 / 0 失敗**（`e2e-audio-prefix.trx`）
+- 全件: **65 合格 / 0 失敗 / 6 スキップ**（opt-in 6 件。基準 63 + 追加 2、`e2e-all.trx`）、6 分 51 秒、残プロセス 0
+- `logs	cs-gst-20260917.log` 190KB 生成（E2E 全件分の shim ログ）
+- 証跡: `TestResults/v041-removal-b/`（agent-b の作業ツリー）
+- **判定: v0.4.1 の完了条件 1（開発機の修正前後 4 本）と 2（E2E 全件）は合格。** バージョン 0.4.1 は main `514b4a0`
+
+### 検証機（クリーン環境）での v0.4.1 setup 版の確認（2026-09-17 06:38〜06:55、`TSP-TestMachine`、親の判定）
+
+導入: SHA-256 一致、v0.4.0 の上へ上書き、FileVersion 0.4.1.0、プラグイン 19、`logs	cs-gst-20260917.log` 生成。
+
+| 素材（`--open` 20 秒、環境変数なし） | 結果 |
+| --- | --- |
+| AV1 4K24 元素材 3 本 + 複製 3 本（44.1k / 48k 映像先頭 / 48k 音声先頭） | **6 本とも 13.4〜13.6 秒で 0xC0000005**（Faulting module `atidxx64.dll` 30.0.13002.19003、offset 0x9544f4、6 本同一）。tcs-gst ログは `video-chain: av1-gpu …` → `ring: created 3840x2160 … epoch=1` で途切れ、bus error なし。`TCS_NO_AUDIO=1` でも 4.0 秒で同じ（音声に依存しない） |
+| 同上、`GST_DEBUG=2`（d3d11 のデバッグレイヤー有効） | 6 本とも成功: attempt=3 av1-gpu、total 9.6 秒、first_frame 157〜243ms、`d3d11av1dec` 3840x2160@24 |
+| ProRes HQ 4K60 10bit .mov（12GB、PCM 48k） | 成功: attempt=8 `prores-cpu`、total 24.8 秒（attempt 0〜7 は各 3.0〜3.2 秒の preroll-timeout）、`avdec_prores` mem=d3d11、60 秒で早期終了なし |
+| 44.1kHz の音（`GST_DEBUG=2` で回避して 25 秒） | not-negotiated の警告なし、出力エンドポイントのピーク max 0.765 / avg 0.216（54/100 サンプルで信号あり）。可聴確認は OS のミュートのため未実施 |
+
+- 残プロセスは各回 0。Windows アプリケーションログ id 1000/1026 に 12 件
+- DXGI: adapter 0 = AMD Radeon（`adapterLuid=74727`、アプリの `OutputEngine` と shim の external-luid デバイス）、adapter 1 = NVIDIA RTX 3080 Laptop、`d3d11av1dec` は NVIDIA にだけ登録（`Different device, will create new one`）。**デコードは NVIDIA、リングと合成は AMD、落ちるのは AMD のドライバ**
+- 注意: v0.4.0 のときの再現スクリプトは常に `GST_DEBUG=2` を付けていたため、**v0.4.0 が環境変数なしで落ちるかは未確認**（A/B を依頼中）
+
+**判定**: D12（44.1kHz）は検証機でも解消。D15（同梱）も解消。**完了条件 3 は不合格**（AV1 実素材がハイブリッド GPU で落ちる）。新規欠陥として **D16** と **D17** を起票。v0.4.1 は公開済み（告知前）で、v0.4.2 で直す。
+
+## D16: ハイブリッド GPU（内蔵 AMD + NVIDIA）で AV1 の GPU デコードが AMD ドライバ内でクラッシュする（2026-09-17 07:00、検証機）
+
+- 現象・証跡: 上の表。仮説: デコーダが別アダプタ（NVIDIA）のデバイスで動き、その d3d11 メモリが shim のデバイス（AMD）の `CopySubresourceRegion` に渡っている（別デバイスのリソースは未定義）。`GST_DEBUG=2` で落ちないのはデバッグレイヤーがコピーを検証・拒否するか、タイミングが変わるため
+- 影響: 内蔵 GPU がアダプタ 0 のノート PC で、内蔵 GPU が対応しないコーデック（AV1 ほか）の GPU デコード全般。ProRes など CPU デコード → `d3d11upload` の経路は安全
+- 対処: `docs/prompts/2026-09-17-D16-hybrid-gpu-decoder-device.md`（同期担当）。方針は「ring デバイスのアダプタにデコーダが無ければ CPU プロファイルへ」＋ 別デバイスのメモリを `p->context` に渡さない防御
+
+## D17: 不一致プロファイル 1 件あたり検証機で約 3 秒かかり、ProRes 4K は 24.8 秒、AV1 は 9.6 秒でロードされる（2026-09-17、検証機）
+
+- 開発機では不一致が 0.1〜0.2 秒で返る（D14 の修正で bus エラーを即拾う）が、検証機では `preroll-timeout` の 3.0 秒まで待つ。案: 最初の試行で読んだ demux の caps でプロファイル候補を絞る。設計は D16 の指示の 4 節、実装は親の合図後
+
+（続き: D16 の調査 → 修正 → Release ビルドを Tailscale で検証機へ → v0.4.2）
