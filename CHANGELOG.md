@@ -2,6 +2,56 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.4.0 - 2026-09-17
+
+### Added
+
+- Added a typed playback API (`IPlaybackApi`, `PlaybackResult`, `IRenderUpdateSource`) and removed string commands and property names from the application boundary.
+- Made GStreamer-based playback and GPU composition the default. Decoded textures arrive through a D3D11 shared ring and stay on the GPU through composition, fullscreen presentation, and Spout output.
+- Added support for CPU-decoded codecs (ProRes and others) on the same lease path through `d3d11upload`.
+- Added playback of media with audio tracks (S1).
+- Made MPEG-TS seeking land accurately with keyframe snapping and segment rebasing (S3).
+- Added LTC fps modes (Auto and Fixed 24 / 25 / 29.97 / 30) and a sync offset (`syncOffsetMs`, -1000 to +1000 ms).
+- Added sync correction modes (Smooth / Jump). The Smooth limit is widened to +/-20% for one second after landing to shorten convergence (T9).
+- Added the sample clock (`TCS_LTC_SAMPLE_CLOCK`, on by default) that evaluates LTC time from the audio sample position (T2).
+- Added ring epoch tracking so the shared ring follows resolution changes and is reopened when the epoch changes (D8).
+
+### Changed
+
+- Removed mpv. Playback runs on GStreamer only and the `backend` setting is gone. Use `decodeMode` (`hardware` / `software`) as the fallback.
+- Removed CPU composition. Output is GPU composition only and the `outputBackend` default is `1` (Gpu). `0` (Cpu) is ignored with a warning and the settings file is not rewritten.
+- Renamed runtime-specific type names to role-based names (previously `IMpvApi` and others).
+- Made sample-based analysis (frame-end reference) the official analysis for V3 (LTC sync accuracy).
+- Pinned the pipeline clock to the system clock and slaved audio sinks to it (S3 side effect).
+- Removed the runtime name from the shutdown step name ("GStreamer 停止").
+
+### Removed
+
+- Removed the mpv backend and the bundled `libmpv-2.dll` / `mpv-2.dll`.
+- Removed the `backend` key and `outputBackend=Cpu` (v0.3 values are ignored at startup with a warning).
+- Removed the debug OSD (`showDebugOsd` overlay; the setting key remains for compatibility).
+- Removed the old mpv compatibility adapters and the string command path (`GstMpvApiAdapter`, `GstCommandTranslator`, `MpvPlaybackCommandBuilder`, and others).
+
+### Fixed
+
+- Fixed loading of MP4 files with audio tracks (S1).
+- Fixed loading of CPU-decoded codecs such as ProRes (S2).
+- Fixed MPEG-TS seeks that took several seconds before frames arrived (S3).
+- Fixed playback not progressing after GPU recovery when a track switch changed the resolution (D8).
+- Fixed MP4 files with B frames reporting a position ahead of the real one after an accurate seek: the shim now uses stream time mapped through the segment instead of the raw buffer PTS (D10).
+- Fixed stale re-application of LTC frames issuing sync requests when the gap behavior changed (U1).
+- Fixed the `ProjectRoundTrip` E2E failure (test-side playlist selection wait; Q1).
+
+### Known limitations
+
+- 29.97 non-drop LTC requires the "Fixed 29.97" fps mode; Auto cannot distinguish it from 30.
+- Recovering the shim from a real GPU device loss (TDR) is not supported (D9); whether to include it in v0.4 is pending a decision.
+- The product does not add a one-frame constant; adjust the sync offset (`syncOffsetMs`) for field delays.
+- 120Hz output targets are not verified. A 4K main display may drop a few frames per 40 seconds (a dedicated display is recommended).
+- Rare audio dropouts of up to 100 ms during track switches (4 of 12 in a 60-minute test).
+- One LTC hardware-loop E2E test (`LtcHardwareLoopE2ETests.CableLoop_ContinueBlackGap_...`) failed twice in full-suite runs while passing in isolation (under observation).
+- HAP is not supported.
+
 ## 0.3.0 - 2026-07-18
 
 ### Added
