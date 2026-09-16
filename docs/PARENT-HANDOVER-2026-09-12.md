@@ -2,6 +2,10 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-16 19:30 更新（7 回目）**: **履歴を書き換えた**（公開リポジトリからローカルパスを消すため。`git filter-repo`、全コミットの SHA が変更、
+> main と v0.1.0〜v0.3.0 を force push、shim の `build-debug` も履歴から除去）。**この文書や検証記録にある 19:00 以前の SHA は無効**（対応: main `0e87d81`、agent-a `b752e48`、agent-b `76417cf`）。
+> T2 は段 3 まで判定して main へ統合。`w5:p3` は Q1（`ProjectRoundTrip` の既存失敗の切り分け）、`w5:p6` は段 2 前半（移設）。
+>
 > **2026-09-16 18:50 更新（6 回目）**: **D8（= D6）を修正し main `45534a9` へ統合**（安全網 `795c7ff` + リング epoch `d44481f`、R1 の (b) も同時）。
 > T2 は段 3（既定 on・デッドバンド 5ms）を実装中、実機測定待ち。**公開リポジトリのため、文書にローカルの絶対パスを書かない**（`be1e61a` で除去。実体は gitignore の `docs/local/LOCAL-PATHS.md`）。
 >
@@ -226,7 +230,7 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 | ペイン | 作業 | 状態 |
 | --- | --- | --- |
-| `w5:p3`（同期担当） | **T2 段 2**（`TCS_LTC_SAMPLE_CLOCK`、既定 off。指示書 `docs/prompts/2026-09-16-T2-ltc-sample-clock.md` 3 節） | 実装中（基点 `ee3de1f`）。実機は on 3 本 + off 1 本、親の合図後 |
+| `w5:p3`（同期担当） | T2 は完了・統合済み。**次は Q1**（`docs/prompts/2026-09-16-Q1-project-roundtrip-failure.md`、`ProjectRoundTrip` の既存失敗の切り分け） | 指示待ち → 着手 |
 | `w5:p6`（除去担当） | D8 は完了・統合済み（`45534a9`）。**次は段 2 の移設部分**（`docs/prompts/2026-09-16-STAGE2-mpv-relocation.md`） | 指示待ち → 着手 |
 
 **実機は 1 つ。親が順番を管理する。** エージェントには「実機を使う前に一報」を毎回指示している。
