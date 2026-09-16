@@ -2529,19 +2529,23 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     /* The d3d11 decoder + video-processor converter only emit in PLAYING,
      * so we bring the pipeline up to PLAYING to obtain the first frame,
      * then drop back to PAUSED for a paused load (matches "first frame
-     * visible while paused"). D14: poll in 100 ms slices and leave as soon
-     * as the bus reports an error (or the target state is reached). */
+     * visible while paused"). D14/D17-a: poll in 100 ms slices and leave as
+     * soon as the bus reports an error, a pad caps mismatch is recorded, or
+     * the target state is reached. */
     for (int i = 0; i < 30; i++) {
       GstStateChangeReturn sr =
           gst_element_get_state (p->pipeline, nullptr, nullptr, 100 * GST_MSECOND);
       if (sr != GST_STATE_CHANGE_ASYNC)
         break;
-      bool failed;
+      bool stop_wait;
       {
         std::lock_guard<std::mutex> g (p->frame_lock);
-        failed = p->failed;
+        /* D17-a: pad-added decides a caps mismatch (and the policy rejection)
+         * without a bus error; stop the wait at once instead of burning the
+         * remaining 100 ms slices. */
+        stop_wait = p->failed || p->capsMismatch || p->rejected;
       }
-      if (failed)
+      if (stop_wait)
         break;
     }
     preroll_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
