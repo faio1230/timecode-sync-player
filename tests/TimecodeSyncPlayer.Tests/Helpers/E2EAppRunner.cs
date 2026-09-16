@@ -87,8 +87,8 @@ internal sealed class E2EAppRunner : IDisposable
         if (!File.Exists(Path.Combine(exeDir, "tcs_gstreamer.dll")))
             return (exe, $"tcs_gstreamer.dll が見つかりません（build-shim を実行してください）: {exeDir}");
 
-        if (GstRuntimeBinDirectory() is null)
-            return (exe, "GStreamer ランタイムが見つかりません（GSTREAMER_1_0_ROOT_MSVC_X86_64 を確認してください）。");
+        if (GstRuntimeBinDirectory(exeDir) is null)
+            return (exe, "GStreamer ランタイムが見つかりません（同梱の gstreamer\\bin か GSTREAMER_1_0_ROOT_MSVC_X86_64 を確認してください）。");
 
         if (!TestVideoFactory.FfmpegAvailable())
             return (exe, "ffmpeg が PATH にありません。");
@@ -315,9 +315,18 @@ internal sealed class E2EAppRunner : IDisposable
             "TimecodeSyncPlayer.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
     }
 
-    private static string? GstRuntimeBinDirectory()
+    /// <summary>
+    /// D18: 配布物は exe と同じディレクトリに GStreamer ランタイム（gstreamer\bin）を同梱する。
+    /// 同梱があれば環境変数 GSTREAMER_1_0_ROOT_MSVC_X86_64 を要求しない。environmentRoot は
+    /// 単体テストが両経路を固定するための入口（null なら環境変数を読む）。
+    /// </summary>
+    internal static string? GstRuntimeBinDirectory(string exeDir, string? environmentRoot = null)
     {
-        string? root = Environment.GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64");
+        string bundled = Path.Combine(exeDir, "gstreamer", "bin");
+        if (HasGstCoreDll(bundled))
+            return bundled;
+
+        string? root = environmentRoot ?? Environment.GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64");
         if (string.IsNullOrEmpty(root))
         {
             root = Path.Combine(
@@ -325,10 +334,12 @@ internal sealed class E2EAppRunner : IDisposable
                 "gstreamer", "1.0", "msvc_x86_64");
         }
         string bin = Path.Combine(root, "bin");
-        return File.Exists(Path.Combine(bin, "gstreamer-1.0-0.dll")) ||
-               File.Exists(Path.Combine(bin, "gstreamer-1.0.dll"))
-            ? bin : null;
+        return HasGstCoreDll(bin) ? bin : null;
     }
+
+    private static bool HasGstCoreDll(string bin)
+        => File.Exists(Path.Combine(bin, "gstreamer-1.0-0.dll")) ||
+           File.Exists(Path.Combine(bin, "gstreamer-1.0.dll"));
 
     public static void KillProcess(Process? process)
     {

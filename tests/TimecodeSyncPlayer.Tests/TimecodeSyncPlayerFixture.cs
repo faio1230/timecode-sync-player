@@ -36,10 +36,10 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
             return;
         }
 
-        if (GstRuntimeBinDirectory() is null)
+        if (E2EAppRunner.GstRuntimeBinDirectory(exeDir) is null)
         {
             Skipped    = true;
-            SkipReason = "GStreamer ランタイムが見つかりません（GSTREAMER_1_0_ROOT_MSVC_X86_64 を確認してください）。";
+            SkipReason = "GStreamer ランタイムが見つかりません（同梱の gstreamer\\bin か GSTREAMER_1_0_ROOT_MSVC_X86_64 を確認してください）。";
             return;
         }
 
@@ -210,21 +210,6 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
 
         throw new FileNotFoundException(
             "TimecodeSyncPlayer.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
-    }
-
-    private static string? GstRuntimeBinDirectory()
-    {
-        string? root = Environment.GetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64");
-        if (string.IsNullOrEmpty(root))
-        {
-            root = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "gstreamer", "1.0", "msvc_x86_64");
-        }
-        string bin = Path.Combine(root, "bin");
-        return File.Exists(Path.Combine(bin, "gstreamer-1.0-0.dll")) ||
-               File.Exists(Path.Combine(bin, "gstreamer-1.0.dll"))
-            ? bin : null;
     }
 
     private async Task PausePlaybackIfNeeded()
