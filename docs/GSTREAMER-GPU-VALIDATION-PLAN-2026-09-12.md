@@ -2855,6 +2855,17 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - 開発機では不一致が 0.1〜0.2 秒で返る（D14 の修正で bus エラーを即拾う）が、検証機では `preroll-timeout` の 3.0 秒まで待つ。案: 最初の試行で読んだ demux の caps でプロファイル候補を絞る。設計は D16 の指示の 4 節、実装は親の合図後
 
+### D16 の切り分け（検証機、2026-09-17 07:07〜07:15、利用者の承認のもと実施）
+
+| 試験 | 結果 |
+| --- | --- |
+| (b) `decodeMode=software`、v0.4.1、環境変数なし | AV1 元素材: attempt=3 `av1-cpu` ok、`dav1ddec` 3840x2160@24 mem=d3d11、total 9.58 秒、20 秒走って早期終了なし。44.1kHz 複製も同様（first_frame 189.6ms、total 9.51 秒）。クラッシュ 0 |
+| (a) v0.4.0 setup に戻して 48k 音声先頭の複製、環境変数なし | **v0.4.0 でも同じクラッシュ**（`atidxx64.dll` 同一オフセット 0x9544f4、0xC0000005）。前回の「v0.4.0 は落ちない」は `GST_DEBUG=2` 下の観測だった |
+
+- 結論: **D16 は v0.4.1 の回帰ではなく、v0.4.0 から存在するハイブリッド GPU の欠陥**。CPU デコード → `d3d11upload` の経路は同じ機で正常なので、修正方針（GPU プロファイルを skip して CPU へ）は検証機の事実と整合する
+- クラッシュダンプ: 検証機の `%LOCALAPPDATA%\CrashDumps` に 10 個以上（50〜73MB）。解析は任意（修正方針はダンプに依存しない）
+- 検証機は v0.4.1・`decodeMode=hardware` に戻し済み（設定ファイルのハッシュ一致を確認）
+
 ### D16 の修正（agent-a `60f04ba`、2026-09-17 07:40、親のレビュー済み）
 
 - `adapter_supports_profile`: GPU プロファイル 4 種のデコーダ GUID（H264 VLD NOFGT / HEVC Main / VP9 Profile0 / AV1 Profile0。SDK 値と一致を親が確認）を shim デバイスの `ID3D11VideoDevice::GetVideoDecoderProfile` で照会し、無ければ試行前に skip（`load.skip … reason=adapter-lacks-decoder`）→ 既存順序で CPU プロファイルへ
