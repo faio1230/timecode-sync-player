@@ -4,11 +4,10 @@ using FluentAssertions;
 namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
-/// V4: 現場プロジェクトが未提供の間に使う代替プロジェクトを生成・検証する。
-/// 素材と同じ artifacts/media に置き、相対パスで参照する
-/// （ProjectSerializer はプロジェクトディレクトリ外のパスを拒否するため、
-/// 別ディレクトリの fixture から素材を参照できない）。
-/// artifacts/media が無い環境ではスキップする。
+/// V4: 現場プロジェクトが未提供の間に使う代替プロジェクトを検証し、実行用に配置する。
+/// コミット済みの Fixtures/v4-substitute.tsp（素材名だけの相対パス）を
+/// artifacts/media へコピーしてから読み戻す。ProjectSerializer はプロジェクト
+/// ディレクトリ外のパスを拒否するため、.tsp は素材と同じディレクトリに置く必要がある。
 /// 構成（docs/prompts/2026-09-17-V4-gap-project-substitute.md）:
 ///   A  = 0:00:10 から test_1080p60.mp4（MediaIn 0、SyncOffset 0）          [10,40)
 ///   ギャップ1 = 0:00:40〜0:00:50（Black）
@@ -16,13 +15,13 @@ namespace TimecodeSyncPlayer.Tests;
 ///   ギャップ2 = B 終端〜+8 秒
 ///   D  = 無効トラック（C より前の行優先で IsEnabled=false）                [76,96) 無効
 ///   C  = 0:00:76 から test_1080p60.mp4                                     [76,106)
-/// 素材ファイルはこのテストでは変更しない（.tsp のみ生成）。
+/// artifacts/media が無い環境ではスキップする。
 /// </summary>
 [Collection("Project serializer state")]
 public sealed class V4SubstituteProjectTests
 {
     [SkippableFact]
-    public async Task SubstituteProject_IsGeneratedAndLoads()
+    public async Task SubstituteProject_IsProvisionedAndLoads()
     {
         string root = FindRepositoryRoot();
         string mediaDir = Path.Combine(root, "artifacts", "media");
@@ -32,27 +31,12 @@ public sealed class V4SubstituteProjectTests
         Skip.If(!File.Exists(clip1080) || !File.Exists(clip720Mkv) || !File.Exists(clip720Avi),
             "artifacts/media の E2E 素材が必要（scripts/make-e2e-media.ps1）");
 
-        string projectPath = Path.Combine(mediaDir, "v4-substitute.tsp");
-        var playlist = new PlaylistState();
-        playlist.Tracks.Add(new PlaylistTrack(
-            Guid.Parse("11111111-1111-1111-1111-111111111111"), clip1080, "Substitute_A",
-            TimeSpan.Zero, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30),
-            TimeSpan.Zero, 60, true));
-        playlist.Tracks.Add(new PlaylistTrack(
-            Guid.Parse("22222222-2222-2222-2222-222222222222"), clip720Mkv, "Substitute_B",
-            TimeSpan.FromSeconds(2), null, TimeSpan.FromSeconds(50), TimeSpan.FromSeconds(20),
-            TimeSpan.FromSeconds(0.5), 25, true));
-        playlist.Tracks.Add(new PlaylistTrack(
-            Guid.Parse("33333333-3333-3333-3333-333333333333"), clip720Avi, "Substitute_D_disabled",
-            TimeSpan.Zero, null, TimeSpan.FromSeconds(76), TimeSpan.FromSeconds(20),
-            TimeSpan.Zero, 25, false));
-        playlist.Tracks.Add(new PlaylistTrack(
-            Guid.Parse("44444444-4444-4444-4444-444444444444"), clip1080, "Substitute_C",
-            TimeSpan.Zero, null, TimeSpan.FromSeconds(76), TimeSpan.FromSeconds(30),
-            TimeSpan.Zero, 60, true));
+        string template = Path.Combine(root, "tests", "TimecodeSyncPlayer.Tests", "Fixtures",
+            "v4-substitute.tsp");
+        Skip.If(!File.Exists(template), "Fixtures/v4-substitute.tsp が無い");
 
-        await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Continue, GapBehavior.Black,
-            new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
+        string projectPath = Path.Combine(mediaDir, "v4-substitute.tsp");
+        File.Copy(template, projectPath, overwrite: true);
 
         ProjectData? loaded = await ProjectSerializer.LoadAsync(projectPath);
         loaded.Should().NotBeNull();
