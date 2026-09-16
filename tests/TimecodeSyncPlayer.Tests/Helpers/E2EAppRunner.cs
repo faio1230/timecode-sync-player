@@ -1,4 +1,5 @@
 using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
 using FlaUI.Core.Tools;
 using FlaUI.UIA3;
 using System.Diagnostics;
@@ -233,10 +234,15 @@ internal sealed class E2EAppRunner : IDisposable
         return found!;
     }
 
-    /// <summary>デスクトップ上のトップレベルウィンドウをタイトルで探す（ネイティブダイアログ等）。</summary>
+    /// <summary>
+    /// デスクトップ直下のトップレベルウィンドウをタイトルで探す（ネイティブダイアログ等）。
+    /// デスクトップ全体の子孫を名前一致で拾うと、同じ文字列を持つテキスト要素などを
+    /// ウィンドウと誤認するため、ControlType=Window の直下要素だけを対象にする。
+    /// </summary>
     public Window? FindWindowByName(string name)
         => _automation.GetDesktop()
-            .FindFirstDescendant(cf => cf.ByName(name))
+            .FindAllChildren(cf => cf.ByControlType(ControlType.Window))
+            .FirstOrDefault(window => window.Properties.Name.ValueOrDefault == name)
             ?.AsWindow();
 
     public ComboBox Combo(string automationId)
