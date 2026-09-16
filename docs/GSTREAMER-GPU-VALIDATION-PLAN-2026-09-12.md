@@ -2705,3 +2705,10 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
   **親の決定: Single モードでも MediaOut を終端として扱う現行挙動を仕様とする**（mpv 時代の「ファイル長まで再生」は実装依存だった扱い。リリースノートの Changed に記載）。テストの期待値を実効終端基準へ変更して再実行
 - 代替プロジェクトは `tests/TimecodeSyncPlayer.Tests/Fixtures/v4-substitute.tsp`（素材名だけの相対参照）としてコミット。実素材が来たら `TIMECODE_REAL_PROJECT_PATH` で同じテストを追試する
 
+## D11: Single モードで EOF へシークした後、seeking が解除されず巻き戻しのシークが出ない（2026-09-17 04:35、V4 r4 で発見）
+
+- 事実（同期担当のコード確認）: `GstSeekingTracker.IsSeeking` は「シーク発行後に新しい配信が 1 枚来るまで true」。EOF へのシーク後はフレームが来ないので pending が解除されず `seeking=yes` のまま固定。
+  `SingleModeSyncCoordinator.Apply` が以後すべて Deferred になり、LTC を 5.0 へ戻してもシークが出ない（`RealProjectGapE2ETests` の `VerifyVisibleFreeze`、実測 time 0:00:10:10 のまま）
+- 段 4 でトラッカーを共有化したが、判定規則自体は旧 `GstMpvApiAdapter` と同じ（到着数の増加で解除）。EOF 後に配信が無い場合の解除が無いのは以前からの穴と見られる
+- 親の決定: **製品側を直す**（テストの期待値は緩めない）。`GstSeekingTracker` は (a) shim の ended / EOS 通知（`TryAcquire` の `Ended`）で pending を解除、(b) 安全網としてシーク発行から 2 秒で解除（ログ 1 行）。スカラのフラグ操作のみで I13 のロック規則には触れない。非E2E で固定し、V4（`RealProjectGapE2ETests`）で確認。担当: 除去担当
+
