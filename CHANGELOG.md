@@ -2,6 +2,29 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.4.1 - 2026-09-17
+
+### Added
+
+- Added `TCS_LOG_FILE`: the application points the shim log at `logs\tcs-gst-YYYYMMDD.log` and removes files older than 7 days.
+- Added E2E media and tests for 44.1kHz audio and for MP4 files whose video track comes first.
+
+### Fixed
+
+- Fixed 44.1kHz audio media failing to load: the audio branch now resamples to the device rate with `audioresample` (D12).
+- Fixed preroll stalling for MP4 files with the video track first: the video branch now has a queue directly after the demux (D13).
+- Fixed mismatched decode profiles waiting for the full timeout: the attempt now aborts as soon as the bus reports an error (D14).
+- Fixed the packaged GStreamer runtime missing `gstaudioresample.dll`, `gsttypefindfunctions.dll`, and `gio-2.0-0.dll` (D15).
+
+### Known limitations
+
+- 29.97 non-drop LTC requires the "Fixed 29.97" fps mode; Auto cannot distinguish it from 30.
+- Recovering the shim from a real GPU device loss (TDR) is not supported in this release (D9).
+- The product does not add a one-frame constant; adjust the sync offset (`syncOffsetMs`) for field delays.
+- 120Hz output targets are not verified. A 4K main display may drop a few frames per 40 seconds (a dedicated display is recommended).
+- Rare audio dropouts of up to 100 ms during track switches (4 of 12 in a 60-minute test).
+- HAP is not supported.
+
 ## 0.4.0 - 2026-09-17
 
 ### Added
