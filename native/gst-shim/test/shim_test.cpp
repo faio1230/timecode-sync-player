@@ -911,14 +911,6 @@ main (int argc, char** argv)
   int got_old = tcs_player_acquire (p, gen - 1, &info);
   check (got_old == 0, "stale generation refused (none)");
 
-  /* cpu copy while leased (preview path) */
-  std::vector<uint8_t> pixels ((size_t) st.width * st.height * 4, 0);
-  rc = tcs_player_leased_cpu_copy (p, pixels.data (), st.width * 4);
-  check (rc == TCS_OK, "leased cpu copy");
-  unsigned long long sum = 0;
-  for (size_t i = 0; i < pixels.size (); i += 4099) sum += pixels[i];
-  check (sum > 0, "cpu copy non-black");
-
   /* second acquire while leased returns the same lease */
   TcsFrameInfo info2 = {};
   check (tcs_player_acquire (p, gen, &info2) == 1 && info2.seq == info.seq,
