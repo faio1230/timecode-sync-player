@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -7,27 +8,37 @@ public class PlaybackOperationsCoordinatorTests
     private sealed class Recorder
     {
         public readonly List<string> Calls = new();
-        public readonly List<string> Commands = new();
-        public readonly List<(string Name, string Value)> Properties = new();
+        public readonly List<(string Path, double? Start, bool Paused)> Loads = new();
+        public readonly List<double> Seeks = new();
+        public readonly List<bool> SetPausedCalls = new();
+        public int StopCalls;
         public bool IsMpvReady = true;
         public bool HasTimelinePanel = true;
-        public int CommandResult;
-        public Exception? CommandException;
+        public PlaybackResult LoadResult = PlaybackResult.Ok;
+        public PlaybackResult SeekResult = PlaybackResult.Ok;
+        public Exception? SeekException;
 
         public PlaybackOperationsEffects Build() => new(
             IsMpvReady: () => { Calls.Add("IsMpvReady"); return IsMpvReady; },
-            CommandString: command =>
+            Load: (path, start, paused) =>
             {
-                Calls.Add($"CommandString({command})");
-                Commands.Add(command);
-                if (CommandException != null) throw CommandException;
-                return CommandResult;
+                Calls.Add($"Load({path},{start?.ToString() ?? "null"},{paused})");
+                Loads.Add((path, start, paused));
+                return LoadResult;
             },
-            SetPropertyString: (name, value) =>
+            Seek: seconds =>
             {
-                Calls.Add($"SetPropertyString({name},{value})");
-                Properties.Add((name, value));
-                return 0;
+                Calls.Add($"Seek({seconds})");
+                Seeks.Add(seconds);
+                if (SeekException != null) throw SeekException;
+                return SeekResult;
+            },
+            Stop: () => { Calls.Add("Stop"); StopCalls++; return PlaybackResult.Ok; },
+            SetPaused: paused =>
+            {
+                Calls.Add($"SetPaused({paused})");
+                SetPausedCalls.Add(paused);
+                return PlaybackResult.Ok;
             },
             ResetPlayerStateForNewTrack: () => Calls.Add("ResetPlayerStateForNewTrack"),
             ClearLoadedTrackId: () => Calls.Add("ClearLoadedTrackId"),
@@ -53,10 +64,12 @@ public class PlaybackOperationsCoordinatorTests
         bool result = coordinator.LoadFile("C:\\media\\clip.mp4");
 
         result.Should().BeTrue();
+        recorder.Loads.Should().ContainSingle()
+            .Which.Should().Be(("C:\\media\\clip.mp4", null, false));
         recorder.Calls.Should().Equal(
             "IsMpvReady",
-            "CommandString(no-osd loadfile \"C:/media/clip.mp4\" replace)",
-            "SetPropertyString(pause,no)",
+            "Load(C:\\media\\clip.mp4,null,False)",
+            "SetPaused(False)",
             "SetPlayPauseIcon(⏸)",
             "ResetPlayerStateForNewTrack",
             "ResetGapFreeze",
@@ -77,9 +90,9 @@ public class PlaybackOperationsCoordinatorTests
         bool result = coordinator.LoadFile("C:\\media\\clip.mp4", 12.5);
 
         result.Should().BeTrue();
-        recorder.Commands.Should().ContainSingle()
-            .Which.Should().Be("no-osd loadfile \"C:/media/clip.mp4\" replace -1 start=12.500000");
-        recorder.Properties.Should().Equal(("pause", paused ? "yes" : "no"));
+        recorder.Loads.Should().ContainSingle()
+            .Which.Should().Be(("C:\\media\\clip.mp4", (double?)12.5, paused));
+        recorder.SetPausedCalls.Should().Equal(paused);
         playback.IsPaused.Should().Be(paused);
         recorder.Calls.Should().ContainInOrder(
             $"SetPlayPauseIcon({(paused ? "▶" : "⏸")})",
@@ -96,30 +109,31 @@ public class PlaybackOperationsCoordinatorTests
         bool result = coordinator.LoadFilePaused("C:\\media\\clip.mp4");
 
         result.Should().BeTrue();
-        recorder.Commands.Should().Equal("no-osd loadfile \"C:/media/clip.mp4\" replace");
-        recorder.Properties.Should().Equal(("pause", "yes"));
+        recorder.Loads.Should().ContainSingle()
+            .Which.Should().Be(("C:\\media\\clip.mp4", null, true));
+        recorder.SetPausedCalls.Should().Equal(true);
         recorder.Calls.Should().ContainInOrder(
-            "CommandString(no-osd loadfile \"C:/media/clip.mp4\" replace)",
-            "SetPropertyString(pause,yes)",
+            "Load(C:\\media\\clip.mp4,null,True)",
+            "SetPaused(True)",
             "SetPlayPauseIcon(▶)",
             "ResetPlayerStateForNewTrack");
-        recorder.Properties.Should().NotContain(("pause", "no"));
+        recorder.SetPausedCalls.Should().NotContain(false);
     }
 
     [Theory]
     [InlineData(null, true)]
     [InlineData(12.5, false)]
-    public void LoadFile_OnCommandFailureReturnsFalseWithoutResettingState(
+    public void LoadFile_OnLoadFailureReturnsFalseWithoutResettingState(
         double? startPosition,
-        bool writesPauseProperty)
+        bool writesPause)
     {
-        var recorder = new Recorder { CommandResult = -1 };
+        var recorder = new Recorder { LoadResult = PlaybackResult.Fail("load failed") };
         var coordinator = Create(recorder);
 
         bool result = coordinator.LoadFile("clip.mp4", startPosition);
 
         result.Should().BeFalse();
-        recorder.Properties.Any().Should().Be(writesPauseProperty);
+        recorder.SetPausedCalls.Any().Should().Be(writesPause);
         recorder.Calls.Should().NotContain(call =>
             call.StartsWith("SetPlayPauseIcon", StringComparison.Ordinal) ||
             call == "ResetPlayerStateForNewTrack" ||
@@ -137,26 +151,22 @@ public class PlaybackOperationsCoordinatorTests
         recorder.Calls.Should().Equal("IsMpvReady");
     }
 
-    [Theory]
-    [InlineData(true, "no-osd seek 12.346 absolute+exact")]
-    [InlineData(false, "seek 12.346 absolute+exact")]
-    public void SeekTo_UsesSuppressOsdConditionAndInvariantThreeDecimalTarget(
-        bool suppressOsd,
-        string expectedCommand)
+    [Fact]
+    public void SeekTo_PassesRawSecondsToTypedApi()
     {
         var recorder = new Recorder();
         var coordinator = Create(recorder);
 
-        coordinator.SeekTo(12.3456, suppressOsd).Should().BeTrue();
+        coordinator.SeekTo(12.3456).Should().BeTrue();
 
-        recorder.Commands.Should().Equal(expectedCommand);
+        recorder.Seeks.Should().Equal(12.3456);
         recorder.Calls.Should().NotContain("IsMpvReady");
     }
 
     [Fact]
-    public void SeekTo_WhenCommandFailsReturnsFalse()
+    public void SeekTo_WhenSeekFailsReturnsFalse()
     {
-        var recorder = new Recorder { CommandResult = 1 };
+        var recorder = new Recorder { SeekResult = PlaybackResult.Fail("seek rejected") };
 
         Create(recorder).SeekTo(1).Should().BeFalse();
     }
@@ -173,14 +183,14 @@ public class PlaybackOperationsCoordinatorTests
 
         coordinator.SeekTo(5).Should().BeTrue();
 
-        recorder.Properties.Should().Equal(("pause", paused ? "yes" : "no"));
+        recorder.SetPausedCalls.Should().Equal(paused);
         playback.IsPaused.Should().Be(paused);
     }
 
     [Fact]
-    public void SeekTo_WhenCommandThrowsReturnsFalse()
+    public void SeekTo_WhenSeekThrowsReturnsFalse()
     {
-        var recorder = new Recorder { CommandException = new InvalidOperationException("test") };
+        var recorder = new Recorder { SeekException = new InvalidOperationException("test") };
 
         Create(recorder).SeekTo(1).Should().BeFalse();
     }
@@ -193,10 +203,11 @@ public class PlaybackOperationsCoordinatorTests
 
         coordinator.StopPlayback();
 
+        recorder.StopCalls.Should().Be(1);
         recorder.Calls.Should().Equal(
             "IsMpvReady",
-            "CommandString(stop)",
-            "SetPropertyString(pause,yes)",
+            "Stop",
+            "SetPaused(True)",
             "SetPlayPauseIcon(▶)",
             "ResetPlayerStateForNewTrack",
             "ClearLoadedTrackId",

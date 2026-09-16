@@ -1,3 +1,4 @@
+using System.Globalization;
 using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer.Tests.Integration;
@@ -42,11 +43,8 @@ internal sealed class SyncScenarioHarness
         _audioControlCoordinator = new AudioControlCoordinator(
             new AudioControlState(isMuted: false, volume: 100),
             new AudioControlEffects(
-                SetPropertyString: (name, value) =>
-                {
-                    RecordMpvProperty(name, value);
-                    return 0;
-                },
+                SetVolume: volume => RecordMpvProperty("volume", volume.ToString("0.###", CultureInfo.InvariantCulture)),
+                SetMute: mute => RecordMpvProperty("mute", mute ? "yes" : "no"),
                 ApplyUi: _ => { },
                 Persist: _ => { }));
         _continueCoordinator = new ContinueOnTrackCoordinator(

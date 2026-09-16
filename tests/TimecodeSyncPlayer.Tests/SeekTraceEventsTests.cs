@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using FluentAssertions;
+using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -176,16 +177,16 @@ public class SeekTraceEventsTests
     [Fact]
     public void SeekTo_RecordsIssueAndReturnAroundCommand()
     {
-        var commands = new List<string>();
+        var seeks = new List<double>();
         List<JsonElement> events = Capture(() =>
         {
             var coordinator = new PlaybackOperationsCoordinator(
                 new PlaybackControlState(),
-                Effects(command => { commands.Add(command); return 0; }));
+                Effects(seek: seconds => { seeks.Add(seconds); return PlaybackResult.Ok; }));
             coordinator.SeekTo(55.125).Should().BeTrue();
         });
 
-        commands.Should().ContainSingle().Which.Should().Be("no-osd seek 55.125 absolute+exact");
+        seeks.Should().ContainSingle().Which.Should().Be(55.125);
         var issues = Events(events, "seek.issue").ToList();
         var returns = Events(events, "seek.return").ToList();
         issues.Should().Contain(e => e.GetProperty("value").GetInt64() == 55_125_000);
@@ -197,16 +198,23 @@ public class SeekTraceEventsTests
     [Fact]
     public void LoadFile_RecordsIssueAndReturnWithStartMicroseconds()
     {
-        var commands = new List<string>();
+        var loads = new List<(string Path, double? Start, bool Paused)>();
         List<JsonElement> events = Capture(() =>
         {
+            var playback = new PlaybackControlState();
+            playback.SetPaused(false);
             var coordinator = new PlaybackOperationsCoordinator(
-                new PlaybackControlState(),
-                Effects(command => { commands.Add(command); return 0; }));
+                playback,
+                Effects(load: (path, start, paused) =>
+                {
+                    loads.Add((path, start, paused));
+                    return PlaybackResult.Ok;
+                }));
             coordinator.LoadFile("C:\\media\\clip.mp4", 12.5).Should().BeTrue();
         });
 
-        commands.Should().ContainSingle().Which.Should().Contain("loadfile");
+        loads.Should().ContainSingle()
+            .Which.Should().Be(("C:\\media\\clip.mp4", (double?)12.5, false));
         Events(events, "load.issue").Should().Contain(e => e.GetProperty("value").GetInt64() == 12_500_000);
         Events(events, "load.return").Should().NotBeEmpty();
     }
@@ -218,7 +226,7 @@ public class SeekTraceEventsTests
         {
             var coordinator = new PlaybackOperationsCoordinator(
                 new PlaybackControlState(),
-                Effects(_ => throw new InvalidOperationException("test")));
+                Effects(seek: _ => throw new InvalidOperationException("test")));
             coordinator.SeekTo(9.5).Should().BeFalse();
         });
 
@@ -226,10 +234,14 @@ public class SeekTraceEventsTests
         Events(events, "seek.return").Should().NotBeEmpty();
     }
 
-    private static PlaybackOperationsEffects Effects(Func<string, int> commandString) => new(
+    private static PlaybackOperationsEffects Effects(
+        Func<double, PlaybackResult>? seek = null,
+        Func<string, double?, bool, PlaybackResult>? load = null) => new(
         IsMpvReady: () => true,
-        CommandString: commandString,
-        SetPropertyString: (_, _) => 0,
+        Load: load ?? ((_, _, _) => PlaybackResult.Ok),
+        Seek: seek ?? (_ => PlaybackResult.Ok),
+        Stop: () => PlaybackResult.Ok,
+        SetPaused: _ => PlaybackResult.Ok,
         ResetPlayerStateForNewTrack: () => { },
         ClearLoadedTrackId: () => { },
         HasTimelinePanel: () => false,

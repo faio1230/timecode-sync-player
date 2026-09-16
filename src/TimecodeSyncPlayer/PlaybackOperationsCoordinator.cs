@@ -1,21 +1,16 @@
 using System.Diagnostics;
-using System.Globalization;
 using Serilog;
+using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
 /// <summary>
-/// mpv playback commands and the corresponding MainWindow state updates.
-/// Every window-owned value is accessed through effects at invocation time.
+/// 再生操作と、それに対応する MainWindow の状態更新。
+/// ウィンドウ所有の値は呼び出し時に effects 経由で取得する。
 /// </summary>
 internal sealed class PlaybackOperationsCoordinator
 {
-    private const string MpvSeekModeAbsolute = "absolute+exact";
-    private const string MpvCommandNoOsd = "no-osd";
-    private const string MpvCommandStop = "stop";
-    private const string MpvValueYes = "yes";
-    private const string MpvValueNo = "no";
     private const string DefaultTimeLabel = "0:00 / 0:00";
     private const string IconPlay = "▶";
 
@@ -34,8 +29,8 @@ internal sealed class PlaybackOperationsCoordinator
     {
         if (!_effects.IsMpvReady()) return;
 
-        _effects.CommandString(MpvCommandStop);
-        _effects.SetPropertyString("pause", MpvValueYes);
+        _effects.Stop();
+        _effects.SetPaused(true);
         ApplyPauseState(true);
         _effects.ResetPlayerStateForNewTrack();
         _effects.ClearLoadedTrackId();
@@ -53,32 +48,28 @@ internal sealed class PlaybackOperationsCoordinator
         if (!_effects.IsMpvReady()) return false;
         bool keepPaused = startPosition.HasValue && _playbackControl.IsPaused;
 
-        bool success;
+        PlaybackResult load;
         if (startPosition.HasValue)
         {
-            int loadRc = TracedLoad(
-                MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition),
+            load = TracedLoad(() => _effects.Load(path, startPosition, keepPaused),
                 (long)Math.Round(startPosition.Value * 1_000_000.0));
-            success = loadRc == 0;
-            Log.Information("LoadFile path={Path} start={Start:F3} loadRc={LoadRc}",
-                path, startPosition.Value, loadRc);
+            Log.Information("Load path={Path} start={Start:F3} loadOk={LoadOk} error={Error}",
+                path, startPosition.Value, load.Success, load.Error);
         }
         else
         {
-            int loadRc = TracedLoad(
-                MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition: null));
-            int pauseRc = _effects.SetPropertyString("pause", MpvValueNo);
-            success = loadRc == 0;
-            Log.Information("LoadFile path={Path} start=none loadRc={LoadRc} pauseRc={PauseRc}",
-                path, loadRc, pauseRc);
+            load = TracedLoad(() => _effects.Load(path, null, false));
+            PlaybackResult pause = _effects.SetPaused(false);
+            Log.Information("Load path={Path} start=none loadOk={LoadOk} pauseOk={PauseOk}",
+                path, load.Success, pause.Success);
         }
 
-        if (!success) return false;
+        if (!load.Success) return false;
 
-        // A positioned load can inherit mpv's EOF pause. Apply the intended state
-        // explicitly, while preserving a pause owned by the user or gap policy.
+        // 位置つきロードは EOF pause を引き継ぐことがある。ユーザー／ギャップが持つ pause を
+        // 保ったまま、意図した状態を明示し直す。
         if (startPosition.HasValue)
-            _effects.SetPropertyString("pause", keepPaused ? MpvValueYes : MpvValueNo);
+            _effects.SetPaused(keepPaused);
         ApplyPauseState(keepPaused);
         _effects.ResetPlayerStateForNewTrack();
         _effects.ResetGapFreeze();
@@ -91,11 +82,11 @@ internal sealed class PlaybackOperationsCoordinator
     {
         if (!_effects.IsMpvReady()) return false;
 
-        int loadRc = TracedLoad(MpvPlaybackCommandBuilder.BuildLoadFileCommand(path, startPosition: null));
-        int pauseRc = _effects.SetPropertyString("pause", MpvValueYes);
-        bool success = loadRc == 0;
-        Log.Information("LoadFile path={Path} start=none loadRc={LoadRc} pauseRc={PauseRc}",
-            path, loadRc, pauseRc);
+        PlaybackResult load = TracedLoad(() => _effects.Load(path, null, true));
+        PlaybackResult pause = _effects.SetPaused(true);
+        bool success = load.Success;
+        Log.Information("Load path={Path} start=none loadOk={LoadOk} pauseOk={PauseOk}",
+            path, load.Success, pause.Success);
 
         if (!success) return false;
 
@@ -109,14 +100,12 @@ internal sealed class PlaybackOperationsCoordinator
 
     public bool SeekTo(double seconds, bool suppressOsd = true)
     {
-        // U1 計測: この呼び出しは UI スレッドから同期で mpv/shim に入る。
+        // U1 計測: この呼び出しは UI スレッドから同期で shim に入る。
         long started = Stopwatch.GetTimestamp();
         try
         {
-            var prefix = suppressOsd ? MpvCommandNoOsd : "";
-            var command = $"{prefix} seek {seconds.ToString("F3", CultureInfo.InvariantCulture)} {MpvSeekModeAbsolute}".Trim();
-            // 計測専用（出力トレース有効時のみ）。プレイヤーへの seek 発行〜復帰を同じ QPC で残す。
-            // GStreamer ではこの呼び出しが shim の tcs_player_seek を同期で通る。
+            // suppressOsd は GStreamer では意味を持たない（OSD 無し）。トレースの互換のため
+            // 従来と同じ detail を残す。
             bool trace = OutputTrace.Current.IsEnabled;
             if (trace)
             {
@@ -124,26 +113,26 @@ internal sealed class PlaybackOperationsCoordinator
                     Value: (long)Math.Round(seconds * 1_000_000.0),
                     Detail: suppressOsd ? "no-osd" : "osd"));
             }
-            int rc;
+            PlaybackResult seek;
             try
             {
-                rc = _effects.CommandString(command);
+                seek = _effects.Seek(seconds);
             }
             finally
             {
                 if (trace)
                     OutputTrace.Current.Record(new("seek.return", "PLAYER", Stopwatch.GetTimestamp()));
             }
-            if (rc != 0)
+            if (!seek.Success)
             {
-                Log.Warning("Seek failed: rc={Rc}, target={Target}", rc, seconds);
+                Log.Warning("Seek failed: error={Error}, target={Target}", seek.Error, seconds);
                 return false;
             }
 
-            // keep-open may pause mpv at EOF without changing the user's play intent.
-            _effects.SetPropertyString("pause", _playbackControl.IsPaused ? MpvValueYes : MpvValueNo);
-            Log.Debug("SeekTo target={Target:F3} rc={Rc} totalMs={TotalMs:F1}",
-                seconds, rc, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            // keep-open may pause at EOF without changing the user's play intent.
+            _effects.SetPaused(_playbackControl.IsPaused);
+            Log.Debug("SeekTo target={Target:F3} ok={Ok} totalMs={TotalMs:F1}",
+                seconds, seek.Success, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             return true;
         }
         catch (Exception ex)
@@ -160,10 +149,10 @@ internal sealed class PlaybackOperationsCoordinator
     }
 
     /// <summary>
-    /// 計測専用（出力トレース有効時のみ）。loadfile 発行〜復帰を同じ QPC で残す。
+    /// 計測専用（出力トレース有効時のみ）。load 発行〜復帰を同じ QPC で残す。
     /// startMicros は新しい開始位置（未指定は -1）。
     /// </summary>
-    private int TracedLoad(string command, long startMicros = -1)
+    private PlaybackResult TracedLoad(Func<PlaybackResult> load, long startMicros = -1)
     {
         bool trace = OutputTrace.Current.IsEnabled;
         if (trace)
@@ -173,7 +162,7 @@ internal sealed class PlaybackOperationsCoordinator
         }
         try
         {
-            return _effects.CommandString(command);
+            return load();
         }
         finally
         {
@@ -185,8 +174,10 @@ internal sealed class PlaybackOperationsCoordinator
 
 internal sealed record PlaybackOperationsEffects(
     Func<bool> IsMpvReady,
-    Func<string, int> CommandString,
-    Func<string, string, int> SetPropertyString,
+    Func<string, double?, bool, PlaybackResult> Load,
+    Func<double, PlaybackResult> Seek,
+    Func<PlaybackResult> Stop,
+    Func<bool, PlaybackResult> SetPaused,
     Action ResetPlayerStateForNewTrack,
     Action ClearLoadedTrackId,
     Func<bool> HasTimelinePanel,

@@ -291,7 +291,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _audioControlCoordinator = new AudioControlCoordinator(
             audioState,
             new AudioControlEffects(
-                SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
+                SetVolume: volume => _playbackApi.SetVolume(volume),
+                SetMute: mute => _playbackApi.SetMute(mute),
                 ApplyUi: ApplyAudioControlUi,
                 Persist: snapshot => _ = _settingsManager.UpdateAsync(settings => settings with
                 {
@@ -1425,8 +1426,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private PlaybackOperationsCoordinator CreatePlaybackOperationsCoordinator() =>
         _playbackOperationsCoordinator ??= new(_playbackControl, new PlaybackOperationsEffects(
             IsMpvReady: () => IsPlayerReady,
-            CommandString: command => _mpvApi.CommandString(_mpv, command),
-            SetPropertyString: (name, value) => _mpvApi.SetPropertyString(_mpv, name, value),
+            Load: (path, start, paused) => _playbackApi.Load(path, start, paused),
+            Seek: seconds => _playbackApi.Seek(seconds),
+            Stop: () => _playbackApi.Stop(),
+            SetPaused: paused => _playbackApi.SetPaused(paused),
             ResetPlayerStateForNewTrack: () => ResetPlayerStateForNewTrack(),
             ClearLoadedTrackId: () => _loadedTrackId = null,
             HasTimelinePanel: () => _timelinePanel != null,

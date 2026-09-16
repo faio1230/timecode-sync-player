@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace TimecodeSyncPlayer;
 
 internal sealed record AudioControlSnapshot(
@@ -41,7 +39,8 @@ internal sealed class AudioControlState
 }
 
 internal sealed record AudioControlEffects(
-    Func<string, string, int> SetPropertyString,
+    Action<double> SetVolume,
+    Action<bool> SetMute,
     Action<AudioControlSnapshot> ApplyUi,
     Action<AudioControlSnapshot> Persist);
 
@@ -60,15 +59,15 @@ internal sealed class AudioControlCoordinator
 
     public void ApplyStartup()
     {
-        _effects.SetPropertyString("mute", _state.IsMuted ? "yes" : "no");
-        _effects.SetPropertyString("volume", FormatVolume(_state.Volume));
+        _effects.SetMute(_state.IsMuted);
+        _effects.SetVolume(_state.Volume);
         _effects.ApplyUi(_state.Snapshot);
     }
 
     public void ToggleMute()
     {
         _state.ToggleMute();
-        _effects.SetPropertyString("mute", _state.IsMuted ? "yes" : "no");
+        _effects.SetMute(_state.IsMuted);
         PublishState();
     }
 
@@ -77,7 +76,7 @@ internal sealed class AudioControlCoordinator
         if (!_state.SetVolume(volume))
             return;
 
-        _effects.SetPropertyString("volume", FormatVolume(_state.Volume));
+        _effects.SetVolume(_state.Volume);
         PublishState();
     }
 
@@ -87,7 +86,4 @@ internal sealed class AudioControlCoordinator
         _effects.ApplyUi(snapshot);
         _effects.Persist(snapshot);
     }
-
-    private static string FormatVolume(double volume) =>
-        volume.ToString("0.###", CultureInfo.InvariantCulture);
 }
