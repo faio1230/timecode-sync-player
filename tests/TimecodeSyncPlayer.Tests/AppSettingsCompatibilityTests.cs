@@ -47,7 +47,7 @@ public class AppSettingsCompatibilityTests
 
         LogEvent[] events;
         lock (sink.Events) events = sink.Events.ToArray();
-        events.Where(e => e.Level == LogEventLevel.Warning).Should().HaveCount(1);
+        events.Where(IsLegacySettingsWarning).Should().HaveCount(1);
     }
 
     [Fact]
@@ -76,6 +76,14 @@ public class AppSettingsCompatibilityTests
 
         LogEvent[] events;
         lock (sink.Events) events = sink.Events.ToArray();
-        events.Where(e => e.Level == LogEventLevel.Warning).Should().BeEmpty();
+        events.Where(IsLegacySettingsWarning).Should().BeEmpty();
     }
+
+    /// <summary>
+    /// Log.Logger はプロセス全体で共有されるため、他のテストの警告を数えないよう
+    /// 互換警告の本文で絞る。
+    /// </summary>
+    private static bool IsLegacySettingsWarning(LogEvent logEvent) =>
+        logEvent.Level == LogEventLevel.Warning
+        && logEvent.RenderMessage().Contains("廃止された設定を無視します", StringComparison.Ordinal);
 }
