@@ -14,7 +14,7 @@
 | I6 | **UI と GPU worker は互いに同期待ちしない**: 受け渡しは不変レコードの mailbox と有限 queue。mpv／GStreamer のコールバックスレッドでもブロックしない。 | C、shim 契約 |
 | I7 | **世代排除**: 旧世代の画像は返さず、NotReady/Ended で黒を出さない（Held を使う）。 | ソース契約 |
 | I8 | **停止順序**: 新規受付停止 → RenderSession.Stop → OutputEngine.Stop（worker join、lease 返却）→ 全画面閉 → mpv／shim destroy → OutputEngine.Dispose → Spout → バッファ。lease は shim destroy より先に返す。 | 段階 6 |
-| I9 | **時間超過は資源解放の理由にしない**: GPU 完了待ちの期限超過は fault として記録し新規処理を止めるが、使用中資源を破棄しない。デバイス消失だけが再作成の根拠。 | 設計 |
+| I9 | **時間超過は資源解放の理由にしない**: GPU 完了待ちの期限超過は fault として記録し新規処理を止めるが、使用中資源を破棄しない。デバイス消失と、ソースの寸法変更（共有リングの作り直し。D8、2026-09-16）だけが再作成の根拠。 | 設計 |
 | I10 | **lead は上げ急・下げ緩**: p99＋1ms で即時に上げ、下げは 5 秒連続で 0.5ms 刻み。起動後 3 秒は学習しない。 | F、段階 3 |
 | I11 | **計測は同じ時計**: 新しい経路は `events.jsonl` に同じ QPC で記録し、`analyze_probe.py`／`gst_delivery_check.py` で親が読める形にする。公開頻度だけで合否を判断しない。 | 全段階 |
 | I12 | **Cpu backend は不変**: `OutputBackend=Cpu` の経路（OutputFrame→Bitmap→SendImage）に手を入れない。 | 計画 |
