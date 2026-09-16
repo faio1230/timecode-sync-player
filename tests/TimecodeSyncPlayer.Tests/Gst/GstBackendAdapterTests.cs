@@ -380,13 +380,26 @@ public class GstBackendStateTests
 }
 
 /// <summary>IGstNativeApi の記録用 fake。ネイティブ DLL に依存しない。</summary>
-file sealed class FakeGstNative : IGstNativeApi
+internal sealed class FakeGstNative : IGstNativeApi
 {
     public IntPtr PlayerCreateResult { get; init; } = IntPtr.Zero;
     public string CreateError { get; init; } = "";
     public List<bool> SetPausedCalls { get; } = [];
     public List<(string Path, double? Start, bool Paused)> LoadCalls { get; } = [];
     public List<double> SeekCalls { get; } = [];
+    public int LoadResult { get; set; }
+    public string LoadError { get; set; } = "";
+    public ulong SeekResult { get; set; } = 1;
+    public int StopResult { get; set; }
+    public int SetPausedResult { get; set; }
+    public int SetSpeedResult { get; set; }
+    public List<double> SetSpeedCalls { get; } = [];
+    public int SetVolumeResult { get; set; }
+    public List<double> SetVolumeCalls { get; } = [];
+    public int SetMuteResult { get; set; }
+    public List<bool> SetMuteCalls { get; } = [];
+    public int SetFrameCallbackCalls { get; private set; }
+    public GstNative.TcsFrameNotifyDelegate? LastFrameCallback { get; private set; }
     public double TimePos { get; set; }
     public double Duration { get; set; } = 10;
     public double Fps { get; set; } = 30;
@@ -424,17 +437,17 @@ file sealed class FakeGstNative : IGstNativeApi
 
     public int Load(IntPtr player, string path, double startSeconds, bool paused, out string error)
     {
-        error = "";
+        error = LoadError;
         LoadCalls.Add((path, startSeconds >= 0 ? startSeconds : null, paused));
-        return 0;
+        return LoadResult;
     }
 
-    public int Stop(IntPtr player) => 0;
+    public int Stop(IntPtr player) => StopResult;
 
     public int SetPaused(IntPtr player, bool paused)
     {
         SetPausedCalls.Add(paused);
-        return 0;
+        return SetPausedResult;
     }
 
     public bool IsPausedValue { get; set; } = true;
@@ -443,15 +456,27 @@ file sealed class FakeGstNative : IGstNativeApi
     public ulong Seek(IntPtr player, double seconds)
     {
         SeekCalls.Add(seconds);
-        return 1;
+        return SeekResult;
     }
 
     public ulong StepFrame(IntPtr player) => 1;
     public ulong GetGeneration(IntPtr player) => 7;
     public ulong SetGeneration(IntPtr player, ulong generation) => generation;
-    public int SetSpeed(IntPtr player, double rate) => 0;
-    public int SetVolume(IntPtr player, double volume0To100) => 0;
-    public int SetMute(IntPtr player, bool mute) => 0;
+    public int SetSpeed(IntPtr player, double rate)
+    {
+        SetSpeedCalls.Add(rate);
+        return SetSpeedResult;
+    }
+    public int SetVolume(IntPtr player, double volume0To100)
+    {
+        SetVolumeCalls.Add(volume0To100);
+        return SetVolumeResult;
+    }
+    public int SetMute(IntPtr player, bool mute)
+    {
+        SetMuteCalls.Add(mute);
+        return SetMuteResult;
+    }
     public List<int> SetDecodeModeCalls { get; } = [];
     public int SetDecodeModeResult { get; set; }
     public int SetDecodeMode(IntPtr player, int mode)
@@ -469,7 +494,11 @@ file sealed class FakeGstNative : IGstNativeApi
         height = Height;
         return width > 0 && height > 0;
     }
-    public void SetFrameCallback(IntPtr player, GstNative.TcsFrameNotifyDelegate? callback) { }
+    public void SetFrameCallback(IntPtr player, GstNative.TcsFrameNotifyDelegate? callback)
+    {
+        SetFrameCallbackCalls++;
+        LastFrameCallback = callback;
+    }
     public int ConsumeUpdate(IntPtr player) { ConsumeUpdateCalls++; return ConsumeUpdateResult; }
 
     public int Acquire(IntPtr player, ulong generation, out GstNative.TcsFrameInfo info)

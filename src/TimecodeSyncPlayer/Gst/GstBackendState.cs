@@ -29,9 +29,13 @@ internal sealed class GstBackendState : IDisposable
     {
         _native = native;
         _settingsManager = settingsManager;
+        Seeking = new GstSeekingTracker(this);
     }
 
     public IGstNativeApi Native => _native;
+
+    /// <summary>シーク中判定（到着数ベース）。文字列経路と型付き経路で共有する。</summary>
+    public GstSeekingTracker Seeking { get; }
 
     public string SenderName { get; private set; } = ResolveSenderName();
 
