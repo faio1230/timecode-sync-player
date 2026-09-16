@@ -25,8 +25,11 @@ def frame(t, index=0, clip=1, black=False, valid=True, kind="normal"):
             "isBlack": black, "markerValid": valid, "probeTicks": 1}
 
 
-def ltc(t, seconds):
-    return {"type": "ltc", "ticks": t, "seconds": seconds, "fps": 25}
+def ltc(t, seconds, sample_ticks=None):
+    event = {"type": "ltc", "ticks": t, "seconds": seconds, "fps": 25}
+    if sample_ticks is not None:
+        event["sampleTicks"] = sample_ticks
+    return event
 
 
 def render_stage(t):
@@ -86,8 +89,8 @@ class AccuracyTests(unittest.TestCase):
         self.analyzer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.analyzer)
 
-    def analyze(self, events, journal=None, fixture=FIXTURE):
-        return self.analyzer.analyze(trace(events), fixture, journal or phase())
+    def analyze(self, events, journal=None, fixture=FIXTURE, ltc_clock="receipt"):
+        return self.analyzer.analyze(trace(events), fixture, journal or phase(), ltc_clock)
 
     def test_known_delay_and_frame_interval_are_separate(self):
         # Frame 21 at 24 fps = .875 s; target 1.0: -125 ms PTS,
@@ -380,6 +383,20 @@ class AccuracyTests(unittest.TestCase):
         self.assertEqual(measured["thresholds"]["20"], {"count": 2, "durationMs": 40})
         self.assertEqual(measured["thresholds"]["40"], {"count": 1, "durationMs": 0})
         self.assertEqual(measured["timeWeightedMeanAbsMs"], 20)
+
+    def test_sample_clock_reorders_rows_and_requires_sample_ticks(self):
+        # T2: 受信順（ticks）では 1000 → 1040 だが、サンプル位置（sampleTicks）では 980 → 1020 に入れ替わる。
+        events = [ltc(1040, 0.04, sample_ticks=980), ltc(1000, 0.0, sample_ticks=1020)]
+        _, receipt_rows = self.analyze(events)
+        self.assertEqual([r["ticks"] for r in receipt_rows], [1000, 1040])
+        summary, sample_rows = self.analyze(events, ltc_clock="sample")
+        self.assertEqual([r["ticks"] for r in sample_rows], [980, 1020])
+        self.assertEqual(summary["ltcClock"], "sample")
+
+        # sampleTicks が無い run を sample で解析したら、明示して不完全にする。
+        incomplete, _ = self.analyze([ltc(1000, 0.0)], ltc_clock="sample")
+        self.assertFalse(incomplete["complete"])
+        self.assertIn("missing-ltc-sample-ticks", incomplete["incompleteReasons"])
 
     def test_footer_errors_and_phase_clock_mismatch_cannot_succeed(self):
         events, journal = complete_run()

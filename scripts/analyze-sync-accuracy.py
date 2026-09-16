@@ -4,6 +4,11 @@
 No application sync decisions, player positions or render-kind hints enter the
 error calculation. Durations are observed receipt-to-receipt intervals, never
 inferred over input discontinuities. This is not a physical display measurement.
+
+--ltc-clock receipt (default) uses the receipt handler QPC (ticks). --ltc-clock
+sample uses the frame-end QPC derived from audio sample positions (sampleTicks)
+and orders events by that time (T2 stage 2 analysis switch; the app-side switch
+is separate).
 """
 import argparse
 from collections import Counter
@@ -41,6 +46,13 @@ def supported_ltc_fps(fps):
     """V3 LTC fps matrix: 24, 25, 30, and non-drop 29.97 (30000/1001)."""
     return (abs(fps - 24.0) < 0.01 or abs(fps - 25.0) < 0.01 or
             abs(fps - 30.0) < 0.01 or abs(fps - (30000.0 / 1001.0)) < 0.01)
+
+
+def event_time(event, ltc_clock):
+    """ltc イベントの時刻。sample ではサンプル位置から出した sampleTicks を使う（T2）。"""
+    if ltc_clock == "sample" and event.get("type") == "ltc":
+        return event["sampleTicks"]
+    return event["ticks"]
 
 
 def valid_render_stage(event):
@@ -118,7 +130,9 @@ def recovery(rows, limit):
     return {"recoveryMs": None, "confirmedAtMs": None, "status": "not-observed", "sustainMs": 500}
 
 
-def analyze(events, fixture, journal):
+def analyze(events, fixture, journal, ltc_clock="receipt"):
+    if ltc_clock not in ("receipt", "sample"):
+        raise ValueError("ltc_clock must be receipt or sample")
     reasons = []
     warnings = []
     meta = [e for e in events if e.get("type") == "meta"]
@@ -178,6 +192,10 @@ def analyze(events, fixture, journal):
                 not number(event.get("fps")) or abs(event["fps"] - ltc_fps) > 0.01):
             reasons.append("invalid-ltc-event")
             continue
+        # T2: sample 時計はサンプル位置から出した時刻が無い run では使えない（明示して不完全にする）。
+        if event.get("type") == "ltc" and ltc_clock == "sample" and not integer(event.get("sampleTicks")):
+            reasons.append("missing-ltc-sample-ticks")
+            continue
         if event.get("type") == "frame" and (not integer(event.get("width")) or event["width"] <= 0 or
                 not integer(event.get("height")) or event["height"] <= 0 or
                 not isinstance(event.get("markerValid"), bool) or not isinstance(event.get("isBlack"), bool) or
@@ -185,7 +203,9 @@ def analyze(events, fixture, journal):
             reasons.append("invalid-frame-event")
             continue
         clean.append(event)
-    events = sorted(clean, key=lambda e: e["ticks"])
+    # T2: sample 時計では ltc イベントの時刻を sampleTicks にし、時刻順に並べ直してから行を作る
+    # （sampleTicks は ticks より最大 50ms 過去なので、受信順とは入れ替わる）。
+    events = sorted(clean, key=lambda e: event_time(e, ltc_clock))
     ends = [e for e in events if e["type"] == "end"]
     if len(ends) != 1:
         reasons.append("trace-end-missing" if not ends else "trace-end-duplicate")
@@ -257,7 +277,7 @@ def analyze(events, fixture, journal):
             continue
         if event["type"] != "ltc":
             continue
-        tick, seconds = event["ticks"], event["seconds"]
+        tick, seconds = event_time(event, ltc_clock), event["seconds"]
         # A phase's LTC clock starts at the first frame that is not a one-period
         # step from the previous frame: the source restart after the phase
         # boundary shows up as a rollback (0 s sweeps) or a forward jump (seek
@@ -428,7 +448,10 @@ def analyze(events, fixture, journal):
                "byFps": {f'{c["fpsNumerator"]}/{c["fpsDenominator"]}': {
                    "all": aggregate([r for r in all_rows if r["expectedClipId"] == c["id"]]),
                    "steady": aggregate([r for r in all_rows if r["expectedClipId"] == c["id"] and r["steady"]])}
-                         for c in ordered_clips}, "phases": phase_summaries, "recovery": recoveries, "gaps": gaps}
+                          for c in ordered_clips}, "phases": phase_summaries, "recovery": recoveries, "gaps": gaps}
+    # sample のときだけ印を足す（receipt の出力は従来と同一に保つ）。
+    if ltc_clock == "sample":
+        summary["ltcClock"] = "sample"
     return summary, rows
 
 
@@ -443,6 +466,8 @@ def markdown(summary):
              "Every LTC sample uses the most recently published bitmap, including held images. Unknown and wrong-clip images have no numeric error; inspect coverage before interpreting measured-only statistics.", "",
              "| Population | Samples | Measured | Mean signed ms | Mean absolute ms | p95 absolute ms | p99 absolute ms | Max absolute ms |",
              "|---|---:|---:|---:|---:|---:|---:|---:|"]
+    if summary.get("ltcClock") == "sample":
+        lines += ["", "LTC clock: sampleTicks (frame-end QPC derived from audio sample positions); events are ordered by sample time."]
     for key in ("all", "steady"):
         group = summary[key]
         for metric in ("signed", "interval"):
@@ -495,10 +520,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("trace", "fixture", "phases", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--ltc-clock", choices=("receipt", "sample"), default="receipt",
+                        help="ltc イベントの時刻: receipt=受信ハンドラの QPC（従来・既定）、sample=サンプル位置由来の sampleTicks")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     try:
-        summary, rows = analyze(read_jsonl(args.trace), json.loads(args.fixture.read_text(encoding="utf-8-sig")), read_jsonl(args.phases))
+        summary, rows = analyze(read_jsonl(args.trace), json.loads(args.fixture.read_text(encoding="utf-8-sig")),
+                                read_jsonl(args.phases), args.ltc_clock)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError) as error:
         summary, rows = {"schema": 1, "complete": False, "accuracyPassFail": "not-defined",
                          "incompleteReasons": ["input-error: " + str(error)]}, []
