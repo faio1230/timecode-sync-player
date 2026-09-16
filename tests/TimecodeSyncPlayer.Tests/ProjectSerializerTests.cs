@@ -1,5 +1,6 @@
 using System.IO;
 using FluentAssertions;
+using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -10,7 +11,7 @@ public class ProjectSerializerTests : IDisposable
 
     public ProjectSerializerTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), "TimecodeSyncPlayer.Tests", "ProjectSerializer");
+        _tempDir = TestTempPaths.Combine("ProjectSerializer");
         Directory.CreateDirectory(_tempDir);
     }
 
