@@ -2764,3 +2764,20 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 - V5 のやり直し（`20260916T160819Z-v5-seek-nc`、`-ClickPlay` なし）: 10 回のシーク着地 delta 0.00ms、`compose.publish` の最長無公開 51.3ms、ERR 0、exit 0。**判定: V5 合格**
 - 証跡: `TestResults/gpu-app/20260916T161217Z-v6-soak`、`.../20260916T160819Z-v5-seek-nc`（agent-a の作業ツリー）
 
+
+## D12〜D15: 検証機（クリーン環境、v0.4.0 setup 版）で音声付き素材が 1 本も再生できない（2026-09-17 05:30 報告、05:45 親が開発機で再現）
+
+発見: 別マシンの検証セッション（Windows 11 Home、RTX 3080 Laptop、GStreamer 未導入、v0.4.0 setup.exe のみ）。素材は AV1 4K 24fps + AAC 44.1kHz の MP4 3 本。
+親の再現: 開発機の Debug ビルド（main `452a828`）に H.264 720p30 + AAC 44.1kHz（ffmpeg 生成）を読ませ、全プロファイルが `Internal data stream error` で失敗（`TestResults/gpu-app/20260916T204501Z-aud441`）。**配布物固有ではなく shim の欠陥。**
+
+| # | 内容 | 裏取り | 影響 |
+| --- | --- | --- | --- |
+| **D12** | shim の音声分岐 `audioconvert ! queue ! audioconvert ! autoaudiosink` に **audioresample が無い**。wasapi2sink（共有モード）は端末のミックスレートしか受けないので、44.1kHz の音声は not-negotiated → qtdemux が `Internal data stream error` → 全プロファイル失敗 | `tcs_gstreamer.cpp` 1653〜1660 行。検証機は `TCS_NO_AUDIO=1` で av1-gpu 200ms で成功 | **48kHz 端末で 44.1kHz 音声の素材が全滅**（yt-dlp 由来・音楽素材に多い） |
+| **D13** | 映像分岐に **queue が無い**。demux が映像サンプルを先に出す MP4（ffmpeg 既定のトラック順）では appsink の preroll で demux スレッドが止まり、音声シンクが preroll できず 15 秒タイムアウト | 検証機: 音声 48kHz 版で再現、`-itsoffset` で音声先頭にした版は成功。`TCS_FAKE_AUDIO=1` でも停止（wasapi 起因ではない） | D12 を直しても、映像先頭の音声付き MP4 は読めない |
+| **D14** | 不一致プロファイル 1 つにつき約 6 秒待つ（bus スレッド起動前に `gst_element_get_state` 3 秒 × 2）。AV1 は av1-gpu まで 18 秒 | `tcs_gstreamer.cpp` 2277〜2283 行 | ロードの体感遅延。ライブでの切替に不利 |
+| **D15** | 同梱一覧（`package-release.ps1`）に `gstaudioresample.dll` と `gsttypefindfunctions.dll` が無く、decodebin フォールバックは `Could not determine type of stream` で常に失敗 | 一覧 17 個を親が確認。検証機の GST_DEBUG に typefind の `Internal data stream error` | 拡張子で選べない素材はすべて失敗 |
+| O1（観測性） | shim の LOG は stderr のみで GUI 起動では捨てられ、アプリログには `all video profiles failed` しか残らない | `#define LOG` 60 行 | 現場診断ができない |
+
+V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミックスレートと同じ）で、E2E 素材は無音の H.264。**44.1kHz と「映像トラック先頭」の素材が検証行列に無かった。**
+
+対処: v0.4.1 として修正する。指示は `docs/prompts/2026-09-17-D12-D14-shim-audio-chain.md`（同期担当、shim）と `docs/prompts/2026-09-17-D15-packaging-and-audio-media.md`（除去担当、同梱・素材・E2E・アプリ側）。検証は開発機の実機と、検証機（クリーン環境）の両方で行う。
