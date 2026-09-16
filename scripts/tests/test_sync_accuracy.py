@@ -398,6 +398,21 @@ class AccuracyTests(unittest.TestCase):
         self.assertFalse(incomplete["complete"])
         self.assertIn("missing-ltc-sample-ticks", incomplete["incompleteReasons"])
 
+    def test_auto_clock_prefers_sample_and_falls_back_to_receipt(self):
+        # 2026-09-16: 既定（auto）は sampleTicks があれば sample。無い旧 run は receipt へ落として明示する。
+        events = [ltc(1040, 0.04, sample_ticks=980), ltc(1000, 0.0, sample_ticks=1020)]
+        summary, rows = self.analyze(events, ltc_clock="auto")
+        self.assertEqual([r["ticks"] for r in rows], [980, 1020])
+        self.assertEqual(summary["ltcClock"], "sample")
+
+        legacy, legacy_rows = self.analyze([ltc(1000, 0.0), ltc(1040, 0.04)], ltc_clock="auto")
+        self.assertEqual([r["ticks"] for r in legacy_rows], [1000, 1040])
+        self.assertEqual(legacy["ltcClock"], "receipt")
+        self.assertTrue(any(w.startswith("ltc-clock-fallback-receipt") for w in legacy["warnings"]))
+        # 明示的な receipt は従来どおり印を足さない。
+        explicit, _ = self.analyze([ltc(1000, 0.0), ltc(1040, 0.04)], ltc_clock="receipt")
+        self.assertNotIn("ltcClock", explicit)
+
     def test_footer_errors_and_phase_clock_mismatch_cannot_succeed(self):
         events, journal = complete_run()
         events[-1]["errors"] = 1

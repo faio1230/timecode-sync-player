@@ -88,8 +88,13 @@ foreach ($backend in $Backends) {
         Remove-Item Env:TCS_V3_LTC_FPS -ErrorAction SilentlyContinue
         Remove-Item Env:TCS_V3_LTC_FPS_MODE -ErrorAction SilentlyContinue
 
+        # analysis\ = official reference (auto: sample when sampleTicks exist, since 2026-09-16).
+        # analysis-receipt\ = legacy receipt reference, kept for comparison with runs before T2.
         & python $analyzer --trace (Join-Path $report 'trace.jsonl') --fixture (Join-Path $report 'fixture.json') `
             --phases (Join-Path $report 'phases.jsonl') --output (Join-Path $report 'analysis') 2>&1 |
+            Select-Object -Last 1 | ForEach-Object { '    ' + $_ }
+        & python $analyzer --trace (Join-Path $report 'trace.jsonl') --fixture (Join-Path $report 'fixture.json') `
+            --phases (Join-Path $report 'phases.jsonl') --output (Join-Path $report 'analysis-receipt') --ltc-clock receipt 2>&1 |
             Select-Object -Last 1 | ForEach-Object { '    ' + $_ }
         $runs += [pscustomobject]@{ Name = $name; Backend = $backend; Report = $report }
         Start-Sleep -Seconds 3
@@ -97,6 +102,9 @@ foreach ($backend in $Backends) {
 }
 
 Write-Output ''
-Write-Output '=== steady error (black-sweep excluded, settling excluded) ==='
+Write-Output '=== steady error (black-sweep excluded, settling excluded) === [analysis = official (sample) reference]'
 $summarize = Join-Path $PSScriptRoot 'summarize-v3-accuracy.py'
 foreach ($run in $runs) { & python $summarize (Join-Path $run.Report 'analysis\accuracy-samples.csv') $run.Name }
+Write-Output ''
+Write-Output '=== same, legacy receipt reference (analysis-receipt) for comparison with pre-T2 runs ==='
+foreach ($run in $runs) { & python $summarize (Join-Path $run.Report 'analysis-receiptccuracy-samples.csv') ($run.Name + ' [receipt]') }

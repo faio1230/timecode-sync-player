@@ -130,11 +130,22 @@ def recovery(rows, limit):
     return {"recoveryMs": None, "confirmedAtMs": None, "status": "not-observed", "sustainMs": 500}
 
 
-def analyze(events, fixture, journal, ltc_clock="receipt"):
-    if ltc_clock not in ("receipt", "sample"):
-        raise ValueError("ltc_clock must be receipt or sample")
+def analyze(events, fixture, journal, ltc_clock="auto"):
+    if ltc_clock not in ("auto", "receipt", "sample"):
+        raise ValueError("ltc_clock must be auto, receipt or sample")
     reasons = []
     warnings = []
+    # 2026-09-16（利用者の決定）: 正式な基準は sample。auto は sampleTicks が全 ltc イベントに
+    # あれば sample、無ければ（T2 より前の run）receipt へ落として明示する。
+    clock_fallback = False
+    if ltc_clock == "auto":
+        ltc_events = [e for e in events if isinstance(e, dict) and e.get("type") == "ltc"]
+        if ltc_events and all(integer(e.get("sampleTicks")) for e in ltc_events):
+            ltc_clock = "sample"
+        else:
+            ltc_clock = "receipt"
+            clock_fallback = True
+            warnings.append("ltc-clock-fallback-receipt: trace has no sampleTicks (recorded before T2)")
     meta = [e for e in events if e.get("type") == "meta"]
     if len(meta) != 1 or meta[0].get("schema") != 1 or not number(meta[0].get("frequency")) or meta[0]["frequency"] <= 0:
         raise ValueError("trace requires exactly one schema=1 meta with positive frequency")
@@ -449,9 +460,11 @@ def analyze(events, fixture, journal, ltc_clock="receipt"):
                    "all": aggregate([r for r in all_rows if r["expectedClipId"] == c["id"]]),
                    "steady": aggregate([r for r in all_rows if r["expectedClipId"] == c["id"] and r["steady"]])}
                           for c in ordered_clips}, "phases": phase_summaries, "recovery": recoveries, "gaps": gaps}
-    # sample のときだけ印を足す（receipt の出力は従来と同一に保つ）。
+    # sample のときと、auto から receipt へ落ちたときだけ印を足す（明示的な receipt の出力は従来と同一に保つ）。
     if ltc_clock == "sample":
         summary["ltcClock"] = "sample"
+    elif clock_fallback:
+        summary["ltcClock"] = "receipt"
     return summary, rows
 
 
@@ -467,7 +480,9 @@ def markdown(summary):
              "| Population | Samples | Measured | Mean signed ms | Mean absolute ms | p95 absolute ms | p99 absolute ms | Max absolute ms |",
              "|---|---:|---:|---:|---:|---:|---:|---:|"]
     if summary.get("ltcClock") == "sample":
-        lines += ["", "LTC clock: sampleTicks (frame-end QPC derived from audio sample positions); events are ordered by sample time."]
+        lines += ["", "LTC clock: sampleTicks (frame-end QPC derived from audio sample positions); events are ordered by sample time. This is the official reference since 2026-09-16."]
+    elif summary.get("ltcClock") == "receipt":
+        lines += ["", "LTC clock: receipt (legacy). The trace has no sampleTicks (recorded before T2); the reference carries the audio-callback quantization (0-50 ms)."]
     for key in ("all", "steady"):
         group = summary[key]
         for metric in ("signed", "interval"):
@@ -520,8 +535,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("trace", "fixture", "phases", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--ltc-clock", choices=("receipt", "sample"), default="receipt",
-                        help="ltc イベントの時刻: receipt=受信ハンドラの QPC（従来・既定）、sample=サンプル位置由来の sampleTicks")
+    parser.add_argument("--ltc-clock", choices=("auto", "receipt", "sample"), default="auto",
+                        help="ltc イベントの時刻: auto（既定）=sampleTicks があれば sample、無ければ receipt へ落として明示。"
+                             "sample=サンプル位置由来の sampleTicks（2026-09-16 から正式）、receipt=受信ハンドラの QPC（従来。比較用）")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     try:
