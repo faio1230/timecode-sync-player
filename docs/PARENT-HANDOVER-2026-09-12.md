@@ -288,6 +288,9 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
    一時停止待ちなどのタイムアウト。他ツリーの DLL は流用せず `build-shim.ps1 -Config Debug` → `dotnet build` で bin を更新する
 6. **E2E を複数まとめて回すとき `TIMECODE_ACCURACY_REPORT_DIR` を共有すると 2 本目が即失敗し、アプリが孤児になって出力パイプを掴む**（親が 3 時間止まった原因）。
    run ごとに別ディレクトリか、変数を設定しない。孤児は自分が起動した PID だけ止める
+7. **実機ハーネスに他ツリーの素材を相対パス（`..	imecode-sync-playerrtifacts\media\...`）で渡すと、アプリが解決できず素材なしで起動し、ハーネスは終了を待ち続けて 1 時間止まる**
+   （D10 の 1080p run、2026-09-16 20:56〜21:54。アプリログ `loadfile 失敗 err=all video profiles failed`）。素材は自分の作業ツリーに置き（`scripts\make-e2e-media.ps1`）、作業ツリー内のパスで渡す。
+   親は 1 時間監視の watcher が切れてから気づいた。**ハーネスの `-Seconds` を過ぎても runner が返らないときは、まずアプリログの loadfile を見る**
 
 1. **指標の符号**: `delta`（LTC − 再生位置）と `signedErrorMs`（絵 − LTC）は向きが逆。**足す**のが正しい。
    差で計算して「74ms のずれ」を作り、T5 の結論・max-buffers 掃引・T6 の設計をその上に積んでいた
