@@ -24,6 +24,7 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 - Made sample-based analysis (frame-end reference) the official analysis for V3 (LTC sync accuracy).
 - Pinned the pipeline clock to the system clock and slaved audio sinks to it (S3 side effect).
 - Removed the runtime name from the shutdown step name ("GStreamer 停止").
+- Single mode now treats the clip `MediaOut` as the end of playback, consistent with Continue mode.
 
 ### Removed
 
@@ -41,15 +42,16 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 - Fixed MP4 files with B frames reporting a position ahead of the real one after an accurate seek: the shim now uses stream time mapped through the segment instead of the raw buffer PTS (D10).
 - Fixed stale re-application of LTC frames issuing sync requests when the gap behavior changed (U1).
 - Fixed the `ProjectRoundTrip` E2E failure (test-side playlist selection wait; Q1).
+- Fixed Single mode staying in the "seeking" state after a seek to EOF, which blocked later sync seeks when the LTC was rewound (D11).
+- Fixed the position label and seek bar not refreshing right after a positioned load while paused (F1).
 
 ### Known limitations
 
 - 29.97 non-drop LTC requires the "Fixed 29.97" fps mode; Auto cannot distinguish it from 30.
-- Recovering the shim from a real GPU device loss (TDR) is not supported (D9); whether to include it in v0.4 is pending a decision.
+- Recovering the shim from a real GPU device loss (TDR) is not supported in this release (D9).
 - The product does not add a one-frame constant; adjust the sync offset (`syncOffsetMs`) for field delays.
 - 120Hz output targets are not verified. A 4K main display may drop a few frames per 40 seconds (a dedicated display is recommended).
 - Rare audio dropouts of up to 100 ms during track switches (4 of 12 in a 60-minute test).
-- One LTC hardware-loop E2E test (`LtcHardwareLoopE2ETests.CableLoop_ContinueBlackGap_...`) failed twice in full-suite runs while passing in isolation (under observation).
 - HAP is not supported.
 
 ## 0.3.0 - 2026-07-18
