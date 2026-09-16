@@ -308,3 +308,22 @@
 5. 相対シークを型付き API のクライアント計算のままにするか、shim に相対シークを追加するか
 6. 失敗表現を int rc / bool＋error / 結果型のどれにするか（7-5 の影響）
 7. 移行を一括にするか段階にするか（7-1）
+
+---
+
+## 10. 親の判断（2026-09-16 22:40）
+
+9 節の材料に対する決定。**段 4 の着手は段 3 の統合後。** 実装の指示書は段 3 完了時に別途出す。
+
+| # | 事項 | 決定 | 根拠 |
+| --- | --- | --- | --- |
+| 1 | `osd-msg3` のデバッグ OSD | **消す**。WPF 側への移設はしない | GStreamer 構成に表示先が無く、診断はログと既存の UI で足りる。必要になったら別件 |
+| 2 | `StepFrame` | **API に含めない**（テストも削除） | アプリが使っていない |
+| 3 | `seeking` の意味論 | **アダプタ内に残す**。型付き API では `IsSeeking` として表現する | shim の契約を段 4 で広げない（I13 の管轄を増やさない） |
+| 4 | `SetDecodeMode` | **再生 API に含めない**。`GstBackendState` の初期化のまま | 再生中に変える操作ではない（設定項目） |
+| 5 | 相対シーク | **クライアント計算のまま**（`Seek(absolute)` ＋呼び出し側で加算） | 型付きになれば書式の欠陥（7-4）は消える。shim に足す理由がない |
+| 6 | 失敗の表現 | **(c) 結果型** `PlaybackResult(bool Success, string? Error)` を **Load / Seek / SetPaused / Stop / SetRate** に。`SetVolume` / `SetMute` は void（失敗はアダプタ内でログ） | 「shim 失敗でも 0」「未知コマンドの黙認」（7-4）を構造的に消す。戻り値を無視している設定系に `_ =` を並べない |
+| 7 | 移行順序 | **段階（呼び出し側ごと）**。(1) 型付き API と GStreamer 実装を追加（既存の文字列経路は残す）→ (2) `GapPlaybackCommandExecutor` / `GapFreezePathGuard` → (3) `PlaybackOperationsCoordinator` / `AudioControlCoordinator` → (4) `MainWindow` の読み取り系 → (5) translator / builder / startup と mpv 用語の削除、中立名への改名 | 各段を非E2E ＋ E2E の一部で守り、最後に E2E 全件 ＋ V3 1 本。一括は差分が大きく、失敗時に原因が絞れない |
+
+中立名は 6 節の案を採用する方向（`IPlaybackApi` / `IRenderUpdateSource` / `GstPlaybackApi`）。最終確定は指示書で行う。
+
