@@ -291,6 +291,8 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 7. **実機ハーネスに他ツリーの素材を相対パス（`..	imecode-sync-playerrtifacts\media\...`）で渡すと、アプリが解決できず素材なしで起動し、ハーネスは終了を待ち続けて 1 時間止まる**
    （D10 の 1080p run、2026-09-16 20:56〜21:54。アプリログ `loadfile 失敗 err=all video profiles failed`）。素材は自分の作業ツリーに置き（`scripts\make-e2e-media.ps1`）、作業ツリー内のパスで渡す。
    親は 1 時間監視の watcher が切れてから気づいた。**ハーネスの `-Seconds` を過ぎても runner が返らないときは、まずアプリログの loadfile を見る**
+8. **`Invoke-AppGpuTrial.ps1 -SeekAtSeconds` はランナーが返らない**（2026-09-16 21:57 の run、素材読込は成功・アプリは一時停止のまま・`harness.jsonl` 空のまま 38 分）。
+   `-ClickPlay` なしで起動した一時停止中のアプリに対する seek の UIA 操作で固まる見込み（未調査。親のスクリプト）。当面 `-SeekAtSeconds` は使わない
 
 1. **指標の符号**: `delta`（LTC − 再生位置）と `signedErrorMs`（絵 − LTC）は向きが逆。**足す**のが正しい。
    差で計算して「74ms のずれ」を作り、T5 の結論・max-buffers 掃引・T6 の設計をその上に積んでいた
