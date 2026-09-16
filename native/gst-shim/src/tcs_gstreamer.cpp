@@ -57,7 +57,36 @@
 #include <cstring>
 #include <cmath>
 
-#define LOG(fmt, ...) fprintf (stderr, "[tcs-gst] " fmt "\n", ##__VA_ARGS__)
+/* O1: LOG writes to stderr and, when TCS_LOG_FILE names a path, appends the
+ * same line to that file (flushed per line). The open is lazy; failures are
+ * ignored. The log volume still follows TCS_LEASE_LOG / TCS_FRAME_LOG. */
+static void
+log_sink_write (const char* line)
+{
+  fputs (line, stderr);
+  static std::mutex log_file_mutex;
+  static FILE* log_file = nullptr;
+  static bool log_file_tried = false;
+  std::lock_guard<std::mutex> g (log_file_mutex);
+  if (!log_file_tried) {
+    log_file_tried = true;
+    char path[1024];
+    DWORD n = GetEnvironmentVariableA ("TCS_LOG_FILE", path, sizeof (path));
+    if (n > 0 && n < sizeof (path))
+      log_file = fopen (path, "a");
+  }
+  if (log_file) {
+    fputs (line, log_file);
+    fflush (log_file);
+  }
+}
+
+#define LOG(fmt, ...) \
+  do { \
+    char tcs_log_line[2048]; \
+    snprintf (tcs_log_line, sizeof (tcs_log_line), "[tcs-gst] " fmt "\n", ##__VA_ARGS__); \
+    log_sink_write (tcs_log_line); \
+  } while (0)
 
 static std::once_flag g_gst_once;
 
@@ -194,6 +223,7 @@ struct TcsPlayer {
   GstElement* appsink = nullptr;
   GstElement* vcaps = nullptr;
   GstElement* vhead = nullptr;
+  GstElement* vqueue = nullptr;           /* D13: demux-side video queue (decouples demux from appsink preroll) */
   GstElement* vparse = nullptr;
   GstElement* vdec = nullptr;
   GstElement* vconvert = nullptr;
@@ -210,6 +240,7 @@ struct TcsPlayer {
   GstElement* aqueue = nullptr;
   GstElement* avolume = nullptr;
   GstElement* aconvert2 = nullptr;        /* second: sink format negotiation */
+  GstElement* aresample = nullptr;        /* D12: resample to the device rate (44.1k -> 48k) */
   GstElement* asink = nullptr;
   GstElement* adecodebin = nullptr;
   gboolean use_d3d11_caps = FALSE;
@@ -344,6 +375,7 @@ struct TcsPlayer {
   std::string path;
   std::string decoder_name;
   std::string last_error;
+  std::string last_bus_error;             /* O1: last GST_MESSAGE_ERROR text of this load */
   double fps = 0.0;
   double duration = -1.0;
   int width = 0;
@@ -1432,6 +1464,17 @@ log_video_chain (const char* profile, GstElement* const* chain, int n)
   LOG ("video-chain: %s elements=%s", profile, names.c_str ());
 }
 
+/* D13: a small queue directly after the demux video pad decouples the demux
+ * thread from appsink preroll (a video-first MP4 otherwise blocks the demux
+ * while the audio sink still has to preroll). Time/byte limits are disabled so
+ * the bound is exactly the buffer count; a flushing seek empties the queue. */
+static void
+configure_video_queue (GstElement* q)
+{
+  g_object_set (q, "max-size-buffers", (guint) 4,
+      "max-size-time", (guint64) 0, "max-size-bytes", (guint) 0, nullptr);
+}
+
 /* Build the static video tail for profile index idx (-1 = decodebin
  * fallback). Elements are added, given the device context and linked;
  * on_demux_pad_added only links the demux pad to p->vhead. */
@@ -1448,29 +1491,31 @@ build_video_chain_static (TcsPlayer* p, int idx)
      * src pad is already decoded raw video. videoconvert -> d3d11upload ->
      * d3d11colorconvert keeps the shared-ring delivery contract (CPU decode,
      * GPU lease) with the format conversion on the GPU (V11-h). */
+    p->vqueue = gst_element_factory_make ("queue", nullptr);
     p->vhead = gst_element_factory_make ("videoconvert", nullptr);
     p->vupload = gst_element_factory_make ("d3d11upload", nullptr);
     p->vgpuconvert = gst_element_factory_make ("d3d11colorconvert", nullptr);
     create_appsink_tail (p, TRUE);
-    if (!p->vhead || !p->vupload || !p->vgpuconvert || !p->vcaps || !p->appsink) {
+    if (!p->vqueue || !p->vhead || !p->vupload || !p->vgpuconvert || !p->vcaps || !p->appsink) {
       set_error (p, "fallback chain factory failed");
       return FALSE;
     }
-    gst_bin_add_many (GST_BIN (p->pipeline), p->vhead, p->vupload,
+    configure_video_queue (p->vqueue);
+    gst_bin_add_many (GST_BIN (p->pipeline), p->vqueue, p->vhead, p->vupload,
         p->vgpuconvert, p->vcaps, p->appsink, nullptr);
     give_device_context (p, p->vhead);
     give_device_context (p, p->vupload);
     give_device_context (p, p->vgpuconvert);
     give_device_context (p, p->pipeline);
-    if (!gst_element_link_many (p->vhead, p->vupload, p->vgpuconvert,
+    if (!gst_element_link_many (p->vqueue, p->vhead, p->vupload, p->vgpuconvert,
             p->vcaps, p->appsink, nullptr)) {
       set_error (p, "fallback chain link failed");
       return FALSE;
     }
     {
-      GstElement* chain[] = { p->vhead, p->vupload, p->vgpuconvert,
+      GstElement* chain[] = { p->vqueue, p->vhead, p->vupload, p->vgpuconvert,
           p->vcaps, p->appsink };
-      log_video_chain ("decodebin-fallback", chain, 5);
+      log_video_chain ("decodebin-fallback", chain, 6);
     }
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->decoder_name = "decodebin(sysmem)";
@@ -1481,6 +1526,7 @@ build_video_chain_static (TcsPlayer* p, int idx)
   gboolean d3d = strstr (prof->conv, "d3d11") != nullptr;
 
   GstElement* head = nullptr;
+  p->vqueue = gst_element_factory_make ("queue", nullptr);
   p->vparse = prof->parse ? gst_element_factory_make (prof->parse, nullptr) : nullptr;
   p->vdec = prof->dec ? gst_element_factory_make (prof->dec, nullptr) : nullptr;
   apply_decode_thread_env (p->vdec);
@@ -1492,15 +1538,17 @@ build_video_chain_static (TcsPlayer* p, int idx)
   p->vupload = d3d ? nullptr : gst_element_factory_make ("d3d11upload", nullptr);
   p->vgpuconvert = d3d ? nullptr : gst_element_factory_make ("d3d11colorconvert", nullptr);
   create_appsink_tail (p, TRUE);
-  if (!p->vconvert || !p->vcaps || !p->appsink ||
+  if (!p->vqueue || !p->vconvert || !p->vcaps || !p->appsink ||
       (prof->parse && !p->vparse) || (prof->dec && !p->vdec) ||
       (!d3d && (!p->vupload || !p->vgpuconvert))) {
     set_error (p, "chain factory failed for profile %s", prof->name);
     return FALSE;
   }
-  head = p->vparse ? p->vparse : (p->vdec ? p->vdec : p->vconvert);
+  configure_video_queue (p->vqueue);
+  head = p->vqueue;
   p->vhead = head;
 
+  gst_bin_add (GST_BIN (p->pipeline), p->vqueue);
   if (p->vparse) gst_bin_add (GST_BIN (p->pipeline), p->vparse);
   if (p->vdec) gst_bin_add (GST_BIN (p->pipeline), p->vdec);
   gst_bin_add (GST_BIN (p->pipeline), p->vconvert);
@@ -1516,7 +1564,7 @@ build_video_chain_static (TcsPlayer* p, int idx)
   if (p->vgpuconvert) give_device_context (p, p->vgpuconvert);
   give_device_context (p, p->pipeline);
 
-  GstElement* chain[] = { p->vparse, p->vdec, p->vconvert, p->vupload,
+  GstElement* chain[] = { p->vqueue, p->vparse, p->vdec, p->vconvert, p->vupload,
       p->vgpuconvert, p->vcaps, p->appsink, nullptr };
   int nChain = (int) (sizeof (chain) / sizeof (chain[0])) - 1;
   GstElement* prev = nullptr;
@@ -1648,12 +1696,15 @@ build_audio_chain (TcsPlayer* p, gboolean need_audio_decode)
    * decodebin never completes the bin PAUSED transition and stalls video
    * preroll). The decoder output can be non-interleaved F32LE, which volume
    * rejects: the first audioconvert accepts it (S1 fix), the second
-   * negotiates the sink format. When autoaudiosink is unusable the sink is
-   * fakesink sync=true so video playback is unaffected. */
+   * negotiates the sink format and audioresample converts to the device rate
+   * (D12: a 44.1kHz source must not fail against a 48kHz shared-mode sink).
+   * When autoaudiosink is unusable the sink is fakesink sync=true so video
+   * playback is unaffected; the resampler stays in that path too. */
   p->aconvert = gst_element_factory_make ("audioconvert", nullptr);
   p->aqueue = gst_element_factory_make ("queue", nullptr);
   p->avolume = gst_element_factory_make ("volume", nullptr);
   p->aconvert2 = gst_element_factory_make ("audioconvert", nullptr);
+  p->aresample = gst_element_factory_make ("audioresample", nullptr);
   bool is_fake = p->use_fakesink;
   GstElement* sink = nullptr;
   if (!is_fake)
@@ -1663,7 +1714,7 @@ build_audio_chain (TcsPlayer* p, gboolean need_audio_decode)
     is_fake = true;
   }
   p->asink = sink;
-  if (!p->aconvert || !p->aqueue || !p->avolume || !p->aconvert2 || !p->asink)
+  if (!p->aconvert || !p->aqueue || !p->avolume || !p->aconvert2 || !p->aresample || !p->asink)
     return FALSE;
   if (is_fake)
     g_object_set (p->asink, "sync", TRUE, nullptr);
@@ -1685,9 +1736,9 @@ build_audio_chain (TcsPlayer* p, gboolean need_audio_decode)
         G_CALLBACK (on_audio_bin_pad_added), p);
   }
   gst_bin_add_many (GST_BIN (p->pipeline), p->aconvert, p->aqueue, p->avolume,
-      p->aconvert2, p->asink, nullptr);
+      p->aconvert2, p->aresample, p->asink, nullptr);
   if (!gst_element_link_many (p->aconvert, p->aqueue, p->avolume,
-        p->aconvert2, p->asink, nullptr)) {
+        p->aconvert2, p->aresample, p->asink, nullptr)) {
     set_error (p, "audio tail link failed");
     return FALSE;
   }
@@ -1770,6 +1821,8 @@ on_demux_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user)
         gst_element_sync_state_with_parent (p->avolume);
       if (p->aconvert2)
         gst_element_sync_state_with_parent (p->aconvert2);
+      if (p->aresample)
+        gst_element_sync_state_with_parent (p->aresample);
       if (p->asink)
         gst_element_sync_state_with_parent (p->asink);
     }
@@ -1917,6 +1970,7 @@ handle_bus_message (TcsPlayer* p, GstMessage* msg)
       std::lock_guard<std::mutex> g (p->frame_lock);
       p->failed = true;
       p->last_error = e ? e->message : "stream error";
+      p->last_bus_error = p->last_error;
       LOG ("bus error: %s", p->last_error.c_str ());
       if (e)
         g_error_free (e);
@@ -1990,6 +2044,7 @@ teardown_pipeline (TcsPlayer* p)
   p->appsink = nullptr;
   p->vcaps = nullptr;
   p->vhead = nullptr;
+  p->vqueue = nullptr;
   p->vparse = nullptr;
   p->vdec = nullptr;
   p->vconvert = nullptr;
@@ -2001,6 +2056,7 @@ teardown_pipeline (TcsPlayer* p)
   p->avolume = nullptr;
   p->aconvert = nullptr;
   p->aconvert2 = nullptr;
+  p->aresample = nullptr;
   p->asink = nullptr;
   p->adecodebin = nullptr;
   p->video_rewrite_installed = false;
@@ -2147,6 +2203,11 @@ static int
 build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int paused)
 {
   const uint64_t t_load = qpc_now ();
+  {
+    /* O1: the appended bus error must belong to this load, not a previous one. */
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    p->last_bus_error.clear ();
+  }
   const char* demux_name = select_demux_for_path (utf8_path);
   gboolean ext_is_decodebin = demux_is_decodebin (demux_name);
 
@@ -2262,6 +2323,12 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     p->load_priming = (paused != 0) && p->audioEnabled;
     p->audio_sink_buffers.store (0, std::memory_order_relaxed);
 
+    /* D14: run the bus thread during the state wait so a bus ERROR (an
+     * unsupported profile) aborts this attempt at once instead of burning the
+     * fixed 3 s + 3 s timeout per mismatched profile. */
+    p->bus_running = true;
+    p->bus_thread = std::thread (bus_loop, p);
+
     GstStateChangeReturn scr = gst_element_set_state (p->pipeline, GST_STATE_PLAYING);
     set_state_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     t_anchor = qpc_now ();
@@ -2273,14 +2340,21 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     /* The d3d11 decoder + video-processor converter only emit in PLAYING,
      * so we bring the pipeline up to PLAYING to obtain the first frame,
      * then drop back to PAUSED for a paused load (matches "first frame
-     * visible while paused"). */
-    gst_element_get_state (p->pipeline, nullptr, nullptr, 3 * GST_SECOND);
-
-    p->bus_running = true;
-    p->bus_thread = std::thread (bus_loop, p);
-
-    if (scr == GST_STATE_CHANGE_ASYNC)
-      gst_element_get_state (p->pipeline, nullptr, nullptr, 3 * GST_SECOND);
+     * visible while paused"). D14: poll in 100 ms slices and leave as soon
+     * as the bus reports an error (or the target state is reached). */
+    for (int i = 0; i < 30; i++) {
+      GstStateChangeReturn sr =
+          gst_element_get_state (p->pipeline, nullptr, nullptr, 100 * GST_MSECOND);
+      if (sr != GST_STATE_CHANGE_ASYNC)
+        break;
+      bool failed;
+      {
+        std::lock_guard<std::mutex> g (p->frame_lock);
+        failed = p->failed;
+      }
+      if (failed)
+        break;
+    }
     preroll_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
 
     bool done = false;
@@ -2426,7 +2500,15 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     return TCS_OK;
   }
 
-  set_error (p, "all video profiles failed for %s", utf8_path);
+  std::string last_bus;
+  {
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    last_bus = p->last_bus_error;
+  }
+  if (last_bus.empty ())
+    set_error (p, "all video profiles failed for %s", utf8_path);
+  else
+    set_error (p, "all video profiles failed for %s (last: %s)", utf8_path, last_bus.c_str ());
   return TCS_ERR_NOT_LOADED;
 }
 
