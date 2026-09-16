@@ -20,6 +20,8 @@
 ```powershell
 # 先に shim の Release ビルド（package-release.ps1 は native\gst-shim\build-release\tcs_gstreamer.dll を要求する）
 powershell -File native\gst-shim\build-shim.ps1 -Config Release
+# csproj は native\tcs_gstreamer.dll があればそれを bin へコピーするので、Release の shim をそこへ置いてからパッケージする（終わったら消して Debug の shim に戻す）
+Copy-Item native\gst-shim\build-release\tcs_gstreamer.dll native\tcs_gstreamer.dll
 # Release ビルド + zip + setup.exe（Inno Setup、GStreamer ランタイム同梱、VC++ 再配布の連鎖）
 powershell -File scripts\package-release.ps1            # Version は csproj から読む
 #   必要なら -InnoSetupCompiler / -GStreamerRoot / -VcRedistPath を明示
