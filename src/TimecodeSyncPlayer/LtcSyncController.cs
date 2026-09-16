@@ -53,6 +53,9 @@ internal sealed class LtcSyncController
     /// <summary>T2: age として受け付ける上限。停止や時計の不一致を同期値へ持ち込まない。</summary>
     internal const double MaxSampleClockAgeSeconds = 0.5;
 
+    /// <summary>U1: 再適用（GapBehaviorChanged 等）からの age 計算であることを示す発生元。</summary>
+    private const string ReapplyAgeSource = "reapply";
+
     private readonly PlaylistState _playlist;
     private readonly GapFreezeHandler _gap;
     private readonly TimecodeSyncService _syncService;
@@ -155,15 +158,44 @@ internal sealed class LtcSyncController
     {
         _pendingSyncSeconds = null;
         LtcSyncContext state = _effects.GetContext();
-        if (_lastAcceptedLtcSeconds is not null && state.IsMonitoring &&
-            state.SyncEnabled && !state.IsSeeking && !_signalLoss.ShouldSuppressSync)
+        if (_lastAcceptedLtcSeconds is null || !state.IsMonitoring ||
+            !state.SyncEnabled || state.IsSeeking || _signalLoss.ShouldSuppressSync)
+            return;
+
+        bool stale = IsStaleReapply();
+        if (_sampleClockEnabled && _lastAcceptedFrameEndTimestamp > 0)
+            Log.Debug("LTC sample clock: reapply ageMs={AgeMs:F1} deferred={Deferred}",
+                ReapplyAgeMilliseconds(), stale);
+
+        if (stale)
         {
-            if (_sampleClockEnabled && _lastAcceptedFrameEndTimestamp > 0)
-                Log.Debug("LTC sample clock: reapply ageMs={AgeMs:F1}",
-                    (_getQpc() - _lastAcceptedFrameEndTimestamp) * 1000.0 / Stopwatch.Frequency);
-            RequestSync(_lastAcceptedRawSeconds, _lastAcceptedFrameEndTimestamp, "reapply");
+            // U1: 最後のフレーム終端から 0.5 秒より古い再適用では同期要求（シーク目標）を
+            // 出さず、次の有効フレームに任せる。ギャップ表示の切替は ApplySync の
+            // ギャップ分岐が即時に行う（gapDisplayOnly）。
+            ApplySync(EffectiveSeconds(_lastAcceptedRawSeconds, _lastAcceptedFrameEndTimestamp, ReapplyAgeSource),
+                gapDisplayOnly: true);
+            return;
         }
+
+        RequestSync(_lastAcceptedRawSeconds, _lastAcceptedFrameEndTimestamp, ReapplyAgeSource);
     }
+
+    /// <summary>
+    /// U1: 再適用時点で最後のフレーム終端が 0.5 秒より古い（停止前の値である）か。
+    /// サンプル時計 off では age を使わないため常に false。
+    /// </summary>
+    private bool IsStaleReapply()
+    {
+        if (!_sampleClockEnabled || _lastAcceptedFrameEndTimestamp <= 0)
+            return false;
+        double ageSeconds = (_getQpc() - _lastAcceptedFrameEndTimestamp) / (double)Stopwatch.Frequency;
+        return ageSeconds is < 0 or > MaxSampleClockAgeSeconds;
+    }
+
+    private double ReapplyAgeMilliseconds() =>
+        _lastAcceptedFrameEndTimestamp <= 0
+            ? 0.0
+            : (_getQpc() - _lastAcceptedFrameEndTimestamp) * 1000.0 / Stopwatch.Frequency;
 
     public void CancelPendingSync()
     {
@@ -232,7 +264,9 @@ internal sealed class LtcSyncController
 
     /// <summary>
     /// フレーム終端からハンドラが動くまでの経過。0〜0.5 秒の外は足さず、1 回だけ警告する
-    /// （時計の不一致や停止の取り違えを同期値へ持ち込まない）。
+    /// （時計の不一致や停止の取り違えを同期値へ持ち込まない）。U1: 再適用の age は
+    /// 「信号停止前に受けたフレームの古さ」でフレーム経路の遅延ではないため、警告は
+    /// frame/tick のときだけに使い、再適用では消費しない。
     /// </summary>
     private double SampleClockAgeSeconds(long frameEndTimestamp, string source)
     {
@@ -241,7 +275,7 @@ internal sealed class LtcSyncController
         double age = (_getQpc() - frameEndTimestamp) / (double)Stopwatch.Frequency;
         if (age is < 0 or > MaxSampleClockAgeSeconds)
         {
-            if (!_sampleClockAgeWarned)
+            if (!_sampleClockAgeWarned && !string.Equals(source, ReapplyAgeSource, StringComparison.Ordinal))
             {
                 _sampleClockAgeWarned = true;
                 Log.Warning(
@@ -493,7 +527,7 @@ internal sealed class LtcSyncController
             Log.Information("LTC signal restored: playback resumed resumeFrames={ResumeFrames}", state.SignalResumeFrames);
     }
 
-    private SyncRequestResult ApplySync(double seconds)
+    private SyncRequestResult ApplySync(double seconds, bool gapDisplayOnly = false)
     {
         _lastContinueFrame = null;
         LtcSyncContext state = _effects.GetContext();
@@ -502,6 +536,9 @@ internal sealed class LtcSyncController
             return SyncRequestResult.Complete;
         if (state.Mode != SyncMode.Continue)
         {
+            // U1: 古い再適用では Single の同期（シーク目標）も次の有効フレームに任せる。
+            if (gapDisplayOnly)
+                return SyncRequestResult.Complete;
             if (state.SyncEnabled && !state.IsSeeking && _playlist.Current != null)
                 _effects.ResumeProjectRestorePause();
             return _single().Apply(seconds);
@@ -514,6 +551,10 @@ internal sealed class LtcSyncController
         switch (result.Status)
         {
             case TimelineQueryStatus.OnTrack:
+                // U1: 古い再適用では OnTrack の同期（シーク・トラック切替・pause 解除）も
+                // 次の有効フレームに任せる。ギャップ表示の切替は下の分岐だけが行う。
+                if (gapDisplayOnly)
+                    return SyncRequestResult.Complete;
                 _effects.ResumeProjectRestorePause();
                 ContinueFrameContext frame = _continue().HandleFrame(result, seconds);
                 _lastContinueFrame = frame;
