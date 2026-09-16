@@ -43,7 +43,7 @@ param(
     # V10: a project without Canvas opens CanvasSelectDialog before the main window is usable.
     [ValidateSet('', 'Ok', 'Cancel')][string]$CanvasDialog = '',
     [switch]$AudioProbe,
-    [string]$AudioProbeExe = 'C:\Users\<user>\Documents\timecode-sync-player\scripts\AudioLoopbackProbe\bin\Debug\net8.0-windows\AudioLoopbackProbe.exe'
+    [string]$AudioProbeExe = (Join-Path $PSScriptRoot '..\AudioLoopbackProbe\bin\Debug\net8.0-windows\AudioLoopbackProbe.exe')
 )
 $ErrorActionPreference = 'Stop'
 
@@ -103,7 +103,7 @@ public static class AppOutputCapture {
 }
 '@
 }
-$receiverExe = 'C:\Users\<user>\Downloads\Spout-SDK-examples_2-007-017\Spout-SDK-examples\Examples_2-007-017\SpoutDX\WinSpoutDXreceiver.exe'
+$receiverExe = Join-Path $env:USERPROFILE 'Downloads\Spout-SDK-examples_2-007-017\Spout-SDK-examples\Examples_2-007-017\SpoutDX\WinSpoutDXreceiver.exe'
 $session = (query session 2>$null | Select-String '>console') -ne $null
 if (-not $session) { throw 'Not a console session; refusing to run a display test.' }
 $busy = Get-Process | Where-Object { $_.ProcessName -match '^(TimecodeSyncPlayer|GpuOutputProbe|WinSpoutDXreceiver|gst-launch-1.0|tcs-shim-test)$' }

@@ -19,11 +19,11 @@ param(
     [Parameter(Mandatory)][string]$LogRoot
 )
 $ErrorActionPreference = 'Stop'
-$root = 'C:\Users\<user>\Documents\timecode-sync-player\.superpowers\worktrees\session-refactor'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location $root
 $runner = Join-Path $root 'scripts\GpuOutputProbeHarness\Run-GpuOutputProbe.ps1'
 $app = Join-Path $root 'scripts\GpuOutputProbe\bin\Debug\net8.0-windows\GpuOutputProbe.exe'
-$receiver = 'C:\Users\<user>\Downloads\Spout-SDK-examples_2-007-017\Spout-SDK-examples\Examples_2-007-017\SpoutDX\WinSpoutDXreceiver.exe'
+$receiver = Join-Path $env:USERPROFILE 'Downloads\Spout-SDK-examples_2-007-017\Spout-SDK-examples\Examples_2-007-017\SpoutDX\WinSpoutDXreceiver.exe'
 $before = @(Get-ChildItem -Directory (Join-Path $root $LogRoot) -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 $args = @{
     AppExe=$app; ReceiverExe=$receiver; ReceiverMode='official'; Mode='split'; Output='both'

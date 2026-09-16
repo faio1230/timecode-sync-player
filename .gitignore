@@ -11,3 +11,6 @@ native/gst-shim/proto/build-*/
 .dotnet/
 .superpowers/
 __pycache__/
+
+# 個人環境のパス一覧（公開しない）
+docs/local/

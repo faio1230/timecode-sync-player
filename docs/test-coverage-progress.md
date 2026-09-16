@@ -1256,7 +1256,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 - 失敗時ログでは `CABLE Output` から peak 0.985、約25fps、2秒あたり47〜51 decoded framesを正常受信して
   いた。一方、テストは信号開始から2秒以内の初期表示を取得できず、開始窓を越えた値を以後受理しない
   状態だった。CABLE Input / Output / In 16ch はすべて Present / OK。QA-002全ツリー列挙単独テストは合格。
-- `query session` ではユーザー `<host>` のsession 1が `Disc`、ユーザーのないconsole session 4が
+- `query session` ではユーザー `<user>` のsession 1が `Disc`、ユーザーのないconsole session 4が
   `Conn` だった。2026-07-17の既知事例と同様、Active consoleではない状態が実機LTC/UIA取得タイミングを
   崩している可能性が高い。Active consoleまたは対話デスクトップへ復帰後、まず上記単独E2Eを再測定し、
   合格を確認してからX1全E2Eゲートを再開すること。
@@ -1265,7 +1265,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 
 ### v0.3 X1 外部環境blocked確定（2026-07-18）
 
-- 3回目の継続監査でも `query session` はユーザー `<host>` のsession 1が `Disc`、ユーザーのない
+- 3回目の継続監査でも `query session` はユーザー `<user>` のsession 1が `Disc`、ユーザーのない
   console session 4が `Conn` のままで、Active console／対話デスクトップは復旧していなかった。
 - 同一条件は、X1全E2E失敗時、`main@03b2300` 比較診断時、今回の再監査の3ターン連続で確認した。
   実機LTC全件グリーンが必須であり、既存テストのSkip化・待機窓緩和・アサーション弱体化は禁止のため、
@@ -1279,7 +1279,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 
 ### v0.3 X1 環境復旧後の完了（2026-07-18）
 
-- ユーザー `<host>` が console session 1で `Active`、CABLEエンドポイント全可視、デスクトップ直下
+- ユーザー `<user>` が console session 1で `Active`、CABLEエンドポイント全可視、デスクトップ直下
   11要素のUIA列挙106msとなった環境で再開した。停止記録どおり最初に
   `CableLoop_ContinueBlackGap_WhenSwitchingToSingle_RestoresVideoStateImmediately` を単独実行し、
   1/1件合格（9秒）を確認した。
