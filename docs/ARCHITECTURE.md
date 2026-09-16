@@ -1,13 +1,13 @@
 # アーキテクチャ
 
 TimecodeSyncPlayer の内部構造について、データフロー・スレッドモデル・主要コンポーネント・
-mpv連携やLTC同期の実装上の要点をまとめる。
+GStreamer 連携やLTC同期の実装上の要点をまとめる。
 
 ---
 
 ## 1. データフロー
 
-### CPU 出力経路（OutputBackend=Cpu、既定）
+### CPU 出力経路（OutputBackend=Cpu。**段 3 で除去予定**。記述は除去まで現状を残す）
 
 ```
 [マイク/ライン入力] → NAudio WASAPI → LtcAudioMonitor
@@ -21,18 +21,20 @@ mpv連携やLTC同期の実装上の要点をまとめる。
                                              ↓
                                    SyncDecisionEngine.Decide()
                                              ↓ （Seek / None）
-                              MainWindowのI/O境界 → mpv_command("seek")
+                              MainWindowのI/O境界 → IMpvApi.CommandString("seek")
                                              ↓
-                              RenderSession / mpv SW render context
-                              （専用レンダースレッド）
+                                   GstMpvApiAdapter → tcs_gstreamer.dll
+                                             ↓
+                              RenderSession / レンダーコンテキスト
+                              （GstMpvRenderApiAdapter、専用レンダースレッド）
                                              ↓
                               最大1枚の待機画像（コピー・世代・順序番号）
                                              ↓
                               UIスレッド（直列公開処理）
                                       ↙              ↘
-                              WriteableBitmap     SpoutOutput.SendFrame()
+                              WriteableBitmap     ISpoutOutput.SendFrame()
                                       ↓                       ↓
-                              Image コントロール          SpoutDX.dll
+                              Image コントロール         SpoutDX / shim 経由
 ```
 
 LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し、`LtcAudioMonitor` がPCMサンプルを
@@ -40,20 +42,20 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
 フレームをDispatcher経由で `LtcSyncController` へ渡す。controllerはフレーム診断・信号断の
 抑止条件を評価し、Single/Continue/Gapに応じた既存Coordinatorを実行する。
 `SyncDecisionEngine` は現在の再生位置との差分からシークすべきかどうかを判定する。
-シークが必要と判定された場合、UIスレッド上でmpvへ`seek`コマンドを発行する。mpvの
-ソフトウェアレンダリングAPIは専用レンダースレッドで実行し、描画結果をUIスレッド上で
-`WriteableBitmap`へ転送する。同じUIスレッド上の直列公開処理からSpout2出力にも渡す。
+シークが必要と判定された場合、UIスレッド上で再生API（`IMpvApi` 越し。段 4 で型付き API に
+置換予定）へシークを発行し、`GstMpvApiAdapter` が shim の `tcs_player_seek` を呼ぶ。
+CPU 経路では `GstMpvRenderApiAdapter` が shim のリース画像を専用レンダースレッドで
+bgr0 バッファへコピーし、描画結果をUIスレッド上で `WriteableBitmap` へ転送する。
+同じUIスレッド上の直列公開処理からSpout出力にも渡す。
 
-### GPU 出力経路（OutputBackend=Gpu）
+### GPU 出力経路（OutputBackend=Gpu、既定）
 
-`OutputBackend=Gpu`では、mpvのSW描画スレッドが作ったスナップショットをGPU workerへ渡し、
-D3D11上で固定キャンバスへ合成してから全画面・Spout・プレビューへ配る。UIはタイムライン状態
-（世代・Gap・テストカード・キャンバス・配置・位置）を不変レコードのmailboxで渡し、
-出力側はクリップやシークの判断を持たない。
+`OutputBackend=Gpu`では、GStreamer shimが自前デバイスでデコードしたフレームを共有リングで
+GPU workerへ渡し、D3D11上で固定キャンバスへ合成してから全画面・Spout・プレビューへ配る。
+UIはタイムライン状態（世代・Gap・テストカード・キャンバス・配置・位置）を不変レコードの
+mailboxで渡し、出力側はクリップやシークの判断を持たない。
 
 ```text
-mpv描画スレッド ─ RenderedFrameSnapshot ─▶ MpvSnapshotSource（4 slot、GPUアップロード、3枚リング）
-                                                          │
 GStreamer shim（自前デバイス）─ NT共有3枚＋共有フェンス（値=seq）─▶ GStreamerSource
                                                           │
 UIスレッド ─ TimelineOutputState mailbox ───────────────▶ GPU worker（OutputEngine.GPU）
@@ -70,8 +72,7 @@ UIスレッド ─ コマンド（全画面HWND、キャンバス、カード、
 ```
 
 - **ソース**: `IVideoSource`契約（世代排除・最新優先・準備不可はNotReady・有限lease・非ブロッキング）。
-  mpvはCPU画素をGPUへアップロードし、完了クエリでGPUコピー完了を確認してからリングへ公開する。
-  GStreamerはshimが別デバイスでデコードし、3枚の共有リングへコピーして`seq`を共有フェンスで
+  GStreamerではshimが別デバイスでデコードし、3枚の共有リングへコピーして`seq`を共有フェンスで
   Signalする。合成側は描画前に`Context4::Wait(fence, seq)`をGPUキューへ積むだけでCPUは待たない。
 - **合成**: 合成画像は常に3枚のpool。読者0の面に書き、GPU完了後に最新として公開する。
   読者はleaseを取り、GPU使用完了まで返さない（読者→書き手の安全）。
@@ -87,7 +88,7 @@ UIスレッド ─ コマンド（全画面HWND、キャンバス、カード、
   （全画面中10Hz、それ以外30Hz）。
 - **終了**: 全画面用の子HWNDの破棄より先にswapchainを切断する。
 
-`OutputBackend=Cpu`の経路は設定で選択でき、従来どおり残す。
+`OutputBackend=Cpu`の経路は設定で選択できるが、**段 3（CPU 合成の除去）で削除予定**。除去まで上の記述を現状として残す。
 
 ## 2. スレッドモデル
 
@@ -99,25 +100,26 @@ UIスレッド ─ TimelineOutputState（mailbox）／コマンド（有限queue
     ▲                                                                  │
     │ プレビュー配列・GPU状態通知（Dispatcher.BeginInvoke、待たない）     │
     └──────────────────────────────────────────────────────────────────┘
-mpv描画スレッド ─ スナップショット（mailbox）─────────────────────▶ GPU worker
 GPU worker ─ 合成pool（NT共有＋共有フェンス）───────────────────▶ Spout worker（別デバイス）
 GStreamerストリーミングスレッド ─ 共有リング＋共有フェンス（別デバイス）─▶ GPU worker
+GStreamer shim ─ フレーム通知（コールバック）─────────▶ RenderSession ─▶ UIスレッド
 ```
 
 - **UIスレッド（WPFメインスレッド）**: シークコマンドの発行、`WriteableBitmap`への描画更新、
   ユーザー操作（プレイリスト編集・再生制御）の処理を担う。GPU経路ではさらに、タイムライン状態の
   mailbox公開、全画面HWND・キャンバス・カード・世代のコマンド発行、GPU状態通知とプレビュー画像の
   反映を担う。
-- **専用レンダースレッド**: mpvレンダーコンテキストの作成・更新・描画・解放を直列に実行する。
-  ターゲット時刻まで待機するmpv描画処理をUIスレッドから分離し、再生中もユーザー操作と
-  UI Automation要求へ応答できるようにする。
+- **専用レンダースレッド（`RenderSession`）**: レンダーコンテキストの作成・更新・解放を直列に実行する。
+  CPU 経路では `GstMpvRenderApiAdapter.RenderContextRender` のリース画像コピーもこのスレッドで実行し、
+  UIスレッドから分離する（段 3 後はフレーム通知の駆動と寿命管理のみ）。
 - **オーディオスレッド（NAudio WASAPIコールバック）**: `LtcAudioMonitor`がこのスレッド上で
   PCMサンプルを受け取り、LTCデコードを行う。UIスレッドとは別スレッドで動作するため、
   デコード結果をUIスレッドに引き渡す際はスレッドセーフな手段（Dispatcher経由など）を使う。
-- **mpv内部スレッド**: mpvのレンダー更新コールバックはmpv自身のスレッドから呼び出される。
-  コールバックは専用レンダースレッドへ直接処理を予約する。UIの位置取得や操作完了を待たず、
-  FRAME要求ごとに描画する。画像をコピーしてからUIへ公開を予約する。1つの予約で1回だけ描画し、
-  連続する更新が明示的な再描画・Freeze取得・終了処理を待たせ続けないようにする。
+- **GStreamer shim のコールバック**: shimのフレーム通知は shim が作ったデバイスのスレッドから
+  呼び出される。`GstBackendState` がデリゲートの寿命を保持して `RenderSession` へ転送し、
+  UIはそれを `Dispatcher.BeginInvoke` で処理する。コールバック内でUIの位置取得や操作完了を
+  待たない。画像のコピーとUIへの公開予約は別スレッドで行い、連続する更新が明示的な再描画・
+  Freeze取得・終了処理を待たせ続けないようにする。
 - **GPU worker（`OutputEngine.GPU`、`OutputBackend=Gpu`時のみ）**: 合成pool・合成・全画面
   swapchain・Present・vblank統計・プレビュー読み戻し・ソースleaseを所有する。D3D11のimmediate
   contextはこのスレッドのもので、他スレッドが触る資源は共有フェンスで同期する。UIからは
@@ -135,20 +137,20 @@ GStreamerストリーミングスレッド ─ 共有リング＋共有フェン
 |---|---|
 | `MainWindow.xaml.cs` | メインウィンドウのコードビハインド。UIイベントとI/O境界を制御クラスへ接続する |
 | `LtcSyncController.cs` | LTCフレーム受信・信号断・表示状態とSingle/Continue/Gapへの分岐を統合し、本番と統合テストで共用する |
-| `RenderSession.cs` | render context・専用スレッド・callback・パラメータ・ピクセルバッファ・世代・公開ゲートを所有し、描画の開始から停止までを管理する |
-| `FrameRenderer.cs` | `WriteableBitmap`の保持とmpvから受け取ったフレームバッファの描画を担当 |
-| `RenderFrameWorker.cs` | 描画サイズの判定、mpv描画、UI反映用フレーム情報の受け渡しを直列化する |
-| `RenderedFrameSnapshot.cs` | プールから借りた画像コピーを保持し、待機画像を最大1枚に制限する。UIが使用中の画像を上書きしない |
+| `RenderSession.cs` | レンダーコンテキスト・専用スレッド・callback・パラメータ・ピクセルバッファ・世代・公開ゲートを所有し、CPU 経路の描画開始から停止までを管理する（GPU 経路ではフレーム通知の駆動と寿命管理。CPU 側のスナップショット経路は段 3 で除去予定） |
+| `FrameRenderer.cs` | `WriteableBitmap`の保持と、レンダー API から受け取ったフレームバッファの描画を担当（CPU 経路。段 3 で除去予定） |
+| `RenderFrameWorker.cs` | 描画サイズの判定、レンダー処理、UI反映用フレーム情報の受け渡しを直列化する（CPU 経路。段 3 で除去予定） |
+| `RenderedFrameSnapshot.cs` | プールから借りた画像コピーを保持し、待機画像を最大1枚に制限する。UIが使用中の画像を上書きしない（CPU 経路。段 3 で除去予定） |
 | `GapFreezeCaptureOperation.cs` | 画像コピー成功と現在の取得試行を確認してからFreeze確定状態へ進める |
-| `RenderThreadExecutor.cs` | mpvレンダーAPIを単一の専用スレッド上で実行する |
-| `RenderFramePipelineGate.cs` | 通常・Black・Freezeのフレーム公開と共有バッファ操作を直列化する |
+| `RenderThreadExecutor.cs` | レンダーAPIを単一の専用スレッド上で実行する |
+| `RenderFramePipelineGate.cs` | 通常・Black・Freezeのフレーム公開と共有バッファ操作を直列化する（CPU 経路。段 3 で除去予定） |
 | `LtcDecoder.cs` | libltcに依存しない純C#実装のLTCデコーダ。PCMサンプル列からタイムコードを復元する |
 | `LtcAudioMonitor.cs` | NAudio WASAPIで音声デバイスを監視し、PCMサンプルを`LtcDecoder`に供給する |
 | `SyncDecisionEngine.cs` | LTC秒と現在の再生位置からシークすべきかどうかを判定するロジック |
 | `TimecodeSyncService.cs` | `SyncDecisionEngine`の判定結果とシーク抑制（デバウンス）・ファイルロード状態を統合管理する |
 | `GapFreezeHandler.cs` | トラック間・終端後のギャップ状態を管理するステートマシン（Freeze/Black/通常再生の遷移） |
 | `PlaylistState.cs` | プレイリストの内部状態（トラック一覧・現在位置など）を保持する |
-| `SpoutOutput.cs` | SpoutDXを介したフレーム送信のライフサイクル管理 |
+| `GstSpoutOutput.cs` | shim 所有の spoutDX sender を使う`ISpoutOutput`。通常フレームは GPU テクスチャ、Freeze/Black は CPU 画像を送る |
 | `ViewModels/MainViewModel.cs` | Playlist・Sync・Playerの各ViewModelを集約するルートViewModel |
 | `ViewModels/PlaylistViewModel.cs` | プレイリスト操作コマンドとプレイリストの表示状態を管理 |
 | `ViewModels/SyncViewModel.cs` | LTC開始/停止、同期トグル、同期状態の管理 |
@@ -156,7 +158,10 @@ GStreamerストリーミングスレッド ─ 共有リング＋共有フェン
 | `Contracts/IVideoSource.cs` | 出力側の映像ソース契約。世代排除・最新優先・有限lease・非ブロッキングを定める |
 | `Output/OutputEngine.cs` | GPU出力層。GPU workerとSpout workerを所有し、pool・全画面swapchain・合成・プレビュー・デバイス消失復旧・終了を管理する |
 | `Output/ComposeLayer.cs` | 固定キャンバスへの合成。Held（最後に確定した画像）・Freeze・Black・GapFreeze・テストカードと、配置の選択規則（`ComposeLayerPolicy`）を持つ |
-| `Output/MpvSnapshotSource.cs` | mpvのスナップショット（BGRA配列）をGPU workerでアップロードし、3枚リングで合成層へ供給する`IVideoSource` |
+| `Gst/GstBackendState.cs` | shim（`tcs_gstreamer.dll`）のプレイヤーハンドル・pause ミラー・フレーム通知デリゲートの寿命を所有する |
+| `Gst/GstNativeApi.cs` / `Gst/IGstNativeApi.cs` | shim の C ABI（`tcs_player_*`）の薄いラッパ。テストでは fake を注入する |
+| `Gst/GstMpvApiAdapter.cs` / `Gst/GstCommandTranslator.cs` | 再生操作の境界。`IMpvApi` の文字列コマンド／プロパティを shim 呼び出しへ翻訳する（`loadfile` / `seek` / `stop` / `pause` / `volume` / `mute` / `speed` と取得系のみ。他は no-op。段 4 で型付き API に置換予定） |
+| `Gst/GstMpvRenderApiAdapter.cs` | `IMpvRenderApi` の GStreamer 実装。SW レンダー互換の `RenderParam` を解釈し、CPU 経路ではリース画像を bgr0 へコピーする（コピーは段 3 で除去予定） |
 | `Output/GStreamerSource.cs` | tcs_gstreamer.dllのリースAPIを`IVideoSource`へ適合する。共有リング3枚＋共有フェンスを合成デバイス上で一度だけ開く |
 | `Output/SpoutSender.cs` | Spout送信workerの送信機。別デバイスで保持テクスチャへコピーし、アクセスmutexを要求8msで取得して送信する |
 | `Output/TimelineOutputState.cs` | UIがmailboxでGPU workerへ渡すタイムライン状態（世代・Gap・テストカード・キャンバス・配置・位置） |
@@ -166,32 +171,36 @@ GStreamerストリーミングスレッド ─ 共有リング＋共有フェン
 | `ExitCoordinator.cs`, `ExitTransitions.cs` | 終了確認ダイアログの状態機械（Running→Confirming→ShuttingDown→Exited、Confirming/ShuttingDownからForcing） |
 | `MainWindowResourceDisposer.cs` | 終了手順を定められた順序で段階実行し、例外を集約する |
 
-## 4. mpv SW render の要点
+## 4. GStreamer shim 連携とレンダー境界の要点
 
-- **`vo=libmpv`が必須**: これを設定しないとmpvが自前のウィンドウを開いてしまう。
-  `vo=null`は破棄用VOのため、再生自体は進んでもフレームが`WriteableBitmap`側に届かない。
-- **現在のSW描画では`hwdec=no`を既定とする**: ハードウェアコピー方式のシーク遅延が同期追従を
-  妨げた実測に基づく。CPU負荷と本番素材の性能確認が必要。比較は`SYNC-ACCURACY.md`を参照。
-- **SW render param定数は17〜20**: `MPV_RENDER_PARAM_SW_SIZE=17`, `SW_FORMAT=18`,
-  `SW_STRIDE=19`, `SW_POINTER=20`。古いドキュメントでは6〜9と記載されている場合があるが、
-  これは誤りなので注意。
-- **`MpvRenderParam`は明示的パディングが必要**:
+- **再生は shim（`tcs_gstreamer.dll`）が唯一のバックエンド**: mpv の再生経路は段 2 で削除済み。
+  shim は自前の D3D11 デバイスでデコードし、NT 共有の 3 枚リングと共有フェンスで合成層へ渡す。
+  合成デバイス（`OutputEngine` のもの）とは別で、context は共有しない。
+- **再生操作は現状文字列の翻訳で行われている**: `GstMpvApiAdapter` が `loadfile` / `seek` / `stop` /
+  `frame-step` と `pause` / `volume` / `mute` / `speed` / `time-pos` / `duration` / `container-fps` /
+  `path` / `width` / `height` / `video-codec` / `seeking` を解釈し、それ以外は黙って no-op（または
+  空・-1）を返す。既知の穴（相対シークのカルチャ依存書式、shim のシーク失敗でも 0 を返す）と
+  置き換え案は [V04-STAGE4-TYPED-API-SURVEY-2026-09-16.md](V04-STAGE4-TYPED-API-SURVEY-2026-09-16.md)。
+- **`RenderParam` は明示的パディングが必要**:
   ```csharp
-  struct MpvRenderParam { int Type; int _padding; IntPtr Data; }  // 16バイト
+  struct RenderParam { int Type; int _padding; IntPtr Data; }  // 16バイト
   ```
   `_padding`フィールドを省略するとx64 ABI上でアライメントがずれ、クラッシュの原因になる。
-- **レンダー更新コールバックのデリゲートはフィールドで保持する**:
-  `mpv_render_context_set_update_callback`に渡したデリゲートをローカル変数のみで保持すると、
-  GCに回収されてクラッシュする。`RenderSession`がコンテキストの解放成功までフィールドで保持する。
-- **mpvレンダーAPIは単一の専用スレッドで直列実行する**: `mpv_render_context_render`は
-  ターゲット時刻まで待機することがあるためUIスレッドでは呼ばない。レンダーコンテキストの
-  作成・更新・描画・解放も同じ専用スレッドに揃え、同時呼び出しを避ける。
-- **非同期描画の後着を無効化する**: トラック変更時はレンダー世代を進め、await完了後の旧世代
-  フレームを表示・Spout・Freezeキャッシュへ公開しない。Black/Freezeの遅延描画もゲート取得時に
-  現在のGap判断を再確認し、Gap退出後の古い副作用を破棄する。レンダーcallbackの例外はUIの
-  未処理例外にせずログ境界で処理し、schedulerの完了処理は必ず実行する。
-- **公開順序を逆転させない**: 明示的な再描画で新しい画像を反映した後は、待機していた古い画像を
-  順序番号で破棄する。新しい画像がまだ描画されたに過ぎない場合は、UI使用中の画像を妨げない。
+  SW レンダー param の定数は 17〜20（`SW_SIZE=17`, `SW_FORMAT=18`, `SW_STRIDE=19`, `SW_POINTER=20`）で、
+  `GstMpvRenderApiAdapter` が同じ番号を公開して `RenderFrameParameterBuilder` の配列を解釈する
+  （CPU 経路のコピーは段 3 で除去予定）。
+- **更新コールバックのデリゲートはフィールドで保持する**: shim へ渡したコールバックをローカル変数
+  のみで保持すると GC に回収されてクラッシュする。`GstBackendState` は `_thunk` を、
+  `RenderSession` は `_updateCallback` をコンテキストの解放成功まで保持する。
+- **レンダーAPIは単一の専用スレッドで直列実行する**: レンダーコンテキストの作成・更新・解放
+  （CPU 経路では描画コピーも）を同じ専用スレッドに揃え、同時呼び出しを避ける。
+- **非同期描画の後着を無効化する**（CPU 経路の規則。段 3 まで）: トラック変更時はレンダー世代を
+  進め、await完了後の旧世代フレームを表示・Spout・Freezeキャッシュへ公開しない。Black/Freezeの
+  遅延描画もゲート取得時に現在のGap判断を再確認し、Gap退出後の古い副作用を破棄する。
+  レンダーcallbackの例外はUIの未処理例外にせずログ境界で処理し、schedulerの完了処理は必ず実行する。
+- **公開順序を逆転させない**（CPU 経路。段 3 まで）: 明示的な再描画で新しい画像を反映した後は、
+  待機していた古い画像を順序番号で破棄する。新しい画像がまだ描画されたにすぎない場合は、
+  UI使用中の画像を妨げない。
 - **Freezeはコピー成功後に確定する**: nativeの`seeking=no`、`pause=yes`、パスと位置を確認して
   再描画し、await後にも確認する。画像を最終用バッファへコピーできた場合だけキャッシュを確定する。
   最終画像からさらにframe-stepは送らない。停止後の通知が来なくてもタイマーで再試行・公開し、
@@ -199,10 +208,15 @@ GStreamerストリーミングスレッド ─ 共有リング＋共有フェン
   確定待ちは`Hold`で既に公開した画像を保ち、以前のクリップのFrozenバッファへ切り替えない。
   キャッシュの画素・サイズとhandlerの確定情報がそろった場合だけ最終画像を再公開する。
   動画長が不明な場合も確定情報を作らず、現在の画像を保持する。
+  **GPU 構成では CPU 側フリーズバッファを埋めないため `GapRenderDecision` が `Hold` に落ちる。**
+  判定を合成層の frozen に寄せる変更は段 3 で行う予定。
 - **描画資源の所有者は`RenderSession`**: 内部でバッファ・描画helper・`FrameRenderer`を生成する。
   Windowは`BitmapChanged`をプレビューとFullscreenへ接続し、Gap判断とUI更新を受け持つ。
   native専用バッファとUI公開用バッファを分離し、画像のコピーだけを受け渡す。
   UIバッファの通常/Black/Freeze公開はsession内の同じゲートを通す。
+- **デコード方式は `decodeMode` で選ぶ**: `software` のときだけ起動時に 1 回
+  `tcs_player_set_decode_mode` を呼ぶ。旧 mpv の `hwdec=no` に相当する指定はこの設定に置き換わった
+  （[SETUP.md](SETUP.md)）。
 
 ## 5. LTC同期の要点
 
@@ -228,15 +242,15 @@ GStreamerストリーミングスレッド ─ 共有リング＋共有フェン
 
 テストは大きく2種類に分離されている。
 
-- **非E2Eテスト**: mpvやオーディオデバイスなどの実ネイティブDLL・実デバイスに依存せず、
+- **非E2Eテスト**: GStreamer shimやオーディオデバイスなどの実ネイティブDLL・実デバイスに依存せず、
   フェイク実装（Contracts配下のインターフェースに対するテストダブル）経由でロジックを検証する。
   CI環境やネイティブDLLがない環境でも実行できる。
 - **同期の統合テスト**: `SyncScenarioHarness` は本番と同じ `LtcSyncController` を呼ぶ。
-  受信済みフレームからの制御を共用し、mpv・表示の境界を記録する。生LTCフレームの診断と
+  受信済みフレームからの制御を共用し、再生・表示の境界を記録する。生LTCフレームの診断と
   同期抑止、停止通知の再入、デバイス列挙エラー表示の維持はcontrollerの振る舞いで検証する。
 - **E2Eテスト（FlaUI）**: FlaUIを用いて実際にアプリケーションを起動し、UI操作を通じて
-  エンドツーエンドの挙動を検証する。実行には`scripts/get-mpv.ps1`で導入する
-  `libmpv-2.dll`（または互換用`mpv-2.dll`）などのネイティブDLLと実機環境が必要。
+  エンドツーエンドの挙動を検証する。実行には `native/tcs_gstreamer.dll` と GStreamer ランタイム、
+  必要に応じて `SpoutDX.dll` などのネイティブDLLと実機環境が必要（[SETUP.md](SETUP.md)）。
 - **GPU出力の管理テスト**: 合成poolの読み書き規則、vblank判断、lead学習、キャンバス世代の
   破棄規則、GStreamerリングのリース規則、復旧手順、終了状態遷移はGPU非依存の純粋規則として
   xUnitで固定する。実動画のスループット・Spout受信・デバイス消失は実機で確認する
@@ -251,22 +265,22 @@ Spout worker・ソースleaseを所有する。
 
 終了は`ExitCoordinator`（状態機械は`ExitTransitions`）が制御する。×／Alt+F4では確認
 ダイアログを表示し、その間も再生・LTC・出力は継続する。キャンセルでRunningへ戻り、通常終了は
-`MainWindowResourceDisposer`の5段階（新規受付停止 → mpv／GStreamer停止 → 出力停止 →
-全画面終了 → 資源解放）を定められた順序で1つずつ実行する。50ms以上ブロックし得る段階はUIスレッド外で
+`MainWindowResourceDisposer`の5段階（新規受付停止 → 再生停止（ダイアログ表示は「mpv／GStreamer 停止」）→
+出力停止 → 全画面終了 → 資源解放）を定められた順序で1つずつ実行する。50ms以上ブロックし得る段階はUIスレッド外で
 実行し、ダイアログの進捗表示を更新する。強制終了は確認なしで`Environment.Exit(2)`を呼び、
 2秒の番人スレッドでプロセスをKillする。
 
-通常は描画停止 → Fullscreen終了 → timer停止 → render context解放 → mpv終了 → LTC終了 →
+通常は描画停止 → Fullscreen終了 → timer停止 → render context解放 → shim player 破棄 → LTC終了 →
 Spout終了 → timeline終了 → sessionのバッファ・スレッド解放の順に処理する。Gpu経路では
 同じ順序（新規受付停止 → `RenderSession.Stop` → `OutputEngine.Stop`（Spout worker join・
-全lease返却）→ 全画面閉 → mpv／GStreamer終了 → `OutputEngine.Dispose` → CPU Spout →
+全lease返却）→ 全画面閉 → GStreamer（shim）終了 → `OutputEngine.Dispose` → CPU Spout →
 バッファ）で、leaseはGStreamer shimのdestroyより先に返す。
 停止ではnative workerの完了だけを待つ。UIへ戻る非同期パイプラインをUIスレッド上で待たず、
 後着の公開処理は停止フラグで無効化する。
 
 `MainWindowResourceDisposer`は各段階の例外を収集し、独立した後処理を続けてから
 `AggregateException`として呼び出し側へ通知する。render contextの解放に失敗した場合は、
-そのcontextが参照し得るmpv・callback・バッファ・描画スレッドを保持し、LTCやtimelineなどの
+そのcontextが参照し得るshimハンドル・callback・バッファ・描画スレッドを保持し、LTCやtimelineなどの
 独立した後処理を試行する。Window終了では失敗したnative解放を自動再試行しない。
 安全に解放できない資源はプロセス終了まで残るため、終了エラーのログを確認すること。
 LTC通知はDispatcherへ渡す前と実行時の両方で終了状態を確認し、終了後のtimer tickも無視する。
