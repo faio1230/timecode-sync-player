@@ -199,6 +199,22 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD
   起動時にダイアログを出し、**再生だけを無効**にします（アプリは開いたまま。Cpu 合成へは
   フォールバックしません。設定ファイルは書き換えません）。
 
+### LTC fps モード（24 / 25 / 29.97 / 30）
+
+LTC のフレームレートを Preference の「LTC fps」で選びます（既定 **Auto**）。Auto は受信した
+フレームから自動判定します。判定結果はログの
+`LTC fps resolved mode=... detectedFps=... resolvedFps=...` で確認できます。
+
+| モード | 使う場面 |
+|---|---|
+| **Auto**（既定） | 24 / 25 / 30 は自動判定できます |
+| **Fixed 24 / Fixed 25 / Fixed 30** | Auto の判定を固定したいとき |
+| **Fixed 29.97** | **29.97 ノンドロップの信号を使うときは必須**。LTC のドロップフレームフラグが false のため、Auto では 30 と区別できず 30 として解決されます |
+
+- V3 の LTC fps マトリクス（24 / 25 / 29.97 / 30）は `scripts/run-v3-accuracy.ps1` の
+  `-LtcFps` と `-LtcFpsMode` で指定します。29.97 ノンドロップは `-LtcFpsMode fixed` で実行します
+- 24 / 25 / 30 の Auto 判定が合わない場合は Fixed に切り替え、どのモードで再現したかを記録してください
+
 ### 同期補正モード（T5）
 
 LTC 同期の残差（`effectiveLtcSeconds - playbackSeconds`）をデッドゾーンの内側で詰める方法を選びます。
@@ -232,6 +248,9 @@ Preference の「同期補正」で選べます（既定は **Smooth**）。
 - 適用は**同期の入口で 1 回だけ**（`effectiveLtcSeconds = ltcSeconds + syncOffsetMs / 1000`）。
   同期判断・シーク・クリップ切替・ギャップ出入りがすべて同じ量だけずれます
 - 範囲外の値は clamp され、警告ログが出ます
+- **1 フレーム分の定数を製品は足しません**（2026-09-16 の決定）。フレーム境界の差は素材 fps・
+  LTC fps・音声デバイスのバッファで変わるため、固定値を足すと別の条件で誤差になります。
+  フレーム単位のずれが残る場合は、このオフセットで合わせます
 - **V3 の測定は `0`（既定）で行います。** オフセットは現場の調整手段であり、精度を作る手段ではありません
 
 ### 環境変数
@@ -252,6 +271,6 @@ Preference の「同期補正」で選べます（既定は **Smooth**）。
 |---|---|
 | 映像が表示されない | `native/tcs_gstreamer.dll`またはGStreamerランタイムが未配置です。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
 | Spout出力ボタンが押せない（無効化されている） | `native/SpoutDX.dll` が無いだけです。Spout出力を使わないなら正常な動作であり、修正不要です。 |
-| `outputBackend=1`にしたが映像が出ない | D3D11.4が使えずCpuへフォールバックした可能性があります。ログの`OutputBackend: Gpu を指定されましたが利用できないため Cpu へフォールバックします`を確認してください。 |
-| `backend=1`で再生開始に失敗する | GStreamerランタイム未導入、または`tcs_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
+| `outputBackend=1`で再生できない | D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では、起動時ダイアログを出して**再生だけを無効**にします（Cpu 合成へはフォールバックしません）。表示された原因とログを確認してください。 |
+| 再生開始に失敗する | GStreamerランタイム未導入、または`tcs_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
 | コンソール出力やログの日本語が文字化けする | PowerShellのコンソールエンコーディングをUTF-8に設定してください。<br>`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` |
