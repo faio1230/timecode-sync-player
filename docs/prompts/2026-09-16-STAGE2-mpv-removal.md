@@ -108,3 +108,16 @@
    製品から参照ゼロ。計画 3 節の一覧と合わせて削除単位を決める
 6. `ExitDialogE2ETests.ForceExit_WhileFullscreenAndSpout_ExitsWithCodeTwo` は Spout 有効が前提
    （無効環境は Skip）。段 3 で Spout 経路を触ったらこのテストの前提を再確認する
+
+### 追記: 親の独立検証による差し戻し 3 点の修正（`a784bb8`）
+
+1. `AppSettingsCompatibilityTests` の警告数は**メッセージ本文**（「廃止された設定を無視します」）で
+   絞る。`Log.Logger` はプロセス全体で共有するため、全警告を数えると他テスト・環境の警告を拾って
+   件数が揺れる（親環境では Expected 1 に対し 3 件出た）
+2. `tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj` の mpv Content Include を削除
+   （アプリ側 csproj は `c9d62ee` で削除済み。両方 0 件を確認）
+3. `CLAUDE.md` のプロジェクト構成・データフロー・スレッドモデル・既知のクセ（`vo=libmpv`、
+   SW render param 定数、`MpvRenderParam`）・ネイティブ DLL 表を GStreamer 前提へ更新
+   （段 5 の前倒し。`tcs_gstreamer.dll` + GStreamer ランタイムの記載に差し替え）
+
+- 追記時点の agent-b: `a784bb8`（このメモの初版は `a2320c1`）
