@@ -63,7 +63,7 @@
 
 ## GPU経路（OutputBackend=Gpu）の実機確認
 
-GPU経路はrunner（親worktree `TestResults\gpu-mutex-retry-session-20260910T0752Z\Invoke-AppGpuTrial.ps1`）で
+GPU経路はrunner（`scripts\GpuOutputProbeHarness\Invoke-AppGpuTrial.ps1`）で
 1プロセスずつ実行する。オプションの意味・結果ディレクトリの構成・集計スクリプトは
 [HANDOVER-GPU-OUTPUT-2026-09-12.md](HANDOVER-GPU-OUTPUT-2026-09-12.md) を参照。
 GStreamer×Gpu の検証項目（V1〜V11）の定義と結果は
@@ -117,7 +117,7 @@ GStreamer×Gpu の検証項目（V1〜V11）の定義と結果は
 
 - [ ] `-ExitDialog None`: ×／Alt+F4で確認ダイアログが表示され、再生・LTC・出力が継続する。
       runnerは無操作のため60秒後に未終了をerrorとして記録する（想定内）。確認後は手動で終了する
-- [ ] `-ExitDialog Normal`: `BtnExitNormal`で5手順（新規受付停止→再生停止（ダイアログ表示は「mpv／GStreamer 停止」）→出力停止→
+- [ ] `-ExitDialog Normal`: `BtnExitNormal`で5手順（新規受付停止→再生停止（ダイアログ表示は「GStreamer 停止」）→出力停止→
       全画面終了→資源解放）が進み、終了コード0でプロセスが残らない
 - [ ] `-ExitDialog Force`: `BtnExitForce`で追加確認なしに終了する（終了コード2）。プロセスが残らない
 
