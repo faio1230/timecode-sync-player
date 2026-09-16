@@ -112,15 +112,6 @@ internal sealed class RenderSession : IDisposable
     public event Action<WriteableBitmap>? PreviewBitmapChanged;
 
     /// <summary>
-    /// Gpu backend 時のみ設定する。通常フレームを Retain して GPU 出力層へ渡す（所有権も移す）。
-    /// CPU 側の表示・Spout 公開は行わない。Gap 中のフレームは TimelineOutputState 側で解釈する。
-    /// </summary>
-    internal Action<RenderedFrameSnapshot, int, double>? GpuFrameSink { get; set; }
-
-    /// <summary>スナップショット公開時点の再生位置（秒）。取得できなければ null。</summary>
-    internal Func<double?>? PositionSecondsProvider { get; set; }
-
-    /// <summary>
     /// Gpu 合成層がソース（GStreamer リース等）を直接所有する場合に true。
     /// CPU へのフレームコピー（snapshot 生成）を行わず、UI の順序・ギャップ状態機械だけを回す。
     /// </summary>
@@ -228,24 +219,6 @@ internal sealed class RenderSession : IDisposable
                         if (update.Snapshot != null)
                         {
                             _mailbox.Publish(update.Snapshot);
-                            // Gpu backend: UI を経由せず mpv 専用スレッドから GPU worker へ直接渡す。
-                            // 位置はここ（snapshot 生成側）で読み、UI での再読取はしない。
-                            var sink = GpuFrameSink;
-                            if (sink != null)
-                            {
-                                RenderedFrameSnapshot retained = update.Snapshot.Retain();
-                                double position = PositionSecondsProvider?.Invoke() ?? 0;
-                                // 計測専用（出力トレース有効時のみ）。mpv スレッドで新しいフレームが
-                                // GPU 経路へ渡った時刻 c を同じ QPC で残す。
-                                if (OutputTrace.Current.IsEnabled)
-                                {
-                                    OutputTrace.Current.Record(new("mpv.frame", "MPV", Stopwatch.GetTimestamp(),
-                                        ImageId: update.Snapshot.Sequence,
-                                        Value: (long)Math.Round(position * 1_000_000.0),
-                                        Detail: FormattableString.Invariant($"gen={update.Snapshot.Generation}")));
-                                }
-                                sink(retained, update.Snapshot.Generation, position);
-                            }
                         }
                         if (update.HasFrame) Interlocked.Exchange(ref _pendingHasFrame, 1);
                         if (_scheduler.RequestDispatch()) _scheduleUpdate(OnRenderUpdate);
@@ -435,15 +408,6 @@ internal sealed class RenderSession : IDisposable
         _lastAppliedSequence = frame.Sequence;
         _lastFrameWidth = frame.Width;
         _lastFrameHeight = frame.Height;
-
-        if (GpuFrameSink != null)
-        {
-            // Gpu backend: 画像は mpv 専用スレッド側で GPU worker へ渡済み。ここでは既存の
-            // 世代・sequence 逆行防止と afterFrameProcessed だけを維持し、CPU の表示・Spout・Freeze コピーは行わない。
-            if (decision != GapRenderFrameDecision.Hold)
-                afterFrameProcessed?.Invoke();
-            return;
-        }
 
         GapState state = _getGapState();
         bool spoutEnabled = _spoutOutput.IsEnabled;

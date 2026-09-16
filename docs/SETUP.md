@@ -181,7 +181,7 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD
 
 ## 8. バックエンド設定と環境変数
 
-### PlayerBackend / OutputBackend
+### OutputBackend
 
 設定は`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`（`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`で
 上書き可）の次のキーで選びます。変更後はアプリを再起動してください（`decodeMode`も同様に、
@@ -189,26 +189,15 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD
 
 | JSONキー | 値 | 既定 | 内容 |
 |---|---|---|---|
-| `backend` | `0` = Mpv / `1` = Gstreamer | `0` | 再生バックエンド。Gstreamerは`tcs_gstreamer.dll`とGStreamerランタイムが必要です |
-| `outputBackend` | `0` = Cpu / `1` = Gpu | `0` | 映像出力バックエンド。Cpuは従来の`OutputFrame`→`WriteableBitmap`→`SendImage`経路です |
+| `outputBackend` | `1` = Gpu | `1` | 映像出力バックエンド。`0`（Cpu）は v0.3 の設定で、v0.4 は無視して `1`（Gpu）で起動します（警告ログ 1 行、設定ファイルは書き換えません） |
 | `decodeMode` | `hardware` / `software` | `hardware` | デコード方式。`software`はCPUデコーダを優先し、GPUデコーダは最後の手段として使います（GPUに落ちた場合は警告ログ）。**変更はアプリの再起動が必要です**（プレイヤー生成時に1回だけ読みます）。不正値は`hardware`として扱い、警告ログを出します |
 
-例（GStreamer + GPU出力）:
-
-```json
-{
-  "backend": 1,
-  "outputBackend": 1
-}
-```
-
-- `outputBackend=1`でも、D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では
-  起動時にCpuへフォールバックし、ログに理由を出力します（設定ファイルは書き換えません）。
-- `backend=1`は`tcs_gstreamer.dll`とGStreamerランタイムが見つからない場合、再生開始に失敗します。
-  ログのエラーを確認し、前節のセットアップを行ってください。
-- 組み合わせの違い: `backend=0`＋`outputBackend=1`はmpvのスナップショットをGPU合成へ渡します。
-  `backend=1`＋`outputBackend=1`はshimの共有リングを直接ソースにします。
-  `backend=1`＋`outputBackend=0`は互換アダプター（CPU読み戻し）経路です。
+- v0.3 の `backend` キーは v0.4 で廃止しました（再生バックエンドは GStreamer 固定）。
+  値があっても無視して警告ログを 1 行出し、設定ファイルは書き換えません。
+- 再生には `tcs_gstreamer.dll` と GStreamer ランタイムが必要です。
+- `outputBackend=1`で D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では、
+  起動時にダイアログを出し、**再生だけを無効**にします（アプリは開いたまま。Cpu 合成へは
+  フォールバックしません。設定ファイルは書き換えません）。
 
 ### 同期補正モード（T5）
 

@@ -4,7 +4,6 @@ using System.Runtime.InteropServices;
 namespace TimecodeSyncPlayer.Output;
 
 internal enum VblankWaitResult { Reached, Cancelled }
-internal enum LoopWaitResult { Reached, SnapshotReady, Cancelled }
 
 /// <summary>
 /// worker 所有の waitable timer。高分解能（CREATE_WAITABLE_TIMER_HIGH_RESOLUTION）を要求し、
@@ -48,39 +47,6 @@ internal sealed class VblankWaitTimer : IDisposable
             };
         }
         finally { if (referenced) stopHandle.DangerousRelease(); }
-    }
-
-    // GPU ループの空き時間待ち。スナップショット到着で起床してアップロードを先行させる。
-    // index0=停止、index1=タイマー期限、index2=スナップショット到着。
-    public unsafe LoopWaitResult WaitUntilOrStopOrSignal(WaitHandle stop, WaitHandle signal, long nowQpc, long dueQpc, long frequency)
-    {
-        long remaining = Math.Max(1, (dueQpc - nowQpc) * 10_000_000 / frequency);
-        long due = -remaining;
-        if (!Native.SetWaitableTimer(handle, ref due, 0, IntPtr.Zero, IntPtr.Zero, false))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "SetWaitableTimer failed.");
-        uint fallbackMs = (uint)Math.Min(int.MaxValue, remaining / 10_000 + 2);
-        var stopHandle = stop.SafeWaitHandle;
-        var signalHandle = signal.SafeWaitHandle;
-        bool stopReferenced = false, signalReferenced = false;
-        try
-        {
-            stopHandle.DangerousAddRef(ref stopReferenced);
-            signalHandle.DangerousAddRef(ref signalReferenced);
-            IntPtr* handles = stackalloc IntPtr[3] { stopHandle.DangerousGetHandle(), handle, signalHandle.DangerousGetHandle() };
-            uint result = Native.WaitForMultipleObjects(3, handles, false, fallbackMs);
-            return result switch
-            {
-                0 => LoopWaitResult.Cancelled,
-                1 or 258 => LoopWaitResult.Reached,
-                2 => LoopWaitResult.SnapshotReady,
-                _ => throw new Win32Exception(Marshal.GetLastWin32Error(), $"WaitForMultipleObjects returned 0x{result:X8}.")
-            };
-        }
-        finally
-        {
-            if (stopReferenced) stopHandle.DangerousRelease();
-            if (signalReferenced) signalHandle.DangerousRelease();
-        }
     }
 
     public void Dispose() => Native.CloseHandle(handle);

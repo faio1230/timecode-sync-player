@@ -192,8 +192,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // GStreamer 内部型は公開せず、DI 経由で取得する（Gpu 出力時のみ使用）。
         _gstBackendState = services.GetRequiredService<GstBackendState>();
         _gstNativeApi = services.GetRequiredService<IGstNativeApi>();
-        _gstGpuCombo = settingsManager.Current.Backend == PlayerBackend.Gstreamer
-            && outputBackendState.Effective == OutputBackend.Gpu;
+        _gstGpuCombo = outputBackendState.Effective == OutputBackend.Gpu;
         _effectiveOutputBackend = outputBackendState.Effective;
         if (!outputBackendState.PlaybackAvailable)
             _playbackAvailability.MarkUnavailable(outputBackendState.Decision.Detail);
@@ -245,12 +244,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 else
                     Log.Error("OutputEngine: デバイス初期化がタイムアウトし、GStreamer shim へ Adopt できません");
                 _renderSession.SuppressFrameSnapshots = true;
-            }
-            else
-            {
-                // mpv 経路: mpv 専用スレッドで Retain したスナップショットを受け取る。
-                _renderSession.GpuFrameSink = (frame, generation, position) => _outputEngine?.SubmitFrame(frame, generation, position);
-                _renderSession.PositionSecondsProvider = ReadMpvTimePos;
             }
         }
         else
@@ -783,13 +776,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void ShowWindowLoadedSessionInitializationError(WindowLoadedSessionInitializationError error)
     {
-        // ランタイム名（mpv 等）を含めない。見せ方は GPU 利用不可と同じ 1 か所に集約する。
+        // 見せ方は GPU 利用不可と同じ 1 か所に集約する。生成・初期化の失敗は確認先を示す。
         string detail = error switch
         {
             WindowLoadedSessionInitializationError.MpvCreateFailed =>
-                "再生エンジンの生成に失敗しました。",
+                "再生エンジンの生成に失敗しました。GStreamer ランタイムと tcs_gstreamer.dll を確認してください。",
             WindowLoadedSessionInitializationError.MpvInitializeFailed =>
-                "再生エンジンの初期化に失敗しました。",
+                "再生エンジンの初期化に失敗しました。GStreamer ランタイムと tcs_gstreamer.dll を確認してください。",
             WindowLoadedSessionInitializationError.RenderContextCreateFailed =>
                 "レンダーコンテキストの作成に失敗しました。",
             _ => "初期化に失敗しました。"
