@@ -59,6 +59,36 @@ foreach ($s in $specs) {
     if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
 }
 
+# v0.4.1 D12/D13: audio-bearing fixtures. (a) AAC 44.1kHz with the audio track
+# first (isolates the missing audioresample: wasapi2sink runs at the device mix
+# rate), (b) AAC 48kHz with the video track first (ffmpeg default order; the
+# demux video branch needs a queue for the audio sink to preroll).
+$audioSpecs = @(
+    @{ Name = 'test_720p30_aac44k.mp4';             AudioRate = 44100; AudioFirst = $true },
+    @{ Name = 'test_720p30_aac48k_video_first.mp4'; AudioRate = 48000; AudioFirst = $false }
+)
+
+foreach ($s in $audioSpecs) {
+    $path = Join-Path $OutDir $s.Name
+    if ((Test-Path $path) -and -not $Force) {
+        Write-Output ('skip (exists): ' + $s.Name)
+        continue
+    }
+    $video = 'testsrc2=size=1280x720:rate=30:duration=20'
+    $audio = 'sine=frequency=1000:sample_rate=' + $s.AudioRate + ':duration=20'
+    if ($s.AudioFirst) {
+        $inputs = @('-f', 'lavfi', '-i', $audio, '-f', 'lavfi', '-i', $video, '-map', '0:a', '-map', '1:v')
+    } else {
+        $inputs = @('-f', 'lavfi', '-i', $video, '-f', 'lavfi', '-i', $audio)
+    }
+    $ffargs = @('-y', '-hide_banner', '-v', 'error') + $inputs +
+              $venc + @('-g', '30', '-pix_fmt', 'yuv420p') +
+              @('-c:a', 'aac', '-b:a', '128k', '-ar', "$($s.AudioRate)", '-shortest', $path)
+    Write-Output ('making: ' + $s.Name + ' (1280x720@30 + AAC ' + $s.AudioRate + 'Hz)')
+    & ffmpeg @ffargs
+    if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
+}
+
 Write-Output '--- result ---'
 Get-ChildItem $OutDir -File |
     Where-Object { $_.Extension -in '.mp4', '.mkv', '.avi', '.ts' } |

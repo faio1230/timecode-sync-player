@@ -175,6 +175,8 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log
 ```
 
+GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-YYYYMMDD.log` として出力されます（環境変数 `TCS_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `tcs-gst-*.log` は削除されます）。
+
 起動後、映像が表示され、LTC入力デバイスがプルダウンに表示されることを確認してください。
 
 ---

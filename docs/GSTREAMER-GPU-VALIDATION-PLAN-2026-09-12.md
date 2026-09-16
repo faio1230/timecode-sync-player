@@ -1459,6 +1459,8 @@ mpv は同じ条件で -147ms。差は約 130ms。
 | HEVC 4K60 | d3d11h265dec | 59〜60（60） | 59 | 60.0 | 0.96ms | 合格 |
 | H.264 1080p60＋AAC 音声 | d3d11h264dec | 60（60） | 60 | 60.0 | 0.92ms | **S1 修正後に合格**（`fa77d0b`） |
 | ProRes 422 1080p60（.mov、素材長 30 秒） | avdec_prores | 60（60、窓 8〜28 秒） | 59 | 60.0 | 0.82ms | **S2 修正後に合格**（`fa77d0b`） |
+| H.264 720p30 + AAC 44.1kHz（`test_720p30_aac44k.mp4`、音声トラック先頭） | | | | | | |
+| H.264 720p30 + AAC 48kHz（`test_720p30_aac48k_video_first.mp4`、映像トラック先頭） | | | | | | |
 
 注: **8bit HEVC は未測定。** 上表の HEVC 素材 3 本（`v1_h265_1080p60.mp4`・`v1_h265_10bit_1080p60.mp4`・`v1_h265_4k60.mp4`）は
 すべて ffprobe で `yuv420p10le`（Main 10）で、行列に 8bit HEVC 素材が無い。このプロジェクトは 8bit HEVC を一度も測っていない。
@@ -2781,3 +2783,29 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミックスレートと同じ）で、E2E 素材は無音の H.264。**44.1kHz と「映像トラック先頭」の素材が検証行列に無かった。**
 
 対処: v0.4.1 として修正する。指示は `docs/prompts/2026-09-17-D12-D14-shim-audio-chain.md`（同期担当、shim）と `docs/prompts/2026-09-17-D15-packaging-and-audio-media.md`（除去担当、同梱・素材・E2E・アプリ側）。検証は開発機の実機と、検証機（クリーン環境）の両方で行う。
+
+## v0.4.1 の検証記録（2026-09-17 06:10〜、進行中。親の確認済み分）
+
+修正: agent-a `8a706d6`（shim: audioresample、映像 queue max-size-buffers=4、bus スレッド先行 + 100ms 刻みの state 待ち、`TCS_LOG_FILE`、`(last: …)`）、agent-b `9a1150c` / `64670dd` / `e5014d4`（素材 2 本と E2E 2 本、`ConfigureLogFile`、同梱に gstaudioresample / gsttypefindfunctions / gio-2.0-0）。
+
+### 開発機（同期担当の実機、旧 DLL `A59D9C88…` → 新 DLL `F66F6F1B…`、`inputs.json` のハッシュで確認）
+
+| 素材（720p30 H.264 + AAC、20 秒） | 修正前 | 修正後 |
+| --- | --- | --- |
+| (a) 44.1kHz、音声先頭 | **全 10 プロファイル失敗**（各 112〜240ms、最終 `Internal data stream error`）→ `all video profiles failed` | attempt=0 h264-gpu、171.1ms |
+| (b) 48kHz、映像先頭 | 成功 241.3ms（**D13 は本機・この素材では再現せず**） | attempt=0、177.4ms |
+| (c) 48kHz、音声先頭（対照） | 成功 189.0ms | attempt=0、172.7ms |
+| (d) 1080p60 + AAC 48kHz | 成功 186.1ms | attempt=0、177.3ms |
+
+- 音声（(a) 修正後、`-AudioProbe`）: Realtek Digital Output 48kHz、再生区間 101 窓の RMS 平均 -21.1 dBFS、無音区間 40 窓 < -60 dBFS。**44.1kHz の音が出ている**
+- `TCS_LOG_FILE`: 有りで 19 行のファイル、無しで生成なし・ロード時間同等（173.4 / 174.8ms）
+- 証跡: `TestResults/gpu-app/<UTC>-d12-before-{a,b,c,d}`、`…-d12-after-{a,b,c,d}`、`…-d12-after-a-rms`、`…-d12-after-b-log`、`…-d12-after-c-nolog`（agent-a の作業ツリー）
+- 所見: 開発機では不一致プロファイル 1 つの失敗が 0.1〜0.2 秒で返っており、検証機の「6 秒」（D14）は AV1 4K のデコーダ初期化と重なった環境依存の可能性がある。D13・D14 の効果は検証機の AV1 実素材で確認する
+
+### 除去担当の E2E 2 本（shim 修正前、agent-b `e5014d4`、28 秒）
+
+- `GStreamerBackend_PlaysAac44kMedia`: **Failed**（load rc=-2、`all video profiles failed`。修正前の失敗を記録）
+- `GStreamerBackend_PlaysAac48kVideoFirstMedia`: Passed（227.9ms でロード）
+- 証跡: `TestResults/v041-d15/e2e-prefix-audio.trx`、`e2e-prefix-evidence.txt`（agent-b の作業ツリー）
+
+（続き: V5・V3・E2E 一部 → 統合 → 除去担当の E2E 再実行 → 配布物 → 検証機）

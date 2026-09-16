@@ -27,11 +27,11 @@ plugin-loading log):
 | Component | Bundled plugins (used for) | License (as reported) |
 | --- | --- | --- |
 | GStreamer core | `gstcoreelements` (filesrc/queue/capsfilter/fakesink), core libraries | LGPL |
-| gst-plugins-base | `gstapp`, `gstaudioconvert`, `gstaudiotestsrc`, `gstplayback` (decodebin), `gstvideoconvertscale` (videoconvert), `gstvolume` | LGPL |
+| gst-plugins-base | `gstapp`, `gstaudioconvert`, `gstaudioresample`, `gstaudiotestsrc`, `gstplayback` (decodebin), `gsttypefindfunctions` (typefindfunctions), `gstvideoconvertscale` (videoconvert), `gstvolume` | LGPL |
 | gst-plugins-good | `gstaudioparsers` (aacparse), `gstautodetect` (autoaudiosink), `gstisomp4` (qtdemux) | LGPL (the official runtime ships no separate license folder for this component) |
 | gst-plugins-bad | `gstd3d11` (d3d11h264dec/h265dec/colorconvert/upload), `gstmpegtsdemux` (tsdemux), `gstmxf` (mxfdemux), `gstvideoparsersbad` (h264parse/h265parse), `gstwasapi2`, `gstdav1d` (dav1ddec) | LGPL; `gstdav1d` is MIT/X11 |
 | gst-libav | `gstlibav` (avdec_prores, avdec_aac) | LGPL; links FFmpeg libraries (`ffmpeg/LGPL-2.1-or-later.txt`) |
-| glib, proxy-libintl, orc, libffi, pcre2, zlib, bzip2, dav1d | runtime dependencies (GLib, i18n, SIMD, FFI, regex, compression, AV1 decoder) | each component's license text is bundled under `gstreamer\share\licenses\` |
+| glib (gio), proxy-libintl, orc, libffi, pcre2, zlib, bzip2, dav1d | runtime dependencies (GLib, i18n, SIMD, FFI, regex, compression, AV1 decoder) | each component's license text is bundled under `gstreamer\share\licenses\` |
 
 The official runtime also contains plugins that TimecodeSyncPlayer does not load (for example
 nvcodec and GPL components such as x264-based encoders). Those plugins and their DLLs are not
