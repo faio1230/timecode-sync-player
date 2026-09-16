@@ -96,6 +96,11 @@
   - **D18 を直す**: `E2EAppRunner.ResolvePrereqs` が `TIMECODE_SYNC_PLAYER_E2E_APP_PATH` の exe と同じディレクトリの `gstreamer` を同梱ランタイムとして認める。ランナーは環境変数を要求しない
 - 検証機の運用: `TSP-TestMachine` に「main を pull → `run-ltc-scenarios.ps1 -AppExe <インストール先>` → 要約と `ReportDir` の場所を報告」を依頼する。配布物を送るたびに同じ依頼を出す（手順書 1.5 節に追記）
 
+## 4.5 進捗（親の記録）
+
+- 2026-09-17 10:05: ランナー `scripts/run-ltc-scenarios.ps1` と D18（同梱 `gstreamerin` を exe の隣で認識、環境変数不要）を main `6921064` に統合。開発機で `LtcHardwareLoopE2ETests` を対象に 1 回: passed=14 failed=0 skipped=0 err_ftl=0 leftover=0（`TestResults/ltc-scenarios/20260916T232948Z`、agent-a の作業ツリー）。統合後の非E2E は 1 回目に 1 件だけ失敗し、再実行で 1676/1676（不安定なテストの疑い。再発したら trx で特定する）
+- 検証機には clone の付け替え（履歴書き換え後）とランナーの 1 回実行を依頼（10:05）
+
 ## 5. 進め方
 
 1. 除去担当（`w5:p6`）が素材・プロジェクト・色判定ヘルパー・新テストを実装（`docs/prompts/2026-09-17-LTC-scenario-e2e.md`）
