@@ -2,6 +2,10 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-16 20:40 更新（9 回目）**: **V3 の基準の時刻は sample 解析が正式**（利用者の決定。数字は変えない。1 フレーム定数は足さず `SyncOffset`）。
+> sample 基準の正式記録（LTC 4 種）を親が揃え、**V3 合格**を再確定（検証記録の末尾）。Q1（`ProjectRoundTrip` の既存失敗）はテスト側の修正で解消し統合（`ffc2dde`）。
+> **E2E 全件の既存失敗は 0 になった見込み**（段 2 後半の E2E 全件で確認する）。`w5:p3` は Q1 完了・次の指示待ち（コンテキスト 82%、次は `/new`）。
+>
 > **2026-09-16 20:00 更新（8 回目）**: 段 2 前半（移設 `10137dc`）を main `74276cf` へ統合（非E2E 2013）。`w5:p6` は段 2 後半（mpv の削除、`docs/prompts/2026-09-16-STAGE2-mpv-removal.md`。未接続中は明示的な NotReady＝案 1）。
 > `w5:p3` は Q1 の単独 3 回実行中。ローカルの旧オブジェクトは reflog expire + gc で削除済み（利用者の指示）。
 >
@@ -233,7 +237,7 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
 
 | ペイン | 作業 | 状態 |
 | --- | --- | --- |
-| `w5:p3`（同期担当） | T2 は完了・統合済み。**次は Q1**（`docs/prompts/2026-09-16-Q1-project-roundtrip-failure.md`、`ProjectRoundTrip` の既存失敗の切り分け） | 指示待ち → 着手 |
+| `w5:p3`（同期担当） | T2・Q1 とも完了・統合済み（`c511d07`、`ffc2dde`） | 次の指示待ち。コンテキスト 82% → 次の作業前に `/new` |
 | `w5:p6`（除去担当） | 段 2 前半は統合済み（`74276cf`）。**段 2 後半: mpv の削除**（`docs/prompts/2026-09-16-STAGE2-mpv-removal.md`） | 着手（ビルドは親の合図後） |
 
 **実機は 1 つ。親が順番を管理する。** エージェントには「実機を使う前に一報」を毎回指示している。
