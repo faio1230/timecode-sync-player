@@ -89,6 +89,35 @@ foreach ($s in $audioSpecs) {
     if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
 }
 
+# LTC scenario fixtures (track symbols A/B/C): three solid colour clips with
+# distinct head/tail colours so the E2E pixel probes can identify the frame. The
+# burned-in second number is for eyeballing only and sits outside the centre 60%
+# region the probes measure. The LTC scenario tests skip when these are missing.
+$scenarioSpecs = @(
+    @{ Name = 'ltc_a.mp4'; Base = '0xFF0000'; Head = '0xFFFFFF'; Tail = '0xFFFF00' },
+    @{ Name = 'ltc_b.mp4'; Base = '0x00FF00'; Head = '0xFF00FF'; Tail = '0x00FFFF' },
+    @{ Name = 'ltc_c.mp4'; Base = '0x0000FF'; Head = '';       Tail = '0xFFA500' }
+)
+
+foreach ($s in $scenarioSpecs) {
+    $path = Join-Path $OutDir $s.Name
+    if ((Test-Path $path) -and -not $Force) {
+        Write-Output ('skip (exists): ' + $s.Name)
+        continue
+    }
+    $filters = 'color=c=' + $s.Base + ':s=1280x720:r=30:d=20'
+    if ($s.Head -ne '') {
+        $filters += ",drawbox=x=0:y=0:w=iw:h=ih:color=$($s.Head):t=fill:enable='between(t,0,1)'"
+    }
+    $filters += ",drawbox=x=0:y=0:w=iw:h=ih:color=$($s.Tail):t=fill:enable='between(t,19,20)'"
+    $filters += ",drawtext=fontfile='C\:/Windows/Fonts/arial.ttf':text='%{eif\:floor(t)\:d}':x=20:y=20:fontsize=48:fontcolor=black"
+    $ffargs = @('-y', '-hide_banner', '-v', 'error', '-f', 'lavfi', '-i', $filters) +
+              $venc + @('-g', '30', '-pix_fmt', 'yuv420p', '-an', $path)
+    Write-Output ('making: ' + $s.Name + ' (1280x720@30, colour fixture)')
+    & ffmpeg @ffargs
+    if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
+}
+
 Write-Output '--- result ---'
 Get-ChildItem $OutDir -File |
     Where-Object { $_.Extension -in '.mp4', '.mkv', '.avi', '.ts' } |

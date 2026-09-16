@@ -2970,3 +2970,13 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 対処（v0.4.2 には入れない。除去担当の候補）: `E2EAppRunner.ResolvePrereqs` が `TIMECODE_SYNC_PLAYER_E2E_APP_PATH` の exe と同じディレクトリの `gstreamer` フォルダを同梱ランタイムとして認め、環境変数を要求しない。手順書（`docs/RELEASE-PROCEDURE-0.4.md` 1.5 節）に「LTC 同期 E2E をインストール済みアプリで回すときは PATH の先頭に同梱 `gstreamerin` を足す」を暫定で書く
 
 （続き: 0.4.2 の配布物 → Taildrop で検証機の最終確認 → タグ・公開）
+
+## D20〜D22: 利用者の LTC 検証項目に対する欠陥（2026-09-17 11:10、シナリオ E2E で発見。開発機）
+
+| # | 内容 | 仕様の根拠 | 状態 |
+| --- | --- | --- | --- |
+| D20 | Single + 同期 ON で、LTC がアクティブトラックの尺以上になると終端シーク後に次トラックへ自動前進し、連鎖して最後まで進む（S-2/S-3/S-4/S-5） | 項目 7・9（終端で止まる、アクティブ以外は再生しない） | 同期担当が修正中 |
+| D21 | Continue + Freeze で、ジャンプで入った Freeze 領域が前トラックの最終フレームにならない（F-4: ジャンプ時点の絵を保持、F-3: 黒） | 項目 21・22 | 同 |
+| D22 | Continue + Freeze で、最初のトラックの前（先頭オフセット）が黒（F-5） | 項目 24（最初の動画の冒頭フレーム） | 同 |
+
+- 指示: `docs/prompts/2026-09-17-D20-D22-single-eof-and-freeze-by-jump.md`。証跡: `artifacts/ltc-scenarios/<testId>-<timestamp>`（agent-b の作業ツリー）、`TestResults/v042-ltc-scenario/ltc-scenario-e2e.trx`
