@@ -2855,4 +2855,12 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - 開発機では不一致が 0.1〜0.2 秒で返る（D14 の修正で bus エラーを即拾う）が、検証機では `preroll-timeout` の 3.0 秒まで待つ。案: 最初の試行で読んだ demux の caps でプロファイル候補を絞る。設計は D16 の指示の 4 節、実装は親の合図後
 
-（続き: D16 の調査 → 修正 → Release ビルドを Tailscale で検証機へ → v0.4.2）
+### D16 の修正（agent-a `60f04ba`、2026-09-17 07:40、親のレビュー済み）
+
+- `adapter_supports_profile`: GPU プロファイル 4 種のデコーダ GUID（H264 VLD NOFGT / HEVC Main / VP9 Profile0 / AV1 Profile0。SDK 値と一致を親が確認）を shim デバイスの `ID3D11VideoDevice::GetVideoDecoderProfile` で照会し、無ければ試行前に skip（`load.skip … reason=adapter-lacks-decoder`）→ 既存順序で CPU プロファイルへ
+- `on_new_sample` 入口の防御: テクスチャの `GetDevice` が `p->device` と違えば両 LUID をログして `set_error`（落ちずに失敗）
+- テストフック `TCS_FORCE_DECODER_ADAPTER_MISMATCH=1`: 開発機で GPU 4 種が skip → `h264-cpu` attempt=4 で ok。通常は h264-gpu attempt=0、実素材 10 本 failures=0、lock rule PASS。バージョンは 0.4.1 のまま
+- **残る穴（D16-b、追加指示済み）**: 合成デバイスがアダプタ 0 でない構成（外部出力が dGPU 直結）では、GUID 判定を通ったあと `d3d11h264dec`（アダプタ 0 の要素）が別デバイスになり、防御で load が失敗して CPU へ落ちない。デコーダ要素の `adapter-luid` を比べ、別アダプタ要素名（`d3d11h264device1dec` …）を試す
+- 設計上の注意: この方針では、内蔵 GPU が対応しないコーデック（AV1 ほか）は dGPU があっても CPU デコードになる。dGPU で合成まで行う選択肢（合成アダプタを dGPU にする）は別途の検討事項として残す
+
+（続き: 回帰（E2E 一部・V5・V3）→ D16-b → 統合 → Release ビルド（0.4.1 のまま、SHA で識別）を Tailscale で検証機へ → 合格後に 0.4.2）
