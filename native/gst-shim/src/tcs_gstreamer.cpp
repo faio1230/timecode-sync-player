@@ -31,6 +31,7 @@
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
+#include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 
 #include <windows.h>
@@ -95,6 +96,10 @@ env_int (const char* name, int fallback)
 
 /* diagnostics: dump every delivered sample (pacing analysis) */
 static bool frame_log = env_flag ("TCS_FRAME_LOG");
+
+/* D10: log once when the segment is unavailable and reported positions fall
+ * back to the raw buffer PTS. */
+static std::atomic<bool> stream_time_fallback_logged{false};
 
 /* D8 diagnostics: log lease acquire/release and the ring dimension fallback.
  * Off by default; the D8 measurement sets TCS_LEASE_LOG=1. Logs are emitted
@@ -1066,14 +1071,30 @@ on_new_sample (GstAppSink* sink, gpointer user)
       src_tex = nullptr;  /* legacy sample path handles the flatten later */
   }
   const GstSegment* seg = gst_sample_get_segment (sample);
-  guint64 pts = buf && GST_BUFFER_PTS (buf) != GST_CLOCK_TIME_NONE
+  bool has_buffer_pts = buf && GST_BUFFER_PTS (buf) != GST_CLOCK_TIME_NONE;
+  guint64 raw_pts = has_buffer_pts
       ? GST_BUFFER_PTS (buf)
       : (seg ? (guint64) seg->position : 0);
   int64_t running_ns = -1;
-  if (seg && pts != GST_CLOCK_TIME_NONE) {
-    guint64 rt = gst_segment_to_running_time (seg, GST_FORMAT_TIME, pts);
+  if (seg && raw_pts != GST_CLOCK_TIME_NONE) {
+    guint64 rt = gst_segment_to_running_time (seg, GST_FORMAT_TIME, raw_pts);
     if (rt != GST_CLOCK_TIME_NONE)
       running_ns = (int64_t) rt;
+  }
+  /* D10: report stream time, not the raw buffer PTS. qtdemux (B-frames,
+   * negative first DTS) shifts every post-seek timestamp by the first-DTS
+   * compensation, so the raw PTS reads 2 frames ahead of the actual sample
+   * (segment start=15.0333 / time=15.0 maps back to 15.0). The gate below and
+   * the running time keep the raw PTS: the gate compares decoded samples
+   * against the seek target and running time is the scheduling clock. A buffer
+   * without PTS already carries the segment position (stream time). */
+  guint64 pts = raw_pts;
+  if (has_buffer_pts) {
+    int stream_time_fallback = 0;
+    pts = tcs_stream_time_or_pts (seg, raw_pts, &stream_time_fallback);
+    if (stream_time_fallback && !stream_time_fallback_logged.exchange (true))
+      LOG ("D10: no segment stream-time mapping; reporting raw PTS pts_ms=%.2f",
+          (double) raw_pts / 1e6);
   }
 
   /* demux pads (e.g. mpegts) may expose stream caps without width/height;
@@ -1110,7 +1131,7 @@ on_new_sample (GstAppSink* sink, gpointer user)
       p->seg_diag_left--;
       LOG ("seek: diag vsample pts_ms=%.1f seg_start_ms=%.1f seg_base_ms=%.1f "
           "seg_time_ms=%.1f seg_rate=%.3f running_ms=%.1f gated=%d",
-          (double) pts / 1e6, seg ? (double) seg->start / 1e6 : -1.0,
+          (double) raw_pts / 1e6, seg ? (double) seg->start / 1e6 : -1.0,
           seg ? (double) seg->base / 1e6 : -1.0,
           seg ? (double) seg->time / 1e6 : -1.0, seg ? seg->rate : 0.0,
           (double) running_ns / 1e6, p->gate_active ? 1 : 0);
@@ -1123,9 +1144,9 @@ on_new_sample (GstAppSink* sink, gpointer user)
     if (p->gate_active) {
       if (p->gate_first_qpc == 0) {
         p->gate_first_qpc = (uint64_t) arrival.QuadPart;
-        p->gate_first_pts_ns = pts;
+        p->gate_first_pts_ns = raw_pts;
       }
-      if (pts < p->gate_target_ns) {
+      if (raw_pts < p->gate_target_ns) {
         p->gate_dropped++;
         gated = true;
       } else {
@@ -1135,7 +1156,7 @@ on_new_sample (GstAppSink* sink, gpointer user)
         LOG ("seek: ts gate opened target_ns=%llu snap_pts_ns=%llu first_pts_ns=%llu "
             "dropped=%llu first_ms=%.1f open_ms=%.1f",
             (unsigned long long) p->gate_target_ns,
-            (unsigned long long) p->gate_first_pts_ns, (unsigned long long) pts,
+            (unsigned long long) p->gate_first_pts_ns, (unsigned long long) raw_pts,
             (unsigned long long) p->gate_dropped,
             (double) (p->gate_first_qpc - p->gate_armed_qpc) * ms_per_tick,
             (double) ((uint64_t) arrival.QuadPart - p->gate_armed_qpc) * ms_per_tick);
@@ -2836,8 +2857,16 @@ tcs_player_get_time_pos (TcsPlayer* player, double* out_sec)
   std::lock_guard<std::mutex> g (player->frame_lock);
   if (!player->pipeline || player->path.empty ()) return TCS_ERR_NOT_LOADED;
   gint64 pos = 0;
-  if (!gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos) || pos < 0)
+  if (!gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos) || pos < 0) {
+    /* D10: the pipeline query reports stream time (so it already maps the
+     * qtdemux post-seek shift back). When the query is unavailable, fall back
+     * to the newest delivered frame's stream-mapped PTS - never the raw PTS. */
+    if (player->latest_pts_ns > 0) {
+      *out_sec = (double) player->latest_pts_ns / GST_SECOND;
+      return TCS_OK;
+    }
     return TCS_ERR_NOT_LOADED;
+  }
   *out_sec = (double) pos / GST_SECOND;
   if (player->position_trace) {
     /* One snapshot per query. frame_lock freezes latest_seq/latest_pts_ns
