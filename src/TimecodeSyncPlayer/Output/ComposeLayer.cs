@@ -59,6 +59,10 @@ internal readonly record struct LayerImage(
 /// </summary>
 internal sealed class ComposeLayer : IDisposable
 {
+    // Freeze 保存を許す目標位置との差（秒）。D21-b のフレーム到着判定（±2 フレーム）と
+    // 同じ意図で、25〜60fps の 1〜3 フレームに収まる値にする。
+    private const double FreezeTargetToleranceSeconds = 0.05;
+
     private readonly GpuDevice gpu;
     private readonly ShaderPipeline shaders;
     private CanvasSettings canvas;
@@ -108,14 +112,17 @@ internal sealed class ComposeLayer : IDisposable
     /// 戻り値は渡された acquired を Held として保持したか（常に false。所有コピーを使う）。
     /// </summary>
     public bool Compose(Surface target, OutputGapMode gap, ClipPlacement clip, bool testCardEnabled, ImageStamp cardStamp, long origin,
-        LayerImage? acquired)
+        LayerImage? acquired, double? acquirePositionSeconds = null, double? freezeTargetSeconds = null)
     {
-        // GapFreeze のフレームは「新しく取得したソース画像」だけで保存する。所有コピー
-        // （直前キャンバス）は Freeze の対象ではない（次トラックの冒頭フレーム待ちなどで
-        // 古い絵を凍結しない）。目標フレームが届くまで frozen は null のまま、表示は
-        // Policy が Held を選ぶ。
-        if (gap == OutputGapMode.GapFreeze && frozen == null && acquired != null)
+        // GapFreeze のフレームは「目標位置に一致したソース画像」だけで保存する。所有コピー
+        // （直前キャンバス）や、ジャンプ前に届いていたフレームを凍結しない（D26/D21-b）。
+        // 目標フレームが届くまで frozen は null のまま、表示は Policy が Held を選ぶ。
+        if (gap == OutputGapMode.GapFreeze && frozen == null && acquired != null &&
+            acquirePositionSeconds.HasValue && freezeTargetSeconds.HasValue &&
+            Math.Abs(acquirePositionSeconds.Value - freezeTargetSeconds.Value) <= FreezeTargetToleranceSeconds)
+        {
             SaveFreeze(acquired.Value, clip);
+        }
 
         LayerAction action = ComposeLayerPolicy.Decide(gap, acquired != null, HasHeld, frozen != null);
         ClipPlacement placement = ComposeLayerPolicy.SelectPlacement(action, clip, frozenClip);

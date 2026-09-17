@@ -909,6 +909,7 @@ internal sealed class OutputEngine : IDisposable
         LayerImage? acquired = null;
         ISourceImageLease? lease = null;
         SourceStatus status = SourceStatus.NotReady;
+        double? acquiredPositionSeconds = null;
 
         if (gstSource != null)
         {
@@ -920,6 +921,9 @@ internal sealed class OutputEngine : IDisposable
             status = gst.Status;
             lease = gst.Lease;
             acquired = gst.Image;
+            // D26: Freeze 保存は「目標位置のフレーム」だけ許可する（ジャンプ前のフレームを凍結しない）。
+            if (status == SourceStatus.Ready && acquired != null)
+                acquiredPositionSeconds = gst.Stamp.PositionSeconds;
             if (settings.Trace.IsEnabled)
                 settings.Trace.Record(new("compose.acquire", "GPU", acquireEndedQpc, scheduled,
                     gst.Stamp.Sequence, gst.Stamp.DecodedQpc, status.ToString(),
@@ -965,7 +969,7 @@ internal sealed class OutputEngine : IDisposable
                 gapMode,
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
-                stamp, originQpc, acquired);
+                stamp, originQpc, acquired, acquiredPositionSeconds, position);
             if (forceGapBlackOnSwitch && acquired != null)
             {
                 anyFrameAcquired = true;

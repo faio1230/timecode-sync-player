@@ -101,6 +101,38 @@ public sealed class ComposeLayerHeldTests
         held.B.Should().BeLessThan(0.02f);
     }
 
+    [SkippableFact]
+    public void GapFreeze_SavesOnlyTheFrameAtTheTargetPosition()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var red = new SolidSource(env, 64, 64, new Color4(1f, 0f, 0f, 1f));
+        using var yellow = new SolidSource(env, 64, 64, new Color4(1f, 1f, 0f, 1f));
+
+        // 目標と違う位置のフレームは凍結しない（ジャンプ前の絵を保存しない）。
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            red.Image, acquirePositionSeconds: 10.0, freezeTargetSeconds: 19.967);
+        layer.HasFreeze.Should().BeFalse("目標位置でないフレームは Freeze として確定しない");
+
+        // 目標位置のフレームで確定する。
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            yellow.Image, acquirePositionSeconds: 19.967, freezeTargetSeconds: 19.967);
+        layer.HasFreeze.Should().BeTrue();
+        Color4 pixel = env.ReadCenterPixel(target);
+        pixel.G.Should().BeGreaterThan(0.9f, "目標位置のフレーム（黄）を表示する");
+        pixel.R.Should().BeGreaterThan(0.9f);
+        pixel.B.Should().BeLessThan(0.1f);
+
+        // 確定後は凍結したフレームのまま（目標外のフレームでは更新しない）。
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            red.Image, acquirePositionSeconds: 10.0, freezeTargetSeconds: 19.967);
+        pixel = env.ReadCenterPixel(target);
+        pixel.G.Should().BeGreaterThan(0.9f);
+        pixel.B.Should().BeLessThan(0.1f);
+    }
+
     private sealed class SolidSource : IDisposable
     {
         public Surface Surface { get; }
