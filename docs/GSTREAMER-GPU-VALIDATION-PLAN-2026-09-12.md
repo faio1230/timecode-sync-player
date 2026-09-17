@@ -3322,3 +3322,22 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - シナリオ 22/22、LTC ループ 14/14、残プロセス 0。F-3 で `gap freeze target changed, discarding the previous frozen frame target=19.967` が 1 回発動（D32 項目 2 の作動）。証跡 `TestResults/postmerge4/`（agent-b の作業ツリー）
 - **判定: 候補 4（D32 込み）を作って検証機へ。D33（Single の MediaOut ホールド）は次の候補**
 - **候補 4**（2026-09-17 23:50）: `TimecodeSyncPlayer-v0.4.2-f0ee283-setup.exe` 38,664,289 バイト、SHA-256 `5ED002A8BEBD4E66E870FB0EB0FEF44E972FE7846B0A9B6A6268BFA67C73F34C`、zip 17,742,249 バイト `A1DA9B9C84F57F7ABDC715B5F59DED7D8443635DD6DFB141AB5D93CF48430A32`、ProductVersion `0.4.2+f0ee283…`（D32 込み、D33 は未）。Taildrop で検証機へ
+
+## 検証機・実素材での候補 3（`0.4.2+4469cdd`、D31/D31-b 込み、テストは main `e6b2b30` = ミュート起動・区間判定）の結果と分類（2026-09-18 00:15、`TSP-TestMachine` の報告、親の分類）
+
+共通: ERR/FTL 0、`GPU completion pending` 0、`Playback unavailable` 0、`pump deadline` 0、残プロセス 0、LTC ループ 14 本 ×3 合格。RealProjectGap は既定から除外（36 本）。検証機で見つかった基盤不具合: `make-e2e-media.ps1` の AV1 生成が 5.1 で libsvtav1 の stderr 情報行により中断（0 バイト素材）→ 検証機のパッチで修正（親が統合 `528e137`）。
+
+| 回 | -Media | 候補 2 → 候補 3 | 合格に転じた | 新たに失敗 | 両方で失敗 |
+| --- | --- | --- | --- | --- | --- |
+| a | M1,M4,M6 | 24/37 → **31/36** | C2 F1 F4 G1 G5 S1 S2 | なし | C1 F5 G2 S3 S5 |
+| b | M1,M3,M5 | 24/37 → **31/36** | C1 C2 F1 F3 F4 G2 S1 S4 | R1 | F5 G5 S3 S5 |
+| c | M2,M1,M4 | 27/37 → **32/36** | C1 F4 G2 G5 R4 | なし | C2 S1 S3 S5 |
+
+分類（親）:
+- **回り込み除去（ミュート）と区間判定の効果が大きい**（S-1/S-2/S-4、C-1/C-2、F-1/F-4、G-1/G-5 が転じた）。D31/D31-b の効果は S-2（3 回とも合格、hold-landing 20 件すべて範囲内）
+- **S-3 / S-5（3 回とも、D33 の対象）**: LTC 40 / 35 で position 30.8〜32.1（MediaOut 25 を越えて再生が続く）。hold-landing に到達せず。製品側は D33（同期担当が実装済み、実機中）、テスト側は期待値の [MediaIn, MediaOut] clamp（統合済み `a1f99b0`）
+- **F-5（a/b、テスト側）**: A（M1）の冒頭参照が輝度 3.7・黒率 91.6% のほぼ黒で、参照どうしの距離で同定できない（a は M4/head に近い、b は M5/head に一致）。参照が近すぎる（互いの距離が閾値未満）ときは判定不能として扱うテスト側の修正が要る。加えて候補 2 の a S-3 では M1 の head/tail 参照が (76,84,98)/(79,86,105) とほぼ同じ絵 → 4K CPU 素材の参照採取が古いフレームになる疑い（採取の待ちを位置・絵の変化で確認）
+- **C-1 a（c1-01 で黒 32 枚、テスト側）**: テスト開始直後の最初のジャンプは画面が黒（未表示）から始まるため、Held が黒で「黒を挟んだ」と数える。直前の絵が黒なら数えない判定に
+- **G-2 a（製品側の疑い、証跡待ち）**: Black のギャップ後に B（M4、VP9 1080p GPU）へ入って 3.9 秒経っても画面が黒（position 8.917 は正しい）。b（M3 4K GPU）と c（M1 CPU）は合格。出力トレース（compose.acquire / source.acquire / lifecycle）で B のロード後にフレームが届いているかを確認
+- **間欠（要観察）**: R-1 b（停止位置 13.000、保持 12.0）、G-5 b g5-16（着地せず observed 11.000）、C-2 c c2-01（3.5 秒 position 0.000、M2 長 GOP）、S-1 c（追従誤差 1.003 秒、M2 長 GOP = 既知の制限の範囲）
+- 候補 4（D32 込み）は送付済み。候補 3 の後に同じ 3 回を依頼
