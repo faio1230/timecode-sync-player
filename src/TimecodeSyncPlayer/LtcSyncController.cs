@@ -17,7 +17,11 @@ internal readonly record struct LtcSyncContext(
     double VideoFps,
     double DurationSeconds,
     int SignalLossTimeoutMilliseconds,
-    int SignalResumeFrames);
+    int SignalResumeFrames,
+    // D33: Single の補正（Jump の目標・残差）を D29 と同じ [MediaIn, MediaOut ?? 尺] に
+    // 収めるための範囲。Continue では使わない。
+    double MediaInSeconds = 0.0,
+    double? MediaOutSeconds = null);
 
 /// <summary>UI/native I/O boundaries. All LTC routing and state transitions belong to the controller.</summary>
 internal sealed record LtcSyncEffects(
@@ -715,8 +719,15 @@ internal sealed class LtcSyncController
             if (_effects.GetPlaybackSeconds == null) return;
             if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
                 return;
+            // D33: 範囲外の LTC は補正しない（Jump の生値シーク・Smooth の暴走で MediaOut を
+            // 越えない）。粗い判定の終端シークと Single の終端ホールドに任せる。範囲内は clamp は no-op。
+            (double clipIn, double clipOut) = SyncDecisionEngine.ClipRange(
+                state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
+            if (ltcSeconds < clipIn || ltcSeconds > clipOut)
+                return;
             residualSeconds = ltcSeconds - playback;
-            targetSeconds = ltcSeconds;
+            targetSeconds = SyncDecisionEngine.ClampToClip(
+                ltcSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         }
 
         SyncCorrectionDecision decision = _correction.Evaluate(

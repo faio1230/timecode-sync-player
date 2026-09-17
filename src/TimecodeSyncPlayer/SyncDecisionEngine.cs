@@ -54,12 +54,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         // D29: Single の LTC → 素材位置はトラックの範囲に収める。MediaOut 未設定は尺、
         // MediaIn 未設定は 0。Continue はタイムライン写像（FindTrackAtTimelinePosition）で
         // 既に範囲内のため、ここでは no-op になる。
-        double clipIn = IsFinite(state.MediaInSeconds) && state.MediaInSeconds > 0.0
-            ? state.MediaInSeconds : 0.0;
-        double clipOut = state.MediaOutSeconds is { } mediaOut && IsFinite(mediaOut)
-            ? mediaOut : state.DurationSeconds;
-        if (clipOut < clipIn)
-            clipOut = clipIn;
+        (double clipIn, double clipOut) = ClipRange(
+            state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         double target = Math.Clamp(ltcSeconds, clipIn, clipOut);
         double delta = target - state.PlaybackSeconds;
         if (Math.Abs(delta) <= toleranceSeconds)
@@ -143,6 +139,29 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 
     private static bool IsUsableFps(double fps) =>
         IsFinite(fps) && fps > 0;
+
+    /// <summary>
+    /// D29/D33: Single の LTC → 素材位置の範囲。MediaIn 未設定（0 以下）は 0、
+    /// MediaOut 未設定（null）は尺。範囲が逆転していれば In に合わせる。
+    /// </summary>
+    internal static (double In, double Out) ClipRange(
+        double mediaInSeconds, double? mediaOutSeconds, double durationSeconds)
+    {
+        double clipIn = IsFinite(mediaInSeconds) && mediaInSeconds > 0.0 ? mediaInSeconds : 0.0;
+        double clipOut = mediaOutSeconds is { } mediaOut && IsFinite(mediaOut)
+            ? mediaOut : durationSeconds;
+        if (clipOut < clipIn)
+            clipOut = clipIn;
+        return (clipIn, clipOut);
+    }
+
+    /// <summary>D33: 素材位置を [MediaIn, MediaOut ?? 尺] に収める（範囲内なら no-op）。</summary>
+    internal static double ClampToClip(
+        double seconds, double mediaInSeconds, double? mediaOutSeconds, double durationSeconds)
+    {
+        (double clipIn, double clipOut) = ClipRange(mediaInSeconds, mediaOutSeconds, durationSeconds);
+        return Math.Clamp(seconds, clipIn, clipOut);
+    }
 
     /// <summary>
     /// D20-b: 一致判定の許容秒。Decide と同じ規則（動画/タイムコード fps の大きいフレーム幅 ×

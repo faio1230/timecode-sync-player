@@ -198,4 +198,141 @@ public class SingleModeSyncCoordinatorTests
         // シーク失敗時は ReportSeekSent されない
         service.SeekState.HasPendingSeek.Should().BeFalse();
     }
+
+    // ---- D33: 範囲外 LTC の終端ホールド ----
+
+    private static SyncPlaybackState ClipState(
+        double playbackSeconds, double mediaIn, double? mediaOut, double duration = 200.0) => new(
+        SyncEnabled: true,
+        HasCurrentTrack: true,
+        IsSeeking: false,
+        PlaybackSeconds: playbackSeconds,
+        DurationSeconds: duration,
+        VideoFps: 25.0,
+        TimecodeFps: 25.0,
+        MediaInSeconds: mediaIn,
+        MediaOutSeconds: mediaOut);
+
+    [Fact]
+    public void Apply_LtcAboveClipOut_AtBoundary_HoldsWithoutSeek()
+    {
+        double playback = 25.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 40.0).Should().Be(SyncRequestResult.Complete);
+        coordinator.Apply(ltcSeconds: 41.0).Should().Be(SyncRequestResult.Complete);
+
+        seekCalls.Should().BeEmpty("端に達したらシークしない");
+        holdCalls.Should().Equal(new[] { true }, "ホールドは 1 回だけラッチする");
+    }
+
+    [Fact]
+    public void Apply_LtcAboveClipOut_BeforeBoundary_SeeksToClipOutWithoutHold()
+    {
+        double playback = 10.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 40.0);
+
+        seekCalls.Should().ContainSingle().Which.Should().Be(25.0, "D29 の clamp で端へ着地する");
+        holdCalls.Should().BeEmpty("端に達する前はホールドしない");
+    }
+
+    [Fact]
+    public void Apply_LtcBelowClipIn_AtBoundary_HoldsAtClipIn()
+    {
+        double playback = 5.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 0.0);
+
+        seekCalls.Should().BeEmpty();
+        holdCalls.Should().Equal(true);
+    }
+
+    [Fact]
+    public void Apply_BoundaryHoldReleased_WhenLtcReturnsInside_ThenSeeksAndFollows()
+    {
+        double playback = 25.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 40.0);
+        holdCalls.Should().Equal(true);
+
+        // LTC が範囲内（許容分だけ内側）へ戻ったら解除して追従を再開する。
+        coordinator.Apply(ltcSeconds: 10.0);
+
+        holdCalls.Should().Equal(true, false);
+        seekCalls.Should().ContainSingle().Which.Should().Be(10.0);
+    }
+
+    [Fact]
+    public void Apply_GeneratedMedia_ClipOutEqualsDuration_HoldsBeforeEos()
+    {
+        // 生成素材（尺 = MediaOut）: 最終フレームでホールドし、EOS と二重にならない
+        // （ホールドは 1 回だけ。EOS まで進んでから再度ホールドしない）。
+        double playback = 24.96;
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 0.0, mediaOut: null, duration: 25.0),
+                SeekTo: _ => true,
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 40.0);
+        coordinator.Apply(ltcSeconds: 40.0);
+
+        holdCalls.Should().Equal(true);
+    }
+
+    [Fact]
+    public void Apply_LtcInsideClipRange_DoesNotHold()
+    {
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: 10.0),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
+                SeekTo: _ => true,
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 10.0);
+
+        holdCalls.Should().BeEmpty();
+    }
 }

@@ -218,7 +218,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     _seekBarInteraction.IsSeeking, _vm.Sync.IsLtcRunning, _playbackControl.IsPaused,
                     _vm.Sync.LtcSignalLossMode, _vm.Sync.LtcFpsMode, _vm.Sync.GapBehavior,
                     _loadedTrackId, _fps, _duration,
-                    _settingsManager.Current.LtcSignalLossTimeoutMs, _settingsManager.Current.LtcSignalResumeFrames),
+                    _settingsManager.Current.LtcSignalLossTimeoutMs, _settingsManager.Current.LtcSignalResumeFrames,
+                    // D33: Single の補正を D29 の範囲に収めるための [MediaIn, MediaOut]。
+                    _playlist.Current?.MediaIn.TotalSeconds ?? 0.0,
+                    _playlist.Current?.MediaOut?.TotalSeconds),
                 ApplyFrameText: (timecode, realTime) =>
                 {
                     _vm.Sync.LtcTimecodeText = timecode;
@@ -921,7 +924,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     MediaOutSeconds: _playlist.Current?.MediaOut?.TotalSeconds),
                 SeekTo: target => SeekTo(target),
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
-                IsNativeSeeking: IsNativeSeeking));
+                IsNativeSeeking: IsNativeSeeking,
+                // D33: 範囲外 LTC の終端ホールド。一時停止／解除を UI 状態と一緒に反映する。
+                SetEndHold: held =>
+                {
+                    if (!IsPlaybackAvailable) return;
+                    _playbackApi.SetPaused(held);
+                    ApplyPauseState(held);
+                }));
 
     private ContinueOnTrackCoordinator CreateContinueOnTrackCoordinator() =>
         _continueOnTrackCoordinator ??= new ContinueOnTrackCoordinator(

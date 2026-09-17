@@ -118,10 +118,17 @@ internal sealed class SyncScenarioHarness
                 GetTimePos: () => (0, _playbackSeconds),
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled, Playlist.Current != null, IsSeeking, playback,
-                    _durationSeconds, _videoFps, 25),
+                    _durationSeconds, _videoFps, 25,
+                    MediaInSeconds: MediaInSeconds, MediaOutSeconds: MediaOutSeconds),
                 SeekTo: Seek,
                 GetTotalRenderedFrames: () => _renderedFrames,
-                IsNativeSeeking: () => NativeSeeking));
+                IsNativeSeeking: () => NativeSeeking,
+                // D33: 終端ホールドの pause/resume を記録する。
+                SetEndHold: held =>
+                {
+                    Operations.Add(new(held ? "clip-end-hold" : "clip-end-release"));
+                    SetPaused(held);
+                }));
         Controller = new LtcSyncController(
             Playlist, _gap, _syncService,
             new LtcFrameProcessor(new TimecodeFpsSelector(), new TimecodeFrameDiagnostics()),
@@ -130,7 +137,8 @@ internal sealed class SyncScenarioHarness
                 GetContext: () => new LtcSyncContext(
                     true, SyncEnabled, Mode, IsSeeking, IsMonitoring, IsPaused,
                     SignalLossMode, TimecodeFpsMode.Fixed25, GapBehavior,
-                    _loadedTrackId, _videoFps, _durationSeconds, 250, 3),
+                    _loadedTrackId, _videoFps, _durationSeconds, 250, 3,
+                    MediaInSeconds, MediaOutSeconds),
                 ApplyFrameText: (timecode, realTime) =>
                 {
                     TimecodeText = timecode;
@@ -218,6 +226,10 @@ internal sealed class SyncScenarioHarness
 
     /// <summary>T3: 全体に効く同期オフセット（ms）。プラスで映像が先行する。</summary>
     public double SyncOffsetMilliseconds { get; set; }
+
+    /// <summary>D33: Single の LTC → 素材位置の範囲（D29 と同じ）。既定は MediaIn=0 / MediaOut=尺。</summary>
+    public double MediaInSeconds { get; set; }
+    public double? MediaOutSeconds { get; set; }
 
     /// <summary>T7: 補正を有効にしたハーネスだけが使う補正モード。</summary>
     public SyncCorrectionMode CorrectionMode { get; set; } = SyncCorrectionMode.Smooth;
