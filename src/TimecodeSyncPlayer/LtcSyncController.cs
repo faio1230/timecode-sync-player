@@ -575,14 +575,16 @@ internal sealed class LtcSyncController
                 if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
                     _effects.ClearGapFreezeFrame();
                 _effects.UpdateTimelinePosition(seconds);
+                double? loadedPosition = _effects.GetPlaybackSeconds?.Invoke();
                 GapEnterAction action = _gap.DecideGapEnter(result, state.GapBehavior,
-                    state.LoadedTrackId, state.VideoFps, state.DurationSeconds);
+                    state.LoadedTrackId, state.VideoFps, state.DurationSeconds, loadedPosition);
                 GapEnterCoordinator coordinator = _gapCoordinator();
                 new GapEnterActionDispatcher(new GapEnterActionHandlers(
                     coordinator.EnterBlackGap, coordinator.EnterForceBlack, null,
                     coordinator.StartGapFreezeCaptureForCurrentTrack,
                     coordinator.LoadPreviousTrackFinalFrameForGapFreeze,
-                    coordinator.LoadNextTrackFirstFrameForGapFreeze)).Execute(action, result);
+                    coordinator.LoadNextTrackFirstFrameForGapFreeze,
+                    coordinator.CaptureCurrentFrameForGapFreeze)).Execute(action, result);
                 _effects.UpdateCurrentTrackLabel();
                 break;
             case TimelineQueryStatus.NoTracks:

@@ -55,12 +55,37 @@ public class GapEnterActionDispatcherTests
         recorder.Calls.Should().BeEmpty();
     }
 
+    [Fact]
+    public void Execute_DispatchesUseCurrentFrameWithResultAndAction()
+    {
+        var recorder = new Recorder();
+        var dispatcher = new GapEnterActionDispatcher(CreateHandlers(recorder));
+        TimelineQueryResult result = CreateResult();
+        var action = new GapEnterAction(GapEnterActionType.UseCurrentFrame, TargetSeconds: 9.9);
+
+        dispatcher.Execute(action, result);
+
+        recorder.Calls.Should().Equal("current:9.9:Previous");
+    }
+
+    [Fact]
+    public void Execute_IgnoresUseCurrentFrame_WhenHandlerIsMissing()
+    {
+        var recorder = new Recorder();
+        var dispatcher = new GapEnterActionDispatcher(CreateHandlers(recorder) with { UseCurrentFrame = null });
+
+        dispatcher.Execute(new GapEnterAction(GapEnterActionType.UseCurrentFrame, TargetSeconds: 9.9), CreateResult());
+
+        recorder.Calls.Should().BeEmpty();
+    }
+
     private static GapEnterActionHandlers CreateHandlers(Recorder recorder) => new(
         EnterBlackGap: () => recorder.Calls.Add("black"),
         ForceBlack: () => recorder.Calls.Add("force"),
         UseCachedFrame: () => recorder.Calls.Add("cached"),
         SeekToFinalFrame: (result, action) => recorder.Calls.Add($"seek:{action.TargetSeconds}:{result.PreviousTrack?.Name}"),
-        LoadPreviousTrack: (track, target, duration, fps) => recorder.Calls.Add($"load:{track.Name}:{target}:{duration}:{fps}"));
+        LoadPreviousTrack: (track, target, duration, fps) => recorder.Calls.Add($"load:{track.Name}:{target}:{duration}:{fps}"),
+        UseCurrentFrame: (result, action) => recorder.Calls.Add($"current:{action.TargetSeconds}:{result.PreviousTrack?.Name}"));
 
     private static TimelineQueryResult CreateResult()
     {

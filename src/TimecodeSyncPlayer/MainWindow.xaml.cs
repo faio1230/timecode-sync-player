@@ -194,8 +194,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     Environment.GetEnvironmentVariable(OutputEngineSettings.SimulateDeviceLossEnvironmentVariable)),
                 GpuStatusChanged = OnGpuStatusChanged,
                 GStreamerRebindRequested = OnGStreamerRebindRequested,
-                SourceFrameReady = (qpc, generation, sequence) =>
-                    _syncService.LatencyCompensator.ObserveFrameReady(qpc, generation, sequence),
+                SourceFrameReady = OnSourceFrameReady,
             });
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
@@ -1905,14 +1904,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private async Task TryCompleteGapFreezeAsync(int renderGeneration, bool hasFrame, bool allowRedraw = false)
     {
-        // D21: 進入・再ロードの後に届いたフレームだけを最終フレームとして固定する
-        // （位置が先に目標へ動いても、シーク前・ロード前の絵ではキャプチャしない）。
-        // ネイティブシーク中に届いた最終フレームもカウントする（完了はタイマーが起こす）。
-        if (hasFrame &&
-            _gapFreezeHandler.CurrentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
-        {
-            _gapFreezeHandler.NotifyFrameArrived();
-        }
+        // D21-b: 最終フレームの到着は OnSourceFrameReady（ソースフレームの位置）で判定する。
+        // 描画コールバックだけではシーク前の実行中フレームを最終フレームと誤認する。
 
         if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze && !IsNativeSeeking() &&
             _playbackApi.IsPaused())
@@ -1947,6 +1940,78 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// OutputEngine の GPU worker から呼ばれる（UI スレッドではない）。ソースフレームの位置（PTS）が
+    /// 目標の最終フレームと一致したときだけ「届いた」と数える（D21-b）。
+    /// 一致しないフレームはシーク前の実行中フレームなので、目標へ向けた再シークを予約する。
+    /// </summary>
+    private void OnSourceFrameReady(long qpc, int generation, long sequence, double positionSeconds)
+    {
+        _syncService.LatencyCompensator.ObserveFrameReady(qpc, generation, sequence);
+
+        GapFreezeHandler handler = _gapFreezeHandler;
+        if (handler.CurrentState is not (GapState.EnteringFreeze or GapState.WaitingForFrameStep) ||
+            handler.FrameSeenSinceCapture ||
+            !double.IsFinite(positionSeconds))
+        {
+            return;
+        }
+
+        double fps = _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps;
+        // 許容は 2 フレーム（フレーム先頭/終端の解釈差と実素材の端数を含む）。
+        if (Math.Abs(positionSeconds - handler.PendingTargetSeconds) <= 2.0 / fps)
+        {
+            handler.NotifyFrameArrived();
+            return;
+        }
+
+        RequestGapFreezeSeekRetryForStaleFrame(positionSeconds);
+    }
+
+    private int _gapFreezeStaleFrameRetryPosted;
+
+    private void RequestGapFreezeSeekRetryForStaleFrame(double stalePositionSeconds)
+    {
+        // 連続で届くフレームごとに Dispatcher へ積まない（1 件だけ予約する）。
+        if (Interlocked.CompareExchange(ref _gapFreezeStaleFrameRetryPosted, 1, 0) != 0)
+            return;
+        double expectedTarget = _gapFreezeHandler.PendingTargetSeconds;
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+        {
+            Interlocked.Exchange(ref _gapFreezeStaleFrameRetryPosted, 0);
+            RetryGapFreezeSeekForStaleFrame(stalePositionSeconds, expectedTarget);
+        });
+    }
+
+    private void RetryGapFreezeSeekForStaleFrame(double stalePositionSeconds, double expectedTarget)
+    {
+        if (_disposed)
+            return;
+        GapFreezeHandler handler = _gapFreezeHandler;
+        if (handler.FrameSeenSinceCapture ||
+            handler.CurrentState is not (GapState.EnteringFreeze or GapState.WaitingForFrameStep) ||
+            Math.Abs(handler.PendingTargetSeconds - expectedTarget) > 0.001)
+        {
+            return;
+        }
+
+        double target = handler.PendingTargetSeconds;
+        if (!handler.TryBeginSeekRetry())
+        {
+            Log.Warning(
+                "Continue mode: stale gap freeze source frame and no seek retry left stalePosition={Stale:F3} target={Target:F3}",
+                stalePositionSeconds, target);
+            return;
+        }
+
+        bool seekSuccess = SeekTo(target);
+        Log.Warning(
+            "Continue mode: stale gap freeze source frame, reissuing final-frame seek stalePosition={Stale:F3} target={Target:F3} retry={Retry} seekOk={SeekOk}",
+            stalePositionSeconds, target, handler.SeekRetryCount, seekSuccess);
+        if (!seekSuccess)
+            handler.ForceFreezeComplete();
     }
 
     private bool IsNativeSeeking()

@@ -28,6 +28,7 @@ internal enum GapEnterActionType
     UseCachedFrame,
     LoadPreviousTrack,
     SeekToFinalFrame,
+    UseCurrentFrame,
     LoadNextTrackFirstFrame
 }
 
@@ -53,15 +54,19 @@ public sealed class GapFreezeHandler
     public const double TimeoutSec = 3.0;
     public const double EndAdvanceThresholdSec = 0.15;
     internal const double DefaultFallbackFps = 30.0;    // MainWindow・GapEnterCoordinator と共有
+    // D21-b: 目標位置でないフレームが届いたときに、目標へ向けてシークをやり直す上限。
+    public const int MaxSeekRetries = 2;
 
     private GapState _currentState = GapState.Inactive;
     private bool _pauseOwnedByGap;
     private bool _pauseOwnershipRecorded;
     private readonly TimeProvider _timeProvider;
     internal long CaptureAttemptId { get; private set; }
-    // D21: 進入・再ロードの後に実際のフレームが 1 枚届くまでキャプチャを許可しない
-    // （位置だけが先に目標へ動き、シーク前の絵を最終フレームとして固定するのを防ぐ）。
-    internal bool FrameSeenSinceCapture { get; private set; } = true;
+    // D21/D21-b: 進入・再ロードの後に「目標位置のフレーム」が届くまでキャプチャを許可しない。
+    // フレーム位置は OutputEngine が取得したソースフレームの PTS（再生位置クエリより正確）。
+    private volatile bool _frameSeenSinceCapture = true;
+    // D21-b: 目標位置でないフレーム（シーク前の実行中フレーム）が届いたときの再シーク回数。
+    private int _seekRetryCount;
 
     public GapFreezeHandler(TimeProvider? timeProvider = null)
     {
@@ -84,6 +89,14 @@ public sealed class GapFreezeHandler
 
     public bool IsInactive => _currentState == GapState.Inactive;
 
+    /// <summary>進入・再ロードの後に「目標位置のフレーム」が届いたか（D21・D21-b）。</summary>
+    internal bool FrameSeenSinceCapture => _frameSeenSinceCapture;
+
+    /// <summary>D21-b: 再シークをまだ試せるか。</summary>
+    internal bool CanRetrySeek => _seekRetryCount < MaxSeekRetries;
+
+    internal int SeekRetryCount => _seekRetryCount;
+
     public void Reset()
     {
         CaptureAttemptId++;
@@ -95,7 +108,8 @@ public sealed class GapFreezeHandler
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
-        FrameSeenSinceCapture = true;
+        _frameSeenSinceCapture = true;
+        _seekRetryCount = 0;
     }
 
     public void ResetAll()
@@ -113,10 +127,36 @@ public sealed class GapFreezeHandler
         PendingTrackId = trackId;
         PendingTargetSeconds = targetSeconds;
         PendingPath = filePath;
-        FrameSeenSinceCapture = false;
+        _frameSeenSinceCapture = false;
+        _seekRetryCount = 0;
     }
 
-    internal void NotifyFrameArrived() => FrameSeenSinceCapture = true;
+    /// <summary>
+    /// D21-b (a): ロード中トラックが直前トラックと同じで、表示中の絵がすでに最終フレームのとき。
+    /// 改めてシークせず、現在の絵をそのまま最終フレームとして確定する。
+    /// </summary>
+    public void EnterFreezeCaptureWithCurrentFrame(Guid? trackId, double targetSeconds, string? filePath)
+    {
+        EnterFreezeCapture(trackId, targetSeconds, filePath);
+        _frameSeenSinceCapture = true;
+    }
+
+    /// <summary>D21-b: 目標位置のソースフレームが届いた（OutputEngine のフレーム位置で確認）。</summary>
+    internal void NotifyFrameArrived() => _frameSeenSinceCapture = true;
+
+    /// <summary>
+    /// D21-b: 目標位置でないフレームが届いたため、目標へ向けてシークをやり直す。再びフレーム到着を待つ。
+    /// 上限に達しているときは false（呼び出し側は現状のままタイムアウトへ委ねる）。
+    /// </summary>
+    internal bool TryBeginSeekRetry()
+    {
+        if (_seekRetryCount >= MaxSeekRetries)
+            return false;
+        _seekRetryCount++;
+        _frameSeenSinceCapture = false;
+        StartedAt = _timeProvider.GetUtcNow().UtcDateTime;
+        return true;
+    }
 
     public void EnterFreezeCaptureWithReload(Guid? trackId, double targetSeconds, string? filePath)
     {
@@ -188,13 +228,15 @@ public sealed class GapFreezeHandler
 
     /// <summary>
     /// Gap 進入時のアクションを決定する。MainWindow はこの戻り値に従って mpv 操作を行う。
+    /// loadedPositionSeconds は現在ロード中のトラックの再生位置（取得できないときは null）。
     /// </summary>
     internal GapEnterAction DecideGapEnter(
         TimelineQueryResult result,
         GapBehavior gapBehavior,
         Guid? loadedTrackId,
         double currentVideoFps,
-        double currentDurationSeconds)
+        double currentDurationSeconds,
+        double? loadedPositionSeconds = null)
     {
         if (ShouldTransitionFromFreezeToBlack(gapBehavior))
         {
@@ -222,7 +264,8 @@ public sealed class GapFreezeHandler
         {
             if (CurrentState == GapState.Inactive)
             {
-                return BuildFreezeEnterAction(result, loadedTrackId, currentVideoFps, currentDurationSeconds);
+                return BuildFreezeEnterAction(result, loadedTrackId, currentVideoFps, currentDurationSeconds,
+                    loadedPositionSeconds);
             }
         }
         return new GapEnterAction(GapEnterActionType.None);
@@ -276,7 +319,8 @@ public sealed class GapFreezeHandler
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
-        FrameSeenSinceCapture = true;
+        _frameSeenSinceCapture = true;
+        _seekRetryCount = 0;
         ClearCachedFrameInfo();
         SetState(GapState.Inactive);
     }
@@ -285,7 +329,8 @@ public sealed class GapFreezeHandler
         TimelineQueryResult result,
         Guid? loadedTrackId,
         double currentVideoFps,
-        double currentDurationSeconds)
+        double currentDurationSeconds,
+        double? loadedPositionSeconds)
     {
         PlaylistTrack? previousTrack = result.PreviousTrack;
         Guid? previousTrackId = previousTrack?.Id;
@@ -345,18 +390,8 @@ public sealed class GapFreezeHandler
 
         double target = duration > 0 ? Math.Max(0, duration - frameSeconds) : 0;
 
-        // target = 0 のとき（duration が frameSeconds 未満）はキャッシュ再利用せず再シークする
-        if (target > 0 && CanReuseCachedFrame(previousTrackId, target, frameSeconds))
-        {
-            SetState(GapState.FreezeComplete);
-            return new GapEnterAction(
-                GapEnterActionType.UseCachedFrame,
-                previousTrackId,
-                target,
-                duration,
-                fps);
-        }
-
+        // D21-b: 直前トラックが未ロード（または別トラック）なら、その最終フレームを
+        // 一時停止で読み込んでから最終フレームへシークする。
         if (ShouldLoadPreviousTrackForGapFreeze(loadedTrackId, previousTrackId))
         {
             return new GapEnterAction(
@@ -367,8 +402,15 @@ public sealed class GapFreezeHandler
                 fps);
         }
 
+        // ロード中トラックが直前トラックと同じ。位置が最終フレーム ±1 フレームなら
+        // すでに表示中の絵が最終フレームなので、改めてシークせず現在の絵を確定する。
+        bool atFinalFrame = target > 0 &&
+            loadedPositionSeconds.HasValue &&
+            double.IsFinite(loadedPositionSeconds.Value) &&
+            Math.Abs(loadedPositionSeconds.Value - target) <= frameSeconds;
+
         return new GapEnterAction(
-            GapEnterActionType.SeekToFinalFrame,
+            atFinalFrame ? GapEnterActionType.UseCurrentFrame : GapEnterActionType.SeekToFinalFrame,
             previousTrackId,
             target,
             duration,
