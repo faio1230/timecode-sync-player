@@ -133,6 +133,72 @@ public sealed class ComposeLayerHeldTests
         pixel.B.Should().BeLessThan(0.1f);
     }
 
+    [SkippableFact]
+    public void GapFreeze_UsesTargetFrameAcquiredWhileEntering_WhenCompletionTickHasNoNewFrame()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var red = new SolidSource(env, 64, 64, new Color4(1f, 0f, 0f, 1f));
+        using var yellow = new SolidSource(env, 64, 64, new Color4(1f, 1f, 0f, 1f));
+
+        // 再生中の赤を Held（直前キャンバス）にした後、Freeze 進入中（Hold）に目標位置の黄が届く。
+        layer.Compose(target.Surface, OutputGapMode.None, new ClipPlacement(null), false, default, 0,
+            red.Image, acquirePositionSeconds: 10.0, freezeTargetSeconds: 10.0);
+        layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+            yellow.Image, acquirePositionSeconds: 19.967, freezeTargetSeconds: 19.967);
+
+        // 確定（FreezeComplete）の tick では同じリースが続くため新しいフレームは渡らない。
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: 19.967);
+
+        layer.HasFreeze.Should().BeTrue("進入中に取得した目標位置のフレームで確定する");
+        Color4 pixel = env.ReadCenterPixel(target);
+        pixel.G.Should().BeGreaterThan(0.9f, "直前キャンバス（赤）ではなく目標フレーム（黄）を表示する");
+        pixel.R.Should().BeGreaterThan(0.9f);
+        pixel.B.Should().BeLessThan(0.1f);
+    }
+
+    [SkippableFact]
+    public void GapFreeze_DoesNotFreezeStaleSourceFrame_WhenTargetFrameNeverArrives()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var red = new SolidSource(env, 64, 64, new Color4(1f, 0f, 0f, 1f));
+
+        // ジャンプ前のフレーム（位置 10.0）だけが取得済み。目標フレームが届かないまま確定しても凍結しない。
+        layer.Compose(target.Surface, OutputGapMode.None, new ClipPlacement(null), false, default, 0,
+            red.Image, acquirePositionSeconds: 10.0, freezeTargetSeconds: 10.0);
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: 19.967);
+
+        layer.HasFreeze.Should().BeFalse("ジャンプ前の位置のフレームを Freeze として確定しない");
+    }
+
+    [SkippableFact]
+    public void ClearSourceFrame_DropsTrackedFrame_AtGenerationChange()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var yellow = new SolidSource(env, 64, 64, new Color4(1f, 1f, 0f, 1f));
+
+        layer.Compose(target.Surface, OutputGapMode.None, new ClipPlacement(null), false, default, 0,
+            yellow.Image, acquirePositionSeconds: 19.967, freezeTargetSeconds: 19.967);
+
+        // 世代切替（load / seek）でリングの面が再利用され得るため、追跡中のソースを捨てる。
+        layer.ClearSourceFrame();
+
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: 19.967);
+
+        layer.HasFreeze.Should().BeFalse("世代をまたいでソースの面を Freeze に使わない");
+    }
+
     private sealed class SolidSource : IDisposable
     {
         public Surface Surface { get; }

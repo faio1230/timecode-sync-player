@@ -77,6 +77,12 @@ internal sealed class ComposeLayer : IDisposable
     private Surface? heldCanvas;
     private int heldCanvasWidth, heldCanvasHeight;
 
+    // D26-b: Freeze 確定は「進入中（Hold）に取得した目標位置のソース画像」で行う。
+    // 確定 tick（GapFreeze）では同じリースが続いて新しい画像が渡らないため、
+    // 取得済みのソース画像を位置付きで追跡する。世代切替では破棄する（リング面の再利用）。
+    private LayerImage? sourceFrame;
+    private ClipPlacement sourceFrameClip = new(null);
+
     public ComposeLayer(GpuDevice gpu, ShaderPipeline shaders, CanvasSettings canvas)
     {
         this.gpu = gpu;
@@ -104,6 +110,14 @@ internal sealed class ComposeLayer : IDisposable
         frozen = null;
         frozenClip = new(null);
         frozenWidth = frozenHeight = 0;
+    }
+
+    // D26-b: Freeze 候補として追跡している取得済みソース画像。世代切替でリングの面が
+    // 再利用され得るため、破棄する（Held のキャンバスは所有コピーなので破棄しない）。
+    public void ClearSourceFrame()
+    {
+        sourceFrame = null;
+        sourceFrameClip = new(null);
     }
 
     /// <summary>
