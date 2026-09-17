@@ -232,8 +232,26 @@ public sealed class LtcScenarioE2ETests
         scenario.Play(start, 4.0);
         scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
         scenario.PlayHeld(target, 3.0);
+
+        // LTC が保持値へ届いた時刻を一時停止の基準にする（R-1 と同じ基準）。ここでは判定しない
+        // ので、届かないまま時間切れになっても後続の待ちと判定はこれまでどおり動く。
+        DateTime holdObservedAt = DateTime.Now;
+        DateTime ltcDeadline = holdObservedAt.AddSeconds(6);
+        while (scenario.LtcSeconds() < target - 0.001 && DateTime.Now < ltcDeadline)
+        {
+            Thread.Sleep(50);
+            holdObservedAt = DateTime.Now;
+        }
+
         scenario.WaitUntil(() => scenario.IsPaused(), timeoutSeconds + scenario.OneFrame + 0.5,
             "保持の検出で一時停止");
+        scenario.Journal.Write("hold-pause", details: new
+        {
+            target,
+            pauseLatencySeconds = (DateTime.Now - holdObservedAt).TotalSeconds,
+            position = scenario.Position(),
+            ltc = scenario.LtcSeconds(),
+        });
 
         scenario.Play(target, 8.0);
         scenario.WaitUntil(() => !scenario.IsPaused(), 4, "送出再開で再生が復帰");
@@ -254,10 +272,21 @@ public sealed class LtcScenarioE2ETests
         scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
         scenario.PlayHeld(target, 4.0);
         scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 6, "LTC が保持値に到達");
+        const double observeSeconds = 3.0;
         double before = scenario.Position();
-        Thread.Sleep(3000);
-        double advanced = scenario.Position() - before;
-        scenario.Journal.Write("run-through-hold", details: new { target, advanced });
+        Thread.Sleep((int)(observeSeconds * 1000));
+        double after = scenario.Position();
+        double advanced = after - before;
+        // target は LTC の保持値（タイムライン秒）、advancedSeconds は observeSeconds の間に
+        // 進んだ再生位置の差。両者は別の量なので、名前で区別できるようにする。
+        scenario.Journal.Write("run-through-hold", details: new
+        {
+            holdTarget = target,
+            observeSeconds,
+            positionBefore = before,
+            positionAfter = after,
+            advancedSeconds = advanced,
+        });
         advanced.Should().BeGreaterThanOrEqualTo(2.5, "ランスルーは保持中も走り続ける");
         scenario.IsPaused().Should().BeFalse();
     });
