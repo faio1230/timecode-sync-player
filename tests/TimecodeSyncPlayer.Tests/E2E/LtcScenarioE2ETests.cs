@@ -1402,9 +1402,51 @@ public sealed class LtcScenarioE2ETests
         public void CheckFreeze(string name, double ltcTarget, TrackInfo previousTrack)
         {
             Hold(ltcTarget, 3.5);
-            FrameSignature signature = WaitForFrame($"{name}-freeze", TimeSpan.FromSeconds(3.0),
-                (_, match) => match.MatchesTrack(previousTrack.Symbol) && match.Reference!.Kind == "tail",
-                $"{name}: Freeze は {previousTrack.Symbol} の最終フレーム");
+            bool ExpectTail(FrameSignature _, ReferenceMatch match) =>
+                match.MatchesTrack(previousTrack.Symbol) && match.Reference!.Kind == "tail";
+            DateTime started = DateTime.UtcNow;
+            FrameSignature signature;
+            try
+            {
+                signature = WaitForFrame($"{name}-freeze", TimeSpan.FromSeconds(3.0),
+                    (frame, match) => ExpectTail(frame, match),
+                    $"{name}: Freeze は {previousTrack.Symbol} の最終フレーム");
+            }
+            catch (TimeoutException ex)
+            {
+                // A1 §4.5: 3.0 秒はハンドラの timeout と同値で、遅れて更新と更新されないを区別できない。
+                // 合否の基準（3.0 秒）は変えず、判定が外れたときだけ最大 8 秒まで 200ms 間隔で
+                // 遅れての更新を観測し、一致時刻を freeze-late-update に残す（所要は失敗時だけ延びる）。
+                double? lateUpdateSeconds = null;
+                FrameSignature lateSignature = default;
+                for (int attempt = 1; (DateTime.UtcNow - started).TotalSeconds < 8.0; attempt++)
+                {
+                    Thread.Sleep(200);
+                    FrameSignature candidate = Capture($"{name}-freeze-late-{attempt:D2}");
+                    ReferenceMatch match = References.Match(candidate);
+                    if (ExpectTail(candidate, match))
+                    {
+                        lateUpdateSeconds = (DateTime.UtcNow - started).TotalSeconds;
+                        lateSignature = candidate;
+                        break;
+                    }
+                }
+
+                Journal.Write("freeze-late-update", details: new
+                {
+                    name,
+                    seconds = lateUpdateSeconds is double seconds ? Math.Round(seconds, 3) : (double?)null,
+                    note = lateUpdateSeconds is null ? "8 秒まで更新なし" : "3.0 秒の判定後に遅れて一致",
+                    nearestKnownColor = lateUpdateSeconds is null
+                        ? null
+                        : LtcScenarioFrameProbe.DescribeNearestKnownColor(lateSignature),
+                });
+                throw new TimeoutException(
+                    $"{ex.Message}; 遅れての観測: " + (lateUpdateSeconds is double late
+                        ? $"{late:F3} 秒で {previousTrack.Symbol} の最終フレームに更新（合否の基準は 3.0 秒のまま）"
+                        : "8 秒まで更新なし"), ex);
+            }
+
             Journal.Write("freeze-observation", details: new
             {
                 name,
