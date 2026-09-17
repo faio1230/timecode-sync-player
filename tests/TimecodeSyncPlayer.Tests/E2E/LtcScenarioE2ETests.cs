@@ -707,6 +707,8 @@ public sealed class LtcScenarioE2ETests
         /// <summary>
         /// 参照フレーム: 各トラックを読み込み、一時停止で MediaIn と MediaOut-1 フレームへ
         /// シークして画面を読み戻す（2.5 節）。同期 OFF・LTC 送信前に行う。
+        /// tail が head と同一なら、シーク後に届いたフレームが D25 の古いフレーム
+        /// （PTS だけ目標）の可能性が高いため、最大 3 回・200ms 間隔で取り直す。
         /// </summary>
         private void CaptureReferences()
         {
@@ -717,19 +719,58 @@ public sealed class LtcScenarioE2ETests
                 LoadTrack(track.Index);
                 Pause();
                 Seek(track.MediaIn.TotalSeconds);
-                References.Add(track.Symbol, "head", $"ref_{track.Symbol}_head",
-                    LtcScenarioFrameProbe.Capture(App, ReportDir, $"ref_{track.Symbol}_head", Journal));
+                FrameSignature head = LtcScenarioFrameProbe.Capture(
+                    App, ReportDir, $"ref_{track.Symbol}_head", Journal);
+                References.Add(track.Symbol, "head", $"ref_{track.Symbol}_head", head);
 
                 double tail = Math.Max(0, track.MediaOut.TotalSeconds - OneFrame);
                 Seek(tail);
-                References.Add(track.Symbol, "tail", $"ref_{track.Symbol}_tail",
-                    LtcScenarioFrameProbe.Capture(App, ReportDir, $"ref_{track.Symbol}_tail", Journal));
+                FrameSignature tailSignature = CaptureTailReference(track, head);
+                References.Add(track.Symbol, "tail", $"ref_{track.Symbol}_tail", tailSignature);
                 Journal.Write("reference-captured", details: new
                 {
                     symbol = track.Symbol,
                     tailTarget = tail,
                     tailObserved = Position(),
                 });
+            }
+        }
+
+        /// <summary>
+        /// tail 参照の取り直し。シーク後に取得したフレームが直前の参照（head）と同一なら、
+        /// D25 の古いフレームとみなして最大 3 回・200ms 間隔で再取得する。
+        /// それでも同一ならジャーナルに記録して失敗する（シーク後の新しいフレームが描かれるのを待つ）。
+        /// </summary>
+        private FrameSignature CaptureTailReference(TrackInfo track, FrameSignature head)
+        {
+            const int MaxRecaptures = 3;
+            string imageName = $"ref_{track.Symbol}_tail";
+            for (int attempt = 0; ; attempt++)
+            {
+                FrameSignature signature = LtcScenarioFrameProbe.Capture(App, ReportDir, imageName, Journal);
+                if (!head.IsSameFrameAs(signature))
+                    return signature;
+
+                Journal.Write("reference-stale", details: new
+                {
+                    symbol = track.Symbol,
+                    kind = "tail",
+                    attempt,
+                    maxRecaptures = MaxRecaptures,
+                    nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
+                });
+                if (attempt >= MaxRecaptures)
+                {
+                    Journal.Write("reference-recapture-failed", details: new
+                    {
+                        symbol = track.Symbol,
+                        kind = "tail",
+                        attempts = attempt + 1,
+                    });
+                    throw new TimeoutException(
+                        $"参照 {imageName} が head と同一のまま取り直せない（シーク後に新しいフレームが描かれない。D25 の古いフレーム）");
+                }
+                Thread.Sleep(200);
             }
         }
 

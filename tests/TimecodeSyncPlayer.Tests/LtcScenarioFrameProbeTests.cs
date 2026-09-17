@@ -179,6 +179,49 @@ public sealed class LtcScenarioFrameProbeTests
         set.IsTrackBlack("C").Should().BeFalse();
     }
 
+    /// <summary>
+    /// 参照採取の取り直し判定: 同じ表示フレームを再度読むと同一の署名になる。
+    /// D25 のシーク前フレーム（PTS だけ目標）を参照として固定しないための検出に使う。
+    /// </summary>
+    [Fact]
+    public void IsSameFrameAs_AcceptsIdenticalCaptures()
+    {
+        using Bitmap bitmap = Solid(Color.FromArgb(255, 240, 0));
+
+        FrameSignature first = LtcScenarioFrameProbe.MeasureCenter(bitmap);
+        FrameSignature second = LtcScenarioFrameProbe.MeasureCenter(bitmap);
+
+        first.IsSameFrameAs(second).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsSameFrameAs_RejectsDifferentColors()
+    {
+        using Bitmap white = Solid(Color.White);
+        using Bitmap yellow = Solid(Color.FromArgb(255, 240, 0));
+
+        LtcScenarioFrameProbe.MeasureCenter(white)
+            .IsSameFrameAs(LtcScenarioFrameProbe.MeasureCenter(yellow)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsSameFrameAs_RejectsSameMeanWithDifferentPixels()
+    {
+        using Bitmap leftRed = SplitHorizontal(Color.Red, Color.Blue);
+        using Bitmap leftBlue = SplitHorizontal(Color.Blue, Color.Red);
+
+        LtcScenarioFrameProbe.MeasureCenter(leftRed)
+            .IsSameFrameAs(LtcScenarioFrameProbe.MeasureCenter(leftBlue)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsSameFrameAs_RejectsMissingSamples()
+    {
+        FrameSignature empty = default;
+
+        empty.IsSameFrameAs(empty).Should().BeFalse("サンプル無しの署名を同一扱いしない");
+    }
+
     private static Bitmap Solid(Color color)
     {
         var bitmap = new Bitmap(100, 100);

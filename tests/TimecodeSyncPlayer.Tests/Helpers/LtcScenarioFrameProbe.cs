@@ -45,6 +45,15 @@ internal readonly record struct FrameSignature(
             sum += Math.Abs(Pixels[index] - other.Pixels[index]);
         return sum / (double)Pixels.Length;
     }
+
+    /// <summary>
+    /// 同じ表示フレームの取り直しか（参照採取の D25 検出用）。平均色と画素の両方が
+    /// 許容内のときだけ同一とし、同系色の別フレームを同一扱いしない。
+    /// </summary>
+    public bool IsSameFrameAs(FrameSignature other) =>
+        SampleCount > 0 && SampleCount == other.SampleCount &&
+        MeanColorDistanceTo(other) <= LtcScenarioFrameProbe.SameFrameTolerance &&
+        MeanPixelDifferenceTo(other) <= LtcScenarioFrameProbe.SameFrameTolerance;
 }
 
 internal static class LtcScenarioFrameProbe
@@ -53,6 +62,8 @@ internal static class LtcScenarioFrameProbe
     public const double BlackPixelFraction = 0.99;
     public const double ReferenceColorDistance = 60.0;
     public const double ReferencePixelDifference = 12.0;
+    /// <summary>参照の取り直し判定（同一表示フレームの検出）の許容差。</summary>
+    public const double SameFrameTolerance = 0.5;
     public const double CenterFraction = 0.6;
     private const int SampleStride = 8;
 
