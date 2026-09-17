@@ -251,5 +251,6 @@ public class SeekTraceEventsTests
         SetPlayPauseIcon: _ => { },
         ResetGapFreezeAll: () => { },
         ResetGapFreeze: () => { },
-        ClearGapFreezeFrame: () => { });
+        ClearGapFreezeFrame: () => { },
+        BeginSyncFileLoad: _ => { });
 }
