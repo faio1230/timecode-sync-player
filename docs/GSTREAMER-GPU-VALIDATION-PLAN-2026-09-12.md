@@ -3430,3 +3430,28 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - シナリオ 21/22（S-3 のみ失敗、単独再実行 ×2 も失敗）、LTC ループ 14/14。R-1/R-2 の hold-pause 超過 +0.000（pauseLatency 0.147 / 0.261）。shim `0x0@` 0 件
 - S-3 の機序（アプリログ）: `Single mode: clip boundary hold released ltc=10.014 playback=20.000` → `Timecode sync seek suppressed pendingTarget=20.000 playback=20.000 ltc=10.014 requestedTarget=10.014 tolerance=0.2400` → 直後に `clip boundary hold ltc=40.000` が再適用 → `released ltc=10.000` の後、再シークなしで position=20.000 のまま。D33 の境界ホールド（Single、clipOut=20）と D35 の保持値への明示着地（保持 40 → clamp 20 の着地が pending に残る／保持値の再適用）の干渉。D35 統合前（postmerge6）は S-3 合格
 - **判定: D35-b として同期担当が修正。候補 6 は修正後**
+
+### D35-b の統合と候補 6 の作成（2026-09-18 06:37〜07:00、親が交代して実施）
+
+親が TSP-Fable（Fable 5.1）から TSP-Opus へ交代。以降の記録はこのセッション。
+
+- **D35-b（`948b154`）を統合**（main `93abd5c`）。同期担当の実機は S-1〜S-5 5/5、R-1〜R-4 4/4、
+  4K の R 系 4/4、S-3 × `-SegmentSeconds 8` 1/1（**親が 4 つの trx を自分で確認**、失敗 0）。
+  S-3 の回帰はアプリログでも解消を確認（ホールド解除 → 保留と着地ラッチの解除 → 範囲内 LTC へ 1 回着地）
+- テスト側の警告 1 件（`SyncScenarioHarness.cs:133` の CS8602）を修正して統合（`588ab1c`）。ビルド 警告 0
+- **統合後 main の実機確認（除去担当）**: シナリオ **22/22**、LTC ループ **14/14**、S-3 8 秒版 **1/1**、失敗 0。
+  shim ログの `0x0@` **0 件**、`preroll-timeout` は 3 run で +1。R-1 の hold-pause 超過 +0.033（pauseLatency 0.149）、
+  R-2 +0.000（0.190）。**親が 3 つの trx を確認**
+- 親の確認: ビルド 0 エラー / 0 警告、非E2E **1892/0**、`check-shim-lock-rule.py` PASS
+- **候補 6 を作成し検証機へ送付**: `0.4.2+588ab1c`、36.9MB、SHA-256 `EE586735304EE8DD73CDC36FD479DF9D132BD79279718AA27A758D9FDD67AFD0`。
+  検証機は a = M1,M4,M6 / b = M1,M3,M5 / c = M2,M1,M4（各 `-MediaInOffsetSeconds 5`、出力トレース有効）を実行
+
+### L-1 を追加することにした（2026-09-18 07:04、利用者の依頼）
+
+**現行のシナリオで LTC を連続で当て続ける最長区間は S-1 の 10 秒しかない。** 現場は LTC を流しっぱなしで使うので、
+そこが一番薄い。V6（60 分）は LTC 同期を掛けない連続再生、G-5 / F-4 は 2 秒ごとの保持と切替で、どちらも連続追従ではない。
+
+**L-1**: Single モードで 1 トラック内を 60 秒連続追従し、2 秒窓ごとに `frameUpdates`・位置の進み・誤差を集計する。
+判定は「更新 0 の窓 0 件」「位置が進まない窓 0 件」「窓ごとの誤差 ±0.3 秒以内」。最悪の窓を報告に出す。
+**秒数・対象トラック・窓長は環境変数で可変にし、素材を何本回すかは検証機が決める**（利用者の指示）。
+指示書 `docs/prompts/2026-09-18-L1-continuous-follow-stall-audit.md`。
