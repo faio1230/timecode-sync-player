@@ -3021,3 +3021,24 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 現状: 信号断（`LtcSignalLossMode`、タイムアウト既定 250ms）は**無音（解読なし）でだけ**発火。同じ値が続く保持 LTC（Duplicate）は信号断でないため、Stop モードでも動画が走り続ける（S-2 の観測はこれ）。既存 E2E の Stop / RunThrough 4 本は無音の信号断だけを確認している
 - 注意: シナリオ E2E は `LtcSignalLossModeCombo` の index 0 = **RunThrough** で回している。S-2 の「保持中は位置が保持値 ±0.3」という期待は RunThrough では成立しない（走り続けるのが仕様）。S-2 は Stop モードで回すか、RunThrough なら着地だけを見るように直す
 - 対処: `docs/prompts/2026-09-17-D27-held-timecode-stop-and-runthrough.md`（同期担当、S-4 の後・D24/D25 の前）。保持を「タイムコード停止」として信号断と同じ扱いにし、Stop は一時停止・RunThrough は継続、復帰で再同期。E2E に R-1〜R-4 を追加
+
+## D28: VP9 4K（M3、`d3d11vp9dec`）の一時停止シーク後に合成の GPU 完了待ちが 100ms を超え、再生が「利用不可」で止まる（2026-09-17 検証機、ハイブリッド GPU、v0.4.2）
+
+- 観測（検証機、`-Media M1,M3,M5`、13 テストで各 1 回 = 26 件の ERR）: M3 読み込み → 一時停止で 0 と 19.968 へシーク → 0.27 秒後に `[ERR] OutputEngine: compose.source: GPU completion pending >100ms or GetData failed (0x00000001); new work stopped, retaining resources until completion/device loss.` と `[ERR] Playback unavailable: compose.source: …` → 以後 `Playlist track loaded index=2 name=M5` の後に `Gst loadfile` が出ず、M5 のメタデータ待ちで時間切れ
+- 意味: 合成側がソースの GPU 完了（fence / GetData）を 100ms で打ち切り、新規の仕事を止める安全策が発火して**再生系が止まったまま復帰しない**。内蔵 AMD での 4K VP9 復号は遅く、シーク直後は完了待ちが 100ms を超え得る。「遅い」だけで再生が死ぬのは現場で許容できない
+- 対処（未着手。除去担当が D26 の後）: (1) 完了待ちの上限を伸ばす/適応させ、超過は「今 tick を skip」で済ませて次 tick で再試行（デバイス消失と区別）。(2) `Playback unavailable` へ落とす条件を「本当のデバイス消失 / 連続 N 秒の未完了」に限定。(3) 開発機で 4K VP9 を生成して再現を試みる
+- 証跡: 検証機 `TestResults/ltc-scenarios/20260917T014627Z-real`（app-logs）
+
+## D24 の追加証跡（検証機、UI Automation、v0.4.2、2026-09-17 18:00）
+
+- M2（H.264 1920x886 60fps）: 4 秒再生 → 一時停止 → SeekBar を 19.968 の比率へ → +1/+2/+4/+8 秒とも表示 `0:00:00:00`（スライダーは 0.186 のまま）。再生すると 2 秒後 `0:00:21:58`（再生を始めると目標付近から進む）
+- 対照 M4（VP9 1920x1080 60fps）: シーク後 +1〜+8 秒とも `0:00:19:58`
+- shim ログ（M2）: `seek: send end (accurate) ok=1` → `pump_arm: set_state(PLAYING)` → `paused-seek: pump deadline gen=16 -> PAUSED (faults=1)` → 21.040 へのヌッジと 19.968 を交互に送り faults が増える。開発機の切り分け（GOP 600 で再現、ポンプ予算 500ms）と整合
+
+## 観測メモ（検証機、実素材 `-Media M1,M4,M6`、v0.4.2、2026-09-17 10:56）: 22 合格 / 11 失敗
+
+- **素材の冒頭が黒い**（M4 の冒頭は全面黒、M1 の冒頭は輝度 3.7・黒率 91.6%）ため、参照 `M4/head` と黒画面の距離が 0 になり「黒」と「M4 冒頭で静止」を画像で区別できない（F-3 / F-5 の最良一致が M4/head）。「保持中に黒にならない」の判定も暗い素材で誤検出（S-2 / C-2 / F-4 / G-5）。→ テスト基盤: 生成スクリプトに **`-MediaInOffsetSeconds`** を足す（検証機側）。テスト側: 黒の判定は参照が黒でないときだけ課す（除去担当、D26 と一緒に）
+- **S-3（Single、範囲外 LTC 40 → 終端）で position=42.683**（MediaOut 20 なのに媒体の尺 58.5 で clamp）。→ Single モードの LTC → 位置の写像で `MediaOut` が使われていない疑い（**D29 候補**、同期担当が D27 の後に確認）
+- S-1 `ltc=18.080; position=12.117`（4K 復号の追従遅れ）、G-2 `ltc=27.800; position=19.033`、S-4（旧ダブルクリック方式）。RealProjectGap は v0.4.2 に D20〜D22 が無いため想定内。合格 8 本: C-1、F-1、F-2、G-1、G-3、G-4、G-6、S-5。参照の終端到達: M1 / M4 は 19.967、M6（AV1）は 19.958
+
+## 利用者の決定（2026-09-17 18:05）: 保持 LTC 中の動画は**モード依存**（停止モードは保持位置で一時停止、ランスルーは走り続ける。値が動き出したら再同期）= D27 の方針どおり
