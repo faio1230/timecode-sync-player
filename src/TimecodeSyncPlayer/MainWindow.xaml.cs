@@ -250,6 +250,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 },
                 GetCorrectionMode: () => _vm.Sync.SyncCorrectionMode,
                 GetPlaybackSeconds: () => ReadPlaybackTimePos(),
+                GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
                 ApplyRateInstant: rate => _playbackApi.SetRateInstant(rate).Success,
                 SeekTo: target => SeekTo(target),
                 SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text,

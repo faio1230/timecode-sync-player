@@ -34,6 +34,7 @@ internal sealed record LtcSyncEffects(
     Action ResumeGapPause,
     Func<SyncCorrectionMode>? GetCorrectionMode = null,
     Func<double?>? GetPlaybackSeconds = null,
+    Func<long>? GetTotalRenderedFrames = null,
     Func<double, bool>? ApplyRateInstant = null,
     Func<double, bool>? SeekTo = null,
     Action<string>? SetCorrectionStatus = null,
@@ -77,6 +78,8 @@ internal sealed class LtcSyncController
     private double? _lastAcceptedLtcSeconds;
     private double _lastAcceptedRawSeconds;
     private long _lastAcceptedFrameEndTimestamp;
+    // D20-b (i): 同一の Jump 連続で何度も適用しないためのラッチ（Normal/Initial で解除）。
+    private bool _jumpAppliedOnce;
     private double? _pendingSyncSeconds;
     private double _pendingSyncRawSeconds;
     private long _pendingSyncFrameEndTimestamp;
@@ -292,6 +295,7 @@ internal sealed class LtcSyncController
     {
         _lastAcceptedLtcSeconds = null;
         _pendingSyncSeconds = null;
+        _jumpAppliedOnce = false;
         if (_effects.GetContext().IsMonitoring)
         {
             _monitoring.MarkStarted();
@@ -316,6 +320,7 @@ internal sealed class LtcSyncController
     {
         _lastAcceptedLtcSeconds = null;
         _pendingSyncSeconds = null;
+        _jumpAppliedOnce = false;
         if (_monitoring.MarkStopped(exception))
         {
             _signalLoss.Reset();
@@ -344,8 +349,26 @@ internal sealed class LtcSyncController
         ApplyFrame(processed);
         if (sourceFrame != null)
             LogFrameDiagnostics(sourceFrame, processed, mode);
+        bool applyJumpOnce = false;
         if (!processed.ShouldApplySync)
-            return;
+        {
+            // D20-b (i): Jump の直後は 1 回だけ新値で適用する。保持（Duplicate）は定常どおり
+            // 適用しない（低頻度再評価は入れない）。
+            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump && !_jumpAppliedOnce)
+            {
+                _jumpAppliedOnce = true;
+                applyJumpOnce = true;
+            }
+            else
+            {
+                TryReapplyAfterFileLoadRelease();
+                return;
+            }
+        }
+        else
+        {
+            _jumpAppliedOnce = false;
+        }
         // T7: フレーム文脈は必ずこのフレームの処理の先頭で捨てる。抑止などで
         // ApplySync が走らないフレームに前のフレームの素材位置・再生位置を持ち越さない。
         _lastContinueFrame = null;
@@ -355,12 +378,43 @@ internal sealed class LtcSyncController
         // T2: サンプル時計が有効なら、ここでフレーム終端からの経過（age）を足す。
         double rawSeconds = processed.ResolvedSeconds;
         long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
-        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "frame");
+        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, applyJumpOnce ? "jump" : "frame");
         _lastAcceptedLtcSeconds = effectiveSeconds;
         _lastAcceptedRawSeconds = rawSeconds;
         _lastAcceptedFrameEndTimestamp = frameEndTimestamp;
+        if (applyJumpOnce)
+        {
+            // 診断 Jump は信号回復の有効フレームに数えない（ObserveValidFrame を呼ばない）。
+            Log.Information("Timecode sync: applying the first Jump frame once ltc={Ltc:F3}", rawSeconds);
+            RequestSyncEffective(effectiveSeconds);
+            ApplyCorrection(effectiveSeconds);
+            return;
+        }
+
         ObserveValidFrame(rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
         ApplyCorrection(effectiveSeconds);
+    }
+
+    /// <summary>
+    /// D20-b (i): 保持 LTC（Duplicate）では通常の同期経路が走らないため、ロード解除だけを
+    /// ここで観測し、解除されたら最後に受理したタイムコードを 1 回だけ適用する。
+    /// </summary>
+    private void TryReapplyAfterFileLoadRelease()
+    {
+        if (!_syncService.IsLoadingFile)
+            return;
+        if (_effects.GetPlaybackSeconds == null || _effects.GetTotalRenderedFrames == null)
+            return;
+        if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
+            return;
+        if (!_syncService.PollFileLoadRelease(playback, _effects.GetTotalRenderedFrames()))
+            return;
+        if (_lastAcceptedLtcSeconds is not double accepted)
+            return;
+
+        Log.Information(
+            "Timecode sync: reapplying the last accepted timecode once after file load ltc={Ltc:F3}", accepted);
+        RequestSyncEffective(accepted);
     }
 
     /// <summary>

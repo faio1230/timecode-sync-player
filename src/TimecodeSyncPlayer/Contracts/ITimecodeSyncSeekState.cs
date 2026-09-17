@@ -7,5 +7,6 @@ public interface ITimecodeSyncSeekState
     TimecodeSyncSeekPendingStatus LastStatus { get; }
     void BeginSeek(double targetSeconds, DateTime sentAt);
     void Clear();
-    bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now);
+    bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now,
+        double requestedTargetSeconds = double.NaN);
 }

@@ -1,4 +1,4 @@
-using FluentAssertions;
+﻿using FluentAssertions;
 using TimecodeSyncPlayer.Tests.Helpers;
 using TimecodeSyncPlayer.Tests.Integration;
 
@@ -47,18 +47,42 @@ public sealed class DeferredLtcSyncTests
     }
 
     [Fact]
-    public void NewAcceptedRequest_ReplacesPendingAndDiagnosticJumpDoesNotReplaceIt()
+    public void JumpFrame_AppliesOnce_ThenHeldDuplicatesKeepThatRequest()
     {
+        // D20-b (i): Jump の直後は 1 回だけ新値で適用し、保持（Duplicate）は置き換えない。
         var (h, clock) = ArrangePendingLoadSync();
-        Raw(h, 4);
-        Raw(h, 4, 1);
-        Raw(h, 30);
-        Raw(h, 30); // duplicate at the invalid jumped position
+        Raw(h, 4);      // 3.04 → 4.00 は Jump。1 回だけ 4.00 を適用
+        Raw(h, 4, 1);   // 4.00 → 4.04 は Normal。受理して 4.04
+        Raw(h, 4, 12);  // 4.04 → 4.48 は Jump。1 回だけ 4.48 を適用
+        Raw(h, 4, 12);  // 保持（Duplicate）は置き換えない
         h.AdvancePlayback(1.2, 2);
 
         Tick(h, clock, 4);
 
-        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(4.04);
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(4.48);
+    }
+
+    [Fact]
+    public void HeldDuplicateAfterFileLoadRelease_ReappliesLastAcceptedTimecodeOnce()
+    {
+        // D20-b (i): 保持 LTC（Duplicate）でもロード解除を観測し、最後に受理した値を 1 回だけ適用する。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock, enableCorrection: true)
+        {
+            SignalLossMode = LtcSignalLossMode.RunThrough,
+        };
+        h.AddTrack("first", 0);
+        Raw(h, 1);
+        Raw(h, 3);      // Jump（1 回だけ 3.00）
+        Raw(h, 3, 1);   // Normal（3.04 を受理）
+        h.AdvancePlayback(1.2, 2);   // 位置と描画フレームが進み、ロード安定条件を満たす
+        h.Operations.Clear();
+
+        Raw(h, 3, 1);   // 保持（Duplicate）。通常の同期経路は走らない
+
+        Tick(h, clock, 3);   // ロード解除の再適用はデバウンス（250ms）経過後にシークする
+
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(3.04);
     }
 
     [Fact]
@@ -172,7 +196,7 @@ public sealed class DeferredLtcSyncTests
         h.Operations.Should().NotContain(o => o.Name == "seek");
 
         h.AdvancePlayback(3.04, 2); // the older seek now lands at its target
-        Tick(h, clock, 12);
+        Tick(h, clock, 30);
 
         h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(1.04);
         h.AdvancePlayback(2, 20);

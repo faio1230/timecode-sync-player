@@ -50,7 +50,8 @@ public class TimecodeSyncServiceTests
             HasPendingSeek = false;
         }
 
-        public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now)
+        public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now,
+            double requestedTargetSeconds = double.NaN)
         {
             ShouldSuppressCalled = true;
             return ShouldSuppress;

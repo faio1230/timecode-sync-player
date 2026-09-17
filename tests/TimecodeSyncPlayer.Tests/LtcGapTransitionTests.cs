@@ -98,20 +98,22 @@ public sealed class LtcGapTransitionTests
     }
 
     [Fact]
-    public void EnableSync_UsesLastAcceptedFrameInsteadOfDiagnosticJump()
+    public void EnableSync_UsesTheJumpFrameAcceptedOnce()
     {
+        // D20-b (i): Jump は 1 回だけ新値で受理される。同期 ON の再適用もその受理値を使う
+        // （旧挙動の「診断 Jump を無視して直前の受理値へ戻す」から変更）。
         var h = new SyncScenarioHarness();
-        var first = h.AddTrack("first", 0);
-        h.AddTrack("next", 8);
+        h.AddTrack("first", 0);
+        var next = h.AddTrack("next", 8);
         h.SetSyncEnabled(false);
         Raw(h, 1);
-        Raw(h, 9);
+        Raw(h, 9);   // Jump（1 回だけ 9.00 を受理）
         h.Controller.LastLtcSeconds.Should().Be(9);
         h.Operations.Clear();
 
         h.SetSyncEnabled(true);
 
-        h.LoadedTrackId.Should().Be(first.Id);
+        h.LoadedTrackId.Should().Be(next.Id);
         h.Operations.Should().ContainSingle(o => o.Name == "loadfile" && o.Value == 1);
     }
 
