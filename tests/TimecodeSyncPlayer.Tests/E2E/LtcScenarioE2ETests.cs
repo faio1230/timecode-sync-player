@@ -196,12 +196,14 @@ public sealed class LtcScenarioE2ETests
         double requestedSeconds = FollowSecondsFromEnvironment();
         double windowSeconds = FollowWindowSecondsFromEnvironment();
         double settlingSeconds = FollowSettlingSecondsFromEnvironment();
+        double startGateSeconds = FollowStartGateSecondsFromEnvironment();
         string[] requestedTracks = FollowTracksFromEnvironment();
         scenario.Journal.Write("l1-plan", details: new
         {
             requestedSeconds,
             windowSeconds,
             settlingSeconds,
+            startGateSeconds,
             tracks = string.Join(",", requestedTracks),
         });
 
@@ -215,27 +217,52 @@ public sealed class LtcScenarioE2ETests
                 $"L-1 {track.Symbol}: 使用尺 {track.Used:F1}s では連続追従を 30 秒未満（{followSeconds:F1}s）しか回せない");
             scenario.LoadTrack(track.Index);
             scenario.EnsurePlaying();
-            RunFollowAudit(scenario, track, followSeconds, windowSeconds, settlingSeconds);
+            RunFollowAudit(scenario, track, followSeconds, windowSeconds, settlingSeconds, startGateSeconds);
         }
     });
 
     /// <summary>
-    /// L-1: 1 トラックの連続追従。着地の過渡は判定に含めず、追従に入ってから窓を取る。
-    /// settlingSeconds 分の先頭窓は判定から除外する（集計と報告には残す）。
-    /// 送信は判定区間より長く流し、終わったら停止して次のトラックへ持ち越さない。
+    /// L-1: 1 トラックの連続追従。追従開始は「誤差が許容内に入るまで待つ（上限 startGateSeconds 秒）」。
+    /// 上限に達したら待機時間と最後の誤差を理由に失敗する（追いつけないこと自体が結果）。
+    /// 追従に入ってから窓を取り、settlingSeconds 分の先頭窓は判定から除外する（報告には残す）。
+    /// 送信は素材の終端手前まで流し、終わったら停止して次のトラックへ持ち越さない。
     /// </summary>
     private static void RunFollowAudit(Scenario scenario, TrackInfo track, double followSeconds, double windowSeconds,
-        double settlingSeconds)
+        double settlingSeconds, double startGateSeconds)
     {
         double startLtc = track.MediaIn.TotalSeconds + 2.0;
-        // 判定区間 + 事後 2.2 秒の間はフレームを流し続ける必要がある。送信尺が素材の終端
-        // （MediaOut）に達すると Single の境界ホールドで一時停止し、最後の窓が 0 更新に
-        // 見えるため、素材内に収める（1 秒の余裕を残す）。
-        double sendSeconds = Math.Min(followSeconds + 8.0, track.Used - startLtc - 1.0);
-        scenario.Play(startLtc, sendSeconds);
-        scenario.WaitUntil(
-            () => Math.Abs(scenario.Position() - track.SingleTarget(scenario.LtcSeconds())) <= PositionToleranceSeconds,
-            8, $"{track.Symbol}: 連続送出で追従に入る");
+        // ゲート待ちの間もフレームを流し続ける必要があるため、素材の終端手前まで送る。
+        scenario.Play(startLtc, track.Used - startLtc - 1.0);
+
+        DateTime gateStartedAt = DateTime.Now;
+        double lastError = double.NaN;
+        while (true)
+        {
+            lastError = Math.Abs(scenario.Position() - track.SingleTarget(scenario.LtcSeconds()));
+            if (lastError <= PositionToleranceSeconds)
+                break;
+            double waited = (DateTime.Now - gateStartedAt).TotalSeconds;
+            if (waited >= startGateSeconds)
+                throw new TimeoutException(
+                    $"{track.Symbol}: 追従開始ゲート {startGateSeconds:F0}s を超えても誤差が許容内に入らない" +
+                    $"（待機 {waited:F1}s、最後の誤差 {lastError:F3}s）");
+            Thread.Sleep(100);
+        }
+        scenario.Journal.Write("l1-settle", details: new
+        {
+            track = track.Symbol,
+            startGateSeconds,
+            waitedSeconds = Math.Round((DateTime.Now - gateStartedAt).TotalSeconds, 3),
+            lastErrorSeconds = JsonNumberOrNull(lastError),
+        });
+
+        // ゲート待ちで素材を消費しているため、残りの尺に収まる長さに監査区間を丸める。
+        double budgetSeconds = track.MediaOut.TotalSeconds - scenario.LtcSeconds() - 2.0;
+        followSeconds = Math.Min(followSeconds, budgetSeconds);
+        if (followSeconds < 30.0)
+            throw new TimeoutException(
+                $"{track.Symbol}: 追従開始後に残る尺が {followSeconds:F1}s しかなく 30 秒の監査を回せない" +
+                $"（LTC {scenario.LtcSeconds():F3}s / MediaOut {track.MediaOut.TotalSeconds:F3}s）");
 
         DateTime startedAt = DateTime.Now;
         var samples = new List<FollowSample>();
@@ -253,6 +280,8 @@ public sealed class LtcScenarioE2ETests
                 (segment.At - startedAt).TotalSeconds, segment.ElapsedSeconds, segment.FrameUpdates))
             .Where(segment => segment.AtSeconds <= followSeconds + 2.5)
             .ToList();
+        SeekLandingSummary seeks = SeekLandingStats.Summarize(
+            scenario.CorrectionSeekSettleSecondsSince(startedAt));
         scenario.Signal.Stop();
 
         ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
@@ -270,6 +299,14 @@ public sealed class LtcScenarioE2ETests
                 settling = window.Settling,
             });
 
+        scenario.Journal.Write("l1-seeks", details: new
+        {
+            track = track.Symbol,
+            count = seeks.Count,
+            medianSeconds = Math.Round(seeks.MedianSeconds, 3),
+            maxSeconds = Math.Round(seeks.MaxSeconds, 3),
+        });
+
         scenario.Journal.Write("l1-summary", details: new
         {
             track = track.Symbol,
@@ -286,6 +323,9 @@ public sealed class LtcScenarioE2ETests
             maxAbsError = JsonNumberOrNull(summary.MaxAbsError),
             meanFrameUpdates = Math.Round(summary.MeanFrameUpdates, 2),
             expectedFrameUpdates = Math.Round(windowSeconds * MediaFpsForExpectation(scenario, track), 2),
+            seekCount = seeks.Count,
+            seekMedianSeconds = Math.Round(seeks.MedianSeconds, 3),
+            seekMaxSeconds = Math.Round(seeks.MaxSeconds, 3),
             worstUpdateWindow = WindowDetail(summary.WorstUpdates),
             worstAdvanceWindow = WindowDetail(summary.WorstAdvance),
             worstErrorWindow = WindowDetail(summary.WorstError),
@@ -345,6 +385,13 @@ public sealed class LtcScenarioE2ETests
     /// </summary>
     private static double FollowSettlingSecondsFromEnvironment() =>
         ReadPositiveDouble("TCS_L1_SETTLING_SECONDS", 4.0);
+
+    /// <summary>
+    /// L-1: 追従開始ゲート（誤差が許容内に入るまでの待ち）の上限。既定 30 秒。
+    /// 上限に達したら失敗にする（重い素材で追いつけないこと自体が結果）。
+    /// </summary>
+    private static double FollowStartGateSecondsFromEnvironment() =>
+        ReadPositiveDouble("TCS_L1_START_GATE_SECONDS", 30.0);
 
     private static string[] FollowTracksFromEnvironment()
     {
@@ -1853,6 +1900,41 @@ public sealed class LtcScenarioE2ETests
             }
 
             return segments;
+        }
+
+        /// <summary>
+        /// L-1: 補正シークの発行（"Timecode sync seek ltc=... success=true"）から、その保留が
+        /// セトル／タイムアウトした行までの秒数（着地の指標）。セトルしなかった発行
+        /// （次のシークに置き換わったもの）は数えない。
+        /// </summary>
+        public IReadOnlyList<double> CorrectionSeekSettleSecondsSince(DateTime sinceLocal)
+        {
+            var durations = new List<double>();
+            DateTime? issuedAt = null;
+            foreach (string line in RunLogLinesSince(sinceLocal))
+            {
+                Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+                if (!timestamp.Success ||
+                    !DateTime.TryParse(timestamp.Groups[1].Value, CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out DateTime at))
+                    continue;
+
+                if (line.Contains("Timecode sync seek ltc=", StringComparison.Ordinal) &&
+                    line.Contains("success=true", StringComparison.Ordinal))
+                {
+                    issuedAt = at;
+                    continue;
+                }
+                if (issuedAt is not { } issue)
+                    continue;
+                bool settled = line.Contains("Timecode sync pending \"Settled\"", StringComparison.Ordinal);
+                bool timedOut = line.Contains("Timecode sync pending \"TimedOut\"", StringComparison.Ordinal);
+                if (!settled && !timedOut)
+                    continue;
+                durations.Add((at - issue).TotalSeconds);
+                issuedAt = null;
+            }
+            return durations;
         }
 
         public int StressCycles(int defaultValue)
