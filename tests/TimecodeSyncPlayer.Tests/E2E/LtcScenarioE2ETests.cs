@@ -43,10 +43,23 @@ public sealed class LtcScenarioE2ETests
     {
         double start = scenario.A.Start + 3;
         scenario.SetSync(true);
-        scenario.Play(start, 12);
+        scenario.Play(start, 16);
+
+        // S-1: 判定は「固定目標に一度でも入ったか」ではなく、着地後の 2 秒間の位置系列が
+        // そのときの LTC の写像に対して ±0.3 で追従していること。50ms 間隔のラベル読みが
+        // 一瞬の窓を逃しても追従そのものを見る（着地が遅れても目標が動くため見逃さない）。
         scenario.WaitUntil(
-            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(start)) <= PositionToleranceSeconds,
-            10, "LTC 追従に入る");
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            12, "LTC 追従に入る");
+
+        IReadOnlyList<(double Ltc, double Position)> follow = scenario.SampleFollowWindow(
+            TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(50));
+        foreach ((double ltc, double position) in follow)
+            scenario.Journal.Write("follow-sample", details: new { ltc, position });
+        double maxError = LtcFollowSeries.MaxErrorSeconds(follow, scenario.A.TimelineToMedia);
+        scenario.Journal.Write("follow-summary", details: new { samples = follow.Count, maxErrorSeconds = maxError });
+        LtcFollowSeries.IsFollowing(follow, scenario.A.TimelineToMedia, PositionToleranceSeconds)
+            .Should().BeTrue($"着地後の 2 秒間が LTC の写像に対して ±{PositionToleranceSeconds} で追従する（最大誤差 {maxError:F3}s / {follow.Count} サンプル）");
 
         Thread.Sleep(1500);
         DateTime windowStart = DateTime.Now;
@@ -1033,6 +1046,22 @@ public sealed class LtcScenarioE2ETests
         }
 
         public double LtcSeconds() => ParseClock(App.Text("LtcTimecodeText"), LtcFps);
+
+        /// <summary>
+        /// S-1: 着地後の追従を見るための (LTC, 位置) 系列。指定間隔で指定時間サンプルする。
+        /// 判定は <see cref="LtcFollowSeries"/> が行い、ここは読み取りだけを担う。
+        /// </summary>
+        public IReadOnlyList<(double Ltc, double Position)> SampleFollowWindow(TimeSpan duration, TimeSpan interval)
+        {
+            var samples = new List<(double Ltc, double Position)>();
+            DateTime deadline = DateTime.UtcNow + duration;
+            while (DateTime.UtcNow < deadline)
+            {
+                samples.Add((LtcSeconds(), Position()));
+                Thread.Sleep(interval);
+            }
+            return samples;
+        }
 
         private double MediaFps()
         {
