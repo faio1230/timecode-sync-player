@@ -155,6 +155,9 @@ internal sealed class FenceSequence
 
 /// <summary>
 /// GPU 完了確認。期限超過を資源解放の理由にしない。S_OK+BOOL かデバイス損失だけが待ちを終える。
+/// D28: 100ms スライスを超えたら fault にせず false を返し、呼び出し側が tick を skip して
+/// 次 tick で再試行できるようにする。fault（Playback unavailable）はデバイス消失か、
+/// 未完了が GpuCompletionPolicy.FaultAfterSeconds 秒連続したときだけ。
 /// 試作 GpuFence を移植。
 /// </summary>
 internal sealed class GpuFence : IDisposable
@@ -163,35 +166,66 @@ internal sealed class GpuFence : IDisposable
     private readonly ID3D11DeviceContext context;
     private readonly ID3D11Query query;
     private readonly Action<string> fault;
+    private readonly GpuCompletionPolicy policy;
+    private long lastRemovedCheck;
+    private bool stuckFaulted;
 
     public GpuFence(ID3D11Device device, ID3D11DeviceContext context, Action<string> fault)
     {
         this.device = device; this.context = context; this.fault = fault;
+        policy = new GpuCompletionPolicy(System.Diagnostics.Stopwatch.Frequency);
         query = device.CreateQuery(new QueryDescription(QueryType.Event));
     }
 
-    public unsafe void Wait(string stage)
+    /// <summary>
+    /// 完了まで待つ。deferOnSliceExpiry=false は完了（または fault 後の完了・デバイス消失）までブロックする。
+    /// true のときは 1 スライスで打ち切り、未完了なら false（呼び出し側がこの tick を skip して再試行）。
+    /// 例外はデバイス消失のみ（GpuDeviceLostException）。
+    /// </summary>
+    public unsafe bool Wait(string stage, bool deferOnSliceExpiry = false)
     {
         context.End(query); context.Flush();
-        long start = System.Diagnostics.Stopwatch.GetTimestamp(); long lastRemovedCheck = start; bool warned = false;
+        long sliceStart = System.Diagnostics.Stopwatch.GetTimestamp();
         while (true)
         {
             int done = 0;
             int hr = context.GetData(query, (IntPtr)(&done), 4, AsyncGetDataFlags.DoNotFlush).Code;
-            if (hr == 0 && done != 0) return;
-            if ((!warned && hr < 0) || System.Diagnostics.Stopwatch.GetElapsedTime(lastRemovedCheck).TotalMilliseconds >= 100)
+            bool completed = hr == 0 && done != 0;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool removed = false;
+            if (!completed && System.Diagnostics.Stopwatch.GetElapsedTime(lastRemovedCheck).TotalMilliseconds >= GpuCompletionPolicy.SliceMilliseconds)
             {
-                lastRemovedCheck = System.Diagnostics.Stopwatch.GetTimestamp();
-                int removed = device.DeviceRemovedReason.Code;
-                if (removed < 0) throw new GpuDeviceLostException($"{stage}: device removed 0x{removed:X8}");
+                lastRemovedCheck = now;
+                removed = device.DeviceRemovedReason.Code < 0;
             }
-            if (!warned && (hr < 0 || System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds >= 100))
+            switch (policy.Decide(completed, removed, now))
             {
-                warned = true;
-                fault($"{stage}: GPU completion pending >100ms or GetData failed (0x{hr:X8}); new work stopped, retaining resources until completion/device loss.");
+                case GpuWaitDecision.Completed:
+                    return true;
+                case GpuWaitDecision.DeviceLost:
+                    throw new GpuDeviceLostException($"{stage}: device removed 0x{device.DeviceRemovedReason.Code:X8}");
+                case GpuWaitDecision.Stuck:
+                    if (!stuckFaulted)
+                    {
+                        stuckFaulted = true;
+                        fault($"{stage}: GPU completion pending >{GpuCompletionPolicy.FaultAfterSeconds}s; new work stopped, retaining resources until completion/device loss.");
+                    }
+                    Thread.Sleep(1);
+                    break;
+                default:
+                    if (deferOnSliceExpiry && policy.SliceExpired(sliceStart, now)) return false;
+                    Thread.Yield();
+                    break;
             }
-            if (warned) Thread.Sleep(1); else Thread.Yield();
         }
+    }
+
+    /// <summary>非ブロッキングの完了確認（保留した tick の回収用）。直近の Wait が仕掛けた時点まで完了したか。</summary>
+    public unsafe bool IsComplete()
+    {
+        int done = 0;
+        int hr = context.GetData(query, (IntPtr)(&done), 4, AsyncGetDataFlags.DoNotFlush).Code;
+        return hr == 0 && done != 0;
     }
 
     public void Dispose() => query.Dispose();

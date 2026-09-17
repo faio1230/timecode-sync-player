@@ -48,10 +48,23 @@ public sealed class LtcScenarioE2ETests
     {
         double start = scenario.A.Start + 3;
         scenario.SetSync(true);
-        scenario.Play(start, 12);
+        scenario.Play(start, 16);
+
+        // S-1: 判定は「固定目標に一度でも入ったか」ではなく、着地後の 2 秒間の位置系列が
+        // そのときの LTC の写像に対して ±0.3 で追従していること。50ms 間隔のラベル読みが
+        // 一瞬の窓を逃しても追従そのものを見る（着地が遅れても目標が動くため見逃さない）。
         scenario.WaitUntil(
-            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(start)) <= PositionToleranceSeconds,
-            10, "LTC 追従に入る");
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            12, "LTC 追従に入る");
+
+        IReadOnlyList<(double Ltc, double Position)> follow = scenario.SampleFollowWindow(
+            TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(50));
+        foreach ((double ltc, double position) in follow)
+            scenario.Journal.Write("follow-sample", details: new { ltc, position });
+        double maxError = LtcFollowSeries.MaxErrorSeconds(follow, scenario.A.TimelineToMedia);
+        scenario.Journal.Write("follow-summary", details: new { samples = follow.Count, maxErrorSeconds = maxError });
+        LtcFollowSeries.IsFollowing(follow, scenario.A.TimelineToMedia, PositionToleranceSeconds)
+            .Should().BeTrue($"着地後の 2 秒間が LTC の写像に対して ±{PositionToleranceSeconds} で追従する（最大誤差 {maxError:F3}s / {follow.Count} サンプル）");
 
         Thread.Sleep(1500);
         DateTime windowStart = DateTime.Now;
@@ -702,6 +715,8 @@ public sealed class LtcScenarioE2ETests
         /// <summary>
         /// 参照フレーム: 各トラックを読み込み、一時停止で MediaIn と MediaOut-1 フレームへ
         /// シークして画面を読み戻す（2.5 節）。同期 OFF・LTC 送信前に行う。
+        /// tail が head と同一なら、シーク後に届いたフレームが D25 の古いフレーム
+        /// （PTS だけ目標）の可能性が高いため、最大 3 回・200ms 間隔で取り直す。
         /// </summary>
         private void CaptureReferences()
         {
@@ -712,19 +727,58 @@ public sealed class LtcScenarioE2ETests
                 LoadTrack(track.Index);
                 Pause();
                 Seek(track.MediaIn.TotalSeconds);
-                References.Add(track.Symbol, "head", $"ref_{track.Symbol}_head",
-                    LtcScenarioFrameProbe.Capture(App, ReportDir, $"ref_{track.Symbol}_head", Journal));
+                FrameSignature head = LtcScenarioFrameProbe.Capture(
+                    App, ReportDir, $"ref_{track.Symbol}_head", Journal);
+                References.Add(track.Symbol, "head", $"ref_{track.Symbol}_head", head);
 
                 double tail = Math.Max(0, track.MediaOut.TotalSeconds - OneFrame);
                 Seek(tail);
-                References.Add(track.Symbol, "tail", $"ref_{track.Symbol}_tail",
-                    LtcScenarioFrameProbe.Capture(App, ReportDir, $"ref_{track.Symbol}_tail", Journal));
+                FrameSignature tailSignature = CaptureTailReference(track, head);
+                References.Add(track.Symbol, "tail", $"ref_{track.Symbol}_tail", tailSignature);
                 Journal.Write("reference-captured", details: new
                 {
                     symbol = track.Symbol,
                     tailTarget = tail,
                     tailObserved = Position(),
                 });
+            }
+        }
+
+        /// <summary>
+        /// tail 参照の取り直し。シーク後に取得したフレームが直前の参照（head）と同一なら、
+        /// D25 の古いフレームとみなして最大 3 回・200ms 間隔で再取得する。
+        /// それでも同一ならジャーナルに記録して失敗する（シーク後の新しいフレームが描かれるのを待つ）。
+        /// </summary>
+        private FrameSignature CaptureTailReference(TrackInfo track, FrameSignature head)
+        {
+            const int MaxRecaptures = 3;
+            string imageName = $"ref_{track.Symbol}_tail";
+            for (int attempt = 0; ; attempt++)
+            {
+                FrameSignature signature = LtcScenarioFrameProbe.Capture(App, ReportDir, imageName, Journal);
+                if (!head.IsSameFrameAs(signature))
+                    return signature;
+
+                Journal.Write("reference-stale", details: new
+                {
+                    symbol = track.Symbol,
+                    kind = "tail",
+                    attempt,
+                    maxRecaptures = MaxRecaptures,
+                    nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
+                });
+                if (attempt >= MaxRecaptures)
+                {
+                    Journal.Write("reference-recapture-failed", details: new
+                    {
+                        symbol = track.Symbol,
+                        kind = "tail",
+                        attempts = attempt + 1,
+                    });
+                    throw new TimeoutException(
+                        $"参照 {imageName} が head と同一のまま取り直せない（シーク後に新しいフレームが描かれない。D25 の古いフレーム）");
+                }
+                Thread.Sleep(200);
             }
         }
 
@@ -1041,6 +1095,22 @@ public sealed class LtcScenarioE2ETests
         }
 
         public double LtcSeconds() => ParseClock(App.Text("LtcTimecodeText"), LtcFps);
+
+        /// <summary>
+        /// S-1: 着地後の追従を見るための (LTC, 位置) 系列。指定間隔で指定時間サンプルする。
+        /// 判定は <see cref="LtcFollowSeries"/> が行い、ここは読み取りだけを担う。
+        /// </summary>
+        public IReadOnlyList<(double Ltc, double Position)> SampleFollowWindow(TimeSpan duration, TimeSpan interval)
+        {
+            var samples = new List<(double Ltc, double Position)>();
+            DateTime deadline = DateTime.UtcNow + duration;
+            while (DateTime.UtcNow < deadline)
+            {
+                samples.Add((LtcSeconds(), Position()));
+                Thread.Sleep(interval);
+            }
+            return samples;
+        }
 
         private double MediaFps()
         {

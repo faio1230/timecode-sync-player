@@ -86,6 +86,8 @@ internal sealed class OutputEngine : IDisposable
     private CanvasSettings canvas = CanvasSettings.Default;
     private CanvasGeneration current = null!;
     private readonly List<RetiredGeneration> retired = new();
+    // D28: 完了待ちがスライスを超えて skip した合成 tick。GPU 完了後に面・リース・画像を回収する。
+    private readonly List<PendingComposeWrite> pendingWrites = new();
     private readonly ScanoutTracker scanout = new(16);
     private readonly ScheduleOffset scheduleOffset = new();
     private readonly ComposeAlignGate align;
@@ -443,6 +445,8 @@ internal sealed class OutputEngine : IDisposable
         {
             var entry = retired[i];
             if (!entry.Plan.CanDiscardOld(entry.Generation.Pool.ActiveReaders)) continue;
+            // D28: GPU 完了待ちで skip した tick がこの世代の面をまだ参照している間は破棄しない。
+            if (HasPendingWrite(entry.Generation)) continue;
             DisposeCanvasGeneration(entry.Generation);
             entry.Plan.Discarded();
             retired.RemoveAt(i);
@@ -896,6 +900,7 @@ internal sealed class OutputEngine : IDisposable
 
     private void ComposeTick(long scheduled, long nextScheduled)
     {
+        CollectPendingWrites();
         int slot = current.Pool.TryBeginWrite();
         if (slot < 0) { settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.noFreeSlot", value: 1); return; }
         var surface = current.Surfaces[slot];
@@ -979,40 +984,53 @@ internal sealed class OutputEngine : IDisposable
             }
             long composeDrawQpc = Stopwatch.GetTimestamp();
             sharedFence!.Signal(gpu!, stamp.Id); // フェンス値＝画像 ID。Spout 側は GPU キューで待つ。
-            gpu!.Fence.Wait("compose.source");
-            long composeCompletedQpc = Stopwatch.GetTimestamp();
-            if (settings.Trace.IsEnabled)
+            // D28: 完了待ちは 1 スライスで打ち切る。超過したらこの tick は公開せず、GPU が参照中の
+            // 面とリースを保留して次 tick 以降に回収する（fault はデバイス消失か 3 秒連続の未完了だけ）。
+            if (!gpu!.Fence.Wait("compose.source", deferOnSliceExpiry: true))
             {
-                settings.Trace.Record(new("compose.draw", "GPU", composeDrawQpc, scheduled, stamp.Id, stamp.GeneratedQpc,
-                    Value: (composeDrawQpc - composeStartedQpc) * 1_000_000 / Stopwatch.Frequency));
-                settings.Trace.Record(new("compose.fence", "GPU", composeCompletedQpc, scheduled, stamp.Id, stamp.GeneratedQpc,
-                    Value: (composeCompletedQpc - composeDrawQpc) * 1_000_000 / Stopwatch.Frequency));
+                pendingWrites.Add(new PendingComposeWrite(current, slot, lease, acquired));
+                inFlight = false;
+                lease = null;
+                acquired = null;
+                writing = false;
+                settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourcePending", value: 1);
             }
-            if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
-            UpdateComposeLead(composeCompletedQpc - composeStartedQpc, composeCompletedQpc);
-            settings.Trace.Add("compose.complete", "GPU", scheduled, stamp);
-            long publishedTicks = Stopwatch.GetTimestamp();
-            // B4 の厳密結合: accuracy の frame イベント（RecordGpuAccuracyFrame）へ渡す
-            // publishedTicks と同一の QPC を compose.publish に使う。frameTicks ==
-            // compose.publish.qpc となり、全標本を完全一致で結べる（従来は別々の
-            // GetTimestamp で ±2ms の近似結合だった）。
-            settings.Trace.Record(new("compose.publish", "GPU", publishedTicks, scheduled, stamp.Id, stamp.GeneratedQpc));
-            current.Pool.Publish(slot, stamp, true);
-            OnComposePublished();
-            writing = false;
-            settings.Trace.Record(new("compose.visible", "GPU", Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc));
-            // A1: 計測有効時のみ、公開したフレームの画素マーカーを読み戻して記録する（既定経路は IsEnabled 読みだけ）。
-            // 新規ソースがあればソースを、Held/黒/カードの tick は合成キャンバス（レンダラが公開した画素）を読む。
-            if (acquired != null)
-                RecordGpuAccuracyFrame(acquired.Value.RawTexture, acquired.Value.Width, acquired.Value.Height,
-                    publishedTicks, "gpu");
-            else if (SyncAccuracyTrace.Current.IsEnabled)
-                RecordGpuAccuracyFrame(surface.Texture.NativePointer, canvas.Width, canvas.Height,
-                    publishedTicks, "gpu-canvas");
-            // D5: GStreamer のリースは LayerImage が持たない（共有リング画像は Lease=null）ため、
-            // ここで lease を null にして捨てると返却漏れになる。finally の lease?.Dispose() に返させる
-            // （mpv は LayerImage.Release() が返却済みで、その Dispose は冪等）。
-            if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; }
+            else
+            {
+                long composeCompletedQpc = Stopwatch.GetTimestamp();
+                if (settings.Trace.IsEnabled)
+                {
+                    settings.Trace.Record(new("compose.draw", "GPU", composeDrawQpc, scheduled, stamp.Id, stamp.GeneratedQpc,
+                        Value: (composeDrawQpc - composeStartedQpc) * 1_000_000 / Stopwatch.Frequency));
+                    settings.Trace.Record(new("compose.fence", "GPU", composeCompletedQpc, scheduled, stamp.Id, stamp.GeneratedQpc,
+                        Value: (composeCompletedQpc - composeDrawQpc) * 1_000_000 / Stopwatch.Frequency));
+                }
+                if (inFlight) { lease!.CompleteGpuUse(); inFlight = false; }
+                UpdateComposeLead(composeCompletedQpc - composeStartedQpc, composeCompletedQpc);
+                settings.Trace.Add("compose.complete", "GPU", scheduled, stamp);
+                long publishedTicks = Stopwatch.GetTimestamp();
+                // B4 の厳密結合: accuracy の frame イベント（RecordGpuAccuracyFrame）へ渡す
+                // publishedTicks と同一の QPC を compose.publish に使う。frameTicks ==
+                // compose.publish.qpc となり、全標本を完全一致で結べる（従来は別々の
+                // GetTimestamp で ±2ms の近似結合だった）。
+                settings.Trace.Record(new("compose.publish", "GPU", publishedTicks, scheduled, stamp.Id, stamp.GeneratedQpc));
+                current.Pool.Publish(slot, stamp, true);
+                OnComposePublished();
+                writing = false;
+                settings.Trace.Record(new("compose.visible", "GPU", Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc));
+                // A1: 計測有効時のみ、公開したフレームの画素マーカーを読み戻して記録する（既定経路は IsEnabled 読みだけ）。
+                // 新規ソースがあればソースを、Held/黒/カードの tick は合成キャンバス（レンダラが公開した画素）を読む。
+                if (acquired != null)
+                    RecordGpuAccuracyFrame(acquired.Value.RawTexture, acquired.Value.Width, acquired.Value.Height,
+                        publishedTicks, "gpu");
+                else if (SyncAccuracyTrace.Current.IsEnabled)
+                    RecordGpuAccuracyFrame(surface.Texture.NativePointer, canvas.Width, canvas.Height,
+                        publishedTicks, "gpu-canvas");
+                // D5: GStreamer のリースは LayerImage が持たない（共有リング画像は Lease=null）ため、
+                // ここで lease を null にして捨てると返却漏れになる。finally の lease?.Dispose() に返させる
+                // （mpv は LayerImage.Release() が返却済みで、その Dispose は冪等）。
+                if (!retained && acquired != null) { acquired.Value.Release(); acquired = null; }
+            }
         }
         finally
         {
@@ -1232,6 +1250,44 @@ internal sealed class OutputEngine : IDisposable
     {
         public CanvasGeneration Generation { get; } = generation;
         public CanvasSwapPlan Plan { get; } = new();
+    }
+
+    /// <summary>D28: 完了待ちがスライスを超えて skip した合成 tick の資源。GPU 完了後に破棄する。</summary>
+    private sealed record PendingComposeWrite(CanvasGeneration Generation, int Slot, ISourceImageLease? Lease, LayerImage? Acquired);
+
+    // D28: 保留した合成 tick の GPU 完了を非ブロッキングで回収する。完了したら面の書き込みを破棄し
+    // （公開しない）、リースとソース画像を返す。
+    private void CollectPendingWrites()
+    {
+        if (pendingWrites.Count == 0) return;
+        for (int i = pendingWrites.Count - 1; i >= 0; i--)
+        {
+            PendingComposeWrite pending = pendingWrites[i];
+            if (!gpu!.Fence.IsComplete()) continue;
+            try
+            {
+                pending.Generation.Pool.AbortWrite(pending.Slot, true);
+            }
+            catch (Exception e)
+            {
+                Fault("compose.pendingAbort: " + e);
+            }
+            pending.Acquired?.Release();
+            if (pending.Lease != null)
+            {
+                pending.Lease.CompleteGpuUse();
+                pending.Lease.Dispose();
+            }
+            pendingWrites.RemoveAt(i);
+            settings.Trace.Add("skip", "GPU", Stopwatch.GetTimestamp(), detail: "compose.deferredDiscarded", value: 1);
+        }
+    }
+
+    private bool HasPendingWrite(CanvasGeneration generation)
+    {
+        foreach (PendingComposeWrite pending in pendingWrites)
+            if (ReferenceEquals(pending.Generation, generation)) return true;
+        return false;
     }
 
     private void UpdatePreview(long now)
