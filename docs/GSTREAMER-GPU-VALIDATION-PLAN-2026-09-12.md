@@ -3113,3 +3113,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 原因: 最後の保持フレーム（8.000 の Duplicate）は Jump の 151ms 前に到着していたが、`LtcSignalLossPolicy.Evaluate` は Tick 時刻とフレーム時刻を突き合わせて保持の途切れを判定するため、UI スレッドの処理遅延（着地シーク等）で Tick がフレーム処理より後ろにずれると、保持フレームが届いていても理由だけが SignalLoss へ降格する。さらに `LtcSyncController` 側が `Reason == TimecodeHeld` を要求していたため `ObserveJumpFrame` が呼ばれず、Jump の 1 回適用だけが走って復帰も着地も出なかった
 - 修正: ポリシーは「理由が TimecodeHeld でなくても、フレーム時刻で保持が timeout 以内（直後）なら復帰」。コントローラは `IsLost` のとき常に `ObserveJumpFrame` に委ねて判定を一本化。無音からの Jump は `WasHeldRecently` が偽で従来どおり復帰しない
 - 単体: 新規 3（ポリシー 2 + コントローラ 1）、対象 51 件成功、非E2E 1766。実機（S-2 ×3、R-1〜R-4、LTC ループ 14）は合図済み
+
+### D27-c の実機結果と統合（除去担当の実機、agent-b `afa60f6`、2026-09-18 01:10、親の判定）
+
+- S-2 ×3: 3 回とも成功（holds 20、landingSeeks 20、syncSeeks 8〜9）。保持 → Jump の各遷移で `LTC signal restored` と `applying the first Jump frame once` が同一ミリ秒に並び、次の保持で `reason="TimecodeHeld"` → 着地、の繰り返し
+- R-1 / R-3 / R-4 成功、R-2 は参照採取で失敗（tail が head と同一のまま 4 回 = **D25**）
+- LTC ループ 14/14。無音の信号断（`reason="SignalLoss"`）では従来どおり有効フレーム 5 枚で復帰（別経路のまま）
+- **判定: D27-c 解消。main に統合。** 残る間欠はすべて D25（shim）に帰着

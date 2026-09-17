@@ -2,6 +2,8 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-18 01:15 更新（22 回目）**: 統合済み: D20〜D22、D21-b、D20-b、D26/D26-b（ジャンプ時の黒）、D27/D27-b/D27-c（保持 LTC の停止/ランスルー）、D28（合成の完了待ち）、S-1 判定、参照採取の取り直し、検証機のランナーパッチ（D23-b/c/d、-Media、-MediaInOffsetSeconds）。**残る製品欠陥は shim の D25（シーク直後の古いフレーム、一時停止シークで高頻度）と D24（長 GOP のポンプ予算）**。`w5:p3`（同期担当、新セッション）が D25 → D24 を作業中。`w5:p6`（除去担当、68%）は待機。D25/D24 が入ったら配布物（0.4.2 のまま、SHA 識別）を Taildrop で検証機へ送り、`-Media M1,M4,M6 -MediaInOffsetSeconds 5` と `M1,M3,M5` で実素材確認 → 合格なら 0.4.3。
+>
 > **2026-09-17 18:15 更新（21 回目）**: LTC 同期 26 項目（+黒なし、停止/ランスルー）の自動検証を進行中。行列と進捗は `docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md`（4.5 節に時系列）。統合済み: D20〜D22、D21-b、D20-b（+S-4 ゲート）、D23〜D23-d、ランナー `run-ltc-scenarios.ps1`（`-AppExe -MediaDir -Media`）、シナリオ E2E 18 本。
 > 進行中: `w5:p3` = D27（保持 LTC を停止/ランスルーで扱う。利用者決定「モード依存」）→ 次に D24/D25（shim: 一時停止シークのポンプ予算、リング PTS と画素の食い違い）と D29 候補（Single の MediaOut）。`w5:p6` = D26（ジャンプ時の黒。Held を合成側所有の複製に）→ 次に D28（合成の GPU 完了待ち >100ms で再生停止）。
 > 検証機（`TSP-TestMachine`、Remote Control）はテスト基盤（ランナー・生成スクリプト）を自分で直しパッチを Taildrop で送る（受信は `tailscale file get`。GUI が起動中だと `~/Downloads` へ自動保存される）。実素材の次の実行は D24〜D28 を含む次の配布物（Taildrop、版は上げない）を送ってから。
