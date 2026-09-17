@@ -319,6 +319,19 @@ struct TcsPlayer {
   ID3D11Fence* ring_fence = nullptr;
   HANDLE ring_fence_handle = nullptr;
   uint64_t generation = 1;                /* bumped by owner on load/seek */
+  /* D25: downstream SEGMENT events that passed the appsink pad (the pad probe
+   * runs on the streaming thread, so its count is an exact pre/post-seek
+   * boundary: a flushing seek always produces one new segment before its
+   * first buffer). Every buffer is tagged with the count at entry; a sample
+   * whose tag is below the boundary expected from the latest seek was pulled
+   * before that seek and must not be published under its generation. */
+  std::atomic<uint64_t> flush_boundary{0};
+  std::atomic<uint64_t> seek_boundary_expect{0};
+  std::atomic<uint64_t> stale_drops{0};
+  std::atomic<bool> flush_marker_missing{false};
+  /* D25: fence signal values (lease seq) must never repeat while the shared
+   * fence object lives: frames_decoded resets per load, this does not. */
+  uint64_t seq_serial = 0;                /* frame_lock */
   /* MPEG-TS precise seek (method 5, guarded by frame_lock): tsdemux's
    * ACCURATE scan loses H.264 NALs when IDRs carry no SPS/PPS, so a TS seek
    * snaps to the keyframe before the target with KEY_UNIT|SNAP_BEFORE and the
@@ -1121,6 +1134,139 @@ on_demux_segment_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
   return GST_PAD_PROBE_OK;
 }
 
+/* ---- D25: flush-boundary marker for samples ----
+ * A flushing seek bumps the generation, but a sample that the streaming
+ * thread had already pulled out of the appsink before the flush reached the
+ * sink is still in flight; on_new_sample then stamped it with the post-seek
+ * generation and acquire() handed it out as the target frame (V5 1-in-10:
+ * target=14.618 lease=5.250; F-4: the pre-seek picture with a post-seek
+ * sequence). The pad probe below tags every buffer entering the appsink with
+ * the number of flushing seeks that had passed the pad at that instant. The
+ * probe runs on the streaming thread in the same order as the seek event, so
+ * the tag is an exact pre/post-seek marker; on_new_sample drops a sample whose
+ * tag is older than the shim's seek serial. */
+typedef struct {
+  GstMeta meta;
+  uint64_t boundary;   /* flushing seek events that had passed the pad */
+} TcsFlushMeta;
+
+static GType
+tcs_flush_meta_api_get_type (void)
+{
+  static GType type = 0;
+  if (g_once_init_enter (&type)) {
+    static const gchar* tags[] = { nullptr };
+    GType t = gst_meta_api_type_register ("TcsFlushMetaAPI", tags);
+    g_once_init_leave (&type, t);
+  }
+  return type;
+}
+
+static gboolean
+tcs_flush_meta_init (GstMeta* meta, gpointer params, GstBuffer* buffer)
+{
+  (void) params;
+  (void) buffer;
+  ((TcsFlushMeta*) meta)->boundary = 0;
+  return TRUE;
+}
+
+static void
+tcs_flush_meta_free (GstMeta* meta, GstBuffer* buffer)
+{
+  (void) meta;
+  (void) buffer;
+}
+
+static const GstMetaInfo*
+tcs_flush_meta_info (void);
+
+static gboolean
+tcs_flush_meta_transform (GstBuffer* dest, GstMeta* meta, GstBuffer* src,
+    GQuark type, gpointer data)
+{
+  (void) src;
+  if (GST_META_TRANSFORM_IS_COPY (type)) {
+    GstMetaTransformCopy* copy = (GstMetaTransformCopy*) data;
+    if (!copy->region) {
+      TcsFlushMeta* d = (TcsFlushMeta*) gst_buffer_add_meta (dest,
+          tcs_flush_meta_info (), nullptr);
+      if (!d)
+        return FALSE;
+      d->boundary = ((TcsFlushMeta*) meta)->boundary;
+    }
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static const GstMetaInfo*
+tcs_flush_meta_info (void)
+{
+  static const GstMetaInfo* info = nullptr;
+  static bool tried = false;
+  if (!tried) {
+    tried = true;
+    GType api = tcs_flush_meta_api_get_type ();
+    if (api != 0)
+      info = gst_meta_register (api, "TcsFlushMeta",
+          sizeof (TcsFlushMeta), tcs_flush_meta_init, tcs_flush_meta_free,
+          tcs_flush_meta_transform);
+    if (!info)
+      LOG ("D25: flush-meta registration failed; pre-seek filtering disabled");
+  }
+  return info;
+}
+
+static GstPadProbeReturn
+on_appsink_flush_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  GstPadProbeType type = GST_PAD_PROBE_INFO_TYPE (info);
+  if (type & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM) {
+    /* The boundary event is the post-seek SEGMENT: the demuxer consumes the
+     * SEEK event and sends no FLUSH_START through the sink pad (both verified
+     * with the pad-event diagnostic: seek arrived upstream, then segment
+     * downstream; counting SEEK/FLUSH_START dropped every post-seek sample).
+     * The new segment always precedes the first post-seek buffer on the
+     * streaming thread. */
+    GstEvent* ev = GST_PAD_PROBE_INFO_EVENT (info);
+    if (ev && GST_EVENT_TYPE (ev) == GST_EVENT_SEGMENT)
+      p->flush_boundary.fetch_add (1, std::memory_order_acq_rel);
+  } else if (type & GST_PAD_PROBE_TYPE_BUFFER) {
+    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER (info);
+    const GstMetaInfo* mi = tcs_flush_meta_info ();
+    if (buf && mi) {
+      TcsFlushMeta* m = (TcsFlushMeta*) gst_buffer_add_meta (buf, mi, nullptr);
+      if (m)
+        m->boundary = p->flush_boundary.load (std::memory_order_acquire);
+    }
+  }
+  return GST_PAD_PROBE_OK;
+}
+
+/* D25: true when the sample was already past the appsink pad when the latest
+ * seek's segment was expected (its tag predates the seek boundary). Samples
+ * without the marker (probe not installed, e.g. no buffer path) are kept so a
+ * probe problem cannot stop playback; the one-time log flags them. */
+static bool
+sample_is_pre_seek (TcsPlayer* p, GstBuffer* buf)
+{
+  uint64_t expect = p->seek_boundary_expect.load (std::memory_order_acquire);
+  if (expect == 0)
+    return false;
+  const TcsFlushMeta* m = nullptr;
+  GType api = tcs_flush_meta_api_get_type ();
+  if (buf && api != 0)
+    m = (const TcsFlushMeta*) gst_buffer_get_meta (buf, api);
+  if (!m) {
+    if (!p->flush_marker_missing.exchange (true))
+      LOG ("D25: sample without flush marker after a seek; keeping it "
+          "(probe not on the buffer path?)");
+    return false;
+  }
+  return m->boundary < expect;
+}
 
 static GstFlowReturn
 on_new_sample (GstAppSink* sink, gpointer user)
@@ -1133,6 +1279,17 @@ on_new_sample (GstAppSink* sink, gpointer user)
     return GST_FLOW_OK;
 
   GstBuffer* buf = gst_sample_get_buffer (sample);
+  if (sample_is_pre_seek (p, buf)) {
+    /* D25: never publish a pre-seek sample under the post-seek generation. */
+    uint64_t drops = p->stale_drops.fetch_add (1, std::memory_order_relaxed) + 1;
+    if (drops == 1 || (drops % 120) == 0)
+      LOG ("D25: dropped pre-seek sample pts_ms=%.1f (drops=%llu)",
+          buf && GST_BUFFER_PTS (buf) != GST_CLOCK_TIME_NONE
+              ? (double) GST_BUFFER_PTS (buf) / 1e6 : -1.0,
+          (unsigned long long) drops);
+    gst_sample_unref (sample);
+    return GST_FLOW_OK;
+  }
   GstMemory* mem = buf ? gst_buffer_peek_memory (buf, 0) : nullptr;
   bool gpu = mem && gst_is_d3d11_memory (mem);
   /* Map with GST_MAP_D3D11 for the whole arrival: this flushes a pending
@@ -1284,7 +1441,14 @@ on_new_sample (GstAppSink* sink, gpointer user)
       if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
       p->latest_gen = p->generation;
       p->latest_pts_ns = pts;
-      p->latest_seq = ++p->frames_decoded;
+      /* D25: the fence value must be strictly increasing for the lifetime of
+       * the shared fence. frames_decoded restarts at 0 on every load while
+       * the ring/fence persist, so a post-load seq reused an already-completed
+       * fence value and the compositor's IsRingFenceComplete() passed before
+       * the new copy had run (old pixels with a new Info). frames_decoded
+       * stays the per-load counter the load path waits on. */
+      p->latest_seq = ++p->seq_serial;
+      p->frames_decoded++;
       p->latest_gpu = gpu;
       /* Method 2 diagnostics: sample the audio sink position next to the
        * delivered video pts (gate-open frame plus a decimated window). */
@@ -1824,6 +1988,11 @@ create_appsink_tail (TcsPlayer* p, gboolean d3d)
     gst_pad_add_probe (sinkpad,
         (GstPadProbeType) (GST_PAD_PROBE_TYPE_EVENT_UPSTREAM | GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM),
         on_qos_probe, p, nullptr);
+    /* D25: tag every buffer with the seek boundary and count the downstream
+     * SEGMENT events (both on the streaming thread, in order). */
+    gst_pad_add_probe (sinkpad,
+        (GstPadProbeType) (GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM),
+        on_appsink_flush_probe, p, nullptr);
     gst_object_unref (sinkpad);
   }
   p->use_d3d11_caps = d3d;
@@ -2245,6 +2414,8 @@ teardown_pipeline (TcsPlayer* p)
     p->leased_slot = -1;
     p->pending_update = false;
     p->frames_decoded = 0;
+    /* D25: a new pipeline sends its own initial segment; no seek is pending. */
+    p->seek_boundary_expect.store (0, std::memory_order_release);
     p->gate_active = false;
     p->gate_dropped = 0;
     p->rebase_armed = false;
@@ -2312,6 +2483,17 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
   if (!p->pipeline)
     return p->generation;
   p->generation++;
+  /* D25: this seek's segment is the next downstream SEGMENT event. Taking
+   * max(seen, pending) + 1 keeps back-to-back seeks exact: with one seek
+   * already waiting for its segment, the second one expects the segment
+   * after that, so the first seek's frames (tag == pending) are dropped as
+   * stale for the second. */
+  {
+    uint64_t seen = p->flush_boundary.load (std::memory_order_acquire);
+    uint64_t pending = p->seek_boundary_expect.load (std::memory_order_acquire);
+    uint64_t expect = (seen > pending ? seen : pending) + 1;
+    p->seek_boundary_expect.store (expect, std::memory_order_release);
+  }
   /* frames of the previous generation must never reach the compositor */
   for (TcsPlayer::FrameSlot& slot : p->frames)
     gst_sample_unref (slot.sample);
@@ -2415,6 +2597,8 @@ seek_send (TcsPlayer* p, const SeekRequest& req)
         req.keyunit ? "keyunit/snap-before" : "accurate", req.seconds);
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->last_error = msg;
+    /* D25: no segment will arrive for a failed seek; stop filtering. */
+    p->seek_boundary_expect.store (0, std::memory_order_release);
     LOG ("%s", msg);
   }
 }

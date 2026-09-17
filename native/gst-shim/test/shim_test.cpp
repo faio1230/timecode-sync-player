@@ -9,6 +9,8 @@
 #include "tcs_video_profiles.h"
 #include <gst/gstversion.h>
 #include <d3d11.h>
+#include <d3d11_4.h>
+#include <dxgi.h>
 #include <psapi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -793,6 +795,465 @@ run_paused_seek (int argc, char** argv)
   return failures ? 1 : 0;
 }
 
+/* ---- D25: pixel verdict for the first lease after a paused (re-)seek ---- */
+
+struct Rgb { int r, g, b; };
+
+static int
+rgb_dist (const Rgb& a, const Rgb& b)
+{
+  return abs (a.r - b.r) + abs (a.g - b.g) + abs (a.b - b.b);
+}
+
+/* Center pixel of the current lease, read through a staging copy on the
+ * lease's own device/context. The staging copy is submitted on the same
+ * immediate context as the shim's ring copy, so it is ordered after it; the
+ * Map then waits for the GPU. */
+static bool
+read_leased_center_rgb (TcsPlayer* p, Rgb* out)
+{
+  void* texp = nullptr;
+  uint32_t sub = 0, fmt = 0;
+  if (tcs_player_leased_texture (p, &texp, &sub, &fmt) != TCS_OK || !texp)
+    return false;
+  ID3D11Texture2D* tex = (ID3D11Texture2D*) texp;
+  ID3D11Device* dev = nullptr;
+  tex->GetDevice (&dev);
+  if (!dev)
+    return false;
+  ID3D11DeviceContext* ctx = nullptr;
+  dev->GetImmediateContext (&ctx);
+  D3D11_TEXTURE2D_DESC d = {};
+  tex->GetDesc (&d);
+  D3D11_TEXTURE2D_DESC sd = d;
+  sd.Usage = D3D11_USAGE_STAGING;
+  sd.BindFlags = 0;
+  sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  sd.MiscFlags = 0;
+  ID3D11Texture2D* staging = nullptr;
+  bool ok = false;
+  if (SUCCEEDED (dev->CreateTexture2D (&sd, nullptr, &staging)) && staging) {
+    ctx->CopySubresourceRegion (staging, 0, 0, 0, 0, tex, sub, nullptr);
+    ctx->Flush ();
+    D3D11_MAPPED_SUBRESOURCE m = {};
+    if (SUCCEEDED (ctx->Map (staging, 0, D3D11_MAP_READ, 0, &m))) {
+      const BYTE* row = (const BYTE*) m.pData + (size_t) (d.Height / 2) * m.RowPitch;
+      const BYTE* px = row + (size_t) (d.Width / 2) * 4;   /* BGRA */
+      out->b = px[0];
+      out->g = px[1];
+      out->r = px[2];
+      ctx->Unmap (staging, 0);
+      ok = true;
+    }
+    staging->Release ();
+  }
+  ctx->Release ();
+  dev->Release ();
+  return ok;
+}
+
+/* D25: the compositor consumes the shared ring on its own device through the
+ * shared fence. This mimics GStreamerSource/OutputEngine: proceed only when
+ * the fence reports the lease sequence complete, wait on the GPU queue, then
+ * read the slot. A reused fence value (the lease seq restarting at a load)
+ * makes the completeness check pass before the shim's copy has run, so the
+ * read shows the previous slot content (the pre-seek picture). */
+struct ConsumerRing {
+  ID3D11Device* dev = nullptr;
+  ID3D11DeviceContext* ctx = nullptr;
+  ID3D11Device1* dev1 = nullptr;
+  ID3D11Device5* dev5 = nullptr;
+  ID3D11DeviceContext4* ctx4 = nullptr;
+  ID3D11Fence* fence = nullptr;
+  ID3D11Texture2D* tex[4] = {};
+  ID3D11Texture2D* staging = nullptr;
+  uint32_t epoch = 0;
+  uint32_t count = 0;
+
+  void close ()
+  {
+    for (uint32_t i = 0; i < 4; i++) {
+      if (tex[i]) { tex[i]->Release (); tex[i] = nullptr; }
+    }
+    if (staging) { staging->Release (); staging = nullptr; }
+    if (fence) { fence->Release (); fence = nullptr; }
+    if (ctx4) { ctx4->Release (); ctx4 = nullptr; }
+    if (dev5) { dev5->Release (); dev5 = nullptr; }
+    if (dev1) { dev1->Release (); dev1 = nullptr; }
+    if (ctx) { ctx->Release (); ctx = nullptr; }
+    if (dev) { dev->Release (); dev = nullptr; }
+    epoch = 0;
+    count = 0;
+  }
+
+  /* Opens (or reuses) the consumer device and the current ring resources.
+   * Requires a lease held on p (its texture gives the shim adapter). */
+  bool open (TcsPlayer* p)
+  {
+    void* handles[4] = {};
+    void* fence_handle = nullptr;
+    uint32_t n = 0, w = 0, h = 0, ep = 0;
+    if (tcs_player_ring_info (p, handles, 4, &n, &fence_handle, &w, &h) != TCS_OK
+        || n == 0 || n > 4 || !fence_handle)
+      return false;
+    if (tcs_player_ring_epoch (p, &ep) != TCS_OK)
+      return false;
+    if (dev && epoch == ep && count == n)
+      return true;
+    close ();
+    void* texp = nullptr;
+    uint32_t sub = 0, fmt = 0;
+    if (tcs_player_leased_texture (p, &texp, &sub, &fmt) != TCS_OK || !texp)
+      return false;
+    ID3D11Device* shim_dev = nullptr;
+    ((ID3D11Texture2D*) texp)->GetDevice (&shim_dev);
+    IDXGIDevice* dxgi = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    if (shim_dev)
+      shim_dev->QueryInterface (__uuidof(IDXGIDevice), (void**) &dxgi);
+    if (dxgi)
+      dxgi->GetAdapter (&adapter);
+    if (!adapter) {
+      if (dxgi) dxgi->Release ();
+      if (shim_dev) shim_dev->Release ();
+      return false;
+    }
+    D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
+    D3D_FEATURE_LEVEL got_level = D3D_FEATURE_LEVEL_11_0;
+    HRESULT hr = D3D11CreateDevice (adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 2, D3D11_SDK_VERSION,
+        &dev, &got_level, &ctx);
+    adapter->Release ();
+    dxgi->Release ();
+    shim_dev->Release ();
+    if (FAILED (hr) || !dev || !ctx)
+      return false;
+    if (FAILED (dev->QueryInterface (__uuidof(ID3D11Device1), (void**) &dev1)) || !dev1)
+      return false;
+    if (FAILED (dev->QueryInterface (__uuidof(ID3D11Device5), (void**) &dev5)) || !dev5)
+      return false;
+    if (FAILED (ctx->QueryInterface (__uuidof(ID3D11DeviceContext4), (void**) &ctx4)) || !ctx4)
+      return false;
+    if (FAILED (dev5->OpenSharedFence ((HANDLE) fence_handle,
+        __uuidof(ID3D11Fence), (void**) &fence)) || !fence)
+      return false;
+    for (uint32_t i = 0; i < n; i++) {
+      if (FAILED (dev1->OpenSharedResource1 ((HANDLE) handles[i],
+          __uuidof(ID3D11Texture2D), (void**) &tex[i])))
+        return false;
+    }
+    epoch = ep;
+    count = n;
+    return true;
+  }
+
+  /* OutputEngine protocol: HasHeld -> proceed only when the lease's sequence
+   * is complete, then wait on the GPU queue and read the slot. */
+  bool read_slot_rgb (uint64_t seq, int slot, Rgb* out, bool* waited)
+  {
+    *waited = false;
+    if (!ctx4 || !fence || slot < 0 || (uint32_t) slot >= count || !tex[slot])
+      return false;
+    ID3D11Texture2D* src = tex[slot];
+    if (fence->GetCompletedValue () < seq) {
+      ctx4->Wait (fence, seq);
+      *waited = true;
+    }
+    D3D11_TEXTURE2D_DESC d = {};
+    src->GetDesc (&d);
+    if (!staging) {
+      D3D11_TEXTURE2D_DESC sd = d;
+      sd.Usage = D3D11_USAGE_STAGING;
+      sd.BindFlags = 0;
+      sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+      sd.MiscFlags = 0;
+      if (FAILED (dev->CreateTexture2D (&sd, nullptr, &staging)))
+        return false;
+    }
+    ctx->CopySubresourceRegion (staging, 0, 0, 0, 0, src, 0, nullptr);
+    ctx->Flush ();
+    D3D11_MAPPED_SUBRESOURCE m = {};
+    if (FAILED (ctx->Map (staging, 0, D3D11_MAP_READ, 0, &m)))
+      return false;
+    const BYTE* row = (const BYTE*) m.pData + (size_t) (d.Height / 2) * m.RowPitch;
+    const BYTE* px = row + (size_t) (d.Width / 2) * 4;   /* BGRA */
+    out->b = px[0];
+    out->g = px[1];
+    out->r = px[2];
+    ctx->Unmap (staging, 0);
+    return true;
+  }
+};
+
+/* Paused seek with a landing-verified reference frame: retry the seek while
+ * the first lease is a pre-target frame (D25) instead of the target. */
+static bool
+paused_reference_rgb (TcsPlayer* p, double target, double frame_s, unsigned budget_ms,
+                      Rgb* out, double* pts_out)
+{
+  int acquire_iters = (int) (budget_ms / 2 + 500);
+  for (int attempt = 0; attempt < 3; attempt++) {
+    tcs_player_set_paused (p, 1);
+    std::this_thread::sleep_for (std::chrono::milliseconds (100));
+    tcs_player_release (p);
+    uint64_t gen = tcs_player_seek (p, target);
+    for (int i = 0; i < acquire_iters; i++) {
+      TcsFrameInfo info = {};
+      int got = tcs_player_acquire (p, gen, &info);
+      if (got == 1) {
+        double pts = info.pts_ns / 1e9;
+        if (pts >= target - 0.001 && pts <= target + frame_s + 0.001) {
+          bool read_ok = read_leased_center_rgb (p, out);
+          if (pts_out) *pts_out = pts;
+          tcs_player_release (p);
+          return read_ok;
+        }
+        tcs_player_release (p);   /* pre-target frame: keep waiting / retry */
+      } else if (got < 0) {
+        return false;
+      }
+      std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+  }
+  return false;
+}
+
+/* --paused-seek-pixels <file> [iters] [body_sec] [tail_sec]: D25. The
+ * reference colors at body_sec and tail_sec come from landing-verified paused
+ * seeks. Then, per iteration, the player is parked paused at body_sec, plays
+ * briefly (so a sample is in flight) and pauses + seeks to tail_sec: the
+ * FIRST lease of that seek must land on tail_sec AND show the tail color,
+ * never the pre-seek picture. Run with TCS_TEST_HOLD_SEEK_LOCK_MS=300 to make
+ * the in-flight-sample race deterministic. */
+static int
+run_paused_seek_pixels (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --paused-seek-pixels <file> [iters] [body_sec] [tail_sec]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+  int iters = argc > 3 ? atoi (argv[3]) : 10;
+  if (iters < 1)
+    iters = 1;
+  double body_sec = argc > 4 ? atof (argv[4]) : 5.0;
+  double tail_sec = argc > 5 ? atof (argv[5]) : 19.967;
+  unsigned budget_ms = pump_budget_ms_env ();
+  const char* hold = getenv ("TCS_TEST_HOLD_SEEK_LOCK_MS");
+  printf ("  file=%s iters=%d body=%.3f tail=%.3f budget=%ums hold_seek_lock=%s\n",
+      file, iters, body_sec, tail_sec, budget_ms,
+      (hold && atoi (hold) > 0) ? hold : "(unset)");
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimPausedSeekPixels", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  for (int w = 0; w < 200; w++) {
+    TcsStats st = {};
+    tcs_player_get_stats (p, &st);
+    if (st.frames_decoded >= 3) break;
+    std::this_thread::sleep_for (std::chrono::milliseconds (10));
+  }
+  double dur = 0, fps = 0;
+  tcs_player_get_duration (p, &dur);
+  tcs_player_get_fps (p, &fps);
+  double frame_s = fps > 0.0 ? 1.0 / fps : 0.040;
+
+  Rgb body_ref = {}, tail_ref = {};
+  double body_pts = -1, tail_pts = -1;
+  bool body_ok = paused_reference_rgb (p, body_sec, frame_s, budget_ms, &body_ref, &body_pts);
+  bool tail_ok = paused_reference_rgb (p, tail_sec, frame_s, budget_ms, &tail_ref, &tail_pts);
+  printf ("  reference body=%s pts=%.3f rgb=%d,%d,%d\n", body_ok ? "ok" : "MISS",
+      body_pts, body_ref.r, body_ref.g, body_ref.b);
+  printf ("  reference tail=%s pts=%.3f rgb=%d,%d,%d\n", tail_ok ? "ok" : "MISS",
+      tail_pts, tail_ref.r, tail_ref.g, tail_ref.b);
+  check (body_ok && tail_ok, "landing-verified references at both positions");
+  int ref_dist = rgb_dist (body_ref, tail_ref);
+  printf ("  reference color distance=%d\n", ref_dist);
+  check (ref_dist >= 30, "body and tail references differ (pixel verdict is meaningful)");
+
+  /* Open the consumer device before the loop so the judged read happens as
+   * soon as the lease is acquired (the race window is small). */
+  ConsumerRing consumer;
+  {
+    tcs_player_release (p);
+    char lerr[512] = "";
+    if (tcs_player_load (p, file, -1.0, 0, lerr, sizeof (lerr)) == TCS_OK) {
+      for (int w = 0; w < 200; w++) {
+        TcsStats st = {};
+        tcs_player_get_stats (p, &st);
+        if (st.frames_decoded >= 1) break;
+        std::this_thread::sleep_for (std::chrono::milliseconds (10));
+      }
+      TcsFrameInfo info = {};
+      if (tcs_player_acquire (p, tcs_player_get_generation (p), &info) == 1) {
+        consumer.open (p);
+        tcs_player_release (p);
+      }
+    }
+    tcs_player_release (p);
+  }
+  check (consumer.dev != nullptr && consumer.fence != nullptr,
+      "consumer device + shared fence opened");
+
+  int acquire_iters = (int) (budget_ms / 2 + 500);
+  int no_frame = 0, first_landing_bad = 0, first_wrong = 0, consumer_wrong = 0;
+  int consumer_read_fail = 0;
+  for (int i = 0; i < iters; i++) {
+    /* Reload (paused) resets the shim's per-load frame counter: the fence
+     * value must not be reused (D25-B). */
+    tcs_player_release (p);
+    char lerr[512] = "";
+    int lrc = tcs_player_load (p, file, -1.0, 1, lerr, sizeof (lerr));
+    if (lrc != TCS_OK) {
+      no_frame++;
+      printf ("  iter %2d RELOAD FAILED: %s\n", i, lerr);
+      continue;
+    }
+    for (int w = 0; w < 200; w++) {
+      TcsStats st = {};
+      tcs_player_get_stats (p, &st);
+      if (st.frames_decoded >= 1) break;
+      std::this_thread::sleep_for (std::chrono::milliseconds (10));
+    }
+    /* Park paused at the body position (the reference color), then play so
+     * the pre-seek picture is the body. The tail seek follows a pause
+     * immediately (the reference-capture pattern); a sample still in flight
+     * from playback must not be published as the tail frame. With
+     * TCS_TEST_HOLD_SEEK_LOCK_MS the in-flight sample is caught
+     * deterministically. */
+    tcs_player_release (p);
+    uint64_t g_park = tcs_player_seek (p, body_sec);
+    for (int k = 0; k < acquire_iters; k++) {
+      TcsFrameInfo park = {};
+      int got_park = tcs_player_acquire (p, g_park, &park);
+      if (got_park == 1) {
+        double ppts = park.pts_ns / 1e9;
+        tcs_player_release (p);
+        if (ppts >= body_sec - 0.001 && ppts <= body_sec + frame_s + 0.001)
+          break;
+      } else if (got_park < 0) {
+        break;
+      }
+      std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+    tcs_player_set_paused (p, 0);
+    std::this_thread::sleep_for (std::chrono::milliseconds (100));
+    tcs_player_release (p);
+    tcs_player_set_paused (p, 1);
+    unsigned notifies_before = g_frame_notifies.load ();
+    uint64_t g2 = tcs_player_seek (p, tail_sec);
+    /* The compositor is woken by the shim's frame callback and acquires the
+     * lease within microseconds; spin on the same signal so the consumer read
+     * happens while the ring copy is still in flight (the field race). */
+    for (int k = 0; k < acquire_iters * 200 && g_frame_notifies.load () == notifies_before; k++)
+      std::this_thread::yield ();
+    TcsFrameInfo first = {};
+    int got = 0;
+    for (int k = 0; k < acquire_iters && !got; k++) {
+      got = tcs_player_acquire (p, g2, &first);
+      if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+    if (got != 1) {
+      no_frame++;
+      printf ("  iter %2d NO FRAME\n", i);
+      continue;
+    }
+    double pts = first.pts_ns / 1e9;
+    bool landing = pts >= tail_sec - 0.001 && pts <= tail_sec + frame_s + 0.001;
+    Rgb px = {};
+    bool read_ok = read_leased_center_rgb (p, &px);
+    int dist = read_ok ? rgb_dist (px, tail_ref) : -1;
+    /* Consumer-side verdict: read the ring slot through the shared fence the
+     * way the compositor does (before releasing the lease). */
+    Rgb cpx = {};
+    bool waited = false;
+    bool cok = consumer.read_slot_rgb (first.seq, first.slot, &cpx, &waited);
+    int cdist = cok ? rgb_dist (cpx, tail_ref) : -1;
+    printf ("  iter %2d first_pts=%.3f landing=%d seq=%llu slot=%d "
+        "shim_rgb=%d,%d,%d dist=%d consumer_rgb=%d,%d,%d waited=%d cdist=%d\n",
+        i, pts, landing ? 1 : 0, (unsigned long long) first.seq, first.slot,
+        px.r, px.g, px.b, dist, cpx.r, cpx.g, cpx.b, waited ? 1 : 0, cdist);
+    if (!landing)
+      first_landing_bad++;
+    if (!read_ok || dist > 30)
+      first_wrong++;
+    if (!cok)
+      consumer_read_fail++;
+    else if (cdist > 30)
+      consumer_wrong++;
+    tcs_player_release (p);
+    std::this_thread::sleep_for (std::chrono::milliseconds (50));
+  }
+  check (no_frame == 0, "every paused seek after a reload produced a frame");
+  check (first_landing_bad == 0, "first lease after a paused seek lands on the target");
+  check (first_wrong == 0, "first lease after a paused seek has the target pixels");
+  check (consumer_read_fail == 0, "consumer-side read of the lease succeeded");
+  check (consumer_wrong == 0, "consumer-side read shows the target pixels (fence ordered)");
+  consumer.close ();
+  tcs_player_destroy (p);
+  return failures ? 1 : 0;
+}
+
+/* --reload-seq <fileA> <fileB>: D25 root cause. The shared ring/fence
+ * survives a load (same dimensions), so the lease sequence used as the fence
+ * value must not restart at 0 on the next load: a reused value makes the
+ * compositor's IsRingFenceComplete() pass before the new copy has run. */
+static int
+run_reload_seq (int argc, char** argv)
+{
+  if (argc < 4) {
+    printf ("usage: tcs-shim-test --reload-seq <fileA> <fileB>\n");
+    return 2;
+  }
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimReloadSeq", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) return 1;
+  uint64_t seq_a = 0, seq_b = 0;
+  int rc = tcs_player_load (p, argv[2], -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load A");
+  if (rc == TCS_OK) {
+    for (int w = 0; w < 200; w++) {
+      TcsStats st = {};
+      tcs_player_get_stats (p, &st);
+      if (st.frames_decoded >= 5) break;
+      std::this_thread::sleep_for (std::chrono::milliseconds (10));
+    }
+    TcsFrameInfo info = {};
+    if (tcs_player_acquire (p, tcs_player_get_generation (p), &info) == 1) {
+      seq_a = info.seq;
+      tcs_player_release (p);
+    }
+  }
+  tcs_player_release (p);
+  rc = tcs_player_load (p, argv[3], -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load B");
+  if (rc == TCS_OK) {
+    for (int w = 0; w < 200; w++) {
+      TcsStats st = {};
+      tcs_player_get_stats (p, &st);
+      if (st.frames_decoded >= 3) break;
+      std::this_thread::sleep_for (std::chrono::milliseconds (10));
+    }
+    TcsFrameInfo info = {};
+    if (tcs_player_acquire (p, tcs_player_get_generation (p), &info) == 1) {
+      seq_b = info.seq;
+      tcs_player_release (p);
+    }
+  }
+  printf ("  lease seq: A=%llu B=%llu (must strictly increase across a load)\n",
+      (unsigned long long) seq_a, (unsigned long long) seq_b);
+  check (seq_a > 0 && seq_b > seq_a,
+      "fence values (lease seq) do not restart at a load");
+  tcs_player_destroy (p);
+  return failures ? 1 : 0;
+}
+
 /* --seek-method-check <file> [seeks]: C1(b) verification. The process runs
  * with TCS_SEEK_METHOD from the environment (the shim reads it once at load),
  * so this mode is executed once per value. Every seek must produce a frame
@@ -908,6 +1369,16 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--paused-seek") == 0) {
     run_paused_seek (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--paused-seek-pixels") == 0) {
+    run_paused_seek_pixels (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--reload-seq") == 0) {
+    run_reload_seq (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
