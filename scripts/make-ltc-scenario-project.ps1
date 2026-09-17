@@ -6,10 +6,13 @@
 #   powershell -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out C:\reports\ltc-scenario.tsp
 #
 # -Out is written wherever it points (the runner puts it under its report
-# directory). Media files are referenced by absolute path so the media folder is
-# never modified: it is user-managed and read-only on the test machine, and a
-# .tsp must not be left there. The runner deletes the generated project after
-# the run (-KeepProject keeps it).
+# directory). The media folder is user-managed and read-only on the test machine,
+# so the runner first creates a directory junction under the report directory
+# (mklink /J <ReportDir>\media <MediaDir>) and passes the junction path as
+# -MediaDir. Tracks are then stored as paths relative to the .tsp directory
+# (e.g. media\clip.mp4): ProjectSerializer only resolves paths inside the project
+# directory. MediaDir must therefore live inside the -Out directory. The runner
+# deletes the generated project after the run (-KeepProject keeps it).
 #
 # Videos (mp4 / mov / mkv / mxf / ts) are taken in name order from the top of the
 # folder. Every track uses MediaIn 0 and MediaOut = min(SegmentSeconds, duration),
@@ -50,6 +53,13 @@ $outDir = [System.IO.Path]::GetDirectoryName($Out)
 if (-not (Test-Path -LiteralPath $outDir -PathType Container)) {
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 }
+$outDir = [System.IO.Path]::GetFullPath($outDir)
+$outDirPrefix = $outDir.TrimEnd([char]'\') + '\'
+if (-not $MediaDir.StartsWith($outDirPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw ('MediaDir must be inside the directory of -Out (the runner creates a junction like ' +
+        '<ReportDir>\media -> the real media folder and passes the junction path here). ' +
+        'MediaDir=' + $MediaDir + ' OutDir=' + $outDir)
+}
 
 if (Test-Path $FfmpegDir) { $env:PATH = "$env:PATH;$FfmpegDir" }
 $ffprobe = Get-Command ffprobe -ErrorAction SilentlyContinue
@@ -81,7 +91,7 @@ foreach ($file in $files) {
 
     $trackList += [ordered]@{
         id             = ('aaaaaaaa-0000-0000-0000-{0:d12}' -f $index)
-        filePath       = $file.FullName
+        filePath       = $file.FullName.Substring($outDirPrefix.Length)
         name           = ('M' + $index)
         mediaIn        = ([TimeSpan]::Zero).ToString('c')
         mediaOut       = ([TimeSpan]::FromSeconds($used)).ToString('c')
