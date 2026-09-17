@@ -2980,3 +2980,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 | D22 | Continue + Freeze で、最初のトラックの前（先頭オフセット）が黒（F-5） | 項目 24（最初の動画の冒頭フレーム） | **解消**（`40e1c8a`。F-5 合格） |
 
 - 指示: `docs/prompts/2026-09-17-D20-D22-single-eof-and-freeze-by-jump.md`。証跡: `artifacts/ltc-scenarios/<testId>-<timestamp>`（agent-b の作業ツリー）、`TestResults/v042-ltc-scenario/ltc-scenario-e2e.trx`
+
+### D21-b の実装と D20-b の原因（同期担当、2026-09-17 14:10、親の記録）
+
+- **D21-b（agent-a `d92189d`、実機検証中）**: ギャップ進入時の held は常に直前トラックの最終フレーム。(a) 同じトラックで位置が最終フレーム ±1 なら現在の絵を確定、(b) 同じトラックで位置が違えば `SeekToFinalFrame`、(c) 違うトラック/未ロードなら `LoadPreviousTrack`（ロード後に一時停止のまま最終フレームへシーク）。キャッシュ再利用（`CanReuseCachedFrame`）は「前回凍結した絵」であって「今の絵」ではないため廃止。「届いたフレームで確定」の判定は描画コールバックではなく `OutputEngine.SourceFrameReady` のフレーム位置（PTS）で行い、目標 ±2 フレーム以外は数えず、最大 2 回再シーク。単体 1701 合格（+15）
+  - F-3 の黒: (c) は走っていた（B の一時停止ロード成功）が、D21 のゲートがフレーム到着を 1 枚も数えずタイムアウトし、ロードで消えた黒を「現在の絵」として凍結していた。F-4: `SeekToFinalFrame` の 6ms 後にシーク前の B 本文フレームが新世代として届き、それで確定していた
+- **D20-b の原因（分析、修正はこれから）**: (1) 保持 LTC（同一タイムコード連送）は `TimecodeFrameDiagnostics` で Duplicate、`TimecodeSyncFrameGate` は Initial/Normal 以外を適用しないため、保持中は同期が一切走らない。(2) 終端静止では `TimecodeSyncSeekState` に到達不能な pending seek（target=0.000、playback=20.0）が残り、`HasReachedSeekTarget` が成立せず 2 秒のタイムアウトまで全シーク抑止（`sync seek suppressed pendingTarget=0.000 …` の正体）。(3) 解放が LTC の掃引中に起きるとその瞬間の値へ着地し、直後に保持へ入ると (1) で再同期不能。(4) C 切替も同根（ロードで冒頭から再生、LTC 35 は Duplicate なので clamp 終端への同期が適用されない）
+  - 親の承認した修正案: (i) Jump の直後とロード直後（`IsLoadingFile` 解除時）に最後に受理したタイムコードを 1 回だけ適用（保持中の低頻度再評価は入れない。連続 LTC の経路は変えない）、(ii) 到達不能な pending は新しい要求が pending 目標から離れていれば更新する
