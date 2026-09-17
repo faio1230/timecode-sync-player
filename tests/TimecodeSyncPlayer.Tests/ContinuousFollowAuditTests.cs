@@ -137,6 +137,53 @@ public sealed class ContinuousFollowAuditTests
     }
 
     [Fact]
+    public void Summarize_SettlingWindows_AreReportedButNotJudged()
+    {
+        // 先頭 4 秒（2 窓）は追従直後の過渡。0 更新・大誤差でも判定に数えず、集計には残す。
+        List<FollowSample> samples = Samples(8.0, 0.2, t => t < 4.0 ? 10.0 + t + 1.0 : 10.0 + t);
+        List<FollowPerfSegment> perf =
+        [
+            new FollowPerfSegment(2.0, 2.0, 0),
+            new FollowPerfSegment(4.0, 2.0, 0),
+            new FollowPerfSegment(6.0, 2.0, 60),
+            new FollowPerfSegment(8.0, 2.0, 60),
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 8.0, windowSeconds: 2.0, expectedPosition: Identity,
+            settlingSeconds: 4.0);
+
+        summary.Windows.Should().HaveCount(4);
+        summary.Windows.Count(window => window.Settling).Should().Be(2);
+        summary.SettlingWindowCount.Should().Be(2);
+        summary.SettlingMaxAbsError.Should().BeApproximately(1.0, 0.001);
+        summary.StallUpdateWindows.Should().Be(0, "除外した窓は判定に数えない");
+        summary.MaxAbsError.Should().BeApproximately(0.0, 0.001);
+        summary.MeanFrameUpdates.Should().BeApproximately(60.0, 0.001);
+    }
+
+    [Fact]
+    public void Summarize_SettlingExclusion_DoesNotHideAuditedStalls()
+    {
+        List<FollowSample> samples = Samples(8.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf =
+        [
+            new FollowPerfSegment(2.0, 2.0, 0),   // settling（除外）
+            new FollowPerfSegment(4.0, 2.0, 0),   // 判定対象で 0 更新
+            new FollowPerfSegment(6.0, 2.0, 60),
+            new FollowPerfSegment(8.0, 2.0, 60),
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 8.0, windowSeconds: 2.0, expectedPosition: Identity,
+            settlingSeconds: 2.0);
+
+        summary.SettlingWindowCount.Should().Be(1);
+        summary.StallUpdateWindows.Should().Be(1);
+        summary.WorstUpdates!.Value.Index.Should().Be(1);
+    }
+
+    [Fact]
     public void Summarize_ShorterThanOneWindow_ReturnsNoWindows()
     {
         List<FollowSample> samples = Samples(1.0, 0.2, t => 10.0 + t);
