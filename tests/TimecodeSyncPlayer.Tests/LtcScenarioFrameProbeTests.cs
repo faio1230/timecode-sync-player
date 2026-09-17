@@ -144,6 +144,30 @@ public sealed class LtcScenarioFrameProbeTests
         match.MatchesTrack("C").Should().BeFalse();
     }
 
+    /// <summary>
+    /// 期待の参照が他の参照と同定閾値（60）未満の距離にある組は「同定不能」とし、判定を失敗にしない
+    /// （検証機でほぼ黒の head 参照が別素材の head と区別できなかった事例）。
+    /// </summary>
+    [Fact]
+    public void IsAmbiguous_FlagsReferencePairsWithinTheIdentificationThreshold()
+    {
+        using Bitmap nearA = Solid(Color.FromArgb(100, 100, 100));
+        using Bitmap nearB = Solid(Color.FromArgb(130, 100, 100)); // A との距離 30
+        using Bitmap far = Solid(Color.FromArgb(250, 250, 250));
+        using Bitmap dark = Solid(Color.Black);
+        var set = new ReferenceSet();
+        set.Add("A", "head", "ref_A_head", LtcScenarioFrameProbe.MeasureCenter(nearA));
+        set.Add("B", "head", "ref_B_head", LtcScenarioFrameProbe.MeasureCenter(nearB));
+        set.Add("C", "head", "ref_C_head", LtcScenarioFrameProbe.MeasureCenter(far));
+        set.Add("C", "tail", "ref_C_tail", LtcScenarioFrameProbe.MeasureCenter(dark));
+
+        set.IsAmbiguous("A", "head").Should().BeTrue("B の head と距離 30");
+        set.IsAmbiguous("B", "head").Should().BeTrue();
+        set.IsAmbiguous("C", "head").Should().BeFalse("C の tail は黒で距離が大きい");
+        set.IsAmbiguous("C", null).Should().BeFalse();
+        set.IsAmbiguous("A", "tail").Should().BeFalse("参照が無い");
+    }
+
     [Fact]
     public void DescribeNearestKnownColor_IsInformationalOnly()
     {

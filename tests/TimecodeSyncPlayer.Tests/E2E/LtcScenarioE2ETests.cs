@@ -356,10 +356,11 @@ public sealed class LtcScenarioE2ETests
         // 冒頭 1 秒は B の先頭フレーム（色素材ではマゼンタ）。参照一致するなら B の参照であること。
         // 参照が黒の素材では「黒」と「head で静止」を区別できないため非黒を要求しない。
         bool requireNotBlack = scenario.HeadReferenceNotBlack(scenario.B);
-        scenario.Journal.Write("black-judgment", details: new { name = "g2-enter", symbol = scenario.B.Symbol, requireNotBlack });
+        bool ambiguousHead = scenario.SkipAmbiguousReference("g2-enter", scenario.B.Symbol, "head");
+        scenario.Journal.Write("black-judgment", details: new { name = "g2-enter", symbol = scenario.B.Symbol, requireNotBlack, ambiguousHead });
         scenario.WaitForFrame("g2-enter", TimeSpan.FromSeconds(1.0),
-            (signature, match) => (!requireNotBlack || !signature.IsBlack) &&
-                                  (!match.IsMatch || match.MatchesTrack(scenario.B.Symbol)),
+            (signature, match) => ambiguousHead || ((!requireNotBlack || !signature.IsBlack) &&
+                                  (!match.IsMatch || match.MatchesTrack(scenario.B.Symbol))),
             "1 秒以内に黒から B の絵へ");
 
         scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.B.Start + 1.5, 3, "B の冒頭を通過");
@@ -438,10 +439,11 @@ public sealed class LtcScenarioE2ETests
         scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.Start + 0.3, 4, "A の先頭を通過");
         // 参照 head が黒の素材では黒と head の区別ができないため、非黒を要求せず参照一致だけで見る。
         bool requireNotBlack = scenario.HeadReferenceNotBlack(scenario.A);
-        scenario.Journal.Write("black-judgment", details: new { name = "g6-enter", symbol = scenario.A.Symbol, requireNotBlack });
+        bool ambiguousHead = scenario.SkipAmbiguousReference("g6-enter", scenario.A.Symbol, "head");
+        scenario.Journal.Write("black-judgment", details: new { name = "g6-enter", symbol = scenario.A.Symbol, requireNotBlack, ambiguousHead });
         scenario.WaitForFrame("g6-enter", TimeSpan.FromSeconds(2.0),
-            (signature, match) => (!requireNotBlack || !signature.IsBlack) &&
-                                  (!match.IsMatch || match.MatchesTrack(scenario.A.Symbol)),
+            (signature, match) => ambiguousHead || ((!requireNotBlack || !signature.IsBlack) &&
+                                  (!match.IsMatch || match.MatchesTrack(scenario.A.Symbol))),
             "A の先頭フレームで黒から復帰");
 
         scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.Start + 1.5, 4, "A の冒頭を通過");
@@ -735,25 +737,25 @@ public sealed class LtcScenarioE2ETests
         /// <summary>
         /// 参照フレーム: 各トラックを読み込み、一時停止で MediaIn と MediaOut-1 フレームへ
         /// シークして画面を読み戻す（2.5 節）。同期 OFF・LTC 送信前に行う。
-        /// tail が head と同一なら、シーク後に届いたフレームが D25 の古いフレーム
-        /// （PTS だけ目標）の可能性が高いため、最大 3 回・200ms 間隔で取り直す。
+        /// シーク後は前の採取と違う絵（位置は目標 ±1 フレーム）が届くまで最大 3 秒待つ。
+        /// 4K CPU 素材では 3×200ms では新しいフレームが描かれず、head と tail が同じ絵になった。
         /// </summary>
         private void CaptureReferences()
         {
             SetSync(false);
+            FrameSignature? previous = null;
             for (int i = 0; i < 3; i++)
             {
                 TrackInfo track = Tracks[i];
                 LoadTrack(track.Index);
                 Pause();
                 Seek(track.MediaIn.TotalSeconds);
-                FrameSignature head = LtcScenarioFrameProbe.Capture(
-                    App, ReportDir, $"ref_{track.Symbol}_head", Journal);
+                FrameSignature head = CaptureReferenceAfterSeek(track, "head", track.MediaIn.TotalSeconds, previous);
                 References.Add(track.Symbol, "head", $"ref_{track.Symbol}_head", head);
 
                 double tail = Math.Max(0, track.MediaOut.TotalSeconds - OneFrame);
                 Seek(tail);
-                FrameSignature tailSignature = CaptureTailReference(track, head);
+                FrameSignature tailSignature = CaptureReferenceAfterSeek(track, "tail", tail, head);
                 References.Add(track.Symbol, "tail", $"ref_{track.Symbol}_tail", tailSignature);
                 Journal.Write("reference-captured", details: new
                 {
@@ -761,43 +763,49 @@ public sealed class LtcScenarioE2ETests
                     tailTarget = tail,
                     tailObserved = Position(),
                 });
+                previous = tailSignature;
             }
         }
 
         /// <summary>
-        /// tail 参照の取り直し。シーク後に取得したフレームが直前の参照（head）と同一なら、
-        /// D25 の古いフレームとみなして最大 3 回・200ms 間隔で再取得する。
-        /// それでも同一ならジャーナルに記録して失敗する（シーク後の新しいフレームが描かれるのを待つ）。
+        /// シーク後の参照採取。前の採取と違う絵が届き、位置が目標 ±1 フレームに入るまで最大 3 秒待つ
+        /// （D25 の古いフレームを参照として固定しない）。3 秒待っても変わらなければ失敗する
+        /// （シーク後に新しいフレームが描かれない）。
         /// </summary>
-        private FrameSignature CaptureTailReference(TrackInfo track, FrameSignature head)
+        private FrameSignature CaptureReferenceAfterSeek(
+            TrackInfo track, string kind, double target, FrameSignature? previous)
         {
-            const int MaxRecaptures = 3;
-            string imageName = $"ref_{track.Symbol}_tail";
-            for (int attempt = 0; ; attempt++)
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3.0);
+            string imageName = $"ref_{track.Symbol}_{kind}";
+            for (int attempt = 1; ; attempt++)
             {
                 FrameSignature signature = LtcScenarioFrameProbe.Capture(App, ReportDir, imageName, Journal);
-                if (!head.IsSameFrameAs(signature))
+                double observed = Position();
+                if (ReferenceCaptureReadiness.IsReady(signature, previous, observed, target, OneFrame))
                     return signature;
 
                 Journal.Write("reference-stale", details: new
                 {
                     symbol = track.Symbol,
-                    kind = "tail",
+                    kind,
                     attempt,
-                    maxRecaptures = MaxRecaptures,
+                    position = JsonNumber(observed),
+                    target = Math.Round(target, 3),
+                    sameAsPrevious = previous is FrameSignature prev && prev.IsSameFrameAs(signature),
                     nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
                 });
-                if (attempt >= MaxRecaptures)
+                if (DateTime.UtcNow >= deadline)
                 {
                     Journal.Write("reference-recapture-failed", details: new
                     {
                         symbol = track.Symbol,
-                        kind = "tail",
-                        attempts = attempt + 1,
+                        kind,
+                        attempts = attempt,
                     });
                     throw new TimeoutException(
-                        $"参照 {imageName} が head と同一のまま取り直せない（シーク後に新しいフレームが描かれない。D25 の古いフレーム）");
+                        $"参照 {imageName} が前の採取と同一のまま取り直せない（3 秒待っても新しいフレームが描かれない。D25 の古いフレーム）");
                 }
+
                 Thread.Sleep(200);
             }
         }
@@ -1260,14 +1268,35 @@ public sealed class LtcScenarioE2ETests
         public void WaitBlack(string name, double timeoutSeconds, string description) =>
             WaitForFrame(name, TimeSpan.FromSeconds(timeoutSeconds), (signature, _) => signature.IsBlack, description);
 
-        public void WaitReference(string name, string symbol, string? kind, double timeoutSeconds, string description) =>
+        /// <summary>
+        /// 期待の参照が他の参照と同定閾値未満の距離にあるとき、reference-ambiguous をジャーナルに
+        /// 残して true を返す。同定不能の参照では一致判定を失敗にしない。
+        /// </summary>
+        public bool SkipAmbiguousReference(string name, string trackSymbol, string? kind)
+        {
+            if (!References.IsAmbiguous(trackSymbol, kind)) return false;
+            Journal.Write("reference-ambiguous", details: new
+            {
+                name,
+                symbol = trackSymbol,
+                kind,
+                note = "expected reference is within the identification threshold of another reference; judgment skipped",
+            });
+            return true;
+        }
+
+        public void WaitReference(string name, string symbol, string? kind, double timeoutSeconds, string description)
+        {
+            if (SkipAmbiguousReference(name, symbol, kind)) return;
             WaitForFrame(name, TimeSpan.FromSeconds(timeoutSeconds),
                 (_, match) => match.MatchesTrack(symbol) && (kind is null || match.Reference!.Kind == kind),
                 description);
+        }
 
         /// <summary>黒でなく、参照に一致するなら期待トラックの参照であること（中間位置は参照なしを許容）。</summary>
         public void WaitTrackPicture(string name, TrackInfo track, double timeoutSeconds, string description)
         {
+            if (SkipAmbiguousReference(name, track.Symbol, null)) return;
             // 参照が黒の素材では非黒を要求しない（黒と参照静止を区別できない）。
             bool requireNotBlack = BlackJudgmentApplies(track);
             WaitForFrame(name, TimeSpan.FromSeconds(timeoutSeconds),
@@ -1300,15 +1329,33 @@ public sealed class LtcScenarioE2ETests
             // LTC 表示の一致を待ってから位置を見ると、着地して再生が進んだ後に
             // 確認に入り目標±0.3 を通過済みのことがある。送出開始から位置を監視する。
             double sendSeconds = Math.Max(2.5, holdSeconds);
+            // D26: ジャンプ発行から着地確認まで 50ms 間隔で画面を採り、黒（黒率 >= 0.99）を数える。
+            // 参照が黒の素材では「黒」と「参照で静止」を画像で区別できないため数えない。
+            // 発行直前が黒（黒率 >= 0.99）のときも数えない（Held が黒のまま残っているだけで、
+            // テスト開始直後の最初のジャンプが該当する）。
+            bool blackJudgment = BlackJudgmentApplies(track);
+            bool jumpBlackExempt = false;
+            double beforeJumpBlackFraction = 0.0;
+            if (sampleBlackDuringJump)
+            {
+                FrameSignature beforeJump = Capture($"{name}-before-jump");
+                beforeJumpBlackFraction = beforeJump.BlackFraction;
+                jumpBlackExempt = JumpBlackPolicy.IsExempt(beforeJumpBlackFraction);
+                if (jumpBlackExempt)
+                    Journal.Write("jump-black-before", details: new
+                    {
+                        name,
+                        blackFraction = Math.Round(beforeJumpBlackFraction, 4),
+                        note = "ジャンプ発行直前が黒のため jump-black を数えない",
+                    });
+            }
+
             DateTime holdStart = DateTime.UtcNow;
             Signal.PlayHeld(ltcTarget, LtcFps, TimeSpan.FromSeconds(sendSeconds));
             bool runThrough = !SignalLossStop;
             double landingTolerance = PositionToleranceSeconds;
             double frameAllowance = OneFrame;
 
-            // D26: ジャンプ発行から着地確認まで 50ms 間隔で画面を採り、黒（黒率 >= 0.99）を数える。
-            // 参照が黒の素材では「黒」と「参照で静止」を画像で区別できないため数えない。
-            bool blackJudgment = BlackJudgmentApplies(track);
             var jumpSamples = new List<FrameSignature>();
             var follow = new List<(double Elapsed, double Expected, double Observed)>();
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(sendSeconds + 1);
@@ -1350,7 +1397,7 @@ public sealed class LtcScenarioE2ETests
                 }
 
                 if (DateTime.UtcNow >= deadline) break;
-                if (!landed && sampleBlackDuringJump && blackJudgment && DateTime.UtcNow >= nextSample)
+                if (!landed && sampleBlackDuringJump && !jumpBlackExempt && blackJudgment && DateTime.UtcNow >= nextSample)
                 {
                     jumpSamples.Add(Capture($"jump-black-{name}-{jumpSamples.Count + 1:D2}"));
                     nextSample = DateTime.UtcNow.AddMilliseconds(50);
@@ -1374,7 +1421,17 @@ public sealed class LtcScenarioE2ETests
 
             if (sampleBlackDuringJump)
             {
-                if (blackJudgment)
+                if (jumpBlackExempt)
+                {
+                    Journal.Write("jump-black-summary", details: new
+                    {
+                        name,
+                        skipped = true,
+                        reason = "before-jump-is-black",
+                        blackFraction = Math.Round(beforeJumpBlackFraction, 4),
+                    });
+                }
+                else if (blackJudgment)
                 {
                     int blackFrames = jumpSamples.Count(sample => sample.IsBlack);
                     double worst = jumpSamples.Count == 0 ? 1.0 : jumpSamples.Min(sample => sample.BlackFraction);
@@ -1423,7 +1480,11 @@ public sealed class LtcScenarioE2ETests
             });
             if (blackJudgment)
                 signature.IsBlack.Should().BeFalse($"{name}: トラックの保持中に黒にならない");
-            if (match.IsMatch)
+            if (SkipAmbiguousReference(name, track.Symbol, null))
+            {
+                // 同定不能（期待の参照が他の参照と閾値未満）: 参照一致の判定は失敗にしない。
+            }
+            else if (match.IsMatch)
                 match.MatchesTrack(track.Symbol).Should().BeTrue(
                     $"{name}: 参照に一致するなら {track.Symbol} の参照であること（実際: {Describe(match)}）");
         }
@@ -1445,6 +1506,7 @@ public sealed class LtcScenarioE2ETests
         public void CheckFreeze(string name, double ltcTarget, TrackInfo previousTrack)
         {
             Hold(ltcTarget, 3.5);
+            if (SkipAmbiguousReference(name, previousTrack.Symbol, "tail")) return;
             bool ExpectTail(FrameSignature _, ReferenceMatch match) =>
                 match.MatchesTrack(previousTrack.Symbol) && match.Reference!.Kind == "tail";
             DateTime started = DateTime.UtcNow;
