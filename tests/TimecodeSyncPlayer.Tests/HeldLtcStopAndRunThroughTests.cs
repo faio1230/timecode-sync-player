@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FluentAssertions;
 using TimecodeSyncPlayer.Tests.Helpers;
 using TimecodeSyncPlayer.Tests.Integration;
@@ -95,6 +96,43 @@ public sealed class HeldLtcStopAndRunThroughTests
             new TimecodeFrameDiagnosticResult(status, 0, 0),
             ShouldApplySync: status is TimecodeFrameDiagnosticStatus.Normal or TimecodeFrameDiagnosticStatus.Initial,
             ShouldLogFps: false);
+
+    [Fact]
+    public void StopMode_HeldDuplicate_LandingTargetDoesNotAddSampleClockAge()
+    {
+        // D27-d: 保持値は凍結されて進まないため、着地目標にサンプル時計の age（処理遅延）を
+        // 足さない。届いた値そのもの（+T3 オフセット）へ着地する。
+        long qpc = 5_000_000;
+        long frameEnd = qpc - 30 * (Stopwatch.Frequency / 1000); // 30ms 前に終わったフレーム
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock, enableCorrection: true, sampleClockEnabled: true, getQpc: () => qpc)
+        {
+            SignalLossMode = LtcSignalLossMode.Stop,
+        };
+        h.AddTrack("first", 0);
+        h.ChangeMode(SyncMode.Single);
+        h.ManualPlay();
+
+        RawFrame(h, 1, 0, 10_000, frameEnd);
+        RawFrame(h, 1, 1, 10_040, frameEnd);
+        RawFrame(h, 1, 1, 10_200, frameEnd); // Duplicate（保持値 1.04）
+        h.Operations.Clear();
+
+        Tick(h, clock, 3);
+
+        h.IsPaused.Should().BeTrue();
+        h.Operations.Where(o => o.Name == "seek")
+            .Should().ContainSingle()
+            .Which.Value.Should().BeApproximately(1.04, 0.001,
+                "保持値は凍結されているため age（30ms）を足さない");
+    }
+
+    private static void RawFrame(SyncScenarioHarness h, int seconds, int frame, long at, long frameEndTimestamp)
+    {
+        var timecode = new LtcTimecode(0, seconds / 60, seconds % 60, frame, false);
+        h.Controller.ReceiveFrame(
+            new LtcFrameReceivedEventArgs(timecode, 25, seconds + frame / 25d, frameEndTimestamp, 0), at);
+    }
 
     [Fact]
     public void StopMode_SilentLoss_PausesWithoutLanding()
