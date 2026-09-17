@@ -254,6 +254,28 @@ public sealed class GapFreezeHandler
         CachedTargetSeconds = 0;
     }
 
+    /// <summary>
+    /// D32: 新しい進入目標が、今のフリーズ画像（確定済み = Cached、捕捉中 = Pending）の目標と
+    /// 異なるか。異なれば frozen を破棄してから新しい目標を捕捉する（前のギャップの絵が残るのを
+    /// 防ぐ）。同じ目標の再進入では false（F-1 の周期再進入で frozen を捨てない）。
+    /// </summary>
+    public bool ShouldDiscardFrozenFrame(Guid? trackId, double targetSeconds, double frameSeconds)
+    {
+        if (targetSeconds <= 0 || !double.IsFinite(targetSeconds))
+            return false;
+
+        (Guid? knownTrackId, double knownTarget) = PendingTargetSeconds > 0
+            ? (PendingTrackId, PendingTargetSeconds)
+            : (CachedTrackId, CachedTargetSeconds);
+        if (knownTarget <= 0)
+            return false;
+
+        if (knownTrackId != trackId)
+            return true;
+        double tolerance = frameSeconds > 0 ? frameSeconds * 0.5 : 0.0;
+        return Math.Abs(targetSeconds - knownTarget) > tolerance;
+    }
+
     internal void RecordPauseOwnership(bool wasPlaybackPaused)
     {
         if (_pauseOwnershipRecorded)

@@ -215,6 +215,68 @@ public class GapEnterCoordinatorTests
         handler.CurrentState.Should().Be(GapState.FreezeComplete);
     }
 
+    // ---- D32: 進入目標が変わったときのフリーズ画像の破棄 ----
+
+    [Fact]
+    public void StartGapFreeze_DifferentTargetAfterFreezeComplete_ClearsFrozenFrameAndCache()
+    {
+        var prev = CreateTrack(Guid.NewGuid(), path: "C:/prev.mp4");
+        var (coord, handler, rec) = Build(r => { r.LoadedTrackId = prev.Id; r.SeekResult = true; });
+
+        var first = new GapEnterAction(GapEnterActionType.SeekToFinalFrame, prev.Id, TargetSeconds: 49.9, DurationSeconds: 50, Fps: 30);
+        coord.StartGapFreezeCaptureForCurrentTrack(GapWithPrevious(prev), first);
+        handler.OnFreezeComplete(prev.Id);
+        handler.CachedTargetSeconds.Should().Be(49.9);
+        rec.Calls.Clear();
+
+        // 同じトラックの別の目標（前の絵を残してはいけない）。
+        var second = new GapEnterAction(GapEnterActionType.SeekToFinalFrame, prev.Id, TargetSeconds: 10.0, DurationSeconds: 50, Fps: 30);
+        coord.StartGapFreezeCaptureForCurrentTrack(GapWithPrevious(prev), second);
+
+        rec.Calls.Should().Contain("ClearGapFreezeFrame");
+        handler.CachedTrackId.Should().BeNull();
+        handler.CachedTargetSeconds.Should().Be(0);
+    }
+
+    [Fact]
+    public void StartGapFreeze_SameTargetReentry_DoesNotClearFrozenFrame()
+    {
+        var prev = CreateTrack(Guid.NewGuid(), path: "C:/prev.mp4");
+        var (coord, handler, rec) = Build(r => { r.LoadedTrackId = prev.Id; r.SeekResult = true; });
+
+        var first = new GapEnterAction(GapEnterActionType.SeekToFinalFrame, prev.Id, TargetSeconds: 49.9, DurationSeconds: 50, Fps: 30);
+        coord.StartGapFreezeCaptureForCurrentTrack(GapWithPrevious(prev), first);
+        handler.OnFreezeComplete(prev.Id);
+        rec.Calls.Clear();
+
+        // F-1 の周期再進入（同じ目標）。frozen を捨てない。
+        var again = new GapEnterAction(GapEnterActionType.SeekToFinalFrame, prev.Id, TargetSeconds: 49.9, DurationSeconds: 50, Fps: 30);
+        coord.StartGapFreezeCaptureForCurrentTrack(GapWithPrevious(prev), again);
+
+        rec.Calls.Should().NotContain("ClearGapFreezeFrame");
+        handler.CachedTargetSeconds.Should().Be(49.9);
+    }
+
+    [Fact]
+    public void LoadNextTrackFirstFrame_DifferentTrack_ClearsFrozenFrameBeforeLoad()
+    {
+        var previous = CreateTrack(Guid.NewGuid(), path: "C:/c.mp4");
+        var next = CreateTrack(Guid.NewGuid(), path: "C:/a.mp4");
+        var (coord, handler, rec) = Build(r => { r.LoadedTrackId = previous.Id; });
+
+        // 直前のギャップで C の最終フレームが確定している状態。
+        handler.EnterFreezeCapture(previous.Id, 24.983, previous.FilePath);
+        handler.OnFreezeComplete(previous.Id);
+        rec.Calls.Clear();
+
+        // D22: 次トラックの冒頭フレーム（別トラック・別目標）。
+        coord.LoadNextTrackFirstFrameForGapFreeze(next, target: 5.0, duration: 25.0, fps: 60.0);
+
+        rec.Calls.Should().Contain("ClearGapFreezeFrame");
+        rec.Calls.IndexOf("ClearGapFreezeFrame").Should().BeLessThan(rec.Calls.IndexOf("LoadPausedAt"));
+        handler.CachedTrackId.Should().BeNull();
+    }
+
     // ---- CaptureCurrentFrameForGapFreeze（D21-b (a)） ----
 
     [Fact]

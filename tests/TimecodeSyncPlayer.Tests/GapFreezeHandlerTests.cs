@@ -366,6 +366,64 @@ public class GapFreezeHandlerTests
         result.Should().BeFalse();
     }
 
+    // ---- D32: 進入目標が変わったときのフリーズ画像の破棄 ----
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_NoKnownTarget_IsFalse()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.ShouldDiscardFrozenFrame(Guid.NewGuid(), 42.5, 1.0 / 30).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_SameTrackAndTarget_IsFalse()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        // 半フレーム以内の差は同じ目標として扱う（F-1 の周期再進入）。
+        handler.ShouldDiscardFrozenFrame(trackId, 42.5, 1.0 / 30).Should().BeFalse();
+        handler.ShouldDiscardFrozenFrame(trackId, 42.51, 1.0 / 30).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_SameTrackDifferentTarget_IsTrue()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        handler.ShouldDiscardFrozenFrame(trackId, 10.0, 1.0 / 30).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_DifferentTrackSameTarget_IsTrue()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 24.983, "c.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        // 同尺の別トラック（同じ最終位置）でも、別の絵なので捨てる。
+        handler.ShouldDiscardFrozenFrame(Guid.NewGuid(), 24.983, 1.0 / 60).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_PendingCaptureTarget_IsCompared()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        // 捕捉中（Pending）は Cached ではなく Pending と比べる。
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+
+        handler.ShouldDiscardFrozenFrame(trackId, 42.5, 1.0 / 30).Should().BeFalse();
+        handler.ShouldDiscardFrozenFrame(trackId, 40.0, 1.0 / 30).Should().BeTrue();
+    }
+
     [Fact]
     public void ClearCachedFrame_ResetsValues()
     {
