@@ -737,8 +737,9 @@ public sealed class LtcScenarioE2ETests
         /// <summary>
         /// 参照フレーム: 各トラックを読み込み、一時停止で MediaIn と MediaOut-1 フレームへ
         /// シークして画面を読み戻す（2.5 節）。同期 OFF・LTC 送信前に行う。
-        /// シーク後は位置が目標 ±1 フレームに入るまで最大 3 秒待つ（絵の変化は早期退出の条件で、
-        /// 前の採取と同じ絵でも位置が入れば採用する）。
+        /// シーク後は位置が目標 ±1 フレームに入るまで最大 6 秒待つ（絵の変化は早期退出の条件で、
+        /// 前の採取と同じ絵でも位置が入れば採用する）。3 秒経っても位置が動かなければ同じ目標へ
+        /// 1 回だけ再シークする。
         /// </summary>
         private void CaptureReferences()
         {
@@ -771,19 +772,28 @@ public sealed class LtcScenarioE2ETests
         /// シーク後の参照採取。位置が目標 ±1 フレームに入ったら完了（必須）。絵の変化は待ちを早く
         /// 抜けるだけの条件で、前の採取と同じ絵でも位置が入れば採用し reference-same を残す
         /// （現場素材の黒フェードアウト→フェードインのように正当に同じ絵になる場合がある）。
-        /// 3 秒待っても位置が目標に入らないときだけ失敗する。
+        /// 6 秒待っても位置が目標に入らないときだけ失敗する（4K の CPU デコードでは shim の
+        /// 一時停止シークのポンプ予算 4 秒を越えることがあるため、3 秒では足りない）。
         /// </summary>
         private FrameSignature CaptureReferenceAfterSeek(
             TrackInfo track, string kind, double target, FrameSignature? previous)
         {
-            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3.0);
+            // 許容幅は「いま読み込んでいる素材の 1 フレーム」。OneFrame は先頭トラックの
+            // フレームレート基準なので、24fps の素材を 60fps 基準（0.0167 秒）で見てしまい、
+            // 目標 +1 フレーム（0.0417 秒）で止まった位置が永久に「未到達」になっていた。
+            double frameSeconds = CurrentFrameSeconds();
+            const double waitSeconds = 6.0;
+            const double reseekAfterSeconds = 3.0;
+            DateTime startedAt = DateTime.UtcNow;
+            DateTime deadline = startedAt + TimeSpan.FromSeconds(waitSeconds);
+            bool reseeked = false;
             string imageName = $"ref_{track.Symbol}_{kind}";
             for (int attempt = 1; ; attempt++)
             {
                 FrameSignature signature = LtcScenarioFrameProbe.Capture(App, ReportDir, imageName, Journal);
                 double observed = Position();
                 bool sameAsPrevious = previous is FrameSignature prev && prev.IsSameFrameAs(signature);
-                if (ReferenceCaptureReadiness.IsReady(observed, target, OneFrame))
+                if (ReferenceCaptureReadiness.IsReady(observed, target, frameSeconds))
                 {
                     if (sameAsPrevious)
                         Journal.Write("reference-same", details: new
@@ -805,6 +815,7 @@ public sealed class LtcScenarioE2ETests
                     attempt,
                     position = JsonNumber(observed),
                     target = Math.Round(target, 3),
+                    frameSeconds = JsonNumber(frameSeconds),
                     sameAsPrevious,
                     nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
                 });
@@ -815,9 +826,26 @@ public sealed class LtcScenarioE2ETests
                         symbol = track.Symbol,
                         kind,
                         attempts = attempt,
+                        reseeked,
                     });
                     throw new TimeoutException(
-                        $"参照 {imageName} の位置が目標 {target:F3} ±1 フレームに入らない（3 秒待ってもシーク位置に到達しない）");
+                        $"参照 {imageName} の位置が目標 {target:F3} ±1 フレームに入らない" +
+                        $"（{waitSeconds:F0} 秒待ってもシーク位置に到達しない, 再シーク={reseeked}）");
+                }
+
+                if (!reseeked && (DateTime.UtcNow - startedAt).TotalSeconds >= reseekAfterSeconds)
+                {
+                    reseeked = true;
+                    Journal.Write("reference-reseek", details: new
+                    {
+                        symbol = track.Symbol,
+                        kind,
+                        attempt,
+                        target = Math.Round(target, 3),
+                        observed = JsonNumber(observed),
+                    });
+                    Seek(target);
+                    continue;
                 }
 
                 Thread.Sleep(200);
@@ -1081,10 +1109,15 @@ public sealed class LtcScenarioE2ETests
             }
         }
 
+        /// <summary>
+        /// ジャーナルに残すアプリログから素材のパスと名前を伏せる。値は空白を含む（現場素材の
+        /// ファイル名に空白や括弧がある）ので、次のキー（" xxx=" 形式）か行末までを伏せる。
+        /// </summary>
         private static string SanitizeLogLine(string line)
         {
-            string sanitized = Regex.Replace(line, @"(path=)\S+", "$1<redacted>");
-            return Regex.Replace(sanitized, @"(name=)\S+", "$1<redacted>");
+            const string valueUntilNextKey = @"(?:(?!\s+[A-Za-z_][A-Za-z0-9_]*=).)*";
+            string sanitized = Regex.Replace(line, @"(path=)" + valueUntilNextKey, "$1<redacted>");
+            return Regex.Replace(sanitized, @"(name=)" + valueUntilNextKey, "$1<redacted>");
         }
 
         private double PlaybackDuration()
@@ -1193,6 +1226,13 @@ public sealed class LtcScenarioE2ETests
         /// S-1: 再生中素材の fps。アプリのメタデータ行（FetchMetadata 由来）を優先し、
         /// 無ければプロジェクトの参照 fps を使う。
         /// </summary>
+        /// <summary>いま読み込んでいる素材の 1 フレームの秒数（メタ表示の fps から）。</summary>
+        private double CurrentFrameSeconds()
+        {
+            double fps = MediaFps();
+            return fps > 0 ? 1.0 / fps : OneFrame;
+        }
+
         public double MediaFps()
         {
             Match rate = Regex.Match(App.Text("MetaLineText"), @"(\d+(?:\.\d+)?)\s*fps");
