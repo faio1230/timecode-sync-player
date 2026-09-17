@@ -217,6 +217,28 @@ internal sealed class ReferenceSet
                              string.Equals(frame.Kind, "head", StringComparison.Ordinal) &&
                              frame.Signature.IsBlack);
 
+    /// <summary>
+    /// 指定トラックの参照（kind 未指定は head/tail の両方）が、他の参照と同定閾値
+    /// （平均色距離 60）未満の距離にあるか。同定不能の組では参照一致の判定を失敗にしない。
+    /// </summary>
+    public bool IsAmbiguous(string trackSymbol, string? kind)
+    {
+        foreach (ReferenceFrame expected in _frames)
+        {
+            if (!string.Equals(expected.TrackSymbol, trackSymbol, StringComparison.Ordinal)) continue;
+            if (kind is not null && !string.Equals(expected.Kind, kind, StringComparison.Ordinal)) continue;
+            foreach (ReferenceFrame other in _frames)
+            {
+                if (ReferenceEquals(other, expected)) continue;
+                if (expected.Signature.MeanColorDistanceTo(other.Signature) <
+                    LtcScenarioFrameProbe.ReferenceColorDistance)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>平均色距離が最小の参照（同距離は先着）。</summary>
     public ReferenceFrame? Closest(FrameSignature signature)
     {
