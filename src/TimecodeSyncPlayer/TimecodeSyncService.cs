@@ -57,7 +57,8 @@ public sealed class TimecodeSyncService
 
     public bool IsLoadingFile => _isLoadingFile;
 
-    public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds)
+    public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds,
+        double requestedTargetSeconds = double.NaN)
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
 
@@ -72,7 +73,8 @@ public sealed class TimecodeSyncService
                 return true;               // ロード中は全シーク抑止
         }
 
-        bool suppress = _seekState.ShouldSuppressSeek(playbackSeconds, toleranceSeconds, now);
+        bool suppress = _seekState.ShouldSuppressSeek(playbackSeconds, toleranceSeconds, now,
+            requestedTargetSeconds);
 
         if (_seekState.LastStatus is TimecodeSyncSeekPendingStatus.Settled or TimecodeSyncSeekPendingStatus.TimedOut)
         {
@@ -154,6 +156,17 @@ public sealed class TimecodeSyncService
     public void ClearSeekState()
     {
         _seekState.Clear();
+    }
+
+    /// <summary>
+    /// D20-b: 保持 LTC（Duplicate）では通常の同期経路（ApplySync）が走らないため、
+    /// ロード解除だけをここで観測できるようにする。解除された回だけ true を返す。
+    /// </summary>
+    public bool PollFileLoadRelease(double playbackSeconds, long renderedFrameCount)
+    {
+        if (!_isLoadingFile)
+            return false;
+        return TryMarkFileLoaded(playbackSeconds, renderedFrameCount);
     }
 
     public ITimecodeSyncSeekState SeekState => _seekState;

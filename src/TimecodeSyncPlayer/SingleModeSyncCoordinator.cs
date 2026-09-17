@@ -37,7 +37,10 @@ internal sealed class SingleModeSyncCoordinator
             return SyncRequestResult.Deferred;
 
         SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state);
-        bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds);
+        // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
+        double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
+        bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
+            requestedTarget);
         if (decision.Action != SyncActionType.Seek)
             return _syncService.SeekState.HasPendingSeek
                 ? SyncRequestResult.Deferred : SyncRequestResult.Complete;

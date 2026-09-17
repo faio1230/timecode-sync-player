@@ -17,11 +17,13 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class MainWindowGapFreezeRetryTests
 {
     [Fact]
-    public Task FinalCallbackWhileSeeking_TimerCompletesFreezeWithoutAnotherCallback() => OnUi(async () =>
+    public Task SourceFrameAtTargetWhileSeeking_TimerCompletesFreezeWithoutAnotherCallback() => OnUi(async () =>
     {
         using var fixture = new Fixture();
         fixture.PlaybackApi.Seeking = true;
+        fixture.SourceFrameReady(9.9); // D21-b: 目標位置のソースフレームがシーク中に届く。
         await fixture.ProcessFinalCallback();
+        fixture.Handler.FrameSeenSinceCapture.Should().BeTrue();
         fixture.Handler.CurrentState.Should().Be(GapState.EnteringFreeze);
 
         fixture.PlaybackApi.Seeking = false;
@@ -30,6 +32,21 @@ public sealed class MainWindowGapFreezeRetryTests
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
 
         fixture.Handler.CurrentState.Should().Be(GapState.FreezeComplete);
+    });
+
+    [Fact]
+    public Task SourceFrameAwayFromTarget_DoesNotConfirmFrame() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        fixture.SourceFrameReady(2.5); // シーク前の実行中フレーム（目標 9.9 ではない）。
+        fixture.PlaybackApi.Seeking = false;
+        fixture.Tick();
+        await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+
+        fixture.Handler.CurrentState.Should().Be(GapState.EnteringFreeze);
+        fixture.Handler.FrameSeenSinceCapture.Should().BeFalse();
+        fixture.Handler.CachedTrackId.Should().BeNull();
+        fixture.Handler.SeekRetryCount.Should().Be(1, "目標外のフレームで再シークを 1 回だけ試す");
     });
 
     [Fact]
@@ -116,6 +133,8 @@ public sealed class MainWindowGapFreezeRetryTests
 
         public Task ProcessFinalCallback() => (Task)Method("ProcessRenderFrameUpdateAsync")
             .Invoke(Window, [Session.CaptureGeneration(), true])!;
+        public void SourceFrameReady(double positionSeconds) => Method("OnSourceFrameReady")
+            .Invoke(Window, [0L, Session.CaptureGeneration(), 0L, positionSeconds]);
         public void Tick() => Method("OnTick").Invoke(Window, [null, EventArgs.Empty]);
         private static MethodInfo Method(string name) => typeof(MainWindow)
             .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!;

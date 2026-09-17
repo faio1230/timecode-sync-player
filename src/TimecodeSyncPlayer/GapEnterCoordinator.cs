@@ -94,10 +94,12 @@ internal sealed class GapEnterCoordinator
         double duration = action.DurationSeconds ?? _effects.GetDuration();
         double currentFps = _effects.GetFps();
         double fps = action.Fps ?? (currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps);
+        // D21-b: 目標フレームの到着確認はシークより先に始める。シーク完了フレームが
+        // 進入直後に届いても「進入後のフレーム」として数えられるようにする。
+        _gapFreezeHandler.EnterFreezeCapture(previousTrackId ?? loadedTrackId, target, previousTrack?.FilePath);
         bool seekSuccess = _effects.SeekTo(target);
         if (seekSuccess)
         {
-            _gapFreezeHandler.EnterFreezeCapture(previousTrackId ?? loadedTrackId, target, previousTrack?.FilePath);
             Log.Information(
                 "Continue mode: entering gap freeze, waiting for final frame target={Target:F3} duration={Duration:F3} fps={Fps:F3}",
                 target, duration, fps);
@@ -106,6 +108,44 @@ internal sealed class GapEnterCoordinator
         {
             Log.Warning("Continue mode: gap freeze final-frame seek failed, holding current frame");
             _gapFreezeHandler.ForceFreezeComplete();
+        }
+    }
+
+    /// <summary>
+    /// D21-b (a): ロード中トラックが直前トラックと同じで、表示中の絵がすでに最終フレームのとき。
+    /// シークもロードもせず、進入だけを行って現在のフレームを最終フレームとして確定させる。
+    /// </summary>
+    public void CaptureCurrentFrameForGapFreeze(TimelineQueryResult result, GapEnterAction action)
+    {
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            _effects.ResetEndAdvanceTriggered();
+            ApplyGapPause();
+
+            PlaylistTrack? previousTrack = result.PreviousTrack;
+            double target = action.TargetSeconds ?? 0;
+            Guid? previousTrackId = action.TrackId ?? previousTrack?.Id;
+
+            if (target <= 0)
+            {
+                Log.Information("Continue mode: gap freeze activated, holding current frame because duration is unavailable");
+                _gapFreezeHandler.ForceFreezeComplete();
+                return;
+            }
+
+            double duration = action.DurationSeconds ?? _effects.GetDuration();
+            double currentFps = _effects.GetFps();
+            double fps = action.Fps ?? (currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps);
+            _gapFreezeHandler.EnterFreezeCaptureWithCurrentFrame(
+                previousTrackId ?? _effects.GetLoadedTrackId(), target, previousTrack?.FilePath);
+            Log.Information(
+                "Continue mode: gap freeze holds current frame at final position target={Target:F3} duration={Duration:F3} fps={Fps:F3}",
+                target, duration, fps);
+        }
+        finally
+        {
+            LogElapsed(nameof(CaptureCurrentFrameForGapFreeze), started);
         }
     }
 
@@ -216,6 +256,18 @@ internal sealed class GapEnterCoordinator
             _effects.SetDuration(duration);
             _effects.SetFps(fps);
             _gapFreezeHandler.EnterFreezeCaptureWithReload(previousTrack.Id, target, previousTrack.FilePath);
+
+            // D21-b (c): ロードは開始位置つきでもシーク完了フレームを保証しない。
+            // 一時停止のまま最終フレームへシークし直し、そのフレームの到着で確定する。
+            bool seekSuccess = _effects.SeekTo(target);
+            if (!seekSuccess)
+            {
+                Log.Warning(
+                    "Continue mode: gap freeze previous-track seek failed track={Track} target={Target:F3}",
+                    previousTrack.Name, target);
+                _gapFreezeHandler.ForceFreezeComplete();
+                return;
+            }
 
             Log.Information(
                 "Continue mode: loading previous track final frame for gap freeze track={Track} target={Target:F3} duration={Duration:F3} fps={Fps:F3} loadOk={LoadOk} pauseOk={PauseOk}",

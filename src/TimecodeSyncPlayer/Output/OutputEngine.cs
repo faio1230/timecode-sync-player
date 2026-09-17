@@ -29,10 +29,11 @@ internal sealed class OutputEngineSettings
     public Action<PreviewFrame>? PreviewFrameReady { get; init; }
 
     /// <summary>
-    /// GPU worker。source.acquire が Ready になったときの (QPC, 世代, ソース sequence)。
-    /// D7-a の先行補償が「新しい世代の最初のフレーム」を識別するために使う。
+    /// GPU worker。source.acquire が Ready になったときの (QPC, 世代, ソース sequence, フレーム位置秒)。
+    /// D7-a の先行補償が「新しい世代の最初のフレーム」を識別するために使い、
+    /// D21-b のギャップ Freeze 確定がフレーム位置（PTS）で目標フレームを確認するために使う。
     /// </summary>
-    public Action<long, int, long>? SourceFrameReady { get; init; }
+    public Action<long, int, long, double>? SourceFrameReady { get; init; }
 
     /// <summary>試験フック: GPU worker が指定時刻（起動からの秒）に GpuDeviceLostException を投げる。</summary>
     public IReadOnlyList<double> SimulatedDeviceLossSeconds { get; init; } = Array.Empty<double>();
@@ -928,7 +929,8 @@ internal sealed class OutputEngine : IDisposable
                 new ImageStamp(gst.Stamp.Sequence, gst.Stamp.DecodedQpc), status.ToString(),
                 (long)Math.Round(position * 1_000_000));
             if (status == SourceStatus.Ready)
-                settings.SourceFrameReady?.Invoke(acquireEndedQpc, (int)gst.Stamp.Generation, gst.Stamp.Sequence);
+                settings.SourceFrameReady?.Invoke(acquireEndedQpc, (int)gst.Stamp.Generation, gst.Stamp.Sequence,
+                    gst.Stamp.PositionSeconds);
             if (status == SourceStatus.Ended)
                 settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceEnded", value: 1);
             else if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)

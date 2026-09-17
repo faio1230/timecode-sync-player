@@ -6,7 +6,8 @@ internal sealed record GapEnterActionHandlers(
     Action? UseCachedFrame,
     Action<TimelineQueryResult, GapEnterAction> SeekToFinalFrame,
     Action<PlaylistTrack, double, double, double> LoadPreviousTrack,
-    Action<PlaylistTrack, double, double, double>? LoadNextTrackFirstFrame = null);
+    Action<PlaylistTrack, double, double, double>? LoadNextTrackFirstFrame = null,
+    Action<TimelineQueryResult, GapEnterAction>? UseCurrentFrame = null);
 
 internal sealed class GapEnterActionDispatcher
 {
@@ -32,6 +33,10 @@ internal sealed class GapEnterActionDispatcher
                 break;
             case GapEnterActionType.SeekToFinalFrame:
                 _handlers.SeekToFinalFrame(result, action);
+                break;
+            case GapEnterActionType.UseCurrentFrame:
+                if (_handlers.UseCurrentFrame != null)
+                    _handlers.UseCurrentFrame(result, action);
                 break;
             case GapEnterActionType.LoadPreviousTrack:
                 if (result.PreviousTrack != null &&

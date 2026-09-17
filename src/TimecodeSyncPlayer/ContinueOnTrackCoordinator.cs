@@ -111,7 +111,10 @@ internal sealed class ContinueOnTrackCoordinator
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
 
             SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state);
-            bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds);
+            // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
+            double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
+            bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
+                requestedTarget);
             ContinueSyncSeekPlan seekPlan = ContinueSyncSeekPlanner.Decide(decision, suppressSeek, _syncService.IsDebounced());
 
             if (!seekPlan.ShouldSeek)

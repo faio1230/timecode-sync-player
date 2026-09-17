@@ -215,6 +215,50 @@ public class GapEnterCoordinatorTests
         handler.CurrentState.Should().Be(GapState.FreezeComplete);
     }
 
+    // ---- CaptureCurrentFrameForGapFreeze（D21-b (a)） ----
+
+    [Fact]
+    public void CaptureCurrentFrame_EntersCaptureWithoutSeek_AndTrustsCurrentFrame()
+    {
+        var prev = CreateTrack(Guid.NewGuid(), path: "C:/prev.mp4");
+        var (coord, handler, rec) = Build(r => r.LoadedTrackId = prev.Id);
+        var action = new GapEnterAction(GapEnterActionType.UseCurrentFrame, prev.Id,
+            TargetSeconds: 49.9, DurationSeconds: 50, Fps: 30);
+
+        coord.CaptureCurrentFrameForGapFreeze(GapWithPrevious(prev), action);
+
+        rec.Calls.Should().Equal(
+            "ResetEndAdvanceTriggered",
+            "PauseForGap",
+            "ApplyPauseState(True)",
+            "GetFps");
+        rec.SeekTargets.Should().BeEmpty();
+        rec.LoadArgs.Should().BeEmpty();
+        handler.CurrentState.Should().Be(GapState.EnteringFreeze);
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+        handler.PendingTrackId.Should().Be(prev.Id);
+        handler.PendingTargetSeconds.Should().Be(49.9);
+        handler.PendingPath.Should().Be("C:/prev.mp4");
+    }
+
+    [Fact]
+    public void CaptureCurrentFrame_TargetLeqZero_OnlyFreezeComplete()
+    {
+        var prev = CreateTrack(Guid.NewGuid());
+        var (coord, handler, rec) = Build(r => r.LoadedTrackId = prev.Id);
+        var action = new GapEnterAction(GapEnterActionType.UseCurrentFrame, prev.Id,
+            TargetSeconds: 0, DurationSeconds: 50, Fps: 30);
+
+        coord.CaptureCurrentFrameForGapFreeze(GapWithPrevious(prev), action);
+
+        rec.Calls.Should().Equal(
+            "ResetEndAdvanceTriggered",
+            "PauseForGap",
+            "ApplyPauseState(True)");
+        rec.SeekTargets.Should().BeEmpty();
+        handler.CurrentState.Should().Be(GapState.FreezeComplete);
+    }
+
     // ---- EnterNoTracksFreeze ----
 
     [Fact]
@@ -317,9 +361,29 @@ public class GapEnterCoordinatorTests
         rec.EndAdvanceTriggered.Should().BeFalse();
         handler.CurrentState.Should().Be(GapState.EnteringFreeze);
         handler.PendingTrackId.Should().Be(prev.Id);
-        // 実行順序: ロード成功後 pause→reset→duration/fps 更新
+        handler.FrameSeenSinceCapture.Should().BeFalse();
+        // D21-b (c): ロード後、確定前に一時停止のまま最終フレームへシークし直す。
+        rec.SeekTargets.Should().ContainSingle().Which.Should().Be(49.9);
+        // 実行順序: ロード成功後 pause→reset→duration/fps 更新→最終フレームへシーク
         rec.Calls.Should().ContainInOrder(
-            "SetLoadedTrackId", "ApplyPauseState(True)", "ResetPlayerStateForNewTrack", "SetDuration", "SetFps");
+            "SetLoadedTrackId", "ApplyPauseState(True)", "ResetPlayerStateForNewTrack", "SetDuration", "SetFps", "SeekTo");
+    }
+
+    [Fact]
+    public void LoadPreviousTrack_LoadSuccessSeekFailure_ForcesFreezeComplete()
+    {
+        var prev = CreateTrack(Guid.NewGuid(), path: "C:/prev.mp4");
+        var (coord, handler, rec) = Build(r =>
+        {
+            r.LoadedTrackId = Guid.NewGuid();
+            r.LoadResult = new GapLoadCommandResult(PlaybackResult.Ok, PlaybackResult.Ok);
+            r.SeekResult = false;
+        });
+
+        coord.LoadPreviousTrackFinalFrameForGapFreeze(prev, target: 49.9, duration: 50.0, fps: 24.0);
+
+        rec.SeekTargets.Should().ContainSingle();
+        handler.CurrentState.Should().Be(GapState.FreezeComplete);
     }
 
     // ---- HandleNoTracks ----

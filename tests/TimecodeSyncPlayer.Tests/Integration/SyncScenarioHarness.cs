@@ -160,6 +160,7 @@ internal sealed class SyncScenarioHarness
                 GetSyncOffsetMilliseconds: () => SyncOffsetMilliseconds,
                 GetCorrectionMode: enableCorrection ? () => CorrectionMode : null,
                 GetPlaybackSeconds: enableCorrection ? () => _playbackSeconds : null,
+                GetTotalRenderedFrames: () => _renderedFrames,
                 ApplyRateInstant: enableCorrection
                     ? rate =>
                     {

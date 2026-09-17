@@ -352,6 +352,74 @@ public class GapFreezeHandlerTests
         handler.LastReloadAt.Should().Be(new DateTime(2026, 9, 7, 12, 34, 56, DateTimeKind.Utc));
     }
 
+    [Fact]
+    public void EnterFreezeCapture_RequiresFrameArrival()
+    {
+        // D21/D21-b: 進入直後は目標フレームが届いていない。
+        var handler = new GapFreezeHandler();
+
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+
+        handler.FrameSeenSinceCapture.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EnterFreezeCaptureWithCurrentFrame_TrustsDisplayedFrame()
+    {
+        // D21-b (a): すでに最終フレームを表示している場合は到着を待たない。
+        var handler = new GapFreezeHandler();
+
+        handler.EnterFreezeCaptureWithCurrentFrame(Guid.NewGuid(), 42.5, "test.mp4");
+
+        handler.CurrentState.Should().Be(GapState.EnteringFreeze);
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+    }
+
+    [Fact]
+    public void NotifyFrameArrived_OnlyAfterEnterFreezeCapture()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+
+        handler.NotifyFrameArrived();
+
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryBeginSeekRetry_IsBoundedAndRearmsFrameWait()
+    {
+        // D21-b (b): 目標位置でないフレームが届いたら再シークし、再びフレーム到着を待つ。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 12, 34, 56, TimeSpan.Zero));
+        var handler = new GapFreezeHandler(clock);
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.NotifyFrameArrived();
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        handler.TryBeginSeekRetry().Should().BeTrue();
+        handler.SeekRetryCount.Should().Be(1);
+        handler.FrameSeenSinceCapture.Should().BeFalse();
+        handler.StartedAt.Should().Be(new DateTime(2026, 9, 7, 12, 34, 57, DateTimeKind.Utc));
+
+        handler.TryBeginSeekRetry().Should().BeTrue();
+        handler.TryBeginSeekRetry().Should().BeFalse();
+        handler.SeekRetryCount.Should().Be(GapFreezeHandler.MaxSeekRetries);
+        handler.CanRetrySeek.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Reset_ClearsSeekRetries()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.TryBeginSeekRetry().Should().BeTrue();
+
+        handler.Reset();
+
+        handler.SeekRetryCount.Should().Be(0);
+        handler.CanRetrySeek.Should().BeTrue();
+    }
+
     private static PlaylistTrack MakeTrack(Guid id, double durationSeconds, double? fps = 24.0, double? mediaOutSeconds = null)
     {
         return new PlaylistTrack(
@@ -368,8 +436,9 @@ public class GapFreezeHandlerTests
     }
 
     [Fact]
-    public void DecideGapEnter_FreezeBehavior_ReusesCachedFrameWhenTargetMatches()
+    public void DecideGapEnter_FreezeBehavior_LoadedPreviousTrackAtFinalFrame_UsesCurrentFrame()
     {
+        // D21-b (a): ロード中トラックが直前トラックと同じで、位置が最終フレーム ±1 フレーム。
         var trackId = Guid.NewGuid();
         // 24fps, 60s duration → target = 60 - 1/24 ≈ 59.9583
         double fps = 24.0;
@@ -378,8 +447,9 @@ public class GapFreezeHandlerTests
         double expectedTarget = duration - frameSeconds;
 
         var handler = new GapFreezeHandler();
+        // 直前フリーズのキャッシュが残っていても、現在位置の判定を優先する。
         handler.CachedTrackId = trackId;
-        handler.CachedTargetSeconds = expectedTarget;  // キャッシュに正しいターゲットを設定
+        handler.CachedTargetSeconds = 10.0;
 
         var previousTrack = MakeTrack(trackId, duration, fps);
         var result = new TimelineQueryResult(
@@ -388,14 +458,61 @@ public class GapFreezeHandlerTests
             MediaPositionSeconds: 0,
             PreviousTrack: previousTrack);
 
-        // currentVideoFps=24, currentDurationSeconds=60 を渡す
-        var action = handler.DecideGapEnter(result, GapBehavior.Freeze, null, fps, duration);
+        var action = handler.DecideGapEnter(result, GapBehavior.Freeze, trackId, fps, duration,
+            loadedPositionSeconds: expectedTarget);
 
-        action.Type.Should().Be(GapEnterActionType.UseCachedFrame);
+        action.Type.Should().Be(GapEnterActionType.UseCurrentFrame);
         action.TargetSeconds.Should().BeApproximately(expectedTarget, 0.000001);
         action.DurationSeconds.Should().Be(duration);
         action.Fps.Should().Be(fps);
-        handler.CurrentState.Should().Be(GapState.FreezeComplete);
+        action.TrackId.Should().Be(trackId);
+        handler.CurrentState.Should().Be(GapState.Inactive);
+    }
+
+    [Theory]
+    [InlineData(-1.0, true)]
+    [InlineData(-2.0, false)]
+    public void DecideGapEnter_FreezeBehavior_LoadedPreviousTrackPositionBoundary(
+        double offsetFrames, bool expectUseCurrentFrame)
+    {
+        double fps = 25.0;
+        double duration = 50.0;
+        double frameSeconds = 1.0 / fps;
+        double target = duration - frameSeconds;
+        var trackId = Guid.NewGuid();
+        var handler = new GapFreezeHandler();
+        var previousTrack = MakeTrack(trackId, duration, fps);
+        var result = new TimelineQueryResult(TimelineQueryStatus.Gap, null, 0, previousTrack);
+
+        var action = handler.DecideGapEnter(result, GapBehavior.Freeze, trackId, fps, duration,
+            loadedPositionSeconds: target + offsetFrames * frameSeconds);
+
+        action.Type.Should().Be(expectUseCurrentFrame
+            ? GapEnterActionType.UseCurrentFrame
+            : GapEnterActionType.SeekToFinalFrame);
+    }
+
+    [Fact]
+    public void DecideGapEnter_FreezeBehavior_LoadedPreviousTrackWithUnknownPosition_SeeksToFinalFrame()
+    {
+        // D21-b (b): 同じトラックでも位置が最終フレームから離れている（または不明）ならシークする。
+        var trackId = Guid.NewGuid();
+        double fps = 25.0;
+        double duration = 50.0;
+        double expectedTarget = duration - (1.0 / fps);
+
+        var handler = new GapFreezeHandler();
+        handler.CachedTrackId = trackId;
+        handler.CachedTargetSeconds = expectedTarget;   // キャッシュがあってもシークする
+        var previousTrack = MakeTrack(trackId, duration, fps);
+        var result = new TimelineQueryResult(TimelineQueryStatus.Gap, null, 0, previousTrack);
+
+        var action = handler.DecideGapEnter(result, GapBehavior.Freeze, trackId, fps, duration,
+            loadedPositionSeconds: null);
+
+        action.Type.Should().Be(GapEnterActionType.SeekToFinalFrame);
+        action.TargetSeconds.Should().BeApproximately(expectedTarget, 0.000001);
+        action.TrackId.Should().Be(trackId);
     }
 
     [Fact]
@@ -419,7 +536,8 @@ public class GapFreezeHandlerTests
             GapBehavior.Freeze,
             loadedTrackId: null,
             currentVideoFps: 30.0,
-            currentDurationSeconds: 60.0);
+            currentDurationSeconds: 60.0,
+            loadedPositionSeconds: 12.0);
 
         action.Type.Should().Be(GapEnterActionType.LoadPreviousTrack);
         action.TrackId.Should().Be(trackId);
@@ -449,7 +567,8 @@ public class GapFreezeHandlerTests
             GapBehavior.Freeze,
             loadedTrackId: trackId,
             currentVideoFps: currentFps,
-            currentDurationSeconds: currentDuration);
+            currentDurationSeconds: currentDuration,
+            loadedPositionSeconds: 3.0);
 
         action.Type.Should().Be(GapEnterActionType.SeekToFinalFrame);
         action.TrackId.Should().Be(trackId);
@@ -465,13 +584,9 @@ public class GapFreezeHandlerTests
         // MediaOut=50s, MediaDuration=60s → duration=50, fps=25 → target=50-1/25=49.96
         double fps = 25.0;
         double mediaOut = 50.0;
-        double frameSeconds = 1.0 / fps;
-        double expectedTarget = mediaOut - frameSeconds;
+        double expectedTarget = mediaOut - (1.0 / fps);
 
         var handler = new GapFreezeHandler();
-        handler.CachedTrackId = trackId;
-        handler.CachedTargetSeconds = expectedTarget;
-
         var previousTrack = MakeTrack(trackId, durationSeconds: 60.0, fps: fps, mediaOutSeconds: mediaOut);
         var result = new TimelineQueryResult(
             Status: TimelineQueryStatus.Gap,
@@ -479,9 +594,11 @@ public class GapFreezeHandlerTests
             MediaPositionSeconds: 0,
             PreviousTrack: previousTrack);
 
-        var action = handler.DecideGapEnter(result, GapBehavior.Freeze, null, fps, 60.0);
+        var action = handler.DecideGapEnter(result, GapBehavior.Freeze, trackId, fps, 60.0,
+            loadedPositionSeconds: 20.0);
 
-        action.Type.Should().Be(GapEnterActionType.UseCachedFrame);
+        action.Type.Should().Be(GapEnterActionType.SeekToFinalFrame);
+        action.TargetSeconds.Should().BeApproximately(expectedTarget, 0.000001);
     }
 
     [Fact]
@@ -494,8 +611,6 @@ public class GapFreezeHandlerTests
         double expectedTarget = duration - frameSeconds;
 
         var handler = new GapFreezeHandler();
-        handler.CachedTrackId = trackId;
-        handler.CachedTargetSeconds = expectedTarget;
 
         // FrameRate = null のトラック
         var previousTrack = MakeTrack(trackId, duration, fps: null);
@@ -506,9 +621,12 @@ public class GapFreezeHandlerTests
             PreviousTrack: previousTrack);
 
         // currentVideoFps=30 をフォールバックとして使用
-        var action = handler.DecideGapEnter(result, GapBehavior.Freeze, null, currentFps, duration);
+        var action = handler.DecideGapEnter(result, GapBehavior.Freeze, trackId, currentFps, duration,
+            loadedPositionSeconds: 10.0);
 
-        action.Type.Should().Be(GapEnterActionType.UseCachedFrame);
+        action.Type.Should().Be(GapEnterActionType.SeekToFinalFrame);
+        action.TargetSeconds.Should().BeApproximately(expectedTarget, 0.000001);
+        action.Fps.Should().Be(currentFps);
     }
 
     [Fact]

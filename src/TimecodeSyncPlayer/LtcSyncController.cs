@@ -34,6 +34,7 @@ internal sealed record LtcSyncEffects(
     Action ResumeGapPause,
     Func<SyncCorrectionMode>? GetCorrectionMode = null,
     Func<double?>? GetPlaybackSeconds = null,
+    Func<long>? GetTotalRenderedFrames = null,
     Func<double, bool>? ApplyRateInstant = null,
     Func<double, bool>? SeekTo = null,
     Action<string>? SetCorrectionStatus = null,
@@ -77,6 +78,12 @@ internal sealed class LtcSyncController
     private double? _lastAcceptedLtcSeconds;
     private double _lastAcceptedRawSeconds;
     private long _lastAcceptedFrameEndTimestamp;
+    // D20-b: 同期へ実際に適用した最後の値（保持値の変更判定に使う）。
+    private double? _lastAppliedLtcSeconds;
+    // D20-b (i): 同一の Jump 連続で何度も適用しないためのラッチ（Normal/Initial で解除）。
+    private bool _jumpAppliedOnce;
+    // D20-b: 保持値の変更で 1 回だけ適用したことを示すラッチ（Normal/Initial で解除）。
+    private bool _heldReapplyDone;
     private double? _pendingSyncSeconds;
     private double _pendingSyncRawSeconds;
     private long _pendingSyncFrameEndTimestamp;
@@ -291,7 +298,10 @@ internal sealed class LtcSyncController
     public void MonitoringChanged()
     {
         _lastAcceptedLtcSeconds = null;
+        _lastAppliedLtcSeconds = null;
         _pendingSyncSeconds = null;
+        _jumpAppliedOnce = false;
+        _heldReapplyDone = false;
         if (_effects.GetContext().IsMonitoring)
         {
             _monitoring.MarkStarted();
@@ -315,7 +325,10 @@ internal sealed class LtcSyncController
     public void MonitorStopped(Exception? exception)
     {
         _lastAcceptedLtcSeconds = null;
+        _lastAppliedLtcSeconds = null;
         _pendingSyncSeconds = null;
+        _jumpAppliedOnce = false;
+        _heldReapplyDone = false;
         if (_monitoring.MarkStopped(exception))
         {
             _signalLoss.Reset();
@@ -344,8 +357,41 @@ internal sealed class LtcSyncController
         ApplyFrame(processed);
         if (sourceFrame != null)
             LogFrameDiagnostics(sourceFrame, processed, mode);
+        double rawSeconds = processed.ResolvedSeconds;
+        long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
+        bool applyOnce;
+        string applyReason;
         if (!processed.ShouldApplySync)
-            return;
+        {
+            // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
+            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump && !_jumpAppliedOnce)
+            {
+                _jumpAppliedOnce = true;
+                applyOnce = true;
+                applyReason = "first Jump";
+            }
+            // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超
+            // ずれているときだけ 1 回適用する（定常の Duplicate ゲートは維持）。
+            else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
+                     IsHeldValueFarFromLastApplied(rawSeconds, frameEndTimestamp))
+            {
+                _heldReapplyDone = true;
+                applyOnce = true;
+                applyReason = "held value change";
+            }
+            else
+            {
+                TryReapplyAfterFileLoadRelease();
+                return;
+            }
+        }
+        else
+        {
+            _jumpAppliedOnce = false;
+            _heldReapplyDone = false;
+            applyOnce = false;
+            applyReason = "";
+        }
         // T7: フレーム文脈は必ずこのフレームの処理の先頭で捨てる。抑止などで
         // ApplySync が走らないフレームに前のフレームの素材位置・再生位置を持ち越さない。
         _lastContinueFrame = null;
@@ -353,14 +399,62 @@ internal sealed class LtcSyncController
         // 受信した LTC の生値を保つ。ここで作った effective 値を共有することで、
         // 同期判断・シーク・クリップ切替・ギャップ出入りが同じ量だけずれる。
         // T2: サンプル時計が有効なら、ここでフレーム終端からの経過（age）を足す。
-        double rawSeconds = processed.ResolvedSeconds;
-        long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
-        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "frame");
+        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, applyOnce ? "jump" : "frame");
         _lastAcceptedLtcSeconds = effectiveSeconds;
         _lastAcceptedRawSeconds = rawSeconds;
         _lastAcceptedFrameEndTimestamp = frameEndTimestamp;
+        _lastAppliedLtcSeconds = effectiveSeconds;
+        if (applyOnce)
+        {
+            // 診断 Jump・保持値の変更は信号回復の有効フレームに数えない（ObserveValidFrame を呼ばない）。
+            Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
+            RequestSyncEffective(effectiveSeconds);
+            ApplyCorrection(effectiveSeconds);
+            return;
+        }
+
         ObserveValidFrame(rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
         ApplyCorrection(effectiveSeconds);
+    }
+
+    /// <summary>
+    /// D20-b: 保持（Duplicate）中の値が、最後に同期へ適用した値から一致許容を超えてずれているか。
+    /// ずれていれば 1 回だけ適用する（ラッチは一致するフレームで解除）。
+    /// </summary>
+    private bool IsHeldValueFarFromLastApplied(double rawSeconds, long frameEndTimestamp)
+    {
+        if (_heldReapplyDone || _lastAppliedLtcSeconds is not double applied)
+            return false;
+        if (!double.IsFinite(rawSeconds))
+            return false;
+
+        LtcSyncContext state = _effects.GetContext();
+        double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
+        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "held");
+        return Math.Abs(effectiveSeconds - applied) > toleranceSeconds;
+    }
+
+    /// <summary>
+    /// D20-b (i): 保持 LTC（Duplicate）では通常の同期経路が走らないため、ロード解除だけを
+    /// ここで観測し、解除されたら最後に受理したタイムコードを 1 回だけ適用する。
+    /// </summary>
+    private void TryReapplyAfterFileLoadRelease()
+    {
+        if (!_syncService.IsLoadingFile)
+            return;
+        if (_effects.GetPlaybackSeconds == null || _effects.GetTotalRenderedFrames == null)
+            return;
+        if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
+            return;
+        if (!_syncService.PollFileLoadRelease(playback, _effects.GetTotalRenderedFrames()))
+            return;
+        if (_lastAcceptedLtcSeconds is not double accepted)
+            return;
+
+        Log.Information(
+            "Timecode sync: reapplying the last accepted timecode once after file load ltc={Ltc:F3}", accepted);
+        _lastAppliedLtcSeconds = accepted;
+        RequestSyncEffective(accepted);
     }
 
     /// <summary>
@@ -575,14 +669,16 @@ internal sealed class LtcSyncController
                 if (_gap.ShouldTransitionFromFreezeToBlack(state.GapBehavior))
                     _effects.ClearGapFreezeFrame();
                 _effects.UpdateTimelinePosition(seconds);
+                double? loadedPosition = _effects.GetPlaybackSeconds?.Invoke();
                 GapEnterAction action = _gap.DecideGapEnter(result, state.GapBehavior,
-                    state.LoadedTrackId, state.VideoFps, state.DurationSeconds);
+                    state.LoadedTrackId, state.VideoFps, state.DurationSeconds, loadedPosition);
                 GapEnterCoordinator coordinator = _gapCoordinator();
                 new GapEnterActionDispatcher(new GapEnterActionHandlers(
                     coordinator.EnterBlackGap, coordinator.EnterForceBlack, null,
                     coordinator.StartGapFreezeCaptureForCurrentTrack,
                     coordinator.LoadPreviousTrackFinalFrameForGapFreeze,
-                    coordinator.LoadNextTrackFirstFrameForGapFreeze)).Execute(action, result);
+                    coordinator.LoadNextTrackFirstFrameForGapFreeze,
+                    coordinator.CaptureCurrentFrameForGapFreeze)).Execute(action, result);
                 _effects.UpdateCurrentTrackLabel();
                 break;
             case TimelineQueryStatus.NoTracks:

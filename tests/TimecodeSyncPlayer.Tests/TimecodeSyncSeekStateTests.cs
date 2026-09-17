@@ -97,4 +97,37 @@ public class TimecodeSyncSeekStateTests
         suppressed.Should().BeFalse();
         state.HasPendingSeek.Should().BeFalse();
     }
+
+    [Fact]
+    public void ShouldSuppressSeek_FarNewRequest_SupersedesUnreachablePending()
+    {
+        // D20-b (ii): 終端静止中の target 0 pending は playback 20 では永遠に settle しない。
+        // 新しい要求（8.007）が pending から離れていれば置き換え、シークを抑止しない。
+        var state = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        DateTime now = DateTime.UtcNow;
+        state.BeginSeek(0.0, now);
+
+        bool suppressed = state.ShouldSuppressSeek(20.0, toleranceSeconds: 0.2, now.AddMilliseconds(600),
+            requestedTargetSeconds: 8.007);
+
+        suppressed.Should().BeFalse();
+        state.HasPendingSeek.Should().BeTrue();
+        state.TargetSeconds.Should().BeApproximately(8.007, 0.000001);
+    }
+
+    [Fact]
+    public void ShouldSuppressSeek_CloseNewRequest_KeepsSuppressingPending()
+    {
+        // 連続して進む LTC の経路: 要求が pending の近くなら従来どおり抑止する。
+        var state = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        DateTime now = DateTime.UtcNow;
+        state.BeginSeek(10.0, now);
+
+        bool suppressed = state.ShouldSuppressSeek(9.5, toleranceSeconds: 0.2, now.AddMilliseconds(600),
+            requestedTargetSeconds: 10.5);
+
+        suppressed.Should().BeTrue();
+        state.HasPendingSeek.Should().BeTrue();
+        state.TargetSeconds.Should().Be(10.0);
+    }
 }

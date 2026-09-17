@@ -10,6 +10,8 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     private static readonly TimeSpan SettleCooldown = TimeSpan.FromMilliseconds(200);
     private static readonly TimeSpan PostSettleSuppress = TimeSpan.FromMilliseconds(500);
     private const double ContinuousPlaybackSettleSlackMultiplier = 2.0;
+    // D20-b: 到達不能な pending を置き換える距離（tolerance の倍数）。
+    private const double PendingSupersedeToleranceMultiplier = 4.0;
 
     public TimecodeSyncSeekState()
         : this(TimeSpan.FromSeconds(2))
@@ -43,7 +45,8 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         LastStatus = TimecodeSyncSeekPendingStatus.None;
     }
 
-    public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now)
+    public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now,
+        double requestedTargetSeconds = double.NaN)
     {
         if (!HasPendingSeek)
         {
@@ -77,6 +80,17 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
             return true;               // セットルティックも抑止（1-tick 隙間を閉じる）
         }
 
+        // D20-b (ii): 到達不能な pending（例: 終端静止中の target 0）は、新しい要求が
+        // pending の目標から離れていればその要求で置き換え、今回のシークを抑止しない。
+        if (IsNewRequestFarFromPending(requestedTargetSeconds, toleranceSeconds))
+        {
+            TargetSeconds = Math.Max(0, requestedTargetSeconds);
+            _sentAt = now;
+            _settledAt = DateTime.MinValue;
+            LastStatus = TimecodeSyncSeekPendingStatus.Pending;
+            return false;
+        }
+
         if (now - _sentAt >= _timeout)
         {
             Clear();
@@ -86,6 +100,19 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
 
         LastStatus = TimecodeSyncSeekPendingStatus.Pending;
         return true;
+    }
+
+    /// <summary>
+    /// D20-b: 新しい要求が pending の目標から離れているか。連続して進む LTC の経路では
+    /// pending と要求はほぼ一致するため置き換えは起きない。
+    /// </summary>
+    private bool IsNewRequestFarFromPending(double requestedTargetSeconds, double toleranceSeconds)
+    {
+        if (!double.IsFinite(requestedTargetSeconds))
+            return false;
+
+        double distance = Math.Abs(requestedTargetSeconds - TargetSeconds);
+        return distance > Math.Max(0, toleranceSeconds) * PendingSupersedeToleranceMultiplier;
     }
 
     private bool HasReachedSeekTarget(double playbackSeconds, double toleranceSeconds)
