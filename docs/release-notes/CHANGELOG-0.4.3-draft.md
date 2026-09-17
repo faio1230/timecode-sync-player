@@ -31,6 +31,10 @@ The parent integrates it into `CHANGELOG.md` (the file itself and the csproj `Ve
 - Fixed a deferred (unconfirmed) Jump losing its confirmation when the audio capture stalled and the next frame arrived in a burst: the confirmation window is now judged by the frame-end timestamps (QPC derived from the audio sample position) and falls back to the wall clock only when they are unavailable (D31).
 - Fixed Stop mode staying at the previous position when the held LTC value changed: a held value more than half a frame from the landed value now lands once, and RunThrough applies it once per change (D31-b).
 - Fixed the C-1 scenario's landing check using a fixed target: the landing is now judged as the interval [target - 0.3, target + elapsed + 0.3 + 1 frame] (Stop mode +/-0.3), with 0.5 s of follow recorded (test-side).
+- Fixed gap entries sometimes not updating the picture to the previous clip's final frame or the next clip's first frame: a freeze confirmation is re-confirmed when the target frame arrives after the 3-second timeout, and a changed entry target discards the previous frozen image and re-confirms (D32).
+- Fixed the S-3 scenario's end expectation clamping to the media duration instead of `MediaOut` like the product: it now clamps to `[MediaIn, MediaOut]`, which no longer overestimates the end on real media whose `MediaOut` is shorter than the duration (test-side).
+- Fixed scenario E2E running with playback audio unmuted: the app's own audio (which may carry LTC) could loop back into the CABLE input and mix with the test signal; the scenarios now start muted (test-side).
+- Fixed the track-switch completion check depending on the FetchMetadata line, which fast cached loads may not emit: completion now requires "Playlist track loaded index=N" together with the on-screen duration, because same-duration clips can match the duration on the pre-switch label (test-side).
 
 ### Known limitations
 
