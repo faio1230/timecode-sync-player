@@ -13,4 +13,12 @@ public sealed class SingleModeClampTests
     public void Target_ClampsToMediaInAndMediaOut(
         double ltcSeconds, double mediaInSeconds, double mediaOutSeconds, double expected) =>
         SingleModeClamp.Target(ltcSeconds, mediaInSeconds, mediaOutSeconds).Should().Be(expected);
+
+    [Theory]
+    [InlineData(60.0, 2.0 / 60.0 + 1e-6)]  // 60fps 実素材: 検証機で position=25.033（2 フレーム）
+    [InlineData(25.0, 2.0 / 25.0 + 1e-6)]
+    [InlineData(30.0, 2.0 / 30.0 + 1e-6)]
+    [InlineData(0.0, 2.0 / 30.0 + 1e-6)]   // fps 不明は 30fps として扱う
+    public void BoundaryHoldTolerance_UsesTwoFramesOfTheSourceFps(double fps, double expected) =>
+        SingleModeClamp.BoundaryHoldTolerance(fps).Should().BeApproximately(expected, 1e-12);
 }

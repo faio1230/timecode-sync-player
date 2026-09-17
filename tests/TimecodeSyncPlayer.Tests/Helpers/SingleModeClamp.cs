@@ -9,4 +9,11 @@ internal static class SingleModeClamp
 {
     public static double Target(double ltcSeconds, double mediaInSeconds, double mediaOutSeconds) =>
         Math.Clamp(ltcSeconds, mediaInSeconds, mediaOutSeconds);
+
+    /// <summary>
+    /// 製品の境界ホールド（D33）と同じ ±2 フレーム（素材 fps 基準）の判定許容 + ε。
+    /// 60fps 実素材の position=25.033（期待 25.000）を通す。
+    /// </summary>
+    public static double BoundaryHoldTolerance(double fps) =>
+        2.0 / (fps > 0 ? fps : 30.0) + 1e-6;
 }

@@ -128,8 +128,11 @@ public sealed class LtcScenarioE2ETests
         scenario.Hold(outOfRange, 6);
 
         double expectedEnd = scenario.A.SingleTarget(outOfRange);
+        // 製品の境界ホールド（D33）は ±2 フレームでラッチするため、判定許容も素材 fps 基準の
+        // ±2 フレーム + ε にする（60fps 実素材の position=25.033 を通す）。
+        double endHoldTolerance = SingleModeClamp.BoundaryHoldTolerance(scenario.MediaFps());
         scenario.WaitUntil(
-            () => Math.Abs(scenario.Position() - expectedEnd) <= scenario.OneFrame,
+            () => Math.Abs(scenario.Position() - expectedEnd) <= endHoldTolerance,
             6, "範囲外 LTC で A の終端に止まる");
         scenario.WaitReference("s3-tail", scenario.A.Symbol, "tail", 2.5, "終端フレームは A の最終フレーム");
 
