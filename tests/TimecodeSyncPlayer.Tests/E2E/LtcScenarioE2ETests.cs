@@ -3,7 +3,6 @@ using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
 using FlaUI.Core.AutomationElements;
-using FlaUI.Core.Input;
 using FluentAssertions;
 using TimecodeSyncPlayer.Tests.Helpers;
 using Xunit;
@@ -117,13 +116,13 @@ public sealed class LtcScenarioE2ETests
         scenario.SetSync(true);
         scenario.Hold(ltc, 30);
 
-        scenario.PlaylistLoad(scenario.B.Index, scenario.B.Symbol);
+        scenario.LoadTrack(scenario.B.Index, readyMaxPosition: null);
         scenario.WaitUntil(
             () => Math.Abs(scenario.Position() - scenario.B.SingleTarget(ltc)) <= PositionToleranceSeconds,
             10, $"B ロード後に位置が {scenario.B.SingleTarget(ltc):F3} 付近");
         scenario.WaitTrackPicture("s4-b", scenario.B, 3, "B の絵が出ている（B 以外の参照・黒でない）");
 
-        scenario.PlaylistLoad(scenario.C.Index, scenario.C.Symbol);
+        scenario.LoadTrack(scenario.C.Index, readyMaxPosition: null);
         scenario.WaitUntil(
             () => Math.Abs(scenario.Position() - scenario.C.SingleTarget(ltc)) <= PositionToleranceSeconds,
             10, $"C ロード後に位置が {scenario.C.SingleTarget(ltc):F3} 付近");
@@ -841,7 +840,7 @@ public sealed class LtcScenarioE2ETests
             return parts.Length == 2 ? ParseClock(parts[1].Trim(), MediaFps()) : double.NaN;
         }
 
-        public void LoadTrack(int index)
+        public void LoadTrack(int index, double? readyMaxPosition = 3.0)
         {
             for (int guard = 0; guard < 12; guard++)
             {
@@ -865,7 +864,7 @@ public sealed class LtcScenarioE2ETests
                 WaitUntil(() => LoadedTrackIndex() == expectedNext, 10,
                     $"トラック {current} → {expectedNext} のロード");
                 WaitForMetadataSince(issuedAt, expectedNext);
-                WaitMediaReady(maxPosition: 3.0);
+                WaitMediaReady(readyMaxPosition);
             }
 
             throw new TimeoutException($"トラック {index} をロードできない (loaded={LoadedTrackIndex()})");
@@ -876,67 +875,6 @@ public sealed class LtcScenarioE2ETests
             WaitUntil(
                 () => RunLogLinesSince(issuedAt).Any(line => line.Contains("FetchMetadata:", StringComparison.Ordinal)),
                 15, $"トラック {index} のメタデータ取得");
-
-
-        /// <summary>
-        /// プレイリストで項目を選択してダブルクリックで読み込む（S-4 の「選択」）。
-        /// ウィンドウが前面でないと最初のクリックがアクティブ化に食われて
-        /// MouseDoubleClick が発火しないことがあるため、前面化してから最大 3 回試す。
-        /// </summary>
-        public void PlaylistLoad(int index, string symbol)
-        {
-            ListBox playlist = App.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList"))!.AsListBox();
-            WaitUntil(() => playlist.Items.Length > index, 5, "プレイリスト項目の表示");
-            for (int attempt = 1; attempt <= 3; attempt++)
-            {
-                AutomationElement item = playlist.Items[index];
-                try
-                {
-                    App.MainWindow.SetForeground();
-                    item.Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView();
-                    item.Focus();
-                    Mouse.DoubleClick(item.GetClickablePoint(), MouseButton.Left);
-                }
-                catch (Exception ex)
-                {
-                    Journal.Write("playlist-load", details: new { index, symbol, attempt, error = ex.Message });
-                }
-
-                if (TryWaitLoadedIndex(index, 5))
-                {
-                    Journal.Write("playlist-load", details: new { index, symbol, attempt, loadedIndex = LoadedTrackIndex() });
-                    WaitForMetadataSince(DateTime.Now, index);
-                    WaitMediaReady();
-                    return;
-                }
-
-                Journal.Write("playlist-load-retry", details: new
-                {
-                    index,
-                    symbol,
-                    attempt,
-                    timeLabel = RawTimeLabel(),
-                    loadedIndex = LoadedTrackIndex(),
-                    playButton = App.Button("BtnPlay").Name,
-                });
-                Thread.Sleep(400);
-            }
-
-            throw new TimeoutException($"プレイリストから {symbol} のロードに失敗; timeLabel={RawTimeLabel()}; loaded={LoadedTrackIndex()}");
-        }
-
-        private bool TryWaitLoadedIndex(int index, double timeoutSeconds)
-        {
-            try
-            {
-                E2EAssert.WaitUntil(() => LoadedTrackIndex() == index, TimeSpan.FromSeconds(timeoutSeconds));
-                return true;
-            }
-            catch (TimeoutException)
-            {
-                return false;
-            }
-        }
 
         // ---- readings ----
 
