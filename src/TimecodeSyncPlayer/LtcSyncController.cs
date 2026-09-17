@@ -363,6 +363,17 @@ internal sealed class LtcSyncController
         string applyReason;
         if (!processed.ShouldApplySync)
         {
+            // D27: 解読は続いているが値が進まない保持（Duplicate）を信号停止の判定へ伝える。
+            // 無音（フレームが届かない）と同じ経路で損失になり、損失の理由だけが分かれる。
+            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate)
+                _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
+            // D27: 保持からの復帰では、値が動き出した Jump も有効フレームとして数える
+            // （保持中は ObserveValidFrame が呼ばれないため、復帰のきっかけが無くなる）。
+            // ラッチ済みの Jump（連続する Jump の 2 枚目以降）でも数える。無音からの Jump は
+            // 数えない（既存どおり有効フレーム N 枚を要求する）。
+            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump &&
+                _signalLoss.IsLost && _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
+                ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
             // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump && !_jumpAppliedOnce)
             {
@@ -406,7 +417,8 @@ internal sealed class LtcSyncController
         _lastAppliedLtcSeconds = effectiveSeconds;
         if (applyOnce)
         {
-            // 診断 Jump・保持値の変更は信号回復の有効フレームに数えない（ObserveValidFrame を呼ばない）。
+            // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
+            // （ObserveValidFrame を呼ばない）。損失中の Jump だけは上の D27 の経路で数える。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
             RequestSyncEffective(effectiveSeconds);
             ApplyCorrection(effectiveSeconds);
