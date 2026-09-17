@@ -2976,7 +2976,28 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 | # | 内容 | 仕様の根拠 | 状態 |
 | --- | --- | --- | --- |
 | D20 | Single + 同期 ON で、LTC がアクティブトラックの尺以上になると終端シーク後に次トラックへ自動前進し、連鎖して最後まで進む（S-2/S-3/S-4/S-5） | 項目 7・9（終端で止まる、アクティブ以外は再生しない） | **解消**（`269dc60`、main `e5ff5a2`。S-3/S-5 合格、S-2/S-4 はテスト側の欠陥で未判定） |
-| D21 | Continue + Freeze で、ジャンプで入った Freeze 領域が前トラックの最終フレームにならない（F-4: ジャンプ時点の絵を保持、F-3: 黒） | 項目 21・22 | `9215324` では未解消（F-3/F-4 再失敗）→ **D21-b** を同期担当へ |
+| D21 | Continue + Freeze で、ジャンプで入った Freeze 領域が前トラックの最終フレームにならない（F-4: ジャンプ時点の絵を保持、F-3: 黒） | 項目 21・22 | **解消**（D21-b `d92189d`。開発機で F-1〜F-5 合格、V4 1/1、V5 10/10。統合は D20-b と一緒に） |
 | D22 | Continue + Freeze で、最初のトラックの前（先頭オフセット）が黒（F-5） | 項目 24（最初の動画の冒頭フレーム） | **解消**（`40e1c8a`。F-5 合格） |
 
 - 指示: `docs/prompts/2026-09-17-D20-D22-single-eof-and-freeze-by-jump.md`。証跡: `artifacts/ltc-scenarios/<testId>-<timestamp>`（agent-b の作業ツリー）、`TestResults/v042-ltc-scenario/ltc-scenario-e2e.trx`
+
+### D21-b の実装と D20-b の原因（同期担当、2026-09-17 14:10、親の記録）
+
+- **D21-b（agent-a `d92189d`、実機検証中）**: ギャップ進入時の held は常に直前トラックの最終フレーム。(a) 同じトラックで位置が最終フレーム ±1 なら現在の絵を確定、(b) 同じトラックで位置が違えば `SeekToFinalFrame`、(c) 違うトラック/未ロードなら `LoadPreviousTrack`（ロード後に一時停止のまま最終フレームへシーク）。キャッシュ再利用（`CanReuseCachedFrame`）は「前回凍結した絵」であって「今の絵」ではないため廃止。「届いたフレームで確定」の判定は描画コールバックではなく `OutputEngine.SourceFrameReady` のフレーム位置（PTS）で行い、目標 ±2 フレーム以外は数えず、最大 2 回再シーク。単体 1701 合格（+15）
+  - F-3 の黒: (c) は走っていた（B の一時停止ロード成功）が、D21 のゲートがフレーム到着を 1 枚も数えずタイムアウトし、ロードで消えた黒を「現在の絵」として凍結していた。F-4: `SeekToFinalFrame` の 6ms 後にシーク前の B 本文フレームが新世代として届き、それで確定していた
+- **D20-b の原因（分析、修正はこれから）**: (1) 保持 LTC（同一タイムコード連送）は `TimecodeFrameDiagnostics` で Duplicate、`TimecodeSyncFrameGate` は Initial/Normal 以外を適用しないため、保持中は同期が一切走らない。(2) 終端静止では `TimecodeSyncSeekState` に到達不能な pending seek（target=0.000、playback=20.0）が残り、`HasReachedSeekTarget` が成立せず 2 秒のタイムアウトまで全シーク抑止（`sync seek suppressed pendingTarget=0.000 …` の正体）。(3) 解放が LTC の掃引中に起きるとその瞬間の値へ着地し、直後に保持へ入ると (1) で再同期不能。(4) C 切替も同根（ロードで冒頭から再生、LTC 35 は Duplicate なので clamp 終端への同期が適用されない）
+  - 親の承認した修正案: (i) Jump の直後とロード直後（`IsLoadingFile` 解除時）に最後に受理したタイムコードを 1 回だけ適用（保持中の低頻度再評価は入れない。連続 LTC の経路は変えない）、(ii) 到達不能な pending は新しい要求が pending 目標から離れていれば更新する
+
+## D24: 一時停止中のシークが位置を動かさない素材がある（2026-09-17 15:30、検証機の実素材 M2、報告のみ）
+
+- 素材 M2: ISO BMFF、H.264 High、**1920x886**（16:9 でない）、60fps、yuv420p、AAC 44.1kHz、映像トラック先頭、107 秒
+- 観測（検証機、v0.4.2、`d3d11h264dec`）: 参照フレーム採取の一時停止シーク 19.968 で位置が 0 から動かない。shim ログは `seek: send (accurate) target_ns=19967970460 ok=1` → `pump_arm: set_state(PLAYING)` → `paused-seek: pump deadline gen=N -> PAUSED (faults=N)` の繰り返し。アプリログは `Seek command sent … target=19.968 success=true immediateTimePos=0.000` が 4 回（3 回は 21.040 へのヌッジ付き）。M1（ProRes、CPU デコード）の冒頭・終端シークは到達
+- 影響: シナリオ E2E の参照採取が M2 で止まり、実素材の 18 本がすべて準備段階で失敗。現場では「一時停止中に位置を合わせる」操作（プロジェクト読み込み直後の先頭フレーム表示、ギャップ Freeze の最終フレーム取得）に直結する
+- 仮説の候補: 高さ 886 のアラインメント（d3d11 デコーダの出力）、キーフレーム間隔が長く accurate シークの復号が pump の期限内に終わらない、60fps High プロファイル。開発機で同条件の素材（1920x886@60 H.264 High、長い GOP）を生成して `tcs-shim-test` の一時停止シークで再現を試みる（除去担当、調査のみ）
+- 回避（テスト基盤）: 生成スクリプトに素材の選択（`-Media M1,M3,M5`）を足し、M2 を外して本題を先に回す（検証機側で実装）
+
+## D23-b / D23-c（ランナー、検証機側で修正、パッチ待ち）
+
+- D23-b: `MediaDir` と `ReportDir` が互いを含む指定は前提エラーで止める。`ReportDir\media` の削除・置き換えはリンク数 2 以上のファイルだけ（`GetFileInformationByHandle`）。D23 のままでは `MediaDir = ReportDir\media` の指定で実ファイルを消す経路があった
+- D23-c: PowerShell 5.1 で dotnet の標準エラー（xUnit の `[FAIL]` 行）が `ErrorActionPreference=Stop` で例外になり、証跡コピーと SUMMARY を飛ばしていた。native 実行を Continue にし UTF-8 で受ける
+- 検証機の確認: 危険な指定 4 通りでも実ファイルは残る。ダミー 3 回とも SHA-256・リンク数 1 が不変

@@ -50,6 +50,54 @@ $ReportDir = (Resolve-Path -LiteralPath $ReportDir).Path
 Write-Output "app=$AppExe"
 Write-Output "report=$ReportDir"
 
+# ---- hard links (D23) ------------------------------------------------------
+# D23(a): Windows PowerShell 5.1 wildcard-expands the -Target of
+# New-Item -ItemType HardLink, so media names containing brackets fail.
+# Call kernel32 directly and report GetLastError on failure.
+if (-not ('TcsHardLink' -as [type])) {
+    Add-Type -Namespace Tcs -Name HardLink -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+public static extern bool CreateHardLinkW(string lpFileName, string lpExistingFileName, System.IntPtr lpSecurityAttributes);
+'@
+}
+
+function New-HardLink([string]$LinkPath, [string]$TargetPath) {
+    if (-not [Tcs.HardLink]::CreateHardLinkW($LinkPath, $TargetPath, [IntPtr]::Zero)) {
+        $code = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $message = (New-Object System.ComponentModel.Win32Exception($code)).Message
+        throw ('CreateHardLinkW failed link=' + $LinkPath + ' target=' + $TargetPath +
+            ' win32=' + $code + ' (' + $message + ')')
+    }
+}
+
+# D23(b): every link created by this run is tracked so the finally cleanup does
+# not depend on the project having been generated. The cleanup also sweeps any
+# file left under ReportDir\media by an earlier interrupted run (same method,
+# non-recursive, only under ReportDir\media).
+$createdHardLinks = @()
+
+function Remove-LinkedMediaArtifacts {
+    $mediaRoot = Join-Path $ReportDir 'media'
+    if (-not (Test-Path -LiteralPath $mediaRoot)) { return }
+    $mediaRootFull = [IO.Path]::GetFullPath($mediaRoot).TrimEnd([char]'\') + '\'
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($link in $createdHardLinks) { $paths.Add([string]$link) }
+    foreach ($file in @(Get-ChildItem -LiteralPath $mediaRoot -File -ErrorAction SilentlyContinue)) {
+        $paths.Add($file.FullName)
+    }
+    foreach ($path in $paths) {
+        $full = [IO.Path]::GetFullPath($path)
+        if (-not $full.StartsWith($mediaRootFull, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        [IO.File]::Delete($full)
+    }
+    if (@(Get-ChildItem -LiteralPath $mediaRoot -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+        [IO.Directory]::Delete($mediaRoot, $false)
+    }
+}
+
+# Leftovers from an interrupted earlier run in the same report directory.
+Remove-LinkedMediaArtifacts
+
 # ---- prerequisites ---------------------------------------------------------
 $problems = @()
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $problems += 'dotnet is not on PATH' }
@@ -142,23 +190,20 @@ $makeMedia = Join-Path $PSScriptRoot 'make-e2e-media.ps1'
 if (-not $?) { throw "make-e2e-media.ps1 failed" }
 
 function Remove-ScenarioProjectArtifacts {
-    if (-not $projectPath) { return }
-    if ($KeepProject) {
+    if ($KeepProject -and $projectPath) {
         Write-Output ('project_kept=' + $projectPath)
         Write-Output ('hardlinks_kept=' + $linkedMediaDir)
         return
     }
-    Remove-Item -LiteralPath $projectPath -Force -ErrorAction SilentlyContinue
-    if ($linkedMediaDir -and (Test-Path -LiteralPath $linkedMediaDir)) {
-        Get-ChildItem -LiteralPath $linkedMediaDir -File -ErrorAction SilentlyContinue |
-            Remove-Item -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $linkedMediaDir -Force -ErrorAction SilentlyContinue
+    if ($projectPath) {
+        Remove-Item -LiteralPath $projectPath -Force -ErrorAction SilentlyContinue
     }
+    Remove-LinkedMediaArtifacts
 }
 
-try {
 $projectPath = ''
 $linkedMediaDir = ''
+try {
 if ($MediaDir) {
     if (-not (Test-Path -LiteralPath $MediaDir)) { throw "MediaDir not found: $MediaDir" }
     $MediaDir = (Resolve-Path -LiteralPath $MediaDir).Path
@@ -170,8 +215,9 @@ if ($MediaDir) {
     foreach ($mediaFile in @(Get-ChildItem -LiteralPath $MediaDir -File |
         Where-Object { $mediaExtensions -contains $_.Extension.ToLowerInvariant() })) {
         $linkPath = Join-Path $linkedMediaDir $mediaFile.Name
-        if (Test-Path -LiteralPath $linkPath) { Remove-Item -LiteralPath $linkPath -Force }
-        New-Item -ItemType HardLink -Path $linkPath -Target $mediaFile.FullName | Out-Null
+        if (Test-Path -LiteralPath $linkPath) { [IO.File]::Delete($linkPath) }
+        New-HardLink -LinkPath $linkPath -TargetPath $mediaFile.FullName
+        $createdHardLinks += $linkPath
     }
 
     $projectPath = Join-Path $ReportDir 'ltc-scenario.tsp'
