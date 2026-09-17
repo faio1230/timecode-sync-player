@@ -45,6 +45,12 @@ public sealed class ContinuousFollowAuditTests
         summary.MaxAbsError.Should().BeApproximately(0.01, 0.001);
         summary.WorstUpdates!.Value.FrameUpdates.Should().Be(60);
         summary.WorstAdvance!.Value.PositionAdvance.Should().BeGreaterThan(1.5);
+        // 2 秒窓に 0.2 秒刻みで 10 サンプル。進みは前の窓の最後を起点にするため、
+        // 2 本目以降はちょうど 2.0 秒、LTC も同じだけ進む。
+        summary.Windows[0].Samples.Should().Be(10);
+        summary.Windows[0].LtcAdvance.Should().BeApproximately(1.8, 0.001);
+        summary.Windows[1].Samples.Should().Be(10);
+        summary.Windows[1].LtcAdvance.Should().BeApproximately(2.0, 0.001);
     }
 
     [Fact]
@@ -133,14 +139,70 @@ public sealed class ContinuousFollowAuditTests
         summary.Windows.Should().HaveCount(1);
         summary.MaxAbsError.Should().Be(0.0);
         summary.Windows[0].PositionAdvance.Should().BeApproximately(1.5, 0.001);
+        summary.Windows[0].LtcAdvance.Should().BeApproximately(1.5, 0.001);
+        summary.Windows[0].Samples.Should().Be(4);
         summary.StallAdvanceWindows.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_SparseSamples_CarryAdvanceFromThePreviousWindow()
+    {
+        // UIA の読み取りが遅く 2 秒窓に 1 サンプルしか入らない場合でも、前の窓の最後の値から
+        // 進みを測る（窓の中だけで差を取ると、再生が正常でも 0 に見えてしまう）。
+        List<FollowSample> samples =
+        [
+            new FollowSample(0.0, 10.0, 10.0),
+            new FollowSample(1.9, 11.9, 11.9),
+            new FollowSample(3.9, 13.9, 13.9),
+            new FollowSample(5.9, 15.9, 15.9),
+        ];
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[0].Samples.Should().Be(2);
+        summary.Windows[1].Samples.Should().Be(1);
+        summary.Windows[2].Samples.Should().Be(1);
+        summary.Windows[1].PositionAdvance.Should().BeApproximately(2.0, 0.001); // 13.9 − 11.9
+        summary.Windows[2].PositionAdvance.Should().BeApproximately(2.0, 0.001); // 15.9 − 13.9
+        summary.Windows[1].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[2].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.StallAdvanceWindows.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_SparseSamplesEarlyInWindow_MeasureShortInterval()
+    {
+        // サンプルが窓の先頭に 1 個だけの場合、前の窓の最後からの差は「実際に読めた短い区間」の
+        // 進みになる（窓 1 は 0.1 秒）。現判定（窓長 ×0.5 未満で停滞）はまだ変えていないため、
+        // この窓は停滞として数えられる。サンプル不足の扱いは別途決める。
+        List<FollowSample> samples =
+        [
+            new FollowSample(0.0, 10.0, 10.0),
+            new FollowSample(1.9, 11.9, 11.9),
+            new FollowSample(2.0, 12.0, 12.0),
+            new FollowSample(4.0, 14.0, 14.0),
+        ];
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[1].Samples.Should().Be(1);
+        summary.Windows[1].PositionAdvance.Should().BeApproximately(0.1, 0.001);
+        summary.Windows[1].LtcAdvance.Should().BeApproximately(0.1, 0.001);
+        summary.Windows[2].PositionAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.StallAdvanceWindows.Should().Be(1, "現判定はそのまま（サンプル不足の扱いは別途）");
     }
 
     [Fact]
     public void Summarize_SettlingWindows_AreReportedButNotJudged()
     {
         // 先頭 4 秒（2 窓）は追従直後の過渡。0 更新・大誤差でも判定に数えず、集計には残す。
-        List<FollowSample> samples = Samples(8.0, 0.2, t => t < 4.0 ? 10.0 + t + 1.0 : 10.0 + t);
+        // 位置は t=4 で連続になるよう 1.0 秒から徐々に誤差が減る形にする（進みの起点が
+        // 前の窓の最後になるため、不連続な合成データを避ける）。
+        List<FollowSample> samples = Samples(8.0, 0.2, t => 10.0 + t + Math.Max(0.0, 1.0 - t / 4.0));
         List<FollowPerfSegment> perf =
         [
             new FollowPerfSegment(2.0, 2.0, 0),
