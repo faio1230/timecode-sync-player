@@ -149,6 +149,46 @@ internal sealed class LtcSignalLossPolicy
         _lastHeldFrameAtMilliseconds = receivedAtMilliseconds;
     }
 
+    /// <summary>
+    /// D27-b: 保持（タイムコード停止）が理由の損失中に、値が動いた Jump フレームを観測する。
+    /// 値の変化 1 枚で即復帰する（保持からの復帰の特別規則）。無音からの復帰は
+    /// <see cref="ObserveValidFrame"/> の「有効フレーム N 枚」規則のまま変えない。
+    /// 復帰後はこのフレーム時刻を進行の時計にし、続けて保持なら改めて損失になる。
+    /// </summary>
+    public LtcSignalLossAction ObserveJumpFrame(long receivedAtMilliseconds, LtcSignalLossContext context)
+    {
+        if (!context.IsMonitoring)
+        {
+            Reset();
+            return LtcSignalLossAction.None;
+        }
+
+        ObservePlaybackState(context);
+
+        if (!_isLost || _reason != LtcSignalLossReason.TimecodeHeld)
+            return LtcSignalLossAction.None;
+
+        bool canApplyPolicyOwnedResume =
+            context.SyncEnabled &&
+            context.IsMonitoring &&
+            !context.IsGapActive;
+        if (_pausedByPolicy && !canApplyPolicyOwnedResume)
+            return LtcSignalLossAction.None;
+
+        _isLost = false;
+        _reason = LtcSignalLossReason.None;
+        _lastValidFrameAtMilliseconds = receivedAtMilliseconds;
+        _lastHeldFrameAtMilliseconds = null;
+        _consecutiveResumeFrames = 0;
+        _manualResumeSuppressesPause = false;
+        bool shouldResume = _pausedByPolicy;
+        _pausedByPolicy = false;
+
+        return shouldResume
+            ? LtcSignalLossAction.ResumeAndSync
+            : LtcSignalLossAction.None;
+    }
+
     public LtcSignalLossAction Evaluate(long nowMilliseconds, LtcSignalLossContext context)
     {
         if (!context.IsMonitoring)

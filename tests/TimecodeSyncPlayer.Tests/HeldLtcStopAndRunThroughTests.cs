@@ -149,4 +149,30 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.IsPaused.Should().BeFalse();
         h.PlaybackSeconds.Should().BeApproximately(2.16, 0.05, "保持が明けたら LTC 側へ戻る");
     }
+
+    [Fact]
+    public void StopMode_HeldThenJumpToNewHold_RecoversImmediatelyAndPausesAtNewValue()
+    {
+        // S-2: 保持 8.0 で一時停止 → 次の保持値 20.0 への Jump が 1 枚でも届けば復帰し、
+        // そのまま保持が続けば新しい値で改めて一時停止する。
+        (SyncScenarioHarness h, ManualTimeProvider clock) = ArrangeHeldAt204(LtcSignalLossMode.Stop);
+        Tick(h, clock, 3);
+        h.IsPaused.Should().BeTrue();
+        h.Operations.Clear();
+
+        Raw(h, 3, 0, 10_300);
+
+        h.IsPaused.Should().BeFalse("保持損失中の Jump 1 枚で復帰する");
+        h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
+
+        for (int i = 1; i <= 8; i++)
+        {
+            Raw(h, 3, 0, 10_300 + i * 100);
+            Tick(h, clock, 1);
+        }
+
+        h.IsPaused.Should().BeTrue("新しい値の保持が続けば損失で一時停止する");
+        h.PlaybackSeconds.Should().BeApproximately(3.0, 0.05);
+        h.DisplayStates[^1].PauseReason.Should().Be("タイムコード停止で停止中");
+    }
 }
