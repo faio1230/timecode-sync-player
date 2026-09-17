@@ -11,6 +11,7 @@ public class PlaybackOperationsCoordinatorTests
         public readonly List<(string Path, double? Start, bool Paused)> Loads = new();
         public readonly List<double> Seeks = new();
         public readonly List<bool> SetPausedCalls = new();
+        public readonly List<double> BeginSyncFileLoads = new();
         public int StopCalls;
         public bool IsPlayerReady = true;
         public bool HasTimelinePanel = true;
@@ -49,7 +50,12 @@ public class PlaybackOperationsCoordinatorTests
             SetPlayPauseIcon: value => Calls.Add($"SetPlayPauseIcon({value})"),
             ResetGapFreezeAll: () => Calls.Add("ResetGapFreezeAll"),
             ResetGapFreeze: () => Calls.Add("ResetGapFreeze"),
-            ClearGapFreezeFrame: () => Calls.Add("ClearGapFreezeFrame"));
+            ClearGapFreezeFrame: () => Calls.Add("ClearGapFreezeFrame"),
+            BeginSyncFileLoad: startPosition =>
+            {
+                Calls.Add($"BeginSyncFileLoad({startPosition})");
+                BeginSyncFileLoads.Add(startPosition);
+            });
     }
 
     private static PlaybackOperationsCoordinator Create(Recorder recorder) =>
@@ -74,7 +80,21 @@ public class PlaybackOperationsCoordinatorTests
             "ResetPlayerStateForNewTrack",
             "ResetGapFreeze",
             "SetSeekBarValueFromPlayer(0)",
-            "SetTimeLabel(0:00 / 0:00)");
+            "SetTimeLabel(0:00 / 0:00)",
+            "BeginSyncFileLoad(0)");
+        recorder.BeginSyncFileLoads.Should().Equal(0);
+    }
+
+    [Fact]
+    public void LoadFile_WithStart_DoesNotBeginSyncFileLoadGate()
+    {
+        // 位置つきロード（同期主導のトラック切替）は ContinueOnTrackCoordinator が記録する。
+        var recorder = new Recorder();
+        var coordinator = Create(recorder);
+
+        coordinator.LoadFile("C:\\media\\clip.mp4", 12.5).Should().BeTrue();
+
+        recorder.BeginSyncFileLoads.Should().BeEmpty();
     }
 
     [Theory]
@@ -118,6 +138,7 @@ public class PlaybackOperationsCoordinatorTests
             "SetPlayPauseIcon(▶)",
             "ResetPlayerStateForNewTrack");
         recorder.SetPausedCalls.Should().NotContain(false);
+        recorder.BeginSyncFileLoads.Should().Equal(0);
     }
 
     [Theory]
@@ -134,6 +155,7 @@ public class PlaybackOperationsCoordinatorTests
 
         result.Should().BeFalse();
         recorder.SetPausedCalls.Any().Should().Be(writesPause);
+        recorder.BeginSyncFileLoads.Should().BeEmpty();
         recorder.Calls.Should().NotContain(call =>
             call.StartsWith("SetPlayPauseIcon", StringComparison.Ordinal) ||
             call == "ResetPlayerStateForNewTrack" ||
