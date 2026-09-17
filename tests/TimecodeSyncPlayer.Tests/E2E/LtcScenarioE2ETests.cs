@@ -76,10 +76,16 @@ public sealed class LtcScenarioE2ETests
         foreach (PerfSegment segment in segments)
             scenario.Journal.Write("fps-segment", details: new { at = segment.At, elapsed = segment.ElapsedSeconds, frameUpdates = segment.FrameUpdates });
 
+        // 期待範囲は素材の fps から作る（2 秒 × fps ± 10%）。30fps 前提の固定値（55〜65）では
+        // 60fps の実素材（実測 2 秒で約 120）が落ちる。色素材（30fps）は 54〜66 で従来どおり通る。
+        double mediaFps = scenario.MediaFps();
+        (int minUpdates, int maxUpdates) = PerfUpdateExpectation.FrameUpdatesRange(mediaFps, 2.0);
+        scenario.Journal.Write("fps-expectation", details: new { mediaFps, minUpdates, maxUpdates });
+
         segments.Should().HaveCountGreaterThanOrEqualTo(3, "10 秒の観測で 2 秒区間が 3 本以上取れる");
         foreach (PerfSegment segment in segments)
-            segment.FrameUpdates.Should().BeInRange(55, 65,
-                $"frameUpdates={segment.FrameUpdates} が 30fps 素材の 2 秒区間として正常");
+            segment.FrameUpdates.Should().BeInRange(minUpdates, maxUpdates,
+                $"frameUpdates={segment.FrameUpdates} が {mediaFps:F3}fps 素材の 2 秒区間として正常");
     });
 
     [SkippableFact(Timeout = 360_000)]
@@ -1114,7 +1120,11 @@ public sealed class LtcScenarioE2ETests
             return samples;
         }
 
-        private double MediaFps()
+        /// <summary>
+        /// S-1: 再生中素材の fps。アプリのメタデータ行（FetchMetadata 由来）を優先し、
+        /// 無ければプロジェクトの参照 fps を使う。
+        /// </summary>
+        public double MediaFps()
         {
             Match rate = Regex.Match(App.Text("MetaLineText"), @"(\d+(?:\.\d+)?)\s*fps");
             if (rate.Success) return double.Parse(rate.Groups[1].Value, CultureInfo.InvariantCulture);
