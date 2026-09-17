@@ -133,23 +133,60 @@ public sealed class RenderSessionTests
     {
         using var fixture = new Fixture();
         int uiThread = Environment.CurrentManagedThreadId;
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var frameUpdateEntered = new ManualResetEventSlim();
+        using var releaseFrameUpdate = new ManualResetEventSlim();
+        int frameUpdateCalls = 0;
         fixture.Session.FrameUpdate = (generation, hasFrame) =>
         {
             Environment.CurrentManagedThreadId.Should().Be(uiThread);
-            completion.TrySetResult();
+            Interlocked.Increment(ref frameUpdateCalls);
+            frameUpdateEntered.Set();
+            // UI スレッドをここで保持する（2 回目の要求は保持中に入れ、解除後に数える）。
+            releaseFrameUpdate.Wait();
             return Task.CompletedTask;
         };
         fixture.Api.Callback!.TryGetTarget(out var callback).Should().BeTrue();
-        callback!(IntPtr.Zero);
-        await WaitUntil(() => fixture.Scheduled.Count == 1);
-        callback(IntPtr.Zero);
+        Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
 
-        fixture.Scheduled.Should().ContainSingle();
-        fixture.Scheduled[0]();
-        await completion.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.Session.ConsumeUpdateStats().CoalescedRequests.Should().Be(1);
+        // 1 回目: ネイティブ側の drain 完了を直列 executor のバリアで待ってから UI の予約を見る。
+        // （時間には頼らない。drain はバリアより前に executor へ積まれている。）
+        callback!(IntPtr.Zero);
+        await DrainNativeQueueAsync(fixture);
+        fixture.Scheduled.Should().ContainSingle("1 回目の drain が UI へ 1 件予約する");
+
+        // UI スレッドで予約済みの 1 件を実行開始し、FrameUpdate の中で保持する。
+        // ここから先は UI スレッドが塞がるため、テスト本体はワーカー側に移って進める。
+        _ = dispatcher.BeginInvoke(new Action(() => fixture.Scheduled[0]()));
+        await Task.Run(async () =>
+        {
+            try
+            {
+                frameUpdateEntered.Wait(TimeSpan.FromSeconds(5))
+                    .Should().BeTrue("UI スレッドで最初のフレーム更新が保持状態に入る");
+
+                // UI を保持したままネイティブ側から 2 回目の要求を出す。UI の予約は未完了なので
+                // ここで合流が 1 回計上される（drain の完了は executor のバリアで順序付ける）。
+                callback(IntPtr.Zero);
+                await DrainNativeQueueAsync(fixture);
+
+                fixture.Session.ConsumeUpdateStats().CoalescedRequests.Should().Be(1);
+                fixture.Scheduled.Should().ContainSingle("合流した要求は新しい予約を作らない");
+            }
+            finally
+            {
+                releaseFrameUpdate.Set();
+            }
+        });
+
+        Volatile.Read(ref frameUpdateCalls).Should().BeGreaterThan(0);
     });
+
+    /// <summary>
+    /// RenderSession のネイティブ executor に空の処理を積み、それまでの drain が完了したことを
+    /// 順序で保証する（時間待ちではなく、単一スレッドの FIFO を使ったバリア）。
+    /// </summary>
+    private static Task DrainNativeQueueAsync(Fixture fixture) =>
+        fixture.Session.ProcessUpdateAsync(static (_, _) => Task.CompletedTask);
 
     [Fact]
     public Task Shutdown_ContextFreeFailureRetainsNativeDependencies() => OnUi(async () =>
