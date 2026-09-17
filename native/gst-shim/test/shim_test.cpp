@@ -505,6 +505,15 @@ run_delivery_policy_tests ()
    * rejection must all fail the gate; a mismatched profile must never become
    * last-good. */
   {
+    check (tcs_load_caps_ready (3840, 2160) == 1,
+        "D34 caps: width+height -> ready");
+    check (tcs_load_caps_ready (0, 2160) == 0,
+        "D34 caps: width 0 -> not ready");
+    check (tcs_load_caps_ready (3840, 0) == 0,
+        "D34 caps: height 0 -> not ready");
+    /* fps is not an input: variable-framerate media (0/1) stays ready. */
+    check (tcs_load_attempt_ok (1, tcs_load_caps_ready (3840, 2160), 0, 0, 0) == 1,
+        "D34 caps: 0 fps media stays ready (fps is not in the gate)");
     check (tcs_load_attempt_ok (1, 1, 0, 0, 0) == 1,
         "D34 gate: own-generation frame + caps -> ok");
     check (tcs_load_attempt_ok (0, 1, 0, 0, 0) == 0,

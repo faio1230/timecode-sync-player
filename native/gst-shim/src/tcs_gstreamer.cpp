@@ -2837,7 +2837,10 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     first_frame_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     {
       std::lock_guard<std::mutex> g (p->frame_lock);
-      caps_ready = p->width > 0 && p->height > 0 && p->fps > 0.0;
+      /* D34: width/height only. Variable-framerate containers may report
+       * framerate=0/1; fps=0 is accepted (logged below) and the product keeps
+       * its fps default. */
+      caps_ready = tcs_load_caps_ready (p->width, p->height) != 0;
       /* D34: success requires a frame of this generation, determined video
        * caps (0x0@0 is not a loaded stream), no caps mismatch and no error.
        * A mismatched profile must never be recorded as last-good. */
@@ -2891,11 +2894,12 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       const bool caps_missing =
           tcs_load_failure_is_caps_missing (caps_ready ? 1 : 0, caps_mismatch ? 1 : 0) != 0;
       log_attempt (caps_missing ? "caps-missing" : "preroll-timeout");
-      LOG ("load.caps-missing path=%s attempt=%d profile=%s mismatch=%d "
-          "width=%d height=%d fps=%.3f current_gen_frame=%d",
-          utf8_path, attempt, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
-          caps_mismatch ? 1 : 0, load_w, load_h, load_fps,
-          current_gen_frame ? 1 : 0);
+      if (caps_missing)
+        LOG ("load.caps-missing path=%s attempt=%d profile=%s mismatch=%d "
+            "width=%d height=%d fps=%.3f current_gen_frame=%d",
+            utf8_path, attempt, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
+            caps_mismatch ? 1 : 0, load_w, load_h, load_fps,
+            current_gen_frame ? 1 : 0);
       teardown_pipeline (p);
       LOG ("attempt %s/%s failed: %s", container,
           idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
@@ -2976,6 +2980,9 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     duration_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
 
     log_attempt ("ok");
+    if (p->fps <= 0.0)
+      LOG ("load.fps-missing path=%s profile=%s fps=0 (framerate absent in caps) accepted",
+          utf8_path, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback");
     LOG ("loaded (%s / profile %d) %s decoder=%s %dx%d@%.3f mem=%s", container, idx,
         utf8_path, p->decoder_name.empty () ? "?" : p->decoder_name.c_str (),
         p->width, p->height, p->fps, p->use_d3d11_caps ? "d3d11" : "sysmem");
