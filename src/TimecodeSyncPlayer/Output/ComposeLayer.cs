@@ -7,7 +7,7 @@ internal enum LayerAction { DrawAcquired, DrawHeld, DrawFrozen, DrawBlack }
 
 /// <summary>
 /// 合成レイヤーの純粋な選択規則。準備待ち・読込失敗で黒を挿入せず、
-/// 最後に確定した画像（Held）を保持する。Freeze は保存済みのソース画像を使う。
+/// 最後に合成したキャンバス（Held）を保持する。Freeze は保存済みのソース画像を使う。
 /// </summary>
 internal static class ComposeLayerPolicy
 {
@@ -20,12 +20,11 @@ internal static class ComposeLayerPolicy
     };
 
     /// <summary>
-    /// 描画に使う配置。新画像は現在クリップの配置、Held／Freeze は画像を確定した時点の配置を使う
-    /// （クリップ切替で Held を再配置しない、段階 4.2）。
+    /// 描画に使う配置。Freeze は確定時点の配置、それ以外は現在クリップの配置。
+    /// Held は合成済みキャンバスの複製をそのまま重ねるため配置を選ばない（D26）。
     /// </summary>
-    public static ClipPlacement SelectPlacement(LayerAction action, ClipPlacement current, ClipPlacement held, ClipPlacement frozen) => action switch
+    public static ClipPlacement SelectPlacement(LayerAction action, ClipPlacement current, ClipPlacement frozen) => action switch
     {
-        LayerAction.DrawHeld => held,
         LayerAction.DrawFrozen => frozen,
         _ => current
     };
@@ -65,11 +64,14 @@ internal sealed class ComposeLayer : IDisposable
     private CanvasSettings canvas;
     private readonly FitRegistry fits = FitRegistry.CreateDefault();
 
-    private LayerImage? held;
-    private ClipPlacement heldClip = new(null);
     private Surface? frozen;
     private ClipPlacement frozenClip = new(null);
     private int frozenWidth, frozenHeight;
+
+    // D26: Held は「直前に合成したキャンバスそのもの（黒を含む）」の所有コピー。
+    // ソース（共有リングの面など）を参照しないため、世代切替で破棄する必要がない。
+    private Surface? heldCanvas;
+    private int heldCanvasWidth, heldCanvasHeight;
 
     public ComposeLayer(GpuDevice gpu, ShaderPipeline shaders, CanvasSettings canvas)
     {
@@ -78,7 +80,7 @@ internal sealed class ComposeLayer : IDisposable
         this.canvas = canvas;
     }
 
-    public bool HasHeld => held != null;
+    public bool HasHeld => heldCanvas != null;
     public bool HasFreeze => frozen != null;
 
     /// <summary>
@@ -100,39 +102,29 @@ internal sealed class ComposeLayer : IDisposable
         frozenWidth = frozenHeight = 0;
     }
 
-    /// <summary>Held を破棄する（GStreamer の世代切替時）。</summary>
-    public void ClearHeld()
-    {
-        held?.Release();
-        held = null;
-    }
-
     /// <summary>
     /// 合成 1 tick 分。GapFreeze への進入時は、合成前のソース画像を GPU コピーで保存してから描く。
-    /// 戻り値は渡された acquired を Held として保持したか（true のとき呼び出し側は返却しない）。
+    /// 合成後はキャンバスを所有テクスチャへ複製して次 tick の Held にする（D26）。
+    /// 戻り値は渡された acquired を Held として保持したか（常に false。所有コピーを使う）。
     /// </summary>
     public bool Compose(Surface target, OutputGapMode gap, ClipPlacement clip, bool testCardEnabled, ImageStamp cardStamp, long origin,
         LayerImage? acquired)
     {
         if (gap == OutputGapMode.GapFreeze && frozen == null)
         {
-            if (acquired != null) KeepHeld(acquired.Value, clip);
-            SaveFreeze();
-        }
-        else if (gap != OutputGapMode.Black && acquired != null)
-        {
-            KeepHeld(acquired.Value, clip);
+            if (acquired != null) SaveFreeze(acquired.Value, clip);
+            else if (heldCanvas != null) SaveFreeze(LastCanvasImage(), new ClipPlacement(null));
         }
 
-        LayerAction action = ComposeLayerPolicy.Decide(gap, acquired != null, held != null, frozen != null);
-        ClipPlacement placement = ComposeLayerPolicy.SelectPlacement(action, clip, heldClip, frozenClip);
+        LayerAction action = ComposeLayerPolicy.Decide(gap, acquired != null, HasHeld, frozen != null);
+        ClipPlacement placement = ComposeLayerPolicy.SelectPlacement(action, clip, frozenClip);
         switch (action)
         {
             case LayerAction.DrawAcquired:
                 Draw(target, acquired!.Value, placement);
                 break;
             case LayerAction.DrawHeld:
-                Draw(target, held!.Value, placement);
+                DrawHeldCanvas(target);
                 break;
             case LayerAction.DrawFrozen:
                 Draw(target, FrozenImage(), placement);
@@ -145,7 +137,12 @@ internal sealed class ComposeLayer : IDisposable
         if (testCardEnabled)
             shaders.Compose(target, canvas.Width, canvas.Height, cardStamp, origin);
 
-        return acquired != null && held.HasValue && ReferenceEquals(held.Value.Lease, acquired.Value.Lease);
+        // Held = 直前に合成したキャンバスそのもの（黒を含む）。DrawHeld の tick は
+        // 既に同じ内容なのでコピーしない（それ以外は取得・Freeze・黒のいずれも更新する）。
+        if (action != LayerAction.DrawHeld)
+            RememberCanvas(target);
+
+        return false; // ソース画像は保持しない（所有コピーへ複製して返す）
     }
 
     private LayerImage FrozenImage()
@@ -154,21 +151,38 @@ internal sealed class ComposeLayer : IDisposable
         return new LayerImage(frozen!.View, frozen.Texture.NativePointer, frozenWidth, frozenHeight, null, null);
     }
 
-    private void KeepHeld(LayerImage source, ClipPlacement clip)
+    private LayerImage LastCanvasImage() =>
+        new(heldCanvas!.View, heldCanvas.Texture.NativePointer, heldCanvasWidth, heldCanvasHeight, null, null);
+
+    /// <summary>合成後のキャンバスを所有テクスチャへ複製する（寸法変更時は作り直す）。</summary>
+    private void RememberCanvas(Surface target)
     {
-        if (held is { } previous && (previous.Lease != null || previous.Owner != null))
+        if (heldCanvas == null || heldCanvasWidth != canvas.Width || heldCanvasHeight != canvas.Height)
         {
-            // 同じ画像が続くときは直前の配置を維持する（Held を再配置しない）。
-            if (ReferenceEquals(previous.Lease, source.Lease) && ReferenceEquals(previous.Owner, source.Owner)) return;
-            previous.Release();
+            heldCanvas?.Dispose();
+            heldCanvas = new Surface(gpu, gpu.Texture(canvas.Width, canvas.Height, SourceSharing.None), false, SourceSharing.None);
+            heldCanvasWidth = canvas.Width;
+            heldCanvasHeight = canvas.Height;
         }
-        held = source;
-        heldClip = clip;
+        NativeTextureOps.CopyResource(gpu.Context, heldCanvas.Texture.NativePointer, target.Texture.NativePointer);
     }
 
-    private void SaveFreeze()
+    /// <summary>直前キャンバスを重ねる。寸法が一致すればコピー、違えば（キャンバス変更）配置して描く。</summary>
+    private void DrawHeldCanvas(Surface target)
     {
-        if (held is not { } image) return;
+        if (heldCanvasWidth == canvas.Width && heldCanvasHeight == canvas.Height)
+        {
+            NativeTextureOps.CopyResource(gpu.Context, target.Texture.NativePointer, heldCanvas!.Texture.NativePointer);
+            return;
+        }
+
+        var placement = fits.Compute(new ClipPlacement(null), canvas, heldCanvasWidth, heldCanvasHeight, out _, out _);
+        shaders.PlaceView(heldCanvas!.View, heldCanvasWidth, heldCanvasHeight, target.Target!, canvas.Width, canvas.Height, placement);
+    }
+
+    private void SaveFreeze(LayerImage image, ClipPlacement clip)
+    {
+        if (image.Width <= 0 || image.Height <= 0) return;
         if (frozen == null || frozenWidth != image.Width || frozenHeight != image.Height)
         {
             frozen?.Dispose();
@@ -177,7 +191,7 @@ internal sealed class ComposeLayer : IDisposable
             frozenHeight = image.Height;
         }
         NativeTextureOps.CopyResource(gpu.Context, frozen.Texture.NativePointer, image.RawTexture);
-        frozenClip = heldClip;
+        frozenClip = clip;
     }
 
     private void Draw(Surface target, LayerImage image, ClipPlacement clip)
@@ -190,7 +204,7 @@ internal sealed class ComposeLayer : IDisposable
     public void Dispose()
     {
         ClearFreeze();
-        held?.Release();
-        held = null;
+        heldCanvas?.Dispose();
+        heldCanvas = null;
     }
 }
