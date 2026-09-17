@@ -3100,7 +3100,7 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 親の判定: 除去担当の実機は agent-b（main `a47c142` 取り込み）で、**D27-b（`3082f6b`、保持損失中の Jump 1 枚で即復帰）を含まない世代**。D27-b 込みの同期担当の実機では S-2 の着地は 20/20。→ D27-b で解消している見込み。除去担当が main の最新を取り込んで S-2 を 3 回回して確認する
 - 副次の観測: E2E 起動のアプリのログが 13:21〜13:33 の区間で共有ログに残っていなかった（ランナー起動分は残る）。原因未特定。E2E の証跡としてアプリログを当てにする箇所があるため、次回の実行で再確認
 
-## D27-c: 保持損失からの復帰が Jump 1 枚で成立せず、有効フレーム 5 枚（`LtcSignalResumeFrames`）を待って取りこぼすと復帰しない（2026-09-18 00:10、除去担当の再確認、D27-b 込みの世代）
+## D27-c: 保持損失からの復帰が Jump 1 枚で成立せず、有効フレーム 5 枚（`LtcSignalResumeFrames`）を待って取りこぼすと復帰しない（2026-09-17 00:10、除去担当の再確認、D27-b 込みの世代）
 
 - 観測（S-2 2 回目、main `295c9b8`）: s2-04（8 → 20）で `applying the first Jump frame once ltc=19.840` は出るが `LTC signal restored` が出ず、以降の着地シークも無く position=8.033 のまま。cycle 1〜3 では `LTC signal restored: playback resumed resumeFrames=5` を経て着地
 - 意味: D27-b の `ObserveJumpFrame`（保持が理由の損失中は Jump 1 枚で即復帰）が**この経路では効いていない**（条件 `_isLost && _reason == TimecodeHeld`、または `_pausedByPolicy && !canApplyPolicyOwnedResume` のどれかで抜けている疑い。理由が SignalLoss に下がっている、Jump の適用と復帰の順序、など）。テストのプリリュードが 5 枚ちょうどなので 1 枚取りこぼすと 5 枚に届かず、復帰不成立が顕在化
@@ -3108,40 +3108,40 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 参照採取は 3 回中 2 回が D25（tail が head と同一）で失敗 → D25 が最優先のまま
 - 併せて判明: E2E 起動のアプリは `E2EAppRunner.LocateExe()` がテスト出力ディレクトリの exe を最優先するため、ログは `tests/TimecodeSyncPlayer.Tests/bin/Debug/net8.0-windows/logs/` に残る（src 側ではない）。証跡の参照先を間違えないこと。ランナー（検証機側）は `-AppExe` 省略時にこのディレクトリのログも複製する
 
-### D27-c の原因と修正（除去担当、agent-b `0aeb791` / `afa60f6`、2026-09-18 00:40、実機待ち）
+### D27-c の原因と修正（除去担当、agent-b `0aeb791` / `afa60f6`、2026-09-17 00:40、実機待ち）
 
 - 原因: 最後の保持フレーム（8.000 の Duplicate）は Jump の 151ms 前に到着していたが、`LtcSignalLossPolicy.Evaluate` は Tick 時刻とフレーム時刻を突き合わせて保持の途切れを判定するため、UI スレッドの処理遅延（着地シーク等）で Tick がフレーム処理より後ろにずれると、保持フレームが届いていても理由だけが SignalLoss へ降格する。さらに `LtcSyncController` 側が `Reason == TimecodeHeld` を要求していたため `ObserveJumpFrame` が呼ばれず、Jump の 1 回適用だけが走って復帰も着地も出なかった
 - 修正: ポリシーは「理由が TimecodeHeld でなくても、フレーム時刻で保持が timeout 以内（直後）なら復帰」。コントローラは `IsLost` のとき常に `ObserveJumpFrame` に委ねて判定を一本化。無音からの Jump は `WasHeldRecently` が偽で従来どおり復帰しない
 - 単体: 新規 3（ポリシー 2 + コントローラ 1）、対象 51 件成功、非E2E 1766。実機（S-2 ×3、R-1〜R-4、LTC ループ 14）は合図済み
 
-### D27-c の実機結果と統合（除去担当の実機、agent-b `afa60f6`、2026-09-18 01:10、親の判定）
+### D27-c の実機結果と統合（除去担当の実機、agent-b `afa60f6`、2026-09-17 01:10、親の判定）
 
 - S-2 ×3: 3 回とも成功（holds 20、landingSeeks 20、syncSeeks 8〜9）。保持 → Jump の各遷移で `LTC signal restored` と `applying the first Jump frame once` が同一ミリ秒に並び、次の保持で `reason="TimecodeHeld"` → 着地、の繰り返し
 - R-1 / R-3 / R-4 成功、R-2 は参照採取で失敗（tail が head と同一のまま 4 回 = **D25**）
 - LTC ループ 14/14。無音の信号断（`reason="SignalLoss"`）では従来どおり有効フレーム 5 枚で復帰（別経路のまま）
 - **判定: D27-c 解消。main に統合。** 残る間欠はすべて D25（shim）に帰着
 
-### D25 の原因（同期担当、2026-09-18 02:10、中間報告。修正は実装中・未コミット）
+### D25 の原因（同期担当、2026-09-17 02:10、中間報告。修正は実装中・未コミット）
 
 - **(B) 主因**: `frames_decoded` がロードごとに 0 に戻る一方でリング/fence は残るため、fence 値（lease seq）が再利用され、`IsRingFenceComplete` がコピー完了前に真になる。「PTS は目標・画素は前」の主因で、E2E の一時停止シークはロード直後なのでこれに一致。修正: fence 用に単調な `seq_serial` を追加（`frames_decoded` はロード待ち用に維持）。新テスト `--reload-seq`（ロードをまたぐ fence 値の単調性）は修正後 PASS
 - **(A)**: シーク前に appsink から引かれたサンプルが、シーク後の generation で刻印されて acquire に出る（V5 の 1/10 `lease=5.250`、F-4 の「新世代として届く前フレーム」）。修正: appsink パッドプローブでバッファに flush 境界タグを付け、シーク前サンプルを破棄。SEEK/FLUSH_START は appsink パッドに届かず境界は下流 SEGMENT なので、`seek_prepare_locked` で「次の SEGMENT がシークの境界」と期待値を記録する方式へ切替中（カウンタ方式は過剰破棄になった）
 - 新テスト `--paused-seek-pixels`（色素材で一時停止再シーク後の最初のリースの画素を目標フレームと機械照合）。不変条件文書に I5/I7 の補強を追記予定
 - **D24（実装・検証済み、未コミット）**: ポンプ期限を既定 4000ms（`TCS_PUMP_BUDGET_MS`）、超過は復号進捗つき警告。step も同ポンプ化。長 GOP 7 本で g600 が到着し他は悪化なし。lock rule PASS、非E2E 1749、E2E 一部 8/1skip
 
-### D24 / D25 の実装（同期担当、agent-a `00cfb9d` / `f2ba8ab`、2026-09-18 03:00、実機待ち）
+### D24 / D25 の実装（同期担当、agent-a `00cfb9d` / `f2ba8ab`、2026-09-17 03:00、実機待ち）
 
 - D24: ポンプ期限を可変上限（既定 4000ms、`TCS_PUMP_BUDGET_MS` 1〜60000）。超過は復号進捗つき警告（`target_ms / decoded / elapsed_ms / budget_ms / position_ms`）。step も同じポンプに統一。到着 ms（目標 19.968、一時停止シーク）: 1080 g30 / g250 / g250hi / g600 = 12.6 / 284.2 / 271.5 / **820.2**、886 g30 / g250 / g600 = 10.4 / 226.5 / **702.5**（g600 が届くようになり、他は悪化なし）。7 本 failures=0
 - D25: (A) appsink パッドプローブでバッファに境界タグ（境界はシーク後の SEGMENT。SEEK/FLUSH_START はシンクパッドに届かないことを診断で確認）を付け、期待境界未満のサンプルを破棄（失敗シーク・再構築で解除）。(B) fence 用の単調 `seq_serial` を追加（`frames_decoded` はロード毎統計とロード待ちのまま）。証跡: seek-loop は修正前 1/3 回で `target=11.818 lease=2.450`（-9.4 秒）→ 修正後 3×10 すべて着地。`--reload-seq` は修正前 FAIL → 修正後 PASS。`--paused-seek-pixels` は 4 回とも pts=19.967・画素距離 0（一時停止ケースの B はこのハーネスでは GPU コピーが先に完了し画素では再現しないため、決定的な修正前再現は `--reload-seq`）
 - 不変条件に **I14（flush 境界でサンプルは世代に属する）** と **I15（共有フェンス値は再利用しない）** を追記。lock rule PASS、非E2E 1749
 - 実機（E2E 一部、シナリオ 22、V5、V3）は合図済み
 
-### D25 の実機結果と D25-b（同期担当の実機、agent-a `f2ba8ab`、2026-09-18 04:00、親の判定）
+### D25 の実機結果と D25-b（同期担当の実機、agent-a `f2ba8ab`、2026-09-17 04:00、親の判定）
 
 - E2E 一部 8 合格 / 1 スキップ。シナリオ 22 本: 18 合格 / 4 失敗（C-1、F-4、S-1、S-3）。V5 / V3 は F-4 調査を優先して未実行
 - F-4 の機序（同期担当の調査）: shim 側の `TCS_FRAME_LOG` ではシーク後のフレームが PTS=19966.67（目標）で seq 275/276 として正しく届き drop 0。アプリの `events.jsonl` では tail 採取のリースに `compose.ringWait` が無く、Ready → publish の後 NotReady が続いて画面が Held のまま更新されない。**仮説: D25 で `IsRingFenceComplete` が正しく「未完了」を返すようになった結果、合成側のゲートが画像を見送り（acquired=null）、その tick でリースを返却し、一時停止中で次のフレームが来ないため絵が更新されない。修正前は fence 値の再利用でゲートが素通りし、古い画素を描いていた**（S-3 の「位置は目標・絵は本文」も同じ）
 - **親の決定（D25-b、C# 側）**: fence 未完了のリースは見送って返却せず、**保持して次 tick 以降に完了を再確認**する（sequence を消費しない。完了したら描いて公開。上限は D28 と同じ連続 3 秒で、超過は D28 の扱い）。待っている間は Held（D26 の複製）を描く（黒にしない）。不変条件文書の「バッファリング方針・破棄規則は実装側で決めず質問」に対する回答として記録。担当は同期担当（D25 の文脈があるため。OutputEngine / GStreamerSource の C# 変更）
 
-### D25-b の実機結果と D24/D25/D25-b の統合（同期担当の実機、agent-a `c262d71`、2026-09-18 07:40、親の判定）
+### D25-b の実機結果と D24/D25/D25-b の統合（同期担当の実機、agent-a `c262d71`、2026-09-17 07:40、親の判定）
 
 - 実装: fence 未完了のリースは保持（HoldLease）して次 tick 以降に完了を再確認し、完了 tick で同じリースを描画・公開。連続 3 秒未完了は D28 経路。`SourceFrameReady` は実際に描いたフレームだけ通知。トレース `compose.fencePending`。単体 `GstFencePendingPolicy`、非E2E 1753
 - **参照採取は 22 本すべて正しい色（以前の「tail が head と同一」は消失）= D25 解消**。シナリオ 18/22（失敗 F-3 / F-4 / R-1 / S-1）。C-1 / S-3 は通過
@@ -3152,32 +3152,32 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
   - **S-1（テスト側）**: `LtcFollowSeries` の追従判定が LTC と位置をタイムラインオフセット無しで比べている疑い（LTC 17.92 に対し位置 13.0 = A の開始 5 秒を引いた正しい追従）。Continue の写像（タイムライン → 素材位置）で比べる
 - **判定: D24・D25・D25-b を main に統合。** 残りは D25-c（shim、同期担当）、D27-d と S-1（除去担当）
 
-### D27-d と S-1 の修正（除去担当、agent-b `49b6c13` / `aaf656e` / `d118ffc`、2026-09-18 08:30、実機待ち）
+### D27-d と S-1 の修正（除去担当、agent-b `49b6c13` / `aaf656e` / `d118ffc`、2026-09-17 08:30、実機待ち）
 
 - D27-d: 停止時の着地目標が `_lastAcceptedLtcSeconds`（保持直前に受理した値。1 フレーム手前になり得る）だった。Duplicate 到着時に保持値の実効値 `_lastHeldEffectiveSeconds` を記録し、`ReapplyHeldValueOnPause` はそれを優先。値が進むフレーム・監視開始/停止で解除。単体（受理 1.04 → 保持 1.08 → 着地 1.08。修正前は 1.04）
 - S-1: `LtcFollowSeries` がタイムライン開始と MediaIn を受け取って内部で Continue の写像を行う API に変更（写像忘れで LTC と素材位置を直接比べる形をなくす）。単体で LTC 17.92 / 位置 13.0 / 開始 5 秒は追従成立、写像なしは不成立、MediaIn のオフセット適用を固定。E2E S-1 は A.Start と A.MediaIn を渡す
 - 非E2E 1774。実機（R-1 ×3、S-1 ×3）は合図済み
 
-### D25-c の実装（同期担当、agent-a `03033ca`、2026-09-18 09:20、実機待ち）
+### D25-c の実装（同期担当、agent-a `03033ca`、2026-09-17 09:20、実機待ち）
 
 - `tcs_player_get_time_pos`: 一時停止中（ポンプ完了後）は最新の配信済み映像フレームの stream time PTS（D10 写像、現世代のみ）を返し、再生中は従来のパイプライン位置。ポンプ中は従来どおり。トレースの position スナップショットも同値
 - **D25 の連続シーク回帰を修正**: 境界期待値を `max(観測, 保留)+1` → `seen+1` に変更。連続フラッシュシークでセグメントが 1 つに畳まれると期待値が満たされず全フレームが永久に落ちる（`pump deadline … decoded=0`、drops 多数）事象を確認したため。5 秒の安全期限とポンプ期限超過でも期待値を破棄
 - テスト追加: 一時停止シーク後に `get_time_pos` が最新フレーム PTS ±1 フレーム。実素材 10 本の `--paused-seek`（目標 10.0）は全部 failures=0、位置とフレーム PTS の差 0.0〜2.1ms。連続一時停止シークは second-arrival 2.3〜3.1ms（修正前は 6.5 秒タイムアウト）。lock rule PASS、非E2E 1770
 - 実機（F-1〜F-5、G-1〜G-6、V5 1 回）は除去担当の R-1/S-1 の実機の後
 
-### D27-d / S-1 の実機結果と統合（除去担当の実機、agent-b `df4f8d4`、2026-09-18 10:00、親の判定）
+### D27-d / S-1 の実機結果と統合（除去担当の実機、agent-b `df4f8d4`、2026-09-17 10:00、親の判定）
 
 - R-1 ×3: 停止位置 7.000 / 7.033 / 7.033（目標 12 → 素材 7.0 ±1 フレーム）、一時停止遅延 0.21〜0.34 秒。S-1 ×3: follow-summary の最大誤差 0.153 / 0.087 / 0.080（許容 0.3）
 - 追補: 着地 ltc が 12.030〜12.042 = 保持値 + サンプル時計の age（30〜40ms）で先行していたため、保持値は凍結されて進まないものとして着地目標に age を足さないよう修正（`7ad351f` / `df4f8d4`）。追補後の R-1 1 回: `landing seek issued target=7.000 ltc=12.000`。非E2E 1775
 - **判定: D27-d 解消、S-1 の判定は成立。main に統合**
 
-### D25-c の実機結果と統合（同期担当の実機、agent-a `03033ca`、2026-09-18 10:30、親の判定）
+### D25-c の実機結果と統合（同期担当の実機、agent-a `03033ca`、2026-09-17 10:30、親の判定）
 
 - F-1〜F-5 / G-1〜G-6 の 11 本: すべて Passed。以前失敗していた F-3 / F-4 も通過し、F-4 の Freeze probe 10 件はすべて最終フレーム参照と距離 0（position=19.967）。参照色も正常
 - V5: 10/10 着地、目標との差 0.0ms、`compose.publish` 中央値 16.67ms / 最長 44.1ms、ERR 0、受信 12/12
 - **判定: D25-c 解消。main に統合。製品側の既知の欠陥はすべて統合済み（D12〜D28、D20-b〜D27-d、D25-b/c）。** 次は統合後 main での全件（シナリオ 22、LTC ループ 14、V4、E2E 全件）→ 配布物 → 検証機
 
-### 統合後 main（`d3f613d` 相当）の全件確認（除去担当の実機、2026-09-18 11:30、親の判定）
+### 統合後 main（`d3f613d` 相当）の全件確認（除去担当の実機、2026-09-17 11:30、親の判定）
 
 | 実行 | 結果 |
 | --- | --- |
@@ -3190,32 +3190,32 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 残プロセス 0、main への書き込みなし。証跡 `TestResults/postmerge/01..04`（agent-b の作業ツリー）
 - **判定: 全件 87/0/6 と主要シナリオ 21/22 で配布物を作り、検証機の実素材確認へ進む。D26-c は並行して調査（結果次第で 0.4.3 に含めるか判断）**
 
-## D30: 誤デコードの単発 Jump をそのまま適用してギャップへ入り、黒を 1 tick 挟む（D26-c の機序。2026-09-18 12:50、除去担当の解析）
+## D30: 誤デコードの単発 Jump をそのまま適用してギャップへ入り、黒を 1 tick 挟む（D26-c の機序。2026-09-17 12:50、除去担当の解析）
 
 - 機序（C-2 の 13 回目、B → A ジャンプ）: テスト信号のハードカット直後に `LtcDecoder` の fps 推定（ビットクロック推定）が 24.000 にずれた状態で同期語を拾い、**ltc=0.040 の誤った Jump** が生成された。D20-b(i)「Jump の初回を 1 回だけ適用」がこれをそのまま適用 → タイムライン 0.04 は先頭オフセット（5 秒）より前 = ギャップ → `EnterBlackGap` で黒を描画（約 50ms）→ 直後の正しい Jump（11.840）も、保持損失からの復帰でラッチが外れていたため「初回 Jump」として適用され A へ切替。当日のログで first Jump 適用 475 件のうち誤値は 1 件、同種の 24.000 誤デコードは 5 件（他 4 件は適用されずスキップ）
 - 意味: **単発の Jump 1 枚で状態遷移（ギャップ進入・トラック切替・着地）まで走る**ため、LTC の 1 フレームの誤デコード（現場ではドロップアウトや発生器の再始動で起き得る）が黒や誤ジャンプとして見える
 - 対処（除去担当、製品側）: Jump の妥当性ゲート。(1) 初回 Jump の写像が **ギャップ（先頭オフセットを含む）または現在と別のトラック** になる場合は、次のフレーム（≤ 1 フレーム）で値の連続（新値 +1 フレーム、または同値の Duplicate）を確認してから適用する。同じトラック内への Jump は従来どおり即時。(2) Fixed fps モードで `frame.Fps`（デコーダ推定）と解決 fps が食い違う Jump は未確認扱いにして 1 フレーム保留（Auto の正規な fps 切替は除く）。D27-b の保持からの即時復帰は「保持値と連続する Jump」に限る。単体で固定し、C-2 ×3、R-1〜R-4、S-2 で確認
 - 注: D29 候補（Single の LTC → 位置の写像で `MediaOut` が使われていない疑い、実素材 S-3 の position=42.683）は別件のまま
 
-### D30 の実装（除去担当、agent-b `d8e9fdf`、2026-09-18 13:40、実機待ち）
+### D30 の実装（除去担当、agent-b `d8e9fdf`、2026-09-17 13:40、実機待ち）
 
 - `JumpConfirmationPolicy`（新規）: Fixed モードで `detectedFps` と解決 fps の食い違い（標準値丸め、29.97/30 は除外、Auto は対象外）を判定。未確認 Jump の確認は「次フレームが同値 Duplicate、または +1 フレーム（0.5〜1.5 フレーム）」で、次の 1 フレーム以内に限る
 - `LtcSyncController`: (1) Continue で Jump の写像がギャップ（先頭オフセット含む）または現在のロード済みトラックと別なら保留（track-or-gap）。同一トラックは即時。(2) Fixed の fps 食い違い Jump も保留（detected-fps）。(3) 保留中の次フレームが連続すれば「確認済み Jump」として 1 回適用し、保持損失中ならその確認時に `ObserveJumpFrame` で復帰・着地（未確認 1 枚では復帰しない）。保留は監視開始/停止・モード/fps 切替・手動シークで破棄。ログ `holding unconfirmed Jump frame … reason=…` / `applying the confirmed Jump frame once`
 - テスト先行: `JumpConfirmationPolicyTests` 14、`LtcJumpConfirmationTests` 6（0.04 の単発 Jump は適用されない / +1 フレーム・同値 Duplicate で適用 / 別トラックは確認後 loadfile / 同一トラックは即 seek / fps 食い違いは保留 / 保持損失は確認後に復帰）。既存 1 件を D30 仕様に更新。非E2E 1795
 - 実機（C-2 ×3、R-1〜R-4、S-2、V3 1 本）は合図済み
 
-## D29: Single モードの LTC → 素材位置と終端が MediaIn/MediaOut ではなく媒体の尺で clamp されていた（2026-09-18 14:20、同期担当、agent-a `7fccf96`、統合済み）
+## D29: Single モードの LTC → 素材位置と終端が MediaIn/MediaOut ではなく媒体の尺で clamp されていた（2026-09-17 14:20、同期担当、agent-a `7fccf96`、統合済み）
 
 - 原因: `SyncDecisionEngine.Decide` の `Math.Clamp(ltc, 0, DurationSeconds)` と先行補償後の `CompensateTarget(…, DurationSeconds)` が尺基準で、Single の `SyncPlaybackState` に MediaIn/MediaOut が渡っていなかった（実素材 S-3 の position=42.683 の原因）。Continue は `FindTrackAtTimelinePosition` が [MediaIn, MediaOut ?? 尺] に clamp 済みで正しかった
 - 修正: clamp 範囲を [MediaIn, MediaOut ?? 尺] にし、補償後も同じ範囲。`MainWindow` の Single の `BuildPlaybackState` が現在トラックの MediaIn/MediaOut を渡す。D20 の終端静止も MediaOut 基準に。単体 4 件追加、非E2E 1779（main `79f2207` 統合後も 1779。D30 の統合で +20）。実機は除去担当の次の全件で確認
 
-### D30 の実機結果と統合（除去担当の実機、agent-b `d8e9fdf`、2026-09-18 15:00、親の判定）
+### D30 の実機結果と統合（除去担当の実機、agent-b `d8e9fdf`、2026-09-17 15:00、親の判定）
 
 - C-2 ×3: 3 回とも Passed、jump-black-summary 各 20 件で黒 0。R-1〜R-4、S-2: Passed。アプリログにゲートの作動 `holding unconfirmed Jump frame`（62 件、すべて track-or-gap）と `applying the confirmed Jump frame once`（61 件）
 - V3（Smooth、LTC25）: 19 本 Passed、sample steady n=1068 **平均 -29.0ms / p95-p5 35.3ms**（基準 -28.9 / 38.3）。収束 seek-a 120 / seek-b 120 / seek-c 160 / seek-back 80 / black-sweep 402 / freeze-sweep 160ms（1 フレームの確認遅延は許容内）
 - **判定: D30 解消。main に統合（D29 と合わせて 2 本目の候補ビルドへ）**
 
-## 検証機・実素材での候補 1（`0.4.2+c3f3cd3`、D29/D30 前）の結果と分類（2026-09-18 16:10、`TSP-TestMachine` の報告、親の分類）
+## 検証機・実素材での候補 1（`0.4.2+c3f3cd3`、D29/D30 前）の結果と分類（2026-09-17 16:10、`TSP-TestMachine` の報告、親の分類）
 
 共通: prereqs OK、素材フォルダは 3 回とも全項目一致、残プロセス 0、**ERR/FTL 0、`GPU completion pending` 0、`Playback unavailable` 0、`pump deadline` 0**（D24・D28 の経路は再現せず）。LTC ループ 14/14 ×3。M2（長 GOP）・M3（VP9 4K）・M5（AV1）とも読み込みと参照採取まで到達
 
@@ -3234,10 +3234,32 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **RealProjectGap（3 回とも TC 5.00 で「再生が進まない」）**: 生成プロジェクト（MediaIn 5 秒、4K）で最初のトラックの再生開始が遅い疑い。上記の切替時間と同根の可能性
 - **テスト側**: S-1（c）の `frameUpdates` 期待 55〜65 が 30fps 前提（M2 は 60fps、実測 121）→ 素材 fps から期待を作る。S-5（a）の `ltc=3639.960` は時間ビットの誤デコード（D30 の対象）
 
-### 統合後 main（D29・D30 込み、`b62d334` 相当）の全件確認（除去担当の実機、2026-09-18 18:20、親が trx を確認）
+### 統合後 main（D29・D30 込み、`b62d334` 相当）の全件確認（除去担当の実機、2026-09-17 18:20、親が trx を確認）
 
 - **E2E 全件 87 合格 / 0 失敗 / 6 スキップ（opt-in）**。シナリオ 22 本: 20 合格 / 2 失敗（間欠）
   - S-2 s2-19: 保持 8.0 への着地が成立せず position=20.000（前回は s2-04、今回は 19 回目。D27-c 後も残る間欠）
   - C-1 c1-01: 最初の保持 3.0 で position=6.300（3.3 秒行き過ぎ。色素材なので長 GOP ではない）
 - 除去担当がジャーナルとアプリログから機序を解析（コード変更なし）。検証機の候補 2 の結果と合わせて判断
 - 証跡 `TestResults/postmerge2/01-ltc-scenario`（scenarios/S-2-20260917-180316、C-1-20260917-175842）、`02-e2e-all`（agent-b の作業ツリー）
+
+> 注（2026-09-17 19:05）: この文書と `docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md` の 2026-09-17 の D24 以降の見出しは、親が時計を誤って 09-18 と書いていたものを日付だけ直した。時刻は目安で、正確な順序と時刻は `git log` を正とする。
+
+## 検証機・実素材での候補 2（`0.4.2+0a30ad6`、D29/D30 込み）の結果と分類（2026-09-17 19:00、`TSP-TestMachine` の報告、親の分類）
+
+導入: setup 38,664,671 バイト、SHA-256 一致、上書きインストール終了コード 0、ProductVersion `0.4.2+0a30ad6…`、decodeMode hardware。tests は main `e6739fe` 相当でビルド。
+共通: 素材フォルダは 3 回とも全項目一致、残プロセス 0、**ERR/FTL 0、`GPU completion pending` 0、`Playback unavailable` 0、`pump deadline` 0**。LTC ループ 14 本は 3 回とも合格。
+
+| 回 | -Media | 候補 1 → 候補 2 | 合格に転じた | 新たに失敗 | 両方で失敗 |
+| --- | --- | --- | --- | --- | --- |
+| a | M1,M4,M6 | 25 → 24 | R1 | F1 G1 | C1 C2 F4 F5 G2 G5 RealProjectGap S1 S2 S3 S5 |
+| b | M1,M3,M5 | 27 → 24 | S2 | F1 F3 S4 S5 | C1 C2 F4 F5 G2 G5 RealProjectGap S1 S3 |
+| c | M2,M1,M4 | 29 → 27 | F1 | G2 R4 S5 | C1 C2 F4 G5 RealProjectGap S1 S3 |
+
+単独 open の計測（各 30 秒）: M1（ProRes 4K60、CPU）loadfile 1,168 ms・起動→FetchMetadata 2,316 ms・frameUpdates/2s 120〜121。M3（VP9 4K60、GPU）547 ms・1,580 ms・112〜121。M5（AV1 4K24、CPU）970 ms・1,984 ms・48〜49。M2（H.264 60fps、GPU）300 ms・1,319 ms・121。shim のプロファイル試行: M1 は不一致 8 件（各 101〜311 ms）の後に prores-cpu、M5 は 7 件の後に av1-cpu、M3 は 2 件の後に vp9-gpu、M2 は 1 件目で h264-gpu。
+
+分類（親）:
+- **テスト基盤側（検証機で修正・パッチ）**: (1) S 系の LTC が 1 時間台（a S3/S5/S2、b S5。c は正常）→ RealProjectGap（01:00:xx）の信号が後続に混入した疑い。RealProjectGap は 1 時間基準 fixture 前提で生成プロジェクトでは判定が成り立たないので、信号停止の保証か実素材ランナーから除外。(2) 「トラック 0 のメタデータ取得」15 秒の時間切れ（a G1、b S3/S4、c R4）: loadfile は最長 2.2 秒なのでログ監視側を疑う。(3) 参照画像の疑い: b F3（A の終端）と b F5（A の冒頭）が M5/tail と d=0.0 px=0.00 で一致 → 参照 PNG の SHA-256 で取り込みの古さを確認。
+- **製品側の疑い（証跡待ち）**: F-3/F-4/F-5 の「位置は正しいのに絵が古いまま」（ギャップ進入のロード/シーク後にフレームが表示へ届いていない疑い。生成素材では通る）。F-1 a/b の position=24.833（終端 0.17 秒手前で保持）。S-3 c の position=31.067（a は 25.100 で D29 の clamp は効いている）。C-1/C-2 の黒 1〜2 枚（4K）。G-2 の B ロード遅延。S-1 の追従誤差 0.76〜0.81 秒（4K）。
+- **D29 の効果**: S-3 a の position 43.083 → 25.100（clamp は効き、超過 0.1 秒）。S-2 b は合格に転じた。
+- **次版候補（今回は対応しない）**: shim のプロファイル試行順（コンテナのコーデック判定で先に絞る。M1/M5 で 1〜2.5 秒の無駄）。`frame_lock busy; waiting` 5〜7 行は状態変更中の待ち。
+- 検証機へ依頼: 上記 (1)〜(3) の修正パッチ、3 回分のジャーナル・trx・アプリ/shim ログ（PNG は F/C 系のみ）、参照 PNG の SHA-256 一覧、F-3/F-4/F-5・F-1・S-3・C-1/C-2・G-2 のログ抜粋。候補 3 は D31/D31-b 統合後。
