@@ -3310,3 +3310,9 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 項目 3: 製品変更なし（既に破棄）。テストで検証
 - 項目 4（開始位置つき一時停止ロードへの pump）: 見送り（pump は PLAYING へ上げて音声をミュートするため他のロードへの影響を E2E で確認できない。遅延確定で吸収）。親も同意
 - 単体 +12、非E2E 1837/0。親の差し戻し: 目標 0（MediaIn 0 のトラック、D22 の既定）が「> 0」の印で無効になる → 目標 0 でも成立させる修正のうえ実機（F/G/C 系を生成素材・4K 3 本・pump 800ms）
+
+### D32 の実機結果と統合（同期担当の実機、agent-a `badf947` まで、親が統合 `adc8200`、2026-09-17 22:50）
+
+- 目標 0 対応（`badf947`）: LateConfirm と ShouldDiscardFrozenFrame を目標 0 でも成立させた。既存の `> 0` 判定（`GapEnterCoordinator.cs` 87/133 の「尺不明なら現在の絵」、`GapFreezeHandler.cs` 502 の atFinalFrame）は尺 1 フレーム以下の退化時のみで未変更（報告のみ）
+- 実機（開発機）: 生成素材 A/B/C の F-1〜F-5・G-1〜G-6・C-1/C-2 = 13/13、4K 3 本 = 13/13、4K + `TCS_PUMP_BUDGET_MS=800` の F 系 = 5/5（親が trx のカウンタを確認）。F-3 で `gap freeze target changed, discarding the previous frozen frame` が各セッション 1 回発動（C の tail → A の先頭）。遅延確定・capture timed out・pump deadline・stale は 0 件（開発機では 3 秒を外れない）
+- 統合後 main の非E2E 1844/0。**判定: 統合。除去担当がシナリオ 22 + LTC ループ 14 を実機確認 → 候補 4**（検証機の候補 3 の結果と突き合わせ）
