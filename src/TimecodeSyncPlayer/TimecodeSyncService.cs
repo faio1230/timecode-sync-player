@@ -25,8 +25,9 @@ public sealed class TimecodeSyncService
     private const long FileLoadRenderedFrameProgress = 2;
     private static readonly TimeSpan FileLoadTimeout = TimeSpan.FromSeconds(5);
     // D35: 描画フレーム・再生位置の進みを待ち続けない上限。ロード開始からこの時間が過ぎたら
-    // 進捗条件を満たさなくても解除する（停止中のロードで解除が数秒残るのを防ぐ）。
-    private static readonly TimeSpan FileLoadReleaseForceAfter = TimeSpan.FromSeconds(2);
+    // 進捗条件を満たさなくても解除する（停止中のロードで解除が数秒残るのを防ぐ）。実素材は
+    // プロファイル試行で 2.2〜2.5 秒かかるため 5 秒（既存の安全タイムアウトと同じ）。
+    private static readonly TimeSpan FileLoadReleaseForceAfter = TimeSpan.FromSeconds(5);
     // D35: 解除を回収できる鮮度。ロード直後の 1 回だけを対象にし、数秒前の値を保持開始時に
     // 再適用して同期を壊さない（古い解除は破棄する）。
     private static readonly TimeSpan FileLoadReleasePendingMaxAge = TimeSpan.FromSeconds(1.5);
