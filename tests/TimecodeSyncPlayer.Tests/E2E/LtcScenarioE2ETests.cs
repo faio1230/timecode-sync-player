@@ -195,11 +195,13 @@ public sealed class LtcScenarioE2ETests
     {
         double requestedSeconds = FollowSecondsFromEnvironment();
         double windowSeconds = FollowWindowSecondsFromEnvironment();
+        double settlingSeconds = FollowSettlingSecondsFromEnvironment();
         string[] requestedTracks = FollowTracksFromEnvironment();
         scenario.Journal.Write("l1-plan", details: new
         {
             requestedSeconds,
             windowSeconds,
+            settlingSeconds,
             tracks = string.Join(",", requestedTracks),
         });
 
@@ -213,15 +215,17 @@ public sealed class LtcScenarioE2ETests
                 $"L-1 {track.Symbol}: 使用尺 {track.Used:F1}s では連続追従を 30 秒未満（{followSeconds:F1}s）しか回せない");
             scenario.LoadTrack(track.Index);
             scenario.EnsurePlaying();
-            RunFollowAudit(scenario, track, followSeconds, windowSeconds);
+            RunFollowAudit(scenario, track, followSeconds, windowSeconds, settlingSeconds);
         }
     });
 
     /// <summary>
     /// L-1: 1 トラックの連続追従。着地の過渡は判定に含めず、追従に入ってから窓を取る。
+    /// settlingSeconds 分の先頭窓は判定から除外する（集計と報告には残す）。
     /// 送信は判定区間より長く流し、終わったら停止して次のトラックへ持ち越さない。
     /// </summary>
-    private static void RunFollowAudit(Scenario scenario, TrackInfo track, double followSeconds, double windowSeconds)
+    private static void RunFollowAudit(Scenario scenario, TrackInfo track, double followSeconds, double windowSeconds,
+        double settlingSeconds)
     {
         double startLtc = track.MediaIn.TotalSeconds + 2.0;
         scenario.Play(startLtc, followSeconds + 8.0);
@@ -248,7 +252,7 @@ public sealed class LtcScenarioE2ETests
         scenario.Signal.Stop();
 
         ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
-            samples, perf, followSeconds, windowSeconds, track.SingleTarget);
+            samples, perf, followSeconds, windowSeconds, track.SingleTarget, settlingSeconds);
 
         foreach (FollowWindow window in summary.Windows)
             scenario.Journal.Write("l1-window", details: new
@@ -259,6 +263,7 @@ public sealed class LtcScenarioE2ETests
                 frameUpdates = window.FrameUpdates,
                 positionAdvance = Math.Round(window.PositionAdvance, 3),
                 maxAbsError = JsonNumberOrNull(window.MaxAbsError),
+                settling = window.Settling,
             });
 
         scenario.Journal.Write("l1-summary", details: new
@@ -267,7 +272,11 @@ public sealed class LtcScenarioE2ETests
             usedSeconds = Math.Round(track.Used, 3),
             followSeconds = Math.Round(followSeconds, 3),
             windowSeconds,
+            settlingSeconds,
             windows = summary.Windows.Count,
+            auditedWindows = summary.Windows.Count(window => !window.Settling),
+            settlingWindows = summary.SettlingWindowCount,
+            settlingMaxAbsError = JsonNumberOrNull(summary.SettlingMaxAbsError),
             stallUpdateWindows = summary.StallUpdateWindows,
             stallAdvanceWindows = summary.StallAdvanceWindows,
             maxAbsError = JsonNumberOrNull(summary.MaxAbsError),
@@ -278,12 +287,15 @@ public sealed class LtcScenarioE2ETests
             worstErrorWindow = WindowDetail(summary.WorstError),
         });
 
+        string excluded = $"除外 {summary.SettlingWindowCount} 窓（最大誤差 {summary.SettlingMaxAbsError:F3}s）";
+        summary.Windows.Count(window => !window.Settling)
+            .Should().BeGreaterThan(0, $"{track.Symbol}: 判定対象の窓が 1 つ以上ある（{excluded}）");
         summary.StallUpdateWindows.Should().Be(0,
-            $"{track.Symbol}: frameUpdates=0 の窓が無い（最悪 {WindowDetail(summary.WorstUpdates)}）");
+            $"{track.Symbol}: 判定対象で frameUpdates=0 の窓が無い（{excluded}、最悪 {WindowDetail(summary.WorstUpdates)}）");
         summary.StallAdvanceWindows.Should().Be(0,
-            $"{track.Symbol}: 位置が進まない窓が無い（最悪 {WindowDetail(summary.WorstAdvance)}）");
+            $"{track.Symbol}: 判定対象で位置が進まない窓が無い（{excluded}、最悪 {WindowDetail(summary.WorstAdvance)}）");
         summary.MaxAbsError.Should().BeLessThanOrEqualTo(PositionToleranceSeconds,
-            $"{track.Symbol}: 各窓の最大誤差が ±{PositionToleranceSeconds} 秒以内（最悪 {WindowDetail(summary.WorstError)}）");
+            $"{track.Symbol}: 判定対象の各窓の最大誤差が ±{PositionToleranceSeconds} 秒以内（{excluded}、最悪 {WindowDetail(summary.WorstError)}）");
     }
 
     private static string WindowDetail(FollowWindow? window) =>
@@ -322,6 +334,13 @@ public sealed class LtcScenarioE2ETests
 
     private static double FollowWindowSecondsFromEnvironment() =>
         ReadPositiveDouble("TCS_L1_WINDOW_SECONDS", 2.0);
+
+    /// <summary>
+    /// L-1: 追従開始直後の過渡として判定から除外する長さ。既定 4 秒（2 秒窓 ×2）。
+    /// 既存シナリオが着地直後を判定に入れないのに合わせ、除外した窓は報告に残す。
+    /// </summary>
+    private static double FollowSettlingSecondsFromEnvironment() =>
+        ReadPositiveDouble("TCS_L1_SETTLING_SECONDS", 4.0);
 
     private static string[] FollowTracksFromEnvironment()
     {
