@@ -13,6 +13,8 @@ internal sealed class LtcSignalPlayer : IDisposable
     private readonly MMDevice _device;
     private WasapiOut? _output;
     private bool _disposed;
+    // 直前に生成した最後のフレーム番号。連続 → 保持の切替で前置きが戻らないようにする。
+    private int? _lastFrame;
 
     private LtcSignalPlayer(MMDevice device)
     {
@@ -91,6 +93,7 @@ internal sealed class LtcSignalPlayer : IDisposable
         IReadOnlyList<LtcTimecode> timecodes = BuildContinuousTimecodes(start, fps, frameCount);
         float[] monoSamples = LtcTestSignalGenerator.Generate(timecodes, fps, SampleRate, options);
         PlaySamples(monoSamples);
+        _lastFrame = LastFrameNumber(timecodes, fps);
     }
 
     public void PlayWithSilence(
@@ -135,17 +138,40 @@ internal sealed class LtcSignalPlayer : IDisposable
             beforeSamples.Length + silenceSampleCount,
             afterSamples.Length);
         PlaySamples(monoSamples);
+        _lastFrame = LastFrameNumber(afterTimecodes, fps);
     }
 
     public void PlayHeld(double seconds, double fps, TimeSpan duration)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        float[] samples = BuildHeldSamples(seconds, fps, duration, SampleRate);
+        float[] samples = BuildHeldSamples(seconds, fps, duration, SampleRate, _lastFrame);
         Stop();
         PlaySamples(samples);
+        _lastFrame = (int)Math.Round(seconds * NominalFps(fps));
     }
 
-    internal static float[] BuildHeldSamples(double seconds, double fps, TimeSpan duration, int sampleRate)
+    /// <summary>
+    /// 保持のフレーム列。前置きは「前回のフレームの次」から保持値まで進む（連続再生から保持へ
+    /// 切り替えるとき、固定の 5 フレーム前置きだと直前の位置より戻って Reverse が 1 枚出る）。
+    /// previousFrame が無いときは従来どおり保持値の 5 フレーム前から。
+    /// </summary>
+    internal static IReadOnlyList<LtcTimecode> BuildHeldTimecodes(
+        double seconds, double fps, TimeSpan duration, int? previousFrame)
+    {
+        int nominalFps = NominalFps(fps);
+        int targetFrame = (int)Math.Round(seconds * nominalFps);
+        int firstPrelude = targetFrame - 5;
+        if (previousFrame is int previous)
+            firstPrelude = Math.Min(targetFrame, Math.Max(firstPrelude, previous + 1));
+        var frames = new List<LtcTimecode>();
+        // A short advancing prelude reacquires a jumped signal, followed by duplicate timecodes.
+        for (int frame = firstPrelude; frame < targetFrame; frame++) frames.Add(FromFrame(frame, fps));
+        frames.AddRange(Enumerable.Repeat(FromFrame(targetFrame, fps), (int)Math.Ceiling(duration.TotalSeconds * fps)));
+        return frames;
+    }
+
+    internal static float[] BuildHeldSamples(
+        double seconds, double fps, TimeSpan duration, int sampleRate, int? previousFrame = null)
     {
         if (!double.IsFinite(seconds) || seconds < 1 || seconds >= 24 * 3600)
             throw new ArgumentOutOfRangeException(nameof(seconds));
@@ -155,14 +181,15 @@ internal sealed class LtcSignalPlayer : IDisposable
             throw new ArgumentOutOfRangeException(nameof(duration));
         if (sampleRate <= 0)
             throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        return LtcTestSignalGenerator.Generate(
+            BuildHeldTimecodes(seconds, fps, duration, previousFrame), fps: fps, sampleRate: sampleRate);
+    }
+
+    private static int LastFrameNumber(IReadOnlyList<LtcTimecode> timecodes, double fps)
+    {
+        LtcTimecode last = timecodes[^1];
         int nominalFps = NominalFps(fps);
-        int targetFrame = (int)Math.Round(seconds * nominalFps);
-        var frames = new List<LtcTimecode>();
-        // A short advancing prelude reacquires a jumped signal, followed by duplicate
-        // timecodes. Settings changes must not depend on another accepted frame.
-        for (int frame = targetFrame - 5; frame < targetFrame; frame++) frames.Add(FromFrame(frame, fps));
-        frames.AddRange(Enumerable.Repeat(FromFrame(targetFrame, fps), (int)Math.Ceiling(duration.TotalSeconds * fps)));
-        return LtcTestSignalGenerator.Generate(frames, fps: fps, sampleRate: sampleRate);
+        return ((last.Hours * 60 + last.Minutes) * 60 + last.Seconds) * nominalFps + last.Frames;
     }
 
     private static LtcTimecode FromFrame(int frame, double fps)
