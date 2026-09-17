@@ -28,6 +28,9 @@ The parent integrates it into `CHANGELOG.md` (the file itself and the csproj `Ve
 - Fixed paused seeks on long-GOP media timing out at the 500 ms pump deadline: the deadline is now "until the first frame, up to 4000 ms" (`TCS_PUMP_BUDGET_MS`) with a decode-progress warning, and frame step uses the same pump (D24).
 - Fixed the first lease after a seek showing the pre-seek picture with the target PTS: pre-seek samples are excluded at the flush boundary, the shared fence value is monotonic for the player lifetime (D25), a lease whose fence is incomplete is retained and re-checked on the next tick (D25-b), and the paused position reports the newest frame PTS (D25-c).
 - Fixed playback stopping as "unavailable" when the composition GPU wait exceeded 100 ms after a 4K VP9 paused seek on hybrid GPUs: the wait is sliced at 100 ms with a tick skip, resources are retained, and a permanent stop requires device loss or 3 continuous seconds (D28).
+- Fixed a deferred (unconfirmed) Jump losing its confirmation when the audio capture stalled and the next frame arrived in a burst: the confirmation window is now judged by the frame-end timestamps (QPC derived from the audio sample position) and falls back to the wall clock only when they are unavailable (D31).
+- Fixed Stop mode staying at the previous position when the held LTC value changed: a held value more than half a frame from the landed value now lands once, and RunThrough applies it once per change (D31-b).
+- Fixed the C-1 scenario's landing check using a fixed target: the landing is now judged as the interval [target - 0.3, target + elapsed + 0.3 + 1 frame] (Stop mode +/-0.3), with 0.5 s of follow recorded (test-side).
 
 ### Known limitations
 
