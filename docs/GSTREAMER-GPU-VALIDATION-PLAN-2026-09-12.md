@@ -3009,3 +3009,8 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 意味: リングスロットの Info（PTS）とテクスチャ内容が食い違っている。候補: (1) shim が Info を書いてからテクスチャのコピー（`CopySubresourceRegion` → fence signal）が完了する前に消費側が読んだ（fence の待ち漏れ、または fence 値の対応ずれ）、(2) フラッシュシーク後に古いスロットの内容が残ったまま新しい Info で公開された（世代/epoch の扱い）、(3) D10 の stream time 写像で PTS だけが先に更新された
 - 影響: ギャップ Freeze の確定に限らず、**シーク直後の最初の 1〜2 フレームが「位置は正しいのに絵は古い」**可能性。V5 の着地計測（PTS 基準）はこれを見抜けない
 - 対処: 同期担当（shim の担当）が D20-b の実機の後に調査（`docs/OUTPUT-GPU-INVARIANTS.md` の I 系列と `native/gst-shim/README.md` の H-3 に照らす）。E2E 側は D21-b の確定条件をこのまま（PTS 基準）とし、shim を直してから F-4 を再判定する
+
+## D26: ジャンプ（シーク・トラック切替）で一瞬黒が挟まる（2026-09-17 17:00、利用者がシナリオ E2E の画面で発見）
+
+- 原因（親のコード読み）: `OutputEngine.SyncGStreamerGeneration()` が shim の世代変化で `ClearHeld()` し、新世代の最初のフレームまで `NotReady`。`ComposeLayerPolicy` は gap None で取得も Held も無いと `DrawBlack`。Held がリングの面を参照しているため世代切替で捨てる設計だった
+- 方針: Held を合成側が所有する複製（毎 tick のキャンバス複製、ping-pong）にし、黒は gap = Black のときだけ。トラック切替中も直前の絵を保持。指示 `docs/prompts/2026-09-17-D26-no-black-flash-on-seek.md`（除去担当）。E2E にジャンプ中の黒検出（C-1 / C-2、50ms 間隔、黒 0 枚）を追加
