@@ -67,14 +67,36 @@ internal sealed class OutputTrace
         try
         {
             string full = Path.GetFullPath(directory);
-            System.IO.Directory.CreateDirectory(full);
-            return new OutputTrace(full, ParseCapacity(Environment.GetEnvironmentVariable(CapacityEnvironmentVariable)));
+            string run = ResolveRunDirectory(full);
+            System.IO.Directory.CreateDirectory(run);
+            return new OutputTrace(run, ParseCapacity(Environment.GetEnvironmentVariable(CapacityEnvironmentVariable)));
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "出力トレースのディレクトリを作成できません: {Directory}", directory);
             return Disabled;
         }
+    }
+
+    /// <summary>
+    /// D34: 同じディレクトリへ複数回起動すると既存の manifest.json / events.jsonl /
+    /// summary.json（CreateNew）と衝突して保存に失敗する。既存トレースがある場合は
+    /// 起動時刻（UTC）と pid のサブフォルダへ分ける（同名が既にあれば連番を付ける）。
+    /// </summary>
+    internal static string ResolveRunDirectory(string baseDirectory)
+    {
+        bool hasTrace = File.Exists(Path.Combine(baseDirectory, "manifest.json"))
+            || File.Exists(Path.Combine(baseDirectory, "events.jsonl"))
+            || File.Exists(Path.Combine(baseDirectory, "summary.json"));
+        if (!hasTrace)
+            return baseDirectory;
+
+        string stamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'",
+            System.Globalization.CultureInfo.InvariantCulture);
+        string candidate = Path.Combine(baseDirectory, $"{stamp}-{Environment.ProcessId}");
+        for (int n = 2; System.IO.Directory.Exists(candidate); n++)
+            candidate = Path.Combine(baseDirectory, $"{stamp}-{Environment.ProcessId}-{n}");
+        return candidate;
     }
 
     public void Add(string stage, string worker, long scheduled = 0, ImageStamp stamp = default, string? detail = null, long value = 0)
