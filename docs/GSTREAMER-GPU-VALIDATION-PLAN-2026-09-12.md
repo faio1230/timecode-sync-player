@@ -3352,3 +3352,18 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - **統合後 main（D33 込み、`12d2e38`）の実機確認（除去担当、2026-09-17 21:04、親が trx を確認）**: シナリオ 22/22、LTC ループ 14/14、S-3（MediaOut=8 < 尺 12）1/1（`clip boundary hold ltc=28.000 playback=8.044 clip=[0.000,8.000]`、範囲外 LTC 10 でも 8.033 で静止）。証跡 `TestResults/postmerge5/`（agent-b）。**判定: 候補 5（D32+D33）を作る**
 - **候補 5**（2026-09-17 21:04）: `TimecodeSyncPlayer-v0.4.2-3a122b5-setup.exe` 38,666,485 バイト、SHA-256 `70A6D8C30BAF6C521EBD8B8B276E5297C9AC74F235A5CB669BE8AB9CC466E68C`、zip 17,743,378 バイト `9C74FCF4337995CFC76AF8EC650D451BB11C99FE54F6A6725C2CC051D530F133`、ProductVersion `0.4.2+3a122b5…`（D32+D33 込み）。Taildrop で検証機へ。テストは main 3a122b5 以降でビルド
+
+## 検証機・実素材での候補 5（`0.4.2+3a122b5`、D32+D33 込み、テストは main `cc08ad4`）の結果と分類（2026-09-18 04:04、`TSP-TestMachine` の報告、親の分類）
+
+候補 4 は打ち切り（D32 は候補 5 に含む）。出力トレース有効。ERR/FTL 0、`GPU completion pending` 0、`Playback unavailable` 0、`pump deadline` 0、残プロセス 0、LTC ループ 14 本 ×3 合格。
+
+| 回 | -Media | 候補 3 → 候補 5 | 合格に転じた | 新たに失敗 | 両方で失敗 |
+| --- | --- | --- | --- | --- | --- |
+| a | M1,M4,M6 | 31/36 → **35/36** | F5 G2 S3 S5 | なし | C1 |
+| b | M1,M3,M5 | 31/36 → **34/36** | F5 R1 S3 S5 | G2 | G5 |
+| c | M2,M1,M4 | 32/36 → **34/36** | S3 S5 | なし | C2 S1 |
+
+- **D33 の効果**: S-3/S-5 が 3 回とも合格。`Single mode: clip boundary hold ltc=40.000 playback=25.046 clip=[5.000,25.000]` / `released ltc=9.887 …` を確認、`recovered position=10.25`
+- **テスト側の効果**: F-5 3 回とも合格（reference-ambiguous 87〜107 件）。参照採取の位置待ちで tailObserved 24.95〜24.983。jump-black の黒発行除外も作動
+- **残り（製品側の疑いなし）**: a C-1・b G-2 = 参照採取のシーク待ち 3 秒が 4K AV1（CPU）で足りない（テスト側。検証機で 6 秒 + 再シーク 1 回に修正依頼）。b G-5 = `metadata-wait-timeout` 1 件（抜粋依頼）。c C-2 c2-10（observed 14.000、M2 長 GOP、キーフレーム位置で止まっている疑い。ログ抜粋依頼）、c S-1（誤差 0.940 秒、M2 長 GOP = 既知の制限の範囲）
+- **判定: 製品側の欠陥はすべて解消。テスト側の待ち修正のうえ候補 5 のまま再実行 → 残りが長 GOP の間欠だけなら 0.4.3 に上げる**
