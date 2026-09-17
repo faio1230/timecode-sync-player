@@ -7,15 +7,18 @@
 #
 # -Out is written wherever it points (the runner puts it under its report
 # directory). The media folder is user-managed and read-only on the test machine,
-# so the runner first creates a directory junction under the report directory
-# (mklink /J <ReportDir>\media <MediaDir>) and passes the junction path as
-# -MediaDir. Tracks are then stored as paths relative to the .tsp directory
-# (e.g. media\clip.mp4): ProjectSerializer only resolves paths inside the project
-# directory. MediaDir must therefore live inside the -Out directory. The runner
-# deletes the generated project after the run (-KeepProject keeps it).
+# so the runner first creates one hard link per media file under
+# <ReportDir>\media and passes that folder as -MediaDir. Tracks are then stored as
+# paths relative to the .tsp directory (e.g. media\clip.mp4): ProjectSerializer
+# only resolves paths inside the project directory. MediaDir must therefore live
+# inside the -Out directory. The runner deletes the generated project and the
+# links after the run (-KeepProject keeps them).
 #
-# Videos (mp4 / mov / mkv / mxf / ts) are taken in name order from the top of the
-# folder. Every track uses MediaIn 0 and MediaOut = min(SegmentSeconds, duration),
+# Symbols: the videos (mp4 / mov / mkv / mxf / ts) in the folder are numbered
+# M1, M2, ... in name order. Without -Media the first -Tracks of them are used.
+# With -Media (e.g. -Media M1,M3,M5) exactly those symbols are used, in the given
+# order, and each track is named by its symbol, so a symbol always means the same
+# file of the folder. Every track uses MediaIn 0 and MediaOut = min(SegmentSeconds, duration),
 # so material shorter than SegmentSeconds is used as-is. The timeline starts with
 # a 5 s offset and keeps a 5 s gap after every track.
 #
@@ -29,6 +32,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Out,
     [int]$Tracks = 3,
+    [string]$Media = '',
     [double]$SegmentSeconds = 20,
     [string]$FfmpegDir = 'C:\Program Files\ffmpeg\bin'
 )
@@ -68,12 +72,36 @@ if (-not $ffprobe) {
 }
 
 $extensions = @('.mp4', '.mov', '.mkv', '.mxf', '.ts')
-$files = @(Get-ChildItem -LiteralPath $MediaDir -File |
+$allFiles = @(Get-ChildItem -LiteralPath $MediaDir -File |
     Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() } |
-    Sort-Object -Property Name |
-    Select-Object -First $Tracks)
-if ($files.Count -lt $Tracks) {
-    throw "MediaDir contains fewer than $Tracks video files (mp4/mov/mkv/mxf/ts)"
+    Sort-Object -Property Name)
+
+# Selection: list of @{ Symbol; File }. Symbols never name the files.
+$selection = @()
+if ([string]::IsNullOrWhiteSpace($Media)) {
+    if ($allFiles.Count -lt $Tracks) {
+        throw "MediaDir contains fewer than $Tracks video files (mp4/mov/mkv/mxf/ts)"
+    }
+    for ($i = 0; $i -lt $Tracks; $i++) {
+        $selection += @{ Symbol = ('M' + ($i + 1)); File = $allFiles[$i] }
+    }
+} else {
+    $symbols = @($Media -split '[,\s]+' | Where-Object { $_ })
+    if ($symbols.Count -lt 1 -or $symbols.Count -gt 7) {
+        throw 'Media must list 1..7 symbols (e.g. M1,M3,M5)'
+    }
+    $seen = @{}
+    foreach ($symbol in $symbols) {
+        if ($symbol -notmatch '^[Mm](\d+)$') { throw ('Media symbol must look like M1: ' + $symbol) }
+        $number = [int]$matches[1]
+        if ($number -lt 1 -or $number -gt $allFiles.Count) {
+            throw ('Media symbol ' + $symbol + ' is out of range (the folder has ' + $allFiles.Count + ' videos)')
+        }
+        $normalized = 'M' + $number
+        if ($seen.ContainsKey($normalized)) { throw ('Media symbol listed twice: ' + $normalized) }
+        $seen[$normalized] = $true
+        $selection += @{ Symbol = $normalized; File = $allFiles[$number - 1] }
+    }
 }
 
 $invariant = [System.Globalization.CultureInfo]::InvariantCulture
@@ -81,18 +109,20 @@ $gap = 5.0
 $offset = 5.0
 $trackList = @()
 $index = 0
-foreach ($file in $files) {
+foreach ($selected in $selection) {
     $index++
+    $file = $selected.File
+    $symbol = $selected.Symbol
     $durationText = & $ffprobe.Source -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $file.FullName
-    if ($LASTEXITCODE -ne 0) { throw "ffprobe failed for track M$index" }
+    if ($LASTEXITCODE -ne 0) { throw "ffprobe failed for track $symbol" }
     $duration = [double]::Parse(($durationText | Select-Object -First 1).Trim(), $invariant)
-    if ($duration -le 0) { throw "ffprobe returned no duration for track M$index" }
+    if ($duration -le 0) { throw "ffprobe returned no duration for track $symbol" }
     $used = [Math]::Min($SegmentSeconds, $duration)
 
     $trackList += [ordered]@{
         id             = ('aaaaaaaa-0000-0000-0000-{0:d12}' -f $index)
         filePath       = $file.FullName.Substring($outDirPrefix.Length)
-        name           = ('M' + $index)
+        name           = $symbol
         mediaIn        = ([TimeSpan]::Zero).ToString('c')
         mediaOut       = ([TimeSpan]::FromSeconds($used)).ToString('c')
         timelineOffset = ([TimeSpan]::FromSeconds($offset)).ToString('c')
@@ -100,7 +130,7 @@ foreach ($file in $files) {
         syncOffset     = ([TimeSpan]::Zero).ToString('c')
         isEnabled      = $true
     }
-    Write-Output ('M' + $index + ': duration ' + $duration.ToString('F3', $invariant) +
+    Write-Output ($symbol + ': duration ' + $duration.ToString('F3', $invariant) +
         's, used ' + $used.ToString('F3', $invariant) + 's, offset ' + ([TimeSpan]::FromSeconds($offset)).ToString('c'))
     $offset += $used + $gap
 }
