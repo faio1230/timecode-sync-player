@@ -27,6 +27,21 @@ public sealed class LtcSingleClipEndHoldTests
     private static IReadOnlyList<double> SeekTargets(SyncScenarioHarness h) =>
         h.Operations.Where(o => o.Name == "seek").Select(o => o.Value ?? double.NaN).ToList();
 
+    private static void Tick(SyncScenarioHarness h, ManualTimeProvider clock, int count = 1)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            h.Tick100Milliseconds();
+        }
+    }
+
+    private static LtcFrameProcessingResult Processed(double seconds, TimecodeFrameDiagnosticStatus status) =>
+        new("scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
+            new TimecodeFrameDiagnosticResult(status, 0, 0),
+            ShouldApplySync: status is TimecodeFrameDiagnosticStatus.Normal or TimecodeFrameDiagnosticStatus.Initial,
+            ShouldLogFps: false);
+
     [Fact]
     public void OutOfRangeLtc_AtClipOut_HoldsWithoutSeekOrCorrection()
     {
@@ -84,5 +99,53 @@ public sealed class LtcSingleClipEndHoldTests
         h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
         h.IsPaused.Should().BeTrue("MediaOut の最終フレームで静止する");
         SeekTargets(h).Should().BeEmpty("保持フレームではシークしない");
+    }
+
+    [Fact]
+    public void BoundaryHold_DoesNotIssueExplicitLandingToTheEdge()
+    {
+        // D35-b (1): 境界ホールド中は端への明示着地を発行しない。端の 2 フレーム以内で
+        // 1 フレーム超の残差（24.94 対 25）でも、保留シークを増やさない。
+        (SyncScenarioHarness h, ManualTimeProvider clock) = Arrange();
+        h.SignalLossMode = LtcSignalLossMode.Stop;
+        h.AdvancePlayback(24.94);
+
+        h.SupplyLtc(24.9);   // 有効フレーム（進行の時計を開始）
+        h.Controller.ReceiveProcessedFrame(Processed(40.0, TimecodeFrameDiagnosticStatus.Reverse), 10_000);
+        Tick(h, clock, 3);   // 範囲外の非適用フレームのみ → 信号断として一時停止
+
+        h.IsPaused.Should().BeTrue();
+        h.Operations.Clear();
+
+        h.SupplyHeldLtc(40.0);   // 40 保持 → 境界ホールド成立
+
+        h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
+        SeekTargets(h).Should().BeEmpty("境界ホールド中は端への明示着地を発行しない");
+    }
+
+    [Fact]
+    public void BoundaryHoldRelease_ClearsPendingSeek_AndLandsOnTheNewLtc()
+    {
+        // D35-b (2): S-3 の系列。40 保持で端へ clamp した pending が残ったまま 10 保持で
+        // 解除しても、解除時に pending と保持着地のラッチを解除し、10 へ 1 回着地する。
+        (SyncScenarioHarness h, ManualTimeProvider clock) = Arrange();
+        h.SignalLossMode = LtcSignalLossMode.Stop;
+        h.AdvancePlayback(10.0);
+
+        h.SupplyLtc(40.0);       // 端 25 へ clamp シーク（pending=25）
+        SeekTargets(h).Should().Contain(25.0);
+
+        h.SupplyHeldLtc(40.0);   // 40 保持 → 境界ホールド
+        h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
+        h.Operations.Clear();
+
+        clock.Advance(TimeSpan.FromSeconds(1));   // デバウンス窓を明ける
+        h.SupplyHeldLtc(10.0);   // 10 保持 → 解除 → pending に抑止されず 10 へ
+
+        h.Operations.Should().Contain(o => o.Name == "clip-end-release");
+        SeekTargets(h).Should().Equal(new[] { 10.0 }, "解除後は新しい範囲内 LTC へ 1 回だけ着地する");
+
+        h.SupplyHeldLtc(10.0);
+        SeekTargets(h).Should().Equal(new[] { 10.0 }, "同じ値の連続では繰り返さない");
     }
 }

@@ -935,7 +935,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     if (!IsPlaybackAvailable) return;
                     _playbackApi.SetPaused(held);
                     ApplyPauseState(held);
-                }));
+                },
+                // D35-b: ホールド解除時に保留シークと保持着地のラッチを解除する。
+                OnBoundaryHoldReleased: () => _ltcSyncController.NotifyClipBoundaryHoldReleased()));
 
     private ContinueOnTrackCoordinator CreateContinueOnTrackCoordinator() =>
         _continueOnTrackCoordinator ??= new ContinueOnTrackCoordinator(

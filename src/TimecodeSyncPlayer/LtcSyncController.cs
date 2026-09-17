@@ -929,6 +929,16 @@ internal sealed class LtcSyncController
         }
         else
         {
+            // D35-b: D33 の境界ホールド中は端で受け持つ。端への明示着地は保留シークを作り、
+            // 解除時の範囲内 LTC への着地を抑止するため発行しない。
+            if (_single().IsBoundaryHeld)
+            {
+                _heldLossLandingSeconds = heldSeconds;
+                Log.Debug(
+                    "LTC timecode held: landing skipped (clip boundary hold active) ltc={Ltc:F3}",
+                    heldSeconds);
+                return;
+            }
             target = Math.Clamp(heldSeconds, 0, state.DurationSeconds);
         }
 
@@ -959,6 +969,19 @@ internal sealed class LtcSyncController
     {
         double fps = state.VideoFps > 0 ? state.VideoFps : LastTimecodeFps;
         return fps > 0 ? 1.0 / fps : 0.04;
+    }
+
+    /// <summary>
+    /// D35-b: D33 の境界ホールド（Single）が解除されたときに呼ぶ。ホールド中に残った端への
+    /// 保留シークと保持着地のラッチを必ず解除し、解除後の範囲内 LTC への着地を抑止しない。
+    /// </summary>
+    internal void NotifyClipBoundaryHoldReleased()
+    {
+        _heldLossLandingSeconds = null;
+        _heldReapplyDone = false;
+        _pendingSyncSeconds = null;
+        _syncService.SeekState.Clear();
+        Log.Information("Single mode: boundary hold released; pending seek state and held landing latch cleared");
     }
 
     private SyncRequestResult ApplySync(double seconds, bool gapDisplayOnly = false)
