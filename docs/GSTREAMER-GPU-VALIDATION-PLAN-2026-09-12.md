@@ -3321,3 +3321,4 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - シナリオ 22/22、LTC ループ 14/14、残プロセス 0。F-3 で `gap freeze target changed, discarding the previous frozen frame target=19.967` が 1 回発動（D32 項目 2 の作動）。証跡 `TestResults/postmerge4/`（agent-b の作業ツリー）
 - **判定: 候補 4（D32 込み）を作って検証機へ。D33（Single の MediaOut ホールド）は次の候補**
+- **候補 4**（2026-09-17 23:50）: `TimecodeSyncPlayer-v0.4.2-f0ee283-setup.exe` 38,664,289 バイト、SHA-256 `5ED002A8BEBD4E66E870FB0EB0FEF44E972FE7846B0A9B6A6268BFA67C73F34C`、zip 17,742,249 バイト `A1DA9B9C84F57F7ABDC715B5F59DED7D8443635DD6DFB141AB5D93CF48430A32`、ProductVersion `0.4.2+f0ee283…`（D32 込み、D33 は未）。Taildrop で検証機へ
