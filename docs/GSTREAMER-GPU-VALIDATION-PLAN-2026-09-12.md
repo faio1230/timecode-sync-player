@@ -3001,3 +3001,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - D23-b: `MediaDir` と `ReportDir` が互いを含む指定は前提エラーで止める。`ReportDir\media` の削除・置き換えはリンク数 2 以上のファイルだけ（`GetFileInformationByHandle`）。D23 のままでは `MediaDir = ReportDir\media` の指定で実ファイルを消す経路があった
 - D23-c: PowerShell 5.1 で dotnet の標準エラー（xUnit の `[FAIL]` 行）が `ErrorActionPreference=Stop` で例外になり、証跡コピーと SUMMARY を飛ばしていた。native 実行を Continue にし UTF-8 で受ける
 - 検証機の確認: 危険な指定 4 通りでも実ファイルは残る。ダミー 3 回とも SHA-256・リンク数 1 が不変
+
+## D25: シーク直後にリースしたフレームの PTS は目標だが画素はシーク前（2026-09-17 15:50、開発機、F-4 の回帰調査で確定。shim のリング/fence 不変条件の疑い）
+
+- 観測（同期担当、`TestResults/d20b-trace-f4/events.jsonl`、agent-a の作業ツリー）: ギャップ進入の accurate シーク（目標 19.967）の 6.3ms 後の `compose.acquire` は seq=19、`ptsNs=19966666666`（= 目標）、detail=Ready。`GStreamerSource.Lease.Stamp` は PtsNs ≥ 0 のとき実 PTS を使うので fallback ではない。**しかしその絵はシーク前の B 本文（緑）**で、165ms 後の再取得（seq=20）も同じ PTS・同じ絵。アプリはこれを最終フレームとして凍結した（F-4 の失敗）
+- 意味: リングスロットの Info（PTS）とテクスチャ内容が食い違っている。候補: (1) shim が Info を書いてからテクスチャのコピー（`CopySubresourceRegion` → fence signal）が完了する前に消費側が読んだ（fence の待ち漏れ、または fence 値の対応ずれ）、(2) フラッシュシーク後に古いスロットの内容が残ったまま新しい Info で公開された（世代/epoch の扱い）、(3) D10 の stream time 写像で PTS だけが先に更新された
+- 影響: ギャップ Freeze の確定に限らず、**シーク直後の最初の 1〜2 フレームが「位置は正しいのに絵は古い」**可能性。V5 の着地計測（PTS 基準）はこれを見抜けない
+- 対処: 同期担当（shim の担当）が D20-b の実機の後に調査（`docs/OUTPUT-GPU-INVARIANTS.md` の I 系列と `native/gst-shim/README.md` の H-3 に照らす）。E2E 側は D21-b の確定条件をこのまま（PTS 基準）とし、shim を直してから F-4 を再判定する
