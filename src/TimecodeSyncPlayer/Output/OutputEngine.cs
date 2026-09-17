@@ -161,7 +161,7 @@ internal sealed class OutputEngine : IDisposable
     private readonly PreviewHandoff previewHandoff = new(3);
 
     // D5 決定再現用: 環境変数 TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH=1 のときだけ、世代切替
-    // （ClearHeld）からその世代の最初のフレーム取得までギャップを Black に固定する。
+    // からその世代の最初のフレーム取得までギャップを Black に固定する。
     // 未設定なら forceGapBlackOnSwitch=false で、切替ごとの分岐 1 回のみ（既定経路は不変）。
     internal const string ForceGapBlackOnSwitchEnvironmentVariable = "TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH";
     private static readonly bool forceGapBlackOnSwitch =
@@ -222,8 +222,10 @@ internal sealed class OutputEngine : IDisposable
                 Fault("OutputEngine: GStreamer プレイヤーハンドルがありません");
                 return;
             }
-            // 旧ソースのリング Surface を Held が参照している可能性があるため先に手放す。
-            layer?.ClearHeld();
+            // D26: Held は合成側が所有するキャンバスの複製で、ソースのリング面を参照しない。
+            // ソースを差し替えても直前の絵を保持する（黒を挟まない）。Freeze 候補の追跡画像だけは
+            // リング面を参照するため、ソース差し替え時に手放す（D26-b）。
+            layer?.ClearSourceFrame();
             gstSource?.Dispose();
             // ステージ 6b: shim は合成デバイスを Adopt せず、LUID だけを使って自前デバイスを作る。
             // 合成デバイスはリングを開いてフェンス待ちに使う（この gpu を渡す）。
@@ -909,6 +911,7 @@ internal sealed class OutputEngine : IDisposable
         LayerImage? acquired = null;
         ISourceImageLease? lease = null;
         SourceStatus status = SourceStatus.NotReady;
+        double? acquiredPositionSeconds = null;
 
         if (gstSource != null)
         {
@@ -920,6 +923,9 @@ internal sealed class OutputEngine : IDisposable
             status = gst.Status;
             lease = gst.Lease;
             acquired = gst.Image;
+            // D26: Freeze 保存は「目標位置のフレーム」だけ許可する（ジャンプ前のフレームを凍結しない）。
+            if (status == SourceStatus.Ready && acquired != null)
+                acquiredPositionSeconds = gst.Stamp.PositionSeconds;
             if (settings.Trace.IsEnabled)
                 settings.Trace.Record(new("compose.acquire", "GPU", acquireEndedQpc, scheduled,
                     gst.Stamp.Sequence, gst.Stamp.DecodedQpc, status.ToString(),
@@ -965,7 +971,7 @@ internal sealed class OutputEngine : IDisposable
                 gapMode,
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
-                stamp, originQpc, acquired);
+                stamp, originQpc, acquired, acquiredPositionSeconds, position);
             if (forceGapBlackOnSwitch && acquired != null)
             {
                 anyFrameAcquired = true;
@@ -1115,15 +1121,17 @@ internal sealed class OutputEngine : IDisposable
     private readonly record struct GstFrameAcquire(SourceStatus Status, ISourceImageLease? Lease, LayerImage? Image, SourceImageStamp Stamp);
 
     // GStreamer の世代は shim 側の値（load/seek で進む）を観測して対応付ける。
-    // 世代が変わったら Held を手放し、古い世代の画像を返さない。
+    // D26: Held は合成側が所有する直前キャンバスの複製で、世代のリング面を参照しない。
+    // 世代が変わっても破棄せず、新しい世代の最初のフレームまで直前の絵を出す（黒を挟まない）。
+    // D26-b: Freeze 候補として追跡中のソース画像はリング面を参照するため、世代切替で手放す。
     private void SyncGStreamerGeneration()
     {
         if (gstSource == null) return;
         int shimGeneration = gstSource.Generation;
         if (shimGeneration == lastGstGeneration) return;
         lastGstGeneration = shimGeneration;
-        layer?.ClearHeld();
         lastGstSequence = -1;
+        layer?.ClearSourceFrame();
         // D5 決定再現: 再生開始後に世代が変わったら、その世代の最初のフレームまで Black を強制する。
         if (forceGapBlackOnSwitch && anyFrameAcquired)
             armedForceGapBlack = true;

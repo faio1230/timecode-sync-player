@@ -3,38 +3,40 @@ using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer.Tests;
 
-/// <summary>段階 4.2: クリップ切替で Held／Freeze を再配置しない。</summary>
+/// <summary>
+/// 段階 4.2: クリップ切替で Freeze を再配置しない。
+/// D26: Held は合成済みキャンバスの複製をそのまま重ねるため配置を選ばない（テスト対象外）。
+/// </summary>
 public class ComposeLayerPlacementPolicyTests
 {
     private static readonly ClipPlacement Current = new(FitWidth.FitId);
-    private static readonly ClipPlacement Held = new(FitHeight.FitId);
     private static readonly ClipPlacement Frozen = new(null);
 
     [Fact]
     public void DrawAcquired_UsesCurrentClipPlacement()
     {
-        ComposeLayerPolicy.SelectPlacement(LayerAction.DrawAcquired, Current, Held, Frozen)
+        ComposeLayerPolicy.SelectPlacement(LayerAction.DrawAcquired, Current, Frozen)
             .Should().Be(Current);
     }
 
     [Fact]
-    public void DrawHeld_KeepsPlacementFromWhenImageWasAcquired()
+    public void DrawHeld_UsesCurrentPlacement_ButCanvasCopyIsDrawnInstead()
     {
-        ComposeLayerPolicy.SelectPlacement(LayerAction.DrawHeld, Current, Held, Frozen)
-            .Should().Be(Held);
+        ComposeLayerPolicy.SelectPlacement(LayerAction.DrawHeld, Current, Frozen)
+            .Should().Be(Current);
     }
 
     [Fact]
     public void DrawFrozen_KeepsPlacementFromWhenFreezeWasCaptured()
     {
-        ComposeLayerPolicy.SelectPlacement(LayerAction.DrawFrozen, Current, Held, Frozen)
+        ComposeLayerPolicy.SelectPlacement(LayerAction.DrawFrozen, Current, Frozen)
             .Should().Be(Frozen);
     }
 
     [Fact]
     public void DrawBlack_UsesCurrentPlacementWithoutDrawing()
     {
-        ComposeLayerPolicy.SelectPlacement(LayerAction.DrawBlack, Current, Held, Frozen)
+        ComposeLayerPolicy.SelectPlacement(LayerAction.DrawBlack, Current, Frozen)
             .Should().Be(Current);
     }
 }

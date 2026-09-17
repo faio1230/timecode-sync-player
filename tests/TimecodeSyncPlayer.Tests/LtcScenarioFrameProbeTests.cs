@@ -155,6 +155,30 @@ public sealed class LtcScenarioFrameProbeTests
         description.Should().StartWith("yellow");
     }
 
+    /// <summary>
+    /// 参照が黒の素材（冒頭が全面黒など）では「黒」と「参照で静止」を画像で区別できないため、
+    /// 黒判定を課さない。判定側はこのフラグで切り替える。
+    /// </summary>
+    [Fact]
+    public void ReferenceSet_DetectsBlackReferencesForBlackJudgment()
+    {
+        using Bitmap black = Solid(Color.Black);
+        using Bitmap red = Solid(Color.Red);
+        var set = new ReferenceSet();
+        set.Add("A", "head", "ref_A_head", LtcScenarioFrameProbe.MeasureCenter(black));
+        set.Add("A", "tail", "ref_A_tail", LtcScenarioFrameProbe.MeasureCenter(red));
+        set.Add("B", "head", "ref_B_head", LtcScenarioFrameProbe.MeasureCenter(red));
+        set.Add("B", "tail", "ref_B_tail", LtcScenarioFrameProbe.MeasureCenter(red));
+
+        set.IsTrackBlack("A").Should().BeTrue("head が黒のトラックは黒判定を課さない");
+        set.IsHeadReferenceBlack("A").Should().BeTrue();
+        set.IsTrackBlack("B").Should().BeFalse();
+        set.IsHeadReferenceBlack("B").Should().BeFalse();
+        set.HasReferences("A").Should().BeTrue();
+        set.HasReferences("C").Should().BeFalse();
+        set.IsTrackBlack("C").Should().BeFalse();
+    }
+
     private static Bitmap Solid(Color color)
     {
         var bitmap = new Bitmap(100, 100);

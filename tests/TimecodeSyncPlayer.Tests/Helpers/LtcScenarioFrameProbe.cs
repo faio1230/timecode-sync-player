@@ -189,6 +189,23 @@ internal sealed class ReferenceSet
     public void Add(string trackSymbol, string kind, string imageName, FrameSignature signature) =>
         _frames.Add(new ReferenceFrame(trackSymbol, kind, imageName, signature));
 
+    public bool HasReferences(string trackSymbol) =>
+        _frames.Any(frame => string.Equals(frame.TrackSymbol, trackSymbol, StringComparison.Ordinal));
+
+    /// <summary>
+    /// 指定トラックの参照（head/tail）に全面黒が含まれるか。黒参照では「黒」と「参照で静止」を
+    /// 画像で区別できないため、黒の判定（黒であること・黒でないこと）を課さない。
+    /// </summary>
+    public bool IsTrackBlack(string trackSymbol) =>
+        _frames.Any(frame => string.Equals(frame.TrackSymbol, trackSymbol, StringComparison.Ordinal) &&
+                             frame.Signature.IsBlack);
+
+    /// <summary>指定トラックの head 参照が黒か（参照が無ければ false）。</summary>
+    public bool IsHeadReferenceBlack(string trackSymbol) =>
+        _frames.Any(frame => string.Equals(frame.TrackSymbol, trackSymbol, StringComparison.Ordinal) &&
+                             string.Equals(frame.Kind, "head", StringComparison.Ordinal) &&
+                             frame.Signature.IsBlack);
+
     /// <summary>平均色距離が最小の参照（同距離は先着）。</summary>
     public ReferenceFrame? Closest(FrameSignature signature)
     {
