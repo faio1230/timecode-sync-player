@@ -4,7 +4,8 @@
 #   powershell -File scripts\run-ltc-scenarios.ps1 -AppExe <path to TimecodeSyncPlayer.exe>
 #   powershell -File scripts\run-ltc-scenarios.ps1 -Filter "FullyQualifiedName~NoSuchTest"   # dry run
 #   powershell -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-Media M1,M3,M5] [-KeepProject]
-#       (-Media picks tracks by symbol: M<n> is the n-th video of the folder in name order)
+#       (-Media picks tracks by symbol: M<n> is the n-th video of the folder in name order;
+#        -MediaInOffsetSeconds N starts every track N seconds into its video)
 #       (the project .tsp is generated under the report directory, never in the
 #        media folder, and is removed after the run unless -KeepProject is set)
 #
@@ -26,7 +27,8 @@ param(
     [int]$Cycles = 0,
     [string]$Filter = '',
     [string]$MediaDir = '',
-    [string]$Media = '',
+    [string[]]$Media = @(),
+    [double]$MediaInOffsetSeconds = 0,
     [switch]$KeepProject,
     [switch]$SkipBuild
 )
@@ -290,9 +292,12 @@ if ($MediaDir) {
     }
 
     $projectPath = Join-Path $ReportDir 'ltc-scenario.tsp'
+    $Media = @($Media -join ',')[0]
     $makeArgs = @{ MediaDir = $linkedMediaDir; Out = $projectPath }
     if ($Media) { $makeArgs.Media = $Media }
-    Write-Output ('media_select=' + $(if ($Media) { $Media } else { '(first 3 by name)' }))
+    if ($MediaInOffsetSeconds -ne 0) { $makeArgs.MediaInOffsetSeconds = $MediaInOffsetSeconds }
+    Write-Output ('media_select=' + $(if ($Media) { $Media } else { '(first 3 by name)' }) +
+        ' media_in_offset=' + $MediaInOffsetSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))
     & $makeProject @makeArgs *> (Join-Path $ReportDir 'make-ltc-scenario-project.log')
     if (-not $?) { throw "make-ltc-scenario-project.ps1 failed" }
     if (-not (Test-Path -LiteralPath $projectPath)) { throw "project not generated: $projectPath" }
