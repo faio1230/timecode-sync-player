@@ -58,6 +58,9 @@ public sealed class GapFreezeHandler
     private bool _pauseOwnershipRecorded;
     private readonly TimeProvider _timeProvider;
     internal long CaptureAttemptId { get; private set; }
+    // D21: 進入・再ロードの後に実際のフレームが 1 枚届くまでキャプチャを許可しない
+    // （位置だけが先に目標へ動き、シーク前の絵を最終フレームとして固定するのを防ぐ）。
+    internal bool FrameSeenSinceCapture { get; private set; } = true;
 
     public GapFreezeHandler(TimeProvider? timeProvider = null)
     {
@@ -91,6 +94,7 @@ public sealed class GapFreezeHandler
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
+        FrameSeenSinceCapture = true;
     }
 
     public void ResetAll()
@@ -108,7 +112,10 @@ public sealed class GapFreezeHandler
         PendingTrackId = trackId;
         PendingTargetSeconds = targetSeconds;
         PendingPath = filePath;
+        FrameSeenSinceCapture = false;
     }
+
+    internal void NotifyFrameArrived() => FrameSeenSinceCapture = true;
 
     public void EnterFreezeCaptureWithReload(Guid? trackId, double targetSeconds, string? filePath)
     {
@@ -268,6 +275,7 @@ public sealed class GapFreezeHandler
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
+        FrameSeenSinceCapture = true;
         ClearCachedFrameInfo();
         SetState(GapState.Inactive);
     }

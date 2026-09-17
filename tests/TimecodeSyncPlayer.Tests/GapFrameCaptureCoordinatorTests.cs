@@ -5,6 +5,41 @@ namespace TimecodeSyncPlayer.Tests;
 public class GapFrameCaptureCoordinatorTests
 {
     [Fact]
+    public void Decide_ReturnsNone_WhileNoFrameArrivedSinceCapture()
+    {
+        // D21: 進入・再ロード後、位置が目標でもフレーム到着前はキャプチャしない。
+        GapFrameCaptureDecision result = GapFrameCaptureCoordinator.Decide(
+            GapState.EnteringFreeze,
+            hasFrame: false,
+            isExpectedPath: true,
+            hasTimePosition: true,
+            actualPositionSeconds: 9.95,
+            targetSeconds: 10.0,
+            fps: 30.0,
+            allowRedraw: true,
+            frameSeenSinceCapture: false);
+
+        result.Should().Be(GapFrameCaptureDecision.None);
+    }
+
+    [Fact]
+    public void Decide_ReturnsRenderAndCapture_AfterFrameArrivedSinceCapture()
+    {
+        GapFrameCaptureDecision result = GapFrameCaptureCoordinator.Decide(
+            GapState.EnteringFreeze,
+            hasFrame: false,
+            isExpectedPath: true,
+            hasTimePosition: true,
+            actualPositionSeconds: 9.95,
+            targetSeconds: 10.0,
+            fps: 30.0,
+            allowRedraw: true,
+            frameSeenSinceCapture: true);
+
+        result.Should().Be(GapFrameCaptureDecision.RenderAndCapture);
+    }
+
+    [Fact]
     public void Decide_ReturnsNone_WhenNoFrame()
     {
         GapFrameCaptureDecision result = GapFrameCaptureCoordinator.Decide(

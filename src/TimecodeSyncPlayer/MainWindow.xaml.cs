@@ -1905,6 +1905,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private async Task TryCompleteGapFreezeAsync(int renderGeneration, bool hasFrame, bool allowRedraw = false)
     {
+        // D21: 進入・再ロードの後に届いたフレームだけを最終フレームとして固定する
+        // （位置が先に目標へ動いても、シーク前・ロード前の絵ではキャプチャしない）。
+        // ネイティブシーク中に届いた最終フレームもカウントする（完了はタイマーが起こす）。
+        if (hasFrame &&
+            _gapFreezeHandler.CurrentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
+        {
+            _gapFreezeHandler.NotifyFrameArrived();
+        }
+
         if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze && !IsNativeSeeking() &&
             _playbackApi.IsPaused())
         {
@@ -1917,7 +1926,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 actualPos,
                 _gapFreezeHandler.PendingTargetSeconds,
                 _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps,
-                allowRedraw: allowRedraw);
+                allowRedraw: allowRedraw,
+                frameSeenSinceCapture: _gapFreezeHandler.FrameSeenSinceCapture);
 
             if (decision == GapFrameCaptureDecision.RenderAndCapture)
             {
@@ -1969,7 +1979,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             return false;
         bool hasPosition = _playbackApi.TryGetTimePos(out double position);
         return GapFrameCaptureCoordinator.Decide(_gapFreezeHandler.CurrentState, true, true,
-            hasPosition, position, _gapFreezeHandler.PendingTargetSeconds, _fps) ==
+            hasPosition, position, _gapFreezeHandler.PendingTargetSeconds, _fps,
+            frameSeenSinceCapture: _gapFreezeHandler.FrameSeenSinceCapture) ==
             GapFrameCaptureDecision.RenderAndCapture;
     }
 
