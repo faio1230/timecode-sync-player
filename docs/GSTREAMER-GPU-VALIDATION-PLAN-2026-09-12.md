@@ -3203,3 +3203,8 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - `LtcSyncController`: (1) Continue で Jump の写像がギャップ（先頭オフセット含む）または現在のロード済みトラックと別なら保留（track-or-gap）。同一トラックは即時。(2) Fixed の fps 食い違い Jump も保留（detected-fps）。(3) 保留中の次フレームが連続すれば「確認済み Jump」として 1 回適用し、保持損失中ならその確認時に `ObserveJumpFrame` で復帰・着地（未確認 1 枚では復帰しない）。保留は監視開始/停止・モード/fps 切替・手動シークで破棄。ログ `holding unconfirmed Jump frame … reason=…` / `applying the confirmed Jump frame once`
 - テスト先行: `JumpConfirmationPolicyTests` 14、`LtcJumpConfirmationTests` 6（0.04 の単発 Jump は適用されない / +1 フレーム・同値 Duplicate で適用 / 別トラックは確認後 loadfile / 同一トラックは即 seek / fps 食い違いは保留 / 保持損失は確認後に復帰）。既存 1 件を D30 仕様に更新。非E2E 1795
 - 実機（C-2 ×3、R-1〜R-4、S-2、V3 1 本）は合図済み
+
+## D29: Single モードの LTC → 素材位置と終端が MediaIn/MediaOut ではなく媒体の尺で clamp されていた（2026-09-18 14:20、同期担当、agent-a `7fccf96`、統合済み）
+
+- 原因: `SyncDecisionEngine.Decide` の `Math.Clamp(ltc, 0, DurationSeconds)` と先行補償後の `CompensateTarget(…, DurationSeconds)` が尺基準で、Single の `SyncPlaybackState` に MediaIn/MediaOut が渡っていなかった（実素材 S-3 の position=42.683 の原因）。Continue は `FindTrackAtTimelinePosition` が [MediaIn, MediaOut ?? 尺] に clamp 済みで正しかった
+- 修正: clamp 範囲を [MediaIn, MediaOut ?? 尺] にし、補償後も同じ範囲。`MainWindow` の Single の `BuildPlaybackState` が現在トラックの MediaIn/MediaOut を渡す。D20 の終端静止も MediaOut 基準に。単体 4 件追加、非E2E 1779（main 統合後 1799）。実機は除去担当の次の全件で確認
