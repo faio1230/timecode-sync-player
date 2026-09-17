@@ -3099,3 +3099,11 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 観測: s2-11（保持 20 → LTC 8）で着地せず position=20.000 のまま。保持損失からの復帰に必要な有効フレーム数（`LtcSignalResumeFrames` 既定 5）に対し、テストの保持→保持の前進プリリュードがちょうど 5 枚（Jump 1 + 通常 4）で、1 枚でも取りこぼすと復帰せず `_isLost && _pausedByPolicy` で同期要求が出ない
 - 親の判定: 除去担当の実機は agent-b（main `a47c142` 取り込み）で、**D27-b（`3082f6b`、保持損失中の Jump 1 枚で即復帰）を含まない世代**。D27-b 込みの同期担当の実機では S-2 の着地は 20/20。→ D27-b で解消している見込み。除去担当が main の最新を取り込んで S-2 を 3 回回して確認する
 - 副次の観測: E2E 起動のアプリのログが 13:21〜13:33 の区間で共有ログに残っていなかった（ランナー起動分は残る）。原因未特定。E2E の証跡としてアプリログを当てにする箇所があるため、次回の実行で再確認
+
+## D27-c: 保持損失からの復帰が Jump 1 枚で成立せず、有効フレーム 5 枚（`LtcSignalResumeFrames`）を待って取りこぼすと復帰しない（2026-09-18 00:10、除去担当の再確認、D27-b 込みの世代）
+
+- 観測（S-2 2 回目、main `295c9b8`）: s2-04（8 → 20）で `applying the first Jump frame once ltc=19.840` は出るが `LTC signal restored` が出ず、以降の着地シークも無く position=8.033 のまま。cycle 1〜3 では `LTC signal restored: playback resumed resumeFrames=5` を経て着地
+- 意味: D27-b の `ObserveJumpFrame`（保持が理由の損失中は Jump 1 枚で即復帰）が**この経路では効いていない**（条件 `_isLost && _reason == TimecodeHeld`、または `_pausedByPolicy && !canApplyPolicyOwnedResume` のどれかで抜けている疑い。理由が SignalLoss に下がっている、Jump の適用と復帰の順序、など）。テストのプリリュードが 5 枚ちょうどなので 1 枚取りこぼすと 5 枚に届かず、復帰不成立が顕在化
+- 対処: 除去担当（D27-c）。復帰は Jump 1 枚で成立させ、単体で「Jump 適用と同時に restored」を固定。S-2 を 3 回
+- 参照採取は 3 回中 2 回が D25（tail が head と同一）で失敗 → D25 が最優先のまま
+- 併せて判明: E2E 起動のアプリは `E2EAppRunner.LocateExe()` がテスト出力ディレクトリの exe を最優先するため、ログは `tests/TimecodeSyncPlayer.Tests/bin/Debug/net8.0-windows/logs/` に残る（src 側ではない）。証跡の参照先を間違えないこと。ランナー（検証機側）は `-AppExe` 省略時にこのディレクトリのログも複製する
