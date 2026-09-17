@@ -3079,3 +3079,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - V5（`Invoke-AppGpuTrial`、10 回）: 10/10 着地、目標との差 0.3〜17.0ms、ジャンプ後 1 秒の NotReady 0、`compose.publish` 最大 20.1ms（シーク窓）、ERR 0
 - V6 短縮（600 秒、連結 MP4）: published 34510、fps min 57.6 / max 60.5、gaps 0 / dropped 1、WS 158→270→271MiB（5 分以降 +1.1MiB）、Private +0.9MiB、ERR 0。毎 tick のキャンバス複製の負荷は問題なし。（連結 TS の 1 本目は publish の記録が 296 秒で止まった。合成は継続、要観察）
 - **判定: D26 は解消（ジャンプで黒を挟まない）。D26-b で Freeze の回帰も解消。残る F-4 / F-5 の間欠は D25（shim）に帰着。main に統合**（利用者の項目 27 は合格。D25 の修正後に F 系を再判定）
+
+### D28 の実装（除去担当、agent-b `8fe2378` / `bc983c0` / `7e96cab`、2026-09-17 22:40、実機待ち）
+
+- 方針: `compose.source` の完了待ちは 100ms スライスで打ち切り、その tick は公開せず、面・リース・ソース画像を保留リストで保持して次 tick 以降に非ブロッキングで回収（`compose.deferredDiscarded`）。保留中の世代は破棄しない（`TryDiscardRetired` をガード）。恒久停止（Playback unavailable）は**デバイス消失か、未完了が連続 3 秒**のときだけ。判定は `GpuCompletionPolicy` に抽出（単体 6 件）
+- 設計差（親が判断）: プレビュー・表示・Spout・ドレインの待ちは保留機構を持たずブロック継続だが、fault 条件を 100ms → 連続 3 秒に緩和。→ **了承**（まず compose.source の経路で現場の症状を止める。他の待ちで問題が出れば追加）
+- 同時に: S-1 の追従判定を「着地後 2 秒・50ms 間隔の (LTC, 位置) 系列で最大誤差 ±0.3」に変更（`LtcFollowSeries`、`9a352fc`）。参照採取は tail が head と同一なら D25 の古いフレームとみなし最大 3 回・200ms 間隔で取り直し（`a24a46c`）
+- 非E2E 1753。実機（シナリオ 22、V5、V6 短縮、4K VP9 の再現）は合図待ち
