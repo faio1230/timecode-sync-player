@@ -55,7 +55,9 @@ public class PlaybackOperationsCoordinatorTests
             {
                 Calls.Add($"BeginSyncFileLoad({startPosition})");
                 BeginSyncFileLoads.Add(startPosition);
-            });
+            },
+            // D33-b: ロード成功後のメタデータ取得予約。
+            RequestMetadataFetch: () => Calls.Add("RequestMetadataFetch"));
     }
 
     private static PlaybackOperationsCoordinator Create(Recorder recorder) =>
@@ -81,8 +83,34 @@ public class PlaybackOperationsCoordinatorTests
             "ResetGapFreeze",
             "SetSeekBarValueFromPlayer(0)",
             "SetTimeLabel(0:00 / 0:00)",
-            "BeginSyncFileLoad(0)");
+            "BeginSyncFileLoad(0)",
+            "RequestMetadataFetch");
         recorder.BeginSyncFileLoads.Should().Equal(0);
+    }
+
+    [Fact]
+    public void LoadFile_OnSuccessRequestsMetadataFetchOnce()
+    {
+        // D33-b: 速いロードでもタイマーを待たずに 1 回取得を予約する。
+        var recorder = new Recorder();
+        var coordinator = Create(recorder);
+
+        coordinator.LoadFile("C:\\media\\clip.mp4").Should().BeTrue();
+        coordinator.LoadFile("C:\\media\\clip.mp4", 12.5).Should().BeTrue();
+        coordinator.LoadFilePaused("C:\\media\\clip.mp4").Should().BeTrue();
+
+        recorder.Calls.Count(call => call == "RequestMetadataFetch").Should().Be(3);
+    }
+
+    [Fact]
+    public void LoadFile_OnFailure_DoesNotRequestMetadataFetch()
+    {
+        var recorder = new Recorder { LoadResult = PlaybackResult.Fail("load failed") };
+        var coordinator = Create(recorder);
+
+        coordinator.LoadFile("clip.mp4").Should().BeFalse();
+
+        recorder.Calls.Should().NotContain("RequestMetadataFetch");
     }
 
     [Fact]

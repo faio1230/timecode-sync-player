@@ -218,7 +218,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     _seekBarInteraction.IsSeeking, _vm.Sync.IsLtcRunning, _playbackControl.IsPaused,
                     _vm.Sync.LtcSignalLossMode, _vm.Sync.LtcFpsMode, _vm.Sync.GapBehavior,
                     _loadedTrackId, _fps, _duration,
-                    _settingsManager.Current.LtcSignalLossTimeoutMs, _settingsManager.Current.LtcSignalResumeFrames),
+                    _settingsManager.Current.LtcSignalLossTimeoutMs, _settingsManager.Current.LtcSignalResumeFrames,
+                    // D33: Single の補正を D29 の範囲に収めるための [MediaIn, MediaOut]。
+                    _playlist.Current?.MediaIn.TotalSeconds ?? 0.0,
+                    _playlist.Current?.MediaOut?.TotalSeconds),
                 ApplyFrameText: (timecode, realTime) =>
                 {
                     _vm.Sync.LtcTimecodeText = timecode;
@@ -921,7 +924,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     MediaOutSeconds: _playlist.Current?.MediaOut?.TotalSeconds),
                 SeekTo: target => SeekTo(target),
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
-                IsNativeSeeking: IsNativeSeeking));
+                IsNativeSeeking: IsNativeSeeking,
+                // D33: 範囲外 LTC の終端ホールド。一時停止／解除を UI 状態と一緒に反映する。
+                SetEndHold: held =>
+                {
+                    if (!IsPlaybackAvailable) return;
+                    _playbackApi.SetPaused(held);
+                    ApplyPauseState(held);
+                }));
 
     private ContinueOnTrackCoordinator CreateContinueOnTrackCoordinator() =>
         _continueOnTrackCoordinator ??= new ContinueOnTrackCoordinator(
@@ -1445,7 +1455,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             ResetGapFreeze: () => _gapFreezeHandler.Reset(),
             ClearGapFreezeFrame: () => _renderSession.Invalidate(),
             // D20-b: 手動ロードを同期のロードゲートへ記録する（保持 LTC のロード解除再適用）。
-            BeginSyncFileLoad: startPosition => _syncService.BeginFileLoad(startPosition, _syncGateRenderedFrames.Read())));
+            BeginSyncFileLoad: startPosition => _syncService.BeginFileLoad(startPosition, _syncGateRenderedFrames.Read()),
+            // D33-b: ロードが速いと 100ms タイマーが取得前に次のロードへ置き換わり得るため、
+            // ロード成功直後に 1 回だけ取得を予約する（サイズ未取得ならタイマーが再試行）。
+            RequestMetadataFetch: ScheduleMetadataFetch));
 
     // ── Spout ─────────────────────────────────────────────────────
 
@@ -2258,6 +2271,21 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     // ── メタデータ取得 ────────────────────────────────────────────
+
+    /// <summary>
+    /// D33-b: ロード成功後のメタデータ取得を 1 回だけ予約する。ロードが速く 100ms タイマーの
+    /// tick をまたぐ前に次のロードへ置き換わっても、ここで取得できる。サイズが未取得なら
+    /// <see cref="FetchMetadata"/> はフラグを立てずに戻り、従来どおりタイマーが再試行する。
+    /// </summary>
+    private void ScheduleMetadataFetch()
+    {
+        if (_disposed) return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            if (!_disposed)
+                FetchMetadata();
+        });
+    }
 
     private void FetchMetadata()
     {

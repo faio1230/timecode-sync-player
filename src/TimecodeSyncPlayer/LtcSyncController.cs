@@ -17,7 +17,11 @@ internal readonly record struct LtcSyncContext(
     double VideoFps,
     double DurationSeconds,
     int SignalLossTimeoutMilliseconds,
-    int SignalResumeFrames);
+    int SignalResumeFrames,
+    // D33: Single の補正（Jump の目標・残差）を D29 と同じ [MediaIn, MediaOut ?? 尺] に
+    // 収めるための範囲。Continue では使わない。
+    double MediaInSeconds = 0.0,
+    double? MediaOutSeconds = null);
 
 /// <summary>UI/native I/O boundaries. All LTC routing and state transitions belong to the controller.</summary>
 internal sealed record LtcSyncEffects(
@@ -434,6 +438,11 @@ internal sealed class LtcSyncController
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
                 _lastHeldEffectiveSeconds = heldEffectiveSeconds;
+                // D33: 保持（Duplicate）では通常の同期評価が走らない。範囲外 LTC の保持中でも
+                // 終端ホールド／解除を評価する（境界へのシークは通常フレーム側が行う）。
+                LtcSyncContext heldState = _effects.GetContext();
+                if (heldState.Mode == SyncMode.Single && heldState.SyncEnabled && heldState.IsMonitoring)
+                    _single().ApplyClipBoundaryHoldOnly(heldEffectiveSeconds);
             }
             // D30: 写像がギャップ／別トラックの Jump と、Fixed モードでデコーダ推定 fps が
             // 食い違う Jump は未確認にして次の 1 フレームの連続を待つ（誤値 1 枚で状態を動かさない）。
@@ -715,8 +724,15 @@ internal sealed class LtcSyncController
             if (_effects.GetPlaybackSeconds == null) return;
             if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
                 return;
+            // D33: 範囲外の LTC は補正しない（Jump の生値シーク・Smooth の暴走で MediaOut を
+            // 越えない）。粗い判定の終端シークと Single の終端ホールドに任せる。範囲内は clamp は no-op。
+            (double clipIn, double clipOut) = SyncDecisionEngine.ClipRange(
+                state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
+            if (ltcSeconds < clipIn || ltcSeconds > clipOut)
+                return;
             residualSeconds = ltcSeconds - playback;
-            targetSeconds = ltcSeconds;
+            targetSeconds = SyncDecisionEngine.ClampToClip(
+                ltcSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         }
 
         SyncCorrectionDecision decision = _correction.Evaluate(

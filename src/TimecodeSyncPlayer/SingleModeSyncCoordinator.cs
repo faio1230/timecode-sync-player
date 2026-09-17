@@ -12,6 +12,10 @@ internal sealed class SingleModeSyncCoordinator
     private readonly TimecodeSyncService _syncService;
     private readonly SingleModeSyncEffects _effects;
 
+    // D33: 終端ホールドのラッチ。LTC が範囲外で再生位置が clipIn/clipOut に達したら立て、
+    // 許容分だけ内側へ戻ったら解除する。
+    private bool _clipBoundaryHeld;
+
     public SingleModeSyncCoordinator(
         TimecodeSyncService syncService,
         SingleModeSyncEffects effects)
@@ -35,6 +39,12 @@ internal sealed class SingleModeSyncCoordinator
         if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
             !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
             return SyncRequestResult.Deferred;
+
+        // D33: 範囲外の LTC（D29 の clamp 後は clipIn/clipOut に貼り付く）で再生位置が端に
+        // 達したら、シークも補正もせず終端ホールド（一時停止＋ラッチ）。LTC が許容分だけ
+        // 内側へ戻ったら解除して追従を再開する。
+        if (ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state))
+            return SyncRequestResult.Complete;
 
         SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state);
         // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
@@ -67,6 +77,90 @@ internal sealed class SingleModeSyncCoordinator
             decision.UsedDefaultVideoFps, decision.UsedDefaultTimecodeFps, success);
         return success ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
     }
+
+    /// <summary>
+    /// D33: 保持（Duplicate）フレームでも終端ホールド／解除を評価する。保持中は通常の同期評価が
+    /// 走らない（シークもしない）ため、境界へ着地したあとに LTC が止まった場合の停止はここで行う。
+    /// </summary>
+    public bool ApplyClipBoundaryHoldOnly(double ltcSeconds)
+    {
+        if (_effects.IsNativeSeeking?.Invoke() == true)
+            return _clipBoundaryHeld;
+
+        (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
+        if (timePosRc != 0)
+            return _clipBoundaryHeld;
+
+        SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
+        if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
+            !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
+            return _clipBoundaryHeld;
+
+        return ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state);
+    }
+
+    /// <summary>
+    /// D33: 範囲外 LTC の端での終端ホールド。true を返したら呼び出し側はシーク・判定へ進まない。
+    /// 端に達する前（シークで着地する前）は false を返し、通常の着地シークに任せる。
+    /// </summary>
+    private bool ApplyClipBoundaryHold(double ltcSeconds, double playbackSeconds, SyncPlaybackState state)
+    {
+        if (!state.SyncEnabled || !state.HasCurrentTrack || !double.IsFinite(ltcSeconds))
+            return false;
+
+        (double clipIn, double clipOut) = SyncDecisionEngine.ClipRange(
+            state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
+        // 尺が未確定（0 など）の間は端が決まらないため、ホールドしない。
+        if (!double.IsFinite(clipOut) || !SeekBarUpdateState.IsUsableDuration(clipOut - clipIn))
+            return false;
+
+        double fps = state.VideoFps > 0 ? state.VideoFps
+            : state.TimecodeFps > 0 ? state.TimecodeFps : 30.0;
+        double boundaryTolerance = 2.0 / fps;
+
+        bool belowIn = ltcSeconds < clipIn;
+        bool aboveOut = ltcSeconds > clipOut;
+        if (!belowIn && !aboveOut)
+        {
+            if (_clipBoundaryHeld &&
+                ltcSeconds >= clipIn + boundaryTolerance && ltcSeconds <= clipOut - boundaryTolerance)
+            {
+                _clipBoundaryHeld = false;
+                _effects.SetEndHold?.Invoke(false);
+                Log.Information(
+                    "Single mode: clip boundary hold released ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
+                    ltcSeconds, playbackSeconds, clipIn, clipOut);
+            }
+            return _clipBoundaryHeld;
+        }
+
+        bool atOut = aboveOut && playbackSeconds >= clipOut - boundaryTolerance;
+        bool atIn = belowIn && playbackSeconds <= clipIn + boundaryTolerance;
+        if (!atOut && !atIn)
+        {
+            // 端に居ない（トラック差し替え後のロード直後など）。古いラッチを解除して、
+            // 通常の着地シークで新しい端へ向かわせる。
+            if (_clipBoundaryHeld)
+            {
+                _clipBoundaryHeld = false;
+                _effects.SetEndHold?.Invoke(false);
+                Log.Information(
+                    "Single mode: clip boundary hold released (playback left the boundary) ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
+                    ltcSeconds, playbackSeconds, clipIn, clipOut);
+            }
+            return false;
+        }
+
+        if (!_clipBoundaryHeld)
+        {
+            _clipBoundaryHeld = true;
+            _effects.SetEndHold?.Invoke(true);
+            Log.Information(
+                "Single mode: clip boundary hold ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
+                ltcSeconds, playbackSeconds, clipIn, clipOut);
+        }
+        return true;
+    }
 }
 
 /// <summary>
@@ -78,4 +172,6 @@ internal sealed record SingleModeSyncEffects(
     Func<double, SyncPlaybackState> BuildPlaybackState,
     Func<double, bool> SeekTo,
     Func<long>? GetTotalRenderedFrames = null,
-    Func<bool>? IsNativeSeeking = null);
+    Func<bool>? IsNativeSeeking = null,
+    // D33: 終端ホールドの pause/resume（true = 端で一時停止、false = 解除して再開）。
+    Action<bool>? SetEndHold = null);

@@ -81,6 +81,8 @@ internal sealed class PlaybackOperationsCoordinator
         // 発行 QPC つきで既に記録するため、ここでは触らない。
         if (!startPosition.HasValue)
             _effects.BeginSyncFileLoad(0);
+        // D33-b: ロードごとにメタデータ取得を 1 回予約する（100ms タイマーの取り逃し対策）。
+        _effects.RequestMetadataFetch?.Invoke();
         return true;
     }
 
@@ -103,6 +105,8 @@ internal sealed class PlaybackOperationsCoordinator
         _effects.SetTimeLabel(DefaultTimeLabel);
         // D20-b: 一時停止の手動ロードも同期のロードゲートに記録する。
         _effects.BeginSyncFileLoad(0);
+        // D33-b: ロードごとにメタデータ取得を 1 回予約する。
+        _effects.RequestMetadataFetch?.Invoke();
         return true;
     }
 
@@ -193,4 +197,6 @@ internal sealed record PlaybackOperationsEffects(
     Action ResetGapFreezeAll,
     Action ResetGapFreeze,
     Action ClearGapFreezeFrame,
-    Action<double> BeginSyncFileLoad);
+    Action<double> BeginSyncFileLoad,
+    // D33-b: ロード成功後にメタデータ取得を 1 回予約する（未設定ならタイマーのみ）。
+    Action? RequestMetadataFetch = null);
