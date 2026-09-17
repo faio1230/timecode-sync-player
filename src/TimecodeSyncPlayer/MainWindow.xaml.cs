@@ -915,7 +915,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     PlaybackSeconds: playbackSeconds,
                     DurationSeconds: _duration,
                     VideoFps: _fps,
-                    TimecodeFps: _ltcSyncController.LastTimecodeFps),
+                    TimecodeFps: _ltcSyncController.LastTimecodeFps,
+                    // D29: Single の LTC → 素材位置はトラックの MediaIn/MediaOut に収める。
+                    MediaInSeconds: _playlist.Current?.MediaIn.TotalSeconds ?? 0.0,
+                    MediaOutSeconds: _playlist.Current?.MediaOut?.TotalSeconds),
                 SeekTo: target => SeekTo(target),
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
                 IsNativeSeeking: IsNativeSeeking));

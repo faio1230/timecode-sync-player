@@ -354,4 +354,101 @@ public class SyncDecisionEngineTests
         decision.Action.Should().Be(SyncActionType.None);
         decision.TargetSeconds.Should().Be(0.0);
     }
+
+    // ---- D29: Single の LTC → 素材位置は MediaIn/MediaOut に収める ----
+
+    [Fact]
+    public void Decide_ClampsTargetToMediaOut_WhenSet()
+    {
+        // 尺 58.5、MediaOut 20 のトラックで範囲外の LTC 40 → 終端は尺ではなく MediaOut。
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
+        var state = new SyncPlaybackState(
+            SyncEnabled: true,
+            HasCurrentTrack: true,
+            IsSeeking: false,
+            PlaybackSeconds: 4.0,
+            DurationSeconds: 58.5,
+            VideoFps: 30.0,
+            TimecodeFps: 25.0,
+            MediaInSeconds: 2.0,
+            MediaOutSeconds: 20.0);
+
+        SyncDecision decision = engine.Decide(40.0, state);
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().Be(20.0, "終端静止は MediaOut 基準");
+    }
+
+    [Fact]
+    public void Decide_ClampsTargetToMediaIn_WhenBelowTheClipStart()
+    {
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
+        var state = new SyncPlaybackState(
+            SyncEnabled: true,
+            HasCurrentTrack: true,
+            IsSeeking: false,
+            PlaybackSeconds: 6.0,
+            DurationSeconds: 58.5,
+            VideoFps: 30.0,
+            TimecodeFps: 25.0,
+            MediaInSeconds: 2.0,
+            MediaOutSeconds: 20.0);
+
+        SyncDecision decision = engine.Decide(1.0, state);
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().Be(2.0);
+    }
+
+    [Fact]
+    public void Decide_UsesDurationAsTheEnd_WhenMediaOutIsUnset()
+    {
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
+        var state = new SyncPlaybackState(
+            SyncEnabled: true,
+            HasCurrentTrack: true,
+            IsSeeking: false,
+            PlaybackSeconds: 4.0,
+            DurationSeconds: 58.5,
+            VideoFps: 30.0,
+            TimecodeFps: 25.0,
+            MediaInSeconds: 2.0,
+            MediaOutSeconds: null);
+
+        SyncDecision decision = engine.Decide(100.0, state);
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().Be(58.5);
+    }
+
+    [Fact]
+    public void Decide_ClampsTheCompensatedTargetToMediaOut()
+    {
+        // 先行補償 0.3 秒が乗っても、行き先は MediaOut を超えない（超えると媒体側で
+        // クランプされ、範囲外の位置へ着地してしまう）。
+        var compensator = new SeekLatencyCompensator(enabled: true);
+        compensator.SelectTrack(Guid.NewGuid());
+        const long decideQpc = 1_000;
+        compensator.MarkSeekDecision(decideQpc);
+        compensator.MarkSeekSent();
+        compensator.ObserveFrameReady(decideQpc + (long)(System.Diagnostics.Stopwatch.Frequency * 0.3), 1, 1);
+        compensator.CompensationSeconds.Should().BeApproximately(0.3, 1e-9);
+
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2), compensator);
+        var state = new SyncPlaybackState(
+            SyncEnabled: true,
+            HasCurrentTrack: true,
+            IsSeeking: false,
+            PlaybackSeconds: 10.0,
+            DurationSeconds: 58.5,
+            VideoFps: 30.0,
+            TimecodeFps: 25.0,
+            MediaInSeconds: 2.0,
+            MediaOutSeconds: 20.0);
+
+        SyncDecision decision = engine.Decide(19.9, state);
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().BeApproximately(20.0, 1e-9);
+    }
 }
