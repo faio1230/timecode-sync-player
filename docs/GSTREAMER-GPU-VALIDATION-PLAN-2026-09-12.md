@@ -3107,3 +3107,9 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 対処: 除去担当（D27-c）。復帰は Jump 1 枚で成立させ、単体で「Jump 適用と同時に restored」を固定。S-2 を 3 回
 - 参照採取は 3 回中 2 回が D25（tail が head と同一）で失敗 → D25 が最優先のまま
 - 併せて判明: E2E 起動のアプリは `E2EAppRunner.LocateExe()` がテスト出力ディレクトリの exe を最優先するため、ログは `tests/TimecodeSyncPlayer.Tests/bin/Debug/net8.0-windows/logs/` に残る（src 側ではない）。証跡の参照先を間違えないこと。ランナー（検証機側）は `-AppExe` 省略時にこのディレクトリのログも複製する
+
+### D27-c の原因と修正（除去担当、agent-b `0aeb791` / `afa60f6`、2026-09-18 00:40、実機待ち）
+
+- 原因: 最後の保持フレーム（8.000 の Duplicate）は Jump の 151ms 前に到着していたが、`LtcSignalLossPolicy.Evaluate` は Tick 時刻とフレーム時刻を突き合わせて保持の途切れを判定するため、UI スレッドの処理遅延（着地シーク等）で Tick がフレーム処理より後ろにずれると、保持フレームが届いていても理由だけが SignalLoss へ降格する。さらに `LtcSyncController` 側が `Reason == TimecodeHeld` を要求していたため `ObserveJumpFrame` が呼ばれず、Jump の 1 回適用だけが走って復帰も着地も出なかった
+- 修正: ポリシーは「理由が TimecodeHeld でなくても、フレーム時刻で保持が timeout 以内（直後）なら復帰」。コントローラは `IsLost` のとき常に `ObserveJumpFrame` に委ねて判定を一本化。無音からの Jump は `WasHeldRecently` が偽で従来どおり復帰しない
+- 単体: 新規 3（ポリシー 2 + コントローラ 1）、対象 51 件成功、非E2E 1766。実機（S-2 ×3、R-1〜R-4、LTC ループ 14）は合図済み
