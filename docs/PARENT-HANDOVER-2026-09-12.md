@@ -2,6 +2,10 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-17 18:15 更新（21 回目）**: LTC 同期 26 項目（+黒なし、停止/ランスルー）の自動検証を進行中。行列と進捗は `docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md`（4.5 節に時系列）。統合済み: D20〜D22、D21-b、D20-b（+S-4 ゲート）、D23〜D23-d、ランナー `run-ltc-scenarios.ps1`（`-AppExe -MediaDir -Media`）、シナリオ E2E 18 本。
+> 進行中: `w5:p3` = D27（保持 LTC を停止/ランスルーで扱う。利用者決定「モード依存」）→ 次に D24/D25（shim: 一時停止シークのポンプ予算、リング PTS と画素の食い違い）と D29 候補（Single の MediaOut）。`w5:p6` = D26（ジャンプ時の黒。Held を合成側所有の複製に）→ 次に D28（合成の GPU 完了待ち >100ms で再生停止）。
+> 検証機（`TSP-TestMachine`、Remote Control）はテスト基盤（ランナー・生成スクリプト）を自分で直しパッチを Taildrop で送る（受信は `tailscale file get`。GUI が起動中だと `~/Downloads` へ自動保存される）。実素材の次の実行は D24〜D28 を含む次の配布物（Taildrop、版は上げない）を送ってから。
+>
 > **2026-09-17 09:55 更新（20 回目）**: **履歴を再度書き換えた**（素材の作品名・ファイル名の除去。それ以前の SHA は文書中のものも含めて無効。main `adcb6cb`、agent-a `5c61981`、agent-b `0763553`、タグ v0.4.0〜v0.4.2 も付け替え）。素材は記号（実素材 M1〜M7、テスト素材 A〜C）だけで書く（利用者の指示、メモリ `no-media-titles-in-public-repo`）。
 > v0.4.2 (beta) 公開済み（D16 ハイブリッド GPU、D17 ロード時間）。検証機は Remote Control の `TSP-TestMachine`（Tailscale で配布物を渡す。公開は検証後）。版番号は直ってから上げる（利用者の方針）。
 > 進行中: LTC 同期 26 項目の自動検証（`docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md`）。`w5:p6` = シナリオ E2E 19 件 + 参照フレーム判定 + プロジェクト生成、`w5:p3` = ランナー `run-ltc-scenarios.ps1` + D18（実装済み、実機 1 回待ち）。
