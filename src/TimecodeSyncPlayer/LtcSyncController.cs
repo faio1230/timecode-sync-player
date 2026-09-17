@@ -370,8 +370,9 @@ internal sealed class LtcSyncController
             // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
             // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ 1 回だけ着地させる
             // （ラッチ済みの Jump でも数えるためラッチを解除してから適用する）。
-            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump &&
-                _signalLoss.IsLost && _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
+            // D27-c: 保持フレームの途切れで理由が信号断へ下がっていても、保持の直後の Jump は
+            // 復帰に数える（判定は ObserveJumpFrame 側。無音からの Jump は復帰しない）。
+            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump && _signalLoss.IsLost)
             {
                 ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
                 if (!_signalLoss.IsLost)

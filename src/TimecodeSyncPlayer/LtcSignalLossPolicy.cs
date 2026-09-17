@@ -154,6 +154,9 @@ internal sealed class LtcSignalLossPolicy
     /// 値の変化 1 枚で即復帰する（保持からの復帰の特別規則）。無音からの復帰は
     /// <see cref="ObserveValidFrame"/> の「有効フレーム N 枚」規則のまま変えない。
     /// 復帰後はこのフレーム時刻を進行の時計にし、続けて保持なら改めて損失になる。
+    /// D27-c: 保持フレームの途切れで理由が信号断へ下がっていても、Jump が保持フレームの
+    /// 直後（フレーム時刻で timeout 以内）なら保持からの復帰として扱う。処理遅延で
+    /// Tick が保持フレームの時刻より後ろにずれても復帰を取りこぼさない。
     /// </summary>
     public LtcSignalLossAction ObserveJumpFrame(long receivedAtMilliseconds, LtcSignalLossContext context)
     {
@@ -165,7 +168,8 @@ internal sealed class LtcSignalLossPolicy
 
         ObservePlaybackState(context);
 
-        if (!_isLost || _reason != LtcSignalLossReason.TimecodeHeld)
+        if (!_isLost ||
+            (_reason != LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(receivedAtMilliseconds)))
             return LtcSignalLossAction.None;
 
         bool canApplyPolicyOwnedResume =

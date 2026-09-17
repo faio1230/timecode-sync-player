@@ -585,6 +585,52 @@ public class LtcSignalLossPolicyTests
         policy.ObserveJumpFrame(At(340), paused).Should().Be(LtcSignalLossAction.ResumeAndSync);
     }
 
+    // ---- D27-c: 理由が信号断へ下がっても、直後の Jump は保持からの復帰として扱う ----
+
+    [Fact]
+    public void ObserveJumpFrame_AfterReasonDowngradedButHeldFrameIsRecent_ResumesImmediately()
+    {
+        var policy = CreatePolicy(resumeFrames: 5);
+        LtcSignalLossContext context = Context();
+        LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(150), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+
+        // フレーム処理の遅延などで Tick が保持フレームの時刻より後ろへずれ、理由だけが
+        // 信号断へ下がる（保持フレームは 150ms のまま）。
+        policy.Evaluate(At(500), paused).Should().Be(LtcSignalLossAction.None);
+        policy.Reason.Should().Be(LtcSignalLossReason.SignalLoss);
+
+        // その後も保持フレームは届いており、Jump は保持の直後（フレーム時刻で timeout 以内）。
+        policy.ObserveHeldFrame(At(560), paused);
+        policy.ObserveJumpFrame(At(610), paused).Should().Be(LtcSignalLossAction.ResumeAndSync);
+        policy.IsLost.Should().BeFalse();
+        policy.Reason.Should().Be(LtcSignalLossReason.None);
+        policy.IsPauseOwned.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ObserveJumpFrame_AfterHeldFramesStoppedForTimeout_DoesNotResume()
+    {
+        var policy = CreatePolicy(resumeFrames: 5);
+        LtcSignalLossContext context = Context();
+        LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(150), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Evaluate(At(500), paused).Should().Be(LtcSignalLossAction.None);
+        policy.Reason.Should().Be(LtcSignalLossReason.SignalLoss);
+
+        // 保持フレームが timeout を超えて途切れた後の Jump は保持からの復帰に数えない。
+        policy.ObserveJumpFrame(At(1000), paused).Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeTrue();
+        policy.IsPauseOwned.Should().BeTrue();
+    }
+
     private static LtcSignalLossPolicy CreatePolicy(int resumeFrames = 5) =>
         new(TimeSpan.FromMilliseconds(250), resumeFrames);
 
