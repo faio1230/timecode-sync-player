@@ -1102,17 +1102,26 @@ public sealed class LtcScenarioE2ETests
 
         /// <summary>
         /// 新しいトラックのロード完了を待つ。目印は FetchMetadata 行、または TimeLabel の尺が
-        /// そのトラックの尺になったこと。速いロード（キャッシュ済みプロファイル）では
-        /// FetchMetadata 行が出ないことがあるため、行だけには頼らない。
+        /// そのトラックの尺になったことに加えて issuedAt 以降のログの
+        /// 「Playlist track loaded index=&lt;index&gt;」行。速いロード（キャッシュ済みプロファイル）では
+        /// FetchMetadata 行が出ないことがあり、同じ尺の素材では切替前のラベルでも尺が一致するため、
+        /// 尺だけには頼らない。
         /// </summary>
         private void WaitForMetadataSince(DateTime issuedAt, int index)
         {
             TrackInfo? track = Tracks.FirstOrDefault(candidate => candidate.Index == index);
+            string loadedPattern = $@"Playlist track loaded index={index}\b";
             try
             {
                 WaitUntil(
-                    () => RunLogLinesSince(issuedAt).Any(line => line.Contains("FetchMetadata:", StringComparison.Ordinal)) ||
-                          (track is not null && TimeLabelShowsDuration(track)),
+                    () =>
+                    {
+                        string[] lines = RunLogLinesSince(issuedAt).ToArray();
+                        if (lines.Any(line => line.Contains("FetchMetadata:", StringComparison.Ordinal)))
+                            return true;
+                        return track is not null && TimeLabelShowsDuration(track) &&
+                               lines.Any(line => Regex.IsMatch(line, loadedPattern));
+                    },
                     15, $"トラック {index} のメタデータ取得");
             }
             catch (TimeoutException)
