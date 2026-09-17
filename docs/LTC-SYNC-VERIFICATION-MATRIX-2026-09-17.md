@@ -142,6 +142,8 @@
 
 - 2026-09-17 18:00 検証機（実素材、v0.4.2、agent-t のパッチ後）: `-Media M1,M3,M5` は **D28**（VP9 4K の一時停止シーク後に合成の GPU 完了待ち >100ms → Playback unavailable、ERR 26）で 13 本が後続ロード不能。`-Media M1,M4,M6` は 22/11（シナリオ 8/10、LTC ループ 14/14）。失敗の多くは**冒頭が黒い素材**の画像判定と v0.4.2 未修正分。パッチ 4 本（D23-b/c/d、`-Media`）を Taildrop で受領し main `420c681` に統合（`LtcScenarioE2ETests.BuildTracks` の M 記号対応を含む）。利用者の決定: 保持 LTC 中はモード依存（D27）
 
+- 2026-09-17 18:30: 検証機のパッチ `-MediaInOffsetSeconds N`（MediaIn を N 秒ずらし、尺 ≤ N はエラー）と `-Media` の配列対応を main `6ce0776` に統合（開発機の空振り OK）。次の実素材実行は D24〜D28 を含む配布物の後（`-Media M1,M4,M6 -MediaInOffsetSeconds 5` と `M1,M3,M5`）
+
 ## 4.6 検証機側で直す（利用者の方針 2026-09-17 13:45）
 
 - 環境依存のテスト基盤（ランナー、プロジェクト生成、E2E の待ち方、前提検査）は**検証機の Claude が自分の clone で直して確かめ、パッチで送る**。製品コード（`src/`、shim）は開発機側で直して親がレビューする
