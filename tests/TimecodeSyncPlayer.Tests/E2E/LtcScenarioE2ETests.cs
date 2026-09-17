@@ -164,8 +164,9 @@ public sealed class LtcScenarioE2ETests
         scenario.SetSignalLossMode(stop: true);
 
         scenario.Play(start, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
         scenario.PlayHeld(target, 3.5);
-        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 8, "LTC が保持値に到達");
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 6, "LTC が保持値に到達");
         DateTime holdObservedAt = DateTime.Now;
         scenario.WaitUntil(() => scenario.IsPaused(), timeoutSeconds + scenario.OneFrame + 0.5,
             "保持の検出で一時停止");
@@ -200,6 +201,7 @@ public sealed class LtcScenarioE2ETests
         scenario.SetSignalLossMode(stop: true);
 
         scenario.Play(start, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
         scenario.PlayHeld(target, 3.0);
         scenario.WaitUntil(() => scenario.IsPaused(), timeoutSeconds + scenario.OneFrame + 0.5,
             "保持の検出で一時停止");
@@ -220,8 +222,9 @@ public sealed class LtcScenarioE2ETests
         scenario.SetSignalLossMode(stop: false);
 
         scenario.Play(start, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
         scenario.PlayHeld(target, 4.0);
-        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 8, "LTC が保持値に到達");
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 6, "LTC が保持値に到達");
         double before = scenario.Position();
         Thread.Sleep(3000);
         double advanced = scenario.Position() - before;
@@ -239,8 +242,9 @@ public sealed class LtcScenarioE2ETests
         scenario.SetSignalLossMode(stop: false);
 
         scenario.Play(start, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
         scenario.PlayHeld(target, 3.0);
-        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 8, "LTC が保持値に到達");
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 6, "LTC が保持値に到達");
         Thread.Sleep(2000);
 
         scenario.Play(target, 8.0);
