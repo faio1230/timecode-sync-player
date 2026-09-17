@@ -81,6 +81,9 @@ internal sealed class LtcSyncController
     // D27-d: 保持（Duplicate）として届いた最後の値。停止時の着地目標は保持値そのものにし、
     // 保持直前の受理値（1 フレーム手前になり得る）を使わない。Normal/Initial で解除する。
     private double? _lastHeldEffectiveSeconds;
+    // D31-b: 保持損失中に着地シークを発行した保持値。この値から保持値が変わったら 1 回だけ
+    // 新しい保持値へ着地する（同じ保持値の連続では発行しない）。損失が明けたら解除する。
+    private double? _heldLossLandingSeconds;
     // D20-b: 同期へ実際に適用した最後の値（保持値の変更判定に使う）。
     private double? _lastAppliedLtcSeconds;
     // D20-b (i): 同一の Jump 連続で何度も適用しないためのラッチ（Normal/Initial で解除）。
@@ -318,6 +321,7 @@ internal sealed class LtcSyncController
         _lastAcceptedLtcSeconds = null;
         _lastAppliedLtcSeconds = null;
         _lastHeldEffectiveSeconds = null;
+        _heldLossLandingSeconds = null;
         _pendingSyncSeconds = null;
         _pendingJumpSeconds = null;
         _pendingJumpFrameEndTimestamp = 0;
@@ -348,6 +352,7 @@ internal sealed class LtcSyncController
         _lastAcceptedLtcSeconds = null;
         _lastAppliedLtcSeconds = null;
         _lastHeldEffectiveSeconds = null;
+        _heldLossLandingSeconds = null;
         _pendingSyncSeconds = null;
         _pendingJumpSeconds = null;
         _pendingJumpFrameEndTimestamp = 0;
@@ -414,6 +419,7 @@ internal sealed class LtcSyncController
         string applyReason;
         if (!processed.ShouldApplySync)
         {
+            bool heldValueChangedDuringLoss = false;
             // D27: 解読は続いているが値が進まない保持（Duplicate）を信号停止の判定へ伝える。
             // 無音（フレームが届かない）と同じ経路で損失になり、損失の理由だけが分かれる。
             // D27-d: 停止時の着地目標に使う「保持として届いた値」もここで記録する
@@ -423,8 +429,11 @@ internal sealed class LtcSyncController
                 _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
                 // D27-d: 着地目標は保持として届いた値そのもの。保持値は凍結されて進まないため、
                 // サンプル時計の age は足さず T3 オフセットだけ適用する。
-                _lastHeldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
+                double heldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
+                // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
+                heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
+                _lastHeldEffectiveSeconds = heldEffectiveSeconds;
             }
             // D30: 写像がギャップ／別トラックの Jump と、Fixed モードでデコーダ推定 fps が
             // 食い違う Jump は未確認にして次の 1 フレームの連続を待つ（誤値 1 枚で状態を動かさない）。
@@ -466,6 +475,23 @@ internal sealed class LtcSyncController
                     return;
                 }
             }
+            // D31-b: 保持損失中に保持値そのもの（タイムコード停止位置）が変わったら、停止モードは
+            // 新しい保持値へ 1 回だけ着地する（D27 の着地を遷移時から変化時へ拡張）。ランスルーは
+            // 同期の 1 回適用に同じ変化の判定を使う（同値の連続では発行しない）。
+            else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
+                     heldValueChangedDuringLoss)
+            {
+                _heldReapplyDone = true;
+                if (_signalLoss.IsPauseOwned)
+                {
+                    ReapplyHeldValueOnPause();
+                    _lastAppliedLtcSeconds = _lastHeldEffectiveSeconds;
+                    _lastContinueFrame = null;
+                    return;
+                }
+                applyOnce = true;
+                applyReason = "held value change";
+            }
             // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超
             // ずれているときだけ 1 回適用する（定常の Duplicate ゲートは維持）。
             else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
@@ -487,6 +513,7 @@ internal sealed class LtcSyncController
             _heldReapplyDone = false;
             // D27-d: 値が進むフレームが来たら保持は明けたので、着地目標の保持値を捨てる。
             _lastHeldEffectiveSeconds = null;
+            _heldLossLandingSeconds = null;
             applyOnce = false;
             applyReason = "";
         }
@@ -543,6 +570,8 @@ internal sealed class LtcSyncController
 
         _jumpAppliedOnce = true;
         _heldReapplyDone = false;
+        // D31-b: 確認済みの適用で損失が明けた（または新しい値へ動いた）ので、損失中の着地値は捨てる。
+        _heldLossLandingSeconds = null;
         _lastContinueFrame = null;
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
         _lastAcceptedLtcSeconds = effectiveSeconds;
@@ -592,6 +621,23 @@ internal sealed class LtcSyncController
         double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "held");
         return Math.Abs(effectiveSeconds - applied) > toleranceSeconds;
+    }
+
+    /// <summary>
+    /// D31-b: 保持損失中に、今回の保持値が「着地を発行済みの保持値」または「直前の保持値」から
+    /// 変わったか。保持値は凍結値なので、半フレームを超える差を変化として扱う（同値の連続では
+    /// false。着地を繰り返さない）。
+    /// </summary>
+    private bool IsHeldValueChangedDuringLoss(double heldEffectiveSeconds)
+    {
+        if (!_signalLoss.IsLost)
+            return false;
+        double? baseline = _heldLossLandingSeconds ?? _lastHeldEffectiveSeconds;
+        if (baseline is not double previous || !double.IsFinite(heldEffectiveSeconds))
+            return false;
+
+        double frameSeconds = LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04;
+        return Math.Abs(heldEffectiveSeconds - previous) > frameSeconds * 0.5;
     }
 
     /// <summary>
@@ -830,6 +876,8 @@ internal sealed class LtcSyncController
             target = Math.Clamp(heldSeconds, 0, state.DurationSeconds);
         }
 
+        // D31-b: この損失で着地を試みた保持値を覚え、値が変わったときだけ再度着地する。
+        _heldLossLandingSeconds = heldSeconds;
         if (_effects.SeekTo(target))
         {
             _syncService.ReportSeekSent(target);

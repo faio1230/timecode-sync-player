@@ -258,10 +258,20 @@ internal sealed class SyncScenarioHarness
     }
 
     public void SupplyLtc(double seconds) =>
+        SupplyLtc(seconds, TimecodeFrameDiagnosticStatus.Normal, shouldApplySync: true);
+
+    /// <summary>
+    /// D31-b: 解読は続いているが値が進まない保持（Duplicate）として供給する。進行の時計を
+    /// 進めないため、タイムアウト後は信号停止（保持）の判定へ伝わる。
+    /// </summary>
+    public void SupplyHeldLtc(double seconds) =>
+        SupplyLtc(seconds, TimecodeFrameDiagnosticStatus.Duplicate, shouldApplySync: false);
+
+    private void SupplyLtc(double seconds, TimecodeFrameDiagnosticStatus status, bool shouldApplySync) =>
         Controller.ReceiveProcessedFrame(new LtcFrameProcessingResult(
             "scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
-            new TimecodeFrameDiagnosticResult(TimecodeFrameDiagnosticStatus.Normal, 0, 0),
-            ShouldApplySync: true, ShouldLogFps: false), _monotonicMilliseconds);
+            new TimecodeFrameDiagnosticResult(status, 0, 0),
+            ShouldApplySync: shouldApplySync, ShouldLogFps: false), _monotonicMilliseconds);
 
     /// <summary>
     /// T2: サンプル時計の検証用。フレーム終端 QPC を持つフレームとして渡す（秒は 25fps の
