@@ -15,11 +15,16 @@
 # non-ASCII comments break parsing.
 [CmdletBinding()]
 param(
-    [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media'),
+    [string]$OutDir = '',
     [string]$FfmpegDir = 'C:\Program Files\ffmpeg\bin',
     [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 leaves $PSScriptRoot empty inside param() defaults when the
+# script is started with powershell -File, so the default is resolved here.
+if ([string]::IsNullOrWhiteSpace($OutDir)) {
+    $OutDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media'
+}
 
 if (Test-Path $FfmpegDir) { $env:PATH = "$env:PATH;$FfmpegDir" }
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
@@ -27,6 +32,35 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
 }
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
+
+# Windows PowerShell 5.1 turns each stderr line of a native command into an
+# ErrorRecord, and with $ErrorActionPreference = 'Stop' the first one aborts the
+# script while ffmpeg is still writing. libsvtav1 prints "Svt[info]" banners to
+# stderr regardless of -v error, so the AV1 fixture aborted the whole runner and
+# left a zero-byte file behind that later runs skipped as "exists". Run ffmpeg
+# with 'Continue', judge by the exit code, and remove the output on failure.
+$env:SVT_LOG = '1'
+function Invoke-Ffmpeg([string[]]$FfArgs, [string]$OutputPath, [string]$Name) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $messages = @(& ffmpeg @FfArgs 2>&1 | ForEach-Object { [string]$_ })
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if ($code -ne 0) {
+        $messages | Select-Object -Last 20 | ForEach-Object { Write-Output ('ffmpeg: ' + $_) }
+        if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }
+        throw ('ffmpeg failed: ' + $Name + ' (exit ' + $code + ')')
+    }
+}
+
+# An existing fixture is reused only when it is not empty (a zero-byte file is
+# what an interrupted run leaves behind).
+function Test-Fixture([string]$Path) {
+    return (Test-Path -LiteralPath $Path) -and ((Get-Item -LiteralPath $Path).Length -gt 0)
+}
 
 # libx264 only. The ffmpeg build on this machine exposes h264_nvenc with the old
 # preset names (default/slow/medium/hq/...) and rejects p1..p7; even 'medium'
@@ -47,7 +81,7 @@ $specs = @(
 
 foreach ($s in $specs) {
     $path = Join-Path $OutDir $s.Name
-    if ((Test-Path $path) -and -not $Force) {
+    if ((Test-Fixture $path) -and -not $Force) {
         Write-Output ('skip (exists): ' + $s.Name)
         continue
     }
@@ -55,8 +89,7 @@ foreach ($s in $specs) {
     $ffargs = @('-y', '-hide_banner', '-v', 'error', '-f', 'lavfi', '-i', $src) +
               $venc + @('-g', "$($s.Fps)", '-pix_fmt', 'yuv420p') + $s.Extra + @($path)
     Write-Output ('making: ' + $s.Name + ' (' + $s.W + 'x' + $s.H + '@' + $s.Fps + ', ' + $s.Sec + 's)')
-    & ffmpeg @ffargs
-    if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
+    Invoke-Ffmpeg $ffargs $path $s.Name
 }
 
 # v0.4.1 D12/D13: audio-bearing fixtures. (a) AAC 44.1kHz with the audio track
@@ -70,7 +103,7 @@ $audioSpecs = @(
 
 foreach ($s in $audioSpecs) {
     $path = Join-Path $OutDir $s.Name
-    if ((Test-Path $path) -and -not $Force) {
+    if ((Test-Fixture $path) -and -not $Force) {
         Write-Output ('skip (exists): ' + $s.Name)
         continue
     }
@@ -85,8 +118,7 @@ foreach ($s in $audioSpecs) {
               $venc + @('-g', '30', '-pix_fmt', 'yuv420p') +
               @('-c:a', 'aac', '-b:a', '128k', '-ar', "$($s.AudioRate)", '-shortest', $path)
     Write-Output ('making: ' + $s.Name + ' (1280x720@30 + AAC ' + $s.AudioRate + 'Hz)')
-    & ffmpeg @ffargs
-    if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
+    Invoke-Ffmpeg $ffargs $path $s.Name
 }
 
 # LTC scenario fixtures (track symbols A/B/C): three solid colour clips with
@@ -101,7 +133,7 @@ $scenarioSpecs = @(
 
 foreach ($s in $scenarioSpecs) {
     $path = Join-Path $OutDir $s.Name
-    if ((Test-Path $path) -and -not $Force) {
+    if ((Test-Fixture $path) -and -not $Force) {
         Write-Output ('skip (exists): ' + $s.Name)
         continue
     }
@@ -114,8 +146,7 @@ foreach ($s in $scenarioSpecs) {
     $ffargs = @('-y', '-hide_banner', '-v', 'error', '-f', 'lavfi', '-i', $filters) +
               $venc + @('-g', '30', '-pix_fmt', 'yuv420p', '-an', $path)
     Write-Output ('making: ' + $s.Name + ' (1280x720@30, colour fixture)')
-    & ffmpeg @ffargs
-    if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
+    Invoke-Ffmpeg $ffargs $path $s.Name
 }
 
 # A1 reproduction fixtures: 4K colour clips whose CPU decode can push the first
@@ -141,7 +172,7 @@ $scenario4kSpecs = @(
 
 foreach ($s in $scenario4kSpecs) {
     $path = Join-Path $OutDir $s.Name
-    if ((Test-Path $path) -and -not $Force) {
+    if ((Test-Fixture $path) -and -not $Force) {
         Write-Output ('skip (exists): ' + $s.Name)
         continue
     }
@@ -155,8 +186,7 @@ foreach ($s in $scenario4kSpecs) {
     $ffargs = @('-y', '-hide_banner', '-v', 'error', '-f', 'lavfi', '-i', $filters) +
               $s.Encoder + @('-g', "$($s.Fps)", '-an', $path)
     Write-Output ('making: ' + $s.Name + ' (' + $s.W + 'x' + $s.H + '@' + $s.Fps + ', colour fixture)')
-    & ffmpeg @ffargs
-    if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
+    Invoke-Ffmpeg $ffargs $path $s.Name
 }
 
 Write-Output '--- result ---'
