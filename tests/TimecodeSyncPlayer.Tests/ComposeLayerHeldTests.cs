@@ -76,7 +76,7 @@ public sealed class ComposeLayerHeldTests
     }
 
     [SkippableFact]
-    public void BlackGap_DrawsBlack_AndKeepsLastVideoCanvas()
+    public void BlackGap_DrawsBlack_AndKeepsBlackAsHeldCanvas()
     {
         using GpuEnvironment? env = GpuEnvironment.TryCreate();
         Skip.If(env is null, "D3D11 デバイスを作成できない環境");
@@ -92,13 +92,13 @@ public sealed class ComposeLayerHeldTests
         black.G.Should().BeLessThan(0.02f);
         black.B.Should().BeLessThan(0.02f);
 
-        // Black gap の黒は「最後の映像キャンバス」を置き換えない。ギャップを抜けた直後に
-        // 新フレームが届くまでは直前の絵（前トラックの最終フレーム）を保持する。
+        // Held = 直前に合成したキャンバスそのもの（黒を含む）。Black ギャップ明けで
+        // 新フレームが届くまでは黒のまま（ギャップ前の映像を一瞬戻さない）。
         layer.Compose(target.Surface, OutputGapMode.None, new ClipPlacement(null), false, default, 0, null);
         Color4 held = env.ReadCenterPixel(target);
-        held.G.Should().BeGreaterThan(0.9f, "直前の映像キャンバス（緑）を保持する");
-        held.R.Should().BeLessThan(0.1f);
-        held.B.Should().BeLessThan(0.1f);
+        held.R.Should().BeLessThan(0.02f, "Black ギャップの黒が最後のキャンバスとして続く");
+        held.G.Should().BeLessThan(0.02f);
+        held.B.Should().BeLessThan(0.02f);
     }
 
     private sealed class SolidSource : IDisposable
