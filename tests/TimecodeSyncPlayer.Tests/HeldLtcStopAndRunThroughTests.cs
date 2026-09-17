@@ -63,6 +63,40 @@ public sealed class HeldLtcStopAndRunThroughTests
     }
 
     [Fact]
+    public void StopMode_HeldDuplicateAfterLastAccepted_LandsOnTheHeldValue()
+    {
+        // D27-d: 着地目標は「保持として届いている値（Duplicate）」にする。直前の受理値では
+        // 保持値に 1 フレーム届かない（R-1 で 1 フレーム手前に停止）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock, enableCorrection: true) { SignalLossMode = LtcSignalLossMode.Stop };
+        h.AddTrack("first", 0);
+        h.ChangeMode(SyncMode.Single);
+        h.ManualPlay();
+
+        // 受理済みの値は 1.04 まで。保持値 1.08 は Duplicate として届いている。
+        h.Controller.ReceiveProcessedFrame(Processed(1.00, TimecodeFrameDiagnosticStatus.Normal), 10_000);
+        h.Controller.ReceiveProcessedFrame(Processed(1.04, TimecodeFrameDiagnosticStatus.Normal), 10_040);
+        h.Controller.ReceiveProcessedFrame(Processed(1.08, TimecodeFrameDiagnosticStatus.Duplicate), 10_120);
+        h.Controller.ReceiveProcessedFrame(Processed(1.08, TimecodeFrameDiagnosticStatus.Duplicate), 10_200);
+        h.Operations.Clear();
+
+        Tick(h, clock, 3);
+
+        h.IsPaused.Should().BeTrue();
+        h.Operations.Where(o => o.Name == "seek")
+            .Should().ContainSingle("保持で停止したときに保持値へ 1 回だけ着地する")
+            .Which.Value.Should().BeApproximately(1.08, 0.001,
+                "着地目標は保持として届いた値（1.08）で、直前の受理値（1.04）ではない");
+        h.DisplayStates[^1].PauseReason.Should().Be("タイムコード停止で停止中");
+    }
+
+    private static LtcFrameProcessingResult Processed(double seconds, TimecodeFrameDiagnosticStatus status) =>
+        new("scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
+            new TimecodeFrameDiagnosticResult(status, 0, 0),
+            ShouldApplySync: status is TimecodeFrameDiagnosticStatus.Normal or TimecodeFrameDiagnosticStatus.Initial,
+            ShouldLogFps: false);
+
+    [Fact]
     public void StopMode_SilentLoss_PausesWithoutLanding()
     {
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
