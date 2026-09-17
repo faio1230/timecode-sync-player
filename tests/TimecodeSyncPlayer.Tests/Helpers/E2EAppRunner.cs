@@ -11,6 +11,12 @@ namespace TimecodeSyncPlayer.Tests.Helpers;
 
 internal sealed class E2EAppRunner : IDisposable
 {
+    /// <summary>出力トレースの環境変数。値はフォルダ名。</summary>
+    private const string OutputTraceVariable = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
+
+    private static readonly object TraceGate = new();
+    private static int _traceLaunchNumber;
+
     private readonly UIA3Automation _automation;
     private readonly Process _process;
 
@@ -162,6 +168,30 @@ internal sealed class E2EAppRunner : IDisposable
     public static Process StartProcess(string exePath, string arguments)
         => StartProcess(exePath, arguments, settingsFilePath: null);
 
+    /// <summary>
+    /// 出力トレースを起動ごとの別フォルダへ逃がす。アプリは manifest.json を新規作成でしか
+    /// 書かないため、1 つのフォルダを共有すると 2 つ目以降のインスタンスが終了時に
+    /// 「出力トレースの保存に失敗しました（manifest.json already exists）」で捨てられる。
+    /// 呼び出し側が明示的にフォルダを指定しているときは触らない。
+    /// </summary>
+    private static void IsolateOutputTrace(ProcessStartInfo startInfo, IReadOnlyDictionary<string, string?>? environment)
+    {
+        if (environment != null && environment.ContainsKey(OutputTraceVariable))
+            return;
+        if (!startInfo.Environment.TryGetValue(OutputTraceVariable, out string? root) || string.IsNullOrWhiteSpace(root))
+            return;
+
+        int number;
+        lock (TraceGate)
+        {
+            number = ++_traceLaunchNumber;
+        }
+
+        string directory = Path.Combine(root, $"{DateTime.Now:HHmmss}-{number:D3}");
+        Directory.CreateDirectory(directory);
+        startInfo.Environment[OutputTraceVariable] = directory;
+    }
+
     public static Process StartProcess(string exePath, string arguments, string? settingsFilePath,
         IReadOnlyDictionary<string, string?>? environment = null)
     {
@@ -182,6 +212,8 @@ internal sealed class E2EAppRunner : IDisposable
                 else startInfo.Environment[entry.Key] = entry.Value;
             }
         }
+        IsolateOutputTrace(startInfo, environment);
+
         string? settingsDirectory = null;
         if (string.IsNullOrWhiteSpace(settingsFilePath))
         {
