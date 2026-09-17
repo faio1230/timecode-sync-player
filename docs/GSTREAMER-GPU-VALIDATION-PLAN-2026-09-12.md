@@ -3014,3 +3014,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - 原因（親のコード読み）: `OutputEngine.SyncGStreamerGeneration()` が shim の世代変化で `ClearHeld()` し、新世代の最初のフレームまで `NotReady`。`ComposeLayerPolicy` は gap None で取得も Held も無いと `DrawBlack`。Held がリングの面を参照しているため世代切替で捨てる設計だった
 - 方針: Held を合成側が所有する複製（毎 tick のキャンバス複製、ping-pong）にし、黒は gap = Black のときだけ。トラック切替中も直前の絵を保持。指示 `docs/prompts/2026-09-17-D26-no-black-flash-on-seek.md`（除去担当）。E2E にジャンプ中の黒検出（C-1 / C-2、50ms 間隔、黒 0 枚）を追加
+
+## D27: タイムコードが「止まった」（値が進まない保持 LTC）ときの停止 / ランスルーの扱い（2026-09-17 17:30、利用者の仕様）
+
+- 仕様（利用者）: 「タイムコードが止まった時に動画も停止するか、走り続けるか。ランスルーは走り続けて、停止は止まる」
+- 現状: 信号断（`LtcSignalLossMode`、タイムアウト既定 250ms）は**無音（解読なし）でだけ**発火。同じ値が続く保持 LTC（Duplicate）は信号断でないため、Stop モードでも動画が走り続ける（S-2 の観測はこれ）。既存 E2E の Stop / RunThrough 4 本は無音の信号断だけを確認している
+- 注意: シナリオ E2E は `LtcSignalLossModeCombo` の index 0 = **RunThrough** で回している。S-2 の「保持中は位置が保持値 ±0.3」という期待は RunThrough では成立しない（走り続けるのが仕様）。S-2 は Stop モードで回すか、RunThrough なら着地だけを見るように直す
+- 対処: `docs/prompts/2026-09-17-D27-held-timecode-stop-and-runthrough.md`（同期担当、S-4 の後・D24/D25 の前）。保持を「タイムコード停止」として信号断と同じ扱いにし、Stop は一時停止・RunThrough は継続、復帰で再同期。E2E に R-1〜R-4 を追加
