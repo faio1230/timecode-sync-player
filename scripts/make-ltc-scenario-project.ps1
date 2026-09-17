@@ -18,8 +18,11 @@
 # M1, M2, ... in name order. Without -Media the first -Tracks of them are used.
 # With -Media (e.g. -Media M1,M3,M5) exactly those symbols are used, in the given
 # order, and each track is named by its symbol, so a symbol always means the same
-# file of the folder. Every track uses MediaIn 0 and MediaOut = min(SegmentSeconds, duration),
-# so material shorter than SegmentSeconds is used as-is. The timeline starts with
+# file of the folder. Every track uses MediaIn = MediaInOffsetSeconds (default 0) and
+# MediaOut = MediaIn + min(SegmentSeconds, duration - MediaIn), so material shorter
+# than MediaIn + SegmentSeconds is used up to its end. -MediaInOffsetSeconds skips an
+# intro (for example a black first frame that the reference-image checks cannot tell
+# apart from a black gap); a video not longer than the offset stops with an error. The timeline starts with
 # a 5 s offset and keeps a 5 s gap after every track.
 #
 # NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
@@ -32,8 +35,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Out,
     [int]$Tracks = 3,
-    [string]$Media = '',
+    [string[]]$Media = @(),
     [double]$SegmentSeconds = 20,
+    [double]$MediaInOffsetSeconds = 0,
     [string]$FfmpegDir = 'C:\Program Files\ffmpeg\bin'
 )
 $ErrorActionPreference = 'Stop'
@@ -47,6 +51,9 @@ if ($Tracks -lt 1 -or $Tracks -gt 7) {
 }
 if ($SegmentSeconds -le 0) {
     throw 'SegmentSeconds must be positive'
+}
+if ($MediaInOffsetSeconds -lt 0 -or [double]::IsNaN($MediaInOffsetSeconds) -or [double]::IsInfinity($MediaInOffsetSeconds)) {
+    throw 'MediaInOffsetSeconds must be zero or positive'
 }
 
 $Out = [System.IO.Path]::GetFullPath($Out)
@@ -78,6 +85,8 @@ $allFiles = @(Get-ChildItem -LiteralPath $MediaDir -File |
 
 # Selection: list of @{ Symbol; File }. Symbols never name the files.
 $selection = @()
+# -Media accepts "M1,M3,M5" (from -File) and M1,M3,M5 (an array inside PowerShell).
+$Media = @($Media -join ',')[0]
 if ([string]::IsNullOrWhiteSpace($Media)) {
     if ($allFiles.Count -lt $Tracks) {
         throw "MediaDir contains fewer than $Tracks video files (mp4/mov/mkv/mxf/ts)"
@@ -117,21 +126,26 @@ foreach ($selected in $selection) {
     if ($LASTEXITCODE -ne 0) { throw "ffprobe failed for track $symbol" }
     $duration = [double]::Parse(($durationText | Select-Object -First 1).Trim(), $invariant)
     if ($duration -le 0) { throw "ffprobe returned no duration for track $symbol" }
-    $used = [Math]::Min($SegmentSeconds, $duration)
+    if ($duration -le $MediaInOffsetSeconds) {
+        throw ('track ' + $symbol + ' is ' + $duration.ToString('F3', $invariant) +
+            ' s long, not longer than MediaInOffsetSeconds ' + $MediaInOffsetSeconds.ToString('F3', $invariant) + ' s')
+    }
+    $mediaIn = $MediaInOffsetSeconds
+    $used = [Math]::Min($SegmentSeconds, $duration - $mediaIn)
 
     $trackList += [ordered]@{
         id             = ('aaaaaaaa-0000-0000-0000-{0:d12}' -f $index)
         filePath       = $file.FullName.Substring($outDirPrefix.Length)
         name           = $symbol
-        mediaIn        = ([TimeSpan]::Zero).ToString('c')
-        mediaOut       = ([TimeSpan]::FromSeconds($used)).ToString('c')
+        mediaIn        = ([TimeSpan]::FromSeconds($mediaIn)).ToString('c')
+        mediaOut       = ([TimeSpan]::FromSeconds($mediaIn + $used)).ToString('c')
         timelineOffset = ([TimeSpan]::FromSeconds($offset)).ToString('c')
         mediaDuration  = ([TimeSpan]::FromSeconds($duration)).ToString('c')
         syncOffset     = ([TimeSpan]::Zero).ToString('c')
         isEnabled      = $true
     }
     Write-Output ($symbol + ': duration ' + $duration.ToString('F3', $invariant) +
-        's, used ' + $used.ToString('F3', $invariant) + 's, offset ' + ([TimeSpan]::FromSeconds($offset)).ToString('c'))
+        's, in ' + $mediaIn.ToString('F3', $invariant) + 's, used ' + $used.ToString('F3', $invariant) + 's, offset ' + ([TimeSpan]::FromSeconds($offset)).ToString('c'))
     $offset += $used + $gap
 }
 
