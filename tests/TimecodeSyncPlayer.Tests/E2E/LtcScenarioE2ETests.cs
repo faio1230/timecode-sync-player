@@ -69,6 +69,8 @@ public sealed class LtcScenarioE2ETests
         double low = scenario.A.Start + 3;
         double high = Math.Min(scenario.A.Start + 15, scenario.A.End - 0.5);
         scenario.SetSync(true);
+        // D27: 停止モードで回す。保持中は位置が保持値で止まる（ランスルーでは走り続けるのが仕様）。
+        scenario.SetSignalLossMode(stop: true);
 
         int holds = 0;
         int seeksBefore = scenario.CountLogMatches(@"Timecode sync seek .*success=true", RegexOptions.IgnoreCase);
@@ -147,6 +149,113 @@ public sealed class LtcScenarioE2ETests
         int loadedOther = scenario.CountLogMatchesSince(@"Playlist track loaded index=[12]", holdStartedAt);
         scenario.Journal.Write("switch-observation", details: new { loadedOther, loadedIndex = scenario.LoadedTrackIndex() });
         loadedOther.Should().Be(0, "Single ではアクティブ以外へ切り替わらない");
+    });
+
+    // ---- R: 保持 LTC（タイムコード停止）の停止 / ランスルー（D27） ----
+
+    [SkippableFact(Timeout = 240_000)]
+    public void R1_StopMode_HeldLtc_PausesAndHoldsPosition() => Run("R-1", continueMode: true, blackGap: true, scenario =>
+    {
+        const double timeoutSeconds = 0.25; // AppSettings.DefaultLtcSignalLossTimeoutMs
+        double start = scenario.A.Start + 3;
+        double target = scenario.A.Start + 7;
+        double expectedPosition = scenario.A.TimelineToMedia(target);
+        scenario.SetSync(true);
+        scenario.SetSignalLossMode(stop: true);
+
+        scenario.Play(start, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
+        scenario.PlayHeld(target, 3.5);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 6, "LTC が保持値に到達");
+        DateTime holdObservedAt = DateTime.Now;
+        scenario.WaitUntil(() => scenario.IsPaused(), timeoutSeconds + scenario.OneFrame + 0.5,
+            "保持の検出で一時停止");
+        double pauseLatencySeconds = (DateTime.Now - holdObservedAt).TotalSeconds;
+        scenario.Journal.Write("hold-pause", details: new
+        {
+            target,
+            pauseLatencySeconds,
+            position = scenario.Position(),
+            ltc = scenario.LtcSeconds(),
+        });
+
+        // タイマー間隔 100ms と UIA 読みの遅れを含めた上限（+1 フレーム + タイマー + 読み）。
+        pauseLatencySeconds.Should().BeLessThanOrEqualTo(timeoutSeconds + scenario.OneFrame + 0.35,
+            $"{timeoutSeconds:F2}s + 1 フレーム以内の一時停止（観測 {pauseLatencySeconds * 1000.0:F0}ms）");
+        scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedPosition) <= scenario.OneFrame,
+            timeoutSeconds + scenario.OneFrame + 1.0, "停止位置が保持値");
+        double stoppedPosition = scenario.Position();
+        Thread.Sleep(1500);
+        Math.Abs(scenario.Position() - stoppedPosition).Should().BeLessThanOrEqualTo(scenario.OneFrame,
+            "保持中は停止位置が動かない");
+        scenario.WaitTrackPicture("r1-hold", scenario.A, 2, "保持中は A の本文");
+    });
+
+    [SkippableFact(Timeout = 240_000)]
+    public void R2_StopMode_HeldThenResent_ResumesAndFollows() => Run("R-2", continueMode: true, blackGap: true, scenario =>
+    {
+        const double timeoutSeconds = 0.25;
+        double start = scenario.A.Start + 3;
+        double target = scenario.A.Start + 7;
+        scenario.SetSync(true);
+        scenario.SetSignalLossMode(stop: true);
+
+        scenario.Play(start, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
+        scenario.PlayHeld(target, 3.0);
+        scenario.WaitUntil(() => scenario.IsPaused(), timeoutSeconds + scenario.OneFrame + 0.5,
+            "保持の検出で一時停止");
+
+        scenario.Play(target, 8.0);
+        scenario.WaitUntil(() => !scenario.IsPaused(), 4, "送出再開で再生が復帰");
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            8, "復帰後は LTC に追従");
+    });
+
+    [SkippableFact(Timeout = 240_000)]
+    public void R3_RunThrough_HeldLtc_KeepsPlaying() => Run("R-3", continueMode: true, blackGap: true, scenario =>
+    {
+        double start = scenario.A.Start + 3;
+        double target = scenario.A.Start + 7;
+        scenario.SetSync(true);
+        scenario.SetSignalLossMode(stop: false);
+
+        scenario.Play(start, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
+        scenario.PlayHeld(target, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 6, "LTC が保持値に到達");
+        double before = scenario.Position();
+        Thread.Sleep(3000);
+        double advanced = scenario.Position() - before;
+        scenario.Journal.Write("run-through-hold", details: new { target, advanced });
+        advanced.Should().BeGreaterThanOrEqualTo(2.5, "ランスルーは保持中も走り続ける");
+        scenario.IsPaused().Should().BeFalse();
+    });
+
+    [SkippableFact(Timeout = 240_000)]
+    public void R4_RunThrough_HeldThenResent_Resyncs() => Run("R-4", continueMode: true, blackGap: true, scenario =>
+    {
+        double start = scenario.A.Start + 3;
+        double target = scenario.A.Start + 7;
+        scenario.SetSync(true);
+        scenario.SetSignalLossMode(stop: false);
+
+        scenario.Play(start, 4.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
+        scenario.PlayHeld(target, 3.0);
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.001, 6, "LTC が保持値に到達");
+        Thread.Sleep(2000);
+
+        scenario.Play(target, 8.0);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.TimelineToMedia(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            8, "再送出で LTC へ再同期（ジャンプで戻る）");
+        scenario.Journal.Write("run-through-resync", details: new
+        {
+            ltc = scenario.LtcSeconds(),
+            position = scenario.Position(),
+        });
     });
 
     // ---- C: Continue のジャンプ ----
@@ -622,6 +731,12 @@ public sealed class LtcScenarioE2ETests
             Journal.Write("hold", details: new { target = targetSeconds, observed = LtcSeconds() });
         }
 
+        /// <summary>D27: 保持 LTC を送る。受信待ちは呼び出し側が行う（停止の観測を先に始めるため）。</summary>
+        public void PlayHeld(double targetSeconds, double durationSeconds) =>
+            Signal.PlayHeld(targetSeconds, LtcFps, TimeSpan.FromSeconds(Math.Max(1.0, durationSeconds)));
+
+        public bool IsPaused() => App.Button("BtnPlay").Name == "▶";
+
         private static LtcTimecode ToTimecode(double seconds)
         {
             int frame = (int)Math.Round(seconds * LtcFps);
@@ -658,6 +773,16 @@ public sealed class LtcScenarioE2ETests
             string expected = black ? "Black" : "Freeze";
             WaitUntil(() => combo.SelectedItem?.Name.Contains(expected, StringComparison.Ordinal) == true,
                 5, $"ギャップ動作 {expected}");
+        }
+
+        /// <summary>D27: 信号断時の動作を明示する（既定はランスルー）。</summary>
+        public void SetSignalLossMode(bool stop)
+        {
+            ComboBox combo = App.Combo("LtcSignalLossModeCombo");
+            combo.Select(stop ? 1 : 0);
+            string expected = stop ? "停止" : "ランスルー";
+            WaitUntil(() => combo.SelectedItem?.Name.Contains(expected, StringComparison.Ordinal) == true,
+                5, $"信号断時の動作 {expected}");
         }
 
         private void Pause()

@@ -7,6 +7,18 @@ internal enum LtcSignalLossAction
     ResumeAndSync
 }
 
+/// <summary>
+/// D27: 損失（Loss）と判定した理由。無音（信号断）か、解読は続いているが値が進まない
+/// 保持（タイムコード停止）か。停止モードの表示文言と、停止位置を保持値へ合わせる
+/// 1 回の着地の判断に使う。
+/// </summary>
+internal enum LtcSignalLossReason
+{
+    None,
+    SignalLoss,
+    TimecodeHeld
+}
+
 internal sealed record LtcSignalLossContext(
     LtcSignalLossMode Mode,
     bool SyncEnabled,
@@ -38,6 +50,8 @@ internal sealed class LtcSignalLossPolicy
     private readonly TimeSpan _timeout;
     private readonly int _resumeFrameCount;
     private long? _lastValidFrameAtMilliseconds;
+    private long? _lastHeldFrameAtMilliseconds;
+    private LtcSignalLossReason _reason;
     private bool _isLost;
     private bool _pausedByPolicy;
     private bool _manualResumeSuppressesPause;
@@ -59,9 +73,14 @@ internal sealed class LtcSignalLossPolicy
     public bool IsLost => _isLost;
     public bool IsPauseOwned => _pausedByPolicy;
 
+    /// <summary>D27: 直近の損失判定の理由（保持か無音か）。</summary>
+    public LtcSignalLossReason Reason => _reason;
+
     public void Reset()
     {
         _lastValidFrameAtMilliseconds = null;
+        _lastHeldFrameAtMilliseconds = null;
+        _reason = LtcSignalLossReason.None;
         _isLost = false;
         _pausedByPolicy = false;
         _manualResumeSuppressesPause = false;
@@ -82,6 +101,8 @@ internal sealed class LtcSignalLossPolicy
         if (!_isLost)
         {
             _lastValidFrameAtMilliseconds = receivedAtMilliseconds;
+            _lastHeldFrameAtMilliseconds = null;
+            _reason = LtcSignalLossReason.None;
             _consecutiveResumeFrames = 0;
             return LtcSignalLossAction.None;
         }
@@ -99,6 +120,7 @@ internal sealed class LtcSignalLossPolicy
             return LtcSignalLossAction.None;
 
         _isLost = false;
+        _reason = LtcSignalLossReason.None;
         _consecutiveResumeFrames = 0;
         _manualResumeSuppressesPause = false;
         bool shouldResume = _pausedByPolicy;
@@ -107,6 +129,24 @@ internal sealed class LtcSignalLossPolicy
         return shouldResume
             ? LtcSignalLossAction.ResumeAndSync
             : LtcSignalLossAction.None;
+    }
+
+    /// <summary>
+    /// D27: 解読は続いているが値が進まない保持フレーム（Duplicate）の到着を記録する。
+    /// 進行の時計（_lastValidFrameAtMilliseconds）は進めないので、保持が
+    /// <see cref="_timeout"/> 続けば Evaluate が信号断と同じ損失として扱う。
+    /// 損失の理由を「保持」に分けるためだけの観測で、判定の閾値は変えない。
+    /// </summary>
+    public void ObserveHeldFrame(long receivedAtMilliseconds, LtcSignalLossContext context)
+    {
+        if (!context.IsMonitoring)
+        {
+            Reset();
+            return;
+        }
+
+        ObservePlaybackState(context);
+        _lastHeldFrameAtMilliseconds = receivedAtMilliseconds;
     }
 
     public LtcSignalLossAction Evaluate(long nowMilliseconds, LtcSignalLossContext context)
@@ -128,6 +168,11 @@ internal sealed class LtcSignalLossPolicy
                 _consecutiveResumeFrames = 0;
             }
 
+            // D27: 保持フレームが途切れたら理由を信号断へ下げる（無音になった後の Jump を
+            // 保持からの復帰として数えないため）。
+            if (_reason == LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(nowMilliseconds))
+                _reason = LtcSignalLossReason.SignalLoss;
+
             return EvaluatePause(context);
         }
 
@@ -137,8 +182,19 @@ internal sealed class LtcSignalLossPolicy
 
         _isLost = true;
         _consecutiveResumeFrames = 0;
+        _reason = WasHeldRecently(nowMilliseconds)
+            ? LtcSignalLossReason.TimecodeHeld
+            : LtcSignalLossReason.SignalLoss;
         return EvaluatePause(context);
     }
+
+    /// <summary>
+    /// D27: 損失を確定した時点で直近に保持フレームが届いていれば「タイムコード停止」。
+    /// 無音なら保持フレームは無い（または古い）ので「信号断」になる。
+    /// </summary>
+    private bool WasHeldRecently(long nowMilliseconds) =>
+        _lastHeldFrameAtMilliseconds is long heldAt &&
+        ElapsedMilliseconds(heldAt, nowMilliseconds) <= _timeout.TotalMilliseconds;
 
     private LtcSignalLossAction EvaluatePause(LtcSignalLossContext context)
     {

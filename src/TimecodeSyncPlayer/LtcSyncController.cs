@@ -363,6 +363,17 @@ internal sealed class LtcSyncController
         string applyReason;
         if (!processed.ShouldApplySync)
         {
+            // D27: 解読は続いているが値が進まない保持（Duplicate）を信号停止の判定へ伝える。
+            // 無音（フレームが届かない）と同じ経路で損失になり、損失の理由だけが分かれる。
+            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate)
+                _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
+            // D27: 保持からの復帰では、値が動き出した Jump も有効フレームとして数える
+            // （保持中は ObserveValidFrame が呼ばれないため、復帰のきっかけが無くなる）。
+            // ラッチ済みの Jump（連続する Jump の 2 枚目以降）でも数える。無音からの Jump は
+            // 数えない（既存どおり有効フレーム N 枚を要求する）。
+            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump &&
+                _signalLoss.IsLost && _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
+                ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
             // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump && !_jumpAppliedOnce)
             {
@@ -406,7 +417,8 @@ internal sealed class LtcSyncController
         _lastAppliedLtcSeconds = effectiveSeconds;
         if (applyOnce)
         {
-            // 診断 Jump・保持値の変更は信号回復の有効フレームに数えない（ObserveValidFrame を呼ばない）。
+            // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
+            // （ObserveValidFrame を呼ばない）。損失中の Jump だけは上の D27 の経路で数える。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
             RequestSyncEffective(effectiveSeconds);
             ApplyCorrection(effectiveSeconds);
@@ -604,7 +616,7 @@ internal sealed class LtcSyncController
     {
         LtcDisplayState display = LtcDisplayStateFormatter.Format(
             _monitoring.IsDetectionActive(_effects.GetContext().IsMonitoring), _signalLoss.IsLost, _formatText);
-        _effects.ApplyDisplay(display, LtcSignalLossPauseReasonFormatter.Format(_signalLoss.IsPauseOwned));
+        _effects.ApplyDisplay(display, LtcSignalLossPauseReasonFormatter.Format(_signalLoss.IsPauseOwned, _signalLoss.Reason));
     }
 
     private void ApplySignalLossAction(LtcSignalLossAction action)
@@ -615,9 +627,53 @@ internal sealed class LtcSyncController
         _effects.SetSignalLossPaused(pause);
         LtcSyncContext state = _effects.GetContext();
         if (pause)
-            Log.Information("LTC signal lost: playback paused timeoutMs={TimeoutMs}", state.SignalLossTimeoutMilliseconds);
+        {
+            Log.Information(
+                "LTC signal lost: playback paused timeoutMs={TimeoutMs} reason={Reason}",
+                state.SignalLossTimeoutMilliseconds, _signalLoss.Reason);
+            // D27: 保持（タイムコード停止）で止めるときは、停止位置を保持値へ 1 回だけ着地させる。
+            // 無音（信号断）では着地先の値が無いので何もしない。
+            if (_signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
+                ReapplyHeldValueOnPause();
+        }
         else
+        {
             Log.Information("LTC signal restored: playback resumed resumeFrames={ResumeFrames}", state.SignalResumeFrames);
+        }
+    }
+
+    /// <summary>
+    /// D27: 保持で一時停止したときの 1 回の着地。最後に受理したタイムコード（保持値）へ
+    /// シークし、フレームが保持時刻に対応した位置で止まるようにする。同期エンジンの
+    /// デバウンス・保留状態には依存しない（停止時の 1 回だけ）。
+    /// </summary>
+    private void ReapplyHeldValueOnPause()
+    {
+        if (_lastAcceptedLtcSeconds is not double held || _effects.SeekTo == null)
+            return;
+        LtcSyncContext state = _effects.GetContext();
+        if (!state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
+            return;
+
+        double target;
+        if (state.Mode == SyncMode.Continue)
+        {
+            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(held);
+            if (result.Status != TimelineQueryStatus.OnTrack)
+                return;
+            target = result.MediaPositionSeconds;
+        }
+        else
+        {
+            target = Math.Clamp(held, 0, state.DurationSeconds);
+        }
+
+        if (_effects.SeekTo(target))
+        {
+            _syncService.ReportSeekSent(target);
+            Log.Information(
+                "LTC timecode held: landing seek issued target={Target:F3} ltc={Ltc:F3}", target, held);
+        }
     }
 
     private SyncRequestResult ApplySync(double seconds, bool gapDisplayOnly = false)

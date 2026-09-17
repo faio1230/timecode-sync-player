@@ -367,6 +367,119 @@ public class LtcSignalLossPolicyTests
         invalidFrames.Should().Throw<ArgumentOutOfRangeException>();
     }
 
+    // ---- D27: 保持（値が進まない LTC） ----
+
+    [Fact]
+    public void Evaluate_AfterHeldFrames_ReportsTimecodeHeldReason()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(100), context);
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(249), context).Should().Be(LtcSignalLossAction.None);
+
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+        policy.IsLost.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_WithoutHeldFrames_ReportsSignalLossReason()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+
+        policy.Reason.Should().Be(LtcSignalLossReason.SignalLoss);
+    }
+
+    [Fact]
+    public void ObserveValidFrame_AfterHeldLoss_ResumesAndClearsReason()
+    {
+        var policy = CreatePolicy(resumeFrames: 2);
+        LtcSignalLossContext receiving = Context();
+        LtcSignalLossContext paused = receiving with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, receiving);
+        policy.ObserveHeldFrame(At(100), receiving);
+        policy.Evaluate(At(250), receiving).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+
+        policy.ObserveValidFrame(At(300), paused).Should().Be(LtcSignalLossAction.None);
+        policy.ObserveValidFrame(At(340), paused).Should().Be(LtcSignalLossAction.ResumeAndSync);
+        policy.Reason.Should().Be(LtcSignalLossReason.None);
+        policy.IsLost.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Evaluate_HeldFramesInRunThrough_DoesNotPauseAndKeepsHeldReason()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context() with { Mode = LtcSignalLossMode.RunThrough };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(150), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.None);
+
+        policy.IsLost.Should().BeTrue();
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+        policy.IsPauseOwned.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Evaluate_HeldThenSilentFrames_DowngradesReasonToSignalLoss()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+
+        policy.Evaluate(At(500), context with { IsPlaybackPaused = true }).Should().Be(LtcSignalLossAction.None);
+        policy.Reason.Should().Be(LtcSignalLossReason.SignalLoss,
+            "保持フレームが途切れたら無音として扱う（Jump を復帰に数えない前提）");
+    }
+
+    [Fact]
+    public void Evaluate_HeldFramesDuringGap_PausesOnFirstTickAfterGapExit()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext receiving = Context();
+
+        policy.ObserveValidFrame(Start, receiving);
+        policy.ObserveHeldFrame(At(150), receiving);
+        policy.Evaluate(At(250), receiving with { IsGapActive = true })
+            .Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeTrue();
+        policy.IsPauseOwned.Should().BeFalse();
+
+        policy.Evaluate(At(260), receiving).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+    }
+
+    [Fact]
+    public void Reset_ClearsHeldReason()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+
+        policy.Reset();
+
+        policy.Reason.Should().Be(LtcSignalLossReason.None);
+        policy.IsLost.Should().BeFalse();
+    }
+
     private static LtcSignalLossPolicy CreatePolicy(int resumeFrames = 5) =>
         new(TimeSpan.FromMilliseconds(250), resumeFrames);
 
