@@ -83,12 +83,11 @@
 
 ### 4.1 素材
 
-`scripts/make-e2e-media.ps1` に 4K の色素材を 2 本追加した（別コミット）。head 0〜1 秒・body・tail 最終 1 秒の構成は既存 3 本と同じで、12 秒。ファイル名は既存 3 本より後ろに並ぶ新規名のため、「名前順の先頭 3 本」を選ぶ既存の実行には影響しない。
+`scripts/make-e2e-media.ps1` に 4K の色素材を 3 本追加した（A/B/C の 3 トラック分。別コミット）。head 0〜1 秒（C には無し）・body・tail 最終 1 秒の構成は既存 3 本と同じで、12 秒。ファイル名は既存 3 本より後ろに並ぶ新規名のため、「名前順の先頭 3 本」を選ぶ既存の実行には影響しない。3 本とも CPU デコードになる組み合わせ。
 
 - 4K60 ProRes: `prores_ks` profile 3（422 HQ）・`yuv422p10le`・`-g 60`（CPU デコード）
 - 4K24 AV1: `libsvtav1` preset 10・`yuv420p`・`-g 24`（CPU デコード）
-
-F-4 は A/B/C の 3 トラックを使うため、2 本だけでは C が足りない。C は既存の 720p 素材を `-Media` で混ぜるか、同構成の 4K をもう 1 本追加して対応する（要判断）。
+- 4K60 ProRes（C 用）: 同じ ProRes 設定。head 色なし・tail は既存 C と同じ色
 
 ### 4.2 実行
 
@@ -113,7 +112,7 @@ scripts\run-ltc-scenarios.ps1 -MediaDir artifacts\media -Media <4K 2 本と必�
 
 ### 4.5 見込み所要
 
-- 素材生成: 4K 1 本あたり 30 秒前後（実測ベース）、2 本で 1〜2 分
+- 素材生成: 4K 1 本あたり 30 秒前後（実測ベース）、3 本で 2 分前後
 - E2E: F-4 3 サイクルで 2 分前後、F-1/F-3/F-5 を含めて 10〜20 分
 - 注意: `CheckFreeze` の待ちは 3.0 秒（`tests/TimecodeSyncPlayer.Tests/E2E/LtcScenarioE2ETests.cs:1402-1407`）でハンドラ timeout と同値。「遅れて更新」と「更新されない」の区別には、待ちを延ばした手動観測を併用する。
 
