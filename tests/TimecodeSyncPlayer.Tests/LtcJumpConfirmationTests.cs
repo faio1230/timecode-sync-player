@@ -1,4 +1,8 @@
+using System.Diagnostics;
 using FluentAssertions;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using TimecodeSyncPlayer.Tests.Helpers;
 using TimecodeSyncPlayer.Tests.Integration;
 
@@ -9,9 +13,42 @@ namespace TimecodeSyncPlayer.Tests;
 /// 現在と別トラックになる Jump は、次の 1 フレームで値の連続（同値の Duplicate または +1 フレーム）
 /// を確認してから適用する。同一トラック内の Jump は従来どおり即時。Fixed fps モードでデコーダ
 /// 推定 fps が解決 fps と食い違う Jump も未確認扱い。保持損失からの復帰も確認済み Jump に限る。
+/// D31: 確認窓の時計はサンプル時計（FrameEndTimestamp）を優先する。
 /// </summary>
+[Collection("Serilog global logger")]
 public sealed class LtcJumpConfirmationTests
 {
+    private sealed class ListSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = new();
+        public void Emit(LogEvent logEvent) { lock (Events) Events.Add(logEvent); }
+    }
+
+    private sealed class LoggerCapture : IDisposable
+    {
+        private readonly ILogger _previous;
+
+        public LoggerCapture(ListSink sink)
+        {
+            Sink = sink;
+            _previous = Log.Logger;
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+        }
+
+        public ListSink Sink { get; }
+
+        public List<LogEvent> Snapshot()
+        {
+            lock (Sink.Events) return Sink.Events.ToList();
+        }
+
+        public void Dispose() => Log.Logger = _previous;
+    }
+
+    private static bool IsApplyOnceWithReason(LogEvent logEvent, string reason) =>
+        logEvent.MessageTemplate.Text.Contains("applying the") &&
+        logEvent.Properties.TryGetValue("Reason", out LogEventPropertyValue? value) &&
+        value is ScalarValue scalar && scalar.Value?.ToString() == reason;
     private static void Raw(SyncScenarioHarness h, double seconds, long at, double detectedFps = 25.0)
     {
         int frame = (int)Math.Round(seconds * 25.0);
@@ -43,6 +80,31 @@ public sealed class LtcJumpConfirmationTests
         return (h, a, b, clock);
     }
 
+    private const long SampleClockBase = 100_000_000;
+    private static long FrameTicks => Stopwatch.Frequency / 25;
+
+    /// <summary>
+    /// D31: サンプル時計（FrameEndTimestamp）付きのフレームで同じ状態を作る。
+    /// 壁時計（受信時刻）は Tick100Milliseconds で進めても、サンプル時計は 1 フレームずつ進む。
+    /// </summary>
+    private static (SyncScenarioHarness Harness, PlaylistTrack A, PlaylistTrack B, ManualTimeProvider Clock)
+        ArrangeContinueWithAOnSampleClock()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 17, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock, sampleClockEnabled: false) { GapBehavior = GapBehavior.Black };
+        PlaylistTrack a = h.AddTrack("A", 5, 20);
+        PlaylistTrack b = h.AddTrack("B", 30, 20);
+        h.ReloadProject();
+        h.ManualPlay();
+        h.SupplyLtcFrame(7.0, SampleClockBase);
+        h.SupplyLtcFrame(7.04, SampleClockBase + FrameTicks);
+        clock.Advance(TimeSpan.FromMilliseconds(300));
+        h.SupplyLtcFrame(7.08, SampleClockBase + FrameTicks * 2);
+        clock.Advance(TimeSpan.FromMilliseconds(600));
+        h.Operations.Clear();
+        return (h, a, b, clock);
+    }
+
     [Fact]
     public void GapMappingJump_IsNotAppliedUntilTheNextFrameConfirms()
     {
@@ -58,6 +120,49 @@ public sealed class LtcJumpConfirmationTests
 
         h.IsGapActive.Should().BeTrue("+1 フレームの連続で確認できた Jump は適用する");
         h.RenderSurface.Should().Be(ScenarioRenderSurface.Black);
+    }
+
+    [Fact]
+    public void PendingJumpConfirmation_UsesTheSampleClockWhenTheWallClockIsLate()
+    {
+        using var capture = new LoggerCapture(new ListSink());
+        (SyncScenarioHarness h, _, _, _) = ArrangeContinueWithAOnSampleClock();
+
+        // ギャップ写像の Jump。サンプル時計は 1 フレーム差だが、コールバックが滞り
+        // 壁時計では 200ms 離れている（25fps の確認窓 100ms の外）。
+        h.SupplyLtcFrame(0.04, SampleClockBase + FrameTicks * 3);
+        h.Tick100Milliseconds(2);
+        h.SupplyLtcFrame(0.04, SampleClockBase + FrameTicks * 4);
+
+        List<LogEvent> events = capture.Snapshot();
+        events.Should().Contain(e => e.MessageTemplate.Text.Contains("applying the confirmed Jump frame once"),
+            "サンプル時計が 1 フレーム差なので確認成立する");
+        events.Should().NotContain(e => e.MessageTemplate.Text.Contains("dropping out-of-window pending Jump frame"));
+        events.Should().NotContain(e => IsApplyOnceWithReason(e, "held value change"),
+            "確認済み Jump は保持値の変更より先に適用する");
+        h.IsGapActive.Should().BeTrue();
+        h.RenderSurface.Should().Be(ScenarioRenderSurface.Black);
+    }
+
+    [Fact]
+    public void PendingJumpConfirmation_RejectsAFrameAfterASampleClockGap()
+    {
+        using var capture = new LoggerCapture(new ListSink());
+        (SyncScenarioHarness h, _, _, _) = ArrangeContinueWithAOnSampleClock();
+
+        // 壁時計は 100ms（25fps の確認窓の上限ちょうど）だが、サンプル時計は 600ms 空いている。
+        h.SupplyLtcFrame(0.04, SampleClockBase + FrameTicks * 3);
+        h.Tick100Milliseconds();
+        h.SupplyLtcFrame(0.04, SampleClockBase + FrameTicks * 3 + (long)(Stopwatch.Frequency * 0.6));
+
+        List<LogEvent> events = capture.Snapshot();
+        LogEvent drop = events.Last(e => e.MessageTemplate.Text.Contains("dropping out-of-window pending Jump frame"));
+        Convert.ToDouble(((ScalarValue)drop.Properties["StreamMs"]).Value).Should().BeApproximately(600.0, 1.0);
+        Convert.ToDouble(((ScalarValue)drop.Properties["WallMs"]).Value).Should().BeApproximately(100.0, 1.0);
+        events.Should().NotContain(e => e.MessageTemplate.Text.Contains("applying the confirmed Jump frame once"),
+            "サンプル時計が 600ms 空いた保留は確認に使わない");
+        events.Should().Contain(e => IsApplyOnceWithReason(e, "held value change"),
+            "拒否された次のフレームは既存の保持値の変更として処理される");
     }
 
     [Fact]

@@ -92,6 +92,7 @@ internal sealed class LtcSyncController
     // から適用する。誤デコード 1 枚でギャップ進入・トラック切替・保持復帰を起こさない。
     private double? _pendingJumpSeconds;
     private long _pendingJumpReceivedAt;
+    private long _pendingJumpFrameEndTimestamp;
     private double? _pendingSyncSeconds;
     private double _pendingSyncRawSeconds;
     private long _pendingSyncFrameEndTimestamp;
@@ -154,6 +155,7 @@ internal sealed class LtcSyncController
         _smoothAvailable = true;
         _frames.ResetDiagnostics();
         _pendingJumpSeconds = null;
+        _pendingJumpFrameEndTimestamp = 0;
         _syncService.ClearSeekState();
         ExitGapForManualControl();
         _effects.UpdateCurrentTrackLabel();
@@ -216,6 +218,7 @@ internal sealed class LtcSyncController
     {
         _pendingSyncSeconds = null;
         _pendingJumpSeconds = null;
+        _pendingJumpFrameEndTimestamp = 0;
         // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
         ResetCorrection();
     }
@@ -306,6 +309,7 @@ internal sealed class LtcSyncController
     public void FpsModeChanged()
     {
         _pendingJumpSeconds = null;
+        _pendingJumpFrameEndTimestamp = 0;
         _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
     }
 
@@ -316,6 +320,7 @@ internal sealed class LtcSyncController
         _lastHeldEffectiveSeconds = null;
         _pendingSyncSeconds = null;
         _pendingJumpSeconds = null;
+        _pendingJumpFrameEndTimestamp = 0;
         _jumpAppliedOnce = false;
         _heldReapplyDone = false;
         if (_effects.GetContext().IsMonitoring)
@@ -345,6 +350,7 @@ internal sealed class LtcSyncController
         _lastHeldEffectiveSeconds = null;
         _pendingSyncSeconds = null;
         _pendingJumpSeconds = null;
+        _pendingJumpFrameEndTimestamp = 0;
         _jumpAppliedOnce = false;
         _heldReapplyDone = false;
         if (_monitoring.MarkStopped(exception))
@@ -382,13 +388,25 @@ internal sealed class LtcSyncController
         if (_pendingJumpSeconds is double pendingJump)
         {
             _pendingJumpSeconds = null;
-            if (JumpConfirmationPolicy.IsWithinConfirmationWindow(
-                    _pendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps) &&
+            bool withinWindow = JumpConfirmationPolicy.IsWithinConfirmationWindow(
+                _pendingJumpFrameEndTimestamp, frameEndTimestamp,
+                _pendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps);
+            if (withinWindow &&
                 JumpConfirmationPolicy.IsConfirmedBy(
                     pendingJump, rawSeconds, LastTimecodeFps, processed.Diagnostic.Status))
             {
                 ApplyConfirmedJump(processed.Diagnostic.Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
                 return;
+            }
+            if (!withinWindow)
+            {
+                // D31: 窓はサンプル時計（FrameEndTimestamp）優先。壁時計（受信時刻）は参考値として出す。
+                Log.Information(
+                    "Timecode sync: dropping out-of-window pending Jump frame ltc={Ltc:F3} next={Next:F3} streamMs={StreamMs:F1} wallMs={WallMs}",
+                    pendingJump, rawSeconds,
+                    JumpConfirmationPolicy.SampleClockDifferenceMilliseconds(
+                        _pendingJumpFrameEndTimestamp, frameEndTimestamp) ?? -1.0,
+                    receivedAtMilliseconds - _pendingJumpReceivedAt);
             }
         }
 
@@ -417,6 +435,7 @@ internal sealed class LtcSyncController
                 {
                     _pendingJumpSeconds = rawSeconds;
                     _pendingJumpReceivedAt = receivedAtMilliseconds;
+                    _pendingJumpFrameEndTimestamp = frameEndTimestamp;
                     Log.Information(
                         "Timecode sync: holding unconfirmed Jump frame ltc={Ltc:F3} reason={Reason}",
                         rawSeconds, deferReason);
