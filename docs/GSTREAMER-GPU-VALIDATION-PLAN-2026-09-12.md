@@ -3065,3 +3065,9 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 原因（再現テスト先行で確定）: D26 の `SaveFreeze` は「確定 tick（gap=GapFreeze）に新規取得したソース画像」だけを保存元にしたが、目標フレームは Freeze 進入中（gap=Hold）に取得され、shim は同じリースを返し続けるので以降の tick は `AcquireGStreamer` が `stamp.Sequence == lastGstSequence` で画像を返さない（acquired == null）→ 確定 tick で `SaveFreeze` が走らず frozen が null → Policy が Held（直前キャンバス）を描き続ける。D21-b は進入中に保持したソース画像（旧 held）から保存していたため成立していた。F-1 はシーク不要でキャンバス自体が最終フレームなので通過
 - 修正: `ComposeLayer` に Held のキャンバスとは別に「取得済みソース画像 + 位置 + 配置」を追跡する `sourceFrame` を追加。Freeze 確定は確定 tick の新規フレームを優先し、無ければ追跡画像の PTS が目標に一致するときだけ保存（D26 の位置ゲートは維持）。`OutputEngine` は shim の世代切替とソース差し替え時に追跡画像を破棄（リング面を世代をまたいで参照しない不変条件を維持）
 - 単体: 新規 3 件（修正前は赤）、非E2E 1725 合格。実機（F-1〜F-5、G-1〜G-6、C-1/C-2 の黒 0 枚、V5、V6 短縮）は D27 の検証の後
+
+### D27-b の実装（同期担当、agent-a `ed69124` / `3082f6b`、2026-09-17 21:10、実機待ち）
+
+- S-2: `LtcSignalLossPolicy.ObserveJumpFrame` — 損失理由が TimecodeHeld のときだけ Jump 1 枚で損失を解除して復帰（ResumeAndSync）し、復帰フレーム時刻を進行時計にする（保持が続けば改めてタイムアウトで損失）。無音からの復帰は既存の N 枚のまま。コントローラは復帰時に Jump ラッチを解除し、その Jump を新値として 1 回適用（着地）。単体 6 + 統合 1（停止モードで保持 → Jump 1 枚 → 即復帰 → 保持で新値に一時停止）
+- S-4: `TimecodeSyncService` に未回収のロード解除 `_fileLoadReleasePending` を追加。解除は `TryMarkFileLoaded` の成功で立ち、誰が起こしても 1 回だけ回収できる。コントローラは受理値あり・プレイヤー準備・監視・同期 ON・非シーク・（Single は尺確定後）で解除を消費して 1 回適用。Deferred 完了に先を越されても取りこぼさない。単体 2 + 統合 1
+- 非E2E 1740 合格（+10）。実機（S-2 / S-4 / R-1〜R-4 / LTC ループ 14）は除去担当の D26-b 検証の後
