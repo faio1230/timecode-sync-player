@@ -3214,3 +3214,22 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - C-2 ×3: 3 回とも Passed、jump-black-summary 各 20 件で黒 0。R-1〜R-4、S-2: Passed。アプリログにゲートの作動 `holding unconfirmed Jump frame`（62 件、すべて track-or-gap）と `applying the confirmed Jump frame once`（61 件）
 - V3（Smooth、LTC25）: 19 本 Passed、sample steady n=1068 **平均 -29.0ms / p95-p5 35.3ms**（基準 -28.9 / 38.3）。収束 seek-a 120 / seek-b 120 / seek-c 160 / seek-back 80 / black-sweep 402 / freeze-sweep 160ms（1 フレームの確認遅延は許容内）
 - **判定: D30 解消。main に統合（D29 と合わせて 2 本目の候補ビルドへ）**
+
+## 検証機・実素材での候補 1（`0.4.2+c3f3cd3`、D29/D30 前）の結果と分類（2026-09-18 16:10、`TSP-TestMachine` の報告、親の分類）
+
+共通: prereqs OK、素材フォルダは 3 回とも全項目一致、残プロセス 0、**ERR/FTL 0、`GPU completion pending` 0、`Playback unavailable` 0、`pump deadline` 0**（D24・D28 の経路は再現せず）。LTC ループ 14/14 ×3。M2（長 GOP）・M3（VP9 4K）・M5（AV1）とも読み込みと参照採取まで到達
+
+| 回 | -Media | SUMMARY | 失敗 |
+| --- | --- | --- | --- |
+| a | M1,M4,M6 | 25 / 12 | C1 C2 G5 R1 S1 F4 F5 S2 S3 G2 S5 RealProjectGap |
+| b | M1,M3,M5 | 27 / 10 | C1 C2 G5 S3 F4 S2 S1 G2 F5 RealProjectGap |
+| c | M2,M1,M4 | 29 / 8 | C2 C1 G5 F4 S3 F1 S1 RealProjectGap |
+
+分類（親）:
+- **候補 2（D29/D30）で直る見込み**: S-2 / S-3 の position=58.5 / 43.1 / 46.0（尺で clamp = D29）。C-1 / C-2 のジャンプ中の黒（a: 3+1、b: 2+1）と G-5 の保持中の黒は、誤デコード Jump がギャップへ写像された D30 の経路の疑い → 候補 2 の結果で判定
+- **長 GOP（M2）のシーク遅延（c の C-1 / C-2 / G-5: 着地が 2.5〜3.5 秒遅い）**: 再生中の accurate シークはキーフレームから目標まで復号するため、キーフレーム 10 秒間隔の 60fps 素材では 1〜3 秒かかる。製品の仕様上の制約（現場向けの推奨: キーフレーム間隔 1〜2 秒で書き出す）。既知の制限として記載し、テストは素材の GOP に応じた許容を検討
+- **4K 実素材でのトラック切替・追従の遅れ（G-2: B の冒頭通過時に B が未ロード、S-1: 追従誤差 0.87 秒、F-1（c）: M2 のメタデータ取得で時間切れ）**: 内蔵 GPU / CPU 復号の 4K での切替時間の実測が要る → 検証機に M1/M3/M5 の切替時間と `frameUpdates` を依頼
+- **Freeze の実素材での不一致（F-4: B の後のギャップで A の tail が出る、F-5: 先頭オフセットで前サイクルの C の tail が残る）**: 直前トラック（4K）の最終フレームの読み込み → シークが遅く、Held（前の絵）が残ったまま判定窓を過ぎた疑い。切替時間の実測後に判断（D21-b の再シーク上限 / 判定窓）
+- **R-1 の停止位置ドリフト 0.067（2 フレーム）**: 一時停止後に位置が 2 フレーム動く。軽微、要観察
+- **RealProjectGap（3 回とも TC 5.00 で「再生が進まない」）**: 生成プロジェクト（MediaIn 5 秒、4K）で最初のトラックの再生開始が遅い疑い。上記の切替時間と同根の可能性
+- **テスト側**: S-1（c）の `frameUpdates` 期待 55〜65 が 30fps 前提（M2 は 60fps、実測 121）→ 素材 fps から期待を作る。S-5（a）の `ltc=3639.960` は時間ビットの誤デコード（D30 の対象）
