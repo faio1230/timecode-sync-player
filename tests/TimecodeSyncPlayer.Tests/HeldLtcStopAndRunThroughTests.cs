@@ -177,6 +177,40 @@ public sealed class HeldLtcStopAndRunThroughTests
     }
 
     [Fact]
+    public void StopMode_HeldThenJumpToNewHold_RecoversImmediately_EvenAfterReasonDowngraded()
+    {
+        // D27-c: フレーム処理の遅延で理由が信号断へ下がっていても、直近に保持フレームが
+        // 届いていれば Jump 1 枚で復帰し、そのまま保持が続けば新しい値で再損失する。
+        (SyncScenarioHarness h, ManualTimeProvider clock) = ArrangeHeldAt204(LtcSignalLossMode.Stop);
+        Tick(h, clock, 3);
+        h.IsPaused.Should().BeTrue();
+        h.Operations.Clear();
+
+        // 保持のまま Tick だけが進み、理由が信号断へ下がる。
+        Tick(h, clock, 3);
+        // 保持フレームは届き続けている。
+        Raw(h, 2, 1, 10_700);
+
+        // Jump 1 枚で復帰（restored と同時に新しい値へ適用）。
+        Raw(h, 3, 0, 10_800);
+
+        h.IsPaused.Should().BeFalse(
+            $"保持損失の直後の Jump 1 枚で復帰する ops=[{string.Join(",", h.Operations.Select(o => o.Name))}] reason={h.DisplayStates[^1].PauseReason}");
+        h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
+
+        // その後の Duplicate が続けば新しい値で再損失する。
+        for (int i = 1; i <= 12; i++)
+        {
+            Raw(h, 3, 0, 10_800 + i * 100);
+            Tick(h, clock, 1);
+        }
+
+        h.IsPaused.Should().BeTrue("新しい値の保持が続けば損失で一時停止する");
+        h.PlaybackSeconds.Should().BeApproximately(3.0, 0.05);
+        h.DisplayStates[^1].PauseReason.Should().Be("タイムコード停止で停止中");
+    }
+
+    [Fact]
     public void RunThroughMode_ManualLoadRelease_AfterDeferredRetryStillReappliesHeldValueOnce()
     {
         // S-4: 手動ロードの解除を Tick 側の保留シーク再送が先に回収しても（尺未確定で
