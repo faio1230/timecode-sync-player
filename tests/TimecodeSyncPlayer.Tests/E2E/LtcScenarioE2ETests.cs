@@ -183,6 +183,154 @@ public sealed class LtcScenarioE2ETests
         loadedOther.Should().Be(0, "Single ではアクティブ以外へ切り替わらない");
     });
 
+    // ---- L: 連続追従の詰まり監査（L-1） ----
+
+    /// <summary>
+    /// L-1: Single モードで 1 トラック内を連続追従し、窓ごとに frameUpdates・位置の進み・
+    /// 誤差を集計して「途中で詰まらないか」を見る。対象トラック・秒数・窓長は
+    /// TCS_L1_TRACKS / TCS_L1_FOLLOW_SECONDS / TCS_L1_WINDOW_SECONDS で外から変えられる。
+    /// </summary>
+    [SkippableFact(Timeout = 900_000)]
+    public void L1_Single_ContinuousFollow_DoesNotStall() => Run("L-1", continueMode: false, blackGap: true, scenario =>
+    {
+        double requestedSeconds = FollowSecondsFromEnvironment();
+        double windowSeconds = FollowWindowSecondsFromEnvironment();
+        string[] requestedTracks = FollowTracksFromEnvironment();
+        scenario.Journal.Write("l1-plan", details: new
+        {
+            requestedSeconds,
+            windowSeconds,
+            tracks = string.Join(",", requestedTracks),
+        });
+
+        scenario.SetSync(true);
+        foreach (string token in requestedTracks)
+        {
+            TrackInfo track = ResolveFollowTrack(scenario, token);
+            // 使用尺から先頭 2 秒・末尾 2 秒の余裕を引いた長さに丸める（短すぎれば Skip）。
+            double followSeconds = Math.Min(requestedSeconds, track.Used - 4.0);
+            Skip.If(followSeconds < 30.0,
+                $"L-1 {track.Symbol}: 使用尺 {track.Used:F1}s では連続追従を 30 秒未満（{followSeconds:F1}s）しか回せない");
+            scenario.LoadTrack(track.Index);
+            scenario.EnsurePlaying();
+            RunFollowAudit(scenario, track, followSeconds, windowSeconds);
+        }
+    });
+
+    /// <summary>
+    /// L-1: 1 トラックの連続追従。着地の過渡は判定に含めず、追従に入ってから窓を取る。
+    /// 送信は判定区間より長く流し、終わったら停止して次のトラックへ持ち越さない。
+    /// </summary>
+    private static void RunFollowAudit(Scenario scenario, TrackInfo track, double followSeconds, double windowSeconds)
+    {
+        double startLtc = track.MediaIn.TotalSeconds + 2.0;
+        scenario.Play(startLtc, followSeconds + 8.0);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - track.SingleTarget(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            8, $"{track.Symbol}: 連続送出で追従に入る");
+
+        DateTime startedAt = DateTime.Now;
+        var samples = new List<FollowSample>();
+        while ((DateTime.Now - startedAt).TotalSeconds < followSeconds)
+        {
+            double elapsed = (DateTime.Now - startedAt).TotalSeconds;
+            samples.Add(new FollowSample(elapsed, scenario.LtcSeconds(), scenario.Position()));
+            Thread.Sleep(50);
+        }
+
+        // アプリの Playback perf 行（2 秒窓）の最後の 1 本を確定させてから読む。
+        Thread.Sleep(2200);
+        List<FollowPerfSegment> perf = scenario.PerfSegmentsSince(startedAt)
+            .Select(segment => new FollowPerfSegment(
+                (segment.At - startedAt).TotalSeconds, segment.ElapsedSeconds, segment.FrameUpdates))
+            .Where(segment => segment.AtSeconds <= followSeconds + 2.5)
+            .ToList();
+        scenario.Signal.Stop();
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, followSeconds, windowSeconds, track.SingleTarget);
+
+        foreach (FollowWindow window in summary.Windows)
+            scenario.Journal.Write("l1-window", details: new
+            {
+                track = track.Symbol,
+                index = window.Index,
+                atSeconds = Math.Round(window.StartSeconds, 3),
+                frameUpdates = window.FrameUpdates,
+                positionAdvance = Math.Round(window.PositionAdvance, 3),
+                maxAbsError = JsonNumberOrNull(window.MaxAbsError),
+            });
+
+        scenario.Journal.Write("l1-summary", details: new
+        {
+            track = track.Symbol,
+            usedSeconds = Math.Round(track.Used, 3),
+            followSeconds = Math.Round(followSeconds, 3),
+            windowSeconds,
+            windows = summary.Windows.Count,
+            stallUpdateWindows = summary.StallUpdateWindows,
+            stallAdvanceWindows = summary.StallAdvanceWindows,
+            maxAbsError = JsonNumberOrNull(summary.MaxAbsError),
+            meanFrameUpdates = Math.Round(summary.MeanFrameUpdates, 2),
+            expectedFrameUpdates = Math.Round(windowSeconds * track.FrameRate, 2),
+            worstUpdateWindow = WindowDetail(summary.WorstUpdates),
+            worstAdvanceWindow = WindowDetail(summary.WorstAdvance),
+            worstErrorWindow = WindowDetail(summary.WorstError),
+        });
+
+        summary.StallUpdateWindows.Should().Be(0,
+            $"{track.Symbol}: frameUpdates=0 の窓が無い（最悪 {WindowDetail(summary.WorstUpdates)}）");
+        summary.StallAdvanceWindows.Should().Be(0,
+            $"{track.Symbol}: 位置が進まない窓が無い（最悪 {WindowDetail(summary.WorstAdvance)}）");
+        summary.MaxAbsError.Should().BeLessThanOrEqualTo(PositionToleranceSeconds,
+            $"{track.Symbol}: 各窓の最大誤差が ±{PositionToleranceSeconds} 秒以内（最悪 {WindowDetail(summary.WorstError)}）");
+    }
+
+    private static string WindowDetail(FollowWindow? window) =>
+        window is not { } value
+            ? "none"
+            : $"index={value.Index} at={value.StartSeconds:F2}s updates={value.FrameUpdates} " +
+              $"advance={value.PositionAdvance:F3}s maxError={value.MaxAbsError:F3}s";
+
+    private static double? JsonNumberOrNull(double value) =>
+        double.IsFinite(value) ? Math.Round(value, 3) : null;
+
+    private static TrackInfo ResolveFollowTrack(Scenario scenario, string token)
+    {
+        // A/B/C はプロジェクトのトラック記号に関係なく 1/2/3 本目を指す（実素材でも使える）。
+        if (token.Length == 1 && token[0] is >= 'A' and <= 'C')
+            return scenario.Tracks[token[0] - 'A'];
+
+        TrackInfo? match = scenario.Tracks.FirstOrDefault(
+            candidate => string.Equals(candidate.Symbol, token, StringComparison.OrdinalIgnoreCase));
+        Skip.If(match is null, $"TCS_L1_TRACKS の '{token}' がプロジェクトのトラックに無い");
+        return match!;
+    }
+
+    private static double FollowSecondsFromEnvironment() =>
+        ReadPositiveDouble("TCS_L1_FOLLOW_SECONDS", 60.0);
+
+    private static double FollowWindowSecondsFromEnvironment() =>
+        ReadPositiveDouble("TCS_L1_WINDOW_SECONDS", 2.0);
+
+    private static string[] FollowTracksFromEnvironment()
+    {
+        string? raw = Environment.GetEnvironmentVariable("TCS_L1_TRACKS");
+        if (string.IsNullOrWhiteSpace(raw))
+            return ["A"];
+        string[] tokens = raw.Split([',', ';'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return tokens.Length > 0 ? tokens : ["A"];
+    }
+
+    private static double ReadPositiveDouble(string variable, double fallback)
+    {
+        string? raw = Environment.GetEnvironmentVariable(variable);
+        return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && value > 0
+            ? value
+            : fallback;
+    }
+
     // ---- R: 保持 LTC（タイムコード停止）の停止 / ランスルー（D27） ----
 
     [SkippableFact(Timeout = 240_000)]
