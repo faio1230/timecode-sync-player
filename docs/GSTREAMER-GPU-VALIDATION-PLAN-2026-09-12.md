@@ -3375,3 +3375,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **D34 候補（製品側）**: 異常が「キャッシュ済みプロファイルの速いロード（110〜150ms）」に集中。b G-5（M1 151.8ms → FetchMetadata 15 秒出ず timeLabel 0/0）、b G-6（position=0.000 のまま）、c C-2 c2-10（M1 110.6ms start=14.937 → position 14.000 のまま）、候補 2 のメタデータ時間切れ 4 件（113〜224ms）。同期担当が机上解析（`docs/prompts/2026-09-18-D34-analysis-fast-cached-load-dead-pipeline.md`）、検証機に shim ログ・トレースの抜粋を依頼
 - S-1 c（着地後 1 秒は rate 3.7 で追いつき、遅れ 0.4〜0.6 秒）は長 GOP の既知の制限として扱う
 - **版上げ（0.4.3）は D34 の判定まで保留**（agent-a に準備済み `6b88a8d` / `9d14ccf`）
+
+## D34: 前回成功プロファイルの再利用（attempt=0）で別素材でも残骸フレーム 1 枚で成功扱いになり caps 0x0@0 のまま返る（2026-09-18 05:08、検証機の shim ログで確定、親の判定）
+
+- shim ログ: `pad caps mismatch for profile vp9-gpu -> next attempt` の直後に `load.attempt <M1> attempt=0 profile=vp9-gpu result=ok … frames=1` → `loaded … 0x0@0.000`。直前に成功した別素材のプロファイルが attempt=0 に来たときだけ発生（成功ロード 148/155/163 件中 1〜2）。同期担当の H1（attempt=0 の teardown で前パイプラインの残骸フレームがゲートに入る）と一致
+- アプリ側: rc=0 を信じて進み、FetchMetadata が出ず（尺 −1・サイズ 0）、位置は 0 または切替前の PTS、絵は黒／旧絵（G-5・G-6・C-2 の間欠、候補 2 のメタデータ時間切れ 4 件）
+- 出力トレースは `manifest.json` 既存で保存失敗（115 起動中 105 回）→ テスト側はフォルダ分け（検証機）、製品側は連番フォルダで失敗しない（D34 項目 4）
+- 指示: `docs/prompts/2026-09-18-D34-fast-cached-load-accepts-stale-frame.md`（同期担当）。**版上げは D34 統合後**
