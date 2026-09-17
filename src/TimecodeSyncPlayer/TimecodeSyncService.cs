@@ -13,6 +13,7 @@ public sealed class TimecodeSyncService
     // ちょうど 1 回だけ回収できるようにする。解除が起きたら立て、回収したら下ろす。
     private bool _fileLoadReleasePending;
     private DateTime _fileLoadStartedAt = DateTime.MinValue;
+    private DateTime _fileLoadReleasedAt = DateTime.MinValue;
     private double _fileLoadStartPositionSeconds;
     private long _fileLoadStartedRenderedFrames;
     private SyncActionType _lastLoggedSyncAction = SyncActionType.None;
@@ -23,6 +24,12 @@ public sealed class TimecodeSyncService
     private const double FileLoadPlaybackProgressSeconds = 0.08;
     private const long FileLoadRenderedFrameProgress = 2;
     private static readonly TimeSpan FileLoadTimeout = TimeSpan.FromSeconds(5);
+    // D35: 描画フレーム・再生位置の進みを待ち続けない上限。ロード開始からこの時間が過ぎたら
+    // 進捗条件を満たさなくても解除する（停止中のロードで解除が数秒残るのを防ぐ）。
+    private static readonly TimeSpan FileLoadReleaseForceAfter = TimeSpan.FromSeconds(2);
+    // D35: 解除を回収できる鮮度。ロード直後の 1 回だけを対象にし、数秒前の値を保持開始時に
+    // 再適用して同期を壊さない（古い解除は破棄する）。
+    private static readonly TimeSpan FileLoadReleasePendingMaxAge = TimeSpan.FromSeconds(1.5);
 
     /// <summary>
     /// T9: 粗い同期シークを発行した時点の通知（<see cref="ReportSeekSent"/> と同じ）。
@@ -139,26 +146,33 @@ public sealed class TimecodeSyncService
         if (!_isLoadingFile) return true;
         if (!double.IsFinite(playbackSeconds) || playbackSeconds < 0)
             return false;
-        if (_timeProvider.GetUtcNow().UtcDateTime - _fileLoadStartedAt > FileLoadTimeout)
-        {
-            _isLoadingFile = false;
-            _fileLoadReleasePending = true;
-            _lastSyncSeekAt = _timeProvider.GetUtcNow().UtcDateTime;
-            return true;
-        }
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+        if (now - _fileLoadStartedAt > FileLoadTimeout)
+            return ReleaseFileLoad(now, "timeout");
 
         double playbackProgress = playbackSeconds - _fileLoadStartPositionSeconds;
         long renderedFrameProgress = renderedFrameCount - _fileLoadStartedRenderedFrames;
         if (playbackProgress < FileLoadPlaybackProgressSeconds ||
             renderedFrameProgress < FileLoadRenderedFrameProgress)
         {
+            // D35: 停止（保持）などで描画フレーム・再生位置が進まなくても、ロード開始から
+            // 一定時間で必ず解除する。解除後は従来どおり保持 LTC の 1 回再適用に回収される。
+            if (now - _fileLoadStartedAt >= FileLoadReleaseForceAfter)
+                return ReleaseFileLoad(now, "forced");
             return false;
         }
 
+        return ReleaseFileLoad(now, "progress");
+    }
+
+    private bool ReleaseFileLoad(DateTime now, string reason)
+    {
         _isLoadingFile = false;
         _fileLoadReleasePending = true;
-        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+        _fileLoadReleasedAt = now;
         _lastSyncSeekAt = now;                // ロード後デバウンスを再スタート
+        if (reason != "progress")
+            Serilog.Log.Information("Timecode sync: file load released ({Reason})", reason);
         return true;
     }
 
@@ -184,8 +198,16 @@ public sealed class TimecodeSyncService
 
         if (_fileLoadReleasePending)
         {
+            DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
             _fileLoadReleasePending = false;
-            return true;
+            // D35: 解除直後の 1 回だけ回収する。鮮度を過ぎた解除（保持開始の数秒前に
+            // 解除された古い値）は再適用せず破棄する。
+            if (now - _fileLoadReleasedAt <= FileLoadReleasePendingMaxAge)
+                return true;
+            Serilog.Log.Information(
+                "Timecode sync: dropping stale file load release ageMs={AgeMs:F0}",
+                (now - _fileLoadReleasedAt).TotalMilliseconds);
+            return false;
         }
 
         return false;
