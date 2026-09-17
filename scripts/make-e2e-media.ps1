@@ -118,6 +118,40 @@ foreach ($s in $scenarioSpecs) {
     if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
 }
 
+# A1 reproduction fixtures: 4K colour clips whose CPU decode can push the first
+# frame after a paused seek past the gap-freeze capture window. Same
+# head/base/tail structure as the 1280x720 fixtures above (head 0..1s, tail last
+# second), 12s long, new names only: the three fixtures above are not touched
+# and the "first three by name" selection of the scenario runner is unchanged.
+#   ProRes: prores_ks profile 3 (422 HQ), yuv422p10le, 60fps, one-second GOP.
+#   AV1:    libsvtav1 preset 10, yuv420p, 24fps, one-second GOP (CPU decode).
+$scenario4kSpecs = @(
+    @{ Name = 'ltc_d_4k60_prores.mov'; W = 3840; H = 2160; Fps = 60; Sec = 12;
+       Base = '0xFF0000'; Head = '0xFFFFFF'; Tail = '0xFFFF00';
+       Encoder = @('-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le') },
+    @{ Name = 'ltc_e_4k24_av1.mp4'; W = 3840; H = 2160; Fps = 24; Sec = 12;
+       Base = '0x00FF00'; Head = '0xFF00FF'; Tail = '0x00FFFF';
+       Encoder = @('-c:v', 'libsvtav1', '-preset', '10', '-pix_fmt', 'yuv420p') }
+)
+
+foreach ($s in $scenario4kSpecs) {
+    $path = Join-Path $OutDir $s.Name
+    if ((Test-Path $path) -and -not $Force) {
+        Write-Output ('skip (exists): ' + $s.Name)
+        continue
+    }
+    $tailStart = $s.Sec - 1
+    $filters = 'color=c=' + $s.Base + ':s=' + $s.W + 'x' + $s.H + ':r=' + $s.Fps + ':d=' + $s.Sec
+    $filters += ",drawbox=x=0:y=0:w=iw:h=ih:color=$($s.Head):t=fill:enable='between(t,0,1)'"
+    $filters += ",drawbox=x=0:y=0:w=iw:h=ih:color=$($s.Tail):t=fill:enable='between(t," + $tailStart + ',' + $s.Sec + ")'"
+    $filters += ",drawtext=fontfile='C\:/Windows/Fonts/arial.ttf':text='%{eif\:floor(t)\:d}':x=20:y=20:fontsize=96:fontcolor=black"
+    $ffargs = @('-y', '-hide_banner', '-v', 'error', '-f', 'lavfi', '-i', $filters) +
+              $s.Encoder + @('-g', "$($s.Fps)", '-an', $path)
+    Write-Output ('making: ' + $s.Name + ' (' + $s.W + 'x' + $s.H + '@' + $s.Fps + ', colour fixture)')
+    & ffmpeg @ffargs
+    if ($LASTEXITCODE -ne 0) { throw ('ffmpeg failed: ' + $s.Name) }
+}
+
 Write-Output '--- result ---'
 Get-ChildItem $OutDir -File |
     Where-Object { $_.Extension -in '.mp4', '.mkv', '.avi', '.ts' } |
