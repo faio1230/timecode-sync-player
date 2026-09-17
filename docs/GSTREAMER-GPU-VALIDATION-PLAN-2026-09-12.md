@@ -3424,3 +3424,9 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 生成素材 R-1〜R-4 ×3 = 12/12、4K 3 本 R ×3 = 11/12（サイクル 3 の R-3 ランスルー継続が advanced=2.433 で閾値 2.5 未満。再実行 4/4 で 2.733。一時停止・着地を通らない経路で、4K CPU デコードの一時的なペース落ち）、S-2・C-1・C-2 3/3
 - hold-pause の超過（R-1、着地後）: 7 ラン中 6 ラン 0.000、1 ラン +0.033（1 フレーム）。landing seek は R-1/R-2 14/14 回で発行。一時停止 34 回・着地 31 回・1 フレーム以内の省略 3 回。倍率復帰 15 件。shim `0x0@` 0 件（成功ロード 174）
 - 統合後 main: 非E2E 1890/0 相当（親が確認）、ロック規則 PASS。**判定: 統合。除去担当が統合後 main を実機確認 → 候補 6（D34+D35）**
+
+### 統合後 main（D35 込み `6eae377`）の実機確認（除去担当、2026-09-18 06:27）: **S-3 が回帰（3/3 再現）**、他は合格
+
+- シナリオ 21/22（S-3 のみ失敗、単独再実行 ×2 も失敗）、LTC ループ 14/14。R-1/R-2 の hold-pause 超過 +0.000（pauseLatency 0.147 / 0.261）。shim `0x0@` 0 件
+- S-3 の機序（アプリログ）: `Single mode: clip boundary hold released ltc=10.014 playback=20.000` → `Timecode sync seek suppressed pendingTarget=20.000 playback=20.000 ltc=10.014 requestedTarget=10.014 tolerance=0.2400` → 直後に `clip boundary hold ltc=40.000` が再適用 → `released ltc=10.000` の後、再シークなしで position=20.000 のまま。D33 の境界ホールド（Single、clipOut=20）と D35 の保持値への明示着地（保持 40 → clamp 20 の着地が pending に残る／保持値の再適用）の干渉。D35 統合前（postmerge6）は S-3 合格
+- **判定: D35-b として同期担当が修正。候補 6 は修正後**
