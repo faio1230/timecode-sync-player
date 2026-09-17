@@ -3059,3 +3059,9 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - V5（`tcs-shim-test --seek-loop` 10 回、1080p60）: 到着最大 51.8ms（劣化なし）。**10 回中 1 回（seek4）が target=14.618 に対し lease=5.250 の前フレーム**（D25 と同種の「シーク直後の古いフレーム」。shim 側）
 - V6 短縮（10 分、無音素材）: 平均 61.9fps（区間 min 57.4 / max 110.4）、ワーキングセット 250→285MB（60 秒以降 +19MB。要注視）。**音声付き素材が `all video profiles failed`（shim ログは全プロファイル set-state-fail）で読めなかった**ため無音で実施 → 除去担当のツリーの shim/素材の問題か要確認（main では 44.1k/48k の E2E が通っている）
 - 証跡: `TestResults/v042-ltc-scenario/d26-*.trx`、`artifacts/ltc-scenarios/<testId>-*/harness.jsonl`（agent-b の作業ツリー）
+
+### D26-b: F-2〜F-5 回帰の原因と修正（除去担当、agent-b `a2e39bb` / `af997a1`、2026-09-17 20:00、実機待ち）
+
+- 原因（再現テスト先行で確定）: D26 の `SaveFreeze` は「確定 tick（gap=GapFreeze）に新規取得したソース画像」だけを保存元にしたが、目標フレームは Freeze 進入中（gap=Hold）に取得され、shim は同じリースを返し続けるので以降の tick は `AcquireGStreamer` が `stamp.Sequence == lastGstSequence` で画像を返さない（acquired == null）→ 確定 tick で `SaveFreeze` が走らず frozen が null → Policy が Held（直前キャンバス）を描き続ける。D21-b は進入中に保持したソース画像（旧 held）から保存していたため成立していた。F-1 はシーク不要でキャンバス自体が最終フレームなので通過
+- 修正: `ComposeLayer` に Held のキャンバスとは別に「取得済みソース画像 + 位置 + 配置」を追跡する `sourceFrame` を追加。Freeze 確定は確定 tick の新規フレームを優先し、無ければ追跡画像の PTS が目標に一致するときだけ保存（D26 の位置ゲートは維持）。`OutputEngine` は shim の世代切替とソース差し替え時に追跡画像を破棄（リング面を世代をまたいで参照しない不変条件を維持）
+- 単体: 新規 3 件（修正前は赤）、非E2E 1725 合格。実機（F-1〜F-5、G-1〜G-6、C-1/C-2 の黒 0 枚、V5、V6 短縮）は D27 の検証の後
