@@ -17,6 +17,7 @@ internal sealed class GpuCompletionPolicy
     public const double FaultAfterSeconds = 3.0;
 
     private readonly double _ticksPerSecond;
+    private readonly object _gate = new();
     private long pendingSinceQpc = -1;
     private bool stuckReported;
 
@@ -27,25 +28,29 @@ internal sealed class GpuCompletionPolicy
     }
 
     /// <summary>FaultAfterSeconds 到達を報告済みか（fault を 1 回だけ出すため）。</summary>
-    public bool StuckReported => stuckReported;
+    public bool StuckReported { get { lock (_gate) return stuckReported; } }
 
+    /// <summary>GPU worker と Spout worker が同じ GpuFence を共有するため、状態はロックで守る。</summary>
     public GpuWaitDecision Decide(bool completed, bool deviceRemoved, long nowQpc)
     {
         if (deviceRemoved) return GpuWaitDecision.DeviceLost;
-        if (completed)
+        lock (_gate)
         {
-            pendingSinceQpc = -1;
-            stuckReported = false;
-            return GpuWaitDecision.Completed;
-        }
+            if (completed)
+            {
+                pendingSinceQpc = -1;
+                stuckReported = false;
+                return GpuWaitDecision.Completed;
+            }
 
-        if (pendingSinceQpc < 0) pendingSinceQpc = nowQpc;
-        if ((nowQpc - pendingSinceQpc) / _ticksPerSecond >= FaultAfterSeconds)
-        {
-            stuckReported = true;
-            return GpuWaitDecision.Stuck;
+            if (pendingSinceQpc < 0) pendingSinceQpc = nowQpc;
+            if ((nowQpc - pendingSinceQpc) / _ticksPerSecond >= FaultAfterSeconds)
+            {
+                stuckReported = true;
+                return GpuWaitDecision.Stuck;
+            }
+            return GpuWaitDecision.Pending;
         }
-        return GpuWaitDecision.Pending;
     }
 
     public bool SliceExpired(long sliceStartQpc, long nowQpc) =>
