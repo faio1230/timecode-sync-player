@@ -116,6 +116,14 @@ scripts\run-ltc-scenarios.ps1 -MediaDir artifacts\media -Media <4K 2 本と必�
 - E2E: F-4 3 サイクルで 2 分前後、F-1/F-3/F-5 を含めて 10〜20 分
 - 注意: `CheckFreeze` の待ちは 3.0 秒（`tests/TimecodeSyncPlayer.Tests/E2E/LtcScenarioE2ETests.cs:1402-1407`）でハンドラ timeout と同値。「遅れて更新」と「更新されない」の区別には、待ちを延ばした手動観測を併用する。
 
+### 4.6 P1/P2 の判別（再現時に同時記録する）
+
+再現で確かめる仮説を P1（ロード／シークのフレームが 3 秒の timeout に間に合わず Held が残り、遅れて届いたフレームでは更新されない）と P2（(a)/(b) が render 世代を進めず `frozen==null` ガードで前回のフリーズ画像を再利用）に絞り、次を 1 つの時系列で同時に記録する: `pump deadline`、`gap freeze final-frame capture timed out`、`gap freeze activated, final frame captured`、`stale gap freeze source frame, reissuing final-frame seek`、`lifecycle`（render 世代と shim 世代の遷移）、`compose.acquire`（PtsNs・status・seq）、`compose.sourcePending`、`gap.enter`、シナリオジャーナルの `freeze-observation`。
+
+- P1 の判定: 進入〜保持の間に、目標へ一致する PtsNs の `compose.acquire` が 1 度も無く、`pump deadline` と `capture timed out` が出る。遅れて届いた直後に PtsNs が目標へ一致し、`final frame captured` が出ない（または絵が更新されない）ことを確認する。
+- P2 の判定: 直前のフリーズ以降に render 世代が進んでいない（`lifecycle` に遷移が無い）ことを確認し、今回のギャップで目標一致の PtsNs が届いても `freeze-observation` の nearest color が前エピソードのままであることを見る。`SaveFreeze` は `frozen==null` のときだけ走るため、**一致フレームの到着と絵の更新が食い違えば P2**。
+- 両者は排他ではない。P1 で Held が残った後に P2 が乗る複合があり得るため、判別は「目標一致フレームの到着有無」×「絵の更新有無」の 2×2 で行う。
+
 ## 5. 未確定点
 
 - 検証機の参照 PNG が古い可能性（F-3/F-5 の d=0.0）は検証機側の確認待ち。ここが古い場合、観測の一部は画面と無関係に出る。
