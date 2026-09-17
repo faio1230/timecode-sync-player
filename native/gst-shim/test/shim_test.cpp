@@ -701,6 +701,22 @@ run_paused_seek (int argc, char** argv)
   check (got == 1 && paused_ms < (double) budget_ms + 250.0,
       "paused seek arrival within the pump budget");
 
+  /* D25-c: while paused (pump finished) get_time_pos reports the newest
+   * delivered video frame's stream-time PTS, not the pipeline position (the
+   * audio sink advances during the pump and pushed the queried position past
+   * the owner's +/-2 frame freeze/landing tolerance). */
+  if (got) {
+    double pos = -1.0;
+    int pos_rc = tcs_player_get_time_pos (p, &pos);
+    double frame_s = fps > 0.0 ? 1.0 / fps : 0.04;
+    double pts_s = info.pts_ns / 1e9;
+    double diff = pos - pts_s;
+    printf ("  PAUSED seek get_time_pos=%.3f frame_pts=%.3f delta_ms=%+.1f\n",
+        pos, pts_s, diff * 1000.0);
+    check (pos_rc == TCS_OK && diff <= frame_s + 0.001 && -diff <= frame_s + 0.001,
+        "paused seek get_time_pos matches the newest frame PTS (+/-1 frame)");
+  }
+
   /* contrast: the same paused pipeline delivers the frame once PLAYING runs,
    * which is exactly what step_frame already does for one frame. */
   if (!got) {
