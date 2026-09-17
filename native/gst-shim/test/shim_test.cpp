@@ -5,6 +5,7 @@
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
+#include "tcs_load_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 #include <gst/gstversion.h>
@@ -497,6 +498,42 @@ run_delivery_policy_tests ()
     for (int i = 4; i < TCS_VIDEO_PROFILE_COUNT; i++)
       check (strstr (kTcsVideoProfiles[i].conv, "d3d11") == nullptr,
           "profiles: CPU profiles keep a CPU converter (upload must be built)");
+  }
+
+  /* D34: load attempt success gate (pure). A stale frame of the previous
+   * pipeline, undetermined caps (0x0@0), a caps mismatch, a bus error or a
+   * rejection must all fail the gate; a mismatched profile must never become
+   * last-good. */
+  {
+    check (tcs_load_caps_ready (3840, 2160) == 1,
+        "D34 caps: width+height -> ready");
+    check (tcs_load_caps_ready (0, 2160) == 0,
+        "D34 caps: width 0 -> not ready");
+    check (tcs_load_caps_ready (3840, 0) == 0,
+        "D34 caps: height 0 -> not ready");
+    /* fps is not an input: variable-framerate media (0/1) stays ready. */
+    check (tcs_load_attempt_ok (1, tcs_load_caps_ready (3840, 2160), 0, 0, 0) == 1,
+        "D34 caps: 0 fps media stays ready (fps is not in the gate)");
+    check (tcs_load_attempt_ok (1, 1, 0, 0, 0) == 1,
+        "D34 gate: own-generation frame + caps -> ok");
+    check (tcs_load_attempt_ok (0, 1, 0, 0, 0) == 0,
+        "D34 gate: stale-generation frame -> not ok");
+    check (tcs_load_attempt_ok (0, 0, 1, 0, 0) == 0,
+        "D34 gate: stale frame + caps mismatch -> not ok");
+    check (tcs_load_attempt_ok (1, 0, 0, 0, 0) == 0,
+        "D34 gate: 0x0@0 caps -> not ok");
+    check (tcs_load_attempt_ok (1, 1, 1, 0, 0) == 0,
+        "D34 gate: caps mismatch -> not ok");
+    check (tcs_load_attempt_ok (1, 1, 0, 1, 0) == 0,
+        "D34 gate: bus error -> not ok");
+    check (tcs_load_attempt_ok (1, 1, 0, 0, 1) == 0,
+        "D34 gate: rejected -> not ok");
+    check (tcs_load_failure_is_caps_missing (0, 0) == 1,
+        "D34 label: no caps -> caps-missing");
+    check (tcs_load_failure_is_caps_missing (1, 1) == 1,
+        "D34 label: caps mismatch -> caps-missing");
+    check (tcs_load_failure_is_caps_missing (1, 0) == 0,
+        "D34 label: caps ready without mismatch -> preroll-timeout");
   }
 }
 

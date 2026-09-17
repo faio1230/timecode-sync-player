@@ -26,6 +26,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private double            _duration        = 0;
     private double            _fps             = 0;
     private bool              _metadataFetched = false;
+    // D34: ロード後のメタデータ取得を最大 MetadataFetchRetrySeconds 秒まで 100ms tick で再試行する。
+    private DateTime?         _metadataFetchDeadlineUtc;
+    private bool              _metadataFetchTimedOutLogged;
+    private const int         MetadataFetchRetrySeconds = 5;
 
     // ── SW レンダー ────────────────────────────────────────────────
     private readonly RenderSession _renderSession;
@@ -1816,8 +1820,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (durationRc == 0 && SeekBarUpdateState.IsUsableDuration(dur))
             _duration = dur;
 
-        if (!_metadataFetched && _duration > 0)
-            FetchMetadata();
+        TickMetadataFetch();
 
         // Gap 状態ではレンダーコールバックが止まるため、
         // タイマーでタイムライン位置を更新する
@@ -2280,11 +2283,37 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void ScheduleMetadataFetch()
     {
         if (_disposed) return;
+        // D34: ロード直後にサイズ・尺が揃わない場合（caps 未確定を成功のまま返さない修正後も
+        // 数 tick かかることがある）に備え、100ms tick の再試行期限をここで張り直す。
+        _metadataFetchDeadlineUtc = DateTime.UtcNow.AddSeconds(MetadataFetchRetrySeconds);
+        _metadataFetchTimedOutLogged = false;
         Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
             if (!_disposed)
                 FetchMetadata();
         });
+    }
+
+    /// <summary>
+    /// D34: タイマー tick からのメタデータ取得。期限（ロード後 5 秒）内はサイズ未取得でも
+    /// 100ms ごとに再試行し、期限切れで 1 回だけ警告する。従来の「尺が取れたら取得」も残す。
+    /// </summary>
+    private void TickMetadataFetch()
+    {
+        if (_metadataFetched) return;
+        bool withinWindow = _metadataFetchDeadlineUtc is { } deadline && DateTime.UtcNow < deadline;
+        if (withinWindow || _duration > 0)
+        {
+            FetchMetadata();
+            return;
+        }
+        if (_metadataFetchDeadlineUtc.HasValue && !_metadataFetchTimedOutLogged)
+        {
+            _metadataFetchTimedOutLogged = true;
+            Log.Warning(
+                "FetchMetadata: メタデータ（サイズ）が {Seconds} 秒以内に取得できませんでした",
+                MetadataFetchRetrySeconds);
+        }
     }
 
     private void FetchMetadata()
@@ -2300,6 +2329,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             return;
 
         _metadataFetched = true;
+        _metadataFetchDeadlineUtc = null;
         Log.Information("FetchMetadata: {W}x{H} {Fps:F3}fps V:{VCodec} A:{ACodec}",
             width, height, _fps, vcodec, acodec);
 
@@ -2403,6 +2433,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         _renderSession.Invalidate();
         _metadataFetched = false;
+        _metadataFetchDeadlineUtc = null;
+        _metadataFetchTimedOutLogged = false;
+        // D34: 前トラックのメタデータ表示（サイズ・fps）を次のロードまで残さない。
+        _vm.Player.MetaLine = string.Empty;
         _duration = 0;
         _fps = 0;
         _renderSession.ResetUpdateStats();

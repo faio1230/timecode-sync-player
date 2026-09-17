@@ -31,6 +31,7 @@
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
+#include "tcs_load_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 
@@ -2708,10 +2709,17 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     p->fps = 0.0;
     p->use_d3d11_caps = FALSE;
     p->rejected = false;
+    uint64_t attempt_gen = 0;
     {
       std::lock_guard<std::mutex> g (p->frame_lock);
       p->decoder_name.clear ();
-      p->generation++;
+      attempt_gen = ++p->generation;
+      /* D34: a frame of the previous pipeline can land after teardown's reset
+       * (teardown clears frames_decoded before the old pipeline reaches NULL).
+       * Clear the counter again here; the generation gate below rejects any
+       * late frame that still slips through. */
+      p->frames_decoded = 0;
+      p->pending_update = false;
     }
 
     p->pipeline = gst_pipeline_new ("tcs_play");
@@ -2808,11 +2816,17 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     preroll_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
 
     bool done = false;
+    bool current_gen_frame = false;
+    bool caps_ready = false;
     int wait_iters = env_flag ("TCS_ONE_ATTEMPT") ? 60 : 300;
     for (int i = 0; i < wait_iters; i++) {
       {
         std::lock_guard<std::mutex> g (p->frame_lock);
-        done = p->frames_decoded > 0 || p->failed || p->capsMismatch || p->rejected;
+        /* D34: only a frame of THIS attempt's generation may satisfy the first
+         * frame gate. A late frame of the previous pipeline (delivered while
+         * teardown set the old pipeline to NULL) carries the old generation. */
+        current_gen_frame = p->frames_decoded > 0 && p->latest_gen == attempt_gen;
+        done = current_gen_frame || p->failed || p->capsMismatch || p->rejected;
         if (p->frames_decoded > 0)
           frames_at_frame = (int64_t) p->frames_decoded;
       }
@@ -2823,7 +2837,15 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     first_frame_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     {
       std::lock_guard<std::mutex> g (p->frame_lock);
-      done = p->frames_decoded > 0 && !p->failed && !p->rejected;
+      /* D34: width/height only. Variable-framerate containers may report
+       * framerate=0/1; fps=0 is accepted (logged below) and the product keeps
+       * its fps default. */
+      caps_ready = tcs_load_caps_ready (p->width, p->height) != 0;
+      /* D34: success requires a frame of this generation, determined video
+       * caps (0x0@0 is not a loaded stream), no caps mismatch and no error.
+       * A mismatched profile must never be recorded as last-good. */
+      done = tcs_load_attempt_ok (current_gen_frame ? 1 : 0, caps_ready ? 1 : 0,
+          p->capsMismatch ? 1 : 0, p->failed ? 1 : 0, p->rejected ? 1 : 0) != 0;
     }
     if (p->rejected) {
       log_attempt ("rejected");
@@ -2855,11 +2877,29 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
         }
       }
       std::string err;
+      bool caps_mismatch;
+      int load_w, load_h;
+      double load_fps;
       {
         std::lock_guard<std::mutex> g (p->frame_lock);
         err = p->last_error;
+        caps_mismatch = p->capsMismatch;
+        load_w = p->width;
+        load_h = p->height;
+        load_fps = p->fps;
       }
-      log_attempt ("preroll-timeout");
+      /* D34: an attempt without determined caps (or with a pad caps mismatch)
+       * is reported as caps-missing so the order advances; the success gate
+       * above already keeps last_good untouched. */
+      const bool caps_missing =
+          tcs_load_failure_is_caps_missing (caps_ready ? 1 : 0, caps_mismatch ? 1 : 0) != 0;
+      log_attempt (caps_missing ? "caps-missing" : "preroll-timeout");
+      if (caps_missing)
+        LOG ("load.caps-missing path=%s attempt=%d profile=%s mismatch=%d "
+            "width=%d height=%d fps=%.3f current_gen_frame=%d",
+            utf8_path, attempt, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
+            caps_mismatch ? 1 : 0, load_w, load_h, load_fps,
+            current_gen_frame ? 1 : 0);
       teardown_pipeline (p);
       LOG ("attempt %s/%s failed: %s", container,
           idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
@@ -2940,6 +2980,9 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     duration_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
 
     log_attempt ("ok");
+    if (p->fps <= 0.0)
+      LOG ("load.fps-missing path=%s profile=%s fps=0 (framerate absent in caps) accepted",
+          utf8_path, idx >= 0 ? g_profiles[idx].name : "decodebin-fallback");
     LOG ("loaded (%s / profile %d) %s decoder=%s %dx%d@%.3f mem=%s", container, idx,
         utf8_path, p->decoder_name.empty () ? "?" : p->decoder_name.c_str (),
         p->width, p->height, p->fps, p->use_d3d11_caps ? "d3d11" : "sysmem");
