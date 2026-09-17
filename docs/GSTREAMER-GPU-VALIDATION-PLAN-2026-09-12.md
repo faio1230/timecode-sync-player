@@ -3207,4 +3207,4 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 ## D29: Single モードの LTC → 素材位置と終端が MediaIn/MediaOut ではなく媒体の尺で clamp されていた（2026-09-18 14:20、同期担当、agent-a `7fccf96`、統合済み）
 
 - 原因: `SyncDecisionEngine.Decide` の `Math.Clamp(ltc, 0, DurationSeconds)` と先行補償後の `CompensateTarget(…, DurationSeconds)` が尺基準で、Single の `SyncPlaybackState` に MediaIn/MediaOut が渡っていなかった（実素材 S-3 の position=42.683 の原因）。Continue は `FindTrackAtTimelinePosition` が [MediaIn, MediaOut ?? 尺] に clamp 済みで正しかった
-- 修正: clamp 範囲を [MediaIn, MediaOut ?? 尺] にし、補償後も同じ範囲。`MainWindow` の Single の `BuildPlaybackState` が現在トラックの MediaIn/MediaOut を渡す。D20 の終端静止も MediaOut 基準に。単体 4 件追加、非E2E 1779（main 統合後 1799）。実機は除去担当の次の全件で確認
+- 修正: clamp 範囲を [MediaIn, MediaOut ?? 尺] にし、補償後も同じ範囲。`MainWindow` の Single の `BuildPlaybackState` が現在トラックの MediaIn/MediaOut を渡す。D20 の終端静止も MediaOut 基準に。単体 4 件追加、非E2E 1779（main `79f2207` 統合後も 1779。D30 の統合で +20）。実機は除去担当の次の全件で確認
