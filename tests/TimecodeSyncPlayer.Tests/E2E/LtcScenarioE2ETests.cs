@@ -778,6 +778,10 @@ public sealed class LtcScenarioE2ETests
         private FrameSignature CaptureReferenceAfterSeek(
             TrackInfo track, string kind, double target, FrameSignature? previous)
         {
+            // 許容幅は「いま読み込んでいる素材の 1 フレーム」。OneFrame は先頭トラックの
+            // フレームレート基準なので、24fps の素材を 60fps 基準（0.0167 秒）で見てしまい、
+            // 目標 +1 フレーム（0.0417 秒）で止まった位置が永久に「未到達」になっていた。
+            double frameSeconds = CurrentFrameSeconds();
             const double waitSeconds = 6.0;
             const double reseekAfterSeconds = 3.0;
             DateTime startedAt = DateTime.UtcNow;
@@ -789,7 +793,7 @@ public sealed class LtcScenarioE2ETests
                 FrameSignature signature = LtcScenarioFrameProbe.Capture(App, ReportDir, imageName, Journal);
                 double observed = Position();
                 bool sameAsPrevious = previous is FrameSignature prev && prev.IsSameFrameAs(signature);
-                if (ReferenceCaptureReadiness.IsReady(observed, target, OneFrame))
+                if (ReferenceCaptureReadiness.IsReady(observed, target, frameSeconds))
                 {
                     if (sameAsPrevious)
                         Journal.Write("reference-same", details: new
@@ -811,6 +815,7 @@ public sealed class LtcScenarioE2ETests
                     attempt,
                     position = JsonNumber(observed),
                     target = Math.Round(target, 3),
+                    frameSeconds = JsonNumber(frameSeconds),
                     sameAsPrevious,
                     nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
                 });
@@ -1221,6 +1226,13 @@ public sealed class LtcScenarioE2ETests
         /// S-1: 再生中素材の fps。アプリのメタデータ行（FetchMetadata 由来）を優先し、
         /// 無ければプロジェクトの参照 fps を使う。
         /// </summary>
+        /// <summary>いま読み込んでいる素材の 1 フレームの秒数（メタ表示の fps から）。</summary>
+        private double CurrentFrameSeconds()
+        {
+            double fps = MediaFps();
+            return fps > 0 ? 1.0 / fps : OneFrame;
+        }
+
         public double MediaFps()
         {
             Match rate = Regex.Match(App.Text("MetaLineText"), @"(\d+(?:\.\d+)?)\s*fps");
