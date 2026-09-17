@@ -223,7 +223,9 @@ internal sealed class OutputEngine : IDisposable
                 return;
             }
             // D26: Held は合成側が所有するキャンバスの複製で、ソースのリング面を参照しない。
-            // ソースを差し替えても直前の絵を保持する（黒を挟まない）。
+            // ソースを差し替えても直前の絵を保持する（黒を挟まない）。Freeze 候補の追跡画像だけは
+            // リング面を参照するため、ソース差し替え時に手放す（D26-b）。
+            layer?.ClearSourceFrame();
             gstSource?.Dispose();
             // ステージ 6b: shim は合成デバイスを Adopt せず、LUID だけを使って自前デバイスを作る。
             // 合成デバイスはリングを開いてフェンス待ちに使う（この gpu を渡す）。
@@ -1121,6 +1123,7 @@ internal sealed class OutputEngine : IDisposable
     // GStreamer の世代は shim 側の値（load/seek で進む）を観測して対応付ける。
     // D26: Held は合成側が所有する直前キャンバスの複製で、世代のリング面を参照しない。
     // 世代が変わっても破棄せず、新しい世代の最初のフレームまで直前の絵を出す（黒を挟まない）。
+    // D26-b: Freeze 候補として追跡中のソース画像はリング面を参照するため、世代切替で手放す。
     private void SyncGStreamerGeneration()
     {
         if (gstSource == null) return;
@@ -1128,6 +1131,7 @@ internal sealed class OutputEngine : IDisposable
         if (shimGeneration == lastGstGeneration) return;
         lastGstGeneration = shimGeneration;
         lastGstSequence = -1;
+        layer?.ClearSourceFrame();
         // D5 決定再現: 再生開始後に世代が変わったら、その世代の最初のフレームまで Black を強制する。
         if (forceGapBlackOnSwitch && anyFrameAcquired)
             armedForceGapBlack = true;
