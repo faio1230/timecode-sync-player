@@ -3293,3 +3293,11 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 証跡 `TestResults/ltc-scenarios/a1-01-f1-nobudget/`〜`a1-08-f5-pump800/`（agent-a の作業ツリー）
 - 条件 3（`TCS_FORCE_DECODER_ADAPTER_MISMATCH=1`、さらに `TCS_FORCE_DECODER_LUID_MISMATCH=1` 併用。prores-cpu / av1-cpu attempt=8 を確認）: F-1/F-3/F-4/F-5 とも **再現せず**。load.summary total_ms は 105〜183ms で、開発機では不一致プロファイルが即座に返るため検証機の 1〜2.5 秒にならない。decodeMode=software はシナリオ E2E がテストごとの設定ファイルをアプリ自身に作らせるため外部から注入できず未実施。証跡 `a1-09`〜`a1-13`
 - **判定: 開発機の 3 条件ではデコード／ロード時間が検証機より 1 桁短く、3 秒のフリーズ確定窓を外す状況を作れない。検証機の証跡（参照 PNG の SHA、GapEnter 経路のログ、`capture timed out` の有無）で 2×2 を突き合わせる方針に切り替え（2026-09-17 21:05）**
+
+### 検証機の候補 2 証跡（zip）から親が抽出した A1 の機序（2026-09-17 21:40）
+
+- **1 時間台 LTC の混入の原因**（検証機の解析）: RealProjectGap ではなく **アプリの再生音の回り込み**。M1 の第 1 ch に 30fps の LTC が入っており、検証機の既定再生デバイスが CABLE Input のためテストの LTC と同じ線に混ざる（`detectedFps=30` `ltc=3601…`）。テスト側修正: シナリオ E2E は `isMuted: true` で起動（パッチ 0002）。RealProjectGap は実素材ランナーの既定から除外（0001）
+- **メタデータ待ちの時間切れ**: FetchMetadata 行が速いロード（キャッシュ済みプロファイル、elapsedMs<250）で出ないことがある（383 回中 5 回）。テスト側: 「Playlist track loaded index=N」+ TimeLabel の尺でも完了に（0002 + 親の補強依頼 `230592d`）。製品側の観測として記録（ログのみ、挙動に影響なし）
+- **参照 PNG は古くない**（396 枚、同一テスト内で同一 SHA の組 0）。b F-3/F-5 の M5/tail 一致は「参照採取の最後の絵が画面に残ったまま」= 製品側
+- **A1 の機序（アプリログ）**: (1) D22 の開始位置つき一時停止ロードのプリロールが長 GOP で 3 秒に届かず `capture timed out`（c F-5、pump は seek 限定で対象外）。(2) Freeze 切替直後に位置が C の終端側にあるため「C の最終フレーム」で先に確定し、その後の D22 進入（A の冒頭）では frozen が置き換わらない（b F-5/F-3、a F-4）。(3) A の後のギャップで確定後に B の中間へジャンプ → B のロード 440ms なのに 2.6 秒以上 A の tail が残る（a F-4）。→ **D32**（`docs/prompts/2026-09-17-D32-gap-freeze-late-frame-and-reenter.md`、同期担当）
+- **S-3 c（position=31.4）**: 生成プロジェクトは MediaOut = MediaIn + 20 = 25 だが、ジャーナルの尺表示は素材の全長（2:08）。Single で LTC 40 → D29 の clamp 目標 25 へ着地後も再生が MediaOut で止まらず進んだ疑い（生成素材は尺 = MediaOut なので EOS で止まり気づかない）→ 候補 3 の S-3 ジャーナル（hold-landing の range）で確認してから D33 候補
