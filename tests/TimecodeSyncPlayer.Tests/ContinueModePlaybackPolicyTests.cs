@@ -25,11 +25,22 @@ public class ContinueModePlaybackPolicyTests
     }
 
     [Fact]
-    public void ShouldAutoAdvanceAtMediaEnd_ReturnsTrue_ForSingleMode()
+    public void ShouldAutoAdvanceAtMediaEnd_ReturnsFalse_ForSingleModeWithTimecodeSync()
     {
+        // D20: Single + 同期 ON は終端で自動前進しない（終端の最終フレームで静止）。
         bool result = ContinueModePlaybackPolicy.ShouldAutoAdvanceAtMediaEnd(
             SyncMode.Single,
             timecodeSyncEnabled: true);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldAutoAdvanceAtMediaEnd_ReturnsTrue_ForSingleModeWithoutTimecodeSync()
+    {
+        bool result = ContinueModePlaybackPolicy.ShouldAutoAdvanceAtMediaEnd(
+            SyncMode.Single,
+            timecodeSyncEnabled: false);
 
         result.Should().BeTrue();
     }

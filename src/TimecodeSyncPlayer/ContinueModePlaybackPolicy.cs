@@ -9,8 +9,10 @@ internal enum ContinueModeEndAdvanceAction
 
 internal static class ContinueModePlaybackPolicy
 {
+    // D20: 同期 ON のときはモードに関わらずメディア終端の自動前進をしない
+    // （Single + 同期 ON はアクティブトラックの終端で静止し、LTC が範囲に戻れば追従再開）。
     public static bool ShouldAutoAdvanceAtMediaEnd(SyncMode syncMode, bool timecodeSyncEnabled) =>
-        syncMode != SyncMode.Continue || !timecodeSyncEnabled;
+        !timecodeSyncEnabled;
 
     public static ContinueModeEndAdvanceAction DecideEndAdvanceAction(
         double positionSeconds,
