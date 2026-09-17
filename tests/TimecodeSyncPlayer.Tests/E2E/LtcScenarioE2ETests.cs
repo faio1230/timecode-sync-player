@@ -534,9 +534,12 @@ public sealed class LtcScenarioE2ETests
             foreach (TrackData track in project.Tracks.Where(t => t.IsEnabled))
             {
                 int index = tracks.Count;
+                // A generated project names each track by its folder symbol (M1..M7,
+                // see scripts/make-ltc-scenario-project.ps1 -Media); use it so journals
+                // and reference images say which file of the folder was involved.
                 string symbol = isDefaultProject
                     ? index < 3 ? ((char)('A' + index)).ToString() : $"M{index + 1}"
-                    : $"M{index + 1}";
+                    : IsMediaSymbol(track.Name) ? track.Name!.ToUpperInvariant() : $"M{index + 1}";
                 TimeSpan mediaOut = track.MediaOut ?? track.MediaDuration;
                 tracks.Add(new TrackInfo(index, symbol, track.TimelineOffset, track.MediaIn, mediaOut,
                     track.MediaDuration, track.FrameRate ?? 30.0));
@@ -544,6 +547,9 @@ public sealed class LtcScenarioE2ETests
 
             return tracks;
         }
+
+        private static bool IsMediaSymbol(string? name) =>
+            name is not null && Regex.IsMatch(name, @"^[Mm][1-9][0-9]*$");
 
         private void StartApp(string projectPath)
         {

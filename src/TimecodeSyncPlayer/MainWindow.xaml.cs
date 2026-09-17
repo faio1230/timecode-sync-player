@@ -1440,7 +1440,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             SetPlayPauseIcon: value => _vm.Player.PlayPauseIcon = value,
             ResetGapFreezeAll: () => _gapFreezeHandler.ResetAll(),
             ResetGapFreeze: () => _gapFreezeHandler.Reset(),
-            ClearGapFreezeFrame: () => _renderSession.Invalidate()));
+            ClearGapFreezeFrame: () => _renderSession.Invalidate(),
+            // D20-b: 手動ロードを同期のロードゲートへ記録する（保持 LTC のロード解除再適用）。
+            BeginSyncFileLoad: startPosition => _syncService.BeginFileLoad(startPosition, _syncGateRenderedFrames.Read())));
 
     // ── Spout ─────────────────────────────────────────────────────
 

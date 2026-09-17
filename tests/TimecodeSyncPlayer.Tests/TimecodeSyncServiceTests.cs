@@ -248,6 +248,21 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
+    public void PollFileLoadRelease_ReturnsTrueOnlyOnTheReleaseTick()
+    {
+        // D20-b: 保持 LTC（Duplicate）でもロード解除だけを観測できる。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var service = new TimecodeSyncService(engine, seekState);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+
+        service.PollFileLoadRelease(playbackSeconds: 12.12, renderedFrameCount: 4).Should().BeFalse();
+        service.PollFileLoadRelease(playbackSeconds: 12.12, renderedFrameCount: 5).Should().BeTrue();
+        service.PollFileLoadRelease(playbackSeconds: 12.2, renderedFrameCount: 6).Should().BeFalse();
+        service.IsLoadingFile.Should().BeFalse();
+    }
+
+    [Fact]
     public void TryMarkFileLoaded_GpuCompositing_OpensOnPublishedFrames_WithoutWaitingForCpuBitmaps()
     {
         // 出荷構成（GPU 合成）: 表示経路（OutputEngine）の公開数だけが進む。

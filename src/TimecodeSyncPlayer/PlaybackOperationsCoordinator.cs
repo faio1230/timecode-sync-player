@@ -75,6 +75,12 @@ internal sealed class PlaybackOperationsCoordinator
         _effects.ResetGapFreeze();
         _effects.SetSeekBarValueFromPlayer(0);
         _effects.SetTimeLabel(DefaultTimeLabel);
+        // D20-b: 手動ロード（次/前/プレイリスト）は同期のロードゲートにも記録し、
+        // 保持 LTC でもロード解除時に最後に受理した値を 1 回適用できるようにする。
+        // 位置つきロード（同期主導のトラック切替）は ContinueOnTrackCoordinator が
+        // 発行 QPC つきで既に記録するため、ここでは触らない。
+        if (!startPosition.HasValue)
+            _effects.BeginSyncFileLoad(0);
         return true;
     }
 
@@ -95,6 +101,8 @@ internal sealed class PlaybackOperationsCoordinator
         _effects.ResetGapFreeze();
         _effects.SetSeekBarValueFromPlayer(0);
         _effects.SetTimeLabel(DefaultTimeLabel);
+        // D20-b: 一時停止の手動ロードも同期のロードゲートに記録する。
+        _effects.BeginSyncFileLoad(0);
         return true;
     }
 
@@ -184,4 +192,5 @@ internal sealed record PlaybackOperationsEffects(
     Action<string> SetPlayPauseIcon,
     Action ResetGapFreezeAll,
     Action ResetGapFreeze,
-    Action ClearGapFreezeFrame);
+    Action ClearGapFreezeFrame,
+    Action<double> BeginSyncFileLoad);
