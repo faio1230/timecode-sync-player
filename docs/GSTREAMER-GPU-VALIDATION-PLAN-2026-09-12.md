@@ -3282,3 +3282,12 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 統合後 main の非E2E 1825/0（親）
 - **候補 3**: `TimecodeSyncPlayer-v0.4.2-4469cdd-setup.exe` 38,663,525 バイト、SHA-256 `04A0018DA1CA36A7DB54BC4BF2BE561051F9019D55E0E3B16F08D68DC6E5F68C`、zip 17,741,413 バイト `9619CDFF3897A57BAFAEB194B4036B46036C484A897FC578F2F05B4A985586B2`、ProductVersion `0.4.2+4469cdd…`。Taildrop で検証機へ送付。検証機には先にテスト基盤側 3 件の修正を済ませてから実素材 3 回を依頼
 - A1（4K でギャップ進入後に絵が更新されない）の机上解析は `docs/analysis/2026-09-17-A1-gap-freeze-frame-not-updated.md`。候補 P1（3 秒の timeout に間に合わず Held が残り、遅れて届いても更新されない）と P2（(a)/(b) 経路が render 世代を進めず前回のフリーズ画像を再利用）。開発機で 4K ProRes/AV1 の生成素材により再現する
+
+### A1 の開発機再現（同期担当、4K 生成素材 3 本、2026-09-17 20:55）: 再現せず
+
+- 条件 1（pump 既定 4000ms）・条件 2（`TCS_PUMP_BUDGET_MS=800`）で F-1/F-3/F-4/F-5 各 3 サイクル: すべて Passed。`capture timed out` 0、`pump deadline` 0、`stale gap freeze source frame` 0、`compose.sourcePending` 0。F-4 の freeze-observation は 6 件とも期待色（A tail → B tail の更新が毎回成立）
+- 2×2 判別: 全ギャップで「目標一致フレーム到着あり × 絵の更新あり」。P1 も P2 も発現せず
+- 差の要因: 開発機は 4K60 ProRes CPU でも 1 枚目 61ms・ロード 0.17 秒、AV1 は GPU デコード。検証機の「8 プロファイル試行で 1〜2.5 秒」のロード条件が再現できていない
+- 補足観測: F-1 の保持中に `final frame captured` が約 110ms 間隔で繰り返す（DecideGapEnter が FreezeComplete→Inactive→再進入）。世代は変わらず frozen の再保存は無し。無害だが D32 で整理候補
+- 次: 条件 3（`TCS_FORCE_DECODER_ADAPTER_MISMATCH=1` + decodeMode=software でプロファイル試行を検証機並みに）→ 出なければ検証機の証跡（参照 PNG の SHA、GapEnter 経路のログ）待ち
+- 証跡 `TestResults/ltc-scenarios/a1-01-f1-nobudget/`〜`a1-08-f5-pump800/`（agent-a の作業ツリー）
