@@ -63,6 +63,37 @@ public sealed class DeferredLtcSyncTests
     }
 
     [Fact]
+    public void HeldValueFarFromLastApplied_AppliesOnce()
+    {
+        // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超ずれていれば
+        // 1 回だけ適用する（S-2 の late landing 残差を詰める）。
+        var (h, clock) = ArrangePendingLoadSync();
+        Raw(h, 4, 12);  // 3.04 → 4.48 は Jump。1 回だけ適用（最後に適用 = 4.48）
+        Raw(h, 2, 1);   // 4.48 → 2.04 も Jump。ラッチ中なので適用しない
+        Raw(h, 2, 1);   // 保持（Duplicate）。|2.04 - 4.48| > tolerance → 1 回だけ適用
+        h.AdvancePlayback(1.2, 2);
+
+        Tick(h, clock, 4);
+
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(2.04);
+    }
+
+    [Fact]
+    public void HeldValueEqualToLastApplied_DoesNotReapply()
+    {
+        // 定常の Duplicate ゲートは維持（保持値が最後に適用した値と同じなら何もしない）。
+        var (h, clock) = ArrangePendingLoadSync();
+        Raw(h, 4);      // Jump（適用 4.00）
+        Raw(h, 4, 1);   // Normal（適用 4.04）
+        Raw(h, 4, 1);   // Duplicate（4.04 = 最後に適用した値）
+        h.AdvancePlayback(1.2, 2);
+
+        Tick(h, clock, 4);
+
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(4.04);
+    }
+
+    [Fact]
     public void HeldDuplicateAfterFileLoadRelease_ReappliesLastAcceptedTimecodeOnce()
     {
         // D20-b (i): 保持 LTC（Duplicate）でもロード解除を観測し、最後に受理した値を 1 回だけ適用する。

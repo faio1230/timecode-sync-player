@@ -27,7 +27,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     public SyncDecision Decide(double ltcSeconds, SyncPlaybackState state)
     {
         SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
-        double toleranceSeconds = Math.Max(fps.VideoFrameSeconds, fps.TimecodeFrameSeconds) * _options.ToleranceFrames;
+        double toleranceSeconds = ToleranceSeconds(fps.VideoFps, fps.TimecodeFps, _options.ToleranceFrames);
         // 計測専用（出力トレース有効時のみ）。既定経路では読み取り 1 回だけで、文字列は作らない。
         bool traceEnabled = OutputTrace.Current.IsEnabled;
 
@@ -131,6 +131,20 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 
     private static bool IsUsableFps(double fps) =>
         IsFinite(fps) && fps > 0;
+
+    /// <summary>
+    /// D20-b: 一致判定の許容秒。Decide と同じ規則（動画/タイムコード fps の大きいフレーム幅 ×
+    /// ToleranceFrames、fps 不明は 30）を、保持 LTC の再適用判定と共有する。
+    /// </summary>
+    internal static double ToleranceSeconds(double videoFps, double timecodeFps, double toleranceFrames)
+    {
+        double resolvedVideoFps = IsUsableFps(videoFps) ? videoFps : 30.0;
+        double resolvedTimecodeFps = IsUsableFps(timecodeFps) ? timecodeFps : 30.0;
+        return Math.Max(1.0 / resolvedVideoFps, 1.0 / resolvedTimecodeFps) * toleranceFrames;
+    }
+
+    internal static double ToleranceSeconds(double videoFps, double timecodeFps) =>
+        ToleranceSeconds(videoFps, timecodeFps, new SyncDecisionOptions().ToleranceFrames);
 }
 
 public sealed record SyncDecisionOptions(
