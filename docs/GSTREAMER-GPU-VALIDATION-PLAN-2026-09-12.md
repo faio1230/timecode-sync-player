@@ -3383,3 +3383,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 出力トレースは `manifest.json` 既存で保存失敗（115 起動中 105 回）→ テスト側はフォルダ分け（検証機）、製品側は連番フォルダで失敗しない（D34 項目 4）
 - 指示: `docs/prompts/2026-09-18-D34-fast-cached-load-accepts-stale-frame.md`（同期担当）。**版上げは D34 統合後**
 - D34 の頻度（検証機、2026-09-18 05:10）: 手元の全 19 run・成功ロード 2,530 件のうち `0x0@0.000` は 13 件（0.51%、実行中を含め 15 件）。**15 件中 13 件が 180 秒以内の失敗を伴い、9 件は 22 秒以内**（C-1/C-2/G-5/G-6/S-1/R 系の間欠はほぼこれで説明がつく）。流用された decoder は d3d11vp9dec・d3d11h264dec・dav1ddec・avdec_prores の 4 通りすべて（素材・プロファイル固有ではない）。`0x0` が 0 件の run では失敗が 0〜1 件。候補 6 の確認項目: `0x0@0.000` 0 件、素材ごとの通常値から外れた高速ロード無し、出力トレースの保存失敗警告 0 件
+
+### D34 の実装（同期担当 agent-a `65795f0` shim / `2f5138c` アプリ / `066ea40` トレース、2026-09-18 05:17、実機待ち）
+
+- shim: 成功判定を純関数 `tcs_load_attempt_ok`（現世代フレーム ∧ caps 確定 ∧ mismatch なし ∧ failed/rejected なし）に置換。attempt 開始時に `frames_decoded` を再クリアし `latest_gen == attempt_gen` のフレームだけ数える。満たさなければ `result=caps-missing` で次の attempt へ、`last_good` は更新しない。`loaded 0x0@0.000` は返らない。shim 単体 `--policy-only` に真理値表 10 件、ロック規則 PASS
+- アプリ: メタデータ取得をロード後 5 秒・100ms tick で再試行（期限切れで警告 1 行）、`ResetPlayerStateForNewTrack` で MetaLine を空に。トレースは既存 manifest があれば `<起動時刻UTC>-<pid>` のサブフォルダへ
+- 非E2E 1876/0。開発機再現（生成素材 h264 → 4K ProRes → AV1、F-4/G-5/C-2 ×3）: 3/3、shim ログ 成功ロード 38 / 試行 205 / `caps-missing` 167 / `0x0@` 0 件、FetchMetadata 67 / タイムアウト警告 0
+- 親の差し戻し: caps 確定の条件から fps>0 を外す（可変フレームレート素材は framerate=0/1 を返し得るため。幅・高さ>0 のみ必須）。そのうえで実機（シナリオ 22 + 4K F/G/C + LTC ループ）
