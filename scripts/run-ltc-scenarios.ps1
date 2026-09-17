@@ -312,8 +312,10 @@ if ($MediaDir) {
 
 # ---- filter and environment ------------------------------------------------
 if ([string]::IsNullOrWhiteSpace($Filter)) {
+    # RealProjectGapE2ETests is not in the default filter: it assumes a fixture project whose
+    # timeline starts at one hour (it sends 01:00:xx), so against the project generated from
+    # -MediaDir its checks do not apply. Pass -Filter explicitly to run it.
     $Filter = 'FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests'
-    if ($MediaDir) { $Filter += '|FullyQualifiedName~RealProjectGapE2ETests' }
 }
 Write-Output "filter=$Filter"
 

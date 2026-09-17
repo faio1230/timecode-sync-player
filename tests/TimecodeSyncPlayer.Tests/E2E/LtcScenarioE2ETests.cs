@@ -694,8 +694,16 @@ public sealed class LtcScenarioE2ETests
 
         private void StartApp(string projectPath)
         {
+            // 検証機では既定の再生デバイスが LTC ループと同じ CABLE Input になり得る。
+            // 実素材の音声トラックに LTC が入っていると（制作マスターでは一般的）、アプリの
+            // 再生音が LTC 入力へ回り込み、テストの送った LTC に別の LTC が混ざる。
+            // シナリオは音を使わないので、設定が未作成ならミュートで起動する。
+            string settingsPath = Path.Combine(ReportDir, "settings.json");
+            if (!File.Exists(settingsPath))
+                File.WriteAllText(settingsPath, "{\n  \"isMuted\": true\n}\n");
+
             App = E2EAppRunner.Start(_exePath, $"--load-project \"{projectPath}\"",
-                Path.Combine(ReportDir, "settings.json"), pausePlaybackIfNeeded: false);
+                settingsPath, pausePlaybackIfNeeded: false);
             MonkeyJson.WriteAppProcessMarker(Path.Combine(ReportDir, "app-process.json"), App.Process);
 
             DateTime? appStartedAt = null;
@@ -1092,11 +1100,36 @@ public sealed class LtcScenarioE2ETests
             throw new TimeoutException($"トラック {index} をロードできない (loaded={LoadedTrackIndex()})");
         }
 
-        /// <summary>新しいトラックの FetchMetadata 行が出るまで待つ（ロード完了の目印）。</summary>
-        private void WaitForMetadataSince(DateTime issuedAt, int index) =>
-            WaitUntil(
-                () => RunLogLinesSince(issuedAt).Any(line => line.Contains("FetchMetadata:", StringComparison.Ordinal)),
-                15, $"トラック {index} のメタデータ取得");
+        /// <summary>
+        /// 新しいトラックのロード完了を待つ。目印は FetchMetadata 行、または TimeLabel の尺が
+        /// そのトラックの尺になったこと。速いロード（キャッシュ済みプロファイル）では
+        /// FetchMetadata 行が出ないことがあるため、行だけには頼らない。
+        /// </summary>
+        private void WaitForMetadataSince(DateTime issuedAt, int index)
+        {
+            TrackInfo? track = Tracks.FirstOrDefault(candidate => candidate.Index == index);
+            try
+            {
+                WaitUntil(
+                    () => RunLogLinesSince(issuedAt).Any(line => line.Contains("FetchMetadata:", StringComparison.Ordinal)) ||
+                          (track is not null && TimeLabelShowsDuration(track)),
+                    15, $"トラック {index} のメタデータ取得");
+            }
+            catch (TimeoutException)
+            {
+                JournalMediaLabelState("metadata-wait-timeout");
+                throw;
+            }
+        }
+
+        private bool TimeLabelShowsDuration(TrackInfo track)
+        {
+            string[] parts = RawTimeLabel().Split('/');
+            if (parts.Length != 2) return false;
+            double fps = track.FrameRate > 0 ? track.FrameRate : 30.0;
+            double shown = ParseClock(parts[1].Trim(), fps);
+            return double.IsFinite(shown) && Math.Abs(shown - track.Duration.TotalSeconds) <= 1.0;
+        }
 
         // ---- readings ----
 
