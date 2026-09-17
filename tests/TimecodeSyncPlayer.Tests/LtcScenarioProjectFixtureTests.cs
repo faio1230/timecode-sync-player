@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json.Nodes;
 using FluentAssertions;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -60,6 +61,59 @@ public sealed class LtcScenarioProjectFixtureTests
         project.Should().NotBeNull();
         foreach (TrackData track in project!.Tracks)
             File.Exists(track.FilePath).Should().BeTrue($"素材が解決できる: {track.Name}");
+    }
+
+    /// <summary>
+    /// 実素材のランナーと同じ形: 一時ディレクトリに素材ダミー（media\ 配下）と .tsp を置き、
+    /// 素材を .tsp のディレクトリからの相対パス（media\&lt;ファイル名&gt;）で書く。
+    /// ProjectSerializer がプロジェクトディレクトリ内の相対パスを解決できることを固定する。
+    /// （ランナーは ReportDir\media に素材へのハードリンクを張り、そのパスを -MediaDir に渡す）
+    /// </summary>
+    [SkippableFact]
+    public async Task LtcScenarioProject_MediaSubdirectoryRelativePaths_Resolve()
+    {
+        string fixture = Path.Combine(FindRepositoryRoot(), "tests", "TimecodeSyncPlayer.Tests",
+            "Fixtures", "ltc-scenario.tsp");
+        Skip.If(!File.Exists(fixture), "Fixtures/ltc-scenario.tsp が無い");
+
+        string projectDir = Path.Combine(Path.GetTempPath(), "tcs-ltc-project-rel",
+            Guid.NewGuid().ToString("N"));
+        string mediaDir = Path.Combine(projectDir, "media");
+        Directory.CreateDirectory(mediaDir);
+        string[] mediaNames = ["m1.mp4", "m2.mp4", "m3.mp4"];
+        foreach (string name in mediaNames)
+            await File.WriteAllBytesAsync(Path.Combine(mediaDir, name), new byte[16]);
+
+        string projectPath = Path.Combine(projectDir, "ltc-scenario.tsp");
+        try
+        {
+            JsonNode node = JsonNode.Parse(await File.ReadAllTextAsync(fixture))!;
+            JsonArray tracks = node["tracks"]!.AsArray();
+            for (int index = 0; index < tracks.Count; index++)
+            {
+                tracks[index]!["name"] = $"M{index + 1}";
+                tracks[index]!["filePath"] = Path.Combine("media", mediaNames[index]);
+            }
+
+            await File.WriteAllTextAsync(projectPath, node.ToJsonString());
+
+            ProjectData? project = await ProjectSerializer.LoadAsync(projectPath);
+
+            project.Should().NotBeNull();
+            project!.Tracks.Should().HaveCount(mediaNames.Length);
+            for (int index = 0; index < mediaNames.Length; index++)
+            {
+                string expected = Path.GetFullPath(Path.Combine(mediaDir, mediaNames[index]));
+                project.Tracks[index].FilePath.Should().Be(expected,
+                    "プロジェクトディレクトリ内の相対パス（media\\<ファイル名>）を解決できる");
+                File.Exists(project.Tracks[index].FilePath).Should().BeTrue(
+                    $"相対パスの素材が実在する: M{index + 1}");
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(projectDir, recursive: true); } catch { /* 一時ファイルの後始末 */ }
+        }
     }
 
     private static string FindRepositoryRoot()
