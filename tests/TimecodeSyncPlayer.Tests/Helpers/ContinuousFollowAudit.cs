@@ -13,11 +13,17 @@ internal readonly record struct FollowPerfSegment(double AtSeconds, double SpanS
     public double MidpointSeconds => AtSeconds - SpanSeconds * 0.5;
 }
 
-/// <summary>L-1: 1 窓の集計結果。</summary>
+/// <summary>
+/// L-1: 1 窓の集計結果。Settling は追従直後の過渡として判定から除外した窓（集計と報告には残す）。
+/// </summary>
 internal readonly record struct FollowWindow(
-    int Index, double StartSeconds, int FrameUpdates, double PositionAdvance, double MaxAbsError);
+    int Index, double StartSeconds, int FrameUpdates, double PositionAdvance, double MaxAbsError,
+    bool Settling);
 
-/// <summary>L-1: 全窓の集計。</summary>
+/// <summary>
+/// L-1: 全窓の集計。Windows は Settling を含む全窓。判定に使う数値（Stall*、MaxAbsError、
+/// MeanFrameUpdates、Worst*）は Settling を除いた窓だけから作る。
+/// </summary>
 internal sealed record ContinuousFollowSummary(
     IReadOnlyList<FollowWindow> Windows,
     double MeanFrameUpdates,
@@ -26,11 +32,14 @@ internal sealed record ContinuousFollowSummary(
     double MaxAbsError,
     FollowWindow? WorstUpdates,
     FollowWindow? WorstAdvance,
-    FollowWindow? WorstError);
+    FollowWindow? WorstError,
+    int SettlingWindowCount,
+    double SettlingMaxAbsError);
 
 /// <summary>
 /// L-1: 連続追従（Single・1 トラック内）の詰まり監査。UI に依存しない純関数で、
 /// 「更新 0 の窓」「位置が進まない窓」「窓ごとの最大誤差」を数える。単体で固定する。
+/// 追従開始直後の過渡（settlingSeconds）は判定から除外し、集計値としては報告する。
 /// </summary>
 internal static class ContinuousFollowAudit
 {
@@ -40,6 +49,7 @@ internal static class ContinuousFollowAudit
         double durationSeconds,
         double windowSeconds,
         Func<double, double> expectedPosition,
+        double settlingSeconds = 0.0,
         double minAdvanceRatio = 0.5)
     {
         ArgumentNullException.ThrowIfNull(samples);
@@ -49,6 +59,8 @@ internal static class ContinuousFollowAudit
             throw new ArgumentOutOfRangeException(nameof(durationSeconds));
         if (!double.IsFinite(windowSeconds) || windowSeconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(windowSeconds));
+        if (!double.IsFinite(settlingSeconds) || settlingSeconds < 0)
+            throw new ArgumentOutOfRangeException(nameof(settlingSeconds));
 
         int windowCount = (int)Math.Floor(durationSeconds / windowSeconds);
         var windows = new List<FollowWindow>(windowCount);
@@ -89,12 +101,15 @@ internal static class ContinuousFollowAudit
             }
 
             double advance = hasPosition ? lastPosition - firstPosition : 0.0;
-            windows.Add(new FollowWindow(index, start, frameUpdates, advance, maxError));
+            windows.Add(new FollowWindow(index, start, frameUpdates, advance, maxError, start < settlingSeconds));
         }
+
+        List<FollowWindow> audited = windows.Where(window => !window.Settling).ToList();
+        List<FollowWindow> settling = windows.Where(window => window.Settling).ToList();
 
         int stallUpdates = 0;
         int stallAdvance = 0;
-        foreach (FollowWindow window in windows)
+        foreach (FollowWindow window in audited)
         {
             if (window.FrameUpdates == 0)
                 stallUpdates++;
@@ -104,12 +119,14 @@ internal static class ContinuousFollowAudit
 
         return new ContinuousFollowSummary(
             windows,
-            windows.Count == 0 ? 0.0 : windows.Average(window => (double)window.FrameUpdates),
+            audited.Count == 0 ? 0.0 : audited.Average(window => (double)window.FrameUpdates),
             stallUpdates,
             stallAdvance,
-            windows.Count == 0 ? 0.0 : windows.Max(window => window.MaxAbsError),
-            windows.Count == 0 ? null : windows.MinBy(window => window.FrameUpdates),
-            windows.Count == 0 ? null : windows.MinBy(window => window.PositionAdvance),
-            windows.Count == 0 ? null : windows.MaxBy(window => window.MaxAbsError));
+            audited.Count == 0 ? 0.0 : audited.Max(window => window.MaxAbsError),
+            audited.Count == 0 ? null : audited.MinBy(window => window.FrameUpdates),
+            audited.Count == 0 ? null : audited.MinBy(window => window.PositionAdvance),
+            audited.Count == 0 ? null : audited.MaxBy(window => window.MaxAbsError),
+            settling.Count,
+            settling.Count == 0 ? 0.0 : settling.Max(window => window.MaxAbsError));
     }
 }
