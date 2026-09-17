@@ -3120,3 +3120,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - R-1 / R-3 / R-4 成功、R-2 は参照採取で失敗（tail が head と同一のまま 4 回 = **D25**）
 - LTC ループ 14/14。無音の信号断（`reason="SignalLoss"`）では従来どおり有効フレーム 5 枚で復帰（別経路のまま）
 - **判定: D27-c 解消。main に統合。** 残る間欠はすべて D25（shim）に帰着
+
+### D25 の原因（同期担当、2026-09-18 02:10、中間報告。修正は実装中・未コミット）
+
+- **(B) 主因**: `frames_decoded` がロードごとに 0 に戻る一方でリング/fence は残るため、fence 値（lease seq）が再利用され、`IsRingFenceComplete` がコピー完了前に真になる。「PTS は目標・画素は前」の主因で、E2E の一時停止シークはロード直後なのでこれに一致。修正: fence 用に単調な `seq_serial` を追加（`frames_decoded` はロード待ち用に維持）。新テスト `--reload-seq`（ロードをまたぐ fence 値の単調性）は修正後 PASS
+- **(A)**: シーク前に appsink から引かれたサンプルが、シーク後の generation で刻印されて acquire に出る（V5 の 1/10 `lease=5.250`、F-4 の「新世代として届く前フレーム」）。修正: appsink パッドプローブでバッファに flush 境界タグを付け、シーク前サンプルを破棄。SEEK/FLUSH_START は appsink パッドに届かず境界は下流 SEGMENT なので、`seek_prepare_locked` で「次の SEGMENT がシークの境界」と期待値を記録する方式へ切替中（カウンタ方式は過剰破棄になった）
+- 新テスト `--paused-seek-pixels`（色素材で一時停止再シーク後の最初のリースの画素を目標フレームと機械照合）。不変条件文書に I5/I7 の補強を追記予定
+- **D24（実装・検証済み、未コミット）**: ポンプ期限を既定 4000ms（`TCS_PUMP_BUDGET_MS`）、超過は復号進捗つき警告。step も同ポンプ化。長 GOP 7 本で g600 が到着し他は悪化なし。lock rule PASS、非E2E 1749、E2E 一部 8/1skip
