@@ -120,6 +120,12 @@ $makeProject = Join-Path $PSScriptRoot 'make-ltc-scenario-project.ps1'
 if ($MediaDir -and -not (Test-Path -LiteralPath $makeProject)) {
     $problems += "make-ltc-scenario-project.ps1 is not merged yet (removal team). Drop -MediaDir or run after it is merged."
 }
+if ($MediaDir -and (Test-Path -LiteralPath $MediaDir)) {
+    $mediaFull = (Resolve-Path -LiteralPath $MediaDir).Path
+    if (-not [string]::Equals([IO.Path]::GetPathRoot($mediaFull), [IO.Path]::GetPathRoot($ReportDir), [StringComparison]::OrdinalIgnoreCase)) {
+        $problems += 'MediaDir and ReportDir must be on the same volume (hard links); pass -ReportDir on the MediaDir volume'
+    }
+}
 
 Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | capture: ' + ($captureCable -join '; ') +
     '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource)
@@ -135,12 +141,41 @@ $makeMedia = Join-Path $PSScriptRoot 'make-e2e-media.ps1'
 & $makeMedia *> (Join-Path $ReportDir 'make-e2e-media.log')
 if (-not $?) { throw "make-e2e-media.ps1 failed" }
 
+function Remove-ScenarioProjectArtifacts {
+    if (-not $projectPath) { return }
+    if ($KeepProject) {
+        Write-Output ('project_kept=' + $projectPath)
+        Write-Output ('hardlinks_kept=' + $linkedMediaDir)
+        return
+    }
+    Remove-Item -LiteralPath $projectPath -Force -ErrorAction SilentlyContinue
+    if ($linkedMediaDir -and (Test-Path -LiteralPath $linkedMediaDir)) {
+        Get-ChildItem -LiteralPath $linkedMediaDir -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $linkedMediaDir -Force -ErrorAction SilentlyContinue
+    }
+}
+
+try {
 $projectPath = ''
+$linkedMediaDir = ''
 if ($MediaDir) {
     if (-not (Test-Path -LiteralPath $MediaDir)) { throw "MediaDir not found: $MediaDir" }
     $MediaDir = (Resolve-Path -LiteralPath $MediaDir).Path
+
+    # D19b: hard links only (no junction, no copy); the media folder stays untouched.
+    $linkedMediaDir = Join-Path $ReportDir 'media'
+    New-Item -ItemType Directory -Force -Path $linkedMediaDir | Out-Null
+    $mediaExtensions = @('.mp4', '.mov', '.mkv', '.mxf', '.ts')
+    foreach ($mediaFile in @(Get-ChildItem -LiteralPath $MediaDir -File |
+        Where-Object { $mediaExtensions -contains $_.Extension.ToLowerInvariant() })) {
+        $linkPath = Join-Path $linkedMediaDir $mediaFile.Name
+        if (Test-Path -LiteralPath $linkPath) { Remove-Item -LiteralPath $linkPath -Force }
+        New-Item -ItemType HardLink -Path $linkPath -Target $mediaFile.FullName | Out-Null
+    }
+
     $projectPath = Join-Path $ReportDir 'ltc-scenario.tsp'
-    & $makeProject -MediaDir $MediaDir -Out $projectPath *> (Join-Path $ReportDir 'make-ltc-scenario-project.log')
+    & $makeProject -MediaDir $linkedMediaDir -Out $projectPath *> (Join-Path $ReportDir 'make-ltc-scenario-project.log')
     if (-not $?) { throw "make-ltc-scenario-project.ps1 failed" }
     if (-not (Test-Path -LiteralPath $projectPath)) { throw "project not generated: $projectPath" }
     $env:TIMECODE_LTC_SCENARIO_PROJECT = $projectPath
@@ -258,13 +293,9 @@ Write-Output ('SUMMARY passed=' + $passed + ' failed=' + $failed + ' skipped=' +
     ' err_ftl=' + $errFtl + ' leftover=' + $leftover.Count + ' report=' + $ReportDir)
 foreach ($name in $failedNames) { Write-Output ('FAILED ' + $name) }
 Write-Output ('app_logs=' + (($copiedLogs | Sort-Object) -join ','))
-
-if ($projectPath) {
-    if ($KeepProject) {
-        Write-Output ('project_kept=' + $projectPath)
-    } else {
-        Remove-Item -LiteralPath $projectPath -Force -ErrorAction SilentlyContinue
-    }
+}
+finally {
+    Remove-ScenarioProjectArtifacts
 }
 
 if ($failed -gt 0 -or $testExit -ne 0) { exit 1 }
