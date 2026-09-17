@@ -310,18 +310,42 @@ $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe
 if ($Cycles -gt 0) { $env:TIMECODE_LTC_SCENARIO_CYCLES = [string]$Cycles }
 
 # ---- build and run ---------------------------------------------------------
+# D23-c: Windows PowerShell 5.1 turns every stderr line of a native command into
+# an ErrorRecord; with $ErrorActionPreference = 'Stop' the first one (xUnit writes
+# "[FAIL]" lines to stderr) aborts the runner after dotnet exits, so the evidence
+# copy and the SUMMARY line are skipped. Native output is also decoded with the
+# console code page, which garbles the UTF-8 text of dotnet. Run native commands
+# with 'Continue', decode as UTF-8, and write ErrorRecords as plain text.
+function Invoke-NativeToLog([scriptblock]$Command, [string]$LogPath) {
+    $previousPreference = $ErrorActionPreference
+    $previousEncoding = $null
+    try { $previousEncoding = [Console]::OutputEncoding } catch { }
+    $ErrorActionPreference = 'Continue'
+    try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+    try {
+        & $Command 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+        } | Out-File -FilePath $LogPath -Encoding utf8
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+        if ($previousEncoding) {
+            try { [Console]::OutputEncoding = $previousEncoding } catch { }
+        }
+    }
+}
+
 if (-not $SkipBuild) {
-    & dotnet build $testProj -c Debug *>&1 |
-        Out-File -FilePath (Join-Path $ReportDir 'build.log') -Encoding utf8
-    if ($LASTEXITCODE) { throw "tests build failed ($LASTEXITCODE)" }
+    $buildExit = Invoke-NativeToLog { dotnet build $testProj -c Debug } (Join-Path $ReportDir 'build.log')
+    if ($buildExit) { throw "tests build failed ($buildExit)" }
 }
 
 $testStart = Get-Date
 $trxName = 'results.trx'
-& dotnet test $testProj -c Debug --no-build --filter $Filter `
-    --results-directory $ReportDir --logger "trx;LogFileName=$trxName" *>&1 |
-    Out-File -FilePath (Join-Path $ReportDir 'dotnet-test.log') -Encoding utf8
-$testExit = $LASTEXITCODE
+$testExit = Invoke-NativeToLog {
+    dotnet test $testProj -c Debug --no-build --filter $Filter `
+        --results-directory $ReportDir --logger "trx;LogFileName=$trxName"
+} (Join-Path $ReportDir 'dotnet-test.log')
 Get-Content -LiteralPath (Join-Path $ReportDir 'dotnet-test.log') -Tail 3 | ForEach-Object { Write-Output $_ }
 
 # ---- copy evidence ---------------------------------------------------------
