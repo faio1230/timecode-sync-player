@@ -3402,3 +3402,9 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - fps=0 受け入れ（`99787b3`）: caps 確定は幅・高さのみ。`load.fps-missing` を診断ログに。`caps-missing` は caps 欠落/不一致時のみ（bus error 起因は preroll-timeout）
 - 実機（開発機）: 生成素材 36/36（シナリオ 22 + LTC ループ 14）、4K 3 本の F/G/C 3/3（親が trx を確認）。shim ログ全体で `loaded … 0x0@` **0 件**（成功ロード 168 + 64、`caps-missing` 3 + 282、`preroll-timeout` 1 = ハードウェアループの一時クリップの bus error、次 attempt で成功）。FetchMetadata の 5 秒警告 0
 - 統合後 main: 非E2E 1876/0、ロック規則 PASS。**判定: 統合。除去担当が S-3 の許容（±2 フレーム）を直したうえで統合後 main を実機確認 → 候補 6**
+
+## D35: 停止モードの保持で一時停止までの 250〜480ms 分だけ進み、保持値への着地シークが出ない（2026-09-18 05:46、検証機の R-1 抜粋 2 回、親の判定）
+
+- ケース 1（SignalLoss）: 損失宣言 250ms の間 rate≈1.0 で進み position=12.183（保持 12.0）、着地シークなし。Duplicate は損失宣言の後に届いた（保持値未知のまま損失）。ケース 2（TimecodeHeld）: 最後の受理から 483ms 後に一時停止、12.55 → 判定時 13.000、着地シークなし（shim の accurate シークは最初の 1 回のみ）
+- 共通: 保持開始の直前に `Reverse` −2 フレームが 1 枚（テスト信号側）、その直後に「reapplying … after file load」がロードの 5〜7 秒後に走る（`_fileLoadReleasePending` の残り疑い）
+- 指示: `docs/prompts/2026-09-18-D35-stop-mode-hold-no-landing-seek.md`（同期担当）。候補 6 は D34+D35 で
