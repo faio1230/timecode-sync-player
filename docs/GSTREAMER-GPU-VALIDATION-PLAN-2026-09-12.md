@@ -3316,3 +3316,8 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 目標 0 対応（`badf947`）: LateConfirm と ShouldDiscardFrozenFrame を目標 0 でも成立させた。既存の `> 0` 判定（`GapEnterCoordinator.cs` 87/133 の「尺不明なら現在の絵」、`GapFreezeHandler.cs` 502 の atFinalFrame）は尺 1 フレーム以下の退化時のみで未変更（報告のみ）
 - 実機（開発機）: 生成素材 A/B/C の F-1〜F-5・G-1〜G-6・C-1/C-2 = 13/13、4K 3 本 = 13/13、4K + `TCS_PUMP_BUDGET_MS=800` の F 系 = 5/5（親が trx のカウンタを確認）。F-3 で `gap freeze target changed, discarding the previous frozen frame` が各セッション 1 回発動（C の tail → A の先頭）。遅延確定・capture timed out・pump deadline・stale は 0 件（開発機では 3 秒を外れない）
 - 統合後 main の非E2E 1844/0。**判定: 統合。除去担当がシナリオ 22 + LTC ループ 14 を実機確認 → 候補 4**（検証機の候補 3 の結果と突き合わせ）
+
+### 統合後 main（D32 込み、`adc8200`）の実機確認（除去担当、2026-09-17 23:35、親が trx のカウンタを確認）
+
+- シナリオ 22/22、LTC ループ 14/14、残プロセス 0。F-3 で `gap freeze target changed, discarding the previous frozen frame target=19.967` が 1 回発動（D32 項目 2 の作動）。証跡 `TestResults/postmerge4/`（agent-b の作業ツリー）
+- **判定: 候補 4（D32 込み）を作って検証機へ。D33（Single の MediaOut ホールド）は次の候補**
