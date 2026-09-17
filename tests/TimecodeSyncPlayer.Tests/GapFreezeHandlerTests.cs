@@ -581,4 +581,51 @@ public class GapFreezeHandlerTests
         action.Type.Should().Be(GapEnterActionType.LoadPreviousTrack);
         action.TrackId.Should().Be(requestedTrackId);
     }
+
+    [Fact]
+    public void DecideGapEnter_FreezeBehavior_LoadsNextTrackFirstFrame_BeforeFirstTrack()
+    {
+        // D22: 先頭オフセット領域（前トラックなし）は次のトラックの冒頭フレームを保持する。
+        var nextTrackId = Guid.NewGuid();
+        var nextTrack = MakeTrack(nextTrackId, durationSeconds: 20.0, fps: 30.0);
+        var handler = new GapFreezeHandler();
+
+        var leadingGap = new TimelineQueryResult(
+            Status: TimelineQueryStatus.Gap,
+            Track: null,
+            MediaPositionSeconds: 0,
+            PreviousTrack: null,
+            NextTrack: nextTrack);
+
+        var action = handler.DecideGapEnter(
+            leadingGap, GapBehavior.Freeze, loadedTrackId: null, currentVideoFps: 30.0, currentDurationSeconds: 20.0);
+
+        action.Type.Should().Be(GapEnterActionType.LoadNextTrackFirstFrame);
+        action.TrackId.Should().Be(nextTrackId);
+        action.TargetSeconds.Should().Be(0.0);
+    }
+
+    [Fact]
+    public void DecideGapEnter_FreezeBehavior_ReusesCachedNextTrackFirstFrame()
+    {
+        var nextTrackId = Guid.NewGuid();
+        var nextTrack = MakeTrack(nextTrackId, durationSeconds: 20.0, fps: 30.0);
+        var handler = new GapFreezeHandler();
+        handler.CurrentState = GapState.FreezeComplete;
+        handler.CachedTrackId = nextTrackId;
+        handler.CachedTargetSeconds = 0.0;
+
+        var leadingGap = new TimelineQueryResult(
+            Status: TimelineQueryStatus.Gap,
+            Track: null,
+            MediaPositionSeconds: 0,
+            PreviousTrack: null,
+            NextTrack: nextTrack);
+
+        var action = handler.DecideGapEnter(
+            leadingGap, GapBehavior.Freeze, loadedTrackId: nextTrackId, currentVideoFps: 30.0, currentDurationSeconds: 20.0);
+
+        action.Type.Should().Be(GapEnterActionType.UseCachedFrame);
+        action.TrackId.Should().Be(nextTrackId);
+    }
 }

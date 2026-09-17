@@ -27,7 +27,8 @@ internal enum GapEnterActionType
     ForceBlack,
     UseCachedFrame,
     LoadPreviousTrack,
-    SeekToFinalFrame
+    SeekToFinalFrame,
+    LoadNextTrackFirstFrame
 }
 
 internal sealed record GapEnterAction(
@@ -291,6 +292,40 @@ public sealed class GapFreezeHandler
 
         if (!previousTrackId.HasValue)
         {
+            // D22: 先頭オフセット領域（前トラックなし）の Freeze は、次のトラックの
+            // 冒頭フレーム（MediaIn）を保持する。次のトラックが無い場合だけ黒。
+            PlaylistTrack? nextTrack = result.NextTrack;
+            if (nextTrack != null)
+            {
+                double nextFps = nextTrack.FrameRate ?? (currentVideoFps > 0 ? currentVideoFps : DefaultFallbackFps);
+                double nextFrameSeconds = 1.0 / nextFps;
+                double nextDuration = (nextTrack.MediaOut ?? nextTrack.MediaDuration).TotalSeconds;
+                if (nextDuration <= 0)
+                {
+                    Serilog.Log.Warning("GapFreezeHandler: nextTrack {TrackId} has duration <= 0, falling back to currentDurationSeconds={Duration:F3}", nextTrack.Id, currentDurationSeconds);
+                    nextDuration = currentDurationSeconds;
+                }
+                double nextTarget = Math.Max(0, nextTrack.MediaIn.TotalSeconds);
+
+                if (CanReuseCachedFrame(nextTrack.Id, nextTarget, nextFrameSeconds))
+                {
+                    SetState(GapState.FreezeComplete);
+                    return new GapEnterAction(
+                        GapEnterActionType.UseCachedFrame,
+                        nextTrack.Id,
+                        nextTarget,
+                        nextDuration,
+                        nextFps);
+                }
+
+                return new GapEnterAction(
+                    GapEnterActionType.LoadNextTrackFirstFrame,
+                    nextTrack.Id,
+                    nextTarget,
+                    nextDuration,
+                    nextFps);
+            }
+
             ClearCachedFrameInfo();
             SetState(GapState.ForceBlack);
             return new GapEnterAction(GapEnterActionType.ForceBlack);

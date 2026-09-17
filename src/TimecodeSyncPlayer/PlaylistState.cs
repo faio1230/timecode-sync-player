@@ -163,6 +163,7 @@ public sealed class PlaylistState : IPlaylistService
     public TimelineQueryResult FindTrackAtTimelinePosition(double timelineSeconds)
     {
         PlaylistTrack? previousTrack = null;
+        PlaylistTrack? nextTrack = null;
         bool hasEnabledTrack = false;
 
         for (int i = 0; i < Tracks.Count; i++)
@@ -193,12 +194,14 @@ public sealed class PlaylistState : IPlaylistService
 
             if (tlOut <= timelineSeconds)
                 previousTrack = track;
+            else if (nextTrack == null && tlIn > timelineSeconds)
+                nextTrack = track;
         }
 
         if (!hasEnabledTrack)
             return new TimelineQueryResult(TimelineQueryStatus.NoTracks, null, 0, null);
 
-        return new TimelineQueryResult(TimelineQueryStatus.Gap, null, 0, previousTrack);
+        return new TimelineQueryResult(TimelineQueryStatus.Gap, null, 0, previousTrack, nextTrack);
     }
 
     /// <summary>

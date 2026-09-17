@@ -581,7 +581,8 @@ internal sealed class LtcSyncController
                 new GapEnterActionDispatcher(new GapEnterActionHandlers(
                     coordinator.EnterBlackGap, coordinator.EnterForceBlack, null,
                     coordinator.StartGapFreezeCaptureForCurrentTrack,
-                    coordinator.LoadPreviousTrackFinalFrameForGapFreeze)).Execute(action, result);
+                    coordinator.LoadPreviousTrackFinalFrameForGapFreeze,
+                    coordinator.LoadNextTrackFirstFrameForGapFreeze)).Execute(action, result);
                 _effects.UpdateCurrentTrackLabel();
                 break;
             case TimelineQueryStatus.NoTracks:
