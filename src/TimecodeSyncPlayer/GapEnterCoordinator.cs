@@ -94,9 +94,12 @@ internal sealed class GapEnterCoordinator
         double duration = action.DurationSeconds ?? _effects.GetDuration();
         double currentFps = _effects.GetFps();
         double fps = action.Fps ?? (currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps);
+        Guid? captureTrackId = previousTrackId ?? loadedTrackId;
+        // D32: 別の目標へ入り直すときは、前のフリーズ画像を破棄してから捕捉する。
+        DiscardFrozenFrameIfTargetChanged(captureTrackId, target, fps);
         // D21-b: 目標フレームの到着確認はシークより先に始める。シーク完了フレームが
         // 進入直後に届いても「進入後のフレーム」として数えられるようにする。
-        _gapFreezeHandler.EnterFreezeCapture(previousTrackId ?? loadedTrackId, target, previousTrack?.FilePath);
+        _gapFreezeHandler.EnterFreezeCapture(captureTrackId, target, previousTrack?.FilePath);
         bool seekSuccess = _effects.SeekTo(target);
         if (seekSuccess)
         {
@@ -137,8 +140,11 @@ internal sealed class GapEnterCoordinator
             double duration = action.DurationSeconds ?? _effects.GetDuration();
             double currentFps = _effects.GetFps();
             double fps = action.Fps ?? (currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps);
+            Guid? captureTrackId = previousTrackId ?? _effects.GetLoadedTrackId();
+            // D32: 別の目標へ入り直すときは、前のフリーズ画像を破棄してから捕捉する。
+            DiscardFrozenFrameIfTargetChanged(captureTrackId, target, fps);
             _gapFreezeHandler.EnterFreezeCaptureWithCurrentFrame(
-                previousTrackId ?? _effects.GetLoadedTrackId(), target, previousTrack?.FilePath);
+                captureTrackId, target, previousTrack?.FilePath);
             Log.Information(
                 "Continue mode: gap freeze holds current frame at final position target={Target:F3} duration={Duration:F3} fps={Fps:F3}",
                 target, duration, fps);
@@ -163,10 +169,13 @@ internal sealed class GapEnterCoordinator
                 double fps = currentFps > 0 ? currentFps : GapFreezeHandler.DefaultFallbackFps;
                 double frameSeconds = 1.0 / fps;
                 double target = Math.Max(0, duration - frameSeconds);
+                Guid? captureTrackId = _effects.GetLoadedTrackId();
+                // D32: 別の目標へ入り直すときは、前のフリーズ画像を破棄してから捕捉する。
+                DiscardFrozenFrameIfTargetChanged(captureTrackId, target, fps);
                 bool seekSuccess = _effects.SeekTo(target);
                 if (seekSuccess)
                 {
-                    _gapFreezeHandler.EnterFreezeCapture(_effects.GetLoadedTrackId(), target, null);
+                    _gapFreezeHandler.EnterFreezeCapture(captureTrackId, target, null);
                     Log.Information("Continue mode: no tracks, entering gap freeze target={Target:F3} duration={Duration:F3}", target, duration);
                 }
                 else
@@ -197,6 +206,9 @@ internal sealed class GapEnterCoordinator
                 return;
 
             _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
+
+            // D32: 別の目標へ入り直すときは、前のフリーズ画像を破棄してからロードする。
+            DiscardFrozenFrameIfTargetChanged(nextTrack.Id, target, fps);
 
             GapLoadCommandResult commandResult = _effects.LoadPausedAt(nextTrack.FilePath, target);
 
@@ -237,6 +249,9 @@ internal sealed class GapEnterCoordinator
                 return;
 
             _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
+
+            // D32: 別の目標へ入り直すときは、前のフリーズ画像を破棄してからロードする。
+            DiscardFrozenFrameIfTargetChanged(previousTrack.Id, target, fps);
 
             GapLoadCommandResult commandResult = _effects.LoadPausedAt(previousTrack.FilePath, target);
 
@@ -318,6 +333,24 @@ internal sealed class GapEnterCoordinator
             OutputTrace.Current.Record(new("gap.enter", "GAP", Stopwatch.GetTimestamp(),
                 Detail: "mode=" + GapPlayerModePolicy.Describe(_playerMode)));
         _effects.ApplyPauseState(true);
+    }
+
+    /// <summary>
+    /// D32: 進入目標が今のフリーズ画像の目標（確定済み = Cached、捕捉中 = Pending）と変わるとき
+    /// だけ、前のフリーズ画像とキャッシュを破棄する。同じ目標の再進入では破棄しない
+    /// （F-1 の周期再進入で frozen を捨てない）。
+    /// </summary>
+    private void DiscardFrozenFrameIfTargetChanged(Guid? trackId, double targetSeconds, double fps)
+    {
+        double frameSeconds = fps > 0 ? 1.0 / fps : 1.0 / GapFreezeHandler.DefaultFallbackFps;
+        if (!_gapFreezeHandler.ShouldDiscardFrozenFrame(trackId, targetSeconds, frameSeconds))
+            return;
+
+        _gapFreezeHandler.ClearCachedFrameInfo();
+        _effects.ClearGapFreezeFrame();
+        Log.Information(
+            "Continue mode: gap freeze target changed, discarding the previous frozen frame track={TrackId} target={Target:F3}",
+            trackId, targetSeconds);
     }
 }
 

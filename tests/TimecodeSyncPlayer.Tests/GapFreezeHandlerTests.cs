@@ -148,6 +148,116 @@ public class GapFreezeHandlerTests
         handler.CurrentState.Should().Be(GapState.FreezeComplete);
         handler.CachedTrackId.Should().BeNull();
         handler.CachedTargetSeconds.Should().Be(0);
+        handler.HasLateConfirmTarget.Should().BeFalse();
+    }
+
+    // ---- D32: タイムアウト後の遅延確定 ----
+
+    [Fact]
+    public void ForceFreezeComplete_RetainsLateConfirmTarget_WithoutCertifyingIt()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+
+        handler.ForceFreezeComplete();
+
+        handler.HasLateConfirmTarget.Should().BeTrue();
+        handler.LateConfirmTrackId.Should().Be(trackId);
+        handler.LateConfirmTargetSeconds.Should().Be(42.5);
+        handler.LateConfirmPath.Should().Be("test.mp4");
+        // 遅延確定の候補であって、最終画像として認定はしない。
+        handler.CachedTrackId.Should().BeNull();
+        handler.CachedTargetSeconds.Should().Be(0);
+    }
+
+    [Fact]
+    public void ReopenCaptureForLateFrame_ReentersWithFrameSeen()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+        handler.ForceFreezeComplete();
+
+        handler.ReopenCaptureForLateFrame();
+
+        handler.CurrentState.Should().Be(GapState.EnteringFreeze);
+        handler.PendingTrackId.Should().Be(trackId);
+        handler.PendingTargetSeconds.Should().Be(42.5);
+        handler.PendingPath.Should().Be("test.mp4");
+        handler.FrameSeenSinceCapture.Should().BeTrue("届いたフレームで確定する");
+        handler.HasLateConfirmTarget.Should().BeFalse();
+        handler.CanRetrySeek.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ForceFreezeComplete_RetainsTargetZero_AndReopensIt()
+    {
+        // D32: MediaIn 0 の先頭フレーム（目標 0）も有効な遅延確定の目標。
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 0.0, "head.mp4");
+
+        handler.ForceFreezeComplete();
+
+        handler.HasLateConfirmTarget.Should().BeTrue();
+        handler.LateConfirmTargetSeconds.Should().Be(0.0);
+        handler.LateConfirmTrackId.Should().Be(trackId);
+
+        handler.ReopenCaptureForLateFrame();
+
+        handler.CurrentState.Should().Be(GapState.EnteringFreeze);
+        handler.PendingTargetSeconds.Should().Be(0.0);
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsLateConfirmFrame_TargetZero_AcceptsFrameAtZero()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 0.0, "head.mp4");
+        handler.ForceFreezeComplete();
+
+        handler.IsLateConfirmFrame(0.0, 60).Should().BeTrue();
+        handler.IsLateConfirmFrame(0.01, 60).Should().BeTrue();
+        handler.IsLateConfirmFrame(0.1, 60).Should().BeFalse();
+        handler.IsLateConfirmFrame(double.NaN, 60).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsLateConfirmFrame_WithoutLateTarget_IsFalse()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.IsLateConfirmFrame(0.0, 60).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ReopenCaptureForLateFrame_WithoutLateTarget_DoesNothing()
+    {
+        var handler = new GapFreezeHandler();
+        handler.ForceFreezeComplete();
+
+        handler.ReopenCaptureForLateFrame();
+
+        handler.CurrentState.Should().Be(GapState.FreezeComplete);
+        handler.PendingTargetSeconds.Should().Be(0);
+    }
+
+    [Fact]
+    public void Reset_ClearsLateConfirmTarget()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.ForceFreezeComplete();
+        handler.HasLateConfirmTarget.Should().BeTrue();
+
+        handler.Reset();
+
+        handler.HasLateConfirmTarget.Should().BeFalse();
+        handler.LateConfirmTargetSeconds.Should().BeNull();
+        handler.LateConfirmTrackId.Should().BeNull();
+        handler.LateConfirmPath.Should().BeNull();
     }
 
     [Fact]
@@ -297,6 +407,102 @@ public class GapFreezeHandlerTests
         bool result = handler.CanReuseCachedFrame(trackId, target: 0, frameSeconds: 1.0 / 24.0);
 
         result.Should().BeFalse();
+    }
+
+    // ---- D32: 進入目標が変わったときのフリーズ画像の破棄 ----
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_NoKnownTarget_IsFalse()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.ShouldDiscardFrozenFrame(Guid.NewGuid(), 42.5, 1.0 / 30).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_SameTrackAndTarget_IsFalse()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        // 半フレーム以内の差は同じ目標として扱う（F-1 の周期再進入）。
+        handler.ShouldDiscardFrozenFrame(trackId, 42.5, 1.0 / 30).Should().BeFalse();
+        handler.ShouldDiscardFrozenFrame(trackId, 42.51, 1.0 / 30).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_SameTrackDifferentTarget_IsTrue()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        handler.ShouldDiscardFrozenFrame(trackId, 10.0, 1.0 / 30).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_DifferentTrackSameTarget_IsTrue()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 24.983, "c.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        // 同尺の別トラック（同じ最終位置）でも、別の絵なので捨てる。
+        handler.ShouldDiscardFrozenFrame(Guid.NewGuid(), 24.983, 1.0 / 60).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_PendingCaptureTarget_IsCompared()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        // 捕捉中（Pending）は Cached ではなく Pending と比べる。
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+
+        handler.ShouldDiscardFrozenFrame(trackId, 42.5, 1.0 / 30).Should().BeFalse();
+        handler.ShouldDiscardFrozenFrame(trackId, 40.0, 1.0 / 30).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_NewTargetZero_DifferentFromKnown_IsTrue()
+    {
+        // D32: MediaIn 0 の先頭フレーム（目標 0）への進入も、別目標なら捨てる。
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 24.983, "tail.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        handler.ShouldDiscardFrozenFrame(trackId, 0.0, 1.0 / 60).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_KnownTargetZero_IsCompared()
+    {
+        // D32: 確定済みの目標 0 も有効（同じ目標 0 の再進入では捨てない、別トラックなら捨てる）。
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 0.0, "head.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        handler.CachedTargetKnown.Should().BeTrue();
+        handler.ShouldDiscardFrozenFrame(trackId, 0.0, 1.0 / 60).Should().BeFalse();
+        handler.ShouldDiscardFrozenFrame(Guid.NewGuid(), 0.0, 1.0 / 60).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_AfterClearCachedFrameInfo_IsFalse()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+        handler.OnFreezeComplete(trackId);
+        handler.ClearCachedFrameInfo();
+
+        handler.ShouldDiscardFrozenFrame(Guid.NewGuid(), 10.0, 1.0 / 30).Should().BeFalse();
     }
 
     [Fact]

@@ -69,7 +69,7 @@ public class ContinueOnTrackCoordinatorTests
         public ContinueOnTrackEffects Build() => new(
             PeekGapExit: () => new GapExitAction(GapExit),
             IsPlaybackPaused: () => true,
-            ClearGapFreezeFrame: () => { },
+            ClearGapFreezeFrame: () => Calls.Add("ClearGapFreezeFrame"),
             DecideGapExit: () => { Calls.Add("DecideGapExit"); return new GapExitAction(GapExit); },
             SeekTo: target => { Calls.Add("SeekTo"); SeekTargets.Add(target); return SeekResult; },
             ResumePlayback: () => Calls.Add("ResumePlayback"),
@@ -190,6 +190,7 @@ public class ContinueOnTrackCoordinatorTests
             "GetLoadedTrackId",
             "SeekTo",
             "DecideGapExit",
+            "ClearGapFreezeFrame",
             "ResumePlayback",
             "ApplyPauseState(False)",
             "UpdateCurrentTrackLabel");
