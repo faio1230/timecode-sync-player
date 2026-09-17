@@ -202,10 +202,12 @@ public sealed class LtcScenarioE2ETests
         DateTime holdObservedAt = DateTime.Now;
         scenario.WaitUntil(() => scenario.IsPaused(), timeoutSeconds + scenario.OneFrame + 0.5,
             "保持の検出で一時停止");
-        double pauseLatencySeconds = (DateTime.Now - holdObservedAt).TotalSeconds;
+        DateTime pausedAt = DateTime.Now;
+        double pauseLatencySeconds = (pausedAt - holdObservedAt).TotalSeconds;
         scenario.Journal.Write("hold-pause", details: new
         {
             target,
+            expected = expectedPosition,
             pauseLatencySeconds,
             position = scenario.Position(),
             ltc = scenario.LtcSeconds(),
@@ -217,6 +219,16 @@ public sealed class LtcScenarioE2ETests
         scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedPosition) <= scenario.OneFrame,
             timeoutSeconds + scenario.OneFrame + 1.0, "停止位置が保持値");
         double stoppedPosition = scenario.Position();
+        // hold-pause は一時停止を検出した瞬間の値で、保持値への明示着地より前を拾う。
+        // 着地後に落ち着いた位置はこちらで見る。
+        scenario.Journal.Write("hold-landed", details: new
+        {
+            target,
+            expected = expectedPosition,
+            position = stoppedPosition,
+            overshoot = stoppedPosition - expectedPosition,
+            secondsAfterPause = (DateTime.Now - pausedAt).TotalSeconds,
+        });
         Thread.Sleep(1500);
         Math.Abs(scenario.Position() - stoppedPosition).Should().BeLessThanOrEqualTo(scenario.OneFrame,
             "保持中は停止位置が動かない");
@@ -229,6 +241,7 @@ public sealed class LtcScenarioE2ETests
         const double timeoutSeconds = 0.25;
         double start = scenario.A.Start + 3;
         double target = scenario.A.Start + 7;
+        double expectedPosition = scenario.A.TimelineToMedia(target);
         scenario.SetSync(true);
         scenario.SetSignalLossMode(stop: true);
 
@@ -248,12 +261,33 @@ public sealed class LtcScenarioE2ETests
 
         scenario.WaitUntil(() => scenario.IsPaused(), timeoutSeconds + scenario.OneFrame + 0.5,
             "保持の検出で一時停止");
+        DateTime pausedAt = DateTime.Now;
         scenario.Journal.Write("hold-pause", details: new
         {
             target,
-            pauseLatencySeconds = (DateTime.Now - holdObservedAt).TotalSeconds,
+            expected = expectedPosition,
+            pauseLatencySeconds = (pausedAt - holdObservedAt).TotalSeconds,
             position = scenario.Position(),
             ltc = scenario.LtcSeconds(),
+        });
+
+        // 保持値への明示着地が済むまで、R-1 の判定と同じ幅（1 フレーム）と同じ時間だけ様子を見る。
+        // ここでは判定しないので、着地しないまま時間切れになっても送出の再開へ進む。
+        DateTime landingDeadline = pausedAt.AddSeconds(timeoutSeconds + scenario.OneFrame + 1.0);
+        while (Math.Abs(scenario.Position() - expectedPosition) > scenario.OneFrame
+            && DateTime.Now < landingDeadline)
+        {
+            Thread.Sleep(50);
+        }
+        double landedPosition = scenario.Position();
+        scenario.Journal.Write("hold-landed", details: new
+        {
+            target,
+            expected = expectedPosition,
+            position = landedPosition,
+            overshoot = landedPosition - expectedPosition,
+            secondsAfterPause = (DateTime.Now - pausedAt).TotalSeconds,
+            landed = Math.Abs(landedPosition - expectedPosition) <= scenario.OneFrame,
         });
 
         scenario.Play(target, 8.0);
