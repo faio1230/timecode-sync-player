@@ -79,6 +79,27 @@ internal sealed class SingleModeSyncCoordinator
     }
 
     /// <summary>
+    /// D33: 保持（Duplicate）フレームでも終端ホールド／解除を評価する。保持中は通常の同期評価が
+    /// 走らない（シークもしない）ため、境界へ着地したあとに LTC が止まった場合の停止はここで行う。
+    /// </summary>
+    public bool ApplyClipBoundaryHoldOnly(double ltcSeconds)
+    {
+        if (_effects.IsNativeSeeking?.Invoke() == true)
+            return _clipBoundaryHeld;
+
+        (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
+        if (timePosRc != 0)
+            return _clipBoundaryHeld;
+
+        SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
+        if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
+            !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
+            return _clipBoundaryHeld;
+
+        return ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state);
+    }
+
+    /// <summary>
     /// D33: 範囲外 LTC の端での終端ホールド。true を返したら呼び出し側はシーク・判定へ進まない。
     /// 端に達する前（シークで着地する前）は false を返し、通常の着地シークに任せる。
     /// </summary>

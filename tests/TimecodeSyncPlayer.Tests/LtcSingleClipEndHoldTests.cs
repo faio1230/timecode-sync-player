@@ -70,4 +70,19 @@ public sealed class LtcSingleClipEndHoldTests
         h.IsPaused.Should().BeFalse();
         SeekTargets(h).Should().Contain(10.0);
     }
+
+    [Fact]
+    public void HeldDuplicateLtc_AtClipOut_HoldsWithoutSeek()
+    {
+        // D33: LTC が保持（Duplicate）のまま境界に着地した場合でもホールドする
+        // （通常の同期評価が走らないため、保持フレーム用の評価で止める）。
+        (SyncScenarioHarness h, _) = Arrange();
+        h.AdvancePlayback(25.0);
+
+        h.SupplyHeldLtc(40.0);
+
+        h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
+        h.IsPaused.Should().BeTrue("MediaOut の最終フレームで静止する");
+        SeekTargets(h).Should().BeEmpty("保持フレームではシークしない");
+    }
 }

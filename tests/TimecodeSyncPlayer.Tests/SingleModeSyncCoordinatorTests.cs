@@ -335,4 +335,32 @@ public class SingleModeSyncCoordinatorTests
 
         holdCalls.Should().BeEmpty();
     }
+
+    [Fact]
+    public void ApplyClipBoundaryHoldOnly_HoldsOnHeldFramesWithoutSeek()
+    {
+        // D33: LTC が保持（Duplicate）のまま境界へ着地したケース。通常の Apply は走らないため、
+        // 保持フレーム用の評価でホールドする（シークはしない）。
+        double playback = 25.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.ApplyClipBoundaryHoldOnly(40.0).Should().BeTrue();
+
+        seekCalls.Should().BeEmpty();
+        holdCalls.Should().Equal(new[] { true });
+
+        // LTC が範囲内へ戻れば解除する。
+        coordinator.ApplyClipBoundaryHoldOnly(10.0).Should().BeFalse();
+
+        seekCalls.Should().BeEmpty();
+        holdCalls.Should().Equal(new[] { true, false });
+    }
 }

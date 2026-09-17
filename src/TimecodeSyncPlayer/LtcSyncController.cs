@@ -438,6 +438,11 @@ internal sealed class LtcSyncController
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
                 _lastHeldEffectiveSeconds = heldEffectiveSeconds;
+                // D33: 保持（Duplicate）では通常の同期評価が走らない。範囲外 LTC の保持中でも
+                // 終端ホールド／解除を評価する（境界へのシークは通常フレーム側が行う）。
+                LtcSyncContext heldState = _effects.GetContext();
+                if (heldState.Mode == SyncMode.Single && heldState.SyncEnabled && heldState.IsMonitoring)
+                    _single().ApplyClipBoundaryHoldOnly(heldEffectiveSeconds);
             }
             // D30: 写像がギャップ／別トラックの Jump と、Fixed モードでデコーダ推定 fps が
             // 食い違う Jump は未確認にして次の 1 フレームの連続を待つ（誤値 1 枚で状態を動かさない）。
