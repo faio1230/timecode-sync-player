@@ -116,6 +116,7 @@ public sealed class HeldLtcStopAndRunThroughTests
         RawFrame(h, 1, 0, 10_000, frameEnd);
         RawFrame(h, 1, 1, 10_040, frameEnd);
         RawFrame(h, 1, 1, 10_200, frameEnd); // Duplicate（保持値 1.04）
+        h.AdvancePlayback(1.2);              // D35: 1 フレーム超の行き過ぎで明示着地の対象にする
         h.Operations.Clear();
 
         Tick(h, clock, 3);

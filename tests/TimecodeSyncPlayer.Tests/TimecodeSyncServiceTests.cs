@@ -448,6 +448,77 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
+    public void TryMarkFileLoaded_ForcesRelease_WhenProgressStallsPastTheGrace()
+    {
+        // D35: 停止（保持）などで描画フレーム・再生位置が進まなくても、ロード開始から
+        // 一定時間（5 秒。実素材のプロファイル試行 2.2〜2.5 秒を下回らない）で解除する。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 18, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        service.TryMarkFileLoaded(playbackSeconds: 12.0, renderedFrameCount: 3)
+            .Should().BeTrue("進捗が無くても期限で解除する");
+        service.IsLoadingFile.Should().BeFalse();
+        service.HasPendingFileLoadRelease.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryMarkFileLoaded_BeforeTheGrace_StillWaitsForProgress()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 18, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+
+        clock.Advance(TimeSpan.FromSeconds(5) - TimeSpan.FromTicks(1));
+
+        service.TryMarkFileLoaded(playbackSeconds: 12.0, renderedFrameCount: 3)
+            .Should().BeFalse("期限前は従来どおり進捗を待つ");
+        service.IsLoadingFile.Should().BeTrue();
+    }
+
+    [Fact]
+    public void PollFileLoadRelease_ConsumesFreshReleaseOnce()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 18, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        service.TryMarkFileLoaded(12.0, 3).Should().BeTrue();
+
+        clock.Advance(TimeSpan.FromSeconds(1));  // 鮮度（1.5 秒）以内
+
+        service.PollFileLoadRelease(12.0, 3).Should().BeTrue();
+        service.PollFileLoadRelease(12.0, 3).Should().BeFalse();
+    }
+
+    [Fact]
+    public void PollFileLoadRelease_DropsStaleRelease()
+    {
+        // D35: ロード直後の 1 回だけを対象にし、数秒前に解除された値を保持開始時に
+        // 再適用して同期を壊さない。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 18, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        service.TryMarkFileLoaded(12.0, 3).Should().BeTrue();
+
+        clock.Advance(TimeSpan.FromSeconds(1.5) + TimeSpan.FromTicks(1));
+
+        service.PollFileLoadRelease(12.0, 3).Should().BeFalse("古い解除は再適用しない");
+        service.HasPendingFileLoadRelease.Should().BeFalse();
+    }
+
+    [Fact]
     public void EvaluateDecision_LogsOnlyWhenActionChanges()
     {
         var engine = new MockSyncDecisionEngine

@@ -53,9 +53,8 @@ public sealed class LtcHeldValueChangeTests
         h.ReloadProject();
         h.SetDurationSeconds(30);
         h.ManualPlay();
-        // 初期位置を保持値に合わせ、最初の有効フレームでシーク保留を作らない（保留セトルが
-        // 変化フレームのシークを抑止しないようにする）。
-        h.AdvancePlayback(20.0);
+        // 初期位置は保持値より 0.18 秒先行（D35 の失敗帯。許容内の行き過ぎでも明示着地が要る）。
+        h.AdvancePlayback(20.18);
         return (h, clock);
     }
 
