@@ -1,4 +1,4 @@
-﻿/* tcs_gstreamer implementation (v3). See tcs_gstreamer.h for the contract.
+/* tcs_gstreamer implementation (v3). See tcs_gstreamer.h for the contract.
  *
  * Role: GPU frame SOURCE for the compositing layer.
  *   filesrc ! typefind ! demux ! <explicit per-codec chain> ! appsink
@@ -200,6 +200,36 @@ resolve_seek_method (void)
 
 static int seek_method = resolve_seek_method ();
 
+/* D24: the paused-seek pump deadline is only an upper bound. An accurate seek
+ * decodes from the previous keyframe up to the target, so a long GOP (e.g. a
+ * 10s keyframe interval) legitimately takes longer than the old fixed 500ms.
+ * Default 4000ms; TCS_PUMP_BUDGET_MS overrides it (1..60000). */
+static const ULONGLONG kPumpBudgetDefaultMs = 4000;
+static const ULONGLONG kPumpBudgetMaxMs = 60000;
+
+static ULONGLONG
+resolve_pump_budget_ms (void)
+{
+  char buf[32];
+  DWORD n = GetEnvironmentVariableA ("TCS_PUMP_BUDGET_MS", buf, sizeof (buf));
+  ULONGLONG ms = kPumpBudgetDefaultMs;
+  if (n > 0 && n < sizeof (buf)) {
+    long long v = _strtoi64 (buf, nullptr, 10);
+    if (v > 0 && (ULONGLONG) v <= kPumpBudgetMaxMs)
+      ms = (ULONGLONG) v;
+    else
+      LOG ("pump-budget: value '%s' out of range -> default %llums",
+          buf, (unsigned long long) kPumpBudgetDefaultMs);
+  } else if (n >= sizeof (buf)) {
+    LOG ("pump-budget: value too long -> default %llums",
+        (unsigned long long) kPumpBudgetDefaultMs);
+  }
+  LOG ("pump-budget: deadline %llums", (unsigned long long) ms);
+  return ms;
+}
+
+static ULONGLONG pump_budget_ms = resolve_pump_budget_ms ();
+
 struct TcsPlayer {
   /* D3D11 + Spout.
    * Stage 6b: the device is ALWAYS owned by the shim. The compositor pointer
@@ -363,6 +393,8 @@ struct TcsPlayer {
   bool pump_active = false;              /* frame_lock */
   uint64_t pump_generation = 0;          /* frame_lock */
   ULONGLONG pump_deadline = 0;           /* frame_lock */
+  ULONGLONG pump_armed_ms = 0;           /* frame_lock (D24 diagnostics) */
+  uint64_t pump_frames_at_arm = 0;       /* frame_lock (D24 diagnostics) */
   bool pump_muted = false;               /* frame_lock */
   uint64_t pump_faults = 0;              /* frame_lock (diagnostics) */
 
@@ -1088,6 +1120,7 @@ on_demux_segment_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
       (double) (target - seg->start) / 1e6, seg->rate);
   return GST_PAD_PROBE_OK;
 }
+
 
 static GstFlowReturn
 on_new_sample (GstAppSink* sink, gpointer user)
@@ -2005,9 +2038,9 @@ on_demux_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user)
 }
 /* ---------------- D2: paused-seek preroll pump ---------------- */
 
-/* Upper bound for one pump. Reached without a frame -> back to PAUSED and the
- * failure is recorded (last_error + counter), never a silent PLAYING. */
-static const ULONGLONG kPumpBudgetMs = 500;
+/* Upper bound for one pump (D24: pump_budget_ms, default 4000ms). Reached
+ * without a frame -> back to PAUSED and the failure is recorded (last_error +
+ * counter + a warning log with the decode progress), never a silent PLAYING. */
 
 /* Arm the pump for a seek that was issued while paused. Called outside
  * frame_lock / state_mutex by tcs_player_seek; returns immediately (the
@@ -2025,7 +2058,9 @@ pump_arm (TcsPlayer* p, uint64_t generation)
       p->pump_active = true;
       p->pump_pending.store (true, std::memory_order_relaxed);
       p->pump_generation = generation;
-      p->pump_deadline = GetTickCount64 () + kPumpBudgetMs;
+      p->pump_armed_ms = GetTickCount64 ();
+      p->pump_deadline = p->pump_armed_ms + pump_budget_ms;
+      p->pump_frames_at_arm = p->frames_decoded;
       if (!p->pump_muted) {
         /* No audible output while the pipeline runs for the preroll: the user
          * still believes playback is paused (same idea as load_priming). */
@@ -2051,6 +2086,7 @@ pump_preroll_tick (TcsPlayer* p)
   GstElement* pipeline = nullptr;
   bool has_frame = false, timed_out = false, user_paused = false;
   uint64_t gen = 0, faults = 0;
+  uint64_t target_ns = 0, decoded = 0, elapsed_ms = 0;
   {
     std::lock_guard<std::mutex> st (p->state_mutex);
     {
@@ -2080,13 +2116,33 @@ pump_preroll_tick (TcsPlayer* p)
       if (timed_out) {
         p->pump_faults++;
         faults = p->pump_faults;
+        target_ns = p->gate_target_ns;
+        decoded = p->frames_decoded >= p->pump_frames_at_arm
+            ? p->frames_decoded - p->pump_frames_at_arm : 0;
+        elapsed_ms = GetTickCount64 () - p->pump_armed_ms;
         p->last_error = "paused seek: no frame before the pump deadline";
       }
       pipeline = p->pipeline;
     }
-    if (timed_out)
-      LOG ("paused-seek: pump deadline gen=%llu -> PAUSED (faults=%llu)",
-          (unsigned long long) gen, (unsigned long long) faults);
+    if (timed_out) {
+      /* D24: long-GOP seeks decode from the previous keyframe; the timeout is
+       * a diagnostic, not a stream error. Report how far the decode got (the
+       * distance left is target - position) instead of failing the seek. The
+       * position query runs outside frame_lock (see I13's rule for the
+       * state/seek calls it applies to; a query must not hold the lock while
+       * the streaming thread may be waiting for it). */
+      gint64 pos = -1;
+      gboolean pos_ok = FALSE;
+      if (pipeline)
+        pos_ok = gst_element_query_position (pipeline, GST_FORMAT_TIME, &pos);
+      LOG ("paused-seek: pump deadline gen=%llu -> PAUSED (faults=%llu "
+          "target_ms=%.1f decoded=%llu elapsed_ms=%llu budget_ms=%llu "
+          "position_ms=%.1f pos_ok=%d)",
+          (unsigned long long) gen, (unsigned long long) faults,
+          (double) target_ns / 1e6, (unsigned long long) decoded,
+          (unsigned long long) elapsed_ms, (unsigned long long) pump_budget_ms,
+          pos_ok ? (double) pos / 1e6 : -1.0, pos_ok ? 1 : 0);
+    }
     /* A user resume clears pump_active in set_paused and keeps PLAYING. */
     if (pipeline && (timed_out || user_paused)) {
       LOG ("pump_tick: set_state(PAUSED) begin");
@@ -2982,10 +3038,8 @@ TCS_GST_API uint64_t
 tcs_player_step_frame (TcsPlayer* player)
 {
   if (!player) return 0;
-  guint64 before;
   bool wasPaused;
   uint64_t gen;
-  GstElement* pipeline;
   SeekRequest req;
   log_pipe_state (player, "step.before");
   {
@@ -2994,34 +3048,19 @@ tcs_player_step_frame (TcsPlayer* player)
     gint64 pos = 0;
     gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos);
     double step = player->fps > 0.0 ? 1.0 / player->fps : 0.04;
-    before = player->frames_decoded;
     wasPaused = player->paused;
     /* the step target goes through the same TS gate as a manual seek */
     gen = seek_prepare_locked (player, (double) pos / GST_SECOND + step, player->rate, &req);
-    pipeline = player->pipeline;
   }
   seek_send (player, req);
   apply_pending_play_restart (player);
-  if (wasPaused) {
-    /* PAUSED sinks do not re-preroll after a flush seek: run briefly and
-     * stop again once the stepped frame has been delivered. The state changes
-     * are outside frame_lock (see tcs_player_set_paused). */
-    gst_element_set_state (pipeline, GST_STATE_PLAYING);
-    log_pipe_state (player, "step.playing");
-    ULONGLONG t0 = GetTickCount64 ();
-    while (GetTickCount64 () - t0 < 500) {
-      bool arrived;
-      {
-        std::lock_guard<std::mutex> g (player->frame_lock);
-        arrived = player->frames_decoded > before;
-      }
-      if (arrived)
-        break;
-      Sleep (10);
-    }
-    gst_element_set_state (pipeline, GST_STATE_PAUSED);
-    log_pipe_state (player, "step.paused");
-  }
+  /* D24: a step on a paused pipeline is a paused seek with the same problem:
+   * PAUSED sinks do not re-preroll after a flush seek, and the fixed 500ms
+   * PLAYING window was too short for a long GOP (the frame was lost again on
+   * PAUSED). Use the shared pump: non-blocking, budget-bounded (4s default),
+   * and it restores PAUSED as soon as the stepped frame is queued. */
+  if (wasPaused)
+    pump_arm (player, gen);
   return gen;
 }
 
