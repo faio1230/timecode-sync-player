@@ -166,7 +166,8 @@ public sealed class LtcScenarioE2ETests
             {
                 holds++;
                 scenario.CheckHold($"c1-{holds:D2}", target, scenario.A,
-                    scenario.A.TimelineToMedia(target), scenario.Expectation("red (body)"), holdSeconds: 2.5);
+                    scenario.A.TimelineToMedia(target), scenario.Expectation("red (body)"), holdSeconds: 2.5,
+                    sampleBlackDuringJump: true);
             }
         }
 
@@ -186,10 +187,12 @@ public sealed class LtcScenarioE2ETests
         {
             holds++;
             scenario.CheckHold($"c2-{holds:D2}", inA, scenario.A,
-                scenario.A.TimelineToMedia(inA), scenario.Expectation("red (body)"), holdSeconds: 2.5);
+                scenario.A.TimelineToMedia(inA), scenario.Expectation("red (body)"), holdSeconds: 2.5,
+                sampleBlackDuringJump: true);
             holds++;
             scenario.CheckHold($"c2-{holds:D2}", inB, scenario.B,
-                scenario.B.TimelineToMedia(inB), scenario.Expectation("green (body)"), holdSeconds: 3.5);
+                scenario.B.TimelineToMedia(inB), scenario.Expectation("green (body)"), holdSeconds: 3.5,
+                sampleBlackDuringJump: true);
         }
 
         holds.Should().Be(cycles * 2);
@@ -989,13 +992,51 @@ public sealed class LtcScenarioE2ETests
         /// <summary>保持ジャンプの共通判定: 位置が期待に入り、進行し、絵が期待トラック側であること。</summary>
         public void CheckHold(
             string name, double ltcTarget, TrackInfo track, double expectedPosition,
-            string matrixExpectation, double holdSeconds)
+            string matrixExpectation, double holdSeconds, bool sampleBlackDuringJump = false)
         {
             // LTC 表示の一致を待ってから位置を見ると、着地して再生が進んだ後に
             // 確認に入り目標±0.3 を通過済みのことがある。送出開始から位置を監視する。
             double sendSeconds = Math.Max(2.5, holdSeconds);
             Signal.PlayHeld(ltcTarget, LtcFps, TimeSpan.FromSeconds(sendSeconds));
-            bool landed = TryWaitPosition(expectedPosition, PositionToleranceSeconds, sendSeconds + 1);
+
+            // D26: ジャンプ発行から着地確認まで 50ms 間隔で画面を採り、黒（黒率 >= 0.99）を数える。
+            var jumpSamples = new List<FrameSignature>();
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(sendSeconds + 1);
+            DateTime nextSample = DateTime.UtcNow;
+            bool landed = false;
+            while (true)
+            {
+                double position = Position();
+                if (double.IsFinite(position) && Math.Abs(position - expectedPosition) <= PositionToleranceSeconds)
+                {
+                    landed = true;
+                    break;
+                }
+
+                if (DateTime.UtcNow >= deadline) break;
+                if (sampleBlackDuringJump && DateTime.UtcNow >= nextSample)
+                {
+                    jumpSamples.Add(Capture($"jump-black-{name}-{jumpSamples.Count + 1:D2}"));
+                    nextSample = DateTime.UtcNow.AddMilliseconds(50);
+                }
+
+                Thread.Sleep(50);
+            }
+
+            if (sampleBlackDuringJump)
+            {
+                int blackFrames = jumpSamples.Count(sample => sample.IsBlack);
+                double worst = jumpSamples.Count == 0 ? 1.0 : jumpSamples.Min(sample => sample.BlackFraction);
+                Journal.Write("jump-black-summary", details: new
+                {
+                    name,
+                    samples = jumpSamples.Count,
+                    blackFrames,
+                    minBlackFraction = Math.Round(worst, 4),
+                });
+                blackFrames.Should().Be(0, $"{name}: ジャンプ中（発行〜着地）に黒を挟まない");
+            }
+
             WaitUntil(() => Math.Abs(LtcSeconds() - ltcTarget) <= 0.05, 6, $"保持 LTC {ltcTarget:F2} の受信");
             Journal.Write("hold", details: new { target = ltcTarget, observed = LtcSeconds() });
             landed.Should().BeTrue(
