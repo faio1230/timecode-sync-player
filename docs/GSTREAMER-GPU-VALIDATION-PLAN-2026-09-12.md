@@ -3349,3 +3349,5 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 単体 +11（+ 追加修正分）、非E2E 1873/0（統合後 main）
 - 実機（開発機）: S-1〜S-5・R-1〜R-4 9/9（最終ビルド）。S-3 × `-SegmentSeconds 8`（MediaOut=8 < 尺 12）: `Single mode: clip boundary hold ltc=28.000 playback=8.009 clip=[0.000,8.000]` を確認（テスト側の clamp 未統合のツリーだったため判定は失敗。統合後 main で除去担当が再確認）。12 秒生成素材の C 役は head 色が無く tail 参照が body と同一になるため参照採取が止まる（テスト側の制約、C 役を差し替えて実施）。V3（Smooth、LTC25）: steady n=1065 平均 −26.0ms・p95−p5 38.3ms（基準 −28.9 / 38.3）、収束 seek-a 159 / seek-b 120 / seek-c 120 / seek-back 160 / black 400 / freeze 120ms
 - **判定: 統合。除去担当がシナリオ 22 + LTC ループ 14 + S-3（SegmentSeconds 8）を実機確認 → 候補 5**
+
+- **統合後 main（D33 込み、`12d2e38`）の実機確認（除去担当、2026-09-17 21:04、親が trx を確認）**: シナリオ 22/22、LTC ループ 14/14、S-3（MediaOut=8 < 尺 12）1/1（`clip boundary hold ltc=28.000 playback=8.044 clip=[0.000,8.000]`、範囲外 LTC 10 でも 8.033 で静止）。証跡 `TestResults/postmerge5/`（agent-b）。**判定: 候補 5（D32+D33）を作る**
