@@ -122,7 +122,7 @@ public sealed class LtcScenarioE2ETests
     [SkippableFact(Timeout = 180_000)]
     public void S3_Single_OutOfRangeLtc_StopsAtTrackEnd() => Run("S-3", continueMode: false, blackGap: true, scenario =>
     {
-        // Single は LTC をメディア位置へ絶対マップする（0..尺へクランプ）。範囲外は終端で止まる。
+        // Single は LTC をメディア位置へ絶対マップし、製品と同じ [MediaIn, MediaOut] へクランプする（MediaOut 未設定は尺）。範囲外は終端で止まる。
         double outOfRange = scenario.A.End + 15;
         scenario.SetSync(true);
         scenario.Hold(outOfRange, 6);
@@ -564,8 +564,9 @@ public sealed class LtcScenarioE2ETests
         /// <summary>Continue: タイムライン秒 → メディア位置。</summary>
         public double TimelineToMedia(double ltcSeconds) => ltcSeconds - Start + MediaIn.TotalSeconds;
 
-        /// <summary>Single: LTC 秒はそのままメディア位置（0..尺へクランプ）。</summary>
-        public double SingleTarget(double ltcSeconds) => Math.Clamp(ltcSeconds, 0, Duration.TotalSeconds);
+        /// <summary>Single: LTC 秒はそのままメディア位置（製品と同じ [MediaIn, MediaOut] へクランプ）。</summary>
+        public double SingleTarget(double ltcSeconds) =>
+            SingleModeClamp.Target(ltcSeconds, MediaIn.TotalSeconds, MediaOut.TotalSeconds);
     }
 
     private sealed record PerfSegment(DateTime At, double ElapsedSeconds, int FrameUpdates);
