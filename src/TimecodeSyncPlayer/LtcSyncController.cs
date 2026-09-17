@@ -375,7 +375,10 @@ internal sealed class LtcSyncController
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate)
             {
                 _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
-                _lastHeldEffectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "held");
+                // D27-d: 着地目標は保持として届いた値そのもの。保持値は凍結されて進まないため、
+                // サンプル時計の age は足さず T3 オフセットだけ適用する。
+                _lastHeldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
+                    _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
             }
             // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
             // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ 1 回だけ着地させる
