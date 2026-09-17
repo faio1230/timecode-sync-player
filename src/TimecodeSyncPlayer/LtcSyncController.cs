@@ -367,13 +367,16 @@ internal sealed class LtcSyncController
             // 無音（フレームが届かない）と同じ経路で損失になり、損失の理由だけが分かれる。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate)
                 _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
-            // D27: 保持からの復帰では、値が動き出した Jump も有効フレームとして数える
-            // （保持中は ObserveValidFrame が呼ばれないため、復帰のきっかけが無くなる）。
-            // ラッチ済みの Jump（連続する Jump の 2 枚目以降）でも数える。無音からの Jump は
-            // 数えない（既存どおり有効フレーム N 枚を要求する）。
+            // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
+            // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ 1 回だけ着地させる
+            // （ラッチ済みの Jump でも数えるためラッチを解除してから適用する）。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump &&
                 _signalLoss.IsLost && _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
-                ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
+            {
+                ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
+                if (!_signalLoss.IsLost)
+                    _jumpAppliedOnce = false;
+            }
             // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump && !_jumpAppliedOnce)
             {
@@ -418,7 +421,7 @@ internal sealed class LtcSyncController
         if (applyOnce)
         {
             // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
-            // （ObserveValidFrame を呼ばない）。損失中の Jump だけは上の D27 の経路で数える。
+            // （ObserveValidFrame を呼ばない）。保持損失からの復帰は上の D27-b の経路。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
             RequestSyncEffective(effectiveSeconds);
             ApplyCorrection(effectiveSeconds);
@@ -449,18 +452,29 @@ internal sealed class LtcSyncController
     /// <summary>
     /// D20-b (i): 保持 LTC（Duplicate）では通常の同期経路が走らないため、ロード解除だけを
     /// ここで観測し、解除されたら最後に受理したタイムコードを 1 回だけ適用する。
+    /// D27-b: 解除が Tick 側の保留シーク再送（同期コーディネーターの完了）に先を越されても、
+    /// 未回収の解除を回収して 1 回は適用する。着地先（clamp 位置）が決まらないうちは
+    /// 解除を消費しない。
     /// </summary>
     private void TryReapplyAfterFileLoadRelease()
     {
-        if (!_syncService.IsLoadingFile)
+        if (!_syncService.IsLoadingFile && !_syncService.HasPendingFileLoadRelease)
+            return;
+        if (_lastAcceptedLtcSeconds is not double accepted)
             return;
         if (_effects.GetPlaybackSeconds == null || _effects.GetTotalRenderedFrames == null)
             return;
         if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
             return;
-        if (!_syncService.PollFileLoadRelease(playback, _effects.GetTotalRenderedFrames()))
+
+        LtcSyncContext state = _effects.GetContext();
+        if (!state.IsPlayerReady || !state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
             return;
-        if (_lastAcceptedLtcSeconds is not double accepted)
+        // Single は尺が使えるまで待つ（保持値の clamp 着地先が決まらないため）。
+        if (state.Mode != SyncMode.Continue && !SeekBarUpdateState.IsUsableDuration(state.DurationSeconds))
+            return;
+
+        if (!_syncService.PollFileLoadRelease(playback, _effects.GetTotalRenderedFrames()))
             return;
 
         Log.Information(

@@ -149,4 +149,73 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.IsPaused.Should().BeFalse();
         h.PlaybackSeconds.Should().BeApproximately(2.16, 0.05, "保持が明けたら LTC 側へ戻る");
     }
+
+    [Fact]
+    public void StopMode_HeldThenJumpToNewHold_RecoversImmediatelyAndPausesAtNewValue()
+    {
+        // S-2: 保持 8.0 で一時停止 → 次の保持値 20.0 への Jump が 1 枚でも届けば復帰し、
+        // そのまま保持が続けば新しい値で改めて一時停止する。
+        (SyncScenarioHarness h, ManualTimeProvider clock) = ArrangeHeldAt204(LtcSignalLossMode.Stop);
+        Tick(h, clock, 3);
+        h.IsPaused.Should().BeTrue();
+        h.Operations.Clear();
+
+        Raw(h, 3, 0, 10_300);
+
+        h.IsPaused.Should().BeFalse("保持損失中の Jump 1 枚で復帰する");
+        h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
+
+        for (int i = 1; i <= 8; i++)
+        {
+            Raw(h, 3, 0, 10_300 + i * 100);
+            Tick(h, clock, 1);
+        }
+
+        h.IsPaused.Should().BeTrue("新しい値の保持が続けば損失で一時停止する");
+        h.PlaybackSeconds.Should().BeApproximately(3.0, 0.05);
+        h.DisplayStates[^1].PauseReason.Should().Be("タイムコード停止で停止中");
+    }
+
+    [Fact]
+    public void RunThroughMode_ManualLoadRelease_AfterDeferredRetryStillReappliesHeldValueOnce()
+    {
+        // S-4: 手動ロードの解除を Tick 側の保留シーク再送が先に回収しても（尺未確定で
+        // None → Complete）、保持値の 1 回適用が必ず走り、clamp 位置へ着地する。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock, enableCorrection: true) { SignalLossMode = LtcSignalLossMode.RunThrough };
+        h.AddTrack("first", 0);
+        h.ChangeMode(SyncMode.Single);
+        h.ManualPlay();
+        Raw(h, 1, 0, 10_000);
+        Raw(h, 1, 1, 10_040);
+        h.AdvancePlayback(1.04, 5);
+
+        h.BeginManualFileLoad();
+        h.NativeSeeking = true;
+        Raw(h, 8, 0, 10_080);
+        h.Operations.Clear();
+
+        // ロードが進み、保留再送が解除を先に回収する（尺は未確定なので決定は None）。
+        h.NativeSeeking = false;
+        h.AdvancePlayback(0.2, 3);
+        h.SetDurationSeconds(0);
+        Tick(h, clock, 3);
+        h.Operations.Should().NotContain(o => o.Name == "seek", "尺が未確定のうちは着地しない");
+        h.IsPaused.Should().BeFalse();
+
+        // 尺が確定して保持フレームが届いたら、解除の 1 回適用が clamp 位置へ着地する
+        // （解除でデバウンスが再スタートするため 1 回は Deferred、次の Tick で再送される）。
+        h.SetDurationSeconds(5);
+        Raw(h, 8, 0, 10_400);
+        Tick(h, clock, 1);
+
+        h.Operations.Where(o => o.Name == "seek")
+            .Should().ContainSingle().Which.Value.Should().BeApproximately(5.0, 0.05);
+        h.PlaybackSeconds.Should().BeApproximately(5.0, 0.05);
+
+        Raw(h, 8, 0, 10_440);
+        Tick(h, clock, 2);
+        h.Operations.Where(o => o.Name == "seek")
+            .Should().ContainSingle("解除の 1 回適用は 1 回だけ");
+    }
 }

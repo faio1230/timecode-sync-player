@@ -321,6 +321,12 @@ internal sealed class SyncScenarioHarness
             LoadFile(current.FilePath, current.MediaIn.TotalSeconds);
     }
 
+    /// <summary>D27-b: 手動ロード（次/前/プレイリスト）でアプリ側が立てるロードゲートを再現する。</summary>
+    public void BeginManualFileLoad() => _syncService.BeginFileLoad(0, _renderedFrames);
+
+    /// <summary>テスト用: 尺（clamp の着地先）を差し替える。</summary>
+    public void SetDurationSeconds(double seconds) => _durationSeconds = seconds;
+
     public void ReloadProject()
     {
         Operations.Add(new("project-load"));

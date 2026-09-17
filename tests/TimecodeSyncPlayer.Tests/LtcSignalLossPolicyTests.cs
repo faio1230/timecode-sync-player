@@ -480,6 +480,111 @@ public class LtcSignalLossPolicyTests
         policy.IsLost.Should().BeFalse();
     }
 
+    // ---- D27-b: 保持が理由の損失中は Jump 1 枚で即復帰 ----
+
+    [Fact]
+    public void ObserveJumpFrame_DuringHeldLoss_ResumesImmediately()
+    {
+        var policy = CreatePolicy(resumeFrames: 5);
+        LtcSignalLossContext context = Context();
+        LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.IsPauseOwned.Should().BeTrue();
+
+        policy.ObserveJumpFrame(At(300), paused).Should().Be(LtcSignalLossAction.ResumeAndSync);
+        policy.IsLost.Should().BeFalse();
+        policy.Reason.Should().Be(LtcSignalLossReason.None);
+        policy.IsPauseOwned.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ObserveJumpFrame_AfterSilentLoss_DoesNotResume()
+    {
+        var policy = CreatePolicy(resumeFrames: 5);
+        LtcSignalLossContext context = Context();
+        LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.SignalLoss);
+
+        policy.ObserveJumpFrame(At(300), paused).Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeTrue();
+        policy.IsPauseOwned.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ObserveJumpFrame_StartsANewLossClock()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+        LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.ObserveJumpFrame(At(300), paused).Should().Be(LtcSignalLossAction.ResumeAndSync);
+
+        policy.Evaluate(At(549), context).Should().Be(LtcSignalLossAction.None,
+            "復帰した Jump の時刻から改めてタイムアウトを数える");
+        policy.Evaluate(At(550), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.SignalLoss);
+    }
+
+    [Fact]
+    public void ObserveJumpFrame_InRunThrough_ClearsLossWithoutSuspend()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context() with { Mode = LtcSignalLossMode.RunThrough };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeTrue();
+
+        policy.ObserveJumpFrame(At(300), context).Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeFalse();
+        policy.Reason.Should().Be(LtcSignalLossReason.None);
+    }
+
+    [Fact]
+    public void ObserveJumpFrame_WhenPauseOwnedButSyncOff_DoesNotResume()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+        LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+
+        policy.ObserveJumpFrame(At(300), paused with { SyncEnabled = false })
+            .Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeTrue();
+        policy.IsPauseOwned.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ObserveJumpFrame_WhenGapActive_DoesNotResume()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+        LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+
+        policy.ObserveJumpFrame(At(300), paused with { IsGapActive = true })
+            .Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeTrue();
+
+        policy.ObserveJumpFrame(At(340), paused).Should().Be(LtcSignalLossAction.ResumeAndSync);
+    }
+
     private static LtcSignalLossPolicy CreatePolicy(int resumeFrames = 5) =>
         new(TimeSpan.FromMilliseconds(250), resumeFrames);
 
