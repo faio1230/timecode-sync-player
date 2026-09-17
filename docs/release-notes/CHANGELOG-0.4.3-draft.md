@@ -38,3 +38,4 @@ The parent integrates it into `CHANGELOG.md` (the file itself and the csproj `Ve
 - Rare audio dropouts of up to 100 ms during track switches (4 of 12 in a 60-minute test).
 - HAP is not supported.
 - Codecs the integrated GPU cannot decode (AV1 and others) fall back to CPU decoding even when a dGPU is present (4K24 held up in the measurement; 4K60 not verified).
+- On long-GOP media (for example 10-second keyframe intervals), a playing accurate seek must decode from the keyframe to the target, so jump landings can be 1-3 seconds late (measured with 60 fps H.264 at 10-second intervals). Recommended for production: encode with a 1-2 second keyframe interval (`-g 60..120` for 60 fps). Paused seeks wait up to 4 seconds (D24).
