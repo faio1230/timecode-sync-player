@@ -51,7 +51,16 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             return SyncDecision.NoneWith(fps, toleranceSeconds);
         }
 
-        double target = Math.Clamp(ltcSeconds, 0.0, state.DurationSeconds);
+        // D29: Single の LTC → 素材位置はトラックの範囲に収める。MediaOut 未設定は尺、
+        // MediaIn 未設定は 0。Continue はタイムライン写像（FindTrackAtTimelinePosition）で
+        // 既に範囲内のため、ここでは no-op になる。
+        double clipIn = IsFinite(state.MediaInSeconds) && state.MediaInSeconds > 0.0
+            ? state.MediaInSeconds : 0.0;
+        double clipOut = state.MediaOutSeconds is { } mediaOut && IsFinite(mediaOut)
+            ? mediaOut : state.DurationSeconds;
+        if (clipOut < clipIn)
+            clipOut = clipIn;
+        double target = Math.Clamp(ltcSeconds, clipIn, clipOut);
         double delta = target - state.PlaybackSeconds;
         if (Math.Abs(delta) <= toleranceSeconds)
         {
@@ -61,9 +70,12 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         }
 
         // 行き先だけを先行補償する。シーク可否（delta と tolerance）は補償前の値で判定する。
+        // 補償後もトラックの範囲（D29）へ収める。
         double compensatedTarget = _latencyCompensator is null
             ? target
-            : _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds);
+            : Math.Clamp(
+                _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds),
+                clipIn, clipOut);
         long decideQpc = traceEnabled || _latencyCompensator != null ? Stopwatch.GetTimestamp() : 0;
         _latencyCompensator?.MarkSeekDecision(decideQpc);
 
@@ -159,7 +171,11 @@ public sealed record SyncPlaybackState(
     double PlaybackSeconds,
     double DurationSeconds,
     double VideoFps = 0.0,
-    double TimecodeFps = 0.0);
+    double TimecodeFps = 0.0,
+    // D29: Single の LTC → 素材位置の範囲。MediaIn はクリップ開始（既定 0）、
+    // MediaOut はクリップ終端（未設定 = null で尺を使う）。
+    double MediaInSeconds = 0.0,
+    double? MediaOutSeconds = null);
 
 public enum SyncActionType
 {

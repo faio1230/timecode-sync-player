@@ -20,6 +20,7 @@ The parent integrates it into `CHANGELOG.md` (the file itself and the csproj `Ve
 ### Fixed
 
 - Fixed Single mode with sync enabled advancing to the next track when the LTC passed the active track's end: playback stops at the end (D20).
+- Fixed Single mode seeking past the clip out-point when the LTC exceeded `MediaOut` (the seek used the media duration instead): the LTC-to-media mapping and the end clamp now use `MediaIn` / `MediaOut` (`MediaOut` unset falls back to the duration), and the end hold is `MediaOut`-based (D29).
 - Fixed the freeze entered by a jump not showing the previous track's final frame: the frame is confirmed by position (PTS +/-2 frames) with up to 2 re-seeks (D21, D21-b).
 - Fixed the black picture before the first track (leading offset) (D22).
 - Fixed the one-frame black flash on jumps (seek / track switch) (D26, D26-b).
