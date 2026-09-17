@@ -327,6 +327,7 @@ struct TcsPlayer {
    * before that seek and must not be published under its generation. */
   std::atomic<uint64_t> flush_boundary{0};
   std::atomic<uint64_t> seek_boundary_expect{0};
+  std::atomic<ULONGLONG> seek_expect_ms{0};   /* when the expectation was set */
   std::atomic<uint64_t> stale_drops{0};
   std::atomic<bool> flush_marker_missing{false};
   /* D25: fence signal values (lease seq) must never repeat while the shared
@@ -1255,6 +1256,14 @@ sample_is_pre_seek (TcsPlayer* p, GstBuffer* buf)
   uint64_t expect = p->seek_boundary_expect.load (std::memory_order_acquire);
   if (expect == 0)
     return false;
+  /* Safety bound: if the seek's segment never reaches the appsink pad (a
+   * collapsed back-to-back flush, a failed flush), filtering must not drop
+   * frames forever. After 5s (pump budget 4s + margin) the expectation is
+   * abandoned and samples pass. */
+  if (GetTickCount64 () - p->seek_expect_ms.load (std::memory_order_relaxed) > 5000) {
+    p->seek_boundary_expect.store (0, std::memory_order_release);
+    return false;
+  }
   const TcsFlushMeta* m = nullptr;
   GType api = tcs_flush_meta_api_get_type ();
   if (buf && api != 0)
@@ -2283,13 +2292,17 @@ pump_preroll_tick (TcsPlayer* p)
       user_paused = p->paused;
       gen = p->pump_generation;
       if (timed_out) {
-        p->pump_faults++;
-        faults = p->pump_faults;
-        target_ns = p->gate_target_ns;
-        decoded = p->frames_decoded >= p->pump_frames_at_arm
-            ? p->frames_decoded - p->pump_frames_at_arm : 0;
-        elapsed_ms = GetTickCount64 () - p->pump_armed_ms;
-        p->last_error = "paused seek: no frame before the pump deadline";
+      p->pump_faults++;
+      faults = p->pump_faults;
+      target_ns = p->gate_target_ns;
+      decoded = p->frames_decoded >= p->pump_frames_at_arm
+          ? p->frames_decoded - p->pump_frames_at_arm : 0;
+      elapsed_ms = GetTickCount64 () - p->pump_armed_ms;
+      p->last_error = "paused seek: no frame before the pump deadline";
+      /* D25: no kept frame arrived within the budget; the seek's segment may
+       * never have reached the appsink pad. Stop filtering so a later frame
+       * is not dropped forever. */
+      p->seek_boundary_expect.store (0, std::memory_order_release);
       }
       pipeline = p->pipeline;
     }
@@ -2483,16 +2496,20 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
   if (!p->pipeline)
     return p->generation;
   p->generation++;
-  /* D25: this seek's segment is the next downstream SEGMENT event. Taking
-   * max(seen, pending) + 1 keeps back-to-back seeks exact: with one seek
-   * already waiting for its segment, the second one expects the segment
-   * after that, so the first seek's frames (tag == pending) are dropped as
-   * stale for the second. */
+  /* D25: this seek's segment is the next downstream SEGMENT event, so the
+   * expected boundary is "seen + 1". Back-to-back seeks are deliberately not
+   * stacked (the earlier max(seen, pending)+1): when two flushing seeks
+   * collapse into one segment event (observed with consecutive paused seeks:
+   * the second segment never reaches the appsink pad), a stacked expectation
+   * never materializes and every later frame is dropped forever. With seen+1
+   * the worst case is that the earlier seek's frame is published as the new
+   * generation's first frame, which the owner's landing gate rejects and
+   * re-seeks (D21-b); the time bound in sample_is_pre_seek covers a segment
+   * that never arrives at all. */
   {
     uint64_t seen = p->flush_boundary.load (std::memory_order_acquire);
-    uint64_t pending = p->seek_boundary_expect.load (std::memory_order_acquire);
-    uint64_t expect = (seen > pending ? seen : pending) + 1;
-    p->seek_boundary_expect.store (expect, std::memory_order_release);
+    p->seek_boundary_expect.store (seen + 1, std::memory_order_release);
+    p->seek_expect_ms.store (GetTickCount64 (), std::memory_order_relaxed);
   }
   /* frames of the previous generation must never reach the compositor */
   for (TcsPlayer::FrameSlot& slot : p->frames)
@@ -3354,8 +3371,20 @@ tcs_player_get_time_pos (TcsPlayer* player, double* out_sec)
   if (!player || !out_sec) return TCS_ERR_GENERIC;
   std::lock_guard<std::mutex> g (player->frame_lock);
   if (!player->pipeline || player->path.empty ()) return TCS_ERR_NOT_LOADED;
+  /* D25-c: while paused (and the paused-seek pump has finished) report the
+   * newest delivered video frame's stream-time PTS. The pipeline position is
+   * dominated by the audio sink, which keeps advancing during the muted pump
+   * (target + pump duration); the owner's freeze/landing gates compare this
+   * value against the frame target with a +/-2 frame tolerance, so a correctly
+   * landed frame looked out of range and the freeze timed out. While playing,
+   * keep the pipeline position. latest_pts_ns is already the D10 stream-time
+   * mapped PTS (the same space the seek target uses). */
+  bool paused_frame_pos = player->paused && !player->pump_active &&
+      player->latest_pts_ns > 0 && player->latest_gen == player->generation;
   gint64 pos = 0;
-  if (!gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos) || pos < 0) {
+  if (paused_frame_pos) {
+    pos = (gint64) player->latest_pts_ns;
+  } else if (!gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos) || pos < 0) {
     /* D10: the pipeline query reports stream time (so it already maps the
      * qtdemux post-seek shift back). When the query is unavailable, fall back
      * to the newest delivered frame's stream-mapped PTS - never the raw PTS. */
