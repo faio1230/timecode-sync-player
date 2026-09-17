@@ -2,10 +2,27 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-18 08:25 更新（33 回目、TSP-Opus）**: **0.4.3 は公開待ちの状態。L-1 の検証機結果を待ってから公開する（利用者の判断）。**
+> - **main `85464bb`**（push 済み）。版は **0.4.3**（`23958c4` の revert を戻し済み）。CHANGELOG・リリースノートは D35-b まで反映し、検証欄も記入済み
+> - **統合済み**: D35-b（`948b154`）、テスト警告の解消（`588ab1c`）、検証機のパッチ（hold-landed、`19c7b8c`）、L-1（`54aed71` / `b2be591`）、CI 断続失敗のテスト修正（`ad32e07`）
+> - **候補 6（`0.4.2+588ab1c`、SHA-256 `EE586735…67AFD0`）は検証機で合格**: 実素材 3 通しとも **36/36**、`0x0@` 0 件、トレース保存失敗 0 件、候補 5 で落ちた 5 本（C-1 / C-2 / F-4 / R-1 / S-3）がすべて合格
+> - **0.4.3 の配布物は作成・確認済み**: `TimecodeSyncPlayer-v0.4.3-setup.exe`（SHA-256 `AD7B7EB7BE23006D17DAECA9FF34719C5424D40E99D65EDD2443A5D4E2D73057`、36.9MB）、zip（`40FEBA7C6B395FE450C70D94986BC68A540E1CEF84D3DB78CD0BE4995DE3CD0A`、16.9MB）。
+>   除去担当の起動確認: 音声付き素材と 1080p60 の再生、Spout 受信（毎秒 49〜54 枚）、LTC シナリオ 36/36、起動ログ v0.4.3、`0x0@` 0 件、残プロセス 0
+> - **残りの手順**: 検証機の L-1 結果 → 判定 → `git tag -a v0.4.3` → push → `gh release create v0.4.3 --prerelease`（**公開は利用者の許可を得てから**）
+> - **新規テスト L-1**（`docs/prompts/2026-09-18-L1-continuous-follow-stall-audit.md`）: Single で 1 トラック内を 60 秒連続追従し、2 秒窓ごとに詰まりを集計。
+>   開発機（生成素材）は詰まり窓 0 件。検証機は**デコード経路 5 種類を 1 本ずつ**（VP9 4K60 / AV1 4K24 / H.264 1080p60 / VP9 1080p60 / ProRes 4K60 は 50 秒）で実行中。素材の本数は検証機の判断（利用者の指示）
+> - **D36 起票（修正は公開後）**: UI 更新スケジューラで再スケジュール要求が失われうる。絵は止まらず、`OnTick` の 100ms 再送があるため実害は最悪 100ms
+> - **LTC 同期の設計相談に回答済み**: `docs/analysis/2026-09-18-LTC-sync-architecture-review.md`。
+>   提案にあった「サンプル位置での時刻付け」「経過時間の外挿」「レート補正」「シーク補正」は**すべて実装済み**と確認。
+>   足りないのは**速度（rate）の推定**（Ardour は差分商とデッドゾーンのみでフィルタ無し）。表示済みフレームの PTS が同期へ戻っていない点、出力が常に最新 1 枚を選ぶ点も差分。
+>   改善案 P1〜P5 と、先に取る計測 M1〜M4 を提示済み。**着手は 0.4.3 公開後、利用者の判断を待つ**
+> - 注意: 展開した 0.4.3 の配布物を**古いテストツリー**で回すと全件が「メインウィンドウが 5 秒以内に表示されませんでした」で落ちる（テスト側の期待タイトルが v0.4.2）。テストは `32eb638` 以降でビルドする
+>
 > **2026-09-18 06:35 更新（32 回目、親の交代）**: 4 代目（Fable 5.1）はトークン上限のため **TSP-Opus セッションへ交代**。現在地:
 > - **main `47ce202`（push 済み）**: 製品欠陥 D12〜D35 統合済み。版は **0.4.2 のまま**（版上げ `6b88a8d`/`9d14ccf` は agent-a 経由で main に入ったが `23958c4` で revert 済み。**0.4.3 に上げるときは `git revert 23958c4`** で戻し、CHANGELOG 0.4.3 節は統合済み、`docs/release-notes/v0.4.3.md` の「（親が記入）」検証機欄を埋める）。
 > - **進行中（`w5:p3`、agent-a、実機使用中）**: **D35-b**（`948b154`: 境界ホールド中は明示着地を抑止、解除時に保留シークと保持着地ラッチを解除）。統合後 main で S-3 が 3/3 回帰した件（D33 の境界ホールドと D35 の明示着地の干渉）の修正。非E2E → 実機 S-1〜S-5・R-1〜R-4（生成素材）、S-3 × `-SegmentSeconds 8`、4K 3 本の R 系を回して報告する指示済み。watcher `bx57rdrvn`（scratchpad/watch.sh）。
-> - **次の手順**: p3 の報告 → 親が trx を確認 → agent-a を main に統合（`git merge --no-ff agent-a`）→ ビルド・非E2E（`--filter "Category!=E2E"`、現在 1890）・`scripts/check-shim-lock-rule.py` → `w5:p6`（agent-b、新セッション、待機中）に統合後 main の実機確認（シナリオ 22 + LTC ループ 14 + S-3 seg8）→ 合格なら **候補 6** を作る: `docs/RELEASE-PROCEDURE-0.4.md` 1 節の手順（shim Release → `native	cs_gstreamer.dll` にコピー → `scripts\package-release.ps1` → コピーを削除）で出た `artifactselease\TimecodeSyncPlayer-v0.4.2-setup.exe` を `…-v0.4.2-<SHA7>-setup.exe` に改名して SHA-256 を取り、`tailscale file cp <exe> <test-machine>:` で送付 → 検証機 `TSP-TestMachine`（SendMessage、`bridge:session_016QeXVsVpChftrXPhWDthmY`）に「SHA-256、含まれる修正、tests は main <SHA> でビルド、-Media M1,M4,M6 / M1,M3,M5 / M2,M1,M4 各 -MediaInOffsetSeconds 5、出力トレース有効、報告項目（候補 5 との trx 差分、0x0 ロード 0 件、高速ロード無し、トレース保存失敗 0 件、R-1〜R-4 の hold-pause 超過）」を依頼。
+> - **次の手順**: p3 の報告 → 親が trx を確認 → agent-a を main に統合（`git merge --no-ff agent-a`）→ ビルド・非E2E（`--filter "Category!=E2E"`、現在 1890）・`scripts/check-shim-lock-rule.py` → `w5:p6`（agent-b、新セッション、待機中）に統合後 main の実機確認（シナリオ 22 + LTC ループ 14 + S-3 seg8）→ 合格なら **候補 6** を作る: `docs/RELEASE-PROCEDURE-0.4.md` 1 節の手順（shim Release → `native	cs_gstreamer.dll` にコピー → `scripts\package-release.ps1` → コピーを削除）で出た `artifacts
+elease\TimecodeSyncPlayer-v0.4.2-setup.exe` を `…-v0.4.2-<SHA7>-setup.exe` に改名して SHA-256 を取り、`tailscale file cp <exe> <test-machine>:` で送付 → 検証機 `TSP-TestMachine`（SendMessage、`bridge:session_016QeXVsVpChftrXPhWDthmY`）に「SHA-256、含まれる修正、tests は main <SHA> でビルド、-Media M1,M4,M6 / M1,M3,M5 / M2,M1,M4 各 -MediaInOffsetSeconds 5、出力トレース有効、報告項目（候補 5 との trx 差分、0x0 ロード 0 件、高速ロード無し、トレース保存失敗 0 件、R-1〜R-4 の hold-pause 超過）」を依頼。
 > - **検証機の候補 5 通し**: a 32 / b 36 / c 35（/36）。失敗 5 本のうち 3 本は D34、残りは S-3 の 2 フレーム超過（テスト側の許容 ±2 フレームを統合済み）と R-1（D35）。候補 6 で 36/36 近傍・`0x0@` 0 件なら **0.4.3 へ**（revert を戻し、`docs/RELEASE-PROCEDURE-0.4.md` 2 節でタグ・`gh release create v0.4.3 --prerelease`、日本語ノート。公開は利用者に一報）。残る間欠は M2 長 GOP の S-1（既知の制限）のみ。
 > - **検証機からの Taildrop は `~/Downloads` に届く**（パッチは `agent-t` ブランチで `git am -3` → main へ統合 → push。証跡 zip は scratchpad へ展開）。検証機のメッセージには数値と証跡だけを求め、判定は親が書く。
 > - 規則の再確認: 実機は直列 1 本、自分の PID だけ止める、main への書き込みは統合のみ、stash/reset/clean 禁止、コミット日本語、push は `git -c credential.helper= -c "credential.helper=!gh auth git-credential" push origin main`、素材名・ローカルパスを公開文書に書かない（M1〜M7 / A〜C）、**日時は `date` を見て書く**。
