@@ -3301,3 +3301,12 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **参照 PNG は古くない**（396 枚、同一テスト内で同一 SHA の組 0）。b F-3/F-5 の M5/tail 一致は「参照採取の最後の絵が画面に残ったまま」= 製品側
 - **A1 の機序（アプリログ）**: (1) D22 の開始位置つき一時停止ロードのプリロールが長 GOP で 3 秒に届かず `capture timed out`（c F-5、pump は seek 限定で対象外）。(2) Freeze 切替直後に位置が C の終端側にあるため「C の最終フレーム」で先に確定し、その後の D22 進入（A の冒頭）では frozen が置き換わらない（b F-5/F-3、a F-4）。(3) A の後のギャップで確定後に B の中間へジャンプ → B のロード 440ms なのに 2.6 秒以上 A の tail が残る（a F-4）。→ **D32**（`docs/prompts/2026-09-17-D32-gap-freeze-late-frame-and-reenter.md`、同期担当）
 - **S-3 c（position=31.4）**: 生成プロジェクトは MediaOut = MediaIn + 20 = 25 だが、ジャーナルの尺表示は素材の全長（2:08）。Single で LTC 40 → D29 の clamp 目標 25 へ着地後も再生が MediaOut で止まらず進んだ疑い（生成素材は尺 = MediaOut なので EOS で止まり気づかない）→ 候補 3 の S-3 ジャーナル（hold-landing の range）で確認してから D33 候補
+
+### D32 の実装（同期担当 agent-a `93ac50e` / `8468056` / `191f265`、2026-09-17 22:20、実機待ち）
+
+- 裏取り: (1.1) 開始位置つきロードは内部 seek 直後に PAUSED へ落ち pump を張らない（`tcs_gstreamer.cpp` 2872-2927）→ プリロールが遅い素材は 3 秒（`GapFreezeHandler.HasTimedOut`）で打ち切り。(1.2) frozen の破棄は render 世代変更か SetCanvas/Dispose のみで、別目標の再進入は `EnterFreezeCapture` をやり直すだけ（`GapFreezeHandler.cs` 277-286）。(1.3) は設計と差異: ギャップ出口・切替は `CompleteGapExit` / `LoadFile` が `ClearGapFreezeFrame` を呼び frozen は破棄済み。残るのは Held キャンバス（ギャップ中に frozen を描いた tick が直前キャンバスとして保存）で、2.6 秒の遅れは 1.1 と同根
+- 項目 1: `ForceFreezeComplete` で目標を Cached に入れず LateConfirm として残し、FreezeComplete 中でも目標 ±2 フレームのフレーム到着で `ReopenCaptureForLateFrame`（UI スレッド、1 件）→ 確定・置換
+- 項目 2: `ShouldDiscardFrozenFrame`（別トラック or 半フレーム超の別目標）で 5 経路とも目標が変わるときだけ `ClearCachedFrameInfo` + `ClearGapFreezeFrame`。同目標の周期再進入（F-1）は破棄しない
+- 項目 3: 製品変更なし（既に破棄）。テストで検証
+- 項目 4（開始位置つき一時停止ロードへの pump）: 見送り（pump は PLAYING へ上げて音声をミュートするため他のロードへの影響を E2E で確認できない。遅延確定で吸収）。親も同意
+- 単体 +12、非E2E 1837/0。親の差し戻し: 目標 0（MediaIn 0 のトラック、D22 の既定）が「> 0」の印で無効になる → 目標 0 でも成立させる修正のうえ実機（F/G/C 系を生成素材・4K 3 本・pump 800ms）
