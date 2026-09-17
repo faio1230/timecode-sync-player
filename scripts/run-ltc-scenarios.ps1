@@ -312,6 +312,12 @@ if ([string]::IsNullOrWhiteSpace($Filter)) {
 Write-Output "filter=$Filter"
 
 $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe
+# D23-d: the scenario tests write their journals and frame images under
+# artifacts\ltc-scenarios unless this is set, which the evidence copy below does
+# not look at. Keep them inside the report directory.
+$scenarioReport = Join-Path $ReportDir 'scenarios'
+New-Item -ItemType Directory -Force -Path $scenarioReport | Out-Null
+$env:TIMECODE_LTC_SCENARIO_REPORT_DIR = $scenarioReport
 if ($Cycles -gt 0) { $env:TIMECODE_LTC_SCENARIO_CYCLES = [string]$Cycles }
 
 # ---- build and run ---------------------------------------------------------
