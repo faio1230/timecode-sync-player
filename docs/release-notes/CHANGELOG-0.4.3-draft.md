@@ -9,7 +9,6 @@ The parent integrates it into `CHANGELOG.md` (the file itself and the csproj `Ve
 
 - Added `TCS_PUMP_BUDGET_MS` (1..60000 ms, default 4000) to override the paused-seek pump deadline (D24).
 - Added `compose.fencePending` trace events for a lease withheld until its ring fence completes (D25-b).
-- Added E2E scenarios for held-LTC stop/run-through (R-1..R-4), black frames during jumps (C-1/C-2), freeze final frames (F-1..F-5), and gaps (G-1..G-6).
 
 ### Changed
 
@@ -30,7 +29,6 @@ The parent integrates it into `CHANGELOG.md` (the file itself and the csproj `Ve
 - Fixed playback stopping as "unavailable" when the composition GPU wait exceeded 100 ms after a 4K VP9 paused seek on hybrid GPUs: the wait is sliced at 100 ms with a tick skip, resources are retained, and a permanent stop requires device loss or 3 continuous seconds (D28).
 - Fixed a deferred (unconfirmed) Jump losing its confirmation when the audio capture stalled and the next frame arrived in a burst: the confirmation window is now judged by the frame-end timestamps (QPC derived from the audio sample position) and falls back to the wall clock only when they are unavailable (D31).
 - Fixed Stop mode staying at the previous position when the held LTC value changed: a held value more than half a frame from the landed value now lands once, and RunThrough applies it once per change (D31-b).
-- Fixed the C-1 scenario's landing check using a fixed target: the landing is now judged as the interval [target - 0.3, target + elapsed + 0.3 + 1 frame] (Stop mode +/-0.3), with 0.5 s of follow recorded (test-side).
 - Fixed gap entries sometimes not updating the picture to the previous clip's final frame or the next clip's first frame: a freeze confirmation is re-confirmed when the target frame arrives after the 3-second timeout, and a changed entry target discards the previous frozen image and re-confirms (D32).
 - Fixed Single mode continuing playback when the LTC went outside the clip's range (past `MediaOut` or before `MediaIn`): playback now holds at the edge position and resumes following when the LTC returns to range, and jump corrections are clamped to `[MediaIn, MediaOut]` (D33).
 - Fixed fast (cached-profile) loads skipping the metadata fetch and leaving the on-screen metadata line showing the previous track: the fetch is now scheduled once when the load completes (D33-b).
@@ -39,9 +37,7 @@ The parent integrates it into `CHANGELOG.md` (the file itself and the csproj `Ve
 - Fixed output trace saves failing when `manifest.json` already existed in the target directory (105 of 115 app starts on the verification machine): the trace is written to a `<startup-time>-<pid>` subfolder instead (D34).
 - Fixed Stop mode stopping 0.2-0.5 seconds past the held LTC value (the advance until the loss timeout) with no landing seek: once the held value is known (regardless of the loss reason or whether it arrived before or after the pause), playback lands once on the held position without going through the sync tolerance, skipping only when already within one video frame. The Smooth rate is restored to 1.0 just before pausing (D35).
 - Fixed the once-after-load "reapplying the last accepted timecode" firing 5-7 seconds after a load on an unrelated Reverse frame: the load release is forced 5 seconds after the load starts and a release older than 1.5 seconds is discarded instead of reapplied (D35).
-- Fixed the S-3 scenario's end expectation clamping to the media duration instead of `MediaOut` like the product: it now clamps to `[MediaIn, MediaOut]`, which no longer overestimates the end on real media whose `MediaOut` is shorter than the duration (test-side).
-- Fixed scenario E2E running with playback audio unmuted: the app's own audio (which may carry LTC) could loop back into the CABLE input and mix with the test signal; the scenarios now start muted (test-side).
-- Fixed the track-switch completion check depending on the FetchMetadata line, which fast cached loads may not emit: completion now requires "Playlist track loaded index=N" together with the on-screen duration, because same-duration clips can match the duration on the pre-switch label (test-side).
+- Fixed the position remaining at the clip edge after a clip-boundary hold: the D35 explicit landing to the held value created a pending seek to the edge during the hold, and the landing for an LTC that returned into range after the hold was released was suppressed. The explicit landing is no longer issued during a boundary hold, and the pending seek and the hold-landing latch are cleared when the hold is released (D35-b).
 
 ### Known limitations
 
