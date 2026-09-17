@@ -228,7 +228,11 @@ public sealed class LtcScenarioE2ETests
         double settlingSeconds)
     {
         double startLtc = track.MediaIn.TotalSeconds + 2.0;
-        scenario.Play(startLtc, followSeconds + 8.0);
+        // 判定区間 + 事後 2.2 秒の間はフレームを流し続ける必要がある。送信尺が素材の終端
+        // （MediaOut）に達すると Single の境界ホールドで一時停止し、最後の窓が 0 更新に
+        // 見えるため、素材内に収める（1 秒の余裕を残す）。
+        double sendSeconds = Math.Min(followSeconds + 8.0, track.Used - startLtc - 1.0);
+        scenario.Play(startLtc, sendSeconds);
         scenario.WaitUntil(
             () => Math.Abs(scenario.Position() - track.SingleTarget(scenario.LtcSeconds())) <= PositionToleranceSeconds,
             8, $"{track.Symbol}: 連続送出で追従に入る");
