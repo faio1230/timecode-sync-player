@@ -705,7 +705,13 @@ public sealed class LtcScenarioE2ETests
                 }
 
                 range.SetValue(ratio);
-                if (TryWaitPosition(target, 0.2, 4)) return;
+                if (TryWaitPosition(target, 0.2, 4))
+                {
+                    // D26: シーク直後は直前キャンバス（Held）が表示されたまま位置表示だけが
+                    // 先に進むことがある。参照採取は新しい世代のフレームが描かれるのを待つ。
+                    Thread.Sleep(500);
+                    return;
+                }
                 last = Position();
                 Thread.Sleep(200);
             }
