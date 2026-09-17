@@ -3274,3 +3274,11 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 実機（開発機、同期担当）: S-2 cycles=3、C-1、R-1〜R-4 成功。C-2 c2-01 が 1 回失敗（position=10.367、ランスルーの進行を固定目標 ±0.3 が取り逃す型 = 除去担当の C-1 修正と同型。D31 系のログは失敗窓に無し）、単独再実行は成功。証跡 `TestResults/ltc-scenarios/d31-01-scenario`、`d31-02-c2`（agent-a の作業ツリー）。
 - C-1 テスト修正（除去担当 agent-b `6ea69da` / `f52c8a4`、親が統合 `cb11b0f`）: `CheckHold` の着地判定を区間 [target − 0.3, target + 経過秒 + 0.3 + 1/fps]（停止モードは固定 ±0.3）に。着地後 0.5 秒の follow をジャーナルへ。`HoldLandingExpectation` 単体 10 本。非E2E 1819/0（agent-b）。
 - **判定: 統合後 main で非E2E → 除去担当がシナリオ 22 本 + LTC ループを実機確認 → 候補 3 へ**
+
+### 統合後 main（D31/D31-b・C-1 区間判定込み、`cb11b0f`）の実機確認と候補 3（2026-09-17 20:10、除去担当の実機、親が trx のカウンタを確認）
+
+- シナリオ 22/22、LTC ループ 14/14、RealProjectGap（代替 fixture）1/1。残プロセス 0。証跡 `TestResults/postmerge3/`（agent-b の作業ツリー）
+- hold-landing の例: C-1 c1-01 elapsed 0.611 / observed 3.267 / range [2.700, 3.944]（一点期待 3.611±0.34 なら 0.004 外側）、S-2 s2-19 observed 8.000 / range [7.700, 8.300]（前回失敗した保持が D31/D31-b で着地）
+- 統合後 main の非E2E 1825/0（親）
+- **候補 3**: `TimecodeSyncPlayer-v0.4.2-4469cdd-setup.exe` 38,663,525 バイト、SHA-256 `04A0018DA1CA36A7DB54BC4BF2BE561051F9019D55E0E3B16F08D68DC6E5F68C`、zip 17,741,413 バイト `9619CDFF3897A57BAFAEB194B4036B46036C484A897FC578F2F05B4A985586B2`、ProductVersion `0.4.2+4469cdd…`。Taildrop で検証機へ送付。検証機には先にテスト基盤側 3 件の修正を済ませてから実素材 3 回を依頼
+- A1（4K でギャップ進入後に絵が更新されない）の机上解析は `docs/analysis/2026-09-17-A1-gap-freeze-frame-not-updated.md`。候補 P1（3 秒の timeout に間に合わず Held が残り、遅れて届いても更新されない）と P2（(a)/(b) 経路が render 世代を進めず前回のフリーズ画像を再利用）。開発機で 4K ProRes/AV1 の生成素材により再現する
