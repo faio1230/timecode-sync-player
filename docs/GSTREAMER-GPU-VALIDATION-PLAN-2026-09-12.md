@@ -3196,3 +3196,10 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 意味: **単発の Jump 1 枚で状態遷移（ギャップ進入・トラック切替・着地）まで走る**ため、LTC の 1 フレームの誤デコード（現場ではドロップアウトや発生器の再始動で起き得る）が黒や誤ジャンプとして見える
 - 対処（除去担当、製品側）: Jump の妥当性ゲート。(1) 初回 Jump の写像が **ギャップ（先頭オフセットを含む）または現在と別のトラック** になる場合は、次のフレーム（≤ 1 フレーム）で値の連続（新値 +1 フレーム、または同値の Duplicate）を確認してから適用する。同じトラック内への Jump は従来どおり即時。(2) Fixed fps モードで `frame.Fps`（デコーダ推定）と解決 fps が食い違う Jump は未確認扱いにして 1 フレーム保留（Auto の正規な fps 切替は除く）。D27-b の保持からの即時復帰は「保持値と連続する Jump」に限る。単体で固定し、C-2 ×3、R-1〜R-4、S-2 で確認
 - 注: D29 候補（Single の LTC → 位置の写像で `MediaOut` が使われていない疑い、実素材 S-3 の position=42.683）は別件のまま
+
+### D30 の実装（除去担当、agent-b `d8e9fdf`、2026-09-18 13:40、実機待ち）
+
+- `JumpConfirmationPolicy`（新規）: Fixed モードで `detectedFps` と解決 fps の食い違い（標準値丸め、29.97/30 は除外、Auto は対象外）を判定。未確認 Jump の確認は「次フレームが同値 Duplicate、または +1 フレーム（0.5〜1.5 フレーム）」で、次の 1 フレーム以内に限る
+- `LtcSyncController`: (1) Continue で Jump の写像がギャップ（先頭オフセット含む）または現在のロード済みトラックと別なら保留（track-or-gap）。同一トラックは即時。(2) Fixed の fps 食い違い Jump も保留（detected-fps）。(3) 保留中の次フレームが連続すれば「確認済み Jump」として 1 回適用し、保持損失中ならその確認時に `ObserveJumpFrame` で復帰・着地（未確認 1 枚では復帰しない）。保留は監視開始/停止・モード/fps 切替・手動シークで破棄。ログ `holding unconfirmed Jump frame … reason=…` / `applying the confirmed Jump frame once`
+- テスト先行: `JumpConfirmationPolicyTests` 14、`LtcJumpConfirmationTests` 6（0.04 の単発 Jump は適用されない / +1 フレーム・同値 Duplicate で適用 / 別トラックは確認後 loadfile / 同一トラックは即 seek / fps 食い違いは保留 / 保持損失は確認後に復帰）。既存 1 件を D30 仕様に更新。非E2E 1795
+- 実機（C-2 ×3、R-1〜R-4、S-2、V3 1 本）は合図済み
