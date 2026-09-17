@@ -137,7 +137,19 @@ internal sealed class SingleModeSyncCoordinator
         bool atOut = aboveOut && playbackSeconds >= clipOut - boundaryTolerance;
         bool atIn = belowIn && playbackSeconds <= clipIn + boundaryTolerance;
         if (!atOut && !atIn)
-            return _clipBoundaryHeld;
+        {
+            // 端に居ない（トラック差し替え後のロード直後など）。古いラッチを解除して、
+            // 通常の着地シークで新しい端へ向かわせる。
+            if (_clipBoundaryHeld)
+            {
+                _clipBoundaryHeld = false;
+                _effects.SetEndHold?.Invoke(false);
+                Log.Information(
+                    "Single mode: clip boundary hold released (playback left the boundary) ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
+                    ltcSeconds, playbackSeconds, clipIn, clipOut);
+            }
+            return false;
+        }
 
         if (!_clipBoundaryHeld)
         {

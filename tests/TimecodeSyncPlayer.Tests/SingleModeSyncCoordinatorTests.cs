@@ -337,6 +337,32 @@ public class SingleModeSyncCoordinatorTests
     }
 
     [Fact]
+    public void Apply_BoundaryHoldReleased_WhenPlaybackLeavesTheBoundary()
+    {
+        // D33: トラック差し替え後のロード直後のように、ラッチ中でも位置が端から離れたら
+        // 解除して通常の着地シークに任せる（S-4 の回帰）。
+        double playback = 25.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 40.0);
+        holdCalls.Should().Equal(new[] { true });
+
+        playback = 0.0;
+        coordinator.Apply(ltcSeconds: 40.0);
+
+        holdCalls.Should().Equal(new[] { true, false });
+        seekCalls.Should().ContainSingle().Which.Should().Be(25.0);
+    }
+
+    [Fact]
     public void ApplyClipBoundaryHoldOnly_HoldsOnHeldFramesWithoutSeek()
     {
         // D33: LTC が保持（Duplicate）のまま境界へ着地したケース。通常の Apply は走らないため、
