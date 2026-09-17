@@ -87,6 +87,11 @@ internal sealed class LtcSyncController
     private bool _jumpAppliedOnce;
     // D20-b: 保持値の変更で 1 回だけ適用したことを示すラッチ（Normal/Initial で解除）。
     private bool _heldReapplyDone;
+    // D30: 未確認の Jump。写像がギャップ／別トラック、または Fixed モードでデコーダ推定 fps が
+    // 食い違う Jump を保持し、次の 1 フレームの連続（同値 Duplicate か +1 フレーム）で確認して
+    // から適用する。誤デコード 1 枚でギャップ進入・トラック切替・保持復帰を起こさない。
+    private double? _pendingJumpSeconds;
+    private long _pendingJumpReceivedAt;
     private double? _pendingSyncSeconds;
     private double _pendingSyncRawSeconds;
     private long _pendingSyncFrameEndTimestamp;
@@ -148,6 +153,7 @@ internal sealed class LtcSyncController
         ResetCorrection();
         _smoothAvailable = true;
         _frames.ResetDiagnostics();
+        _pendingJumpSeconds = null;
         _syncService.ClearSeekState();
         ExitGapForManualControl();
         _effects.UpdateCurrentTrackLabel();
@@ -209,6 +215,7 @@ internal sealed class LtcSyncController
     public void CancelPendingSync()
     {
         _pendingSyncSeconds = null;
+        _pendingJumpSeconds = null;
         // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
         ResetCorrection();
     }
@@ -296,7 +303,11 @@ internal sealed class LtcSyncController
         return age;
     }
 
-    public void FpsModeChanged() => _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
+    public void FpsModeChanged()
+    {
+        _pendingJumpSeconds = null;
+        _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
+    }
 
     public void MonitoringChanged()
     {
@@ -304,6 +315,7 @@ internal sealed class LtcSyncController
         _lastAppliedLtcSeconds = null;
         _lastHeldEffectiveSeconds = null;
         _pendingSyncSeconds = null;
+        _pendingJumpSeconds = null;
         _jumpAppliedOnce = false;
         _heldReapplyDone = false;
         if (_effects.GetContext().IsMonitoring)
@@ -332,6 +344,7 @@ internal sealed class LtcSyncController
         _lastAppliedLtcSeconds = null;
         _lastHeldEffectiveSeconds = null;
         _pendingSyncSeconds = null;
+        _pendingJumpSeconds = null;
         _jumpAppliedOnce = false;
         _heldReapplyDone = false;
         if (_monitoring.MarkStopped(exception))
@@ -364,6 +377,21 @@ internal sealed class LtcSyncController
             LogFrameDiagnostics(sourceFrame, processed, mode);
         double rawSeconds = processed.ResolvedSeconds;
         long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
+        // D30: 未確認 Jump の確認。直後の 1 フレームが同値の Duplicate か +1 フレームなら、
+        // その値を確認済み Jump として適用する（保持損失からの復帰も確認後に行う）。
+        if (_pendingJumpSeconds is double pendingJump)
+        {
+            _pendingJumpSeconds = null;
+            if (JumpConfirmationPolicy.IsWithinConfirmationWindow(
+                    _pendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps) &&
+                JumpConfirmationPolicy.IsConfirmedBy(
+                    pendingJump, rawSeconds, LastTimecodeFps, processed.Diagnostic.Status))
+            {
+                ApplyConfirmedJump(processed.Diagnostic.Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
+                return;
+            }
+        }
+
         bool applyOnce;
         string applyReason;
         if (!processed.ShouldApplySync)
@@ -380,23 +408,44 @@ internal sealed class LtcSyncController
                 _lastHeldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
             }
-            // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
-            // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ 1 回だけ着地させる
-            // （ラッチ済みの Jump でも数えるためラッチを解除してから適用する）。
-            // D27-c: 保持フレームの途切れで理由が信号断へ下がっていても、保持の直後の Jump は
-            // 復帰に数える（判定は ObserveJumpFrame 側。無音からの Jump は復帰しない）。
-            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump && _signalLoss.IsLost)
+            // D30: 写像がギャップ／別トラックの Jump と、Fixed モードでデコーダ推定 fps が
+            // 食い違う Jump は未確認にして次の 1 フレームの連続を待つ（誤値 1 枚で状態を動かさない）。
+            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump)
             {
-                ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
-                if (!_signalLoss.IsLost)
-                    _jumpAppliedOnce = false;
-            }
-            // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
-            if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump && !_jumpAppliedOnce)
-            {
-                _jumpAppliedOnce = true;
-                applyOnce = true;
-                applyReason = "first Jump";
+                string? deferReason = UnconfirmedJumpReason(processed, sourceFrame, rawSeconds, frameEndTimestamp);
+                if (deferReason != null)
+                {
+                    _pendingJumpSeconds = rawSeconds;
+                    _pendingJumpReceivedAt = receivedAtMilliseconds;
+                    Log.Information(
+                        "Timecode sync: holding unconfirmed Jump frame ltc={Ltc:F3} reason={Reason}",
+                        rawSeconds, deferReason);
+                    return;
+                }
+
+                // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
+                // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ 1 回だけ着地させる
+                // （ラッチ済みの Jump でも数えるためラッチを解除してから適用する）。
+                // D27-c: 保持フレームの途切れで理由が信号断へ下がっていても、保持の直後の Jump は
+                // 復帰に数える（判定は ObserveJumpFrame 側。無音からの Jump は復帰しない）。
+                if (_signalLoss.IsLost)
+                {
+                    ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
+                    if (!_signalLoss.IsLost)
+                        _jumpAppliedOnce = false;
+                }
+                // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
+                if (!_jumpAppliedOnce)
+                {
+                    _jumpAppliedOnce = true;
+                    applyOnce = true;
+                    applyReason = "first Jump";
+                }
+                else
+                {
+                    TryReapplyAfterFileLoadRelease();
+                    return;
+                }
             }
             // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超
             // ずれているときだけ 1 回適用する（定常の Duplicate ゲートは維持）。
@@ -446,6 +495,67 @@ internal sealed class LtcSyncController
 
         ObserveValidFrame(rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
         ApplyCorrection(effectiveSeconds);
+    }
+
+    /// <summary>
+    /// D30: 次の 1 フレームの連続で確認できた Jump を 1 回適用する。保持損失中なら確認済みの
+    /// Jump として復帰させ、着地は確認フレームの値で行う。
+    /// </summary>
+    private void ApplyConfirmedJump(
+        TimecodeFrameDiagnosticStatus status, double rawSeconds, long frameEndTimestamp, long receivedAtMilliseconds)
+    {
+        if (status == TimecodeFrameDiagnosticStatus.Duplicate)
+        {
+            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
+            _lastHeldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
+                _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
+        }
+        else
+        {
+            _lastHeldEffectiveSeconds = null;
+        }
+
+        if (_signalLoss.IsLost)
+        {
+            ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
+            if (!_signalLoss.IsLost)
+                _jumpAppliedOnce = false;
+        }
+
+        _jumpAppliedOnce = true;
+        _heldReapplyDone = false;
+        _lastContinueFrame = null;
+        double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
+        _lastAcceptedLtcSeconds = effectiveSeconds;
+        _lastAcceptedRawSeconds = rawSeconds;
+        _lastAcceptedFrameEndTimestamp = frameEndTimestamp;
+        _lastAppliedLtcSeconds = effectiveSeconds;
+        Log.Information("Timecode sync: applying the confirmed Jump frame once ltc={Ltc:F3}", rawSeconds);
+        RequestSyncEffective(effectiveSeconds);
+        ApplyCorrection(effectiveSeconds);
+    }
+
+    /// <summary>
+    /// D30: この Jump を即時適用できない理由（null なら即時）。ギャップ（先頭オフセットを含む）／
+    /// 現在と別トラックへの写像と、Fixed fps モードでのデコーダ推定 fps の食い違いを未確認とする。
+    /// Single はトラックの写像を持たないため、写像による保留はしない。
+    /// </summary>
+    private string? UnconfirmedJumpReason(
+        LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame,
+        double rawSeconds, long frameEndTimestamp)
+    {
+        LtcSyncContext state = _effects.GetContext();
+        if (sourceFrame != null &&
+            JumpConfirmationPolicy.IsDetectedFpsSuspect(state.FpsMode, sourceFrame.Fps, processed.ResolvedFps))
+            return "detected-fps";
+        if (state.Mode == SyncMode.Continue)
+        {
+            double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
+            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(effectiveSeconds);
+            if (result.Status != TimelineQueryStatus.OnTrack || result.Track?.Id != state.LoadedTrackId)
+                return "track-or-gap";
+        }
+        return null;
     }
 
     /// <summary>

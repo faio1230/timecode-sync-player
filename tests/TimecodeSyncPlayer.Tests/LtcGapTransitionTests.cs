@@ -102,12 +102,14 @@ public sealed class LtcGapTransitionTests
     {
         // D20-b (i): Jump は 1 回だけ新値で受理される。同期 ON の再適用もその受理値を使う
         // （旧挙動の「診断 Jump を無視して直前の受理値へ戻す」から変更）。
+        // D30: 別トラックへの Jump は次の 1 フレームの連続を確認してから受理する。
         var h = new SyncScenarioHarness();
         h.AddTrack("first", 0);
         var next = h.AddTrack("next", 8);
         h.SetSyncEnabled(false);
         Raw(h, 1);
-        Raw(h, 9);   // Jump（1 回だけ 9.00 を受理）
+        Raw(h, 9);   // Jump（D30: 未確認のため保留）
+        Raw(h, 9);   // 同値の Duplicate で確認 → 9.00 を受理
         h.Controller.LastLtcSeconds.Should().Be(9);
         h.Operations.Clear();
 
