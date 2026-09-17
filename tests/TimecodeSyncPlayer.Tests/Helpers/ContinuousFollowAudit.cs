@@ -15,10 +15,13 @@ internal readonly record struct FollowPerfSegment(double AtSeconds, double SpanS
 
 /// <summary>
 /// L-1: 1 窓の集計結果。Settling は追従直後の過渡として判定から除外した窓（集計と報告には残す）。
+/// LtcAdvance と Samples は、位置が進まない窓の切り分け用。位置と LTC はどちらも画面の
+/// ラベルから読むので、両方が同時に止まっていれば表示側、LTC だけ進んでいれば再生側、
+/// と読み分けられる（Samples が少ない窓は読み取り自体が遅れている）。
 /// </summary>
 internal readonly record struct FollowWindow(
     int Index, double StartSeconds, int FrameUpdates, double PositionAdvance, double MaxAbsError,
-    bool Settling);
+    bool Settling, double LtcAdvance, int Samples);
 
 /// <summary>
 /// L-1: 全窓の集計。Windows は Settling を含む全窓。判定に使う数値（Stall*、MaxAbsError、
@@ -64,6 +67,11 @@ internal static class ContinuousFollowAudit
 
         int windowCount = (int)Math.Floor(durationSeconds / windowSeconds);
         var windows = new List<FollowWindow>(windowCount);
+        // 窓の進みは「前の窓の最後の値」を起点にする。画面ラベルの読み取りは 1 サンプルあたり
+        // 100ms 以上かかることがあり、2 秒窓に 1〜3 サンプルしか入らない場合がある。窓の中だけで
+        // 差を取ると、再生が正常でも進みが 0 に見えてしまう。
+        double carryPosition = double.NaN;
+        double carryLtc = double.NaN;
         for (int index = 0; index < windowCount; index++)
         {
             double start = index * windowSeconds;
@@ -78,17 +86,31 @@ internal static class ContinuousFollowAudit
 
             double firstPosition = double.NaN;
             double lastPosition = double.NaN;
+            double firstLtc = double.NaN;
+            double lastLtc = double.NaN;
             double maxError = 0.0;
             bool hasPosition = false;
+            bool hasLtc = false;
+            int sampleCount = 0;
             foreach (FollowSample sample in samples)
             {
                 if (sample.WallSeconds < start || sample.WallSeconds >= end)
                     continue;
+                sampleCount++;
+                if (double.IsFinite(sample.LtcSeconds))
+                {
+                    if (!hasLtc)
+                    {
+                        firstLtc = double.IsFinite(carryLtc) ? carryLtc : sample.LtcSeconds;
+                        hasLtc = true;
+                    }
+                    lastLtc = sample.LtcSeconds;
+                }
                 if (!double.IsFinite(sample.PositionSeconds))
                     continue;
                 if (!hasPosition)
                 {
-                    firstPosition = sample.PositionSeconds;
+                    firstPosition = double.IsFinite(carryPosition) ? carryPosition : sample.PositionSeconds;
                     hasPosition = true;
                 }
                 lastPosition = sample.PositionSeconds;
@@ -101,7 +123,13 @@ internal static class ContinuousFollowAudit
             }
 
             double advance = hasPosition ? lastPosition - firstPosition : 0.0;
-            windows.Add(new FollowWindow(index, start, frameUpdates, advance, maxError, start < settlingSeconds));
+            double ltcAdvance = hasLtc ? lastLtc - firstLtc : 0.0;
+            if (hasPosition)
+                carryPosition = lastPosition;
+            if (hasLtc)
+                carryLtc = lastLtc;
+            windows.Add(new FollowWindow(index, start, frameUpdates, advance, maxError,
+                start < settlingSeconds, ltcAdvance, sampleCount));
         }
 
         List<FollowWindow> audited = windows.Where(window => !window.Settling).ToList();
