@@ -10,8 +10,9 @@
 #        media folder, and is removed after the run unless -KeepProject is set)
 #   powershell -File scripts\run-ltc-scenarios.ps1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
 #       (L-1 continuous-follow audit: seconds / tracks / window length / settling
-#        exclusion via -FollowSettlingSeconds; the default filter includes L-1. To
-#        run only the previous 22 scenarios:
+#        exclusion via -FollowSettlingSeconds / follow-start gate bound via
+#        -FollowStartGateSeconds; the default filter includes L-1. To run only the
+#        previous 22 scenarios:
 #        -Filter 'FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_')
 #       -SegmentSeconds N raises the per-track used length above the 20 s default;
 #       L-1 needs >= 34 s used per track (60 s follow rounds down to used - 4).
@@ -41,6 +42,7 @@ param(
     [string]$FollowTracks = '',
     [double]$FollowWindowSeconds = 0,
     [double]$FollowSettlingSeconds = 0,
+    [double]$FollowStartGateSeconds = 0,
     [switch]$KeepProject,
     [switch]$SkipBuild
 )
@@ -349,10 +351,14 @@ if ($FollowWindowSeconds -gt 0) {
 if ($FollowSettlingSeconds -gt 0) {
     $env:TCS_L1_SETTLING_SECONDS = $FollowSettlingSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 }
+if ($FollowStartGateSeconds -gt 0) {
+    $env:TCS_L1_START_GATE_SECONDS = $FollowStartGateSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+}
 if ($FollowSeconds -gt 0 -or -not [string]::IsNullOrWhiteSpace($FollowTracks) -or $FollowWindowSeconds -gt 0 -or
-    $FollowSettlingSeconds -gt 0) {
+    $FollowSettlingSeconds -gt 0 -or $FollowStartGateSeconds -gt 0) {
     Write-Output ('l1: follow_seconds=' + $env:TCS_L1_FOLLOW_SECONDS + ' tracks=' + $env:TCS_L1_TRACKS +
-        ' window_seconds=' + $env:TCS_L1_WINDOW_SECONDS + ' settling_seconds=' + $env:TCS_L1_SETTLING_SECONDS)
+        ' window_seconds=' + $env:TCS_L1_WINDOW_SECONDS + ' settling_seconds=' + $env:TCS_L1_SETTLING_SECONDS +
+        ' start_gate_seconds=' + $env:TCS_L1_START_GATE_SECONDS)
 }
 
 # ---- build and run ---------------------------------------------------------
