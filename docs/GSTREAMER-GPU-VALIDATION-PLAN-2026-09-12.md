@@ -3341,3 +3341,11 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **G-2 a（製品側の疑い、証跡待ち）**: Black のギャップ後に B（M4、VP9 1080p GPU）へ入って 3.9 秒経っても画面が黒（position 8.917 は正しい）。b（M3 4K GPU）と c（M1 CPU）は合格。出力トレース（compose.acquire / source.acquire / lifecycle）で B のロード後にフレームが届いているかを確認
 - **間欠（要観察）**: R-1 b（停止位置 13.000、保持 12.0）、G-5 b g5-16（着地せず observed 11.000）、C-2 c c2-01（3.5 秒 position 0.000、M2 長 GOP）、S-1 c（追従誤差 1.003 秒、M2 長 GOP = 既知の制限の範囲）
 - 候補 4（D32 込み）は送付済み。候補 3 の後に同じ 3 回を依頼
+
+## D33: Single モードで LTC が MediaOut を越えても終端で止まらない／速いロードでメタデータ取得が抜ける（同期担当 agent-a `6411395` / `dcd2c8a` / `6ba1451` / `d0f630f`、親が統合 `12d2e38`、2026-09-17 20:52）
+
+- **D33-a**: `SingleModeSyncCoordinator` に終端ホールド（目標が clipOut/clipIn に貼り付き、再生位置が ±2 フレームなら一時停止してラッチ。範囲に戻れば解除して追従）。範囲外 LTC は補正を丸ごとスキップ（越えたシークを封じる。範囲内では clamp は no-op）。`LtcSyncContext` に MediaIn/MediaOut を追加。E2E 中に見つけた 2 件を追加修正: 保持（Duplicate）フレームでも終端ホールドを評価（`6ba1451`、S-3 補足で素材終端 11.983 まで進んだ）、端から離れたらホールドを解除して再着地（`d0f630f`、S-4 の回帰 position=10.333）
+- **D33-b**: `PlaybackOperationsEffects.RequestMetadataFetch` をロード成功時に 1 回呼び、`Dispatcher.BeginInvoke(Background)` で `FetchMetadata` を予約（サイズ未取得なら従来のタイマーが再試行）
+- 単体 +11（+ 追加修正分）、非E2E 1873/0（統合後 main）
+- 実機（開発機）: S-1〜S-5・R-1〜R-4 9/9（最終ビルド）。S-3 × `-SegmentSeconds 8`（MediaOut=8 < 尺 12）: `Single mode: clip boundary hold ltc=28.000 playback=8.009 clip=[0.000,8.000]` を確認（テスト側の clamp 未統合のツリーだったため判定は失敗。統合後 main で除去担当が再確認）。12 秒生成素材の C 役は head 色が無く tail 参照が body と同一になるため参照採取が止まる（テスト側の制約、C 役を差し替えて実施）。V3（Smooth、LTC25）: steady n=1065 平均 −26.0ms・p95−p5 38.3ms（基準 −28.9 / 38.3）、収束 seek-a 159 / seek-b 120 / seek-c 120 / seek-back 160 / black 400 / freeze 120ms
+- **判定: 統合。除去担当がシナリオ 22 + LTC ループ 14 + S-3（SegmentSeconds 8）を実機確認 → 候補 5**
