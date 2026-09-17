@@ -216,8 +216,12 @@ public sealed class LtcScenarioE2ETests
         scenario.Play(scenario.A.End - 2, 14);
         scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.B.Start - 0.05, 8, "LTC が B の先頭を通過");
         // 冒頭 1 秒は B の先頭フレーム（色素材ではマゼンタ）。参照一致するなら B の参照であること。
+        // 参照が黒の素材では「黒」と「head で静止」を区別できないため非黒を要求しない。
+        bool requireNotBlack = scenario.HeadReferenceNotBlack(scenario.B);
+        scenario.Journal.Write("black-judgment", details: new { name = "g2-enter", symbol = scenario.B.Symbol, requireNotBlack });
         scenario.WaitForFrame("g2-enter", TimeSpan.FromSeconds(1.0),
-            (signature, match) => !signature.IsBlack && (!match.IsMatch || match.MatchesTrack(scenario.B.Symbol)),
+            (signature, match) => (!requireNotBlack || !signature.IsBlack) &&
+                                  (!match.IsMatch || match.MatchesTrack(scenario.B.Symbol)),
             "1 秒以内に黒から B の絵へ");
 
         scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.B.Start + 1.5, 3, "B の冒頭を通過");
@@ -294,8 +298,12 @@ public sealed class LtcScenarioE2ETests
         scenario.WaitBlack("g6-black", 2.0, "先頭オフセット領域は黒");
 
         scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.Start + 0.3, 4, "A の先頭を通過");
+        // 参照 head が黒の素材では黒と head の区別ができないため、非黒を要求せず参照一致だけで見る。
+        bool requireNotBlack = scenario.HeadReferenceNotBlack(scenario.A);
+        scenario.Journal.Write("black-judgment", details: new { name = "g6-enter", symbol = scenario.A.Symbol, requireNotBlack });
         scenario.WaitForFrame("g6-enter", TimeSpan.FromSeconds(2.0),
-            (signature, match) => !signature.IsBlack && (!match.IsMatch || match.MatchesTrack(scenario.A.Symbol)),
+            (signature, match) => (!requireNotBlack || !signature.IsBlack) &&
+                                  (!match.IsMatch || match.MatchesTrack(scenario.A.Symbol)),
             "A の先頭フレームで黒から復帰");
 
         scenario.WaitUntil(() => scenario.LtcSeconds() >= scenario.A.Start + 1.5, 4, "A の冒頭を通過");
@@ -984,10 +992,25 @@ public sealed class LtcScenarioE2ETests
                 description);
 
         /// <summary>黒でなく、参照に一致するなら期待トラックの参照であること（中間位置は参照なしを許容）。</summary>
-        public void WaitTrackPicture(string name, TrackInfo track, double timeoutSeconds, string description) =>
+        public void WaitTrackPicture(string name, TrackInfo track, double timeoutSeconds, string description)
+        {
+            // 参照が黒の素材では非黒を要求しない（黒と参照静止を区別できない）。
+            bool requireNotBlack = BlackJudgmentApplies(track);
             WaitForFrame(name, TimeSpan.FromSeconds(timeoutSeconds),
-                (signature, match) => !signature.IsBlack && (!match.IsMatch || match.MatchesTrack(track.Symbol)),
+                (signature, match) => (!requireNotBlack || !signature.IsBlack) &&
+                                      (!match.IsMatch || match.MatchesTrack(track.Symbol)),
                 description);
+        }
+
+        /// <summary>
+        /// 黒の判定（黒であること・黒でないこと）を課してよいか。該当トラックの参照に全面黒が
+        /// 含まれると「黒」と「参照で静止」を画像で区別できないため、位置と参照一致だけで判定する。
+        /// </summary>
+        public bool BlackJudgmentApplies(TrackInfo track) =>
+            References.HasReferences(track.Symbol) && !References.IsTrackBlack(track.Symbol);
+
+        /// <summary>head 参照が黒でないときだけ非黒を要求してよい（参照が無ければ要求する）。</summary>
+        public bool HeadReferenceNotBlack(TrackInfo track) => !References.IsHeadReferenceBlack(track.Symbol);
 
         /// <summary>保持ジャンプの共通判定: 位置が期待に入り、進行し、絵が期待トラック側であること。</summary>
         public void CheckHold(
@@ -1000,6 +1023,8 @@ public sealed class LtcScenarioE2ETests
             Signal.PlayHeld(ltcTarget, LtcFps, TimeSpan.FromSeconds(sendSeconds));
 
             // D26: ジャンプ発行から着地確認まで 50ms 間隔で画面を採り、黒（黒率 >= 0.99）を数える。
+            // 参照が黒の素材では「黒」と「参照で静止」を画像で区別できないため数えない。
+            bool blackJudgment = BlackJudgmentApplies(track);
             var jumpSamples = new List<FrameSignature>();
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(sendSeconds + 1);
             DateTime nextSample = DateTime.UtcNow;
@@ -1014,7 +1039,7 @@ public sealed class LtcScenarioE2ETests
                 }
 
                 if (DateTime.UtcNow >= deadline) break;
-                if (sampleBlackDuringJump && DateTime.UtcNow >= nextSample)
+                if (sampleBlackDuringJump && blackJudgment && DateTime.UtcNow >= nextSample)
                 {
                     jumpSamples.Add(Capture($"jump-black-{name}-{jumpSamples.Count + 1:D2}"));
                     nextSample = DateTime.UtcNow.AddMilliseconds(50);
@@ -1025,16 +1050,29 @@ public sealed class LtcScenarioE2ETests
 
             if (sampleBlackDuringJump)
             {
-                int blackFrames = jumpSamples.Count(sample => sample.IsBlack);
-                double worst = jumpSamples.Count == 0 ? 1.0 : jumpSamples.Min(sample => sample.BlackFraction);
-                Journal.Write("jump-black-summary", details: new
+                if (blackJudgment)
                 {
-                    name,
-                    samples = jumpSamples.Count,
-                    blackFrames,
-                    minBlackFraction = Math.Round(worst, 4),
-                });
-                blackFrames.Should().Be(0, $"{name}: ジャンプ中（発行〜着地）に黒を挟まない");
+                    int blackFrames = jumpSamples.Count(sample => sample.IsBlack);
+                    double worst = jumpSamples.Count == 0 ? 1.0 : jumpSamples.Min(sample => sample.BlackFraction);
+                    Journal.Write("jump-black-summary", details: new
+                    {
+                        name,
+                        samples = jumpSamples.Count,
+                        blackFrames,
+                        minBlackFraction = Math.Round(worst, 4),
+                    });
+                    blackFrames.Should().Be(0, $"{name}: ジャンプ中（発行〜着地）に黒を挟まない");
+                }
+                else
+                {
+                    Journal.Write("jump-black-summary", details: new
+                    {
+                        name,
+                        skipped = true,
+                        reason = "reference-is-black",
+                        symbol = track.Symbol,
+                    });
+                }
             }
 
             WaitUntil(() => Math.Abs(LtcSeconds() - ltcTarget) <= 0.05, 6, $"保持 LTC {ltcTarget:F2} の受信");
@@ -1053,10 +1091,12 @@ public sealed class LtcScenarioE2ETests
                 observedPosition = observed,
                 matrixExpectation = Expectation(matrixExpectation),
                 isBlack = signature.IsBlack,
+                blackJudgment,
                 nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
                 best = Describe(match),
             });
-            signature.IsBlack.Should().BeFalse($"{name}: トラックの保持中に黒にならない");
+            if (blackJudgment)
+                signature.IsBlack.Should().BeFalse($"{name}: トラックの保持中に黒にならない");
             if (match.IsMatch)
                 match.MatchesTrack(track.Symbol).Should().BeTrue(
                     $"{name}: 参照に一致するなら {track.Symbol} の参照であること（実際: {Describe(match)}）");
