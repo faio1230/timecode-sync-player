@@ -3263,3 +3263,14 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **D29 の効果**: S-3 a の position 43.083 → 25.100（clamp は効き、超過 0.1 秒）。S-2 b は合格に転じた。
 - **次版候補（今回は対応しない）**: shim のプロファイル試行順（コンテナのコーデック判定で先に絞る。M1/M5 で 1〜2.5 秒の無駄）。`frame_lock busy; waiting` 5〜7 行は状態変更中の待ち。
 - 検証機へ依頼: 上記 (1)〜(3) の修正パッチ、3 回分のジャーナル・trx・アプリ/shim ログ（PNG は F/C 系のみ）、参照 PNG の SHA-256 一覧、F-3/F-4/F-5・F-1・S-3・C-1/C-2・G-2 のログ抜粋。候補 3 は D31/D31-b 統合後。
+
+## D31 / D31-b: 未確認 Jump の確認窓が壁時計依存、停止中に保持値が変わっても着地しない（2026-09-17 19:20、同期担当 agent-a `34b267d` / `577039c`、親が統合 `610cdde`）
+
+- **D31 原因**: D30 の確認窓が `receivedAtMilliseconds`（音声コールバックで打つ `TickCount64`）の差 ≤ max(2.5 フレーム, 100ms)。WASAPI 捕捉が滞ると次フレームが 203ms 後にまとめて届き、確認不成立で保留を捨てていた（S-2 s2-19）。
+- **D31 修正**: 窓は `FrameEndTimestamp`（同期ワード末尾の QPC、サンプル位置由来）の差で判定。どちらかが 0 のときだけ壁時計。窓外で捨てるときは `dropping out-of-window pending Jump frame`（ストリーム差 ms・壁時計差 ms）をログ。
+- **D31-b 原因**（同期担当の解析）: 前サイクルの保持 20.0 で停止・着地（D27）後、新しい保持値 8.0 の Duplicate は D20-b で `_lastAppliedLtcSeconds` を更新するだけで、D27 の着地は損失遷移時にしか走らず、再生は 20.0 に留まる。
+- **D31-b 修正**: 保持損失中に保持値が「着地済みの値（無ければ直前の保持値）」から半フレーム超変わったら、停止モードは `ReapplyHeldValueOnPause` で 1 回着地、ランスルーは 1 回適用（同値の連続では発行しない。損失が明ければ解除）。D20-b の `_heldReapplyDone` ラッチで 2 回目以降の保持値変化が適用されなかった点も変化ごとに 1 回へ。
+- 単体: +3（JumpConfirmationPolicyTests/LtcJumpConfirmationTests）+3（LtcHeldValueChangeTests）。非E2E 1815/0（agent-a）。
+- 実機（開発機、同期担当）: S-2 cycles=3、C-1、R-1〜R-4 成功。C-2 c2-01 が 1 回失敗（position=10.367、ランスルーの進行を固定目標 ±0.3 が取り逃す型 = 除去担当の C-1 修正と同型。D31 系のログは失敗窓に無し）、単独再実行は成功。証跡 `TestResults/ltc-scenarios/d31-01-scenario`、`d31-02-c2`（agent-a の作業ツリー）。
+- C-1 テスト修正（除去担当 agent-b `6ea69da` / `f52c8a4`、親が統合 `cb11b0f`）: `CheckHold` の着地判定を区間 [target − 0.3, target + 経過秒 + 0.3 + 1/fps]（停止モードは固定 ±0.3）に。着地後 0.5 秒の follow をジャーナルへ。`HoldLandingExpectation` 単体 10 本。非E2E 1819/0（agent-b）。
+- **判定: 統合後 main で非E2E → 除去担当がシナリオ 22 本 + LTC ループを実機確認 → 候補 3 へ**
