@@ -36,6 +36,11 @@ public sealed class LtcScenarioE2ETests
     private const string CyclesVariable = "TIMECODE_LTC_SCENARIO_CYCLES";
     private const double PositionToleranceSeconds = 0.3;
 
+    // S-2: 停止モードは停止時に同期コントローラが保持値へ着地シークを 1 回発行するため、
+    // 同期コーディネーターのシークと着地シークの両方を成功シークとして数える。
+    private const string SyncSeekLogPattern = @"Timecode sync seek .*success=true";
+    private const string LandingSeekLogPattern = @"LTC timecode held: landing seek issued";
+
     // ---- S: 単発・fps ----
 
     [SkippableFact(Timeout = 180_000)]
@@ -73,7 +78,8 @@ public sealed class LtcScenarioE2ETests
         scenario.SetSignalLossMode(stop: true);
 
         int holds = 0;
-        int seeksBefore = scenario.CountLogMatches(@"Timecode sync seek .*success=true", RegexOptions.IgnoreCase);
+        int syncSeeksBefore = scenario.CountLogMatches(SyncSeekLogPattern, RegexOptions.IgnoreCase);
+        int landingSeeksBefore = scenario.CountLogMatches(LandingSeekLogPattern, RegexOptions.IgnoreCase);
         for (int cycle = 0; cycle < cycles; cycle++)
         {
             foreach (double target in new[] { low, high })
@@ -85,9 +91,11 @@ public sealed class LtcScenarioE2ETests
         }
 
         holds.Should().Be(cycles * 2);
-        int successfulSeeks = scenario.CountLogMatches(@"Timecode sync seek .*success=true", RegexOptions.IgnoreCase) - seeksBefore;
-        scenario.Journal.Write("seek-summary", details: new { holds, successfulSeeks });
-        successfulSeeks.Should().BeGreaterThanOrEqualTo(cycles * 2, "各保持で同期シークが成功する");
+        int syncSeeks = scenario.CountLogMatches(SyncSeekLogPattern, RegexOptions.IgnoreCase) - syncSeeksBefore;
+        int landingSeeks = scenario.CountLogMatches(LandingSeekLogPattern, RegexOptions.IgnoreCase) - landingSeeksBefore;
+        int successfulSeeks = syncSeeks + landingSeeks;
+        scenario.Journal.Write("seek-summary", details: new { holds, successfulSeeks, syncSeeks, landingSeeks });
+        successfulSeeks.Should().BeGreaterThanOrEqualTo(cycles * 2, "各保持でシークが成功する（停止モードの着地シークを含む）");
     });
 
     [SkippableFact(Timeout = 180_000)]
