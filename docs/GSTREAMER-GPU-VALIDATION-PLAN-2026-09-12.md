@@ -3291,3 +3291,5 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 補足観測: F-1 の保持中に `final frame captured` が約 110ms 間隔で繰り返す（DecideGapEnter が FreezeComplete→Inactive→再進入）。世代は変わらず frozen の再保存は無し。無害だが D32 で整理候補
 - 次: 条件 3（`TCS_FORCE_DECODER_ADAPTER_MISMATCH=1` + decodeMode=software でプロファイル試行を検証機並みに）→ 出なければ検証機の証跡（参照 PNG の SHA、GapEnter 経路のログ）待ち
 - 証跡 `TestResults/ltc-scenarios/a1-01-f1-nobudget/`〜`a1-08-f5-pump800/`（agent-a の作業ツリー）
+- 条件 3（`TCS_FORCE_DECODER_ADAPTER_MISMATCH=1`、さらに `TCS_FORCE_DECODER_LUID_MISMATCH=1` 併用。prores-cpu / av1-cpu attempt=8 を確認）: F-1/F-3/F-4/F-5 とも **再現せず**。load.summary total_ms は 105〜183ms で、開発機では不一致プロファイルが即座に返るため検証機の 1〜2.5 秒にならない。decodeMode=software はシナリオ E2E がテストごとの設定ファイルをアプリ自身に作らせるため外部から注入できず未実施。証跡 `a1-09`〜`a1-13`
+- **判定: 開発機の 3 条件ではデコード／ロード時間が検証機より 1 桁短く、3 秒のフリーズ確定窓を外す状況を作れない。検証機の証跡（参照 PNG の SHA、GapEnter 経路のログ、`capture timed out` の有無）で 2×2 を突き合わせる方針に切り替え（2026-09-17 21:05）**
