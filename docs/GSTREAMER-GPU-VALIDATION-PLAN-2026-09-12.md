@@ -3208,3 +3208,9 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - 原因: `SyncDecisionEngine.Decide` の `Math.Clamp(ltc, 0, DurationSeconds)` と先行補償後の `CompensateTarget(…, DurationSeconds)` が尺基準で、Single の `SyncPlaybackState` に MediaIn/MediaOut が渡っていなかった（実素材 S-3 の position=42.683 の原因）。Continue は `FindTrackAtTimelinePosition` が [MediaIn, MediaOut ?? 尺] に clamp 済みで正しかった
 - 修正: clamp 範囲を [MediaIn, MediaOut ?? 尺] にし、補償後も同じ範囲。`MainWindow` の Single の `BuildPlaybackState` が現在トラックの MediaIn/MediaOut を渡す。D20 の終端静止も MediaOut 基準に。単体 4 件追加、非E2E 1779（main `79f2207` 統合後も 1779。D30 の統合で +20）。実機は除去担当の次の全件で確認
+
+### D30 の実機結果と統合（除去担当の実機、agent-b `d8e9fdf`、2026-09-18 15:00、親の判定）
+
+- C-2 ×3: 3 回とも Passed、jump-black-summary 各 20 件で黒 0。R-1〜R-4、S-2: Passed。アプリログにゲートの作動 `holding unconfirmed Jump frame`（62 件、すべて track-or-gap）と `applying the confirmed Jump frame once`（61 件）
+- V3（Smooth、LTC25）: 19 本 Passed、sample steady n=1068 **平均 -29.0ms / p95-p5 35.3ms**（基準 -28.9 / 38.3）。収束 seek-a 120 / seek-b 120 / seek-c 160 / seek-back 80 / black-sweep 402 / freeze-sweep 160ms（1 フレームの確認遅延は許容内）
+- **判定: D30 解消。main に統合（D29 と合わせて 2 本目の候補ビルドへ）**
