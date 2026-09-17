@@ -12,6 +12,8 @@
 #       (L-1 continuous-follow audit: seconds / tracks / window length; the default
 #        filter includes L-1. To run only the previous 22 scenarios:
 #        -Filter 'FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_')
+#       -SegmentSeconds N raises the per-track used length above the 20 s default;
+#       L-1 needs >= 34 s used per track (60 s follow rounds down to used - 4).
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg, .NET SDK, the
 # target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
@@ -33,6 +35,7 @@ param(
     [string]$MediaDir = '',
     [string[]]$Media = @(),
     [double]$MediaInOffsetSeconds = 0,
+    [double]$SegmentSeconds = 0,
     [int]$FollowSeconds = 0,
     [string]$FollowTracks = '',
     [double]$FollowWindowSeconds = 0,
@@ -304,6 +307,7 @@ if ($MediaDir) {
     $makeArgs = @{ MediaDir = $linkedMediaDir; Out = $projectPath }
     if ($Media) { $makeArgs.Media = $Media }
     if ($MediaInOffsetSeconds -ne 0) { $makeArgs.MediaInOffsetSeconds = $MediaInOffsetSeconds }
+    if ($SegmentSeconds -gt 0) { $makeArgs.SegmentSeconds = $SegmentSeconds }
     Write-Output ('media_select=' + $(if ($Media) { $Media } else { '(first 3 by name)' }) +
         ' media_in_offset=' + $MediaInOffsetSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))
     & $makeProject @makeArgs *> (Join-Path $ReportDir 'make-ltc-scenario-project.log')

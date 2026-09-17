@@ -272,7 +272,7 @@ public sealed class LtcScenarioE2ETests
             stallAdvanceWindows = summary.StallAdvanceWindows,
             maxAbsError = JsonNumberOrNull(summary.MaxAbsError),
             meanFrameUpdates = Math.Round(summary.MeanFrameUpdates, 2),
-            expectedFrameUpdates = Math.Round(windowSeconds * track.FrameRate, 2),
+            expectedFrameUpdates = Math.Round(windowSeconds * MediaFpsForExpectation(scenario, track), 2),
             worstUpdateWindow = WindowDetail(summary.WorstUpdates),
             worstAdvanceWindow = WindowDetail(summary.WorstAdvance),
             worstErrorWindow = WindowDetail(summary.WorstError),
@@ -294,6 +294,16 @@ public sealed class LtcScenarioE2ETests
 
     private static double? JsonNumberOrNull(double value) =>
         double.IsFinite(value) ? Math.Round(value, 3) : null;
+
+    /// <summary>
+    /// L-1: 期待 frameUpdates に使う素材 fps。プロジェクト記録の frameRate は生成スクリプトが
+    /// 書かないことがあるため、画面のメタデータ表示（現在トラックの実 fps）を優先する。
+    /// </summary>
+    private static double MediaFpsForExpectation(Scenario scenario, TrackInfo track)
+    {
+        double mediaFps = scenario.MediaFps();
+        return mediaFps > 0 ? mediaFps : track.FrameRate;
+    }
 
     private static TrackInfo ResolveFollowTrack(Scenario scenario, string token)
     {
