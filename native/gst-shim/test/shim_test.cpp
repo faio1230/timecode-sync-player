@@ -622,7 +622,7 @@ run_paused_seek (int argc, char** argv)
   tcs_player_get_duration (p, &dur);
   tcs_player_get_fps (p, &fps);
   double target_play = dur > 2.0 ? dur * 0.45 : 0.5;
-  double target_paused = dur > 2.0 ? dur * 0.65 : 0.7;
+  double target_paused = argc > 3 ? atof (argv[3]) : (dur > 2.0 ? dur * 0.65 : 0.7);
   printf ("  media duration=%.3fs fps=%.3f play-target=%.3f paused-target=%.3f\n",
       dur, fps, target_play, target_paused);
 
