@@ -487,8 +487,9 @@ internal sealed class LtcSyncController
             // D31-b: 保持損失中に保持値そのもの（タイムコード停止位置）が変わったら、停止モードは
             // 新しい保持値へ 1 回だけ着地する（D27 の着地を遷移時から変化時へ拡張）。ランスルーは
             // 同期の 1 回適用に同じ変化の判定を使う（同値の連続では発行しない）。
+            // D35: 無音損失で一時停止した後に初めて保持値が届いた場合も、同じ明示着地の対象にする。
             else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
-                     heldValueChangedDuringLoss)
+                     (heldValueChangedDuringLoss || ShouldLandOnFirstHeldValueDuringPause()))
             {
                 _heldReapplyDone = true;
                 if (_signalLoss.IsPauseOwned)
@@ -648,6 +649,15 @@ internal sealed class LtcSyncController
         double frameSeconds = LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04;
         return Math.Abs(heldEffectiveSeconds - previous) > frameSeconds * 0.5;
     }
+
+    /// <summary>
+    /// D35: 無音損失（SignalLoss）で一時停止した後に、保持値（Duplicate）が初めて届いたか。
+    /// この損失でまだ着地しておらず、今回のフレームで保持値が分かったときに停止モードの
+    /// 明示着地を行う（損失理由や値の到着順に依存しない）。
+    /// </summary>
+    private bool ShouldLandOnFirstHeldValueDuringPause() =>
+        _signalLoss.IsPauseOwned && _heldLossLandingSeconds is null &&
+        _lastHeldEffectiveSeconds is not null;
 
     /// <summary>
     /// D20-b (i): 保持 LTC（Duplicate）では通常の同期経路が走らないため、ロード解除だけを
@@ -845,6 +855,10 @@ internal sealed class LtcSyncController
         if (action == LtcSignalLossAction.None || !_effects.GetContext().IsPlayerReady)
             return;
         bool pause = action == LtcSignalLossAction.Pause;
+        // D35: 停止モードの保持で止める直前に Smooth の残り倍率を 1.0 へ戻す
+        // （一時停止後はレート変更を受け付けない）。
+        if (pause)
+            RestoreRateBeforePolicyPause();
         _effects.SetSignalLossPaused(pause);
         LtcSyncContext state = _effects.GetContext();
         if (pause)
@@ -852,9 +866,11 @@ internal sealed class LtcSyncController
             Log.Information(
                 "LTC signal lost: playback paused timeoutMs={TimeoutMs} reason={Reason}",
                 state.SignalLossTimeoutMilliseconds, _signalLoss.Reason);
-            // D27: 保持（タイムコード停止）で止めるときは、停止位置を保持値へ 1 回だけ着地させる。
-            // 無音（信号断）では着地先の値が無いので何もしない。
-            if (_signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
+            // D35: 停止モードの保持は、損失理由（SignalLoss / TimecodeHeld）や保持値が損失宣言の
+            // 前後どちらで分かったかに依らず、値が分かった時点で保持値へ明示的に 1 回着地する。
+            // まだ値が無い（無音損失）ときは、その後の Duplicate が届いた時点で受信経路が着地する。
+            if (_lastHeldEffectiveSeconds is not null ||
+                _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
                 ReapplyHeldValueOnPause();
         }
         else
@@ -864,11 +880,35 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
+    /// D35: 保持損失で一時停止する直前に、Smooth 補正が残した倍率を 1.0 へ戻す。
+    /// 一時停止後は rate.instant を受け付けないため、pause の前に戻す。
+    /// </summary>
+    private void RestoreRateBeforePolicyPause()
+    {
+        if (_effects.ApplyRateInstant == null)
+            return;
+        if (!_rateRestorePending && Math.Abs(_lastAppliedRate - 1.0) < 0.0005)
+            return;
+        if (_effects.ApplyRateInstant(1.0))
+        {
+            _lastAppliedRate = 1.0;
+            _rateRestorePending = false;
+            Log.Information("LTC signal lost: playback rate restored to 1.0 before pausing");
+        }
+        else
+        {
+            _rateRestorePending = true;
+        }
+    }
+
+    /// <summary>
     /// D27: 保持で一時停止したときの 1 回の着地。保持値へシークし、フレームが保持時刻に
     /// 対応した位置で止まるようにする。同期エンジンのデバウンス・保留状態には依存しない
     /// （停止時の 1 回だけ）。
     /// D27-d: 保持値は「保持として届いた最後の値（Duplicate）」を使う。保持直前の受理値は
     /// 1 フレーム手前で止まることがある（受領が 1 フレーム遅れる／Jump を適用しない場合）。
+    /// D35: 同期の tolerance（0.240 秒）は経由せず明示的に着地する。許容内の行き過ぎ
+    /// （0.0167〜0.240 秒）でも残さない。既に 1 フレーム以内なら省略する。
     /// </summary>
     private void ReapplyHeldValueOnPause()
     {
@@ -894,12 +934,31 @@ internal sealed class LtcSyncController
 
         // D31-b: この損失で着地を試みた保持値を覚え、値が変わったときだけ再度着地する。
         _heldLossLandingSeconds = heldSeconds;
+
+        // D35: 1 フレーム以内なら既に保持位置なので省略する（停止中の微小残差でシークしない）。
+        if (_effects.GetPlaybackSeconds?.Invoke() is double playback &&
+            double.IsFinite(playback) &&
+            Math.Abs(playback - target) <= HeldLandingFrameSeconds(state))
+        {
+            Log.Debug(
+                "LTC timecode held: landing skipped (within one frame) position={Position:F3} target={Target:F3}",
+                playback, target);
+            return;
+        }
+
         if (_effects.SeekTo(target))
         {
             _syncService.ReportSeekSent(target);
             Log.Information(
                 "LTC timecode held: landing seek issued target={Target:F3} ltc={Ltc:F3}", target, heldSeconds);
         }
+    }
+
+    /// <summary>D35: 着地の省略判定に使う 1 フレーム。映像 fps が無ければ LTC の 1 フレーム。</summary>
+    private double HeldLandingFrameSeconds(LtcSyncContext state)
+    {
+        double fps = state.VideoFps > 0 ? state.VideoFps : LastTimecodeFps;
+        return fps > 0 ? 1.0 / fps : 0.04;
     }
 
     private SyncRequestResult ApplySync(double seconds, bool gapDisplayOnly = false)
