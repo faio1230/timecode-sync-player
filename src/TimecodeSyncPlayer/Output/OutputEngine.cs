@@ -100,6 +100,11 @@ internal sealed class OutputEngine : IDisposable
     private long lastGstSequence = -1;
     private long lastGstFenceWaited = -1;
     private int lastGstGeneration = -1;
+    // D25-b: fence 未完了で見送ったリース。shim へ返さず保持し、次 tick 以降に
+    // 完了を再確認してから描画・公開する（見送りでフレームを失わない）。
+    private ISourceImageLease? pendingFenceLease;
+    private long pendingFenceSequence;
+    private long pendingFenceSinceQpc;
     // 配信トレース（問題 H）。shim の QPC イベントを events.jsonl へ写す。
     private IGstNativeApi? gstNative;
     private IntPtr gstPlayer;
@@ -915,6 +920,7 @@ internal sealed class OutputEngine : IDisposable
         double position = effective?.PositionSeconds ?? 0;
         LayerImage? acquired = null;
         ISourceImageLease? lease = null;
+        bool holdLease = false;
         SourceStatus status = SourceStatus.NotReady;
         double? acquiredPositionSeconds = null;
 
@@ -927,6 +933,7 @@ internal sealed class OutputEngine : IDisposable
             long acquireEndedQpc = Stopwatch.GetTimestamp();
             status = gst.Status;
             lease = gst.Lease;
+            holdLease = gst.HoldLease;
             acquired = gst.Image;
             // D26: Freeze 保存は「目標位置のフレーム」だけ許可する（ジャンプ前のフレームを凍結しない）。
             if (status == SourceStatus.Ready && acquired != null)
@@ -939,7 +946,9 @@ internal sealed class OutputEngine : IDisposable
             settings.Trace.Add("source.acquire", "GPU", scheduled,
                 new ImageStamp(gst.Stamp.Sequence, gst.Stamp.DecodedQpc), status.ToString(),
                 (long)Math.Round(position * 1_000_000));
-            if (status == SourceStatus.Ready)
+            // D25-b: 実際に描くフレーム（画像あり）だけを「届いた」と通知する。見送り tick で
+            // 通知すると、Freeze/参照採取が Held（直前の絵）を最終フレームとして確定してしまう。
+            if (status == SourceStatus.Ready && acquired != null)
                 settings.SourceFrameReady?.Invoke(acquireEndedQpc, (int)gst.Stamp.Generation, gst.Stamp.Sequence,
                     gst.Stamp.PositionSeconds);
             if (status == SourceStatus.Ended)
@@ -1037,7 +1046,8 @@ internal sealed class OutputEngine : IDisposable
             if (inFlight) lease!.CompleteGpuUse();
             if (!retained && acquired != null) acquired.Value.Release();
             // GStreamer のリースは shim が最新へ進めるよう毎 tick 返す（描画テクスチャは AddRef 済み）。
-            if (gstSource != null) lease?.Dispose();
+            // D25-b: fence 未完了で見送った tick は返却しない（エンジンが保留し、次 tick で描く）。
+            if (gstSource != null && !holdLease) lease?.Dispose();
             if (writing) { try { gpu!.Fence.Wait("compose.drain"); } finally { current.Pool.AbortWrite(slot, true); } }
         }
 
@@ -1136,7 +1146,8 @@ internal sealed class OutputEngine : IDisposable
         leadSuspension.OnSourceGenerationChanged();
     }
 
-    private readonly record struct GstFrameAcquire(SourceStatus Status, ISourceImageLease? Lease, LayerImage? Image, SourceImageStamp Stamp);
+    // HoldLease: D25-b。fence 未完了で見送ったリースは呼び出し側で返却せず、エンジンが保持する。
+    private readonly record struct GstFrameAcquire(SourceStatus Status, ISourceImageLease? Lease, LayerImage? Image, SourceImageStamp Stamp, bool HoldLease = false);
 
     // GStreamer の世代は shim 側の値（load/seek で進む）を観測して対応付ける。
     // D26: Held は合成側が所有する直前キャンバスの複製で、世代のリング面を参照しない。
@@ -1149,6 +1160,8 @@ internal sealed class OutputEngine : IDisposable
         if (shimGeneration == lastGstGeneration) return;
         lastGstGeneration = shimGeneration;
         lastGstSequence = -1;
+        // D25-b: 保留中のリースは旧世代のリング面を参照する。返却してから新しい世代を取得する。
+        ReleasePendingFenceLease("gst.generation");
         layer?.ClearSourceFrame();
         // D5 決定再現: 再生開始後に世代が変わったら、その世代の最初のフレームまで Black を強制する。
         if (forceGapBlackOnSwitch && anyFrameAcquired)
@@ -1190,9 +1203,49 @@ internal sealed class OutputEngine : IDisposable
     // shim は「リース保持中は同じ画像を返す」ため、リースは compose 後に毎回返す（呼び出し側が Dispose）。
     // ステージ 6b: slot>=0 のリースは共有リング Surface を使い、描画前に共有フェンスを GPU キューで待つ
     // （CPU は待たない）。D8: リング外のリースは GStreamerSource が拒否するためここには来ない。
+    // D25-b: fence 未完了のリースは見送って返却せず保持し、次 tick で完了を再確認してから描く。
     private GstFrameAcquire AcquireGStreamer(double position)
     {
         int generation = gstSource!.Generation;
+
+        if (pendingFenceLease != null)
+        {
+            var pendingStamp = pendingFenceLease.Stamp;
+            if ((int)pendingStamp.Generation != generation)
+            {
+                ReleasePendingFenceLease("generation");
+            }
+            else
+            {
+                long nowPending = Stopwatch.GetTimestamp();
+                GstFencePendingAction action = GstFencePendingPolicy.Decide(
+                    gstSource.IsRingFenceComplete(pendingStamp.Sequence), true,
+                    pendingFenceSinceQpc, nowPending, Stopwatch.Frequency);
+                if (action == GstFencePendingAction.Timeout)
+                {
+                    long elapsedMs = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
+                    settings.Trace.Record(new("compose.fencePending", "GPU", nowPending, 0,
+                        pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "timeout", Value: elapsedMs));
+                    // D28 と同じ扱い: 新規処理を止め、資源は完了かデバイス消失まで保持する。
+                    Fault($"compose.source: ring fence pending >{GstFencePendingPolicy.LimitSeconds:0}s for seq {pendingFenceSequence}; new work stopped, retaining resources until completion/device loss.");
+                    return new(SourceStatus.Ready, pendingFenceLease, null, pendingStamp, HoldLease: true);
+                }
+                if (action == GstFencePendingAction.Hold)
+                {
+                    // この tick は Held を描く。リースは保持したまま（返却しない）。
+                    return new(SourceStatus.Ready, pendingFenceLease, null, pendingStamp, HoldLease: true);
+                }
+                long waitedMs = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
+                settings.Trace.Record(new("compose.fencePending", "GPU", nowPending, 0,
+                    pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "complete", Value: waitedMs));
+                ISourceImageLease completed = pendingFenceLease;
+                pendingFenceLease = null;
+                pendingFenceSequence = 0;
+                pendingFenceSinceQpc = 0;
+                return DrawRingLease(completed);
+            }
+        }
+
         var status = gstSource.TryAcquire(generation, position, out var lease);
         if (status != SourceStatus.Ready || lease == null) return new(status, null, null, default);
         var stamp = lease.Stamp;
@@ -1201,15 +1254,29 @@ internal sealed class OutputEngine : IDisposable
         if (gstLease.Slot >= 0 && layer!.HasHeld && !gstSource.IsRingFenceComplete(stamp.Sequence))
         {
             // I1/I5: 共有リングのコピー完了（IDR デコード等で数 ms 遅れる）を合成 tick の GPU
-            // フェンス待ちに含めない。この tick は直前の Held を描き、完了後に最新フレームを使う。
-            return new(status, lease, null, stamp);
+            // フェンス待ちに含めない。この tick は直前の Held を描く。D25-b: リースは返却せず
+            // 保持し、完了した tick で同じフレームを描く（返すと shim の一発配信で失われる）。
+            pendingFenceLease = lease;
+            pendingFenceSequence = stamp.Sequence;
+            pendingFenceSinceQpc = Stopwatch.GetTimestamp();
+            settings.Trace.Record(new("compose.fencePending", "GPU", pendingFenceSinceQpc, 0,
+                stamp.Sequence, stamp.DecodedQpc, Detail: "start", Value: 0));
+            return new(status, lease, null, stamp, HoldLease: true);
         }
+        return DrawRingLease(lease);
+    }
+
+    /// <summary>fence 完了済みのリングリースを描画用に返す（保持があれば解いてから呼ぶ）。</summary>
+    private GstFrameAcquire DrawRingLease(ISourceImageLease lease)
+    {
+        var stamp = lease.Stamp;
+        var gstLease = (GStreamerSource.Lease)lease;
         lastGstSequence = stamp.Sequence;
         long srvStartedQpc = Stopwatch.GetTimestamp();
         ID3D11Texture2D? ringTexture = null;
         ID3D11ShaderResourceView? ringView = null;
         bool useRing = gstLease.Slot >= 0
-            && gstSource.TryGetRingSurface(gstLease.Slot, out ringTexture, out ringView);
+            && gstSource!.TryGetRingSurface(gstLease.Slot, out ringTexture, out ringView);
         long srvEndedQpc = Stopwatch.GetTimestamp();
         if (settings.Trace.IsEnabled)
             settings.Trace.Record(new("compose.srv", "GPU", srvEndedQpc,
@@ -1220,7 +1287,7 @@ internal sealed class OutputEngine : IDisposable
             if (GstRingPolicy.ShouldWaitFence(gstLease.Slot, stamp.Sequence, lastGstFenceWaited))
             {
                 long waitStartedQpc = Stopwatch.GetTimestamp();
-                gstSource.WaitRingFence((ulong)stamp.Sequence);
+                gstSource!.WaitRingFence((ulong)stamp.Sequence);
                 long waitEndedQpc = Stopwatch.GetTimestamp();
                 if (settings.Trace.IsEnabled)
                     settings.Trace.Record(new("compose.ringWait", "GPU", waitEndedQpc,
@@ -1230,11 +1297,27 @@ internal sealed class OutputEngine : IDisposable
             }
             // リング Surface は GStreamerSource が所有する（LayerImage は借用して渡すだけ）。
             var ringImage = new LayerImage(ringView!, ringTexture!.NativePointer, lease.Width, lease.Height, null, null);
-            return new(status, lease, ringImage, stamp);
+            return new(SourceStatus.Ready, lease, ringImage, stamp);
         }
         // D8: リング外のリースを GPU 合成で描かない（GStreamerSource が Reject する）。
         // ここに来るのはリング未接続・範囲外などで、画像無し（Held）として返す。
-        return new(status, lease, null, stamp);
+        return new(SourceStatus.Ready, lease, null, stamp);
+    }
+
+    /// <summary>D25-b: 保留中のリースを shim へ返す（世代切替・停止・3 秒超過の後始末）。</summary>
+    private void ReleasePendingFenceLease(string reason)
+    {
+        ISourceImageLease? lease = pendingFenceLease;
+        if (lease == null) return;
+        long sequence = pendingFenceSequence;
+        long elapsedMs = pendingFenceSinceQpc > 0
+            ? (Stopwatch.GetTimestamp() - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency : 0;
+        pendingFenceLease = null;
+        pendingFenceSequence = 0;
+        pendingFenceSinceQpc = 0;
+        lease.Dispose();
+        settings.Trace.Record(new("compose.fencePending", "GPU", Stopwatch.GetTimestamp(), 0,
+            sequence, 0, Detail: "release:" + reason, Value: elapsedMs));
     }
 
     /// <summary>キャンバス 1 世代分の合成 pool と共有サーフェス。</summary>
@@ -1564,6 +1647,8 @@ internal sealed class OutputEngine : IDisposable
     private void ReleaseSourceLeases()
     {
         DisposeOwned(layer, "GPU.composeLayer"); layer = null;
+        // D25-b: 保留中のリースを先に返す（shim destroy より前に全 lease を返す順序を守る）。
+        ReleasePendingFenceLease("stop");
         if (gstSource != null && !gstSource.TryDispose())
             Log.Warning("OutputEngine: GStreamerSource の lease が停止時に残っています");
     }

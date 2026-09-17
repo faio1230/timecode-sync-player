@@ -76,7 +76,8 @@ public class GStreamerSourceTests
             view = null;
             return slot >= 0 && slot < count;
         }
-        public override bool IsFenceComplete(ulong value) => true;
+        public bool FenceComplete { get; set; } = true;
+        public override bool IsFenceComplete(ulong value) => FenceComplete;
         public override void WaitFence(ID3D11DeviceContext4 context, ulong value) { }
         protected override void DisposeCore() { }
     }
@@ -304,6 +305,34 @@ public class GStreamerSourceTests
         var source = new GStreamerSource(player, "gpu", device: null, onRingOpened: null, ringFactory: factory);
         source.TryAcquire(1, 0, out var lease).Should().Be(SourceStatus.NotReady);
         lease.Should().BeNull();
+        player.Releases.Should().Be(1);
+        source.TryDispose().Should().BeTrue();
+    }
+
+    [Fact]
+    public void WithheldLease_IsRetainedAndNotConsumedUntilTheFenceCompletes()
+    {
+        // D25-b: fence 未完了で見送ったリースは返却せず保持し、次 tick でも同じフレームを
+        // 取得できる（shim の一発配信を消費しない）。完了後の返却は最後の Dispose で 1 回だけ。
+        var player = new FakeLeasePlayer { HasRing = true, NextSlot = 0 };
+        var factory = new FakeRingFactory();
+        var source = new GStreamerSource(player, "gpu", device: null, onRingOpened: null, ringFactory: factory);
+        source.TryAcquire(1, 0, out var held).Should().Be(SourceStatus.Ready);
+        held.Should().NotBeNull();
+        factory.Rings.Should().HaveCount(1);
+        factory.Rings[0].FenceComplete = false;
+        source.IsRingFenceComplete(held!.Stamp.Sequence).Should().BeFalse("リングのコピーが未完了");
+
+        source.TryAcquire(1, 0, out var same).Should().Be(SourceStatus.Ready);
+        same!.Stamp.Sequence.Should().Be(held.Stamp.Sequence, "保留中は同じリースが返る");
+        player.Acquires.Should().Be(1, "shim へ再要求しない（sequence を消費しない）");
+        player.Releases.Should().Be(0);
+
+        factory.Rings[0].FenceComplete = true;
+        source.IsRingFenceComplete(same.Stamp.Sequence).Should().BeTrue("コピー完了後は描ける");
+        same.Dispose();
+        player.Releases.Should().Be(0, "保持中のリースが残っている");
+        held.Dispose();
         player.Releases.Should().Be(1);
         source.TryDispose().Should().BeTrue();
     }

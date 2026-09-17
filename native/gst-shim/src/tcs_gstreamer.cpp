@@ -1,4 +1,4 @@
-﻿/* tcs_gstreamer implementation (v3). See tcs_gstreamer.h for the contract.
+/* tcs_gstreamer implementation (v3). See tcs_gstreamer.h for the contract.
  *
  * Role: GPU frame SOURCE for the compositing layer.
  *   filesrc ! typefind ! demux ! <explicit per-codec chain> ! appsink
@@ -200,6 +200,36 @@ resolve_seek_method (void)
 
 static int seek_method = resolve_seek_method ();
 
+/* D24: the paused-seek pump deadline is only an upper bound. An accurate seek
+ * decodes from the previous keyframe up to the target, so a long GOP (e.g. a
+ * 10s keyframe interval) legitimately takes longer than the old fixed 500ms.
+ * Default 4000ms; TCS_PUMP_BUDGET_MS overrides it (1..60000). */
+static const ULONGLONG kPumpBudgetDefaultMs = 4000;
+static const ULONGLONG kPumpBudgetMaxMs = 60000;
+
+static ULONGLONG
+resolve_pump_budget_ms (void)
+{
+  char buf[32];
+  DWORD n = GetEnvironmentVariableA ("TCS_PUMP_BUDGET_MS", buf, sizeof (buf));
+  ULONGLONG ms = kPumpBudgetDefaultMs;
+  if (n > 0 && n < sizeof (buf)) {
+    long long v = _strtoi64 (buf, nullptr, 10);
+    if (v > 0 && (ULONGLONG) v <= kPumpBudgetMaxMs)
+      ms = (ULONGLONG) v;
+    else
+      LOG ("pump-budget: value '%s' out of range -> default %llums",
+          buf, (unsigned long long) kPumpBudgetDefaultMs);
+  } else if (n >= sizeof (buf)) {
+    LOG ("pump-budget: value too long -> default %llums",
+        (unsigned long long) kPumpBudgetDefaultMs);
+  }
+  LOG ("pump-budget: deadline %llums", (unsigned long long) ms);
+  return ms;
+}
+
+static ULONGLONG pump_budget_ms = resolve_pump_budget_ms ();
+
 struct TcsPlayer {
   /* D3D11 + Spout.
    * Stage 6b: the device is ALWAYS owned by the shim. The compositor pointer
@@ -289,6 +319,19 @@ struct TcsPlayer {
   ID3D11Fence* ring_fence = nullptr;
   HANDLE ring_fence_handle = nullptr;
   uint64_t generation = 1;                /* bumped by owner on load/seek */
+  /* D25: downstream SEGMENT events that passed the appsink pad (the pad probe
+   * runs on the streaming thread, so its count is an exact pre/post-seek
+   * boundary: a flushing seek always produces one new segment before its
+   * first buffer). Every buffer is tagged with the count at entry; a sample
+   * whose tag is below the boundary expected from the latest seek was pulled
+   * before that seek and must not be published under its generation. */
+  std::atomic<uint64_t> flush_boundary{0};
+  std::atomic<uint64_t> seek_boundary_expect{0};
+  std::atomic<uint64_t> stale_drops{0};
+  std::atomic<bool> flush_marker_missing{false};
+  /* D25: fence signal values (lease seq) must never repeat while the shared
+   * fence object lives: frames_decoded resets per load, this does not. */
+  uint64_t seq_serial = 0;                /* frame_lock */
   /* MPEG-TS precise seek (method 5, guarded by frame_lock): tsdemux's
    * ACCURATE scan loses H.264 NALs when IDRs carry no SPS/PPS, so a TS seek
    * snaps to the keyframe before the target with KEY_UNIT|SNAP_BEFORE and the
@@ -363,6 +406,8 @@ struct TcsPlayer {
   bool pump_active = false;              /* frame_lock */
   uint64_t pump_generation = 0;          /* frame_lock */
   ULONGLONG pump_deadline = 0;           /* frame_lock */
+  ULONGLONG pump_armed_ms = 0;           /* frame_lock (D24 diagnostics) */
+  uint64_t pump_frames_at_arm = 0;       /* frame_lock (D24 diagnostics) */
   bool pump_muted = false;               /* frame_lock */
   uint64_t pump_faults = 0;              /* frame_lock (diagnostics) */
 
@@ -1089,6 +1134,140 @@ on_demux_segment_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
   return GST_PAD_PROBE_OK;
 }
 
+/* ---- D25: flush-boundary marker for samples ----
+ * A flushing seek bumps the generation, but a sample that the streaming
+ * thread had already pulled out of the appsink before the flush reached the
+ * sink is still in flight; on_new_sample then stamped it with the post-seek
+ * generation and acquire() handed it out as the target frame (V5 1-in-10:
+ * target=14.618 lease=5.250; F-4: the pre-seek picture with a post-seek
+ * sequence). The pad probe below tags every buffer entering the appsink with
+ * the number of flushing seeks that had passed the pad at that instant. The
+ * probe runs on the streaming thread in the same order as the seek event, so
+ * the tag is an exact pre/post-seek marker; on_new_sample drops a sample whose
+ * tag is older than the shim's seek serial. */
+typedef struct {
+  GstMeta meta;
+  uint64_t boundary;   /* flushing seek events that had passed the pad */
+} TcsFlushMeta;
+
+static GType
+tcs_flush_meta_api_get_type (void)
+{
+  static GType type = 0;
+  if (g_once_init_enter (&type)) {
+    static const gchar* tags[] = { nullptr };
+    GType t = gst_meta_api_type_register ("TcsFlushMetaAPI", tags);
+    g_once_init_leave (&type, t);
+  }
+  return type;
+}
+
+static gboolean
+tcs_flush_meta_init (GstMeta* meta, gpointer params, GstBuffer* buffer)
+{
+  (void) params;
+  (void) buffer;
+  ((TcsFlushMeta*) meta)->boundary = 0;
+  return TRUE;
+}
+
+static void
+tcs_flush_meta_free (GstMeta* meta, GstBuffer* buffer)
+{
+  (void) meta;
+  (void) buffer;
+}
+
+static const GstMetaInfo*
+tcs_flush_meta_info (void);
+
+static gboolean
+tcs_flush_meta_transform (GstBuffer* dest, GstMeta* meta, GstBuffer* src,
+    GQuark type, gpointer data)
+{
+  (void) src;
+  if (GST_META_TRANSFORM_IS_COPY (type)) {
+    GstMetaTransformCopy* copy = (GstMetaTransformCopy*) data;
+    if (!copy->region) {
+      TcsFlushMeta* d = (TcsFlushMeta*) gst_buffer_add_meta (dest,
+          tcs_flush_meta_info (), nullptr);
+      if (!d)
+        return FALSE;
+      d->boundary = ((TcsFlushMeta*) meta)->boundary;
+    }
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static const GstMetaInfo*
+tcs_flush_meta_info (void)
+{
+  static const GstMetaInfo* info = nullptr;
+  static bool tried = false;
+  if (!tried) {
+    tried = true;
+    GType api = tcs_flush_meta_api_get_type ();
+    if (api != 0)
+      info = gst_meta_register (api, "TcsFlushMeta",
+          sizeof (TcsFlushMeta), tcs_flush_meta_init, tcs_flush_meta_free,
+          tcs_flush_meta_transform);
+    if (!info)
+      LOG ("D25: flush-meta registration failed; pre-seek filtering disabled");
+  }
+  return info;
+}
+
+static GstPadProbeReturn
+on_appsink_flush_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  GstPadProbeType type = GST_PAD_PROBE_INFO_TYPE (info);
+  if (type & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM) {
+    /* The boundary event is the post-seek SEGMENT: the demuxer consumes the
+     * SEEK event and sends no FLUSH_START through the sink pad (both verified
+     * with the pad-event diagnostic: seek arrived upstream, then segment
+     * downstream; counting SEEK/FLUSH_START dropped every post-seek sample).
+     * The new segment always precedes the first post-seek buffer on the
+     * streaming thread. */
+    GstEvent* ev = GST_PAD_PROBE_INFO_EVENT (info);
+    if (ev && GST_EVENT_TYPE (ev) == GST_EVENT_SEGMENT)
+      p->flush_boundary.fetch_add (1, std::memory_order_acq_rel);
+  } else if (type & GST_PAD_PROBE_TYPE_BUFFER) {
+    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER (info);
+    const GstMetaInfo* mi = tcs_flush_meta_info ();
+    if (buf && mi) {
+      TcsFlushMeta* m = (TcsFlushMeta*) gst_buffer_add_meta (buf, mi, nullptr);
+      if (m)
+        m->boundary = p->flush_boundary.load (std::memory_order_acquire);
+    }
+  }
+  return GST_PAD_PROBE_OK;
+}
+
+/* D25: true when the sample was already past the appsink pad when the latest
+ * seek's segment was expected (its tag predates the seek boundary). Samples
+ * without the marker (probe not installed, e.g. no buffer path) are kept so a
+ * probe problem cannot stop playback; the one-time log flags them. */
+static bool
+sample_is_pre_seek (TcsPlayer* p, GstBuffer* buf)
+{
+  uint64_t expect = p->seek_boundary_expect.load (std::memory_order_acquire);
+  if (expect == 0)
+    return false;
+  const TcsFlushMeta* m = nullptr;
+  GType api = tcs_flush_meta_api_get_type ();
+  if (buf && api != 0)
+    m = (const TcsFlushMeta*) gst_buffer_get_meta (buf, api);
+  if (!m) {
+    if (!p->flush_marker_missing.exchange (true))
+      LOG ("D25: sample without flush marker after a seek; keeping it "
+          "(probe not on the buffer path?)");
+    return false;
+  }
+  return m->boundary < expect;
+}
+
 static GstFlowReturn
 on_new_sample (GstAppSink* sink, gpointer user)
 {
@@ -1100,6 +1279,17 @@ on_new_sample (GstAppSink* sink, gpointer user)
     return GST_FLOW_OK;
 
   GstBuffer* buf = gst_sample_get_buffer (sample);
+  if (sample_is_pre_seek (p, buf)) {
+    /* D25: never publish a pre-seek sample under the post-seek generation. */
+    uint64_t drops = p->stale_drops.fetch_add (1, std::memory_order_relaxed) + 1;
+    if (drops == 1 || (drops % 120) == 0)
+      LOG ("D25: dropped pre-seek sample pts_ms=%.1f (drops=%llu)",
+          buf && GST_BUFFER_PTS (buf) != GST_CLOCK_TIME_NONE
+              ? (double) GST_BUFFER_PTS (buf) / 1e6 : -1.0,
+          (unsigned long long) drops);
+    gst_sample_unref (sample);
+    return GST_FLOW_OK;
+  }
   GstMemory* mem = buf ? gst_buffer_peek_memory (buf, 0) : nullptr;
   bool gpu = mem && gst_is_d3d11_memory (mem);
   /* Map with GST_MAP_D3D11 for the whole arrival: this flushes a pending
@@ -1251,7 +1441,14 @@ on_new_sample (GstAppSink* sink, gpointer user)
       if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
       p->latest_gen = p->generation;
       p->latest_pts_ns = pts;
-      p->latest_seq = ++p->frames_decoded;
+      /* D25: the fence value must be strictly increasing for the lifetime of
+       * the shared fence. frames_decoded restarts at 0 on every load while
+       * the ring/fence persist, so a post-load seq reused an already-completed
+       * fence value and the compositor's IsRingFenceComplete() passed before
+       * the new copy had run (old pixels with a new Info). frames_decoded
+       * stays the per-load counter the load path waits on. */
+      p->latest_seq = ++p->seq_serial;
+      p->frames_decoded++;
       p->latest_gpu = gpu;
       /* Method 2 diagnostics: sample the audio sink position next to the
        * delivered video pts (gate-open frame plus a decimated window). */
@@ -1791,6 +1988,11 @@ create_appsink_tail (TcsPlayer* p, gboolean d3d)
     gst_pad_add_probe (sinkpad,
         (GstPadProbeType) (GST_PAD_PROBE_TYPE_EVENT_UPSTREAM | GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM),
         on_qos_probe, p, nullptr);
+    /* D25: tag every buffer with the seek boundary and count the downstream
+     * SEGMENT events (both on the streaming thread, in order). */
+    gst_pad_add_probe (sinkpad,
+        (GstPadProbeType) (GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM),
+        on_appsink_flush_probe, p, nullptr);
     gst_object_unref (sinkpad);
   }
   p->use_d3d11_caps = d3d;
@@ -2005,9 +2207,9 @@ on_demux_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user)
 }
 /* ---------------- D2: paused-seek preroll pump ---------------- */
 
-/* Upper bound for one pump. Reached without a frame -> back to PAUSED and the
- * failure is recorded (last_error + counter), never a silent PLAYING. */
-static const ULONGLONG kPumpBudgetMs = 500;
+/* Upper bound for one pump (D24: pump_budget_ms, default 4000ms). Reached
+ * without a frame -> back to PAUSED and the failure is recorded (last_error +
+ * counter + a warning log with the decode progress), never a silent PLAYING. */
 
 /* Arm the pump for a seek that was issued while paused. Called outside
  * frame_lock / state_mutex by tcs_player_seek; returns immediately (the
@@ -2025,7 +2227,9 @@ pump_arm (TcsPlayer* p, uint64_t generation)
       p->pump_active = true;
       p->pump_pending.store (true, std::memory_order_relaxed);
       p->pump_generation = generation;
-      p->pump_deadline = GetTickCount64 () + kPumpBudgetMs;
+      p->pump_armed_ms = GetTickCount64 ();
+      p->pump_deadline = p->pump_armed_ms + pump_budget_ms;
+      p->pump_frames_at_arm = p->frames_decoded;
       if (!p->pump_muted) {
         /* No audible output while the pipeline runs for the preroll: the user
          * still believes playback is paused (same idea as load_priming). */
@@ -2051,6 +2255,7 @@ pump_preroll_tick (TcsPlayer* p)
   GstElement* pipeline = nullptr;
   bool has_frame = false, timed_out = false, user_paused = false;
   uint64_t gen = 0, faults = 0;
+  uint64_t target_ns = 0, decoded = 0, elapsed_ms = 0;
   {
     std::lock_guard<std::mutex> st (p->state_mutex);
     {
@@ -2080,13 +2285,33 @@ pump_preroll_tick (TcsPlayer* p)
       if (timed_out) {
         p->pump_faults++;
         faults = p->pump_faults;
+        target_ns = p->gate_target_ns;
+        decoded = p->frames_decoded >= p->pump_frames_at_arm
+            ? p->frames_decoded - p->pump_frames_at_arm : 0;
+        elapsed_ms = GetTickCount64 () - p->pump_armed_ms;
         p->last_error = "paused seek: no frame before the pump deadline";
       }
       pipeline = p->pipeline;
     }
-    if (timed_out)
-      LOG ("paused-seek: pump deadline gen=%llu -> PAUSED (faults=%llu)",
-          (unsigned long long) gen, (unsigned long long) faults);
+    if (timed_out) {
+      /* D24: long-GOP seeks decode from the previous keyframe; the timeout is
+       * a diagnostic, not a stream error. Report how far the decode got (the
+       * distance left is target - position) instead of failing the seek. The
+       * position query runs outside frame_lock (see I13's rule for the
+       * state/seek calls it applies to; a query must not hold the lock while
+       * the streaming thread may be waiting for it). */
+      gint64 pos = -1;
+      gboolean pos_ok = FALSE;
+      if (pipeline)
+        pos_ok = gst_element_query_position (pipeline, GST_FORMAT_TIME, &pos);
+      LOG ("paused-seek: pump deadline gen=%llu -> PAUSED (faults=%llu "
+          "target_ms=%.1f decoded=%llu elapsed_ms=%llu budget_ms=%llu "
+          "position_ms=%.1f pos_ok=%d)",
+          (unsigned long long) gen, (unsigned long long) faults,
+          (double) target_ns / 1e6, (unsigned long long) decoded,
+          (unsigned long long) elapsed_ms, (unsigned long long) pump_budget_ms,
+          pos_ok ? (double) pos / 1e6 : -1.0, pos_ok ? 1 : 0);
+    }
     /* A user resume clears pump_active in set_paused and keeps PLAYING. */
     if (pipeline && (timed_out || user_paused)) {
       LOG ("pump_tick: set_state(PAUSED) begin");
@@ -2189,6 +2414,8 @@ teardown_pipeline (TcsPlayer* p)
     p->leased_slot = -1;
     p->pending_update = false;
     p->frames_decoded = 0;
+    /* D25: a new pipeline sends its own initial segment; no seek is pending. */
+    p->seek_boundary_expect.store (0, std::memory_order_release);
     p->gate_active = false;
     p->gate_dropped = 0;
     p->rebase_armed = false;
@@ -2256,6 +2483,17 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
   if (!p->pipeline)
     return p->generation;
   p->generation++;
+  /* D25: this seek's segment is the next downstream SEGMENT event. Taking
+   * max(seen, pending) + 1 keeps back-to-back seeks exact: with one seek
+   * already waiting for its segment, the second one expects the segment
+   * after that, so the first seek's frames (tag == pending) are dropped as
+   * stale for the second. */
+  {
+    uint64_t seen = p->flush_boundary.load (std::memory_order_acquire);
+    uint64_t pending = p->seek_boundary_expect.load (std::memory_order_acquire);
+    uint64_t expect = (seen > pending ? seen : pending) + 1;
+    p->seek_boundary_expect.store (expect, std::memory_order_release);
+  }
   /* frames of the previous generation must never reach the compositor */
   for (TcsPlayer::FrameSlot& slot : p->frames)
     gst_sample_unref (slot.sample);
@@ -2359,6 +2597,8 @@ seek_send (TcsPlayer* p, const SeekRequest& req)
         req.keyunit ? "keyunit/snap-before" : "accurate", req.seconds);
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->last_error = msg;
+    /* D25: no segment will arrive for a failed seek; stop filtering. */
+    p->seek_boundary_expect.store (0, std::memory_order_release);
     LOG ("%s", msg);
   }
 }
@@ -2982,10 +3222,8 @@ TCS_GST_API uint64_t
 tcs_player_step_frame (TcsPlayer* player)
 {
   if (!player) return 0;
-  guint64 before;
   bool wasPaused;
   uint64_t gen;
-  GstElement* pipeline;
   SeekRequest req;
   log_pipe_state (player, "step.before");
   {
@@ -2994,34 +3232,19 @@ tcs_player_step_frame (TcsPlayer* player)
     gint64 pos = 0;
     gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos);
     double step = player->fps > 0.0 ? 1.0 / player->fps : 0.04;
-    before = player->frames_decoded;
     wasPaused = player->paused;
     /* the step target goes through the same TS gate as a manual seek */
     gen = seek_prepare_locked (player, (double) pos / GST_SECOND + step, player->rate, &req);
-    pipeline = player->pipeline;
   }
   seek_send (player, req);
   apply_pending_play_restart (player);
-  if (wasPaused) {
-    /* PAUSED sinks do not re-preroll after a flush seek: run briefly and
-     * stop again once the stepped frame has been delivered. The state changes
-     * are outside frame_lock (see tcs_player_set_paused). */
-    gst_element_set_state (pipeline, GST_STATE_PLAYING);
-    log_pipe_state (player, "step.playing");
-    ULONGLONG t0 = GetTickCount64 ();
-    while (GetTickCount64 () - t0 < 500) {
-      bool arrived;
-      {
-        std::lock_guard<std::mutex> g (player->frame_lock);
-        arrived = player->frames_decoded > before;
-      }
-      if (arrived)
-        break;
-      Sleep (10);
-    }
-    gst_element_set_state (pipeline, GST_STATE_PAUSED);
-    log_pipe_state (player, "step.paused");
-  }
+  /* D24: a step on a paused pipeline is a paused seek with the same problem:
+   * PAUSED sinks do not re-preroll after a flush seek, and the fixed 500ms
+   * PLAYING window was too short for a long GOP (the frame was lost again on
+   * PAUSED). Use the shared pump: non-blocking, budget-bounded (4s default),
+   * and it restores PAUSED as soon as the stepped frame is queued. */
+  if (wasPaused)
+    pump_arm (player, gen);
   return gen;
 }
 
