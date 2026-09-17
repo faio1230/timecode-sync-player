@@ -5,6 +5,25 @@ namespace TimecodeSyncPlayer.Tests;
 
 public class LtcSignalPlayerTests
 {
+    [Fact]
+    public void BuildHeldTimecodes_AdvancesMonotonicallyFromThePreviousFrame()
+    {
+        // 連続再生が 11.92（frame 298）まで進んだ後の保持 12.0。
+        // 前置きは直前の次（11.96）から始まり、保持値 12.00 まで単調に進む
+        // （固定の 5 フレーム前置き 11.80 だと Reverse が 1 枚出る）。
+        IReadOnlyList<LtcTimecode> frames = LtcSignalPlayer.BuildHeldTimecodes(
+            12.0, 25, TimeSpan.FromSeconds(2), previousFrame: 298);
+
+        int[] numbers = frames.Select(tc => FrameNumber(tc, 25)).ToArray();
+        numbers[0].Should().Be(299);
+        numbers.Should().Contain(300);
+        for (int i = 1; i < numbers.Length; i++)
+            numbers[i].Should().BeGreaterThanOrEqualTo(numbers[i - 1], "連続 → 保持の切替でフレーム番号が戻らない");
+    }
+
+    private static int FrameNumber(LtcTimecode timecode, int fps) =>
+        ((timecode.Hours * 60 + timecode.Minutes) * 60 + timecode.Seconds) * fps + timecode.Frames;
+
     [Theory]
     [InlineData(24)]
     [InlineData(25)]
