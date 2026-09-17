@@ -72,7 +72,7 @@ public sealed class LtcScenarioE2ETests
         scenario.SetSync(true);
 
         int holds = 0;
-        int seeksBefore = scenario.CountLogMatches(@"Timecode sync seek .*success=True");
+        int seeksBefore = scenario.CountLogMatches(@"Timecode sync seek .*success=true", RegexOptions.IgnoreCase);
         for (int cycle = 0; cycle < cycles; cycle++)
         {
             foreach (double target in new[] { low, high })
@@ -84,7 +84,7 @@ public sealed class LtcScenarioE2ETests
         }
 
         holds.Should().Be(cycles * 2);
-        int successfulSeeks = scenario.CountLogMatches(@"Timecode sync seek .*success=True") - seeksBefore;
+        int successfulSeeks = scenario.CountLogMatches(@"Timecode sync seek .*success=true", RegexOptions.IgnoreCase) - seeksBefore;
         scenario.Journal.Write("seek-summary", details: new { holds, successfulSeeks });
         successfulSeeks.Should().BeGreaterThanOrEqualTo(cycles * 2, "各保持で同期シークが成功する");
     });
@@ -719,14 +719,121 @@ public sealed class LtcScenarioE2ETests
             }
         }
 
-        private void WaitMediaReady(double? maxPosition = null) =>
-            WaitUntil(() =>
+        /// <summary>
+        /// メディアの読み込み完了（TimeLabel と尺が解析可能）を待つ。一時停止ロード直後に
+        /// 位置表示が更新されない事象（F1 系）に備え、5 秒ごとにラベル実文字列とアプリログの
+        /// 該当行をジャーナルへ残し、シークバー 0 へのヌッジ → 再生/一時停止のヌッジを行い、
+        /// それでも駄目なら失敗する。
+        /// </summary>
+        private void WaitMediaReady(double? maxPosition = null)
+        {
+            Journal.Write("media-ready-wait", details: new { timeLabel = RawTimeLabel(), maxPosition });
+            if (TryWaitMediaReady(5, maxPosition)) return;
+
+            JournalMediaLabelState("media-ready-stale");
+            NudgeSeekBarToZero();
+            if (TryWaitMediaReady(5, maxPosition)) return;
+
+            NudgePlayPause();
+            if (TryWaitMediaReady(5, maxPosition)) return;
+
+            JournalMediaLabelState("media-ready-failed");
+            throw new TimeoutException(
+                $"メディア読み込み完了に失敗; timeLabel={RawTimeLabel()}; ltc={LtcSeconds():F3}; " +
+                $"position={Position():F3}; loaded={LoadedTrackIndex()}");
+        }
+
+        private bool TryWaitMediaReady(double timeoutSeconds, double? maxPosition)
+        {
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(timeoutSeconds);
+            DateTime nextSample = DateTime.UtcNow;
+            while (true)
             {
                 double position = Position();
                 double duration = PlaybackDuration();
-                if (!double.IsFinite(position) || !double.IsFinite(duration) || duration <= 0) return false;
-                return maxPosition is null || position <= maxPosition;
-            }, 15, "メディア読み込み完了");
+                bool ready = double.IsFinite(position) && double.IsFinite(duration) && duration > 0 &&
+                             (maxPosition is null || position <= maxPosition);
+                if (ready) return true;
+                if (DateTime.UtcNow >= deadline) return false;
+                if (DateTime.UtcNow >= nextSample)
+                {
+                    Journal.Write("media-ready-sample", details: new
+                    {
+                        timeLabel = RawTimeLabel(),
+                        position = JsonNumber(position),
+                        duration = JsonNumber(duration),
+                        loadedIndex = LoadedTrackIndex(),
+                    });
+                    nextSample = DateTime.UtcNow.AddSeconds(1);
+                }
+
+                Thread.Sleep(100);
+            }
+        }
+
+        private string RawTimeLabel() => App.Text("TimeLabel");
+
+        /// <summary>非有限値（NaN/±Infinity）は JSON に書けないため null にする。</summary>
+        private static double? JsonNumber(double value) =>
+            double.IsFinite(value) ? Math.Round(value, 3) : null;
+
+        private void NudgeSeekBarToZero()
+        {
+            try
+            {
+                var range = App.Slider("SeekBar").Patterns.RangeValue.Pattern;
+                double before = range.Value;
+                range.SetValue(Math.Abs(before) < 1e-4 ? 0.01 : 0.0);
+                range.SetValue(0.0);
+                Journal.Write("media-ready-nudge", details: new { kind = "seekbar-zero", before });
+            }
+            catch (Exception ex)
+            {
+                Journal.Write("media-ready-nudge", details: new { kind = "seekbar-zero", error = ex.Message });
+            }
+        }
+
+        private void NudgePlayPause()
+        {
+            try
+            {
+                EnsurePlaying();
+                Thread.Sleep(600);
+                Pause();
+                Journal.Write("media-ready-nudge", details: new { kind = "play-pause" });
+            }
+            catch (Exception ex)
+            {
+                Journal.Write("media-ready-nudge", details: new { kind = "play-pause", error = ex.Message });
+            }
+        }
+
+        /// <summary>失敗・停滞時に、ラベル実文字列とアプリログ末尾（パス・名前は伏せる）を残す。</summary>
+        private void JournalMediaLabelState(string eventName)
+        {
+            try
+            {
+                Journal.Write(eventName, details: new
+                {
+                    timeLabel = RawTimeLabel(),
+                    metaLine = App.Text("MetaLineText"),
+                    ltcText = App.Text("LtcTimecodeText"),
+                    playButton = App.Button("BtnPlay").Name,
+                    loadedIndex = LoadedTrackIndex(),
+                    appLogTail = RunLogLines().TakeLast(20).Select(SanitizeLogLine).ToArray(),
+                });
+            }
+            catch (Exception ex)
+            {
+                Journal.Write(eventName, details: new { error = ex.Message });
+            }
+        }
+
+        private static string SanitizeLogLine(string line)
+        {
+            string sanitized = Regex.Replace(line, @"(path=)\S+", "$1<redacted>");
+            return Regex.Replace(sanitized, @"(name=)\S+", "$1<redacted>");
+        }
 
         private double PlaybackDuration()
         {
@@ -771,30 +878,64 @@ public sealed class LtcScenarioE2ETests
                 15, $"トラック {index} のメタデータ取得");
 
 
-        /// <summary>プレイリストで項目を選択してダブルクリックで読み込む（S-4 の「選択」）。</summary>
+        /// <summary>
+        /// プレイリストで項目を選択してダブルクリックで読み込む（S-4 の「選択」）。
+        /// ウィンドウが前面でないと最初のクリックがアクティブ化に食われて
+        /// MouseDoubleClick が発火しないことがあるため、前面化してから最大 3 回試す。
+        /// </summary>
         public void PlaylistLoad(int index, string symbol)
         {
             ListBox playlist = App.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList"))!.AsListBox();
             WaitUntil(() => playlist.Items.Length > index, 5, "プレイリスト項目の表示");
-            AutomationElement item = playlist.Items[index];
-            DateTime issuedAt = DateTime.Now;
-            try
+            for (int attempt = 1; attempt <= 3; attempt++)
             {
-                item.Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView();
-                item.Focus();
-                App.MainWindow.Focus();
-                Mouse.DoubleClick(item.GetClickablePoint(), MouseButton.Left);
-            }
-            catch (Exception ex)
-            {
-                Journal.Write("playlist-load", details: new { index, symbol, error = ex.Message });
-                throw;
+                AutomationElement item = playlist.Items[index];
+                try
+                {
+                    App.MainWindow.SetForeground();
+                    item.Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView();
+                    item.Focus();
+                    Mouse.DoubleClick(item.GetClickablePoint(), MouseButton.Left);
+                }
+                catch (Exception ex)
+                {
+                    Journal.Write("playlist-load", details: new { index, symbol, attempt, error = ex.Message });
+                }
+
+                if (TryWaitLoadedIndex(index, 5))
+                {
+                    Journal.Write("playlist-load", details: new { index, symbol, attempt, loadedIndex = LoadedTrackIndex() });
+                    WaitForMetadataSince(DateTime.Now, index);
+                    WaitMediaReady();
+                    return;
+                }
+
+                Journal.Write("playlist-load-retry", details: new
+                {
+                    index,
+                    symbol,
+                    attempt,
+                    timeLabel = RawTimeLabel(),
+                    loadedIndex = LoadedTrackIndex(),
+                    playButton = App.Button("BtnPlay").Name,
+                });
+                Thread.Sleep(400);
             }
 
-            WaitUntil(() => LoadedTrackIndex() == index, 15, $"プレイリストから {symbol} のロード");
-            WaitForMetadataSince(issuedAt, index);
-            WaitMediaReady();
-            Journal.Write("playlist-load", details: new { index, symbol, loadedIndex = LoadedTrackIndex() });
+            throw new TimeoutException($"プレイリストから {symbol} のロードに失敗; timeLabel={RawTimeLabel()}; loaded={LoadedTrackIndex()}");
+        }
+
+        private bool TryWaitLoadedIndex(int index, double timeoutSeconds)
+        {
+            try
+            {
+                E2EAssert.WaitUntil(() => LoadedTrackIndex() == index, TimeSpan.FromSeconds(timeoutSeconds));
+                return true;
+            }
+            catch (TimeoutException)
+            {
+                return false;
+            }
         }
 
         // ---- readings ----
@@ -837,7 +978,8 @@ public sealed class LtcScenarioE2ETests
             return index;
         }
 
-        public int CountLogMatches(string pattern) => RunLogLines().Sum(line => Regex.Matches(line, pattern).Count);
+        public int CountLogMatches(string pattern, RegexOptions options = RegexOptions.None) =>
+            RunLogLines().Sum(line => Regex.Matches(line, pattern, options).Count);
 
         public int CountLogMatchesSince(string pattern, DateTime sinceLocal) =>
             RunLogLinesSince(sinceLocal).Sum(line => Regex.Matches(line, pattern).Count);
@@ -879,8 +1021,8 @@ public sealed class LtcScenarioE2ETests
                     isBlack = last.IsBlack,
                     meanLuminance = Math.Round(last.MeanLuminance, 1),
                     best = Describe(lastMatch),
-                    ltc = Math.Round(LtcSeconds(), 3),
-                    position = Math.Round(Position(), 3),
+                    ltc = JsonNumber(LtcSeconds()),
+                    position = JsonNumber(Position()),
                 });
                 if (predicate(last, lastMatch)) return last;
                 if (DateTime.UtcNow >= deadline) break;
@@ -911,9 +1053,15 @@ public sealed class LtcScenarioE2ETests
             string name, double ltcTarget, TrackInfo track, double expectedPosition,
             string matrixExpectation, double holdSeconds)
         {
-            Hold(ltcTarget, holdSeconds);
-            WaitUntil(() => Math.Abs(Position() - expectedPosition) <= PositionToleranceSeconds, holdSeconds + 2,
-                $"{name}: 位置が {expectedPosition:F3} ± {PositionToleranceSeconds:F1} に入る");
+            // LTC 表示の一致を待ってから位置を見ると、着地して再生が進んだ後に
+            // 確認に入り目標±0.3 を通過済みのことがある。送出開始から位置を監視する。
+            double sendSeconds = Math.Max(2.5, holdSeconds);
+            Signal.PlayHeld(ltcTarget, LtcFps, TimeSpan.FromSeconds(sendSeconds));
+            bool landed = TryWaitPosition(expectedPosition, PositionToleranceSeconds, sendSeconds + 1);
+            WaitUntil(() => Math.Abs(LtcSeconds() - ltcTarget) <= 0.05, 6, $"保持 LTC {ltcTarget:F2} の受信");
+            Journal.Write("hold", details: new { target = ltcTarget, observed = LtcSeconds() });
+            landed.Should().BeTrue(
+                $"{name}: 位置が {expectedPosition:F3} ± {PositionToleranceSeconds:F1} に入る (position={Position():F3})");
             double observed = Position();
             FrameSignature signature = Capture($"hold-{name}");
             ReferenceMatch match = References.Match(signature);
