@@ -110,11 +110,12 @@ internal sealed class ComposeLayer : IDisposable
     public bool Compose(Surface target, OutputGapMode gap, ClipPlacement clip, bool testCardEnabled, ImageStamp cardStamp, long origin,
         LayerImage? acquired)
     {
-        if (gap == OutputGapMode.GapFreeze && frozen == null)
-        {
-            if (acquired != null) SaveFreeze(acquired.Value, clip);
-            else if (heldCanvas != null) SaveFreeze(LastCanvasImage(), new ClipPlacement(null));
-        }
+        // GapFreeze のフレームは「新しく取得したソース画像」だけで保存する。所有コピー
+        // （直前キャンバス）は Freeze の対象ではない（次トラックの冒頭フレーム待ちなどで
+        // 古い絵を凍結しない）。目標フレームが届くまで frozen は null のまま、表示は
+        // Policy が Held を選ぶ。
+        if (gap == OutputGapMode.GapFreeze && frozen == null && acquired != null)
+            SaveFreeze(acquired.Value, clip);
 
         LayerAction action = ComposeLayerPolicy.Decide(gap, acquired != null, HasHeld, frozen != null);
         ClipPlacement placement = ComposeLayerPolicy.SelectPlacement(action, clip, frozenClip);
@@ -150,9 +151,6 @@ internal sealed class ComposeLayer : IDisposable
         // Freeze はここが所有する専用テクスチャ。SRV は frozen と同時に破棄される。
         return new LayerImage(frozen!.View, frozen.Texture.NativePointer, frozenWidth, frozenHeight, null, null);
     }
-
-    private LayerImage LastCanvasImage() =>
-        new(heldCanvas!.View, heldCanvas.Texture.NativePointer, heldCanvasWidth, heldCanvasHeight, null, null);
 
     /// <summary>合成後のキャンバスを所有テクスチャへ複製する（寸法変更時は作り直す）。</summary>
     private void RememberCanvas(Surface target)
