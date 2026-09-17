@@ -164,6 +164,8 @@
 
 - 2026-09-18 12:30: 候補ビルド（**0.4.2 のまま**、ProductVersion `0.4.2+c3f3cd3…`）を作成し Taildrop で検証機へ送付。`TimecodeSyncPlayer-v0.4.2-c3f3cd3-setup.exe` SHA-256 `867940E67A1BDD3D2EABCF157C559FD124C9FF0729231331B2AE2400959547E8`（38,659,554）、zip `BB8A555C8EF444B57D3993B87EF40A3CFF9064E2DD2E2205C6D0D164E6D0B1BC`（17,740,087）。プラグイン 19、mpv 0、Release shim ハッシュ一致。展開ビルドの起動確認: 44.1kHz 素材ロード 176.4ms、`already playing`、送信 60/秒、ERR 0、exit 0。検証機には `-Media M1,M4,M6` / `M1,M3,M5` / `M2,M1,M4`（各 `-MediaInOffsetSeconds 5`）の実素材実行を依頼
 
+- 2026-09-18 15:30: 2 本目の候補ビルド（**0.4.2 のまま**、ProductVersion `0.4.2+0a30ad6…`、D29・D30 込み）を Taildrop で検証機へ送付。`TimecodeSyncPlayer-v0.4.2-0a30ad6-setup.exe` SHA-256 `57D75B6A79D139CEA3368568DDA02B8182A6AECAB705D20D936B6C0B82CFE2BF`（38,664,671）、zip `1549A183DD1E1630B6BD21477BF557BC8EB41AA677D52B2298B4E1EA217DF74A`（17,741,062）。プラグイン 19、mpv 0、Release shim ハッシュ一致。検証機には c3f3cd3 の 3 回の報告後に同じ 3 回を再実行して差分を報告するよう依頼。除去担当は統合後 main でシナリオ 22 + E2E 全件を実行中
+
 ## 4.6 検証機側で直す（利用者の方針 2026-09-17 13:45）
 
 - 環境依存のテスト基盤（ランナー、プロジェクト生成、E2E の待ち方、前提検査）は**検証機の Claude が自分の clone で直して確かめ、パッチで送る**。製品コード（`src/`、shim）は開発機側で直して親がレビューする
