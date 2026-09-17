@@ -61,9 +61,11 @@ public sealed class LtcScenarioE2ETests
             TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(50));
         foreach ((double ltc, double position) in follow)
             scenario.Journal.Write("follow-sample", details: new { ltc, position });
-        double maxError = LtcFollowSeries.MaxErrorSeconds(follow, scenario.A.TimelineToMedia);
+        // S-1: LTC はタイムライン秒、位置は素材秒。Continue の写像（開始と MediaIn）で比べる。
+        double maxError = LtcFollowSeries.MaxErrorSeconds(
+            follow, scenario.A.Start, scenario.A.MediaIn.TotalSeconds);
         scenario.Journal.Write("follow-summary", details: new { samples = follow.Count, maxErrorSeconds = maxError });
-        LtcFollowSeries.IsFollowing(follow, scenario.A.TimelineToMedia, PositionToleranceSeconds)
+        LtcFollowSeries.IsFollowing(follow, scenario.A.Start, scenario.A.MediaIn.TotalSeconds, PositionToleranceSeconds)
             .Should().BeTrue($"着地後の 2 秒間が LTC の写像に対して ±{PositionToleranceSeconds} で追従する（最大誤差 {maxError:F3}s / {follow.Count} サンプル）");
 
         Thread.Sleep(1500);

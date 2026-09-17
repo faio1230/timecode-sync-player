@@ -78,6 +78,9 @@ internal sealed class LtcSyncController
     private double? _lastAcceptedLtcSeconds;
     private double _lastAcceptedRawSeconds;
     private long _lastAcceptedFrameEndTimestamp;
+    // D27-d: 保持（Duplicate）として届いた最後の値。停止時の着地目標は保持値そのものにし、
+    // 保持直前の受理値（1 フレーム手前になり得る）を使わない。Normal/Initial で解除する。
+    private double? _lastHeldEffectiveSeconds;
     // D20-b: 同期へ実際に適用した最後の値（保持値の変更判定に使う）。
     private double? _lastAppliedLtcSeconds;
     // D20-b (i): 同一の Jump 連続で何度も適用しないためのラッチ（Normal/Initial で解除）。
@@ -299,6 +302,7 @@ internal sealed class LtcSyncController
     {
         _lastAcceptedLtcSeconds = null;
         _lastAppliedLtcSeconds = null;
+        _lastHeldEffectiveSeconds = null;
         _pendingSyncSeconds = null;
         _jumpAppliedOnce = false;
         _heldReapplyDone = false;
@@ -326,6 +330,7 @@ internal sealed class LtcSyncController
     {
         _lastAcceptedLtcSeconds = null;
         _lastAppliedLtcSeconds = null;
+        _lastHeldEffectiveSeconds = null;
         _pendingSyncSeconds = null;
         _jumpAppliedOnce = false;
         _heldReapplyDone = false;
@@ -365,8 +370,16 @@ internal sealed class LtcSyncController
         {
             // D27: 解読は続いているが値が進まない保持（Duplicate）を信号停止の判定へ伝える。
             // 無音（フレームが届かない）と同じ経路で損失になり、損失の理由だけが分かれる。
+            // D27-d: 停止時の着地目標に使う「保持として届いた値」もここで記録する
+            // （保持直前の受理値は 1 フレーム手前になり得る）。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate)
+            {
                 _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
+                // D27-d: 着地目標は保持として届いた値そのもの。保持値は凍結されて進まないため、
+                // サンプル時計の age は足さず T3 オフセットだけ適用する。
+                _lastHeldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
+                    _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
+            }
             // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
             // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ 1 回だけ着地させる
             // （ラッチ済みの Jump でも数えるためラッチを解除してから適用する）。
@@ -404,6 +417,8 @@ internal sealed class LtcSyncController
         {
             _jumpAppliedOnce = false;
             _heldReapplyDone = false;
+            // D27-d: 値が進むフレームが来たら保持は明けたので、着地目標の保持値を捨てる。
+            _lastHeldEffectiveSeconds = null;
             applyOnce = false;
             applyReason = "";
         }
@@ -658,13 +673,16 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
-    /// D27: 保持で一時停止したときの 1 回の着地。最後に受理したタイムコード（保持値）へ
-    /// シークし、フレームが保持時刻に対応した位置で止まるようにする。同期エンジンの
-    /// デバウンス・保留状態には依存しない（停止時の 1 回だけ）。
+    /// D27: 保持で一時停止したときの 1 回の着地。保持値へシークし、フレームが保持時刻に
+    /// 対応した位置で止まるようにする。同期エンジンのデバウンス・保留状態には依存しない
+    /// （停止時の 1 回だけ）。
+    /// D27-d: 保持値は「保持として届いた最後の値（Duplicate）」を使う。保持直前の受理値は
+    /// 1 フレーム手前で止まることがある（受領が 1 フレーム遅れる／Jump を適用しない場合）。
     /// </summary>
     private void ReapplyHeldValueOnPause()
     {
-        if (_lastAcceptedLtcSeconds is not double held || _effects.SeekTo == null)
+        double? held = _lastHeldEffectiveSeconds ?? _lastAcceptedLtcSeconds;
+        if (held is not double heldSeconds || _effects.SeekTo == null)
             return;
         LtcSyncContext state = _effects.GetContext();
         if (!state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
@@ -673,21 +691,21 @@ internal sealed class LtcSyncController
         double target;
         if (state.Mode == SyncMode.Continue)
         {
-            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(held);
+            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(heldSeconds);
             if (result.Status != TimelineQueryStatus.OnTrack)
                 return;
             target = result.MediaPositionSeconds;
         }
         else
         {
-            target = Math.Clamp(held, 0, state.DurationSeconds);
+            target = Math.Clamp(heldSeconds, 0, state.DurationSeconds);
         }
 
         if (_effects.SeekTo(target))
         {
             _syncService.ReportSeekSent(target);
             Log.Information(
-                "LTC timecode held: landing seek issued target={Target:F3} ltc={Ltc:F3}", target, held);
+                "LTC timecode held: landing seek issued target={Target:F3} ltc={Ltc:F3}", target, heldSeconds);
         }
     }
 
