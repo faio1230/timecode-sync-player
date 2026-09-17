@@ -1,6 +1,6 @@
 # D33: Single モードで LTC が MediaOut を越えても終端で止まらない／速いロードでメタデータ取得が抜ける
 
-作成: 2026-09-17 23:20、親。担当: 同期担当（`w5:p3`、作業ツリー `timecode-sync-player-wt-a`、ブランチ `agent-a`）。
+作成: 2026-09-17 20:19、親。担当: 同期担当（`w5:p3`、作業ツリー `timecode-sync-player-wt-a`、ブランチ `agent-a`）。
 基点: main の最新（D32 統合後 `adc8200` 以降）を `agent-a` へ通常マージし、shim を自分のツリーでビルドしてから。
 根拠: `docs/analysis/2026-09-17-D33-single-mediaout-and-fetchmetadata.md`（同期担当の解析）。仕様: 利用者の検証項目 7「Single で範囲外の LTC → その動画の終端で止まる」（`docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md` 1 節）。
 **製品コードの変更。Smooth/Jump の補正量・サンプル時計には触らない。Single の終端ホールドと、メタデータ取得の予約だけ。**

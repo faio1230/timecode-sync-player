@@ -3072,7 +3072,7 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - S-4: `TimecodeSyncService` に未回収のロード解除 `_fileLoadReleasePending` を追加。解除は `TryMarkFileLoaded` の成功で立ち、誰が起こしても 1 回だけ回収できる。コントローラは受理値あり・プレイヤー準備・監視・同期 ON・非シーク・（Single は尺確定後）で解除を消費して 1 回適用。Deferred 完了に先を越されても取りこぼさない。単体 2 + 統合 1
 - 非E2E 1740 合格（+10）。実機（S-2 / S-4 / R-1〜R-4 / LTC ループ 14）は除去担当の D26-b 検証の後
 
-### D26 / D26-b の実機結果と統合（除去担当の実機、agent-b `af997a1`、2026-09-17 21:40、親の判定）
+### D26 / D26-b の実機結果と統合（除去担当の実機、agent-b `af997a1`、2026-09-17 13:08、親の判定）
 
 - C-1 / C-2 のジャンプ中の黒: **0 枚**（jump-black-summary 各 20 件）。G-1〜G-6 合格。F-2 / F-3 合格、F-1 は 1 回目失敗 → 再実行で合格、**F-4 / F-5 は失敗**
 - 失敗の系統: (a) 参照採取がシーク前フレームを掴む（ref_A_tail が白 = head と同じ）、(b) シーク/ロード直後に「PTS は目標・画素は直前」のフレームを掴む（**D25** と同種）。いずれも D26-b の修正対象外で、shim 側の D25 が残る限り間欠で出る
@@ -3094,7 +3094,7 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - D28 の経路: 開発機の 4K VP9（3840x2160@60、libvpx-vp9）でも `GPU completion pending` / `compose.sourcePending` は 0 件（開発機の GPU では再現せず）。検証機で確認する
 - **判定: D28・S-1・参照採取の取り直しを main に統合**（単体 1753 合格、E2E の失敗は D25 と S-2 の間欠に帰着）。D25 は同期担当（shim）が調査中
 
-### S-2 の間欠（除去担当の解析、2026-09-17 23:50、親の判定）
+### S-2 の間欠（除去担当の解析、2026-09-17 13:47、親の判定）
 
 - 観測: s2-11（保持 20 → LTC 8）で着地せず position=20.000 のまま。保持損失からの復帰に必要な有効フレーム数（`LtcSignalResumeFrames` 既定 5）に対し、テストの保持→保持の前進プリリュードがちょうど 5 枚（Jump 1 + 通常 4）で、1 枚でも取りこぼすと復帰せず `_isLost && _pausedByPolicy` で同期要求が出ない
 - 親の判定: 除去担当の実機は agent-b（main `a47c142` 取り込み）で、**D27-b（`3082f6b`、保持損失中の Jump 1 枚で即復帰）を含まない世代**。D27-b 込みの同期担当の実機では S-2 の着地は 20/20。→ D27-b で解消している見込み。除去担当が main の最新を取り込んで S-2 を 3 回回して確認する
@@ -3242,7 +3242,7 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 除去担当がジャーナルとアプリログから機序を解析（コード変更なし）。検証機の候補 2 の結果と合わせて判断
 - 証跡 `TestResults/postmerge2/01-ltc-scenario`（scenarios/S-2-20260917-180316、C-1-20260917-175842）、`02-e2e-all`（agent-b の作業ツリー）
 
-> 注（2026-09-17 19:05）: この文書と `docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md` の 2026-09-17 の D24 以降の見出しは、親が時計を誤って 09-18 と書いていたものを日付だけ直した。時刻は目安で、正確な順序と時刻は `git log` を正とする。
+> 注（2026-09-17 20:35）: この文書と `docs/LTC-SYNC-VERIFICATION-MATRIX-2026-09-17.md`・`docs/PARENT-HANDOVER-2026-09-12.md` の 2026-09-17 の D24 以降の見出し時刻は、親が時計を見ずに書いたため数時間ずれているものがある（09-18 と書いた日付は 09-17 に直した）。**正確な順序と時刻は `git log` を正とする。**
 
 ## 検証機・実素材での候補 2（`0.4.2+0a30ad6`、D29/D30 込み）の結果と分類（2026-09-17 19:00、`TSP-TestMachine` の報告、親の分類）
 
@@ -3283,7 +3283,7 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **候補 3**: `TimecodeSyncPlayer-v0.4.2-4469cdd-setup.exe` 38,663,525 バイト、SHA-256 `04A0018DA1CA36A7DB54BC4BF2BE561051F9019D55E0E3B16F08D68DC6E5F68C`、zip 17,741,413 バイト `9619CDFF3897A57BAFAEB194B4036B46036C484A897FC578F2F05B4A985586B2`、ProductVersion `0.4.2+4469cdd…`。Taildrop で検証機へ送付。検証機には先にテスト基盤側 3 件の修正を済ませてから実素材 3 回を依頼
 - A1（4K でギャップ進入後に絵が更新されない）の机上解析は `docs/analysis/2026-09-17-A1-gap-freeze-frame-not-updated.md`。候補 P1（3 秒の timeout に間に合わず Held が残り、遅れて届いても更新されない）と P2（(a)/(b) 経路が render 世代を進めず前回のフリーズ画像を再利用）。開発機で 4K ProRes/AV1 の生成素材により再現する
 
-### A1 の開発機再現（同期担当、4K 生成素材 3 本、2026-09-17 20:55）: 再現せず
+### A1 の開発機再現（同期担当、4K 生成素材 3 本、2026-09-17 19:25）: 再現せず
 
 - 条件 1（pump 既定 4000ms）・条件 2（`TCS_PUMP_BUDGET_MS=800`）で F-1/F-3/F-4/F-5 各 3 サイクル: すべて Passed。`capture timed out` 0、`pump deadline` 0、`stale gap freeze source frame` 0、`compose.sourcePending` 0。F-4 の freeze-observation は 6 件とも期待色（A tail → B tail の更新が毎回成立）
 - 2×2 判別: 全ギャップで「目標一致フレーム到着あり × 絵の更新あり」。P1 も P2 も発現せず
@@ -3292,9 +3292,9 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 次: 条件 3（`TCS_FORCE_DECODER_ADAPTER_MISMATCH=1` + decodeMode=software でプロファイル試行を検証機並みに）→ 出なければ検証機の証跡（参照 PNG の SHA、GapEnter 経路のログ）待ち
 - 証跡 `TestResults/ltc-scenarios/a1-01-f1-nobudget/`〜`a1-08-f5-pump800/`（agent-a の作業ツリー）
 - 条件 3（`TCS_FORCE_DECODER_ADAPTER_MISMATCH=1`、さらに `TCS_FORCE_DECODER_LUID_MISMATCH=1` 併用。prores-cpu / av1-cpu attempt=8 を確認）: F-1/F-3/F-4/F-5 とも **再現せず**。load.summary total_ms は 105〜183ms で、開発機では不一致プロファイルが即座に返るため検証機の 1〜2.5 秒にならない。decodeMode=software はシナリオ E2E がテストごとの設定ファイルをアプリ自身に作らせるため外部から注入できず未実施。証跡 `a1-09`〜`a1-13`
-- **判定: 開発機の 3 条件ではデコード／ロード時間が検証機より 1 桁短く、3 秒のフリーズ確定窓を外す状況を作れない。検証機の証跡（参照 PNG の SHA、GapEnter 経路のログ、`capture timed out` の有無）で 2×2 を突き合わせる方針に切り替え（2026-09-17 21:05）**
+- **判定: 開発機の 3 条件ではデコード／ロード時間が検証機より 1 桁短く、3 秒のフリーズ確定窓を外す状況を作れない。検証機の証跡（参照 PNG の SHA、GapEnter 経路のログ、`capture timed out` の有無）で 2×2 を突き合わせる方針に切り替え（2026-09-17 19:30）**
 
-### 検証機の候補 2 証跡（zip）から親が抽出した A1 の機序（2026-09-17 21:40）
+### 検証機の候補 2 証跡（zip）から親が抽出した A1 の機序（2026-09-17 19:45）
 
 - **1 時間台 LTC の混入の原因**（検証機の解析）: RealProjectGap ではなく **アプリの再生音の回り込み**。M1 の第 1 ch に 30fps の LTC が入っており、検証機の既定再生デバイスが CABLE Input のためテストの LTC と同じ線に混ざる（`detectedFps=30` `ltc=3601…`）。テスト側修正: シナリオ E2E は `isMuted: true` で起動（パッチ 0002）。RealProjectGap は実素材ランナーの既定から除外（0001）
 - **メタデータ待ちの時間切れ**: FetchMetadata 行が速いロード（キャッシュ済みプロファイル、elapsedMs<250）で出ないことがある（383 回中 5 回）。テスト側: 「Playlist track loaded index=N」+ TimeLabel の尺でも完了に（0002 + 親の補強依頼 `230592d`）。製品側の観測として記録（ログのみ、挙動に影響なし）
@@ -3302,7 +3302,7 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **A1 の機序（アプリログ）**: (1) D22 の開始位置つき一時停止ロードのプリロールが長 GOP で 3 秒に届かず `capture timed out`（c F-5、pump は seek 限定で対象外）。(2) Freeze 切替直後に位置が C の終端側にあるため「C の最終フレーム」で先に確定し、その後の D22 進入（A の冒頭）では frozen が置き換わらない（b F-5/F-3、a F-4）。(3) A の後のギャップで確定後に B の中間へジャンプ → B のロード 440ms なのに 2.6 秒以上 A の tail が残る（a F-4）。→ **D32**（`docs/prompts/2026-09-17-D32-gap-freeze-late-frame-and-reenter.md`、同期担当）
 - **S-3 c（position=31.4）**: 生成プロジェクトは MediaOut = MediaIn + 20 = 25 だが、ジャーナルの尺表示は素材の全長（2:08）。Single で LTC 40 → D29 の clamp 目標 25 へ着地後も再生が MediaOut で止まらず進んだ疑い（生成素材は尺 = MediaOut なので EOS で止まり気づかない）→ 候補 3 の S-3 ジャーナル（hold-landing の range）で確認してから D33 候補
 
-### D32 の実装（同期担当 agent-a `93ac50e` / `8468056` / `191f265`、2026-09-17 22:20、実機待ち）
+### D32 の実装（同期担当 agent-a `93ac50e` / `8468056` / `191f265`、2026-09-17 19:56、実機待ち）
 
 - 裏取り: (1.1) 開始位置つきロードは内部 seek 直後に PAUSED へ落ち pump を張らない（`tcs_gstreamer.cpp` 2872-2927）→ プリロールが遅い素材は 3 秒（`GapFreezeHandler.HasTimedOut`）で打ち切り。(1.2) frozen の破棄は render 世代変更か SetCanvas/Dispose のみで、別目標の再進入は `EnterFreezeCapture` をやり直すだけ（`GapFreezeHandler.cs` 277-286）。(1.3) は設計と差異: ギャップ出口・切替は `CompleteGapExit` / `LoadFile` が `ClearGapFreezeFrame` を呼び frozen は破棄済み。残るのは Held キャンバス（ギャップ中に frozen を描いた tick が直前キャンバスとして保存）で、2.6 秒の遅れは 1.1 と同根
 - 項目 1: `ForceFreezeComplete` で目標を Cached に入れず LateConfirm として残し、FreezeComplete 中でも目標 ±2 フレームのフレーム到着で `ReopenCaptureForLateFrame`（UI スレッド、1 件）→ 確定・置換
@@ -3311,19 +3311,19 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - 項目 4（開始位置つき一時停止ロードへの pump）: 見送り（pump は PLAYING へ上げて音声をミュートするため他のロードへの影響を E2E で確認できない。遅延確定で吸収）。親も同意
 - 単体 +12、非E2E 1837/0。親の差し戻し: 目標 0（MediaIn 0 のトラック、D22 の既定）が「> 0」の印で無効になる → 目標 0 でも成立させる修正のうえ実機（F/G/C 系を生成素材・4K 3 本・pump 800ms）
 
-### D32 の実機結果と統合（同期担当の実機、agent-a `badf947` まで、親が統合 `adc8200`、2026-09-17 22:50）
+### D32 の実機結果と統合（同期担当の実機、agent-a `badf947` まで、親が統合 `adc8200`、2026-09-17 20:13）
 
 - 目標 0 対応（`badf947`）: LateConfirm と ShouldDiscardFrozenFrame を目標 0 でも成立させた。既存の `> 0` 判定（`GapEnterCoordinator.cs` 87/133 の「尺不明なら現在の絵」、`GapFreezeHandler.cs` 502 の atFinalFrame）は尺 1 フレーム以下の退化時のみで未変更（報告のみ）
 - 実機（開発機）: 生成素材 A/B/C の F-1〜F-5・G-1〜G-6・C-1/C-2 = 13/13、4K 3 本 = 13/13、4K + `TCS_PUMP_BUDGET_MS=800` の F 系 = 5/5（親が trx のカウンタを確認）。F-3 で `gap freeze target changed, discarding the previous frozen frame` が各セッション 1 回発動（C の tail → A の先頭）。遅延確定・capture timed out・pump deadline・stale は 0 件（開発機では 3 秒を外れない）
 - 統合後 main の非E2E 1844/0。**判定: 統合。除去担当がシナリオ 22 + LTC ループ 14 を実機確認 → 候補 4**（検証機の候補 3 の結果と突き合わせ）
 
-### 統合後 main（D32 込み、`adc8200`）の実機確認（除去担当、2026-09-17 23:35、親が trx のカウンタを確認）
+### 統合後 main（D32 込み、`adc8200`）の実機確認（除去担当、2026-09-17 20:24、親が trx のカウンタを確認）
 
 - シナリオ 22/22、LTC ループ 14/14、残プロセス 0。F-3 で `gap freeze target changed, discarding the previous frozen frame target=19.967` が 1 回発動（D32 項目 2 の作動）。証跡 `TestResults/postmerge4/`（agent-b の作業ツリー）
 - **判定: 候補 4（D32 込み）を作って検証機へ。D33（Single の MediaOut ホールド）は次の候補**
-- **候補 4**（2026-09-17 23:50）: `TimecodeSyncPlayer-v0.4.2-f0ee283-setup.exe` 38,664,289 バイト、SHA-256 `5ED002A8BEBD4E66E870FB0EB0FEF44E972FE7846B0A9B6A6268BFA67C73F34C`、zip 17,742,249 バイト `A1DA9B9C84F57F7ABDC715B5F59DED7D8443635DD6DFB141AB5D93CF48430A32`、ProductVersion `0.4.2+f0ee283…`（D32 込み、D33 は未）。Taildrop で検証機へ
+- **候補 4**（2026-09-17 20:25）: `TimecodeSyncPlayer-v0.4.2-f0ee283-setup.exe` 38,664,289 バイト、SHA-256 `5ED002A8BEBD4E66E870FB0EB0FEF44E972FE7846B0A9B6A6268BFA67C73F34C`、zip 17,742,249 バイト `A1DA9B9C84F57F7ABDC715B5F59DED7D8443635DD6DFB141AB5D93CF48430A32`、ProductVersion `0.4.2+f0ee283…`（D32 込み、D33 は未）。Taildrop で検証機へ
 
-## 検証機・実素材での候補 3（`0.4.2+4469cdd`、D31/D31-b 込み、テストは main `e6b2b30` = ミュート起動・区間判定）の結果と分類（2026-09-18 00:15、`TSP-TestMachine` の報告、親の分類）
+## 検証機・実素材での候補 3（`0.4.2+4469cdd`、D31/D31-b 込み、テストは main `e6b2b30` = ミュート起動・区間判定）の結果と分類（2026-09-17 20:31、`TSP-TestMachine` の報告、親の分類）
 
 共通: ERR/FTL 0、`GPU completion pending` 0、`Playback unavailable` 0、`pump deadline` 0、残プロセス 0、LTC ループ 14 本 ×3 合格。RealProjectGap は既定から除外（36 本）。検証機で見つかった基盤不具合: `make-e2e-media.ps1` の AV1 生成が 5.1 で libsvtav1 の stderr 情報行により中断（0 バイト素材）→ 検証機のパッチで修正（親が統合 `528e137`）。
 
