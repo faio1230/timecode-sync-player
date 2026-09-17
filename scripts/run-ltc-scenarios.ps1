@@ -36,6 +36,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $testProj = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
 
+$appExeGiven = -not [string]::IsNullOrWhiteSpace($AppExe)
 if (-not $AppExe) {
     $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
 }
@@ -368,16 +369,32 @@ Get-Content -LiteralPath (Join-Path $ReportDir 'dotnet-test.log') -Tail 3 | ForE
 $appLogDest = Join-Path $ReportDir 'app-logs'
 New-Item -ItemType Directory -Force -Path $appLogDest | Out-Null
 $copiedLogs = @()
-$logDir = Join-Path $appDir 'logs'
-if (Test-Path -LiteralPath $logDir) {
-    $logs = @(Get-ChildItem -LiteralPath $logDir -File -ErrorAction SilentlyContinue |
+# Log folders to collect: the folder next to the app exe (copied to app-logs\).
+# Without -AppExe, also the test output folder (copied to app-logs\test-bin\): an E2E
+# started without TIMECODE_SYNC_PLAYER_E2E_APP_PATH (for example a plain dotnet test)
+# prefers the TimecodeSyncPlayer.exe copied next to the test assembly, and its logs go
+# to that folder.
+$logSources = @(@{ Dir = (Join-Path $appDir 'logs'); Sub = '' })
+if (-not $appExeGiven) {
+    $testBinLogs = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\bin\Debug\net8.0-windows\logs'
+    if (-not [string]::Equals([IO.Path]::GetFullPath($testBinLogs), [IO.Path]::GetFullPath($logSources[0].Dir),
+            [StringComparison]::OrdinalIgnoreCase)) {
+        $logSources += @{ Dir = $testBinLogs; Sub = 'test-bin' }
+    }
+}
+Write-Output ('app_log_dirs=' + (($logSources | ForEach-Object { $_.Dir }) -join ';'))
+foreach ($source in $logSources) {
+    if (-not (Test-Path -LiteralPath $source.Dir)) { continue }
+    $dest = if ($source.Sub) { Join-Path $appLogDest $source.Sub } else { $appLogDest }
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $logs = @(Get-ChildItem -LiteralPath $source.Dir -File -ErrorAction SilentlyContinue |
         Where-Object {
             ($_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
             $_.LastWriteTime -ge $testStart.AddMinutes(-2)
         })
     foreach ($log in $logs) {
-        Copy-Item -LiteralPath $log.FullName -Destination $appLogDest -Force
-        $copiedLogs += $log.Name
+        Copy-Item -LiteralPath $log.FullName -Destination $dest -Force
+        $copiedLogs += $(if ($source.Sub) { $source.Sub + '\' + $log.Name } else { $log.Name })
     }
 }
 
@@ -429,7 +446,7 @@ if (Test-Path -LiteralPath $trxPath) {
 
 $errFtl = 0
 foreach ($name in $copiedLogs) {
-    if ($name -notlike 'timecodesyncplayer-*.log') { continue }
+    if ((Split-Path $name -Leaf) -notlike 'timecodesyncplayer-*.log') { continue }
     $path = Join-Path $appLogDest $name
     foreach ($line in (Get-Content -LiteralPath $path)) {
         if ($line -notmatch '\[(ERR|FTL)\]') { continue }
