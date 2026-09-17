@@ -1244,10 +1244,11 @@ public sealed class LtcScenarioE2ETests
         public bool HeadReferenceNotBlack(TrackInfo track) => !References.IsHeadReferenceBlack(track.Symbol);
 
         /// <summary>
-        /// 保持ジャンプの共通判定: 期待位置に入り、進行し、絵が期待トラック側であること。
-        /// ランスルー（信号断モードが既定のコンボ index 0）は保持中も動画が走り続けるため、
-        /// 着地の期待は「着地目標 + 保持開始（PlayHeld 発行）からの経過秒」で動かす。
-        /// 停止モードの期待は固定。許容は 0.3 に確認フレーム 1 枚分を足す（D30 の確認は 1 フレーム遅れ得る）。
+        /// 保持ジャンプの共通判定: 着地区間に入り、進行し、絵が期待トラック側であること。
+        /// ランスルー（信号断モードが既定のコンボ index 0）は保持中も動画が走り続けるため、着地は
+        /// 区間 [着地目標 − 0.3, 着地目標 + 保持開始（PlayHeld 発行）からの経過秒 + 0.3 + 1/fps] で見る。
+        /// 上限が経過秒で伸びるので、着地の所要が長い素材（長 GOP の実素材は 1〜3 秒）でも窓が閉じない。
+        /// 停止モードは着地目標 ± 0.3 の固定。着地後は 0.5 秒だけ follow（期待 = 目標 + 経過秒）を残す。
         /// </summary>
         public void CheckHold(
             string name, double ltcTarget, TrackInfo track, double expectedPosition,
@@ -1259,7 +1260,8 @@ public sealed class LtcScenarioE2ETests
             DateTime holdStart = DateTime.UtcNow;
             Signal.PlayHeld(ltcTarget, LtcFps, TimeSpan.FromSeconds(sendSeconds));
             bool runThrough = !SignalLossStop;
-            double landingTolerance = PositionToleranceSeconds + OneFrame;
+            double landingTolerance = PositionToleranceSeconds;
+            double frameAllowance = OneFrame;
 
             // D26: ジャンプ発行から着地確認まで 50ms 間隔で画面を採り、黒（黒率 >= 0.99）を数える。
             // 参照が黒の素材では「黒」と「参照で静止」を画像で区別できないため数えない。
@@ -1269,32 +1271,39 @@ public sealed class LtcScenarioE2ETests
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(sendSeconds + 1);
             DateTime nextSample = DateTime.UtcNow;
             bool landed = false;
+            DateTime followUntil = DateTime.MaxValue;
             double lastElapsed = 0.0;
             double lastExpected = double.NaN;
             double lastObserved = double.NaN;
+            (double Min, double Max) lastRange = (double.NaN, double.NaN);
             while (true)
             {
                 lastElapsed = (DateTime.UtcNow - holdStart).TotalSeconds;
                 lastExpected = HoldLandingExpectation.ExpectedPosition(expectedPosition, lastElapsed, runThrough);
+                lastRange = HoldLandingExpectation.LandingRange(
+                    expectedPosition, lastElapsed, runThrough, landingTolerance, frameAllowance);
                 lastObserved = Position();
-                if (!landed && HoldLandingExpectation.IsLanded(lastObserved, lastExpected, landingTolerance))
+                if (!landed && HoldLandingExpectation.IsLanded(lastObserved, lastRange.Min, lastRange.Max))
                 {
                     landed = true;
+                    followUntil = DateTime.UtcNow.AddMilliseconds(500);
                     Journal.Write("hold-landing", details: new
                     {
                         name,
                         runThrough,
                         mappedTarget = expectedPosition,
                         elapsedSeconds = Math.Round(lastElapsed, 3),
-                        expected = Math.Round(lastExpected, 3),
                         observed = Math.Round(lastObserved, 3),
-                        tolerance = Math.Round(landingTolerance, 3),
+                        rangeMin = Math.Round(lastRange.Min, 3),
+                        rangeMax = Math.Round(lastRange.Max, 3),
+                        expected = Math.Round(lastExpected, 3),
                     });
                 }
                 else if (landed)
                 {
-                    // 着地後は「期待どおり進行しているか」の観測だけを残す（失敗条件にしない）。
+                    // 着地後は 0.5 秒だけ「期待どおり進行しているか」の観測を残す（失敗条件にしない）。
                     follow.Add((lastElapsed, lastExpected, lastObserved));
+                    if (DateTime.UtcNow >= followUntil) break;
                 }
 
                 if (DateTime.UtcNow >= deadline) break;
@@ -1350,8 +1359,8 @@ public sealed class LtcScenarioE2ETests
             WaitUntil(() => Math.Abs(LtcSeconds() - ltcTarget) <= 0.05, 6, $"保持 LTC {ltcTarget:F2} の受信");
             Journal.Write("hold", details: new { target = ltcTarget, observed = LtcSeconds() });
             landed.Should().BeTrue(
-                $"{name}: 位置が {(runThrough ? $"{expectedPosition:F3} + 経過秒" : $"{expectedPosition:F3} 固定")}" +
-                $" ± {landingTolerance:F3} に入る (runThrough={runThrough} elapsed={lastElapsed:F3}" +
+                $"{name}: 位置が着地区間 {(runThrough ? $"[{expectedPosition:F3} - 0.3, {expectedPosition:F3} + 経過秒 + 0.3 + 1/fps]" : $"[{expectedPosition:F3} ± 0.3]")}" +
+                $" に入る (runThrough={runThrough} elapsed={lastElapsed:F3} range=[{lastRange.Min:F3}, {lastRange.Max:F3}]" +
                 $" expected={lastExpected:F3} observed={lastObserved:F3})");
             double observed = Position();
             FrameSignature signature = Capture($"hold-{name}");
