@@ -123,6 +123,8 @@
 - 2026-09-17 13:50: D23 を統合（main `87d6a37`、`CreateHardLinkW` の P/Invoke、作成分の追跡と finally の後始末）。開発機で角括弧・全角・連続空白・記号を含む名前のダミー 3 本で確認: リンク生成 → 後始末、`media\` と `.tsp` は残らず、ダミーのリンク数 1 のまま
 - 2026-09-17 13:50 開発機（除去担当、重複なしの 18 本再実行）: **13 合格 / 5 失敗**。失敗はすべて既知（D21-b: F-3/F-4、D20-b: S-2/S-3/S-4）。S-3 の新しい観測: 終端（20.0）で静止後に LTC を 10.0 へ戻すと `sync seek suppressed pendingTarget=0.000 playback=20.000 ltc=9.939` が続き復帰しない（position 14.967 のまま）。ERR/FTL 0、残プロセス 0。証跡 `TestResults/v042-ltc-scenario/d21b3-full-ltc-scenario.trx`（agent-b の作業ツリー）
 
+- 2026-09-17 14:40 開発機（同期担当の実機、D21-b `d92189d`、親が報告を確認）: **シナリオ 16/18（F-1〜F-5 すべて合格。失敗は S-2/S-4 = D20-b 既知）**、`RealProjectGapE2ETests` 1/1、`LtcHardwareLoopE2ETests` 14/14、V5 シーク連打 10/10（PTS 差 0ms、無公開最大 51.3ms）。残プロセス 0。証跡 `TestResults/ltc-scenarios/d21b-0{1,2,3}-*`、`TestResults/gpu-app/20260917T010506Z-d21b-04-v5-seek2`（agent-a の作業ツリー）。**D21 は解消（項目 21・22 合格）**。D20-b（`6ba8d58`、単体 1704 合格）は実機待ち（18 本 + 14 + V4 + V5 + V3）
+
 ## 4.6 検証機側で直す（利用者の方針 2026-09-17 13:45）
 
 - 環境依存のテスト基盤（ランナー、プロジェクト生成、E2E の待ち方、前提検査）は**検証機の Claude が自分の clone で直して確かめ、パッチで送る**。製品コード（`src/`、shim）は開発機側で直して親がレビューする
