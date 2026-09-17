@@ -150,6 +150,73 @@ public class GapFreezeHandlerTests
         handler.CachedTargetSeconds.Should().Be(0);
     }
 
+    // ---- D32: タイムアウト後の遅延確定 ----
+
+    [Fact]
+    public void ForceFreezeComplete_RetainsLateConfirmTarget_WithoutCertifyingIt()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+
+        handler.ForceFreezeComplete();
+
+        handler.HasLateConfirmTarget.Should().BeTrue();
+        handler.LateConfirmTrackId.Should().Be(trackId);
+        handler.LateConfirmTargetSeconds.Should().Be(42.5);
+        handler.LateConfirmPath.Should().Be("test.mp4");
+        // 遅延確定の候補であって、最終画像として認定はしない。
+        handler.CachedTrackId.Should().BeNull();
+        handler.CachedTargetSeconds.Should().Be(0);
+    }
+
+    [Fact]
+    public void ReopenCaptureForLateFrame_ReentersWithFrameSeen()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+        handler.ForceFreezeComplete();
+
+        handler.ReopenCaptureForLateFrame();
+
+        handler.CurrentState.Should().Be(GapState.EnteringFreeze);
+        handler.PendingTrackId.Should().Be(trackId);
+        handler.PendingTargetSeconds.Should().Be(42.5);
+        handler.PendingPath.Should().Be("test.mp4");
+        handler.FrameSeenSinceCapture.Should().BeTrue("届いたフレームで確定する");
+        handler.HasLateConfirmTarget.Should().BeFalse();
+        handler.CanRetrySeek.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ReopenCaptureForLateFrame_WithoutLateTarget_DoesNothing()
+    {
+        var handler = new GapFreezeHandler();
+        handler.ForceFreezeComplete();
+
+        handler.ReopenCaptureForLateFrame();
+
+        handler.CurrentState.Should().Be(GapState.FreezeComplete);
+        handler.PendingTargetSeconds.Should().Be(0);
+    }
+
+    [Fact]
+    public void Reset_ClearsLateConfirmTarget()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.ForceFreezeComplete();
+        handler.HasLateConfirmTarget.Should().BeTrue();
+
+        handler.Reset();
+
+        handler.HasLateConfirmTarget.Should().BeFalse();
+        handler.LateConfirmTargetSeconds.Should().Be(0);
+        handler.LateConfirmTrackId.Should().BeNull();
+        handler.LateConfirmPath.Should().BeNull();
+    }
+
     [Fact]
     public void Reset_ClearsLastReloadAt()
     {

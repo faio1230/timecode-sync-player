@@ -1958,6 +1958,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _syncService.LatencyCompensator.ObserveFrameReady(qpc, generation, sequence);
 
         GapFreezeHandler handler = _gapFreezeHandler;
+        double fps = _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps;
+        // D32: 3 秒のタイムアウトで打ち切った後でも、同じギャップの目標に一致するフレームが
+        // 遅れて届いたら捕捉を開き直して確定する（タイムアウトは Held のまま待ち続けない保険）。
+        if (handler.CurrentState == GapState.FreezeComplete && handler.HasLateConfirmTarget &&
+            double.IsFinite(positionSeconds) &&
+            Math.Abs(positionSeconds - handler.LateConfirmTargetSeconds) <= 2.0 / fps)
+        {
+            RequestGapFreezeLateFrameConfirm();
+            return;
+        }
+
         if (handler.CurrentState is not (GapState.EnteringFreeze or GapState.WaitingForFrameStep) ||
             handler.FrameSeenSinceCapture ||
             !double.IsFinite(positionSeconds))
@@ -1965,7 +1976,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             return;
         }
 
-        double fps = _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps;
         // 許容は 2 フレーム（フレーム先頭/終端の解釈差と実素材の端数を含む）。
         if (Math.Abs(positionSeconds - handler.PendingTargetSeconds) <= 2.0 / fps)
         {
@@ -1974,6 +1984,36 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
 
         RequestGapFreezeSeekRetryForStaleFrame(positionSeconds);
+    }
+
+    private int _gapFreezeLateFramePosted;
+
+    /// <summary>
+    /// D32: 遅延して届いた目標フレームで、タイムアウト済みのフリーズ捕捉を開き直す。
+    /// GPU worker から呼ばれるため、状態の更新は UI スレッドで行う（1 件だけ予約する）。
+    /// </summary>
+    private void RequestGapFreezeLateFrameConfirm()
+    {
+        if (Interlocked.CompareExchange(ref _gapFreezeLateFramePosted, 1, 0) != 0)
+            return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+        {
+            Interlocked.Exchange(ref _gapFreezeLateFramePosted, 0);
+            ConfirmLateGapFreezeFrame();
+        });
+    }
+
+    private void ConfirmLateGapFreezeFrame()
+    {
+        if (_disposed)
+            return;
+        GapFreezeHandler handler = _gapFreezeHandler;
+        if (handler.CurrentState != GapState.FreezeComplete || !handler.HasLateConfirmTarget)
+            return;
+        handler.ReopenCaptureForLateFrame();
+        Log.Information(
+            "Continue mode: late final-frame arrival after the capture timeout, retrying the freeze capture target={Target:F3}",
+            handler.PendingTargetSeconds);
     }
 
     private int _gapFreezeStaleFrameRetryPosted;

@@ -87,6 +87,13 @@ public sealed class GapFreezeHandler
     public Guid? CachedTrackId { get; set; }
     public double CachedTargetSeconds { get; set; }
 
+    // D32: 3 秒のタイムアウトで確定を打ち切った後も、同じギャップに居る間は目標一致フレームの
+    // 到着で確定し直せるように残す目標。Reset / 確定 / 新しい進入で解除する。
+    public Guid? LateConfirmTrackId { get; private set; }
+    public double LateConfirmTargetSeconds { get; private set; }
+    public string? LateConfirmPath { get; private set; }
+    public bool HasLateConfirmTarget => LateConfirmTargetSeconds > 0;
+
     public bool IsInactive => _currentState == GapState.Inactive;
 
     /// <summary>進入・再ロードの後に「目標位置のフレーム」が届いたか（D21・D21-b）。</summary>
@@ -108,6 +115,7 @@ public sealed class GapFreezeHandler
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
+        ClearLateConfirmTarget();
         _frameSeenSinceCapture = true;
         _seekRetryCount = 0;
     }
@@ -127,6 +135,7 @@ public sealed class GapFreezeHandler
         PendingTrackId = trackId;
         PendingTargetSeconds = targetSeconds;
         PendingPath = filePath;
+        ClearLateConfirmTarget();
         _frameSeenSinceCapture = false;
         _seekRetryCount = 0;
     }
@@ -173,6 +182,7 @@ public sealed class GapFreezeHandler
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
+        ClearLateConfirmTarget();
     }
 
     public void ForceFreezeComplete()
@@ -181,9 +191,36 @@ public sealed class GapFreezeHandler
         StartedAt = DateTime.MinValue;
         // タイムアウト時の表示は、確定済みの最終画像として再利用しない。
         ClearCachedFrameInfo();
+        // D32: 打ち切った目標は、同じギャップに居る間だけ遅延確定のために残す
+        // （届いたフレームで確定し直す。Cached には入れない = 最終画像として認定しない）。
+        LateConfirmTrackId = PendingTargetSeconds > 0 ? PendingTrackId : null;
+        LateConfirmTargetSeconds = PendingTargetSeconds > 0 ? PendingTargetSeconds : 0;
+        LateConfirmPath = PendingTargetSeconds > 0 ? PendingPath : null;
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
+    }
+
+    /// <summary>
+    /// D32: タイムアウト後に目標一致フレームが遅れて届いたとき、その目標の捕捉を開き直す。
+    /// 呼び出し側は「届いた」ことを確認済みのフレーム位置で呼ぶ（FrameSeenSinceCapture を立てる）。
+    /// </summary>
+    public void ReopenCaptureForLateFrame()
+    {
+        if (!HasLateConfirmTarget)
+            return;
+        Guid? trackId = LateConfirmTrackId ?? CachedTrackId;
+        string? path = LateConfirmPath;
+        double target = LateConfirmTargetSeconds;
+        EnterFreezeCapture(trackId, target, path);
+        _frameSeenSinceCapture = true;
+    }
+
+    private void ClearLateConfirmTarget()
+    {
+        LateConfirmTrackId = null;
+        LateConfirmTargetSeconds = 0;
+        LateConfirmPath = null;
     }
 
     public bool HasTimedOut() =>
