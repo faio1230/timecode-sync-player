@@ -9,6 +9,9 @@ public sealed class TimecodeSyncService
 
     private DateTime _lastSyncSeekAt = DateTime.MinValue;
     private volatile bool _isLoadingFile;
+    // D27-b: ロード解除を、解除を起こした呼び出しと別の呼び出し（保持 LTC の再適用）でも
+    // ちょうど 1 回だけ回収できるようにする。解除が起きたら立て、回収したら下ろす。
+    private bool _fileLoadReleasePending;
     private DateTime _fileLoadStartedAt = DateTime.MinValue;
     private double _fileLoadStartPositionSeconds;
     private long _fileLoadStartedRenderedFrames;
@@ -56,6 +59,9 @@ public sealed class TimecodeSyncService
     }
 
     public bool IsLoadingFile => _isLoadingFile;
+
+    /// <summary>D27-b: 回収待ちのロード解除があるか。</summary>
+    public bool HasPendingFileLoadRelease => _fileLoadReleasePending;
 
     public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds,
         double requestedTargetSeconds = double.NaN)
@@ -116,6 +122,7 @@ public sealed class TimecodeSyncService
     {
         _latencyCompensator.MarkLoadSent(loadIssuedQpc);
         _isLoadingFile = true;
+        _fileLoadReleasePending = false;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _fileLoadStartedAt = now;
         _fileLoadStartPositionSeconds = Math.Max(0, startPositionSeconds);
@@ -135,6 +142,7 @@ public sealed class TimecodeSyncService
         if (_timeProvider.GetUtcNow().UtcDateTime - _fileLoadStartedAt > FileLoadTimeout)
         {
             _isLoadingFile = false;
+            _fileLoadReleasePending = true;
             _lastSyncSeekAt = _timeProvider.GetUtcNow().UtcDateTime;
             return true;
         }
@@ -148,6 +156,7 @@ public sealed class TimecodeSyncService
         }
 
         _isLoadingFile = false;
+        _fileLoadReleasePending = true;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _lastSyncSeekAt = now;                // ロード後デバウンスを再スタート
         return true;
@@ -161,12 +170,25 @@ public sealed class TimecodeSyncService
     /// <summary>
     /// D20-b: 保持 LTC（Duplicate）では通常の同期経路（ApplySync）が走らないため、
     /// ロード解除だけをここで観測できるようにする。解除された回だけ true を返す。
+    /// D27-b: 解除が同期コーディネーター側の完了（TryMarkFileLoaded）で先に起きた場合も、
+    /// 未回収の解除を 1 回だけ返す（保持 LTC の値の再適用を取りこぼさない）。
     /// </summary>
     public bool PollFileLoadRelease(double playbackSeconds, long renderedFrameCount)
     {
-        if (!_isLoadingFile)
-            return false;
-        return TryMarkFileLoaded(playbackSeconds, renderedFrameCount);
+        if (_isLoadingFile && TryMarkFileLoaded(playbackSeconds, renderedFrameCount))
+        {
+            // この呼び出しが解除を回収する。未回収フラグは残さない。
+            _fileLoadReleasePending = false;
+            return true;
+        }
+
+        if (_fileLoadReleasePending)
+        {
+            _fileLoadReleasePending = false;
+            return true;
+        }
+
+        return false;
     }
 
     public ITimecodeSyncSeekState SeekState => _seekState;

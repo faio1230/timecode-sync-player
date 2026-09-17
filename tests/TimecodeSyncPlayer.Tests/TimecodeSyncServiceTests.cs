@@ -263,6 +263,40 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
+    public void PollFileLoadRelease_WhenAnotherCallerReleasedTheLoad_ReturnsTrueOnce()
+    {
+        // D27-b: 解除が同期コーディネーター側の完了で先に起きても、保持 LTC の再適用が
+        // 回収できるようにする（S-4 の取りこぼし）。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var service = new TimecodeSyncService(engine, seekState);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+
+        service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5).Should().BeTrue();
+        service.IsLoadingFile.Should().BeFalse();
+        service.HasPendingFileLoadRelease.Should().BeTrue();
+
+        service.PollFileLoadRelease(playbackSeconds: 12.2, renderedFrameCount: 6).Should().BeTrue();
+        service.HasPendingFileLoadRelease.Should().BeFalse();
+        service.PollFileLoadRelease(playbackSeconds: 12.3, renderedFrameCount: 7).Should().BeFalse();
+    }
+
+    [Fact]
+    public void BeginFileLoad_ClearsPendingFileLoadRelease()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var service = new TimecodeSyncService(engine, seekState);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+        service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5).Should().BeTrue();
+
+        service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 5);
+
+        service.HasPendingFileLoadRelease.Should().BeFalse();
+        service.PollFileLoadRelease(playbackSeconds: 0.1, renderedFrameCount: 6).Should().BeFalse();
+    }
+
+    [Fact]
     public void TryMarkFileLoaded_GpuCompositing_OpensOnPublishedFrames_WithoutWaitingForCpuBitmaps()
     {
         // 出荷構成（GPU 合成）: 表示経路（OutputEngine）の公開数だけが進む。

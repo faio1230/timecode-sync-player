@@ -452,18 +452,29 @@ internal sealed class LtcSyncController
     /// <summary>
     /// D20-b (i): 保持 LTC（Duplicate）では通常の同期経路が走らないため、ロード解除だけを
     /// ここで観測し、解除されたら最後に受理したタイムコードを 1 回だけ適用する。
+    /// D27-b: 解除が Tick 側の保留シーク再送（同期コーディネーターの完了）に先を越されても、
+    /// 未回収の解除を回収して 1 回は適用する。着地先（clamp 位置）が決まらないうちは
+    /// 解除を消費しない。
     /// </summary>
     private void TryReapplyAfterFileLoadRelease()
     {
-        if (!_syncService.IsLoadingFile)
+        if (!_syncService.IsLoadingFile && !_syncService.HasPendingFileLoadRelease)
+            return;
+        if (_lastAcceptedLtcSeconds is not double accepted)
             return;
         if (_effects.GetPlaybackSeconds == null || _effects.GetTotalRenderedFrames == null)
             return;
         if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
             return;
-        if (!_syncService.PollFileLoadRelease(playback, _effects.GetTotalRenderedFrames()))
+
+        LtcSyncContext state = _effects.GetContext();
+        if (!state.IsPlayerReady || !state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
             return;
-        if (_lastAcceptedLtcSeconds is not double accepted)
+        // Single は尺が使えるまで待つ（保持値の clamp 着地先が決まらないため）。
+        if (state.Mode != SyncMode.Continue && !SeekBarUpdateState.IsUsableDuration(state.DurationSeconds))
+            return;
+
+        if (!_syncService.PollFileLoadRelease(playback, _effects.GetTotalRenderedFrames()))
             return;
 
         Log.Information(
