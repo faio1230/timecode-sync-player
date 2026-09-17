@@ -295,6 +295,8 @@ public sealed class LtcScenarioE2ETests
                 atSeconds = Math.Round(window.StartSeconds, 3),
                 frameUpdates = window.FrameUpdates,
                 positionAdvance = Math.Round(window.PositionAdvance, 3),
+                ltcAdvance = Math.Round(window.LtcAdvance, 3),
+                samples = window.Samples,
                 maxAbsError = JsonNumberOrNull(window.MaxAbsError),
                 settling = window.Settling,
             });
@@ -346,7 +348,8 @@ public sealed class LtcScenarioE2ETests
         window is not { } value
             ? "none"
             : $"index={value.Index} at={value.StartSeconds:F2}s updates={value.FrameUpdates} " +
-              $"advance={value.PositionAdvance:F3}s maxError={value.MaxAbsError:F3}s";
+              $"advance={value.PositionAdvance:F3}s ltcAdvance={value.LtcAdvance:F3}s " +
+              $"samples={value.Samples} maxError={value.MaxAbsError:F3}s";
 
     private static double? JsonNumberOrNull(double value) =>
         double.IsFinite(value) ? Math.Round(value, 3) : null;
