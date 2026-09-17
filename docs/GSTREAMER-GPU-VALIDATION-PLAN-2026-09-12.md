@@ -3351,3 +3351,4 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 - **判定: 統合。除去担当がシナリオ 22 + LTC ループ 14 + S-3（SegmentSeconds 8）を実機確認 → 候補 5**
 
 - **統合後 main（D33 込み、`12d2e38`）の実機確認（除去担当、2026-09-17 21:04、親が trx を確認）**: シナリオ 22/22、LTC ループ 14/14、S-3（MediaOut=8 < 尺 12）1/1（`clip boundary hold ltc=28.000 playback=8.044 clip=[0.000,8.000]`、範囲外 LTC 10 でも 8.033 で静止）。証跡 `TestResults/postmerge5/`（agent-b）。**判定: 候補 5（D32+D33）を作る**
+- **候補 5**（2026-09-17 21:04）: `TimecodeSyncPlayer-v0.4.2-3a122b5-setup.exe` 38,666,485 バイト、SHA-256 `70A6D8C30BAF6C521EBD8B8B276E5297C9AC74F235A5CB669BE8AB9CC466E68C`、zip 17,743,378 バイト `9C74FCF4337995CFC76AF8EC650D451BB11C99FE54F6A6725C2CC051D530F133`、ProductVersion `0.4.2+3a122b5…`（D32+D33 込み）。Taildrop で検証機へ。テストは main 3a122b5 以降でビルド
