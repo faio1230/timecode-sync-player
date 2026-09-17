@@ -8,6 +8,10 @@
 #        -MediaInOffsetSeconds N starts every track N seconds into its video)
 #       (the project .tsp is generated under the report directory, never in the
 #        media folder, and is removed after the run unless -KeepProject is set)
+#   powershell -File scripts\run-ltc-scenarios.ps1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
+#       (L-1 continuous-follow audit: seconds / tracks / window length; the default
+#        filter includes L-1. To run only the previous 22 scenarios:
+#        -Filter 'FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_')
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg, .NET SDK, the
 # target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
@@ -29,6 +33,9 @@ param(
     [string]$MediaDir = '',
     [string[]]$Media = @(),
     [double]$MediaInOffsetSeconds = 0,
+    [int]$FollowSeconds = 0,
+    [string]$FollowTracks = '',
+    [double]$FollowWindowSeconds = 0,
     [switch]$KeepProject,
     [switch]$SkipBuild
 )
@@ -327,6 +334,16 @@ $scenarioReport = Join-Path $ReportDir 'scenarios'
 New-Item -ItemType Directory -Force -Path $scenarioReport | Out-Null
 $env:TIMECODE_LTC_SCENARIO_REPORT_DIR = $scenarioReport
 if ($Cycles -gt 0) { $env:TIMECODE_LTC_SCENARIO_CYCLES = [string]$Cycles }
+# L-1: continuous-follow audit parameters (empty/0 keeps the test defaults).
+if ($FollowSeconds -gt 0) { $env:TCS_L1_FOLLOW_SECONDS = [string]$FollowSeconds }
+if (-not [string]::IsNullOrWhiteSpace($FollowTracks)) { $env:TCS_L1_TRACKS = $FollowTracks }
+if ($FollowWindowSeconds -gt 0) {
+    $env:TCS_L1_WINDOW_SECONDS = $FollowWindowSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+}
+if ($FollowSeconds -gt 0 -or -not [string]::IsNullOrWhiteSpace($FollowTracks) -or $FollowWindowSeconds -gt 0) {
+    Write-Output ('l1: follow_seconds=' + $env:TCS_L1_FOLLOW_SECONDS + ' tracks=' + $env:TCS_L1_TRACKS +
+        ' window_seconds=' + $env:TCS_L1_WINDOW_SECONDS)
+}
 
 # ---- build and run ---------------------------------------------------------
 # D23-c: Windows PowerShell 5.1 turns every stderr line of a native command into
