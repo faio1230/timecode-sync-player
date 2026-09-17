@@ -87,12 +87,19 @@ public sealed class GapFreezeHandler
     public Guid? CachedTrackId { get; set; }
     public double CachedTargetSeconds { get; set; }
 
+    /// <summary>
+    /// D32: Cached が「捕捉済みの目標」を表すか（目標 0 も有効なので値では判定できない）。
+    /// OnFreezeComplete で true、ClearCachedFrameInfo / ResetAll で false。
+    /// </summary>
+    public bool CachedTargetKnown { get; private set; }
+
     // D32: 3 秒のタイムアウトで確定を打ち切った後も、同じギャップに居る間は目標一致フレームの
-    // 到着で確定し直せるように残す目標。Reset / 確定 / 新しい進入で解除する。
+    // 到着で確定し直せるように残す目標。目標 0（MediaIn 0 の先頭フレーム）も有効な目標なので、
+    // 未設定は null で表す。Reset / 確定 / 新しい進入で解除する。
     public Guid? LateConfirmTrackId { get; private set; }
-    public double LateConfirmTargetSeconds { get; private set; }
+    public double? LateConfirmTargetSeconds { get; private set; }
     public string? LateConfirmPath { get; private set; }
-    public bool HasLateConfirmTarget => LateConfirmTargetSeconds > 0;
+    public bool HasLateConfirmTarget => LateConfirmTargetSeconds.HasValue;
 
     public bool IsInactive => _currentState == GapState.Inactive;
 
@@ -125,6 +132,7 @@ public sealed class GapFreezeHandler
         Reset();
         CachedTrackId = null;
         CachedTargetSeconds = 0;
+        CachedTargetKnown = false;
     }
 
     public void EnterFreezeCapture(Guid? trackId, double targetSeconds, string? filePath)
@@ -179,6 +187,7 @@ public sealed class GapFreezeHandler
         StartedAt = DateTime.MinValue;
         CachedTrackId = PendingTrackId ?? loadedTrackId;
         CachedTargetSeconds = PendingTargetSeconds;
+        CachedTargetKnown = true;
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
@@ -187,15 +196,17 @@ public sealed class GapFreezeHandler
 
     public void ForceFreezeComplete()
     {
+        // D32: 打ち切った目標は、同じギャップに居る間だけ遅延確定のために残す
+        // （届いたフレームで確定し直す。Cached には入れない = 最終画像として認定しない）。
+        // 目標 0 も有効なので値ではなく「捕捉中だったか」で判定する。
+        bool hadCapture = _currentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep;
         _currentState = GapState.FreezeComplete;
         StartedAt = DateTime.MinValue;
         // タイムアウト時の表示は、確定済みの最終画像として再利用しない。
         ClearCachedFrameInfo();
-        // D32: 打ち切った目標は、同じギャップに居る間だけ遅延確定のために残す
-        // （届いたフレームで確定し直す。Cached には入れない = 最終画像として認定しない）。
-        LateConfirmTrackId = PendingTargetSeconds > 0 ? PendingTrackId : null;
-        LateConfirmTargetSeconds = PendingTargetSeconds > 0 ? PendingTargetSeconds : 0;
-        LateConfirmPath = PendingTargetSeconds > 0 ? PendingPath : null;
+        LateConfirmTrackId = hadCapture ? PendingTrackId : null;
+        LateConfirmTargetSeconds = hadCapture ? PendingTargetSeconds : null;
+        LateConfirmPath = hadCapture ? PendingPath : null;
         PendingTrackId = null;
         PendingTargetSeconds = 0;
         PendingPath = null;
@@ -207,19 +218,30 @@ public sealed class GapFreezeHandler
     /// </summary>
     public void ReopenCaptureForLateFrame()
     {
-        if (!HasLateConfirmTarget)
+        if (LateConfirmTargetSeconds is not double target)
             return;
         Guid? trackId = LateConfirmTrackId ?? CachedTrackId;
         string? path = LateConfirmPath;
-        double target = LateConfirmTargetSeconds;
         EnterFreezeCapture(trackId, target, path);
         _frameSeenSinceCapture = true;
+    }
+
+    /// <summary>
+    /// D32: 遅延確定の待ち受け中に、このフレーム位置が残した目標と一致するか（±2 フレーム）。
+    /// 目標 0 でも成立する。
+    /// </summary>
+    public bool IsLateConfirmFrame(double positionSeconds, double fps)
+    {
+        if (LateConfirmTargetSeconds is not double target || !double.IsFinite(positionSeconds))
+            return false;
+        double frameSeconds = fps > 0 ? 1.0 / fps : 1.0 / DefaultFallbackFps;
+        return Math.Abs(positionSeconds - target) <= frameSeconds * 2.0;
     }
 
     private void ClearLateConfirmTarget()
     {
         LateConfirmTrackId = null;
-        LateConfirmTargetSeconds = 0;
+        LateConfirmTargetSeconds = null;
         LateConfirmPath = null;
     }
 
@@ -252,23 +274,37 @@ public sealed class GapFreezeHandler
     {
         CachedTrackId = null;
         CachedTargetSeconds = 0;
+        CachedTargetKnown = false;
     }
 
     /// <summary>
     /// D32: 新しい進入目標が、今のフリーズ画像（確定済み = Cached、捕捉中 = Pending）の目標と
     /// 異なるか。異なれば frozen を破棄してから新しい目標を捕捉する（前のギャップの絵が残るのを
     /// 防ぐ）。同じ目標の再進入では false（F-1 の周期再進入で frozen を捨てない）。
+    /// 目標 0（MediaIn 0 の先頭フレーム）も有効な目標として扱う。
     /// </summary>
     public bool ShouldDiscardFrozenFrame(Guid? trackId, double targetSeconds, double frameSeconds)
     {
-        if (targetSeconds <= 0 || !double.IsFinite(targetSeconds))
+        if (!double.IsFinite(targetSeconds))
             return false;
 
-        (Guid? knownTrackId, double knownTarget) = PendingTargetSeconds > 0
-            ? (PendingTrackId, PendingTargetSeconds)
-            : (CachedTrackId, CachedTargetSeconds);
-        if (knownTarget <= 0)
+        Guid? knownTrackId;
+        double knownTarget;
+        if (_currentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
+        {
+            // 捕捉中は Pending と比べる（目標 0 も含めて常に有効）。
+            knownTrackId = PendingTrackId;
+            knownTarget = PendingTargetSeconds;
+        }
+        else if (CachedTargetKnown)
+        {
+            knownTrackId = CachedTrackId;
+            knownTarget = CachedTargetSeconds;
+        }
+        else
+        {
             return false;
+        }
 
         if (knownTrackId != trackId)
             return true;

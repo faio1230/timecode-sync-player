@@ -1961,9 +1961,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         double fps = _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps;
         // D32: 3 秒のタイムアウトで打ち切った後でも、同じギャップの目標に一致するフレームが
         // 遅れて届いたら捕捉を開き直して確定する（タイムアウトは Held のまま待ち続けない保険）。
-        if (handler.CurrentState == GapState.FreezeComplete && handler.HasLateConfirmTarget &&
-            double.IsFinite(positionSeconds) &&
-            Math.Abs(positionSeconds - handler.LateConfirmTargetSeconds) <= 2.0 / fps)
+        if (handler.CurrentState == GapState.FreezeComplete &&
+            handler.IsLateConfirmFrame(positionSeconds, fps))
         {
             RequestGapFreezeLateFrameConfirm();
             return;

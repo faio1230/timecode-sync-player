@@ -148,6 +148,7 @@ public class GapFreezeHandlerTests
         handler.CurrentState.Should().Be(GapState.FreezeComplete);
         handler.CachedTrackId.Should().BeNull();
         handler.CachedTargetSeconds.Should().Be(0);
+        handler.HasLateConfirmTarget.Should().BeFalse();
     }
 
     // ---- D32: タイムアウト後の遅延確定 ----
@@ -190,6 +191,48 @@ public class GapFreezeHandlerTests
     }
 
     [Fact]
+    public void ForceFreezeComplete_RetainsTargetZero_AndReopensIt()
+    {
+        // D32: MediaIn 0 の先頭フレーム（目標 0）も有効な遅延確定の目標。
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 0.0, "head.mp4");
+
+        handler.ForceFreezeComplete();
+
+        handler.HasLateConfirmTarget.Should().BeTrue();
+        handler.LateConfirmTargetSeconds.Should().Be(0.0);
+        handler.LateConfirmTrackId.Should().Be(trackId);
+
+        handler.ReopenCaptureForLateFrame();
+
+        handler.CurrentState.Should().Be(GapState.EnteringFreeze);
+        handler.PendingTargetSeconds.Should().Be(0.0);
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsLateConfirmFrame_TargetZero_AcceptsFrameAtZero()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 0.0, "head.mp4");
+        handler.ForceFreezeComplete();
+
+        handler.IsLateConfirmFrame(0.0, 60).Should().BeTrue();
+        handler.IsLateConfirmFrame(0.01, 60).Should().BeTrue();
+        handler.IsLateConfirmFrame(0.1, 60).Should().BeFalse();
+        handler.IsLateConfirmFrame(double.NaN, 60).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsLateConfirmFrame_WithoutLateTarget_IsFalse()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.IsLateConfirmFrame(0.0, 60).Should().BeFalse();
+    }
+
+    [Fact]
     public void ReopenCaptureForLateFrame_WithoutLateTarget_DoesNothing()
     {
         var handler = new GapFreezeHandler();
@@ -212,7 +255,7 @@ public class GapFreezeHandlerTests
         handler.Reset();
 
         handler.HasLateConfirmTarget.Should().BeFalse();
-        handler.LateConfirmTargetSeconds.Should().Be(0);
+        handler.LateConfirmTargetSeconds.Should().BeNull();
         handler.LateConfirmTrackId.Should().BeNull();
         handler.LateConfirmPath.Should().BeNull();
     }
@@ -422,6 +465,44 @@ public class GapFreezeHandlerTests
 
         handler.ShouldDiscardFrozenFrame(trackId, 42.5, 1.0 / 30).Should().BeFalse();
         handler.ShouldDiscardFrozenFrame(trackId, 40.0, 1.0 / 30).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_NewTargetZero_DifferentFromKnown_IsTrue()
+    {
+        // D32: MediaIn 0 の先頭フレーム（目標 0）への進入も、別目標なら捨てる。
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 24.983, "tail.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        handler.ShouldDiscardFrozenFrame(trackId, 0.0, 1.0 / 60).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_KnownTargetZero_IsCompared()
+    {
+        // D32: 確定済みの目標 0 も有効（同じ目標 0 の再進入では捨てない、別トラックなら捨てる）。
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 0.0, "head.mp4");
+        handler.OnFreezeComplete(trackId);
+
+        handler.CachedTargetKnown.Should().BeTrue();
+        handler.ShouldDiscardFrozenFrame(trackId, 0.0, 1.0 / 60).Should().BeFalse();
+        handler.ShouldDiscardFrozenFrame(Guid.NewGuid(), 0.0, 1.0 / 60).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ShouldDiscardFrozenFrame_AfterClearCachedFrameInfo_IsFalse()
+    {
+        var handler = new GapFreezeHandler();
+        var trackId = Guid.NewGuid();
+        handler.EnterFreezeCapture(trackId, 42.5, "test.mp4");
+        handler.OnFreezeComplete(trackId);
+        handler.ClearCachedFrameInfo();
+
+        handler.ShouldDiscardFrozenFrame(Guid.NewGuid(), 10.0, 1.0 / 30).Should().BeFalse();
     }
 
     [Fact]

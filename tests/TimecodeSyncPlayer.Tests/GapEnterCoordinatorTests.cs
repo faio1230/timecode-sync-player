@@ -277,6 +277,25 @@ public class GapEnterCoordinatorTests
         handler.CachedTrackId.Should().BeNull();
     }
 
+    [Fact]
+    public void LoadNextTrackFirstFrame_TargetZero_ClearsFrozenFrameBeforeLoad()
+    {
+        // D32: MediaIn 0 の先頭フレーム（目標 0）でも別目標の破棄が効く。
+        var previous = CreateTrack(Guid.NewGuid(), path: "C:/c.mp4");
+        var next = CreateTrack(Guid.NewGuid(), path: "C:/a.mp4");
+        var (coord, handler, rec) = Build(r => { r.LoadedTrackId = previous.Id; });
+
+        handler.EnterFreezeCapture(previous.Id, 24.983, previous.FilePath);
+        handler.OnFreezeComplete(previous.Id);
+        rec.Calls.Clear();
+
+        coord.LoadNextTrackFirstFrameForGapFreeze(next, target: 0.0, duration: 25.0, fps: 60.0);
+
+        rec.Calls.Should().Contain("ClearGapFreezeFrame");
+        rec.Calls.IndexOf("ClearGapFreezeFrame").Should().BeLessThan(rec.Calls.IndexOf("LoadPausedAt"));
+        handler.PendingTargetSeconds.Should().Be(0.0);
+    }
+
     // ---- CaptureCurrentFrameForGapFreeze（D21-b (a)） ----
 
     [Fact]
