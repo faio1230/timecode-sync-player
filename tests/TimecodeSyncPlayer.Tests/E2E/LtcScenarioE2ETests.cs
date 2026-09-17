@@ -600,6 +600,9 @@ public sealed class LtcScenarioE2ETests
         public TrackInfo C => Tracks[2];
         public double OneFrame => 1.0 / (Tracks[0].FrameRate > 0 ? Tracks[0].FrameRate : 30.0);
 
+        /// <summary>信号断モードが停止（SetSignalLossMode(true)）か。既定のコンボ index 0 はランスルー。</summary>
+        public bool SignalLossStop { get; private set; }
+
         public static Scenario Start(string testId, bool continueMode, bool blackGap)
         {
             (string exePath, string? skipReason) = E2EAppRunner.ResolvePrereqs();
@@ -864,6 +867,7 @@ public sealed class LtcScenarioE2ETests
             string expected = stop ? "停止" : "ランスルー";
             WaitUntil(() => combo.SelectedItem?.Name.Contains(expected, StringComparison.Ordinal) == true,
                 5, $"信号断時の動作 {expected}");
+            SignalLossStop = stop;
         }
 
         private void Pause()
@@ -1239,7 +1243,12 @@ public sealed class LtcScenarioE2ETests
         /// <summary>head 参照が黒でないときだけ非黒を要求してよい（参照が無ければ要求する）。</summary>
         public bool HeadReferenceNotBlack(TrackInfo track) => !References.IsHeadReferenceBlack(track.Symbol);
 
-        /// <summary>保持ジャンプの共通判定: 位置が期待に入り、進行し、絵が期待トラック側であること。</summary>
+        /// <summary>
+        /// 保持ジャンプの共通判定: 期待位置に入り、進行し、絵が期待トラック側であること。
+        /// ランスルー（信号断モードが既定のコンボ index 0）は保持中も動画が走り続けるため、
+        /// 着地の期待は「着地目標 + 保持開始（PlayHeld 発行）からの経過秒」で動かす。
+        /// 停止モードの期待は固定。許容は 0.3 に確認フレーム 1 枚分を足す（D30 の確認は 1 フレーム遅れ得る）。
+        /// </summary>
         public void CheckHold(
             string name, double ltcTarget, TrackInfo track, double expectedPosition,
             string matrixExpectation, double holdSeconds, bool sampleBlackDuringJump = false)
@@ -1247,32 +1256,68 @@ public sealed class LtcScenarioE2ETests
             // LTC 表示の一致を待ってから位置を見ると、着地して再生が進んだ後に
             // 確認に入り目標±0.3 を通過済みのことがある。送出開始から位置を監視する。
             double sendSeconds = Math.Max(2.5, holdSeconds);
+            DateTime holdStart = DateTime.UtcNow;
             Signal.PlayHeld(ltcTarget, LtcFps, TimeSpan.FromSeconds(sendSeconds));
+            bool runThrough = !SignalLossStop;
+            double landingTolerance = PositionToleranceSeconds + OneFrame;
 
             // D26: ジャンプ発行から着地確認まで 50ms 間隔で画面を採り、黒（黒率 >= 0.99）を数える。
             // 参照が黒の素材では「黒」と「参照で静止」を画像で区別できないため数えない。
             bool blackJudgment = BlackJudgmentApplies(track);
             var jumpSamples = new List<FrameSignature>();
+            var follow = new List<(double Elapsed, double Expected, double Observed)>();
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(sendSeconds + 1);
             DateTime nextSample = DateTime.UtcNow;
             bool landed = false;
+            double lastElapsed = 0.0;
+            double lastExpected = double.NaN;
+            double lastObserved = double.NaN;
             while (true)
             {
-                double position = Position();
-                if (double.IsFinite(position) && Math.Abs(position - expectedPosition) <= PositionToleranceSeconds)
+                lastElapsed = (DateTime.UtcNow - holdStart).TotalSeconds;
+                lastExpected = HoldLandingExpectation.ExpectedPosition(expectedPosition, lastElapsed, runThrough);
+                lastObserved = Position();
+                if (!landed && HoldLandingExpectation.IsLanded(lastObserved, lastExpected, landingTolerance))
                 {
                     landed = true;
-                    break;
+                    Journal.Write("hold-landing", details: new
+                    {
+                        name,
+                        runThrough,
+                        mappedTarget = expectedPosition,
+                        elapsedSeconds = Math.Round(lastElapsed, 3),
+                        expected = Math.Round(lastExpected, 3),
+                        observed = Math.Round(lastObserved, 3),
+                        tolerance = Math.Round(landingTolerance, 3),
+                    });
+                }
+                else if (landed)
+                {
+                    // 着地後は「期待どおり進行しているか」の観測だけを残す（失敗条件にしない）。
+                    follow.Add((lastElapsed, lastExpected, lastObserved));
                 }
 
                 if (DateTime.UtcNow >= deadline) break;
-                if (sampleBlackDuringJump && blackJudgment && DateTime.UtcNow >= nextSample)
+                if (!landed && sampleBlackDuringJump && blackJudgment && DateTime.UtcNow >= nextSample)
                 {
                     jumpSamples.Add(Capture($"jump-black-{name}-{jumpSamples.Count + 1:D2}"));
                     nextSample = DateTime.UtcNow.AddMilliseconds(50);
                 }
 
                 Thread.Sleep(50);
+            }
+
+            if (follow.Count > 0)
+            {
+                Journal.Write("hold-follow", details: new
+                {
+                    name,
+                    samples = follow.Count,
+                    maxErrorSeconds = Math.Round(follow.Max(sample => Math.Abs(sample.Observed - sample.Expected)), 3),
+                    lastElapsed = Math.Round(follow[^1].Elapsed, 3),
+                    lastExpected = Math.Round(follow[^1].Expected, 3),
+                    lastObserved = Math.Round(follow[^1].Observed, 3),
+                });
             }
 
             if (sampleBlackDuringJump)
@@ -1305,7 +1350,9 @@ public sealed class LtcScenarioE2ETests
             WaitUntil(() => Math.Abs(LtcSeconds() - ltcTarget) <= 0.05, 6, $"保持 LTC {ltcTarget:F2} の受信");
             Journal.Write("hold", details: new { target = ltcTarget, observed = LtcSeconds() });
             landed.Should().BeTrue(
-                $"{name}: 位置が {expectedPosition:F3} ± {PositionToleranceSeconds:F1} に入る (position={Position():F3})");
+                $"{name}: 位置が {(runThrough ? $"{expectedPosition:F3} + 経過秒" : $"{expectedPosition:F3} 固定")}" +
+                $" ± {landingTolerance:F3} に入る (runThrough={runThrough} elapsed={lastElapsed:F3}" +
+                $" expected={lastExpected:F3} observed={lastObserved:F3})");
             double observed = Position();
             FrameSignature signature = Capture($"hold-{name}");
             ReferenceMatch match = References.Match(signature);
