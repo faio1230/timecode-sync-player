@@ -737,8 +737,8 @@ public sealed class LtcScenarioE2ETests
         /// <summary>
         /// 参照フレーム: 各トラックを読み込み、一時停止で MediaIn と MediaOut-1 フレームへ
         /// シークして画面を読み戻す（2.5 節）。同期 OFF・LTC 送信前に行う。
-        /// シーク後は前の採取と違う絵（位置は目標 ±1 フレーム）が届くまで最大 3 秒待つ。
-        /// 4K CPU 素材では 3×200ms では新しいフレームが描かれず、head と tail が同じ絵になった。
+        /// シーク後は位置が目標 ±1 フレームに入るまで最大 3 秒待つ（絵の変化は早期退出の条件で、
+        /// 前の採取と同じ絵でも位置が入れば採用する）。
         /// </summary>
         private void CaptureReferences()
         {
@@ -768,9 +768,10 @@ public sealed class LtcScenarioE2ETests
         }
 
         /// <summary>
-        /// シーク後の参照採取。前の採取と違う絵が届き、位置が目標 ±1 フレームに入るまで最大 3 秒待つ
-        /// （D25 の古いフレームを参照として固定しない）。3 秒待っても変わらなければ失敗する
-        /// （シーク後に新しいフレームが描かれない）。
+        /// シーク後の参照採取。位置が目標 ±1 フレームに入ったら完了（必須）。絵の変化は待ちを早く
+        /// 抜けるだけの条件で、前の採取と同じ絵でも位置が入れば採用し reference-same を残す
+        /// （現場素材の黒フェードアウト→フェードインのように正当に同じ絵になる場合がある）。
+        /// 3 秒待っても位置が目標に入らないときだけ失敗する。
         /// </summary>
         private FrameSignature CaptureReferenceAfterSeek(
             TrackInfo track, string kind, double target, FrameSignature? previous)
@@ -781,8 +782,21 @@ public sealed class LtcScenarioE2ETests
             {
                 FrameSignature signature = LtcScenarioFrameProbe.Capture(App, ReportDir, imageName, Journal);
                 double observed = Position();
-                if (ReferenceCaptureReadiness.IsReady(signature, previous, observed, target, OneFrame))
+                bool sameAsPrevious = previous is FrameSignature prev && prev.IsSameFrameAs(signature);
+                if (ReferenceCaptureReadiness.IsReady(observed, target, OneFrame))
+                {
+                    if (sameAsPrevious)
+                        Journal.Write("reference-same", details: new
+                        {
+                            symbol = track.Symbol,
+                            kind,
+                            attempt,
+                            target = Math.Round(target, 3),
+                            observed = JsonNumber(observed),
+                            note = "絵は前の採取と同じだが位置が目標 ±1 フレームに入ったため採用",
+                        });
                     return signature;
+                }
 
                 Journal.Write("reference-stale", details: new
                 {
@@ -791,7 +805,7 @@ public sealed class LtcScenarioE2ETests
                     attempt,
                     position = JsonNumber(observed),
                     target = Math.Round(target, 3),
-                    sameAsPrevious = previous is FrameSignature prev && prev.IsSameFrameAs(signature),
+                    sameAsPrevious,
                     nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
                 });
                 if (DateTime.UtcNow >= deadline)
@@ -803,7 +817,7 @@ public sealed class LtcScenarioE2ETests
                         attempts = attempt,
                     });
                     throw new TimeoutException(
-                        $"参照 {imageName} が前の採取と同一のまま取り直せない（3 秒待っても新しいフレームが描かれない。D25 の古いフレーム）");
+                        $"参照 {imageName} の位置が目標 {target:F3} ±1 フレームに入らない（3 秒待ってもシーク位置に到達しない）");
                 }
 
                 Thread.Sleep(200);

@@ -6,20 +6,14 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class ScenarioCapturePoliciesTests
 {
     [Theory]
-    [InlineData(false, false, true, true)]   // 前の採取と違う絵 + 目標位置 → 採取可
-    [InlineData(false, true, true, false)]   // 前と同じ絵（D25 の古いフレーム）→ まだ待つ
-    [InlineData(false, false, false, false)] // 位置が目標 ±1 フレームの外 → まだ待つ
-    [InlineData(true, false, true, true)]    // 前の採取が無い（最初の head）は位置が合えば可
-    public void ReferenceCaptureReadiness_RequiresAChangedPictureAtTheSeekTarget(
-        bool previousIsNull, bool sameAsPrevious, bool atTarget, bool expected)
-    {
-        FrameSignature candidate = Signature(10);
-        FrameSignature? previous = previousIsNull ? null : sameAsPrevious ? candidate : Signature(200);
-        double observedPosition = atTarget ? 5.0 : 9.0;
-
-        ReferenceCaptureReadiness.IsReady(candidate, previous, observedPosition, 5.0, 0.04)
-            .Should().Be(expected);
-    }
+    [InlineData(5.0, true)]    // 目標ちょうど
+    [InlineData(5.04, true)]   // 上限（目標 ±1 フレーム）
+    [InlineData(4.96, true)]   // 下限
+    [InlineData(4.95, false)]  // 外（下）
+    [InlineData(5.05, false)]  // 外（上）
+    [InlineData(double.NaN, false)]
+    public void ReferenceCaptureReadiness_RequiresThePositionAtTheTarget(double observedPosition, bool expected)
+        => ReferenceCaptureReadiness.IsReady(observedPosition, 5.0, 0.04).Should().Be(expected);
 
     [Theory]
     [InlineData(1.0, true)]
@@ -28,7 +22,4 @@ public sealed class ScenarioCapturePoliciesTests
     [InlineData(0.0, false)]
     public void JumpBlackPolicy_ExemptsJumpsIssuedFromABlackPicture(double beforeJumpBlackFraction, bool expected)
         => JumpBlackPolicy.IsExempt(beforeJumpBlackFraction).Should().Be(expected);
-
-    private static FrameSignature Signature(byte level) =>
-        new(level, level, level, 0.0, 4, [level, level, level, level, level, level, level, level, level, level, level, level]);
 }
