@@ -44,6 +44,28 @@ $appDir = Split-Path $AppExe -Parent
 if (-not $ReportDir) {
     $ReportDir = Join-Path $repoRoot ('TestResults\ltc-scenarios\' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))
 }
+
+# D23-b: the media folder and the report directory must not contain each other.
+# The runner deletes files under ReportDir\media; if that path were the media
+# folder itself (or ReportDir sat inside the media folder), a real media file
+# could be removed or the media folder written to. Checked before anything is
+# created, and exits with the prerequisite code.
+if ($MediaDir) {
+    if (-not (Test-Path -LiteralPath $MediaDir -PathType Container)) {
+        Write-Output ('PREREQ-ERROR MediaDir not found: ' + $MediaDir)
+        Write-Output 'SUMMARY prereq_failed=1'
+        exit 2
+    }
+    $mediaGuard = (Resolve-Path -LiteralPath $MediaDir).ProviderPath.TrimEnd([char]'\') + '\'
+    $reportGuard = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReportDir).TrimEnd([char]'\') + '\'
+    if ($mediaGuard.StartsWith($reportGuard, [StringComparison]::OrdinalIgnoreCase) -or
+        $reportGuard.StartsWith($mediaGuard, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Output 'PREREQ-ERROR MediaDir and ReportDir must not contain each other (pass a separate -ReportDir)'
+        Write-Output 'SUMMARY prereq_failed=1'
+        exit 2
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null
 $ReportDir = (Resolve-Path -LiteralPath $ReportDir).Path
 
@@ -54,11 +76,45 @@ Write-Output "report=$ReportDir"
 # D23(a): Windows PowerShell 5.1 wildcard-expands the -Target of
 # New-Item -ItemType HardLink, so media names containing brackets fail.
 # Call kernel32 directly and report GetLastError on failure.
-if (-not ('TcsHardLink' -as [type])) {
+if (-not ('Tcs.HardLink' -as [type])) {
     Add-Type -Namespace Tcs -Name HardLink -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
 public static extern bool CreateHardLinkW(string lpFileName, string lpExistingFileName, System.IntPtr lpSecurityAttributes);
+
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+public struct ByHandleFileInformation {
+    public uint FileAttributes;
+    public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+    public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+    public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+    public uint VolumeSerialNumber;
+    public uint FileSizeHigh;
+    public uint FileSizeLow;
+    public uint NumberOfLinks;
+    public uint FileIndexHigh;
+    public uint FileIndexLow;
+}
+
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle hFile, out ByHandleFileInformation info);
 '@
+}
+
+# D23-b: number of names (hard links) of a file. A file whose only name is under
+# ReportDir\media is not a link to media and must never be deleted.
+function Get-HardLinkCount([string]$Path) {
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+        [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+    try {
+        $info = New-Object Tcs.HardLink+ByHandleFileInformation
+        if (-not [Tcs.HardLink]::GetFileInformationByHandle($stream.SafeFileHandle, [ref]$info)) {
+            $code = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw ('GetFileInformationByHandle failed path=' + $Path + ' win32=' + $code)
+        }
+        return [int]$info.NumberOfLinks
+    } finally {
+        $stream.Dispose()
+    }
 }
 
 function New-HardLink([string]$LinkPath, [string]$TargetPath) {
@@ -88,6 +144,12 @@ function Remove-LinkedMediaArtifacts {
     foreach ($path in $paths) {
         $full = [IO.Path]::GetFullPath($path)
         if (-not $full.StartsWith($mediaRootFull, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+        # D23-b: delete only a name that is one of several links to the same data.
+        if ((Get-HardLinkCount $full) -lt 2) {
+            Write-Output ('cleanup_kept_non_link=' + $full)
+            continue
+        }
         [IO.File]::Delete($full)
     }
     if (@(Get-ChildItem -LiteralPath $mediaRoot -Force -ErrorAction SilentlyContinue).Count -eq 0) {
@@ -215,7 +277,12 @@ if ($MediaDir) {
     foreach ($mediaFile in @(Get-ChildItem -LiteralPath $MediaDir -File |
         Where-Object { $mediaExtensions -contains $_.Extension.ToLowerInvariant() })) {
         $linkPath = Join-Path $linkedMediaDir $mediaFile.Name
-        if (Test-Path -LiteralPath $linkPath) { [IO.File]::Delete($linkPath) }
+        if (Test-Path -LiteralPath $linkPath) {
+            if ((Get-HardLinkCount $linkPath) -lt 2) {
+                throw ('refusing to replace a non-link file under ReportDir\media: ' + $linkPath)
+            }
+            [IO.File]::Delete($linkPath)
+        }
         New-HardLink -LinkPath $linkPath -TargetPath $mediaFile.FullName
         $createdHardLinks += $linkPath
     }
