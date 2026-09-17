@@ -4,7 +4,8 @@ public sealed record TimelineQueryResult(
     TimelineQueryStatus Status,
     PlaylistTrack? Track,
     double MediaPositionSeconds,
-    PlaylistTrack? PreviousTrack);
+    PlaylistTrack? PreviousTrack,
+    PlaylistTrack? NextTrack = null);
 
 public enum TimelineQueryStatus
 {

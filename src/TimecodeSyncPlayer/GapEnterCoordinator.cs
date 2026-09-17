@@ -147,6 +147,46 @@ internal sealed class GapEnterCoordinator
         }
     }
 
+    public void LoadNextTrackFirstFrameForGapFreeze(PlaylistTrack nextTrack, double target, double duration, double fps)
+    {
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            _effects.ResetEndAdvanceTriggered();
+            if (!_effects.IsPlayerReady())
+                return;
+
+            _gapFreezeHandler.RecordPauseOwnership(_effects.IsPlaybackPaused?.Invoke() ?? false);
+
+            GapLoadCommandResult commandResult = _effects.LoadPausedAt(nextTrack.FilePath, target);
+
+            if (!commandResult.Load.Success)
+            {
+                Log.Warning(
+                    "Continue mode: gap freeze next-track load failed track={Track} target={Target:F3} error={Error} pauseOk={PauseOk}",
+                    nextTrack.Name, target, commandResult.Load.Error, commandResult.Pause.Success);
+                _gapFreezeHandler.ForceFreezeComplete();
+                return;
+            }
+
+            _effects.SetLoadedTrackId(nextTrack.Id);
+
+            _effects.ApplyPauseState(true);
+            _effects.ResetPlayerStateForNewTrack();
+            _effects.SetDuration(duration);
+            _effects.SetFps(fps);
+            _gapFreezeHandler.EnterFreezeCaptureWithReload(nextTrack.Id, target, nextTrack.FilePath);
+
+            Log.Information(
+                "Continue mode: loading next track first frame for gap freeze track={Track} target={Target:F3} duration={Duration:F3} fps={Fps:F3} loadOk={LoadOk} pauseOk={PauseOk}",
+                nextTrack.Name, target, duration, fps, commandResult.Load.Success, commandResult.Pause.Success);
+        }
+        finally
+        {
+            LogElapsed(nameof(LoadNextTrackFirstFrameForGapFreeze), started);
+        }
+    }
+
     public void LoadPreviousTrackFinalFrameForGapFreeze(PlaylistTrack previousTrack, double target, double duration, double fps)
     {
         long started = Stopwatch.GetTimestamp();

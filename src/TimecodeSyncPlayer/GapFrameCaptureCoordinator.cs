@@ -17,7 +17,8 @@ internal static class GapFrameCaptureCoordinator
         double targetSeconds,
         double fps,
         bool isNativeSeeking = false,
-        bool allowRedraw = false)
+        bool allowRedraw = false,
+        bool frameSeenSinceCapture = true)
     {
         if ((!hasFrame && !allowRedraw) || !isExpectedPath || isNativeSeeking)
             return GapFrameCaptureDecision.None;
@@ -27,6 +28,10 @@ internal static class GapFrameCaptureCoordinator
 
         if (state is GapState.EnteringFreeze or GapState.WaitingForFrameStep)
         {
+            // D21: 進入・再ロードの後に届いたフレームだけを最終フレームとして固定する。
+            if (!frameSeenSinceCapture)
+                return GapFrameCaptureDecision.None;
+
             return ContinueModePlaybackPolicy.ShouldCaptureFreezeFrameAfterFrameStep(
                 hasTimePosition,
                 actualPositionSeconds,
