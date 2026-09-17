@@ -16,6 +16,9 @@ internal sealed class SingleModeSyncCoordinator
     // 許容分だけ内側へ戻ったら解除する。
     private bool _clipBoundaryHeld;
 
+    /// <summary>D35-b: 終端ホールド中か（保持値への明示着地を抑止する判定に使う）。</summary>
+    public bool IsBoundaryHeld => _clipBoundaryHeld;
+
     public SingleModeSyncCoordinator(
         TimecodeSyncService syncService,
         SingleModeSyncEffects effects)
@@ -125,11 +128,7 @@ internal sealed class SingleModeSyncCoordinator
             if (_clipBoundaryHeld &&
                 ltcSeconds >= clipIn + boundaryTolerance && ltcSeconds <= clipOut - boundaryTolerance)
             {
-                _clipBoundaryHeld = false;
-                _effects.SetEndHold?.Invoke(false);
-                Log.Information(
-                    "Single mode: clip boundary hold released ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
-                    ltcSeconds, playbackSeconds, clipIn, clipOut);
+                ReleaseBoundaryHold("", ltcSeconds, playbackSeconds, clipIn, clipOut);
             }
             return _clipBoundaryHeld;
         }
@@ -141,13 +140,7 @@ internal sealed class SingleModeSyncCoordinator
             // 端に居ない（トラック差し替え後のロード直後など）。古いラッチを解除して、
             // 通常の着地シークで新しい端へ向かわせる。
             if (_clipBoundaryHeld)
-            {
-                _clipBoundaryHeld = false;
-                _effects.SetEndHold?.Invoke(false);
-                Log.Information(
-                    "Single mode: clip boundary hold released (playback left the boundary) ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
-                    ltcSeconds, playbackSeconds, clipIn, clipOut);
-            }
+                ReleaseBoundaryHold(" (playback left the boundary)", ltcSeconds, playbackSeconds, clipIn, clipOut);
             return false;
         }
 
@@ -160,6 +153,21 @@ internal sealed class SingleModeSyncCoordinator
                 ltcSeconds, playbackSeconds, clipIn, clipOut);
         }
         return true;
+    }
+
+    /// <summary>
+    /// D35-b: 境界ホールドの解除。解除と同時に保留シーク状態と保持着地のラッチを解除する
+    /// （ホールド中に残った端への pending が、新しい範囲内 LTC への着地シークを抑止するのを防ぐ）。
+    /// </summary>
+    private void ReleaseBoundaryHold(string suffix, double ltcSeconds, double playbackSeconds,
+        double clipIn, double clipOut)
+    {
+        _clipBoundaryHeld = false;
+        _effects.SetEndHold?.Invoke(false);
+        _effects.OnBoundaryHoldReleased?.Invoke();
+        Log.Information(
+            "Single mode: clip boundary hold released{Suffix} ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
+            suffix, ltcSeconds, playbackSeconds, clipIn, clipOut);
     }
 }
 
@@ -174,4 +182,6 @@ internal sealed record SingleModeSyncEffects(
     Func<long>? GetTotalRenderedFrames = null,
     Func<bool>? IsNativeSeeking = null,
     // D33: 終端ホールドの pause/resume（true = 端で一時停止、false = 解除して再開）。
-    Action<bool>? SetEndHold = null);
+    Action<bool>? SetEndHold = null,
+    // D35-b: 終端ホールドの解除通知。保留シーク状態と保持着地のラッチを解除する。
+    Action? OnBoundaryHoldReleased = null);

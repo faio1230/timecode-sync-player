@@ -128,7 +128,9 @@ internal sealed class SyncScenarioHarness
                 {
                     Operations.Add(new(held ? "clip-end-hold" : "clip-end-release"));
                     SetPaused(held);
-                }));
+                },
+                // D35-b: 境界ホールド解除時に保留シークと保持着地のラッチを解除する。
+                OnBoundaryHoldReleased: () => Controller.NotifyClipBoundaryHoldReleased()));
         Controller = new LtcSyncController(
             Playlist, _gap, _syncService,
             new LtcFrameProcessor(new TimecodeFpsSelector(), new TimecodeFrameDiagnostics()),
