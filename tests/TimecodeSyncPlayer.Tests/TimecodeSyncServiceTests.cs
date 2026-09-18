@@ -348,22 +348,56 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void EvaluateDecision_LandingWindowWithDeficitBelowHalfSeekCost_PrefersRateCatchUp()
+    public void EvaluateDecision_AfterASeekWithoutProgress_ClosesTheLandingWindow()
     {
-        // D37-d: L-1 実機の小さい誤差の領域（初期誤差 0.344s < 0.5 × シーク所要 1.0s）。
-        // 着地窓中でもシークを強制せず、速度補正に任せる。
+        // D37-d 前進ガード: 境界帯（実機 0.579s 不足 → シーク後 0.600s、前進なし）。
+        // 1 回のシークで前進しなければ窓を閉じ、通常の判断（速度補正）に戻る。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 6));
         var service = new TimecodeSyncService(engine, seekState, clock);
 
         service.NotifyLanding();
-        var state = new SyncPlaybackState(true, true, false, 1.744, 100.0, 60.0, 25.0);
+        engine.DecisionToReturn = new SyncDecision(
+            SyncActionType.Seek, 2.136, 0.579, 0.24, 60.0, 25.0, false, false);
+        service.EvaluateDecision(2.136, new SyncPlaybackState(true, true, false, 1.557, 100.0, 60.0, 25.0))
+            .Action.Should().Be(SyncActionType.Seek);
+        service.ReportSeekSent(2.136);
 
-        SyncDecision decision = service.EvaluateDecision(2.089, state); // delta 0.345
+        // 着地（位置はシーク目標に到達したが、LTC は進んで残差はむしろ増えた）。
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+        service.ShouldSuppressSeek(2.136, 0.24);
 
-        decision.Action.Should().Be(SyncActionType.None);
-        decision.RateCatchUpPreferred.Should().BeTrue("シーク所要の半分以下はシークで悪化する");
+        engine.DecisionToReturn = SyncDecision.None;
+        service.EvaluateDecision(3.099, new SyncPlaybackState(true, true, false, 2.499, 100.0, 60.0, 25.0));
+
+        engine.LastState!.RateCatchUpAllowed.Should().BeTrue(
+            "前進なしで窓を閉じ、このフレームから通常の判断に戻す");
+    }
+
+    [Fact]
+    public void EvaluateDecision_AfterASeekWithProgress_KeepsTheLandingWindow()
+    {
+        // 検証機の帯: 初期誤差 3.5s → 1 回目の着地後 1.8s（前進あり）→ 窓は開いたまま。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.NotifyLanding();
+        engine.DecisionToReturn = new SyncDecision(
+            SyncActionType.Seek, 4.5, 3.5, 0.24, 60.0, 25.0, false, false);
+        service.EvaluateDecision(4.5, new SyncPlaybackState(true, true, false, 1.0, 100.0, 60.0, 25.0))
+            .Action.Should().Be(SyncActionType.Seek);
+        service.ReportSeekSent(4.5);
+
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+        service.ShouldSuppressSeek(4.5, 0.24);
+
+        engine.DecisionToReturn = SyncDecision.None;
+        service.EvaluateDecision(2.8, new SyncPlaybackState(true, true, false, 1.0, 100.0, 60.0, 25.0));
+
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("前進している間は窓を開いたままにする");
     }
 
     [Fact]
