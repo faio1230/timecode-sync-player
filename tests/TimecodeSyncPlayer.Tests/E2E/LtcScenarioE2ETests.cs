@@ -267,16 +267,24 @@ public sealed class LtcScenarioE2ETests
                     $"（待機 {waited:F1}s、最後の誤差 {lastError:F3}s、連続 {stable}/{GateStableSamples}）");
             Thread.Sleep(100);
         }
+        double gateWaitedSeconds = (DateTime.Now - gateStartedAt).TotalSeconds;
         scenario.Journal.Write("l1-settle", details: new
         {
             track = track.Symbol,
             startGateSeconds,
-            waitedSeconds = Math.Round((DateTime.Now - gateStartedAt).TotalSeconds, 3),
+            waitedSeconds = Math.Round(gateWaitedSeconds, 3),
+            waitedLimitSeconds = FollowStartLimitSeconds,
             lastErrorSeconds = JsonNumberOrNull(lastError),
             stableSamples = GateStableSamples,
             gateSamples,
             worstAcceptedSeconds = JsonNumberOrNull(gateWorstAccepted),
         });
+
+        // 追従開始までの時間そのものを判定する。ここを見ないと、追従開始の遅さが
+        // 「ゲート待ち」に吸収されて合否に出ない（監査は追い付いた後から始まるため）。
+        gateWaitedSeconds.Should().BeLessThanOrEqualTo(FollowStartLimitSeconds,
+            $"{track.Symbol}: 追従開始まで {FollowStartLimitSeconds:F0} 秒以内" +
+            $"（実測 {gateWaitedSeconds:F2}s、標本 {gateSamples} 回、採用時の最悪 {gateWorstAccepted:F3}s）");
 
         // ゲート待ちで素材を消費しているため、残りに収まる長さに監査区間を丸める。基準は
         // 素材の終端ではなく「送出した信号の終わり」。信号は startLtc から signalSeconds 分しか
@@ -413,6 +421,13 @@ public sealed class LtcScenarioE2ETests
     /// 5 回 = 0.4 秒ぶん。位置表示が 20Hz 前後で振れるため、1 標本では真の誤差を見誤る。
     /// </summary>
     private const int GateStableSamples = 5;
+
+    /// <summary>
+    /// L-1: 追従開始までの上限（秒）。検証機の実測では、素直に追い付く素材が 0.52〜1.31 秒、
+    /// 追い付きを速度補正だけで詰める素材が 18.47〜19.73 秒で、間が空いている。シーク所要が
+    /// 2 秒前後の素材で着地に 2〜3 秒かかることを見込み、両側から離れた 5 秒に置く。
+    /// </summary>
+    private const double FollowStartLimitSeconds = 5.0;
 
     /// <summary>L-1: 1 回の停止の上限（秒）。</summary>
     private const double LongestFreezeLimitSeconds = 0.5;
