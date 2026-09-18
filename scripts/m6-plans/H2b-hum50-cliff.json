@@ -1,0 +1,14 @@
+{
+  "condition": "H2b-hum50-cliff",
+  "ltcFps": 25,
+  "ltcFpsMode": "fixed",
+  "settlingSeconds": 2.0,
+  "gapSeconds": 0.5,
+  "levels": [
+    { "name": "clean", "seconds": 20 },
+    { "name": "hum50_snr2", "seconds": 20, "humHz": 50, "humDb": 2 },
+    { "name": "hum50_snr1", "seconds": 20, "humHz": 50, "humDb": 1 },
+    { "name": "hum50_snr0_5", "seconds": 20, "humHz": 50, "humDb": 0.5 },
+    { "name": "hum50_snr0", "seconds": 20, "humHz": 50, "humDb": 0 }
+  ]
+}

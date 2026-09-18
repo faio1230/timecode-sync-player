@@ -1,0 +1,12 @@
+{
+  "condition": "D-sample-rate",
+  "ltcFps": 25,
+  "ltcFpsMode": "fixed",
+  "settlingSeconds": 2.0,
+  "gapSeconds": 0.5,
+  "levels": [
+    { "name": "clean", "seconds": 20 },
+    { "name": "gen44100", "seconds": 20, "generateSampleRate": 44100 },
+    { "name": "gen96000", "seconds": 20, "generateSampleRate": 96000 }
+  ]
+}

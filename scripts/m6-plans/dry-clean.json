@@ -1,0 +1,10 @@
+{
+  "condition": "dry-clean",
+  "ltcFps": 25,
+  "ltcFpsMode": "fixed",
+  "settlingSeconds": 2.0,
+  "gapSeconds": 0.5,
+  "levels": [
+    { "name": "clean", "seconds": 20 }
+  ]
+}
