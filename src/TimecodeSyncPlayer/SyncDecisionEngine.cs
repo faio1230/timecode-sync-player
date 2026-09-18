@@ -6,6 +6,14 @@ namespace TimecodeSyncPlayer;
 
 internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 {
+    /// <summary>
+    /// D37-d: 着地窓でシークを優先する下限（シーク所要見積りに対する比）。これは理論値では
+    /// なく調整値: 検証機の帯（残差 1,829ms / 学習値 1,866ms）でシーク側に倒れ、L-1 実測の
+    /// 小さい残差（数百 ms）で速度補正側に落ちるように選んだ。前進ガードと併用し、この
+    /// しきい値の境界帯（0.5〜1.0 倍）は着地後の観測で塞ぐ。
+    /// </summary>
+    internal const double LandingSeekPriorityFraction = 0.5;
+
     private readonly SyncDecisionOptions _options;
     private readonly SeekLatencyCompensator? _latencyCompensator;
     private readonly Func<double> _clockSeconds;
@@ -74,6 +82,15 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         return SyncDecision.Untrusted(fps, toleranceSeconds);
     }
 
+    /// <summary>0.4.5-A フェーズ 1: shadow の評価位置だけを sync.evaluate に残す。</summary>
+    public void RecordShadow(double ltcSeconds, SyncPlaybackState state, string reason)
+    {
+        if (!OutputTrace.Current.IsEnabled) return;
+        SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
+        double toleranceSeconds = ToleranceSeconds(fps.VideoFps, fps.TimecodeFps, _options.ToleranceFrames);
+        RecordEvaluate(ltcSeconds, state, toleranceSeconds, RawDelta(ltcSeconds, state), reason);
+    }
+
     public SyncDecision Decide(double ltcSeconds, SyncPlaybackState state)
     {
         SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
@@ -134,14 +151,23 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             EndRateCatchUp(escalated: false, Math.Abs(delta));
             if (traceEnabled)
                 RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "within-tolerance");
-            return SyncDecision.NoneWith(fps, toleranceSeconds);
+            // D37-d: 到達。サービスは着地窓をここで閉じる。
+            return SyncDecision.NoneWith(fps, toleranceSeconds, withinTolerance: true);
         }
 
         // D37-b: 実在の不足は、シーク 1 回の実測所要（未学習は 1.0 秒）以内ならシークを出さず
         // 速度補正に任せる。絵を止めずに 93ms/秒（着地窓は 200ms/秒）で詰める。
-        // D37-b2: ギャップ明け・切替の着地直後だけは、速度補正に任せずシークで着地させる。
+        // D37-b2: ギャップ明け・切替の着地直後は、速度補正に任せずシークで着地させる。
+        // D37-d: ただし着地窓中でも、不足がシーク所要の半分以下ならシークは誤差を増やすだけ
+        // （着地後残差 ≈ シーク所要。L-1 の 4K60 ロング GOP で実測: 0.34 秒 → シーク後 0.4〜1.8 秒）なので
+        // 速度補正に任せる。半分を超える帯（五分五分を含む）は着地優先でシークし、前進が
+        // 無ければサービス側の前進ガードが窓を閉じる。
         double absDelta = Math.Abs(delta);
-        if (state.RateCatchUpAllowed && _rateCatchUpLimitSeconds > 0 &&
+        bool landingSeekPriority = !state.RateCatchUpAllowed &&
+            _rateCatchUpLimitSeconds > 0 &&
+            absDelta > _rateCatchUpLimitSeconds * LandingSeekPriorityFraction;
+        if (_rateCatchUpLimitSeconds > 0 &&
+            (state.RateCatchUpAllowed || !landingSeekPriority) &&
             absDelta <= _rateCatchUpLimitSeconds)
         {
             BeginOrContinueRateCatchUp(absDelta);
@@ -202,6 +228,17 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     {
         string detail = FormattableString.Invariant(
             $"playback={state.PlaybackSeconds:F6} delta={delta ?? double.NaN:F6} tolerance={toleranceSeconds:F6} syncEnabled={state.SyncEnabled} hasTrack={state.HasCurrentTrack} isSeeking={state.IsSeeking} reason={reason}");
+        // 0.4.5-A フェーズ 1: 評価位置（shadow）は追記のみ。playback= / delta= の意味は変えない。
+        if (state.EvalPositionSeconds is double evalPosition)
+        {
+            detail = FormattableString.Invariant(
+                $"{detail} evalPosition={evalPosition:F6} evalDelta={state.EvalDeltaSeconds.GetValueOrDefault(double.NaN):F6} evalBasis={state.EvalBasis ?? "none"} deliveredGen={state.EvalDeliveredGeneration} currentGen={state.EvalCurrentGeneration}");
+        }
+        if (state.ShadowRate is double shadowRate)
+        {
+            detail = FormattableString.Invariant(
+                $"{detail} shadowRate={shadowRate:F5} shadowRateReason={state.ShadowRateReason ?? "none"}");
+        }
         if (!string.IsNullOrEmpty(gateDetail))
             detail = detail + " " + gateDetail;
         OutputTrace.Current.Record(new("sync.evaluate", "SYNC", Stopwatch.GetTimestamp(),
@@ -364,7 +401,16 @@ public sealed record SyncPlaybackState(
     double? MediaOutSeconds = null,
     // D37-b2: ギャップ明け・トラック切替の着地直後は false。速度補正優先をやめてシークで着地する
     // （着地の瞬間は画面が黒／フリーズで、シークによる静止が見えないため）。
-    bool RateCatchUpAllowed = true);
+    bool RateCatchUpAllowed = true,
+    // 0.4.5-A フェーズ 1: 評価位置（shadow）。trace に eval* として併記するだけで、判断には使わない。
+    double? EvalPositionSeconds = null,
+    double? EvalDeltaSeconds = null,
+    string? EvalBasis = null,
+    ulong EvalDeliveredGeneration = 0,
+    ulong EvalCurrentGeneration = 0,
+    // 0.4.5-A フェーズ 1: 着地未確認中に「出したとしたら」の Smooth レート（適用はしない）。
+    double? ShadowRate = null,
+    string? ShadowRateReason = null);
 
 public enum SyncActionType
 {
@@ -387,7 +433,9 @@ public sealed record SyncDecision(
     // D37-b: 不足がシーク 1 回の実測所要以内なので、シークではなく速度補正に任せる。
     bool RateCatchUpPreferred = false,
     // D37-b: シーク中・着地未確認のため、このフレームの位置を使った判定をしてはいけない。
-    bool PositionUntrusted = false)
+    bool PositionUntrusted = false,
+    // D37-d: 誤差が許容内に入った（着地エピソードの到達）。サービスは着地窓を閉じる。
+    bool WithinTolerance = false)
 {
     public static SyncDecision None { get; } = new(
         SyncActionType.None,
@@ -400,7 +448,7 @@ public sealed record SyncDecision(
         false);
 
     public static SyncDecision NoneWith(SyncFpsResolution fps, double toleranceSeconds,
-        bool gateDeferred = false, bool rateCatchUp = false) => new(
+        bool gateDeferred = false, bool rateCatchUp = false, bool withinTolerance = false) => new(
         SyncActionType.None,
         0.0,
         0.0,
@@ -410,7 +458,8 @@ public sealed record SyncDecision(
         fps.UsedDefaultVideoFps,
         fps.UsedDefaultTimecodeFps,
         gateDeferred,
-        rateCatchUp);
+        rateCatchUp,
+        WithinTolerance: withinTolerance);
 
     /// <summary>
     /// D37-b: 位置を信用できないフレーム（シークの保留中・時間切れ後の再確認中）。

@@ -30,6 +30,12 @@ public interface IPlaybackApi
 
     bool TryGetTimePos(out double seconds);
 
+    /// <summary>
+    /// 0.4.5-A: 位置・基準・世代・最新配信 PTS を同じ瞬間の 1 スナップショットで返す。
+    /// ネイティブ DLL が未対応（_ex が無い）のときは旧 <see cref="TryGetTimePos"/> に落ちる。
+    /// </summary>
+    bool TryGetPositionSample(out PlaybackPositionSample sample);
+
     bool TryGetDuration(out double seconds);
 
     bool TryGetFps(out double fps);

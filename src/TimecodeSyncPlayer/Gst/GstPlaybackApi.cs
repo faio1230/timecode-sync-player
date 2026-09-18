@@ -13,6 +13,10 @@ namespace TimecodeSyncPlayer.Gst;
 internal sealed class GstPlaybackApi : IPlaybackApi
 {
     private readonly GstBackendState _state;
+    // 0.4.5-A: 旧 DLL に _ex が無い場合、1 回だけ警告して以後は旧経路に固定する。
+    private bool _timePosExUnavailable;
+    // 0.4.5-C: 旧 DLL に GOP getter が無い場合、警告を無効化して固定する。
+    private bool _gopStatusUnavailable;
 
     public GstPlaybackApi(GstBackendState state)
     {
@@ -239,6 +243,53 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         }
     }
 
+    public bool TryGetPositionSample(out PlaybackPositionSample sample)
+    {
+        sample = default;
+        IntPtr player = Player;
+        if (player == IntPtr.Zero) return false;
+
+        if (!_timePosExUnavailable)
+        {
+            try
+            {
+                if (!_state.Native.TryGetTimePosEx(player, out GstNative.TcsPositionSample native))
+                    return false;
+                sample = MapPositionSample(native);
+                return true;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // 0.4.5-A: 旧 DLL（_ex なし）。1 回だけ警告し、以後は旧経路に固定する。
+                _timePosExUnavailable = true;
+                Log.Warning("GstPlaybackApi: tcs_player_get_time_pos_ex が DLL に無いため旧経路（TryGetTimePos）へフォールバックします");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "GstPlaybackApi.TryGetPositionSample 失敗");
+                return false;
+            }
+        }
+
+        if (!TryGetTimePos(out double seconds))
+            return false;
+        sample = new PlaybackPositionSample(seconds, PlaybackPositionBasis.Pipeline, 0, 0, 0, 0);
+        return true;
+    }
+
+    private static PlaybackPositionSample MapPositionSample(GstNative.TcsPositionSample native) =>
+        new(native.Seconds,
+            native.Basis switch
+            {
+                1 => PlaybackPositionBasis.Pipeline,
+                2 => PlaybackPositionBasis.Delivered,
+                _ => PlaybackPositionBasis.None,
+            },
+            native.Generation,
+            native.DeliveredSeconds,
+            native.DeliveredGeneration,
+            native.CurrentGeneration);
+
     public bool TryGetDuration(out double seconds)
     {
         seconds = 0;
@@ -272,6 +323,46 @@ internal sealed class GstPlaybackApi : IPlaybackApi
             return false;
         }
     }
+
+    /// <summary>
+    /// 0.4.5-C: ロング GOP 警告のポーリング。active=0 は「未計測」であり
+    /// 「異常なし」ではない（UI は何も出さない）。表示だけの診断値。
+    /// </summary>
+    public bool TryGetGopStatus(out GopStatus status)
+    {
+        status = default;
+        IntPtr player = Player;
+        if (player == IntPtr.Zero) return false;
+        if (_gopStatusUnavailable) return false;
+        try
+        {
+            if (!_state.Native.TryGetGopStatus(player, out GstNative.TcsGopStatus native))
+                return false;
+            status = MapGopStatus(native);
+            return true;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // 旧 DLL（GOP getter なし）。1 回だけ警告し、以後は何も出さない。
+            _gopStatusUnavailable = true;
+            Log.Warning("GstPlaybackApi: tcs_player_get_gop_status が DLL に無いためロング GOP 警告を無効化します");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "GstPlaybackApi.TryGetGopStatus 失敗");
+            return false;
+        }
+    }
+
+    private static GopStatus MapGopStatus(GstNative.TcsGopStatus native) =>
+        new(native.State,
+            native.Active != 0,
+            native.Keyframes,
+            native.MaxIntervalSec,
+            native.PendingSec,
+            native.ThresholdSec,
+            native.WarningQpc);
 
     public string GetPath()
     {
@@ -356,3 +447,17 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         }
     }
 }
+
+/// <summary>
+/// 0.4.5-C: shim のロング GOP 検出スナップショット。State は
+/// <see cref="LongGopWarningMonitor.StateMeasuring"/> /
+/// <see cref="LongGopWarningMonitor.StateWarning"/>。
+/// </summary>
+internal readonly record struct GopStatus(
+    int State,
+    bool Active,
+    ulong Keyframes,
+    double MaxIntervalSeconds,
+    double PendingSeconds,
+    double ThresholdSeconds,
+    ulong WarningQpc);

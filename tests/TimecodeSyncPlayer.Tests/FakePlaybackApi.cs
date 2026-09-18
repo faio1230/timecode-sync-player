@@ -72,6 +72,13 @@ internal sealed class FakePlaybackApi : IPlaybackApi
         return true;
     }
 
+    public bool TryGetPositionSample(out PlaybackPositionSample sample)
+    {
+        sample = new PlaybackPositionSample(
+            TimePos, PlaybackPositionBasis.Pipeline, 0, 0, 0, 0);
+        return true;
+    }
+
     public bool TryGetDuration(out double seconds)
     {
         seconds = Duration;

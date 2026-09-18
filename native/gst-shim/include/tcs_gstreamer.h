@@ -89,6 +89,21 @@ typedef struct TcsStats {
   uint64_t generation;
 } TcsStats;
 
+/* 0.4.5-C: long-GOP warning state, safe to poll from the owner thread.
+ * active=0 means "no GOP probe" (not loaded, decodebin fallback, or the
+ * probe was torn down): the owner must not read that as "no problem".
+ * max_interval_sec = 0 while the interval is unconfirmed. The warning
+ * latches; it is never cleared before the next load. */
+typedef struct TcsGopStatus {
+  int32_t  state;              /* 0 = measuring, 1 = warning (latched) */
+  int32_t  active;             /* 1 = a video chain with the GOP probe is built */
+  uint64_t keyframes;          /* keyframes observed since load */
+  double   max_interval_sec;   /* max keyframe interval (0 = unconfirmed) */
+  double   pending_sec;        /* current buffer PTS - anchor PTS */
+  double   threshold_sec;      /* effective threshold */
+  uint64_t warning_qpc;        /* QPC when latched (0 = none) */
+} TcsGopStatus;
+
 /* ---- delivery trace (problem H instrumentation) ----
  * Every on_new_sample arrival appends one event. qpc is the same
  * QueryPerformanceCounter clock the compositor uses, so the owner can
@@ -104,7 +119,10 @@ typedef struct TcsDeliveryEvent {
                           * 8=position snapshot (tcs_player_get_time_pos):
                           * running_ns=queried position, pts_ns/seq=newest
                           * delivered frame at the same instant; only emitted
-                          * while the output trace is enabled */
+                          * while the output trace is enabled,
+                          * 16=the position snapshot took the delivered-PTS
+                          * fallback (pipeline query failed): running_ns=the
+                          * returned fallback value (= pts_ns) */
 } TcsDeliveryEvent;
 
 typedef struct TcsDeliveryStats {
@@ -211,6 +229,32 @@ TCS_GST_API int tcs_player_set_decode_mode(TcsPlayer* player, int mode);
 
 /* Media-time queries (seconds). TCS_OK or TCS_ERR_NOT_LOADED. */
 TCS_GST_API int tcs_player_get_time_pos(TcsPlayer* player, double* out_sec);
+
+/* 0.4.5-A: which clock the returned position is on. */
+#define TCS_POSITION_BASIS_NONE      0
+#define TCS_POSITION_BASIS_PIPELINE  1  /* gst_element_query_position */
+#define TCS_POSITION_BASIS_DELIVERED 2  /* newest delivered video frame stream PTS */
+
+/* One coherent snapshot (taken under the player's frame lock):
+ *   seconds            same value as tcs_player_get_time_pos
+ *   basis              TCS_POSITION_BASIS_* of `seconds`
+ *   generation         generation `seconds` belongs to
+ *   delivered_seconds  newest delivered video frame PTS (0 = none)
+ *   delivered_generation  generation of delivered_seconds (0 = none)
+ *   current_generation player generation at the same instant
+ * The delivered_* fields are filled on every TCS_OK path, so the owner can
+ * compare the delivered clock with the current generation while playing.
+ * TCS_OK, TCS_ERR_GENERIC (bad args) or TCS_ERR_NOT_LOADED (no pipeline). */
+typedef struct TcsPositionSample {
+  double   seconds;
+  int32_t  basis;
+  uint64_t generation;
+  double   delivered_seconds;
+  uint64_t delivered_generation;
+  uint64_t current_generation;
+} TcsPositionSample;
+
+TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample* out);
 TCS_GST_API int tcs_player_get_duration(TcsPlayer* player, double* out_sec);
 TCS_GST_API int tcs_player_get_fps(TcsPlayer* player, double* out_fps);
 TCS_GST_API int tcs_player_get_path(TcsPlayer* player, char* out, size_t out_len);
@@ -246,6 +290,9 @@ TCS_GST_API int tcs_player_send_image(TcsPlayer* player, const uint8_t* bgra,
                                       int width, int height, int pitch);
 
 TCS_GST_API int tcs_player_get_stats(TcsPlayer* player, TcsStats* out);
+/* 0.4.5-C: snapshot of the long-GOP detector. Takes no lock the streaming
+ * thread needs (dedicated gop lock only). TCS_OK or TCS_ERR_GENERIC. */
+TCS_GST_API int tcs_player_get_gop_status(TcsPlayer* player, TcsGopStatus* out);
 /* Convenience getters (avoid struct marshalling from .NET). */
 TCS_GST_API int tcs_player_decoder_name(TcsPlayer* player, char* out, size_t out_len);
 TCS_GST_API int tcs_player_spout_ready(TcsPlayer* player);

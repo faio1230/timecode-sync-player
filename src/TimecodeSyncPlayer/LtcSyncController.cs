@@ -150,6 +150,11 @@ internal sealed class LtcSyncController
     internal long CorrectionRejectedSamples => _correctionResidualGate.RejectedSamples;
 
     /// <summary>
+    /// 0.4.5-A フェーズ 1: 速度補正の着地窓（±0.20）が開いているか（shadow 記録用。状態は変えない）。
+    /// </summary>
+    public bool IsCorrectionLandingWindowActive() => _correction.IsLandingWindowActive(_getUtcNow());
+
+    /// <summary>
     /// 環境変数の解釈（T2 段 3: 既定 on）。明示的な off（大文字小文字不問）のときだけ無効。
     /// </summary>
     internal static bool IsSampleClockEnabled(string? value)

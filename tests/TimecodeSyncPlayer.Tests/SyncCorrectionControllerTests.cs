@@ -479,4 +479,48 @@ public class SyncCorrectionControllerTests
             actual.Should().Be(expected);
         }
     }
+
+    // ── 0.4.5-A フェーズ 1: shadow プレビュー（状態を変えない） ─────────
+
+    [Theory]
+    [InlineData(0.001, false, 1.0, "smooth-idle")]
+    [InlineData(0.004, false, 1.0, "smooth-deadband")]
+    [InlineData(0.050, false, 1.05, "smooth")]
+    [InlineData(0.050, true, 1.05, "smooth-landing")]
+    [InlineData(0.500, false, 1.10, "smooth")]
+    [InlineData(0.500, true, 1.20, "smooth-landing")]
+    [InlineData(double.NaN, false, 1.0, "invalid")]
+    public void PreviewSmoothRate_UsesTheSameBandsClampAndLandingWindow(
+        double residual, bool landing, double expectedRate, string expectedReason)
+    {
+        (double rate, string reason) = SyncCorrectionController.PreviewSmoothRate(residual, landing);
+
+        rate.Should().BeApproximately(expectedRate, 1e-9);
+        reason.Should().Be(expectedReason);
+    }
+
+    [Fact]
+    public void PreviewSmoothRate_DoesNotTouchControllerState()
+    {
+        var controller = new SyncCorrectionController();
+
+        _ = SyncCorrectionController.PreviewSmoothRate(0.500, landingWindowActive: true);
+
+        // 呼んだ後も新しいコントローラと同じ（ヒステリシスの状態が変わっていない）。
+        SyncCorrectionDecision decision = controller.Evaluate(
+            0.001, 1.0, SyncCorrectionMode.Smooth, true, T0);
+        decision.Action.Should().Be(SyncCorrectionActionType.None);
+        decision.Reason.Should().Be("smooth-idle");
+    }
+
+    [Fact]
+    public void IsLandingWindowActive_FollowsNotifyLanding()
+    {
+        var controller = new SyncCorrectionController();
+
+        controller.IsLandingWindowActive(T0).Should().BeFalse();
+        controller.NotifyLanding(T0);
+        controller.IsLandingWindowActive(T0.AddMilliseconds(500)).Should().BeTrue();
+        controller.IsLandingWindowActive(T0.AddSeconds(1.1)).Should().BeFalse();
+    }
 }

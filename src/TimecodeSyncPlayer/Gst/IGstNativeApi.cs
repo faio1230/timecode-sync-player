@@ -34,6 +34,12 @@ internal interface IGstNativeApi
     /// <summary>最初の load 前に 1 回だけ。GstNative.DecodeModeHardware / DecodeModeSoftware。</summary>
     int SetDecodeMode(IntPtr player, int mode);
     bool TryGetTimePos(IntPtr player, out double seconds);
+
+    /// <summary>
+    /// 0.4.5-A: 位置・基準・世代・最新配信 PTS を同じ瞬間に取る。旧 DLL にこの export が
+    /// 無い場合は <see cref="EntryPointNotFoundException"/> が飛ぶ（呼び出し側でフォールバック）。
+    /// </summary>
+    bool TryGetTimePosEx(IntPtr player, out GstNative.TcsPositionSample sample);
     bool TryGetDuration(IntPtr player, out double seconds);
     bool TryGetFps(IntPtr player, out double fps);
     string GetPath(IntPtr player);
@@ -52,6 +58,12 @@ internal interface IGstNativeApi
     /// <summary>配信トレース（問題 H の計測）。qpc は QPC 時計で events.jsonl と同じ基準。</summary>
     int DrainDeliveryEvents(IntPtr player, GstNative.TcsDeliveryEvent[] buffer, uint capacity, out uint count);
     int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats);
+
+    /// <summary>
+    /// 0.4.5-C: ロング GOP 警告の状態（ポーリング用）。active=0 は「未計測」。
+    /// 専用ロックのみで、フレーム供給のロックには触れない。
+    /// </summary>
+    bool TryGetGopStatus(IntPtr player, out GstNative.TcsGopStatus status);
 
     /// <summary>
     /// ステージ 6b: 共有リングの NT ハンドル・共有フェンス・寸法を取得する。

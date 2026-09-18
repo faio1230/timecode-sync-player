@@ -14,7 +14,7 @@ public class D37cFollowStartAndRatePathTests
     // ── 穴 1: 追従開始はシークで着地する ───────────────────────────
 
     [Fact]
-    public void FollowStart_FirstSyncRequest_ForcesSeekForSubSeekCostDeficit()
+    public void FollowStart_FirstSyncRequest_ForDeficitAboveHalfSeekCost_ForcesSeek()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: QpcFrom(clock));
@@ -26,42 +26,36 @@ public class D37cFollowStartAndRatePathTests
         h.RateAttempts.Clear();
 
         h.SetSyncEnabled(true);
-        h.SupplyLtc(1.5);                               // ずれ 0.5 秒（シーク所要の既定 1.0 秒以内）
+        h.SupplyLtc(1.8);                               // ずれ 0.8 秒（既定 1.0 秒の半分を超える）
 
         // 追従開始の着地窓が開き、速度補正ではなくシークで詰める。
         h.Operations.Where(o => o.Name == "seek").Should().ContainSingle()
-            .Which.Value.Should().BeApproximately(1.5, 1e-9);
+            .Which.Value.Should().BeApproximately(1.8, 1e-9);
     }
 
     [Fact]
-    public void FollowStartWindow_Expires_AndTheSameDeficitUsesRateCatchUp()
+    public void FollowStart_SmallDeficitBelowHalfSeekCost_DoesNotSeek()
     {
+        // D37-d: L-1 実機の小さい誤差（0.3 秒 < 0.5 × 既定 1.0 秒）では、着地窓中でも
+        // シークを強制しない（シークは誤差を増やすだけ）。前進ガードは境界帯用に残る
+        // （サービス単体で固定）。
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: QpcFrom(clock));
         h.AddTrack("track", 0, duration: 5);
         h.ChangeMode(SyncMode.Single);
-        h.ManualPlay();
-        h.SetSyncEnabled(false);
+        h.SetSyncEnabled(false);                        // まだ追従していない
         h.AdvancePlayback(1.0, renderedFrames: 2);
-        h.SetSyncEnabled(true);
-        h.SupplyLtc(1.5);                               // 追従開始 → シーク
-
-        // 着地させて保留を settle させる。
-        for (int i = 0; i < 5; i++)
-        {
-            clock.Advance(TimeSpan.FromMilliseconds(100));
-            h.AdvancePlayback(1.5 + (i * 0.04), renderedFrames: 1);
-            h.SupplyLtc(1.5 + (i * 0.04));
-        }
         h.Operations.Clear();
         h.RateAttempts.Clear();
 
-        clock.Advance(TimeSpan.FromSeconds(1.2));       // 着地窓（1 秒）を過ぎる
-        h.AdvancePlayback(1.5, renderedFrames: 1);
-        h.SupplyLtc(2.0);                               // 同じ 0.5 秒不足
+        h.SetSyncEnabled(true);
+        for (int i = 0; i < 4; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(40));
+            h.SupplyLtc(1.30 + (i * 0.01));            // ずれ 0.30〜0.33 秒（既定 1.0 秒の半分以下）
+        }
 
         h.Operations.Should().NotContain(o => o.Name == "seek");
-        h.RateAttempts.Should().NotBeEmpty("窓の外では従来どおり速度補正を優先する");
     }
 
     [Fact]
@@ -76,10 +70,10 @@ public class D37cFollowStartAndRatePathTests
 
         h.IsMonitoring = false;
         h.IsMonitoring = true;                          // 監視開始（同期は有効のまま）
-        h.SupplyLtc(1.5);
+        h.SupplyLtc(1.8);                               // 0.8 > 0.5 × 1.0
 
         h.Operations.Where(o => o.Name == "seek").Should().ContainSingle()
-            .Which.Value.Should().BeApproximately(1.5, 1e-9);
+            .Which.Value.Should().BeApproximately(1.8, 1e-9);
     }
 
     [Fact]

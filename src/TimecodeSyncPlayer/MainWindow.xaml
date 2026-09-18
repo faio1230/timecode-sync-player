@@ -280,11 +280,17 @@
                         <ComboBoxItem Content="Smooth" Tag="Smooth"/>
                         <ComboBoxItem Content="Jump" Tag="Jump"/>
                     </ComboBox>
-                    <TextBlock x:Name="SyncCorrectionStatusText"
-                               Grid.Row="1" Grid.ColumnSpan="4"
-                               AutomationProperties.AutomationId="SyncCorrectionStatusText"
-                               Foreground="#FFB300" FontSize="11" Margin="0,4,0,0"
-                               Text="{Binding Sync.SyncCorrectionStatus}"/>
+                    <StackPanel Grid.Row="1" Grid.ColumnSpan="4">
+                        <TextBlock x:Name="SyncCorrectionStatusText"
+                                   AutomationProperties.AutomationId="SyncCorrectionStatusText"
+                                   Foreground="#FFB300" FontSize="11" Margin="0,4,0,0"
+                                   Text="{Binding Sync.SyncCorrectionStatus}"/>
+                        <TextBlock x:Name="LongGopWarningText"
+                                   AutomationProperties.AutomationId="LongGopWarningText"
+                                   Foreground="#D7A24B" FontSize="11" Margin="0,2,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Sync.LongGopWarning}"/>
+                    </StackPanel>
                     <TextBlock Text="オフセット:" Foreground="#BBBBBB"
                                Grid.Row="2" Grid.Column="0"
                                VerticalAlignment="Center" Margin="0,6,8,0"/>
@@ -530,10 +536,20 @@
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Margin="4,3">
-                                <TextBlock Text="{Binding Name}"
-                                           TextTrimming="CharacterEllipsis"
-                                           ToolTip="{Binding FilePath}"
-                                           FontSize="13"/>
+                                <DockPanel>
+                                    <TextBlock x:Name="LongGopWarningText"
+                                               DockPanel.Dock="Right"
+                                               Text="{Binding LongGopWarningText}"
+                                               ToolTip="{Binding LongGopWarningTooltip}"
+                                               Foreground="#D7A24B"
+                                               FontSize="10"
+                                               Margin="6,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding Name}"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding FilePath}"
+                                               FontSize="13"/>
+                                </DockPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                     <TextBlock x:Name="TimelineRangeTextBlock"
                                                Foreground="#666666"

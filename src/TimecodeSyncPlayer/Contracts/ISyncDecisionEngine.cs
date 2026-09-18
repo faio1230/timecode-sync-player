@@ -25,4 +25,12 @@ public interface ISyncDecisionEngine
     /// 呼び出し側は要求を Deferred のまま維持する（既定実装は None）。
     /// </summary>
     SyncDecision WhilePositionUntrusted(SyncPlaybackState state) => SyncDecision.None;
+
+    /// <summary>
+    /// 0.4.5-A フェーズ 1: 通常の同期評価が走らないフレーム（ネイティブシーク中・位置未信頼）でも、
+    /// 評価位置（shadow）だけを sync.evaluate に残す。判断は変えない（既定実装は何もしない）。
+    /// </summary>
+    void RecordShadow(double ltcSeconds, SyncPlaybackState state, string reason)
+    {
+    }
 }
