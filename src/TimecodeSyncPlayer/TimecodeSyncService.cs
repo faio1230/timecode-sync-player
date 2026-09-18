@@ -14,6 +14,14 @@ public sealed class TimecodeSyncService
     // 0.4.5-A フェーズ 1: 評価位置（基準・世代から求めた shadow）を trace に併記する。
     // 判断には使わない。
     private readonly PlaybackPositionFeedback _positionFeedback = new();
+    // 0.4.5-A フェーズ 2: 評価位置を判断にも使う。既定 off（フェーズ 1 の挙動）。
+    // 実機で同等以上を確認してから既定を on にする。評価位置が得られないとき
+    // （旧 DLL、世代不一致）は on でも従来の抑制に落ちる。
+    private readonly bool _positionFeedbackEnabled =
+        string.Equals(Environment.GetEnvironmentVariable(PositionFeedbackEnvironmentVariable), "on",
+            StringComparison.OrdinalIgnoreCase);
+
+    internal const string PositionFeedbackEnvironmentVariable = "TCS_SYNC_POSITION_FEEDBACK";
     private TimecodeSyncSeekPendingStatus _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
     private double _publishedSeekCostSeconds = double.NaN;
     // D37-b2/D37-d: ギャップ明け・トラック切替・追従開始の着地エピソード。速度補正優先を
@@ -90,11 +98,19 @@ public sealed class TimecodeSyncService
         PublishSeekCost();
 
         // 0.4.5-A フェーズ 1: 評価位置は trace に併記するだけ（判断は現行のまま）。
+        // 0.4.5-A フェーズ 2（TCS_SYNC_POSITION_FEEDBACK=on）: 評価位置を判断にも使う。
+        bool hasEvalPosition = false;
         if (positionSample is { } sample)
+        {
             state = WithShadow(state, ltcSeconds, sample);
+            hasEvalPosition = state.EvalPositionSeconds.HasValue;
+        }
 
         // D37-b: シーク中・着地未確認の間は位置を使った判定をしない。
-        if (!_positionTrust.IsTrusted)
+        // フェーズ 2: 評価位置があれば、その区間も配信 PTS 基準で評価を続ける
+        // （シーク中はクエリ値が目標で凍結し誤差 0 に見えるが、評価位置は実際に育つ）。
+        // 評価位置が無いとき（旧 DLL・世代不一致で `_ex` が失敗）は従来どおり抑制する。
+        if (!_positionTrust.IsTrusted && !(_positionFeedbackEnabled && hasEvalPosition))
         {
             if (_positionTrust.IsReacquiring)
                 _positionTrust.Observe(state.PlaybackSeconds, NowSeconds());
