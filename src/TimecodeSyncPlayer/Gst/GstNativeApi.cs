@@ -117,6 +117,9 @@ internal sealed class GstNativeApi : IGstNativeApi
     public int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats)
         => GstNative.Imports.tcs_player_get_delivery_stats(player, out stats);
 
+    public bool TryGetGopStatus(IntPtr player, out GstNative.TcsGopStatus status)
+        => GstNative.Imports.tcs_player_get_gop_status(player, out status) == 0;
+
     public int GetRingInfo(IntPtr player, IntPtr[] handles, uint capacity, out uint count,
         out IntPtr fence, out int width, out int height)
         => GstNative.Imports.tcs_player_ring_info(player, handles, capacity, out count, out fence, out width, out height);

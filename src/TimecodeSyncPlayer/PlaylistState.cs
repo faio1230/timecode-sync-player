@@ -261,6 +261,20 @@ public sealed class PlaylistState : IPlaylistService
             RecalculateTimelineFrom(index);
     }
 
+    /// <summary>
+    /// 0.4.5-C: 指定トラックにロング GOP 警告の印を付ける（表示のみ・セッション内）。
+    /// 既に印があれば何もしない。Timeline の再計算は不要。
+    /// </summary>
+    public bool MarkLongGopWarning(Guid trackId)
+    {
+        int index = FindIndexById(trackId);
+        if (index < 0 || Tracks[index].LongGopWarning)
+            return false;
+
+        Tracks[index] = Tracks[index] with { LongGopWarning = true };
+        return true;
+    }
+
     public PlaylistTrack? FindTrackById(Guid id)
     {
         foreach (var track in Tracks)

@@ -15,6 +15,8 @@ internal sealed class GstPlaybackApi : IPlaybackApi
     private readonly GstBackendState _state;
     // 0.4.5-A: 旧 DLL に _ex が無い場合、1 回だけ警告して以後は旧経路に固定する。
     private bool _timePosExUnavailable;
+    // 0.4.5-C: 旧 DLL に GOP getter が無い場合、警告を無効化して固定する。
+    private bool _gopStatusUnavailable;
 
     public GstPlaybackApi(GstBackendState state)
     {
@@ -322,6 +324,46 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         }
     }
 
+    /// <summary>
+    /// 0.4.5-C: ロング GOP 警告のポーリング。active=0 は「未計測」であり
+    /// 「異常なし」ではない（UI は何も出さない）。表示だけの診断値。
+    /// </summary>
+    public bool TryGetGopStatus(out GopStatus status)
+    {
+        status = default;
+        IntPtr player = Player;
+        if (player == IntPtr.Zero) return false;
+        if (_gopStatusUnavailable) return false;
+        try
+        {
+            if (!_state.Native.TryGetGopStatus(player, out GstNative.TcsGopStatus native))
+                return false;
+            status = MapGopStatus(native);
+            return true;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // 旧 DLL（GOP getter なし）。1 回だけ警告し、以後は何も出さない。
+            _gopStatusUnavailable = true;
+            Log.Warning("GstPlaybackApi: tcs_player_get_gop_status が DLL に無いためロング GOP 警告を無効化します");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "GstPlaybackApi.TryGetGopStatus 失敗");
+            return false;
+        }
+    }
+
+    private static GopStatus MapGopStatus(GstNative.TcsGopStatus native) =>
+        new(native.State,
+            native.Active != 0,
+            native.Keyframes,
+            native.MaxIntervalSec,
+            native.PendingSec,
+            native.ThresholdSec,
+            native.WarningQpc);
+
     public string GetPath()
     {
         IntPtr player = Player;
@@ -405,3 +447,17 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         }
     }
 }
+
+/// <summary>
+/// 0.4.5-C: shim のロング GOP 検出スナップショット。State は
+/// <see cref="LongGopWarningMonitor.StateMeasuring"/> /
+/// <see cref="LongGopWarningMonitor.StateWarning"/>。
+/// </summary>
+internal readonly record struct GopStatus(
+    int State,
+    bool Active,
+    ulong Keyframes,
+    double MaxIntervalSeconds,
+    double PendingSeconds,
+    double ThresholdSeconds,
+    ulong WarningQpc);
