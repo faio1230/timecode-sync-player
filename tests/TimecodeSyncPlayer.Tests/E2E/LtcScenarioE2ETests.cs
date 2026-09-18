@@ -297,6 +297,11 @@ public sealed class LtcScenarioE2ETests
                 positionAdvance = Math.Round(window.PositionAdvance, 3),
                 ltcAdvance = Math.Round(window.LtcAdvance, 3),
                 samples = window.Samples,
+                intervalSeconds = Math.Round(window.IntervalSeconds, 3),
+                positionVelocity = window.IntervalSeconds > 0
+                    ? Math.Round(window.PositionAdvance / window.IntervalSeconds, 3)
+                    : 0.0,
+                sparse = window.Sparse,
                 maxAbsError = JsonNumberOrNull(window.MaxAbsError),
                 settling = window.Settling,
             });
@@ -320,6 +325,7 @@ public sealed class LtcScenarioE2ETests
             auditedWindows = summary.Windows.Count(window => !window.Settling),
             settlingWindows = summary.SettlingWindowCount,
             settlingMaxAbsError = JsonNumberOrNull(summary.SettlingMaxAbsError),
+            sparseWindows = summary.SparseWindowCount,
             stallUpdateWindows = summary.StallUpdateWindows,
             stallAdvanceWindows = summary.StallAdvanceWindows,
             maxAbsError = JsonNumberOrNull(summary.MaxAbsError),
@@ -333,13 +339,15 @@ public sealed class LtcScenarioE2ETests
             worstErrorWindow = WindowDetail(summary.WorstError),
         });
 
-        string excluded = $"除外 {summary.SettlingWindowCount} 窓（最大誤差 {summary.SettlingMaxAbsError:F3}s）";
+        string excluded = $"除外 {summary.SettlingWindowCount} 窓（最大誤差 {summary.SettlingMaxAbsError:F3}s）" +
+            $"・疎 {summary.SparseWindowCount} 窓";
         summary.Windows.Count(window => !window.Settling)
             .Should().BeGreaterThan(0, $"{track.Symbol}: 判定対象の窓が 1 つ以上ある（{excluded}）");
         summary.StallUpdateWindows.Should().Be(0,
             $"{track.Symbol}: 判定対象で frameUpdates=0 の窓が無い（{excluded}、最悪 {WindowDetail(summary.WorstUpdates)}）");
         summary.StallAdvanceWindows.Should().Be(0,
-            $"{track.Symbol}: 判定対象で位置が進まない窓が無い（{excluded}、最悪 {WindowDetail(summary.WorstAdvance)}）");
+            $"{track.Symbol}: 判定対象で再生側の停滞（LTC は窓長の半分以上進み、位置がその半分も進まない）の窓が無い" +
+            $"（{excluded}、最悪 {WindowDetail(summary.WorstAdvance)}）");
         summary.MaxAbsError.Should().BeLessThanOrEqualTo(PositionToleranceSeconds,
             $"{track.Symbol}: 判定対象の各窓の最大誤差が ±{PositionToleranceSeconds} 秒以内（{excluded}、最悪 {WindowDetail(summary.WorstError)}）");
     }
@@ -349,7 +357,8 @@ public sealed class LtcScenarioE2ETests
             ? "none"
             : $"index={value.Index} at={value.StartSeconds:F2}s updates={value.FrameUpdates} " +
               $"advance={value.PositionAdvance:F3}s ltcAdvance={value.LtcAdvance:F3}s " +
-              $"samples={value.Samples} maxError={value.MaxAbsError:F3}s";
+              $"samples={value.Samples} interval={value.IntervalSeconds:F3}s sparse={value.Sparse} " +
+              $"maxError={value.MaxAbsError:F3}s";
 
     private static double? JsonNumberOrNull(double value) =>
         double.IsFinite(value) ? Math.Round(value, 3) : null;
