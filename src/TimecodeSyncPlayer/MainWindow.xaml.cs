@@ -148,6 +148,28 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         string.Equals(Environment.GetEnvironmentVariable("TCS_LONG_GOP_WARNING"), "on",
             StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// D37-h: スキャン由来のシーク所要の見積もりを同期へ渡すか。<b>0.4.5 では既定で無効。</b>
+    ///
+    /// 見積もりは <c>最大ギャップ × 係数</c> で、これは「<b>ファイル中で最悪の場所に着地する</b>」
+    /// 前提である。実際にはキーフレームの近くへ落ちることが多く、そのとき<b>大きく行き過ぎる</b>。
+    /// 検証機の実測（候補 6）:
+    /// <list type="bullet">
+    /// <item>追従開始の 1 回目が <b>4/4 とも +2.53〜+2.64 秒の行き過ぎ</b>（見積もり 2.786、実コスト 0.19〜0.31）</item>
+    /// <item>その戻りシークが最悪の GOP 区間に着地して 2.2 秒かかる</item>
+    /// <item><b>シナリオ試験の失敗が 1 件 → 6 件に増えた。</b>先行量の最大が 0.171 秒 → 3.500 秒になり、
+    ///   着地位置そのものがテストの許容（±0.3 秒）を外れる（S-3 で 1 対 1 に追跡済み）</item>
+    /// <item>狙いだった M3 の追従開始も、5 回中 1 回が上限 5 秒を超えた（5.043 秒）</item>
+    /// </list>
+    /// <b>新しい機能が既存の合格を 5 件壊しているので、既定では渡さない。</b>
+    /// 正しい直し方は「最大ギャップからの点推定」をやめ、<b>キーフレーム列を見て着地先を選ぶ</b>こと
+    /// （docs/analysis/2026-09-19-keyframe-aware-seek-target.md）。0.4.6 で入れる。
+    /// 計測用に <c>TCS_SEEK_COST_HINT=on</c> で有効にできる。
+    /// </summary>
+    private readonly bool _seekCostHintEnabled =
+        string.Equals(Environment.GetEnvironmentVariable("TCS_SEEK_COST_HINT"), "on",
+            StringComparison.OrdinalIgnoreCase);
+
     // ── 同期コーディネータ（遅延生成キャッシュ。ラムダは this のフィールドのみを参照するため
     //    呼び出しごとの再生成は不要。初回呼び出し時に確定する） ──
     private SingleModeSyncCoordinator?  _singleModeSyncCoordinator;
@@ -1292,10 +1314,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             // 上限を付ける。スキャンが壊れても行き先が壊れないようにするための歯止め。
             double hint = Math.Min(
                 hintScan.MaxGapSeconds * SeekCostPerGapSecond, MaxSeekCostHintSeconds);
-            _syncService.SetSeekCostHintSeconds(hint);
+            // D37-h: 既定で渡さない。理由は下の定数のコメント。
+            _syncService.SetSeekCostHintSeconds(_seekCostHintEnabled ? hint : 0.0);
             Log.Information(
-                "Seek cost hint: track={Track} maxGapMs={Max:F0} hintMs={Hint:F0} keyframes={Keyframes}",
-                track?.Name, hintScan.MaxGapSeconds * 1000.0, hint * 1000.0, hintScan.Keyframes);
+                "Seek cost hint: track={Track} maxGapMs={Max:F0} hintMs={Hint:F0} keyframes={Keyframes} enabled={Enabled}",
+                track?.Name, hintScan.MaxGapSeconds * 1000.0, hint * 1000.0, hintScan.Keyframes,
+                _seekCostHintEnabled);
         }
 
         if (track != null && quality is GopSeekQuality.Warning or GopSeekQuality.Error
