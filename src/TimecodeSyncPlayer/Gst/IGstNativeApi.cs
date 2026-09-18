@@ -34,6 +34,12 @@ internal interface IGstNativeApi
     /// <summary>最初の load 前に 1 回だけ。GstNative.DecodeModeHardware / DecodeModeSoftware。</summary>
     int SetDecodeMode(IntPtr player, int mode);
     bool TryGetTimePos(IntPtr player, out double seconds);
+
+    /// <summary>
+    /// 0.4.5-A: 位置・基準・世代・最新配信 PTS を同じ瞬間に取る。旧 DLL にこの export が
+    /// 無い場合は <see cref="EntryPointNotFoundException"/> が飛ぶ（呼び出し側でフォールバック）。
+    /// </summary>
+    bool TryGetTimePosEx(IntPtr player, out GstNative.TcsPositionSample sample);
     bool TryGetDuration(IntPtr player, out double seconds);
     bool TryGetFps(IntPtr player, out double fps);
     string GetPath(IntPtr player);

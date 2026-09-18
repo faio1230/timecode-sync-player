@@ -104,7 +104,10 @@ typedef struct TcsDeliveryEvent {
                           * 8=position snapshot (tcs_player_get_time_pos):
                           * running_ns=queried position, pts_ns/seq=newest
                           * delivered frame at the same instant; only emitted
-                          * while the output trace is enabled */
+                          * while the output trace is enabled,
+                          * 16=the position snapshot took the delivered-PTS
+                          * fallback (pipeline query failed): running_ns=the
+                          * returned fallback value (= pts_ns) */
 } TcsDeliveryEvent;
 
 typedef struct TcsDeliveryStats {
@@ -211,6 +214,32 @@ TCS_GST_API int tcs_player_set_decode_mode(TcsPlayer* player, int mode);
 
 /* Media-time queries (seconds). TCS_OK or TCS_ERR_NOT_LOADED. */
 TCS_GST_API int tcs_player_get_time_pos(TcsPlayer* player, double* out_sec);
+
+/* 0.4.5-A: which clock the returned position is on. */
+#define TCS_POSITION_BASIS_NONE      0
+#define TCS_POSITION_BASIS_PIPELINE  1  /* gst_element_query_position */
+#define TCS_POSITION_BASIS_DELIVERED 2  /* newest delivered video frame stream PTS */
+
+/* One coherent snapshot (taken under the player's frame lock):
+ *   seconds            same value as tcs_player_get_time_pos
+ *   basis              TCS_POSITION_BASIS_* of `seconds`
+ *   generation         generation `seconds` belongs to
+ *   delivered_seconds  newest delivered video frame PTS (0 = none)
+ *   delivered_generation  generation of delivered_seconds (0 = none)
+ *   current_generation player generation at the same instant
+ * The delivered_* fields are filled on every TCS_OK path, so the owner can
+ * compare the delivered clock with the current generation while playing.
+ * TCS_OK, TCS_ERR_GENERIC (bad args) or TCS_ERR_NOT_LOADED (no pipeline). */
+typedef struct TcsPositionSample {
+  double   seconds;
+  int32_t  basis;
+  uint64_t generation;
+  double   delivered_seconds;
+  uint64_t delivered_generation;
+  uint64_t current_generation;
+} TcsPositionSample;
+
+TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample* out);
 TCS_GST_API int tcs_player_get_duration(TcsPlayer* player, double* out_sec);
 TCS_GST_API int tcs_player_get_fps(TcsPlayer* player, double* out_fps);
 TCS_GST_API int tcs_player_get_path(TcsPlayer* player, char* out, size_t out_len);
