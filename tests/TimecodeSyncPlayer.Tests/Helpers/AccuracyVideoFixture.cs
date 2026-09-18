@@ -21,6 +21,12 @@ internal static class AccuracyVideoFixture
     /// </summary>
     public const string GopOverrideEnvironmentVariable = "TCS_V3_GOP";
 
+    /// <summary>
+    /// M3-b: フィクスチャ素材の fps 上書き。"25,30,60" のように 3 本ぶんをカンマ区切りで指定する
+    /// （分数は "30000/1001"）。未設定なら既定の 24 / 29.97 / 60。マーカーは clip 1〜3 固定。
+    /// </summary>
+    public const string FpsOverrideEnvironmentVariable = "TCS_V3_FIXTURE_FPS";
+
     public static async Task<AccuracyFixture> CreateAsync(
         string reportDirectory,
         Action<string>? progress = null,
@@ -30,13 +36,16 @@ internal static class AccuracyVideoFixture
         Directory.CreateDirectory(directory);
         var clips = new List<AccuracyClip>();
         var playlist = new PlaylistState();
-        foreach (var spec in new[] { (Id: 1, Num: 24, Den: 1), (Id: 2, Num: 30000, Den: 1001), (Id: 3, Num: 60, Den: 1) })
+        int id = 0;
+        foreach (var spec in ResolveClipSpecs())
         {
-            int keyframeIntervalFrames = ResolveKeyframeIntervalFrames(spec.Num, spec.Den);
-            var clip = new AccuracyClip(spec.Id, $"accuracy-{spec.Id}-{spec.Num}-{spec.Den}", spec.Num, spec.Den,
-                (int)Math.Ceiling(12.0 * spec.Num / spec.Den), (spec.Id - 1) * 12, 0, 10,
-                Path.Combine(directory, $"clip-{spec.Id}.mp4"),
-                keyframeIntervalFrames, keyframeIntervalFrames * spec.Den / (double)spec.Num);
+            id++;
+            int keyframeIntervalFrames = ResolveKeyframeIntervalFrames(spec.Numerator, spec.Denominator);
+            var clip = new AccuracyClip(id, $"accuracy-{id}-{spec.Numerator}-{spec.Denominator}",
+                spec.Numerator, spec.Denominator,
+                (int)Math.Ceiling(12.0 * spec.Numerator / spec.Denominator), (id - 1) * 12, 0, 10,
+                Path.Combine(directory, $"clip-{id}.mp4"),
+                keyframeIntervalFrames, keyframeIntervalFrames * spec.Denominator / (double)spec.Numerator);
             progress?.Invoke($"encode-{clip.Id}");
             await EncodeAsync(clip);
             progress?.Invoke($"verify-{clip.Id}");
@@ -73,6 +82,37 @@ internal static class AccuracyVideoFixture
             return overrideFrames;
         }
         return (int)Math.Round(fpsNumerator / (double)fpsDenominator, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>
+    /// M3-b: フィクスチャ 3 本の fps 仕様。既定は 24 / 29.97 / 60。
+    /// <see cref="FpsOverrideEnvironmentVariable"/> があればそれを読む（マーカーは clip 1〜3 固定のため 3 本必須）。
+    /// </summary>
+    internal static IReadOnlyList<(int Numerator, int Denominator)> ResolveClipSpecs()
+    {
+        string? overrideValue = Environment.GetEnvironmentVariable(FpsOverrideEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(overrideValue))
+            return new[] { (24, 1), (30000, 1001), (60, 1) };
+        var specs = new List<(int Numerator, int Denominator)>();
+        foreach (string token in overrideValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string[] parts = token.Split('/');
+            if (parts.Length is < 1 or > 2 ||
+                !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int numerator) ||
+                numerator < 1)
+                throw new InvalidOperationException(
+                    $"{FpsOverrideEnvironmentVariable} は fps をカンマ区切りで指定してください（例 '25,30,60'、分数は '30000/1001'）: '{overrideValue}'");
+            int denominator = 1;
+            if (parts.Length == 2 &&
+                (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out denominator) || denominator < 1))
+                throw new InvalidOperationException(
+                    $"{FpsOverrideEnvironmentVariable} の分数指定が不正です（例 '30000/1001'）: '{token}'");
+            specs.Add((numerator, denominator));
+        }
+        if (specs.Count != 3)
+            throw new InvalidOperationException(
+                $"{FpsOverrideEnvironmentVariable} は 3 本ぶん指定してください（マーカーは clip 1〜3 固定）: '{overrideValue}'");
+        return specs;
     }
 
     /// <summary>fixture.json の中身。ltcFps は V3 の LTC fps マトリクス（24/25/29.97/30）で変わる。</summary>
