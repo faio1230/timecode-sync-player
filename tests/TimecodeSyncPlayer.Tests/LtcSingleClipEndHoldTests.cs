@@ -149,4 +149,38 @@ public sealed class LtcSingleClipEndHoldTests
         h.SupplyHeldLtc(10.0);
         SeekTargets(h).Should().Equal(new[] { 10.0 }, "同じ値の連続では繰り返さない");
     }
+
+    [Fact]
+    public void BoundaryHoldRelease_EndsTheFollowStartEpisode()
+    {
+        // D37-g の<b>配線</b>を固定する。
+        //
+        // 実機で起きたこと: 境界ホールド中は位置がクリップ端に固定され、ずれが許容内に入る
+        // ことが設計上ないため到達観測が起きず、追従開始の着地窓が上限 5 秒まで開いたままに
+        // なる。その状態で LTC が範囲内へ戻ると、復帰シークが追従開始の先行量を引き継いで
+        // 行き過ぎて着地した（E2E S-3 が 3/3 で落ちた形。実測で 0.3 秒行き過ぎ）。
+        //
+        // ここで固定するのは「NotifyClipBoundaryHoldReleased が追従開始のエピソードを
+        // 終わらせること」。**窓が開いたまま残る状況そのものはハーネスでは作れない**
+        // （D37-d の前進ガードが先に窓を閉じるため）ので、そこは E2E S-3 に任せる。
+        // サービス側の API（EndFollowStartLanding）の単体テストは V045APhase2Tests にある。
+        // 分けているのは、あちらが「API が正しい」、こちらが「API が呼ばれている」という
+        // 別の主張だから。
+        (SyncScenarioHarness h, _) = Arrange();
+        h.SyncService.SetSeekCostHintSeconds(2.0);
+        h.SyncService.NotifyLanding(LandingOrigin.FollowStart);
+
+        h.Controller.NotifyClipBoundaryHoldReleased();
+
+        SyncDecision decision = h.SyncService.EvaluateDecision(
+            10.0,
+            new SyncPlaybackState(
+                SyncEnabled: true, HasCurrentTrack: true, IsSeeking: false,
+                PlaybackSeconds: 7.0, DurationSeconds: 600.0,
+                VideoFps: 60.0, TimecodeFps: 25.0));
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().BeApproximately(10.0, 1e-9,
+            "境界ホールド解除で追従開始のエピソードが終わる。12.0 なら配線が入っていない");
+    }
 }
