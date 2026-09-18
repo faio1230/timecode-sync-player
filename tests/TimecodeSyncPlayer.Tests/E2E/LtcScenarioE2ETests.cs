@@ -236,6 +236,11 @@ public sealed class LtcScenarioE2ETests
         double signalEndLtc = startLtc + signalSeconds;
         scenario.Play(startLtc, signalSeconds);
 
+        // D37-c: 追従開始時の誤差そのもの（待ち時間だけでなく不足の大きさ）を記録する。
+        double followStartPosition = scenario.Position();
+        double followStartLtc = scenario.LtcSeconds();
+        double followStartError = Math.Abs(followStartPosition - track.SingleTarget(followStartLtc));
+
         DateTime gateStartedAt = DateTime.Now;
         double lastError = double.NaN;
         while (true)
@@ -255,6 +260,9 @@ public sealed class LtcScenarioE2ETests
             track = track.Symbol,
             startGateSeconds,
             waitedSeconds = Math.Round((DateTime.Now - gateStartedAt).TotalSeconds, 3),
+            firstPositionSeconds = Math.Round(followStartPosition, 3),
+            firstLtcSeconds = Math.Round(followStartLtc, 3),
+            firstErrorSeconds = JsonNumberOrNull(followStartError),
             lastErrorSeconds = JsonNumberOrNull(lastError),
         });
 
