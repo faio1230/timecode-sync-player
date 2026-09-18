@@ -40,6 +40,8 @@ public class PositionShadowTraceTests
         recorded.Detail.Should().Contain("evalBasis=pipeline");
         recorded.Detail.Should().Contain("deliveredGen=3");
         recorded.Detail.Should().Contain("currentGen=3");
+        recorded.Detail.Should().Contain("shadowRate=1.00000");
+        recorded.Detail.Should().Contain("shadowRateReason=smooth-idle");
     }
 
     [Fact]
@@ -69,6 +71,8 @@ public class PositionShadowTraceTests
         recorded.Detail.Should().Contain("evalBasis=delivered");
         recorded.Detail.Should().Contain("deliveredGen=3");
         recorded.Detail.Should().Contain("currentGen=4");
+        recorded.Detail.Should().Contain("shadowRate=1.10000");
+        recorded.Detail.Should().Contain("shadowRateReason=smooth");
     }
 
     private static string CreateTempDirectory()

@@ -112,14 +112,26 @@ public sealed class TimecodeSyncService
         _engine.RecordShadow(ltcSeconds, state, reason);
     }
 
+    /// <summary>0.4.5-A フェーズ 1: shadow の補正モード（MainWindow が配線。未配線は Smooth）。</summary>
+    public Func<SyncCorrectionMode>? CorrectionModeSource { get; set; }
+
+    /// <summary>0.4.5-A フェーズ 1: shadow の着地窓（±0.20）判定（MainWindow が配線。未配線は false）。</summary>
+    public Func<bool>? CorrectionLandingActiveSource { get; set; }
+
     private SyncPlaybackState WithShadow(SyncPlaybackState state, double ltcSeconds,
         in PlaybackPositionSample sample)
     {
         PlaybackPositionReading reading = _positionFeedback.Observe(sample, state.VideoFps);
+        double residualSeconds = ltcSeconds - reading.EvaluationSeconds;
+        SyncCorrectionMode mode = CorrectionModeSource?.Invoke() ?? SyncCorrectionMode.Smooth;
+        (double previewRate, string previewReason) = mode == SyncCorrectionMode.Smooth
+            ? SyncCorrectionController.PreviewSmoothRate(
+                residualSeconds, CorrectionLandingActiveSource?.Invoke() ?? false)
+            : (0.0, "not-smooth");
         return state with
         {
             EvalPositionSeconds = reading.EvaluationSeconds,
-            EvalDeltaSeconds = ltcSeconds - reading.EvaluationSeconds,
+            EvalDeltaSeconds = residualSeconds,
             EvalBasis = reading.Basis switch
             {
                 PlaybackPositionBasis.Delivered => "delivered",
@@ -128,6 +140,8 @@ public sealed class TimecodeSyncService
             },
             EvalDeliveredGeneration = sample.DeliveredGeneration,
             EvalCurrentGeneration = sample.CurrentGeneration,
+            ShadowRate = previewRate,
+            ShadowRateReason = previewReason,
         };
     }
 
