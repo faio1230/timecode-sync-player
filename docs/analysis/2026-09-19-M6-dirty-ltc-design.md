@@ -1,0 +1,126 @@
+# M6 設計: ダーティーな LTC の限界点測定（2026-09-19）
+
+**指示書**: `docs/prompts/2026-09-19-M6-dirty-ltc-margin.md`
+**方針**: 合否ではなく限界点。条件 A〜E を 1 つずつ振る。**加工は再生側（テストハーネス）で行い、アプリは変更しない。**
+**この文書の 4 本柱**: (1) degraded な音声の作り方 (2) D（サンプルレート不一致）の作り方
+(3) 既存の計器で足りるか (4) 実機時間の見積もり。
+
+---
+
+## 1. degraded な音声の作り方（共通）
+
+### 1-1. 加工点は 1 箇所
+
+現状の経路: `LtcSignalPlayer.Play()`
+→ `LtcTestSignalGenerator.Generate(timecodes, fps, SampleRate, options)`（`Helpers/LtcSignalPlayer.cs:94`）
+→ `PlaySamples()`（float32, デバイスのミックス形式で WASAPI 共有モード送出, `:219-248`）。
+
+**加工は「Generate の直後・PlaySamples の前」に 1 関数を挟む**（`SignalConditioning.Apply(samples, sampleRate, plan)`）。
+A/B は既存の `LtcTestSignalGenerator.Options` だけで作れる（`Helpers/LtcTestSignalGenerator.cs:25-45`）。
+C/D/E は波形後処理（ドロップアウトのゼロ埋め、リサンプル）で作る。**製品側は無変更。**
+
+### 1-2. 条件別の作り方
+
+| # | 条件 | 実装 | 式・注意 |
+| --- | --- | --- | --- |
+| A | ノイズ SNR 40/30/20/12/6 dB | `Options.NoiseAmplitude = N`（一様乱数、シード固定） | 矩形波 RMS=A、一様ノイズ RMS=N/√3 なので **N = A·√3·10^(−SNR/20)**。例 SNR30 → N=0.058、SNR12 → N=0.23、SNR6 → N=0.46。既存の往復試験は N=0.05/0.15（≒31/21dB）が通っている（`LtcDecoderRoundTripTests.cs:281-300`）ので、限界は 20〜30dB の間に見込み |
+| B | レベル −6/−20/−40/−60 dBFS、上側 +3dB | `Options.Amplitude = 10^(dB/20)` | +3dB は A=1.41（float 送出。VB-CABLE 側の扱いを見る）。−60dBFS=0.001。VB-CABLE のキャプチャが 16bit なら約 33 LSB で、ゼロクロスが残る限りデコードは成功しうる。**「壊れない」も結論** |
+| C | 10/50/200/600ms の無音を 5 秒ごと | 連続波形を作り、5 秒周期の先頭から X ms を **ゼロで上書き** | タイムコードは進めたまま該当区間を送出しない（テープのドロップアウト相当）。200〜600ms はサンプルクロック外挿の**上限 0.5 秒**と信号断タイムアウト **250ms**（`AppSettings.cs:28`）の切り替わり域。既存の `PlayWithSilence` は 1 回だけの無音なので、周期挿入は新ヘルパー（`PlayWithDropouts`）で行う |
+| D | 44.1kHz 生成 → 48kHz デバイス | 44.1kHz で `Generate` した波形を **48kHz へリサンプル**して送出（下記 2 節） | 共有モードの変換経路のモデル。実行時は計画 JSON で「生成レート」と「送出レート」を分ける |
+| E | ±50/±100 ppm | リサンプル比を **1 ± ppm×10⁻⁶** にした C/D と同じ後処理 | 例 +100ppm は波形長を 1/(1+100e-6) に線形リサンプル。比例制御の理論残差は 50〜100µs（`dirty-ltc-robustness-review.md` §1-1）なので、壊れる点を探すなら ±1000/±5000ppm を追加候補にする |
+
+**リサンプラ**: NAudio 2.2.1 の `WdlResamplingSampleProvider` を使う（無ければ線形補間で自作。テスト側のみ）。
+D で見たいのは「OS/デバイス変換を挟んだときに、アプリが検知せずとも壊れないか」。**OS の SRC そのものの再現ではない**点を報告に明記する。
+
+### 1-3. 計画の与え方
+
+条件プランを JSON（環境変数 `TCS_M6_DIRTY_PLAN` など）でテストへ渡す:
+
+```json
+{"condition":"A-noise","levels":[
+  {"name":"clean","seconds":20,"noiseDb":null},
+  {"name":"snr40","seconds":20,"noiseDb":40}, ...]}
+```
+
+1 run = 1 条件。レベルは phase として順に切替（**同時に複数を悪化させない**）。
+各レベルの開始/終了は `phases.jsonl` と `dirty-plan.json` の両方に記録し、解析で突き合わせる。
+
+## 2. D（サンプルレート不一致）の作り方（重点）
+
+- 現状: `LtcSignalPlayer` は **必ずデバイスのミックス形式**で生成・送出する（`SampleRate = device.AudioClient.MixFormat.SampleRate`、`:22`）。
+  WASAPI 共有モードはミックス形式以外を受けないため、**テスト側でリサンプルしてから**送出する。
+- 実装: `Generate(..., sampleRate: 44100)` → `Resample(mono, 44100 → SampleRate)` → `PlaySamples`。
+  比は 44100:48000 = 147:160。NAudio の `WdlResamplingSampleProvider` か線形補間。
+- 併せて **96kHz 生成 → 48kHz** を任意で 1 レベル追加（ダウンサンプルの折り返しノイズを見る）。
+- アプリ側の現状: `LtcAudioMonitor.Start()` は `new WasapiCapture()` の既定デバイス形式をそのまま使い（`:49`）、
+  レート不一致の検知・警告は**無い**。したがって D の結論は「検知しない」前提で、**精度・デコードが落ちるか**だけを見る。
+  ログの `LTC audio stats ... sampleRate= bits=` に実際のキャプチャ形式が出る（`LtcAudioMonitor` の 2 秒統計）。
+- 注意: 正しい 44.1→48 変換は**実時間を保つ**のでデコードは落ちない見込み。落ちるとすれば SRC の折り返し/帯域制限が
+  矩形波のゼロクロスを乱す場合。**「壊れない」が結論なら、それはアプリの検知が無いことの根拠になる**（§4 の表示・警告の話）。
+
+## 3. 既存の計器で足りるか
+
+| 見たいもの | 既存の計器 | 判定 |
+| --- | --- | --- |
+| デコード成功率 | アプリログの `LTC audio stats ... decodedFrames=`（**2 秒ごと**、`LtcAudioMonitor`）。トレースの `ltc` イベント数 | **足りる**（ログを run ごとに複製する追加が要る。V3 ランナーは現在ログを複製しない） |
+| D37-a が弾いた標本数 | `events.jsonl` の `sync.evaluate` の `gate_samples/median/consecutive/rejected`（`SyncDecisionEngine`、`run-v3-accuracy.ps1` は OUTPUT_TRACE を有効化済み） | **足りる** |
+| 同期誤差の分布 | `trace.jsonl`（`ltc`/`frame`）＋ `accuracy-samples.csv`。レベル窓ごとに再集計する専用スクリプトを追加 | **足りる**（集計は新規） |
+| 補正シーク回数 | `events.jsonl` の `load.issue` 等 | **足りる** |
+| 信号断の扱い（Stop / RunThrough） | 専用ログが見当たらない。`LtcSignalLossPolicy` / UI の `NO SIGNAL`（`LtcDisplayStateFormatter`）。`ltc` イベントの空白と `sync.evaluate` の reason で推定可能 | **推定で足りる**（正確な経路が必要なら「製品ログ追加」＝別作業。今回は範囲外） |
+| 表示タイムコードに化けた値 | トレースは**実秒のみ**（`SyncAccuracyTrace.RecordLtc` は `ToRealSeconds` を記録。生の HH:MM:SS:FF は無い） | **代理測定**: 秒列の跳び・逆行（1 フレーム超、非単調）を数える。生 digits が必要なら製品トレースの項目追加が要る＝今回の範囲外 |
+| レベル/ピーク | アプリログ `LTC audio stats ... peak= rms=` | **足りる** |
+
+**追加が要るもの（テスト側のみ）**: ① run ごとのアプリログ複製 ② 専用集計 `scripts/analyze-dirty-ltc.py`
+（レベル窓ごとの decode 率・誤差分布・秒列跳び・gate・seeks）③ 計画 JSON と波形加工ヘルパー。
+
+## 4. 実機時間の見積もり（判断材料）
+
+**1 run = 1 条件、レベルは phase で切替**が最小。1 run の実測根拠: 既存 V3 run はシナリオ 103 秒 + フィクスチャ生成
+（≒40 秒）+ 起動/解析で **約 2.5〜3 分**。
+
+| 条件 | レベル構成 | 各レベル | run 数 | 概算 |
+| --- | --- | ---: | ---: | ---: |
+| A ノイズ | clean + 40/30/20/12/6 dB | 20s | 1 | 2.5 分 |
+| B レベル | clean + +3/−6/−20/−40/−60 dBFS | 20s | 1 | 2.5 分 |
+| C 欠落 | 10/50/200/600 ms（5 秒周期） | 30s | 1 + 限界近傍 1 反復 | 3〜5 分 |
+| D レート | 44.1→48、96→48（任意） | 40s | 1 | 3 分 |
+| E ppm | −100/−50/+50/+100 ppm | 25s | 1 | 2.5 分 |
+| dry run | clean（ハーネス検証） | 30s | 1 | 2.5 分 |
+| **合計** | | | **6〜8 本** | **25〜40 分** |
+
+- 各レベル 20〜30 秒 = 25fps で 500〜750 サンプル。decode 率の分解能は 0.1〜0.2%。誤差分布の p5/p95 も十分。
+- **比較用の一案**: 1 レベル = 1 run にすると A6+B6+C4+D2+E4 = 22 本 ≈ 60〜70 分。**phase 切替方式なら 1/3 以下**。
+- 実機は 1 本ずつ・開始前に一報。run 間で VB-CABLE が空くのを確認（既存 V3 と同じ）。
+- 反復は限界近傍（A の 12/6dB、C の 200/600ms、D、E）に 1 本ずつ。ばらつきが大きければ追加。
+
+## 5. 分析と出力
+
+- `scripts/analyze-dirty-ltc.py`（新規）: `trace.jsonl` + `events.jsonl` + `phases.jsonl` + `dirty-plan.json` から
+  レベル窓ごとに decode 率（ltc イベント / 期待フレーム）、同期誤差（frame PTS − 対応 LTC 秒）の平均・p5・p95・最大、
+  秒列跳び/逆行、`gate_rejected`、`load.issue` 回数を出す。
+- 限界点は「成功率 100% の最大悪化レベル」と「最初に有意に落ちたレベル」の 2 点で表す。
+- 急峻か緩やかかを、レベルの順序に対する成功率・誤差のグラフ（表）で示す。
+
+## 6. やらないこと
+
+- 外部機器のアナログ経路（実機が要る。別途）。
+- 製品コードの修正、トレース項目の追加。
+- ノイズをアナログ領域で付加すること（本試験は**デジタル波形への付加**であり、その旨を報告に明記する）。
+
+## 7. リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| `WdlResamplingSampleProvider` が使えない | 線形リサンプラをテスト側に自作（比は有理数なので決定的） |
+| ノイズの SNR 定義が信号波形依存 | 矩形波 RMS=A を明記。`peak/rms` ログで実測を併記 |
+| B が −60dBFS でも壊れない | 「壊れない」を結論にする（量子化の LSB 数と併記） |
+| C の無音で時間code を進めるか止めるか | 進める（ドロップアウト）。0.5 秒外挿と 250ms タイムアウトの境目を明示 |
+| D のリサンプルが OS の SRC と違う | 「検知の有無と壊れ方」の確認であり、SRC 再現ではないと明記 |
+| 表示タイムコード化けの代理測定 | 秒列の跳び頻度を代理指標とし、生 digits 未記録を限界として書く |
+
+## 8. 次の一歩
+
+1. 本設計の承認（特に実機 25〜40 分の見積もり）
+2. ハーネス実装（テスト側: 計画 JSON・波形加工・ログ複製・`PlayWithDropouts`・専用集計）— **実機不要**
+3. dry run 1 本（clean、ハーネス検証）
+4. 本番 5〜7 本を 1 本ずつ
