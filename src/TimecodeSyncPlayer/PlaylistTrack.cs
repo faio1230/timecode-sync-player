@@ -11,7 +11,8 @@ public sealed record PlaylistTrack(
     TimeSpan SyncOffset,
     double? FrameRate,
     bool IsEnabled,
-    string? Fit = null)
+    string? Fit = null,
+    bool LongGopWarning = false)
 {
     /// <summary>
     /// トラックの実効再生時間を取得する。
@@ -58,4 +59,13 @@ public sealed record PlaylistTrack(
     /// UIバインディング用: 実効再生時間をhh:mm:ss:ff形式で取得する。
     /// </summary>
     public string EffectiveDurationText => PlaylistTrackFormatter.FormatEffectiveDuration(this);
+
+    /// <summary>
+    /// 0.4.5-C: ロング GOP 警告の行内表示。警告なしは空文字（幅 0）。
+    /// </summary>
+    public string LongGopWarningText => LongGopWarning ? "⚠ 長GOP" : string.Empty;
+
+    /// <summary>0.4.5-C: 警告のツールチップ（全文）。</summary>
+    public string LongGopWarningTooltip =>
+        LongGopWarning ? LongGopWarningMessages.Recommendation : string.Empty;
 }

@@ -154,6 +154,35 @@ public class ProjectSerializerTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveLoadApply_LongGopWarningIsNotPersisted()
+    {
+        var tempFile = GetTempPath("longgop_not_persisted.mp4");
+        await File.WriteAllTextAsync(tempFile, "");
+
+        try
+        {
+            var source = new PlaylistState();
+            source.AddFiles([tempFile]);
+            source.MarkLongGopWarning(source.Tracks[0].Id).Should().BeTrue();
+
+            string projectPath = GetTempPath("longgop_not_persisted.tsp");
+            await ProjectSerializer.SaveAsync(projectPath, source, SyncMode.Single, GapBehavior.Black);
+
+            var loaded = await ProjectSerializer.LoadAsync(projectPath);
+            var restored = new PlaylistState();
+            ProjectSerializer.ApplyToPlaylist(loaded!, restored);
+
+            restored.Tracks.Should().ContainSingle();
+            restored.Tracks[0].LongGopWarning.Should().BeFalse(
+                "セッション内の警告印はプロジェクトファイルに保存しない");
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public async Task LoadAsync_NonExistentFile_ThrowsFileNotFoundException()
     {
         string filePath = GetTempPath("does_not_exist.tsp");

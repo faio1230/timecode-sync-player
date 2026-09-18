@@ -93,6 +93,12 @@ TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample*
 - 入れるときの形（参考）: `_ex` に限定し、古い世代では `basis = NONE / seconds = 0`
   （`delivered_seconds` は残す）。旧 `get_time_pos` の戻り値は変えない（UI・ギャップ凍結を巻き込まない）。
 
+**2026-09-19 追記（フェーズ 1 の実測で前提が変わった。親判断）**: フェーズ 1 で足した
+`gst.positionFallback` trace により、この経路は実際には **`seek.issue` の 0.3〜0.6ms 後に発火**
+していることを確認した（V3(LTC25) 3 件 / L-1 長 GOP 3 件 / V3(LTC29.97) 2 件。返る値は
+旧世代の配信 PTS そのもの）。「発火が観測されていない」という後回しの根拠は消えたため、
+**世代チェックの優先度を上げ、0.4.5-C の後に着手する**（親の決定）。
+
 ### 1-4. 実装時に触るドキュメント・テスト
 
 - `native/gst-shim/README.md` の位置クエリ節（119-128）に `_ex` と bit 4 を追記。
