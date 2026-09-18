@@ -188,22 +188,101 @@ LTC は進み続けるので**シーク中に育つ誤差がそのまま見え�
 倒れるため許容する。2 秒のシーク中は評価位置が「シーク前 PTS + 33〜80ms」に留まり、**誤差 2 秒が
 そのまま見える**。
 
-### 2-3. 既存のどこを置き換えるか（評価位置の適用箇所）
+### 2-3. 既存のどこを置き換えるか（フェーズ 2 実装仕様）
+
+**有効化スイッチ**: `TCS_SYNC_POSITION_FEEDBACK=on`（既定 off = フェーズ 1）。off では
+この節の変更は全て無効で、フェーズ 1 の挙動のまま。実機で同等以上を確認したら既定を on にする。
+
+#### 2-3-0. 前提と依存関係（2026-09-19 更新）
+
+- **位置フォールバックの世代チェックが必須。実装済み（agent-a `2db35f0`）。**
+  フェーズ 1 の trace で、`gst.positionFallback` は実際に `seek.issue` の 0.3〜0.6ms 後に
+  発火し、**旧世代の PTS をそのまま返していた**（V3(LTC25) 3 件 / L-1 長 GOP 3 件 /
+  V3(LTC29.97) 2 件）。フェーズ 2 は `PlaybackPositionTrust` の抑制を外すため、この経路が
+  古い値を返すと**そのまま評価に入る**。世代チェックが無い shim ではフェーズ 2 を有効にしない。
+  - 起動時に `_ex` が `EntryPointNotFoundException`（旧 DLL）のときは従来どおり 1 回警告し、
+    **フェーズ 2 も自動で無効化**する（サンプル無し経路へ）。`GstPlaybackApi._timePosExUnavailable`
+    と同じフラグに乗せる。
+  - 世代チェック後の契約: 旧世代しか無ければ `_ex` は失敗（`TCS_ERR_NOT_LOADED`）し、
+    サンプル無し経路（旧ガード）に落ちる。
+- **D37-d が入った**（着地窓は到達まで + 前進ガード + 0.5× + 上限）。役割境界は §2-3-5。
+- **実測したシーク中の誤差の育ち方**（フェーズ 1 trace）: 393 → 547 → 751ms、着地で 446ms。
+  フェーズ 2 の効果はこの区間（着地未確認の窓）で測る（§4）。
+
+#### 2-3-1. 判定位置と trace の値（契約を守る）
+
+| 値 | 変数 | フェーズ 2 の扱い |
+| --- | --- | --- |
+| クエリ値 | `state.PlaybackSeconds` | そのまま（`playback=` / `delta=` / `ShouldSuppressSeek` / `TryMarkFileLoaded` / 境界ホールド / UI） |
+| 評価位置 | `state.EvalPositionSeconds`（`WithShadow` が設定） | エンジンの**判断だけ**に使う |
+| 判断用 Δ | `target − 評価位置` | `SeekDecisionGate`・tolerance・速度補正/シーク分岐 |
+| 表示用 Δ | `target − クエリ値` | `delta=`（既存の意味を変えない。§3-1） |
+
+- `SyncDecisionEngine.Decide` の算術（tolerance・rate catch-up・gate・seek 判定）を
+  `state.EvalPositionSeconds ?? state.PlaybackSeconds` に切り替える。**ログは変えない**:
+  `RecordEvaluate` は従来どおり `state.PlaybackSeconds` から `playback=` / `delta=` を作り、
+  `evalPosition=` / `evalDelta=` を併記する。
+- `SyncDecision` に `QueryDeltaSeconds` を追加し、`LogDecisionIfNeeded` の `delta=` は
+  これを使う（判断用 `DeltaSeconds` と区別する）。off では両者同値なので出力は不変。
+- `seek.decide` の `playback=` も同じ規則（クエリ値）のまま。
+
+#### 2-3-2. `TimecodeSyncService.EvaluateDecision`（実装仕様）
+
+phase2 = スイッチ on かつ `_ex` が使える、とする。
+
+1. `WithShadow` で評価位置を作る（フェーズ 1 と同じ）。
+2. 旧ガード `!_positionTrust.IsTrusted` は**サンプルが無いときだけ**適用する。
+   - phase2 && サンプルあり → ガードを通さず評価を続ける。
+   - phase2 && サンプルなし → 従来どおり `WhilePositionUntrusted`。
+   - phase2 off → 従来どおり。
+3. D37-d の前進ガードと着地窓は現行のまま（評価位置ベースになる。着地後は評価位置 =
+   クエリ値なので、前進ガードの pre/post 比較の意味も現行と一致する）。
+4. `Decide` が `Seek` を返し、かつ**着地未確認**（`reading.LandingConfirmed == false`）なら
+   `GateDeferred = true` の None に置き換えて**新しいシークを出さない**（ログ理由 `unlanded`。
+   同じエピソードで 1 回だけ出す）。到達判定（`WithinTolerance` → 窓を閉じる）は置き換えの
+   前に済ませる。
+5. trace は §2-3-1 のとおり（既存フィールド + eval フィールド）。
+
+`LandingConfirmed` の定義: `delivered_generation >= current_generation`。
+`delivered_generation == 0`（1 枚も配信されていない）も false。
+
+#### 2-3-3. コーディネーター（Continue / Single）
+
+- `ReadSyncTimePos` が既に 1 回の `_ex` から値とサンプルの両方を作る。先にサンプルを読む。
+- サンプルがあれば `IsNativeSeeking` でも早期 return しない（フェーズ 1 の shadow 記録は
+  残し、判断に使わないのは off のときだけ）。`GetTimePos` のクエリ値は
+  `TryMarkFileLoaded`・`ShouldSuppressSeek`・`BuildPlaybackState` にそのまま使う。
+- `SingleModeSyncCoordinator.Apply`（30-87）も同じ: `IsNativeSeeking` で即 Deferred にせず、
+  サンプルありなら評価を続ける。
+- `ShouldSuppressSeek` / `TimecodeSyncSeekState` / 境界ホールドは**変えない**（§2-4）。
+
+#### 2-3-4. 表（置き換え箇所の一覧）
 
 | 場所 | いま | 変更 | フェーズ |
 | --- | --- | --- | --- |
-| `TimecodeSyncService.EvaluateDecision`（69-88） | `!_positionTrust.IsTrusted` で `WhilePositionUntrusted`（判定しない） | サンプルがあれば評価位置（§2-2）で判定を続ける。旧ガードはサンプル無しのフォールバックに残す | 2 |
-| `SingleModeSyncCoordinator.Apply`（30-87） | `IsNativeSeeking` で即 Deferred（位置を読まない） | 先にサンプルを読む。着地未確認でも評価は続ける。`ShouldSuppressSeek`・`TryMarkFileLoaded`・境界ホールドは**クエリ値のまま** | 1→2 |
-| `ContinueOnTrackCoordinator.HandleFrame`（88-147） | 同（92-93） | 同 | 1→2 |
-| `TimecodeSyncService.ShouldSuppressSeek` / `TimecodeSyncSeekState` | クエリ値で settle・時間切れ・学習 | **変えない**（§2-4） | - |
-| `PlaybackPositionTrust` | 通常経路の判定停止 | フォールバック専用に縮小（フェーズ 3 で通常経路から削除） | 2→3 |
-| `LtcSyncController.ApplyCorrection`（717-730） | `HasPendingSeek`・`IsPlaybackPositionUsable` で抑止 | 着地まで**適用しない**（現行どおり）。着地未確認の抑止分岐で「出したとしたら」の Smooth レートだけ trace に記録（下記） | 1→2 |
+| `TimecodeSyncService.EvaluateDecision` | `!_positionTrust.IsTrusted` で `WhilePositionUntrusted` | サンプルありは評価を続ける。サンプル無しだけ旧ガード。`unlanded` の安全弁を追加 | 2 |
+| `TimecodeSyncService.ShouldSuppressSeek` / `TimecodeSyncSeekState` | クエリ値で settle・時間切れ・学習 | **変えない** | - |
+| `SyncDecisionEngine.Decide` の算術 | `state.PlaybackSeconds` | `EvalPositionSeconds ?? PlaybackSeconds`。ログは不変 | 2 |
+| `SingleModeSyncCoordinator.Apply` | `IsNativeSeeking` で即 Deferred | サンプルありなら評価を続ける。クエリ値の用途は不変 | 2 |
+| `ContinueOnTrackCoordinator.HandleFrame` | 同 | 同 | 2 |
+| `PlaybackPositionTrust` | 通常経路の判定停止 | サンプル無しのフォールバック専用に縮小（フェーズ 3 で削除） | 2→3 |
+| `LtcSyncController.ApplyCorrection` | `HasPendingSeek`・`IsPlaybackPositionUsable` で抑止 | 着地まで適用しない（現行どおり）。shadow は継続（下記） | 1→2 |
 | UI・タイムライン・ギャップ凍結の `TryGetTimePos` | - | **触らない**（定常の見た目を変えない） | - |
 
-フェーズ 2 で追加する安全弁: **着地未確認の間に新しいシークを出さない**。
-`HasPendingSeek` が時間切れした後でも、世代の合うフレームが届く前に `Seek` を選んだら抑止する
-（ログ理由 `unlanded`）。現行はここを D37-b の判定停止で塞いでいる。**連鎖の再発防止の要**なので、
-フェーズ 2 の必須項目にする。
+#### 2-3-5. D37-d の着地窓との役割境界（重要）
+
+| 機構 | 見るもの | 働くタイミング | フェーズ 2 での関係 |
+| --- | --- | --- | --- |
+| 着地未確認シーク抑止（新、`unlanded`） | 配信世代 < 現在世代 | シーク中・ロード中（着地するまで） | **上流**。unlanded の間は Seek を出さない |
+| D37-d 着地窓 | 着地後に誤差が許容へ入るまで | **着地後**（世代が一致してから） | **下流**。着地後のシーク選択を決める |
+| D37-b `PlaybackPositionTrust` | クエリ値の保留・settle | サンプル無しのときだけ | サンプルあり経路では判定に使わない |
+
+- 順序は「シーク → unlanded（全 Seek 抑止）→ 着地確定 → D37-d の窓が次のシークを選ぶ」。
+  両者が同時に Seek を判断する状態は無い（unlanded の間は窓の判断に到達しない）。
+- D37-d の上限（5 秒 / 連続 3 シーク）は着地済みの窓だけを数える。unlanded の時間は窓の
+  年齢には入るが、`ReportSeekSent` が呼ばれないのでシーク回数は増えない。
+- 前進ガードの `pre` / `post` は**評価位置**で比較する（着地後は評価位置 = クエリ値なので
+  意味は現行と同じ。unlanded 中は `ReportSeekSent` が起きないため比較も発生しない）。
 
 着地未確認中の速度補正（親の判断）: **実際には出さない。** フラッシュ中は効かないうえ副作用が
 読めないため。ただし「出したとしたら」の値を `sync.evaluate` に追記する（`shadowRate=` /
@@ -247,12 +326,15 @@ LTC は進み続けるので**シーク中に育つ誤差がそのまま見え�
 - **フェーズ 2（delivered）**: 環境変数 `TCS_SYNC_POSITION_FEEDBACK` で切替（既定 `off` = フェーズ 1、
   `on` = フェーズ 2。実機で同等以上を確認したら既定を `on` にする。前例:
   `TCS_LTC_SAMPLE_CLOCK` / `TCS_SEEK_LATENCY_COMPENSATION` / `TCS_PUMP_BUDGET_MS`。
-  検証機がビルドし直さずに A/B できる）。通常経路で
-  1. 判定に評価位置を使う（`sync.evaluate` は `playback=` のまま + `evalPosition=` を併記）、
+  検証機がビルドし直さずに A/B できる）。実装仕様は §2-3。
+  1. 判定に評価位置を使う（`sync.evaluate` は `playback=` / `delta=` のまま + `evalPosition=` /
+     `evalDelta=` を併記。`SyncDecision.QueryDeltaSeconds` を追加してログの意味を守る）、
   2. `WhilePositionUntrusted` を通常経路から外す（サンプル無しのときだけ旧ガード）、
-  3. §2-3 の着地未確認シーク抑止を入れる。
+  3. 着地未確認のシーク抑止（`unlanded`）を入れる。
   残すもの: D37-b2 の着地窓、D37-b 2-2 の速度補正方針、`ShouldSuppressSeek` の入力、
   速度補正を出さない方針（値だけ shadow で残す）。
+  **前提: 位置フォールバックの世代チェック（§2-3-0、実装済み `2db35f0`）。旧 DLL や世代チェック
+  無しの shim ではフェーズ 2 を有効にしない。**
 - **フェーズ 3（後片付け）**: shadow の記録経路と `PlaybackPositionTrust` の通常経路を削除する
   （旧 DLL フォールバックに必要な最小分は残す）。**切替スイッチは 0.4.5 では消さない**
   （先行補償の前例に合わせ、0.4.6 で判断する）。
@@ -277,36 +359,58 @@ LTC は進み続けるので**シーク中に育つ誤差がそのまま見え�
 
 **外す前提としてフェーズ 1 で示すもの**（数字と証跡だけ。合否は親が決める）:
 
-- 着地未確認の窓で `evalDelta` が育ち、着地直後の `delta`（クエリ値基準）に連続すること
-  （窓ごとの時系列。既存の `TestResults/x1-v045a/` のスクリプトを再利用）。
-- 窓内でフィードバックを使った場合にシークが増えないこと（安全弁の効き。ログ `unlanded` の件数）。
+- **着地未確認の窓で `evalDelta` が育ち、着地直後の `delta=`（クエリ値基準）に連続すること。**
+  フェーズ 1 の実測ではシーク中に **393 → 547 → 751ms**、着地で **446ms**（推定される素の誤差の
+  育ち方がそのまま見えている）。窓ごとの時系列で、着地の前後が不連続に跳ばないことを確認する
+  （既存の `TestResults/x1-v045a/` のスクリプトを再利用）。
 - 定常で `evalBasis=pipeline` が 100% であること（§4-2）。
 - 着地未確認中の `shadowRate`（出さなかったレート）が、着地後の実補正と比べてどうだったか
   （0.4.6 以降で解禁を判断する材料）。
-- フォールバック回数の実数（§1-2 の bit 4）。
+- フォールバックの実数: 受理（bit 4 の `gst.positionFallback`）と、**旧世代で弾いた回
+  （bit 5 の `gst.positionFallbackRejected`）**。フェーズ 1 の 8 件はすべて後者に移る見込み。
+- フェーズ 2 固有の安全弁（`unlanded` の抑止回数）はフェーズ 2 の run で数える（§4）。
 
-## 4. 定常の非回帰をどう確かめるか
+## 4. フェーズ 2 の効果と非回帰をどう確かめるか
 
-1. **構造**: 定常は `delivered_generation == current_generation` なので評価位置はクエリ値そのもの。
-   フェーズ 1 は判断に入らないため挙動は変わらない。フェーズ 2 でも入力が同一のため、差が出るのは
-   着地未確認の区間だけ。
-2. **trace の不変条件**: `events.jsonl` で「`evalBasis=delivered` の `sync.evaluate` が、
+**フェーズ 2 の効果を p95−p5 で測ってはいけない（親の訂正、2026-09-19）。**
+p95−p5 には LTC fps × 映像 fps の比で決まる**量子化の床**が含まれる（M5 の確定版:
+1:1 なら厳密に 0、25×30 / 25×60 なら **26.67ms**、30×60 なら 16.67ms）。
+現行 V3（LTC25 × 60fps）の 38〜40ms はこの床を含んでおり、**床より下には行けない**。
+定常の p95−p5 は「悪化していないこと」の sanity check に留める。
+
+1. **計測の主軸: 着地未確認の窓の可視化。** `events.jsonl` の `sync.evaluate` から、
+   `player.seeking raw=yes`（および `gst.generation`）で囲まれた窓を切り出し、
+   - `evalDelta` がシーク中に**単調に育つ**こと（実測例: 393 → 547 → 751ms）、
+   - 着地の前後で `evalDelta` → `delta=`（クエリ値基準）が**不連続に跳ばない**こと
+     （着地時の実測 446ms が両系列で連続する）、
+   - 窓の中で新しいシークが出ていないこと（`seek.issue` が窓内に 1 件も無い。`unlanded` の
+     抑止ログと対で数える）、
+   - 窓の長さ（シーク所要）と窓内の最大 `evalDelta` の関係（シーク所要がそのまま見えること）。
+   フェーズ 1 とフェーズ 2 で**同じ素材・同じテスト**の run を並べ、この 4 点を比較する。
+2. **構造**: 定常は `delivered_generation == current_generation` なので評価位置はクエリ値そのもの。
+   フェーズ 2 でも入力が同一のため、差が出るのは着地未確認の区間だけ。
+3. **trace の不変条件**: `events.jsonl` で「`evalBasis=delivered` の `sync.evaluate` が、
    `seek.issue` / `gst.generation` / `loadfile` の窓の外に 1 件も無い」ことを数える。
    窓の特定は `player.seeking raw=yes` と `gst.delivery` の世代を使う。
-3. **実機（親の合図後）**: V3 を Smooth・LTC25 で 1 本（`scripts/run-v3-accuracy.ps1 -Backends gst`）。
-   比較は同じ条件の 0.4.4 の値（例: v0.4.4 の定常 平均 −25.7ms / p95−p5 38.2ms、D37-b2 の
-   −27.7 / 40.0ms）に対し、**定常の平均と p95−p5**（黒・freeze は既存どおり集計外）と収束
-   （seek-a/b/c/back）。25fps の量子化で p95−p5 の下限は約 40ms であることに注意。
-4. **広い回帰**: L-1 ×3（VP9 4K60。補正シーク回数・停止秒・最大誤差）、既存シナリオ 22、
+4. **定常の sanity（悪化していないこと）**: V3 を Smooth・LTC25 で 1 本。見るのは定常の平均
+   と p95−p5（床を含む値。黒・freeze は既存どおり集計外）と収束（seek-a/b/c/back）。
+   比較対象は同じ条件の 0.4.4 の値（例: 定常 平均 −25.7ms / p95−p5 38.2ms、D37-b2 で −27.7 / 40.0ms）。
+5. **広い回帰**: L-1 ×3（VP9 4K60。補正シーク回数・停止秒・最大誤差）、既存シナリオ 22、
    LTC ループ 14。フェーズ 1 とフェーズ 2 で同じセットを回して比較する。
 
 ## 5. 実装時のテスト（追加分）
 
 - shim: `_ex` の basis/gen、フォールバックの bit 4 trace、旧 API 不変。
+  **世代チェック（実装済み `2db35f0`）**: `tcs_position_policy.h` の純関数（着地→許可、
+  seek 直後→拒否、新世代→再許可）と、弾いた回の bit 5 trace。
 - C# 単体: 外挿（レート EMA、上限 2 フレーム、逆行リセット、未計測 1.0）、着地判定（世代）、
   古い世代の配信 PTS を着地に使わない、サンプル無しの旧ガード、着地未確認でシークを出さない、
   shadow が判断を変えない、`shadowRate` の計算が補正の状態（`SyncCorrectionController` の
   `_rateActive` / `_smoothDisabled`）を変えない。
+- フェーズ 2 の追加単体（実装時）: スイッチ off がフェーズ 1 と 1 ビットも変わらないこと、
+  `unlanded` の抑止が `Seek` を `GateDeferred` に置き換えても到達判定（`WithinTolerance`）を
+  落とさないこと、`LogDecisionIfNeeded` の `delta=` が `QueryDeltaSeconds` を出すこと、
+  D37-d の窓が unlanded 中にシーク回数を増やさないこと。
 - 既存の非E2E がすべて通ること。
 
 ## 6. 親の判断（2026-09-19 に確定）
@@ -318,8 +422,9 @@ LTC は進み続けるので**シーク中に育つ誤差がそのまま見え�
 3. **切替スイッチ**: 環境変数 `TCS_SYNC_POSITION_FEEDBACK`。shadow の間は既定 `off`、実機で同等以上を
    確認したら既定 `on`。検証機がビルドし直さずに A/B できる。**スイッチ自体は 0.4.5 では消さず、
    0.4.6 で判断する**（先行補償の前例）。
-4. **shim 側フォールバックの世代チェック**: 0.4.5-A に含めない（§1-3）。`gst.positionFallback` の
-   trace は必須で入れる（§1-2）。未発火の経路の挙動は変えず、まず測る。
+4. **shim 側フォールバックの世代チェック**: フェーズ 1 で発火が確認されたため（`seek.issue` の
+   0.3〜0.6ms 後に 8 件）、**フェーズ 2 の前提として実装済み**（agent-a `2db35f0`、§1-3 の実装追記）。
+   旧世代は `TCS_ERR_NOT_LOADED`、弾いた回は bit 5 の `gst.positionFallbackRejected`。
 
 ## 7. 触らないもの（指示書 §4 と本設計の追記）
 
