@@ -128,7 +128,11 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         (double clipIn, double clipOut) = ClipRange(
             state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         double target = Math.Clamp(ltcSeconds, clipIn, clipOut);
-        double delta = target - state.PlaybackSeconds;
+        // 0.4.5-A フェーズ 2: 判断は評価位置（着地未確認なら配信 PTS + 外挿、着地後はクエリ値）
+        // で行う。フェーズ 1 では EvalPositionSeconds が null なので従来どおりクエリ値になる。
+        // トレースの playback= / delta= はクエリ値のまま（§3-1 の契約）。
+        double queryDelta = target - state.PlaybackSeconds;
+        double delta = target - (state.EvalPositionSeconds ?? state.PlaybackSeconds);
 
         // D37-a: 瞬間値では Seek を出さない。直近の窓の中央値（または許容超えの連続）が
         // 条件を満たすまで待ち、物理的にありえない変化のサンプルは測定の乱れとして弾く。
@@ -139,7 +143,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         {
             LogRejectedSample(gate);
             if (traceEnabled)
-                RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "unstable", GateDetail(gate));
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, queryDelta, "unstable", GateDetail(gate));
             return SyncDecision.NoneWith(fps, toleranceSeconds, gateDeferred: true);
         }
         _rejectedSampleLogged = false;
@@ -150,7 +154,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         {
             EndRateCatchUp(escalated: false, Math.Abs(delta));
             if (traceEnabled)
-                RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "within-tolerance");
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, queryDelta, "within-tolerance");
             // D37-d: 到達。サービスは着地窓をここで閉じる。
             return SyncDecision.NoneWith(fps, toleranceSeconds, withinTolerance: true);
         }
@@ -172,7 +176,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         {
             BeginOrContinueRateCatchUp(absDelta);
             if (traceEnabled)
-                RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "rate-catch-up", GateDetail(gate));
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, queryDelta, "rate-catch-up", GateDetail(gate));
             return SyncDecision.NoneWith(fps, toleranceSeconds, rateCatchUp: true);
         }
 
@@ -180,7 +184,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         {
             LogGatedSeek(gate, toleranceSeconds);
             if (traceEnabled)
-                RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "seek-gated", GateDetail(gate));
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, queryDelta, "seek-gated", GateDetail(gate));
             return SyncDecision.NoneWith(fps, toleranceSeconds, gateDeferred: true);
         }
         _gatedSeekLogged = false;
@@ -212,11 +216,11 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         // value は seek.issue と同じ補償後のターゲットに揃える（解析側の decide/issue 対応付けを維持）。
         if (traceEnabled)
         {
-            RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "seek");
+            RecordEvaluate(ltcSeconds, state, toleranceSeconds, queryDelta, "seek");
             OutputTrace.Current.Record(new("seek.decide", "SYNC", decideQpc,
                 Value: (long)Math.Round(compensatedTarget * 1_000_000.0),
                 Detail: FormattableString.Invariant(
-                    $"delta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6} compensation={_latencyCompensator?.CompensationSeconds ?? 0.0:F6} lookahead={state.SeekTargetLookaheadSeconds:F6}")));
+                    $"delta={queryDelta:F6} evalDelta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6} compensation={_latencyCompensator?.CompensationSeconds ?? 0.0:F6} lookahead={state.SeekTargetLookaheadSeconds:F6}")));
         }
 
         return new SyncDecision(
@@ -227,7 +231,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             fps.VideoFps,
             fps.TimecodeFps,
             fps.UsedDefaultVideoFps,
-            fps.UsedDefaultTimecodeFps);
+            fps.UsedDefaultTimecodeFps,
+            QueryDeltaSeconds: queryDelta);
     }
 
     // 早期 return では判定用 delta（target でクランプ後）を計算していないため、生の差を記録する（有限のときだけ）。
@@ -450,7 +455,11 @@ public sealed record SyncDecision(
     // D37-b: シーク中・着地未確認のため、このフレームの位置を使った判定をしてはいけない。
     bool PositionUntrusted = false,
     // D37-d: 誤差が許容内に入った（着地エピソードの到達）。サービスは着地窓を閉じる。
-    bool WithinTolerance = false)
+    bool WithinTolerance = false,
+    // 0.4.5-A フェーズ 2: 記録用のクエリ値基準の差。判断用の DeltaSeconds が評価位置基準に
+    // なっても、trace の delta= はこちらを使う（既存フィールドの意味を変えない契約）。
+    // フェーズ 1（評価位置なし）では DeltaSeconds と同値。
+    double QueryDeltaSeconds = 0.0)
 {
     public static SyncDecision None { get; } = new(
         SyncActionType.None,
