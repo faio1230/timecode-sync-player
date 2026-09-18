@@ -217,6 +217,11 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             detail = FormattableString.Invariant(
                 $"{detail} evalPosition={evalPosition:F6} evalDelta={state.EvalDeltaSeconds.GetValueOrDefault(double.NaN):F6} evalBasis={state.EvalBasis ?? "none"} deliveredGen={state.EvalDeliveredGeneration} currentGen={state.EvalCurrentGeneration}");
         }
+        if (state.ShadowRate is double shadowRate)
+        {
+            detail = FormattableString.Invariant(
+                $"{detail} shadowRate={shadowRate:F5} shadowRateReason={state.ShadowRateReason ?? "none"}");
+        }
         if (!string.IsNullOrEmpty(gateDetail))
             detail = detail + " " + gateDetail;
         OutputTrace.Current.Record(new("sync.evaluate", "SYNC", Stopwatch.GetTimestamp(),
@@ -385,7 +390,10 @@ public sealed record SyncPlaybackState(
     double? EvalDeltaSeconds = null,
     string? EvalBasis = null,
     ulong EvalDeliveredGeneration = 0,
-    ulong EvalCurrentGeneration = 0);
+    ulong EvalCurrentGeneration = 0,
+    // 0.4.5-A フェーズ 1: 着地未確認中に「出したとしたら」の Smooth レート（適用はしない）。
+    double? ShadowRate = null,
+    string? ShadowRateReason = null);
 
 public enum SyncActionType
 {

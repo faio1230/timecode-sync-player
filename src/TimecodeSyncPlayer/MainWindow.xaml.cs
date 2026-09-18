@@ -263,6 +263,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text,
                 GetSyncOffsetMilliseconds: () => _vm.Sync.SyncOffsetMs),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
+        // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードと着地窓を渡す。
+        _syncService.CorrectionModeSource = () => _vm.Sync.SyncCorrectionMode;
+        _syncService.CorrectionLandingActiveSource = _ltcSyncController.IsCorrectionLandingWindowActive;
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
             settingsManager.Current.Volume);
