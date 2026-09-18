@@ -210,8 +210,10 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void EvaluateDecision_AfterLanding_DisallowsRateCatchUpForOneSecond()
+    public void EvaluateDecision_AfterLanding_StaysOpenUntilArrival()
     {
+        // D37-d: 着地窓は「1 秒」ではなく、誤差が許容内に入るまで開いたままにする
+        // （1 回の着地では収束しない素材で、着地ごとに速度補正へ落ちないため）。
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
@@ -222,9 +224,148 @@ public class TimecodeSyncServiceTests
         service.EvaluateDecision(10.0, state);
         engine.LastState!.RateCatchUpAllowed.Should().BeFalse("ギャップ明け・切替の着地直後はシークで詰める");
 
-        clock.Advance(TimeSpan.FromMilliseconds(1100));
+        clock.Advance(TimeSpan.FromMilliseconds(3900));
         service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("着地から 1 秒を過ぎたら速度補正優先に戻る");
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse(
+            "誤差が許容内に入る前は、着地から 1 秒を過ぎてもシークで詰める");
+
+        engine.DecisionToReturn = new SyncDecision(
+            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
+        service.EvaluateDecision(10.0, state);
+
+        engine.DecisionToReturn = SyncDecision.None;
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("誤差が許容内に入ったら窓を閉じる");
+    }
+
+    // ---- D37-d: 着地窓は誤差が許容内に入るまで開いたまま（上限付き） ----
+
+    [Fact]
+    public void EvaluateDecision_AfterFirstSeekLanding_KeepsWindowOpen_AndSecondSeekIsChosen()
+    {
+        // 検証機の実測値: 初期誤差 3.5 秒、1 回目のシーク所要 1.866 秒（学習値）、
+        // 着地後の残差 1.829 秒。残差 < 学習値なので、窓が閉じていれば速度補正になる。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 6));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.NotifyLanding();
+        var before = new SyncPlaybackState(true, true, false, 6.5, 100.0, 30.0, 30.0);
+
+        SyncDecision first = service.EvaluateDecision(10.0, before);
+        first.Action.Should().Be(SyncActionType.Seek, "初期誤差 3.5 秒は着地窓内のシーク");
+        service.ReportSeekSent(10.0);
+
+        // シーク中は位置を信用しない。
+        service.EvaluateDecision(10.0, before).PositionUntrusted.Should().BeTrue();
+
+        // 1.866 秒で着地し、所要が学習値になる（セットルの 2 ティック）。
+        clock.Advance(TimeSpan.FromSeconds(1.866));
+        service.ShouldSuppressSeek(10.0, 0.2).Should().BeTrue();
+        clock.Advance(TimeSpan.FromMilliseconds(300));
+        service.ShouldSuppressSeek(10.0, 0.2).Should().BeTrue();
+        seekState.LearnedSeekDurationSeconds.Should().BeApproximately(1.866, 0.001);
+
+        // 着地後: LTC は進み、残差 1.829 秒（< 学習値 1.866 秒）。窓が開いているため
+        // 速度補正には落ちず、ゲートが埋まる（3 サンプル）と 2 回目のシークになる。
+        var landed = new SyncPlaybackState(true, true, false, 10.0, 100.0, 30.0, 30.0);
+        SyncDecision second = service.EvaluateDecision(11.829, landed);
+        second.GateDeferred.Should().BeTrue("シーク直後のゲートは 1 サンプル目を保留する");
+        service.EvaluateDecision(11.829, landed);
+        second = service.EvaluateDecision(11.829, landed);
+
+        second.Action.Should().Be(SyncActionType.Seek, "着地窓が開いているため 2 回目もシーク");
+        second.RateCatchUpPreferred.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EvaluateDecision_LandingWindowClosesAtTheSeekCap()
+    {
+        // D37-d 上限 2: 連続シーク 3 回で閉じ、通常の判断（速度補正優先）に戻す。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
+        static void Land(TimecodeSyncService s, MockTimecodeSyncSeekState st)
+        {
+            st.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+            s.ShouldSuppressSeek(10.0, 0.2);
+        }
+
+        service.NotifyLanding();
+        service.ReportSeekSent(10.0);
+        Land(service, seekState);
+        service.ReportSeekSent(10.0);
+        Land(service, seekState);
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("2 回目までは窓が開いている");
+
+        service.ReportSeekSent(10.0);
+        Land(service, seekState);
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("3 回目のシークで窓を閉じる");
+    }
+
+    [Fact]
+    public void EvaluateDecision_LandingWindowClosesAtTheAgeCap()
+    {
+        // D37-d 上限 1: 窓が開いてから 5 秒で閉じる（シーク所要が縮まらない素材で連鎖しない）。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
+
+        service.NotifyLanding();
+        clock.Advance(TimeSpan.FromSeconds(5) - TimeSpan.FromTicks(1));
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("5 秒未満は開いている");
+
+        clock.Advance(TimeSpan.FromTicks(1));
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("5 秒に達したら閉じる");
+    }
+
+    [Fact]
+    public void EvaluateDecision_WithinToleranceClosesLandingWindow()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
+
+        service.NotifyLanding();
+        engine.DecisionToReturn = new SyncDecision(
+            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
+        service.EvaluateDecision(10.0, state);
+
+        engine.DecisionToReturn = SyncDecision.None;
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("到達で閉じた後は通常の判断に戻る");
+    }
+
+    [Fact]
+    public void NotifyLanding_ReopensTheWindowAfterArrival()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
+
+        service.NotifyLanding();
+        engine.DecisionToReturn = new SyncDecision(
+            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
+        service.EvaluateDecision(10.0, state);
+        engine.DecisionToReturn = SyncDecision.None;
+
+        service.NotifyLanding();
+        service.EvaluateDecision(10.0, state);
+
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("新しい着地で窓を開き直す");
     }
 
     [Fact]

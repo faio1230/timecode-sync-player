@@ -16,9 +16,15 @@ public sealed class TimecodeSyncService
     private readonly PlaybackPositionFeedback _positionFeedback = new();
     private TimecodeSyncSeekPendingStatus _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
     private double _publishedSeekCostSeconds = double.NaN;
-    // D37-b2: ギャップ明け・トラック切替の着地直後は、速度補正優先をやめてシークで着地させる。
-    private DateTime _seekLandingAt = DateTime.MinValue;
-    private static readonly TimeSpan SeekLandingWindow = TimeSpan.FromSeconds(1.0);
+    // D37-b2/D37-d: ギャップ明け・トラック切替・追従開始の着地エピソード。速度補正優先を
+    // やめてシークで着地させるが、1 回の着地では収束しない素材（着地時の残差 ≈ シーク所要）が
+    // あるため、誤差が許容内に入るまで開いたままにする。上限（5 秒 / 連続 3 シーク）で閉じ、
+    // シークの連鎖（D37）へ戻らないようにする。上限に達したら通常の判断に戻す。
+    private bool _seekLandingActive;
+    private DateTime _seekLandingOpenedAt = DateTime.MinValue;
+    private int _seekLandingSeeks;
+    private static readonly TimeSpan SeekLandingMaxWindow = TimeSpan.FromSeconds(5.0);
+    private const int SeekLandingMaxSeeks = 3;
 
     private DateTime _lastSyncSeekAt = DateTime.MinValue;
     private volatile bool _isLoadingFile;
@@ -91,10 +97,15 @@ public sealed class TimecodeSyncService
         }
 
         // D37-b2: 着地直後（ギャップ明け・トラック切替）は速度補正に任せず、シークで着地させる。
+        // D37-d: その保護は 1 回のシークの着地では終わらせず、誤差が許容に入るまで続ける。
         SyncPlaybackState effectiveState = IsSeekLandingWindowActive()
             ? state with { RateCatchUpAllowed = false }
             : state;
         SyncDecision decision = _engine.Decide(ltcSeconds, effectiveState);
+        // D37-d: 到達（誤差が許容内）で着地エピソードを閉じる。上限は
+        // IsSeekLandingWindowActive が閉じる（シーク連鎖への逆戻り防止）。
+        if (decision.WithinTolerance)
+            ObserveArrivalWhileLanding();
         LogDecisionIfNeeded(decision, ltcSeconds, effectiveState.PlaybackSeconds);
         return decision;
     }
@@ -149,15 +160,59 @@ public sealed class TimecodeSyncService
     public bool IsPlaybackPositionUsable => _positionTrust.IsTrusted;
 
     /// <summary>
-    /// D37-b2: ギャップ明け・トラック切替の着地を通知する。着地から
-    /// <see cref="SeekLandingWindow"/> の間は速度補正優先を止める（画面が黒／フリーズで
-    /// シークによる静止が見えず、ずれた内容が流れ続ける方が目立つため）。
+    /// D37-b2/D37-d: ギャップ明け・トラック切替・追従開始の着地を通知する。ここから
+    /// 誤差が許容内に入る（または上限に達する）まで、速度補正優先を止める。
     /// </summary>
-    public void NotifyLanding() => _seekLandingAt = _timeProvider.GetUtcNow().UtcDateTime;
+    public void NotifyLanding() => OpenSeekLanding(_timeProvider.GetUtcNow().UtcDateTime);
 
-    private bool IsSeekLandingWindowActive() =>
-        _seekLandingAt != DateTime.MinValue &&
-        _timeProvider.GetUtcNow().UtcDateTime - _seekLandingAt < SeekLandingWindow;
+    private void OpenSeekLanding(DateTime now)
+    {
+        _seekLandingActive = true;
+        _seekLandingOpenedAt = now;
+        _seekLandingSeeks = 0;
+    }
+
+    private void CloseSeekLanding()
+    {
+        _seekLandingActive = false;
+        _seekLandingSeeks = 0;
+    }
+
+    private bool IsSeekLandingWindowActive()
+    {
+        if (!_seekLandingActive)
+            return false;
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+        double ageMs = (now - _seekLandingOpenedAt).TotalMilliseconds;
+        if (_seekLandingSeeks >= SeekLandingMaxSeeks)
+        {
+            Serilog.Log.Information(
+                "Timecode sync: landing window closed at the seek cap seeks={Seeks} ageMs={AgeMs:F0}",
+                _seekLandingSeeks, ageMs);
+            CloseSeekLanding();
+            return false;
+        }
+        if (now - _seekLandingOpenedAt >= SeekLandingMaxWindow)
+        {
+            Serilog.Log.Information(
+                "Timecode sync: landing window closed at the age cap ageMs={AgeMs:F0} seeks={Seeks}",
+                ageMs, _seekLandingSeeks);
+            CloseSeekLanding();
+            return false;
+        }
+        return true;
+    }
+
+    private void ObserveArrivalWhileLanding()
+    {
+        if (!_seekLandingActive)
+            return;
+        Serilog.Log.Information(
+            "Timecode sync: landing window closed on arrival ageMs={AgeMs:F0} seeks={Seeks}",
+            (_timeProvider.GetUtcNow().UtcDateTime - _seekLandingOpenedAt).TotalMilliseconds,
+            _seekLandingSeeks);
+        CloseSeekLanding();
+    }
 
     public bool IsLoadingFile => _isLoadingFile;
 
@@ -213,6 +268,9 @@ public sealed class TimecodeSyncService
         // D37-b: 着地が確認できるまで、位置を使った判定をしない。
         _positionTrust.InvalidateForPendingSeek();
         _lastSeekStatus = TimecodeSyncSeekPendingStatus.Pending;
+        // D37-d: 着地エピソード中のシークを数える（上限で窓を閉じる）。
+        if (IsSeekLandingWindowActive())
+            _seekLandingSeeks++;
         SeekIssued?.Invoke();
     }
 
@@ -284,7 +342,9 @@ public sealed class TimecodeSyncService
         _fileLoadReleasePending = true;
         _fileLoadReleasedAt = now;
         _lastSyncSeekAt = now;                // ロード後デバウンスを再スタート
-        _seekLandingAt = now;                 // D37-b2: ロード成立が実際の着地
+        // D37-b2: ロード成立が実際の着地。D37-d: ここから新しい着地エピソードを開く
+        // （ロード中に開始したエピソードとシーク回数を引き継がない）。
+        OpenSeekLanding(now);
         if (reason != "progress")
             Serilog.Log.Information("Timecode sync: file load released ({Reason})", reason);
         return true;
