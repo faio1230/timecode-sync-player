@@ -17,15 +17,19 @@ internal readonly record struct FollowPerfSegment(double AtSeconds, double SpanS
 /// L-1: 1 窓の集計結果。Settling は追従直後の過渡として判定から除外した窓（集計と報告には残す）。
 /// LtcAdvance と Samples は、位置が進まない窓の切り分け用。位置と LTC はどちらも画面の
 /// ラベルから読むので、両方が同時に止まっていれば表示側、LTC だけ進んでいれば再生側、
-/// と読み分けられる（Samples が少ない窓は読み取り自体が遅れている）。
+/// と読み分けられる。IntervalSeconds は進みを測った実測区間（前の窓の最後のサンプルから
+/// この窓の最後のサンプルまで、最大 1.5 窓）。Sparse はその区間が窓長の半分未満で、
+/// 進みの判定に使えない窓（サンプル 0 の窓も含む。判定から外し、報告には残す）。
 /// </summary>
 internal readonly record struct FollowWindow(
     int Index, double StartSeconds, int FrameUpdates, double PositionAdvance, double MaxAbsError,
-    bool Settling, double LtcAdvance, int Samples);
+    bool Settling, double LtcAdvance, int Samples, double IntervalSeconds, bool Sparse);
 
 /// <summary>
 /// L-1: 全窓の集計。Windows は Settling を含む全窓。判定に使う数値（Stall*、MaxAbsError、
-/// MeanFrameUpdates、Worst*）は Settling を除いた窓だけから作る。
+/// MeanFrameUpdates、Worst*）は Settling を除いた窓だけから作る。StallAdvanceWindows は
+/// 「LTC が窓長の半分以上進んだのに位置がその半分も進まなかった」再生側の停滞だけを数え、
+/// 表示側が同時に止まった窓（LTC も止まる）や Sparse な窓は数えない。
 /// </summary>
 internal sealed record ContinuousFollowSummary(
     IReadOnlyList<FollowWindow> Windows,
@@ -37,7 +41,8 @@ internal sealed record ContinuousFollowSummary(
     FollowWindow? WorstAdvance,
     FollowWindow? WorstError,
     int SettlingWindowCount,
-    double SettlingMaxAbsError);
+    double SettlingMaxAbsError,
+    int SparseWindowCount);
 
 /// <summary>
 /// L-1: 連続追従（Single・1 トラック内）の詰まり監査。UI に依存しない純関数で、
@@ -66,12 +71,15 @@ internal static class ContinuousFollowAudit
             throw new ArgumentOutOfRangeException(nameof(settlingSeconds));
 
         int windowCount = (int)Math.Floor(durationSeconds / windowSeconds);
+        double sparseThreshold = windowSeconds * 0.5;
+        double intervalCap = windowSeconds * 1.5;
         var windows = new List<FollowWindow>(windowCount);
         // 窓の進みは「前の窓の最後の値」を起点にする。画面ラベルの読み取りは 1 サンプルあたり
         // 100ms 以上かかることがあり、2 秒窓に 1〜3 サンプルしか入らない場合がある。窓の中だけで
         // 差を取ると、再生が正常でも進みが 0 に見えてしまう。
         double carryPosition = double.NaN;
         double carryLtc = double.NaN;
+        double carryWall = double.NaN;
         for (int index = 0; index < windowCount; index++)
         {
             double start = index * windowSeconds;
@@ -86,6 +94,8 @@ internal static class ContinuousFollowAudit
 
             double firstPosition = double.NaN;
             double lastPosition = double.NaN;
+            double firstWall = double.NaN;
+            double lastWall = double.NaN;
             double firstLtc = double.NaN;
             double lastLtc = double.NaN;
             double maxError = 0.0;
@@ -111,9 +121,11 @@ internal static class ContinuousFollowAudit
                 if (!hasPosition)
                 {
                     firstPosition = double.IsFinite(carryPosition) ? carryPosition : sample.PositionSeconds;
+                    firstWall = double.IsFinite(carryWall) ? carryWall : sample.WallSeconds;
                     hasPosition = true;
                 }
                 lastPosition = sample.PositionSeconds;
+                lastWall = sample.WallSeconds;
                 if (double.IsFinite(sample.LtcSeconds))
                 {
                     double error = Math.Abs(sample.PositionSeconds - expectedPosition(sample.LtcSeconds));
@@ -124,16 +136,26 @@ internal static class ContinuousFollowAudit
 
             double advance = hasPosition ? lastPosition - firstPosition : 0.0;
             double ltcAdvance = hasLtc ? lastLtc - firstLtc : 0.0;
+            // 実測区間（前の窓の最後のサンプルからこの窓の最後のサンプルまで）。窓をまたいで
+            // 空窓が続いた場合は最大 1.5 窓で頭打ちにし、帰属をこの窓に寄せる。
+            double intervalSeconds = hasPosition
+                ? Math.Min(Math.Max(0.0, lastWall - firstWall), intervalCap)
+                : 0.0;
+            bool sparse = !hasPosition || intervalSeconds < sparseThreshold;
             if (hasPosition)
+            {
                 carryPosition = lastPosition;
+                carryWall = lastWall;
+            }
             if (hasLtc)
                 carryLtc = lastLtc;
             windows.Add(new FollowWindow(index, start, frameUpdates, advance, maxError,
-                start < settlingSeconds, ltcAdvance, sampleCount));
+                start < settlingSeconds, ltcAdvance, sampleCount, intervalSeconds, sparse));
         }
 
         List<FollowWindow> audited = windows.Where(window => !window.Settling).ToList();
         List<FollowWindow> settling = windows.Where(window => window.Settling).ToList();
+        List<FollowWindow> measurable = audited.Where(window => !window.Sparse).ToList();
 
         int stallUpdates = 0;
         int stallAdvance = 0;
@@ -141,10 +163,16 @@ internal static class ContinuousFollowAudit
         {
             if (window.FrameUpdates == 0)
                 stallUpdates++;
-            if (window.PositionAdvance < windowSeconds * minAdvanceRatio)
+        }
+        // 案 3: LTC は窓長の半分以上進んだのに、位置がその半分も進まない窓だけを
+        // 再生側の停滞とする（表示側が同時に止まった窓は数えない）。Sparse は判定しない。
+        foreach (FollowWindow window in measurable)
+        {
+            if (window.LtcAdvance >= sparseThreshold && window.PositionAdvance < window.LtcAdvance * minAdvanceRatio)
                 stallAdvance++;
         }
 
+        List<FollowWindow> worstAdvancePool = measurable.Count > 0 ? measurable : audited;
         return new ContinuousFollowSummary(
             windows,
             audited.Count == 0 ? 0.0 : audited.Average(window => (double)window.FrameUpdates),
@@ -152,9 +180,10 @@ internal static class ContinuousFollowAudit
             stallAdvance,
             audited.Count == 0 ? 0.0 : audited.Max(window => window.MaxAbsError),
             audited.Count == 0 ? null : audited.MinBy(window => window.FrameUpdates),
-            audited.Count == 0 ? null : audited.MinBy(window => window.PositionAdvance),
+            worstAdvancePool.Count == 0 ? null : worstAdvancePool.MinBy(window => window.PositionAdvance),
             audited.Count == 0 ? null : audited.MaxBy(window => window.MaxAbsError),
             settling.Count,
-            settling.Count == 0 ? 0.0 : settling.Max(window => window.MaxAbsError));
+            settling.Count == 0 ? 0.0 : settling.Max(window => window.MaxAbsError),
+            audited.Count(window => window.Sparse));
     }
 }
