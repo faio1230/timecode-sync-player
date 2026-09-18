@@ -232,7 +232,9 @@ public sealed class LtcScenarioE2ETests
     {
         double startLtc = track.MediaIn.TotalSeconds + 2.0;
         // ゲート待ちの間もフレームを流し続ける必要があるため、素材の終端手前まで送る。
-        scenario.Play(startLtc, track.Used - startLtc - 1.0);
+        double signalSeconds = track.Used - startLtc - 1.0;
+        double signalEndLtc = startLtc + signalSeconds;
+        scenario.Play(startLtc, signalSeconds);
 
         DateTime gateStartedAt = DateTime.Now;
         double lastError = double.NaN;
@@ -256,8 +258,11 @@ public sealed class LtcScenarioE2ETests
             lastErrorSeconds = JsonNumberOrNull(lastError),
         });
 
-        // ゲート待ちで素材を消費しているため、残りの尺に収まる長さに監査区間を丸める。
-        double budgetSeconds = track.MediaOut.TotalSeconds - scenario.LtcSeconds() - 2.0;
+        // ゲート待ちで素材を消費しているため、残りに収まる長さに監査区間を丸める。基準は
+        // 素材の終端ではなく「送出した信号の終わり」。信号は startLtc から signalSeconds 分しか
+        // 流れないので、素材の終端で丸めると信号が尽きた区間まで測ってしまう（4K60 の実素材では
+        // ゲート待ちが 6 秒ほどかかり、最後の 1〜2 窓で LTC が止まって誤差 2.8〜3.0 秒が出ていた）。
+        double budgetSeconds = signalEndLtc - scenario.LtcSeconds() - 2.0;
         followSeconds = Math.Min(followSeconds, budgetSeconds);
         if (followSeconds < 30.0)
             throw new TimeoutException(
