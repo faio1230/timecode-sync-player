@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.4.5 - 未定
+## 0.4.5 - 2026-09-19
 
 0.4.4 was never published; its entries are folded in here because the two are a single
 dependency chain (the long-GOP warning explains the condition the seek fixes work around).
