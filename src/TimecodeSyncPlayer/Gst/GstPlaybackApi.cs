@@ -328,6 +328,37 @@ internal sealed class GstPlaybackApi : IPlaybackApi
     /// 0.4.5-C: ロング GOP 警告のポーリング。active=0 は「未計測」であり
     /// 「異常なし」ではない（UI は何も出さない）。表示だけの診断値。
     /// </summary>
+    // 0.4.5-C3: 読み込み時の静的スキャン。プレイヤー不要で、再生経路には触れない。
+    // コンテナを読むだけ（デコードしない）が I/O は待つので、UI スレッドから呼ばないこと。
+    private static bool _scanGopUnavailable;
+
+    /// <summary>素材のキーフレーム分布を測る。測れなければ null。</summary>
+    public static GopScanResult? ScanGop(string path, int timeoutMs = 30000)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        if (_scanGopUnavailable) return null;
+        try
+        {
+            if (GstNative.Imports.tcs_scan_gop(path, timeoutMs, out GstNative.TcsGopScan n) != 0)
+                return null;
+            return new GopScanResult(
+                n.Keyframes, n.DurationSec, n.HeadGapSec, n.TailGapSec,
+                n.MedianGapSec, n.P95GapSec, n.MaxGapSec);
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // 旧 DLL（スキャンなし）。1 回だけ警告し、以後は測らない。
+            _scanGopUnavailable = true;
+            Log.Warning("GstPlaybackApi: tcs_scan_gop が DLL に無いため素材のキーフレーム解析を無効化します");
+            return null;
+        }
+        catch (DllNotFoundException)
+        {
+            _scanGopUnavailable = true;
+            return null;
+        }
+    }
+
     public bool TryGetGopStatus(out GopStatus status)
     {
         status = default;

@@ -118,6 +118,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly PlaylistDragDropCoordinator _playlistDragDropCoordinator;
     // 0.4.5-C: ロング GOP 警告（表示のみ。同期の制御則には触れない）。
     private readonly LongGopWarningMonitor _longGopWarningMonitor = new();
+    // 0.4.5-C3: 読み込み時にコンテナを読んでキーフレーム分布を測る（デコードしない）。
+    // 再生経路には触れない独立したパイプラインなので、ロードの状態機械に影響しない。
+    private readonly GopScanCache _gopScanCache =
+        new(path => Gst.GstPlaybackApi.ScanGop(path));
     // 0.4.4 は既定で無効（判定方式が誤っており実素材で誤検出する。詳細は TickLongGopWarning）。
     private readonly bool _longGopWarningEnabled =
         string.Equals(Environment.GetEnvironmentVariable("TCS_LONG_GOP_WARNING"), "on",
@@ -1207,6 +1211,66 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _loadedTrackId = id;
         if (_timelinePanel != null)
             _timelinePanel.LoadedTrackId = id;
+        BeginGopScan(id);
+    }
+
+    /// <summary>
+    /// 0.4.5-C3: 読み込んだ素材のキーフレーム分布を測る。I/O を待つのでバックグラウンドで走らせ、
+    /// 終わったら UI スレッドで表示を更新する。同じ素材は 1 回しか測らない。
+    /// </summary>
+    private void BeginGopScan(Guid? trackId)
+    {
+        if (!trackId.HasValue) return;
+        PlaylistTrack? track = _playlist.FindTrackById(trackId.Value);
+        string? path = track?.FilePath;
+        if (string.IsNullOrEmpty(path)) return;
+        if (_gopScanCache.TryGet(path) is not null)
+        {
+            UpdateGopScanWarning();
+            return;
+        }
+        Guid id = trackId.Value;
+        Task.Run(() =>
+        {
+            try
+            {
+                _gopScanCache.EnsureScanned(path);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "GOP scan failed for {Path}", path);
+                return;
+            }
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_loadedTrackId == id)
+                    UpdateGopScanWarning();
+            });
+        });
+    }
+
+    /// <summary>0.4.5-C3: スキャン結果からステータス行とプレイリストの印を更新する。</summary>
+    private void UpdateGopScanWarning()
+    {
+        PlaylistTrack? track = _loadedTrackId.HasValue
+            ? _playlist.FindTrackById(_loadedTrackId.Value) : null;
+        GopScanResult? scan = _gopScanCache.TryGet(track?.FilePath);
+        GopSeekQuality quality = scan?.Quality ?? GopSeekQuality.Unknown;
+        string text = scan is { } s ? GopScanVerdict.Format(quality, s.MaxGapSeconds) : string.Empty;
+
+        if (_vm.Sync.LongGopWarning != text)
+            _vm.Sync.LongGopWarning = text;
+
+        if (track != null && quality is GopSeekQuality.Warning or GopSeekQuality.Error
+            && !track.LongGopWarning)
+        {
+            Log.Information(
+                "Long GOP warning: track={Track} keyframes={Keyframes} maxGapMs={Max:F0} medianGapMs={Median:F0} headGapMs={Head:F0} tailGapMs={Tail:F0}",
+                track.Name, scan!.Value.Keyframes, scan.Value.MaxGapSeconds * 1000.0,
+                scan.Value.MedianGapSeconds * 1000.0, scan.Value.HeadGapSeconds * 1000.0,
+                scan.Value.TailGapSeconds * 1000.0);
+            _playlist.MarkLongGopWarning(track.Id);
+        }
     }
 
     private void LoadCurrentPlaylistTrack(bool paused = false)
@@ -1855,7 +1919,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _duration = dur;
 
         TickMetadataFetch();
-        TickLongGopWarning();
+        // 0.4.5-C3: ロング GOP の判定は読み込み時の静的スキャン（BeginGopScan）に移した。
+        // 再生中の観測による判定（C2）は「読み込み位置から次のキーフレームまでの距離」を
+        // 見ており、可変 GOP の実素材で誤検出したため使わない。TCS_LONG_GOP_WARNING=on の
+        // ときだけ、比較用に旧経路も動かす。
+        if (_longGopWarningEnabled)
+            TickLongGopWarning();
 
         // Gap 状態ではレンダーコールバックが止まるため、
         // タイマーでタイムライン位置を更新する
