@@ -51,6 +51,9 @@ public sealed class ContinuousFollowAuditTests
         summary.Windows[0].LtcAdvance.Should().BeApproximately(1.8, 0.001);
         summary.Windows[1].Samples.Should().Be(10);
         summary.Windows[1].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.WindowsWithoutPerf.Should().Be(0);
+        summary.SeekSpans.Should().BeEmpty();
+        summary.SeekSecondsTotal.Should().Be(0.0);
     }
 
     [Fact]
@@ -75,9 +78,10 @@ public sealed class ContinuousFollowAuditTests
     }
 
     [Fact]
-    public void Summarize_WindowWithoutAnyPerfLine_IsTreatedAsStalled()
+    public void Summarize_WindowWithoutAnyPerfLine_IsReportedSeparatelyFromStall()
     {
-        // フレームが止まると Playback perf 行自体が出ない。行が無い窓は更新 0 として数える。
+        // アプリの 2 秒タイマーが滑ると Playback perf 行自体が出ない。行が無い窓は
+        // 「アプリが 0 更新と報告した」わけではないので、凍結として数えず別枠に残す。
         List<FollowSample> samples = Samples(6.0, 0.2, t => 10.0 + t);
         List<FollowPerfSegment> perf =
         [
@@ -88,8 +92,75 @@ public sealed class ContinuousFollowAuditTests
         ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
             samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
 
-        summary.StallUpdateWindows.Should().Be(1);
+        summary.Windows[1].PerfSegments.Should().Be(0);
+        summary.WindowsWithoutPerf.Should().Be(1);
+        summary.StallUpdateWindows.Should().Be(0, "行が無い窓は 0 更新と報告された値ではない");
+        summary.WorstUpdates!.Value.Index.Should().Be(0, "最悪更新の報告は perf 行のある窓から選ぶ");
+    }
+
+    [Fact]
+    public void Summarize_RealZeroUpdateWithPerfLine_IsStillCountedNextToMissingPerfWindows()
+    {
+        List<FollowSample> samples = Samples(8.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf =
+        [
+            new FollowPerfSegment(2.0, 2.0, 60),   // 窓 0
+            new FollowPerfSegment(4.0, 2.0, 0),    // 窓 1: 本物の 0 更新
+            new FollowPerfSegment(8.0, 2.0, 60),   // 窓 3（窓 2 は行なし）
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 8.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.StallUpdateWindows.Should().Be(1, "perf 行があり updates=0 の窓は凍結として数える");
         summary.WorstUpdates!.Value.Index.Should().Be(1);
+        summary.WindowsWithoutPerf.Should().Be(1);
+        summary.Windows[2].PerfSegments.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_SeekSpans_AreOverlappedPerWindowAndReported()
+    {
+        List<FollowSample> samples = Samples(6.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+        List<FollowSeekSpan> seeks =
+        [
+            new FollowSeekSpan(1.0, 1.5),   // 窓 0 に 1.0s、窓 1 に 0.5s
+            new FollowSeekSpan(4.5, 1.0),   // 窓 2 に 1.0s
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity,
+            seeks: seeks);
+
+        summary.Windows[0].SeekSeconds.Should().BeApproximately(1.0, 0.001);
+        summary.Windows[0].LongestSeekSeconds.Should().BeApproximately(1.5, 0.001);
+        summary.Windows[1].SeekSeconds.Should().BeApproximately(0.5, 0.001);
+        summary.Windows[2].SeekSeconds.Should().BeApproximately(1.0, 0.001);
+        summary.Windows[2].LongestSeekSeconds.Should().BeApproximately(1.0, 0.001);
+        summary.SeekSpans.Should().HaveCount(2);
+        summary.SeekSecondsTotal.Should().BeApproximately(2.5, 0.001);
+        summary.LongestSeekSeconds.Should().BeApproximately(1.5, 0.001);
+    }
+
+    [Fact]
+    public void Summarize_LongestSeekInWindow_IsNotClippedToTheWindow()
+    {
+        // 窓 1 にかかっているのが後半 0.5 秒でも、シーク 1 回の長さは 4.0 秒として報告する
+        // （しきい値を実測の着地時間から決められるように）。
+        List<FollowSample> samples = Samples(6.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+        List<FollowSeekSpan> seeks = [new FollowSeekSpan(0.5, 4.0)];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity,
+            seeks: seeks);
+
+        summary.Windows[0].SeekSeconds.Should().BeApproximately(1.5, 0.001);
+        summary.Windows[1].SeekSeconds.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[1].LongestSeekSeconds.Should().BeApproximately(4.0, 0.001);
+        summary.SeekSecondsTotal.Should().BeApproximately(4.0, 0.001);
+        summary.LongestSeekSeconds.Should().BeApproximately(4.0, 0.001);
     }
 
     [Fact]

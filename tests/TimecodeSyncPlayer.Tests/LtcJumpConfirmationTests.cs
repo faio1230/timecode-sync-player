@@ -196,13 +196,20 @@ public sealed class LtcJumpConfirmationTests
     }
 
     [Fact]
-    public void SameTrackJump_IsAppliedImmediately()
+    public void SameTrackJump_IsAppliedAfterTheDecisionWindow()
     {
+        // D37-a: 同一トラック内の Jump は確認を待たないが、粗い判定のゲートは窓（3 サンプル）が
+        // 埋まるまで Seek を保留する。実素材では次の LTC フレーム（40ms 間隔）で埋まる。
         (SyncScenarioHarness h, _, _, _) = ArrangeContinueWithA();
 
         Raw(h, 12.0, 10_080);
+        h.Operations.Should().NotContain(o => o.Name == "seek", "1 サンプル目では出さない");
 
-        h.Operations.Should().Contain(o => o.Name == "seek", "同一トラック内の Jump は確認を待たない");
+        Raw(h, 12.04, 10_120);
+        Raw(h, 12.08, 10_160);
+        Raw(h, 12.12, 10_200);
+
+        h.Operations.Should().Contain(o => o.Name == "seek", "窓が埋まれば同一トラック内の Jump を適用する");
         h.IsGapActive.Should().BeFalse();
     }
 
@@ -216,6 +223,8 @@ public sealed class LtcJumpConfirmationTests
         h.Operations.Should().NotContain(o => o.Name == "seek", "fps 推定の食い違いは未確認扱い");
 
         Raw(h, 12.04, 10_120, detectedFps: 25.0);
+        Raw(h, 12.08, 10_160, detectedFps: 25.0);
+        Raw(h, 12.12, 10_200, detectedFps: 25.0);
 
         h.Operations.Should().Contain(o => o.Name == "seek", "次フレームが連続すれば適用する");
     }

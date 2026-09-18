@@ -69,6 +69,28 @@ public class SeekTraceEventsTests
     }
 
     [Fact]
+    public void Evaluate_GatedSeek_RecordsSeekGatedReasonAndNoSeekDecide()
+    {
+        // D37-a: 2 サンプル目以降は瞬間値で出さない。誤差 0.04 秒は許容 1 フレーム
+        // （0.033 秒）を超えるが、窓が埋まるまでは seek.decide を出さず理由を残す。
+        double now = 0.0;
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 1), null, () => now);
+        List<JsonElement> events = Capture(() =>
+        {
+            engine.Decide(77.25, SeekYieldingState(77.25)).Action.Should().Be(SyncActionType.None);
+            now += 0.10;
+            engine.Decide(77.29, SeekYieldingState(77.25)).Action.Should().Be(SyncActionType.None);
+        });
+
+        var evaluate = Events(events, "sync.evaluate").Last();
+        string detail = evaluate.GetProperty("detail").GetString()!;
+        detail.Should().Contain("reason=seek-gated");
+        detail.Should().Contain("gate_samples=2");
+        detail.Should().Contain("delta=0.040000");
+        Events(events, "seek.decide").Should().BeEmpty();
+    }
+
+    [Fact]
     public void Decide_SeekWithLearnedCompensation_RecordsCompensatedTarget()
     {
         var compensator = new SeekLatencyCompensator(enabled: true);
