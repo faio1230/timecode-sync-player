@@ -899,9 +899,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_disposed) return;
         long receivedAtMilliseconds = Environment.TickCount64;
         SyncAccuracyTrace.Current.RecordLtc(e);
+        // M1 計測: Dispatcher 待ちと UI 処理をフレームへ紐付ける（トレース無効時は時刻を取らない）。
+        long enqueuedTicks = SyncAccuracyTrace.Current.IsEnabled ? Stopwatch.GetTimestamp() : 0;
         Dispatcher.BeginInvoke(() =>
         {
-            if (!_disposed) _ltcSyncController.ReceiveFrame(e, receivedAtMilliseconds);
+            if (_disposed) return;
+            long uiStartTicks = enqueuedTicks != 0 ? Stopwatch.GetTimestamp() : 0;
+            _ltcSyncController.ReceiveFrame(e, receivedAtMilliseconds);
+            if (enqueuedTicks != 0)
+                SyncAccuracyTrace.Current.RecordDispatch(
+                    e.FrameEndTimestamp, enqueuedTicks, uiStartTicks, Stopwatch.GetTimestamp());
         });
     }
 
