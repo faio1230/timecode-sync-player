@@ -8,10 +8,6 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 
 - Output traces now record the age breakdown from the LTC sample end to the sync evaluation (Dispatcher enqueue, queue wait, UI processing) when the accuracy trace is enabled (M1). Behaviour is unchanged.
 
-### Improved
-
-- On heavy media (4K60 long-GOP), the wait before sync starts following dropped from around 9 seconds to about 2. The initial offset used to be closed by seeking, which chained; it is now closed by rate correction.
-
 ### Known limitations
 
 - On long-GOP media, a lag that appears while following is closed by playback rate rather than by seeking, so it can take several to a dozen seconds to clear (roughly 10 seconds per second of lag). Seeking there does not converge, because the landing carries a new error equal to the seek duration. Shortening the keyframe interval makes seeks fast and keeps this state from arising.
