@@ -1,0 +1,17 @@
+{
+  "condition": "H1-level-snr",
+  "ltcFps": 25,
+  "ltcFpsMode": "fixed",
+  "settlingSeconds": 2.0,
+  "gapSeconds": 0.5,
+  "levels": [
+    { "name": "clean", "seconds": 20 },
+    { "name": "m6db_snr12", "seconds": 20, "amplitudeDb": -6, "noiseDb": 12 },
+    { "name": "m20db_snr12", "seconds": 20, "amplitudeDb": -20, "noiseDb": 12 },
+    { "name": "m6db_snr5", "seconds": 20, "amplitudeDb": -6, "noiseDb": 5 },
+    { "name": "m20db_snr5", "seconds": 20, "amplitudeDb": -20, "noiseDb": 5 },
+    { "name": "m40db_snr5", "seconds": 20, "amplitudeDb": -40, "noiseDb": 5 },
+    { "name": "m20db_snr4_5", "seconds": 20, "amplitudeDb": -20, "noiseDb": 4.5 },
+    { "name": "m40db_snr4_5", "seconds": 20, "amplitudeDb": -40, "noiseDb": 4.5 }
+  ]
+}

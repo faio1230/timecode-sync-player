@@ -141,6 +141,17 @@ internal sealed class LtcSignalPlayer : IDisposable
         _lastFrame = LastFrameNumber(afterTimecodes, fps);
     }
 
+    /// <summary>
+    /// M6: 事前に生成・加工・リサンプル済みの波形（デバイスのミックスレート）をそのまま送出する。
+    /// </summary>
+    public void SendSamples(float[] monoSamples)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (monoSamples.Length == 0)
+            throw new ArgumentOutOfRangeException(nameof(monoSamples));
+        PlaySamples(monoSamples);
+    }
+
     public void PlayHeld(double seconds, double fps, TimeSpan duration)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

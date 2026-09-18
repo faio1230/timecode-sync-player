@@ -1,0 +1,15 @@
+{
+  "condition": "B-level",
+  "ltcFps": 25,
+  "ltcFpsMode": "fixed",
+  "settlingSeconds": 2.0,
+  "gapSeconds": 0.5,
+  "levels": [
+    { "name": "clean", "seconds": 20 },
+    { "name": "plus3db", "seconds": 20, "amplitudeDb": 3 },
+    { "name": "minus6db", "seconds": 20, "amplitudeDb": -6 },
+    { "name": "minus20db", "seconds": 20, "amplitudeDb": -20 },
+    { "name": "minus40db", "seconds": 20, "amplitudeDb": -40 },
+    { "name": "minus60db", "seconds": 20, "amplitudeDb": -60 }
+  ]
+}
