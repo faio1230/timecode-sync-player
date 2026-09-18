@@ -10,6 +10,9 @@
     { "name": "snr30", "seconds": 20, "noiseDb": 30 },
     { "name": "snr20", "seconds": 20, "noiseDb": 20 },
     { "name": "snr12", "seconds": 20, "noiseDb": 12 },
-    { "name": "snr6", "seconds": 20, "noiseDb": 6 }
+    { "name": "snr6", "seconds": 20, "noiseDb": 6 },
+    { "name": "snr5", "seconds": 20, "noiseDb": 5 },
+    { "name": "snr4_5", "seconds": 20, "noiseDb": 4.5 },
+    { "name": "snr4", "seconds": 20, "noiseDb": 4 }
   ]
 }
