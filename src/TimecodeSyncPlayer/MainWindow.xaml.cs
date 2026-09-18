@@ -170,6 +170,23 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         string.Equals(Environment.GetEnvironmentVariable("TCS_SEEK_COST_HINT"), "on",
             StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 0.4.5-C3: キーフレーム分布のスキャンを行うか（`TCS_GOP_SCAN=off` で止める）。<b>既定は on。</b>
+    ///
+    /// 足した理由は 2 つ。
+    /// 1. <b>切り分けのため。</b>v0.4.3（スキャン無し）は M8 ×5 で配信の落ち込みが 0/277 窓、
+    ///    0.4.5 は 7/292 窓。**時間的には重なっていない**ことは確認済みだが、13.4GB を読み切る
+    ///    ことでページキャッシュやディスク待ち行列に影響している可能性は残る。
+    ///    これを切って比べれば分かる（docs/analysis/2026-09-19-decode-stall-overshoot.md）。
+    /// 2. <b>現場の逃げ道として。</b>300GB 級の ProRes では初回のスキャンに 8 分程度かかる見込み。
+    ///    素材が推奨どおりだと分かっているなら、止めて構わない。
+    ///
+    /// 止めると<b>キーフレーム間隔の警告も出なくなる</b>（判定の材料が無くなるため）。
+    /// </summary>
+    private readonly bool _gopScanEnabled =
+        !string.Equals(Environment.GetEnvironmentVariable("TCS_GOP_SCAN"), "off",
+            StringComparison.OrdinalIgnoreCase);
+
     // ── 同期コーディネータ（遅延生成キャッシュ。ラムダは this のフィールドのみを参照するため
     //    呼び出しごとの再生成は不要。初回呼び出し時に確定する） ──
     private SingleModeSyncCoordinator?  _singleModeSyncCoordinator;
@@ -1263,6 +1280,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// </summary>
     private void BeginGopScan(Guid? trackId)
     {
+        if (!_gopScanEnabled) return;
         if (!trackId.HasValue) return;
         PlaylistTrack? track = _playlist.FindTrackById(trackId.Value);
         string? path = track?.FilePath;
