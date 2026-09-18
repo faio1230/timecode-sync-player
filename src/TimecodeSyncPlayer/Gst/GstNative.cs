@@ -80,6 +80,18 @@ internal static class GstNative
         public ulong WarningQpc;
     }
 
+    /// <summary>0.4.5-C3: 読み込み時の静的スキャン結果（再生せずにコンテナから読む）。</summary>
+    internal struct TcsGopScan
+    {
+        public int Keyframes;
+        public double DurationSec;
+        public double HeadGapSec;
+        public double TailGapSec;
+        public double MedianGapSec;
+        public double P95GapSec;
+        public double MaxGapSec;
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void TcsFrameNotifyDelegate(IntPtr userData, ulong generation, ulong seq);
 
@@ -193,6 +205,11 @@ internal static class GstNative
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_gop_status(
             IntPtr player, out TcsGopStatus outStatus);
+
+        // 0.4.5-C3: プレイヤー不要。コンテナを読むだけで、再生経路には触れない。
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        internal static extern int tcs_scan_gop(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string utf8Path, int timeoutMs, out TcsGopScan outScan);
 
         // ステージ 6b: 共有テクスチャリングの NT ハンドル + 共有フェンス。
         // ハンドルは shim 所有（CloseHandle 禁止）。
