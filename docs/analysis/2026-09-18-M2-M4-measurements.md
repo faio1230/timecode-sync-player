@@ -1,0 +1,115 @@
+# M2〜M4 の実測（既存 run の集計、2026-09-18）
+
+0.4.4 の計測準備。既存 trace だけを使い、M2（LTC の速度とドリフト）、M3（報告位置基準と表示 PTS 基準）、
+M4（24fps 素材 × 60Hz の重複・欠落）を集計した。**製品コードは変更していない。実機は使っていない。**
+M1（age の内訳）と 10 分 run は未実施（末尾の追加案を参照）。
+
+計測の定義は `docs/analysis/2026-09-18-LTC-sync-architecture-review.md` 5 節に従う。
+
+## 使った run
+
+| 名前 | 場所 | 内容 |
+| --- | --- | --- |
+| d30 | `TestResults/v3/d30-ltc25-gst`（agent-b ツリー） | GStreamer、LTC 25fps、103.0s |
+| v3s-24 | `TestResults/v3/v3s-24-ffc2dde-ltc24-gst`（main ツリー） | LTC 24fps、103.0s |
+
+どちらも `trace.jsonl`（SyncAccuracyTrace: `ltc` / `frame` / `render-stage`）と `events.jsonl`（出力トレース）を持ち、
+`analysis/accuracy-samples.csv` は `scripts/analyze-sync-accuracy.py` の出力（表示 PTS 基準の誤差）。
+
+## 集計スクリプト
+
+| 計測 | スクリプト | 変更内容 |
+| --- | --- | --- |
+| M2 | `scripts/analyze-t2-ltc-clock.py` | 拡張: [5] 速度分布、[6] 連続区間の回帰、Theil–Sen robust、外れペア集計 |
+| M3 | `scripts/analyze-v3-spread-stages.py` | 拡張: M3 節（報告位置基準と表示 PTS 基準）。`resync_rows` にフェーズ LTC 未検出時のガードを追加 |
+| M4 | `scripts/analyze-frame-quantization.py` | 新規: 発表ごとの marker フレーム番号から重複・欠落・逆行を集計 |
+
+出力は `TestResults/ltc-metrics-20260918/`（`m2-d30-ltc25.txt`、`m2-v3s-24-ltc24.txt`、`m3-two-bases.txt`、`m4-frame-quantization.txt`）。
+
+## M2: LTC の速度と ppm
+
+ペア = 隣接 LTC フレーム（ΔLTC がちょうど 1/fps）の ΔLTC 秒 ÷ Δサンプル時刻。1.0 が一致。
+
+| run | ペア n | 速度分布 ppm（中央値 / p5 / p95 / std） | \|ppm\|>100 のペア | 連続区間（≧5s）の回帰 |
+| --- | ---: | --- | ---: | --- |
+| d30（LTC 25） | 2234 | -0.0 / -0.0 / +0.0 / 0.0 | 97（4.3%） | #1 34.8s: slope -2.23 ± 5.04、robust +6.97、pair 中央値 -0.0<br>#2 34.9s: slope +26.14 ± 4.34、robust +15.75、pair 中央値 -0.0 |
+| v3s-24（LTC 24） | 2139 | -0.8 / -0.8 / +1.6 / 1.1 | 85（4.0%） | #1 34.9s: slope -10.41 ± 1.80、robust -9.67、pair 中央値 -0.8<br>#2 34.8s: slope -11.38 ± 1.56、robust -14.12、pair 中央値 -0.8 |
+
+- `robust` は 10 秒以上離れた 2 点の傾きの中央値（Theil–Sen、アンカー更新の段差に強い）。
+- 外れペア（\|ppm\|>100、約 4%）はアンカー窓更新による `sampleTicks` の段差（例 d30: Δt=33.9ms で ΔLTC=40ms）。
+  除外後の中央値・p5・p95 は上の値と変わらない。
+- データ源の注意: LTC は検証ハーネスの生成信号（VB-CABLE 経由）で、送信側も受信側も同じ PC のクロック。
+  外部 LTC 機器のクロック差はこの run では測れない。
+
+## M3: 報告位置基準と表示 PTS 基準（steady サンプル、ms）
+
+| run | n | 基準 | 平均 | σ | p95(\|誤差\|) |
+| --- | ---: | --- | ---: | ---: | ---: |
+| d30 | 1068 | 表示 PTS（フレーム PTS − 期待メディア秒） | -29.00 | 11.03 | 48.67 |
+| | | 報告位置（position − 外挿期待） | -2.38 | 1.45 | 4.96 |
+| | | 差（表示 − 報告） | -26.63 | 10.90 | 46.29 |
+| v3s-24 | 1021 | 表示 PTS | -30.78 | 12.40 | 42.30 |
+| | | 報告位置 | -1.88 | 1.17 | 3.22 |
+| | | 差（表示 − 報告） | -28.90 | 11.78 | 40.40 |
+
+- 報告位置は、サンプルの LTC 受信時刻に最も近い `gst.position`（`value` = 同期ループが見る位置 µs）を
+  25ms 以内で採用し、期待値を取得 lag 分だけ外挿して比較した。lag は d30: 中央値 0.04 / p95 11.64 ms、
+  v3s-24: 中央値 2.42 / p95 8.02 ms。未対応 0 件。
+- 表示 PTS はフレーム先頭基準（marker の `frameIndex / fps`）。
+- d30 のレポート見出しは `(mpv)` と出るが、当時の `settings.json` に `backend` キーが無いための既定表示で、
+  実行は GStreamer（`gst.position` 9704/9723 が `ptsNs≠0`）。
+
+## M4: 24fps 素材 × 60Hz の重複・欠落（発表境界）
+
+小欠落 = 連番の飛び 2〜4（1〜3 フレームの落ち）、大飛び = 飛び ≧5（シーク/不連続）、
+小逆行 = 5 フレーム以内の順序戻り、大逆行 = ループ/シーク復帰、長保持 = 連続発表 > 10（freeze/停止）。
+
+| run | clip | 素材 fps | 発表 | 異なり | 重複発表 | 小欠落 | 大飛び | 小逆行/大逆行 | 保持数の分布 | 定常区間の小欠落 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: |
+| d30 | 1 | 24 | 2223 | 785 | 1438 | 0 | 0 | 1/1 | 2:50%、3:49% | 0（25.1s、3 区間） |
+| | 2 | 29.97 | 1717 | 799 | 918 | 0 | 0 | 2/0 | 2:99% | 0 |
+| | 3 | 60 | 1769 | 1591 | 178 | 4 | 0 | 2/0 | 1:100% | 3 |
+| v3s-24 | 1 | 24 | 2228 | 786 | 1442 | 0 | 2 | 1/1 | 2:50%、3:49% | 0（12.6s、1 区間） |
+| | 2 | 29.97 | 1716 | 798 | 918 | 0 | 0 | 1/0 | 2:90%、1:5%、3:5% | 0 |
+| | 3 | 60 | 1768 | 1592 | 176 | 4 | 1 | 1/1 | 1:100% | 3 |
+
+- 24fps→60Hz の重複は両 run とも 2:50% / 3:49%（理想 2.5）。定常区間の小欠落は 0。
+- 大飛びはシーク位相の区間（v3s-24 の clip 1 に 2、clip 3 に 1）に出る。
+- 境界は発表（bitmap-publication）で、物理走査（`present.scanout`）ではない。
+
+## 限界
+
+- **短い run しかない**: run 全体で 103.0s、回帰区間は最長 35s。M2 の傾きは se 1.6〜5.0 ppm、
+  sampleTicks の分解能は 1 tick = 40ms あたり 2.5 ppm。区間ごと・run ごとで slope の符号と大きさが
+  一致しない（例: d30 の 2 区間 -2.2 と +26.1、v3s-24 の 2 区間 -10.4 と -11.4）。
+  **10 分・60 分のドリフトをこの数字から確定できない。**
+- M2 の入力は検証ハーネスの生成信号（VB-CABLE、同一 PC クロック）で、外部 LTC 機器のドリフトは測れない。
+- M3/M4 は発表境界の計測で、物理走査（`present.scanout`）と表示機器の遅れは含まない（今回の指示で後回し）。
+- M4 の「定常区間」は大飛びと小逆行を除いた区間。ループ/シーク復帰は大逆行として分離している。
+- M1（age の内訳）と 10 分 run は未実施。
+
+## M1 の追加案（承認待ち）
+
+1. `src/TimecodeSyncPlayer/MainWindow.xaml.cs` の `LtcMonitor_FrameReceived`（897-906 行）
+   - `Dispatcher.BeginInvoke` の前に `long enqueuedAt = Stopwatch.GetTimestamp();` を 1 行。
+   - ラムダ内で `ReceiveFrame` の前に `long uiStart`、後に `long uiEnd` を取り、
+     `SyncAccuracyTrace.Current.RecordDispatch(e.FrameEndTimestamp, enqueuedAt, uiStart, uiEnd)` を呼ぶ。
+2. `src/TimecodeSyncPlayer/SyncAccuracyTrace.cs` に `RecordDispatch` を追加（約 10 行）。
+   `{"type":"ltc-ui","ticks":uiEnd,"sampleTicks":…,"enqueueTicks":…,"uiStartTicks":…}` を
+   既存のキュー/writer へ 1 行書く。
+3. `scripts/analyze-sync-accuracy.py` の `TRACE_TYPES` と footer 件数検証に `ltc-ui` を追加
+   （または `scripts/analyze-t2-ltc-clock.py` に専用集計を足す）。
+
+これで M1 の内訳が 1 本につながる:
+sample→callback（`callbackTicks − sampleTicks`）、callback→handler（`ticks − callbackTicks`）、
+handler→enqueue（`enqueueTicks − ticks`）、enqueue→UI 開始（`uiStartTicks − enqueueTicks` = Dispatcher 待ち）、
+UI 処理（`uiEndTicks − uiStartTicks`）。
+
+代替案:
+- (a) ラムダに `Log.Debug` 1 行（トレース契約を変えない。集計にはアプリログの複製が要る）。
+- (b) 既存 `sync.apply` の Debug 行（`src/TimecodeSyncPlayer/LtcSyncController.cs:276-277`）に
+  `sampleTicks` を 1 フィールド足し、UI 処理をフレームへ紐付ける。
+
+10 分 run は実機が空いてから、`TIMECODE_ACCURACY_TRACE` を長時間追従の経路
+（`scripts/run-ltc-scenarios.ps1` に 1 行、または手動起動の環境変数）で有効にすれば、
+製品コードを変えずに `ltc` イベントの記録だけが取れる。

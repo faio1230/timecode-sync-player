@@ -142,6 +142,8 @@ def build_records(run):
             "kind": row["kind"],
             "err": fnum(row, "signedErrorMs"),
             "frameAgeMs": fnum(row, "frameAgeMs"),
+            "sampleTicks": fnum(row, "ticks"),
+            "expectedMediaSeconds": fnum(row, "expectedMediaSeconds"),
             "scheduledQpc": publish["scheduledQpc"],
             "publish_qpc": publish["qpc"],
             "acquire_qpc": acquire.get("qpc"),
@@ -218,6 +220,67 @@ def cell(values):
     return f"{percentile(values, 50):.2f} / {percentile(values, 90):.2f} (n={len(values)})"
 
 
+def summary_stats(values):
+    if not values:
+        return None
+    absolute = sorted(abs(value) for value in values)
+    return {
+        "n": len(values),
+        "mean": statistics.fmean(values),
+        "sigma": statistics.pstdev(values) if len(values) > 1 else 0.0,
+        "p95Abs": percentile(absolute, 95),
+    }
+
+
+def two_bases(run, records):
+    """M3: 報告位置基準と表示 PTS 基準の定常誤差を同時に集計する。
+
+    表示 PTS は accuracy-samples.csv の signedErrorMs（フレーム PTS − 期待メディア秒）。
+    報告位置は同じサンプル時刻に最も近い gst.position（value = 同期ループが見る位置 µs）を
+    取得時刻まで期待値を外挿して比較する。差の平均が固定遅延、σ・p95 が変動の分離材料。
+    """
+    positions = load_events(run / "events.jsonl").get("gst.position", [])
+    if not positions:
+        return None
+    position_qpc = [event["qpc"] for event in positions]
+    paired = []
+    unmatched = 0
+    for record in records:
+        tick = record.get("sampleTicks")
+        expected = record.get("expectedMediaSeconds")
+        if tick is None or expected is None or record.get("err") is None:
+            continue
+        index = bisect.bisect_left(position_qpc, tick)
+        best = None
+        for candidate in (index - 1, index, index + 1):
+            if 0 <= candidate < len(positions):
+                distance = abs(position_qpc[candidate] - tick)
+                if best is None or distance < best[0]:
+                    best = (distance, positions[candidate])
+        if best is None or best[0] > 250_000:  # 25 ms（位置取得はほぼ 10ms 間隔）
+            unmatched += 1
+            continue
+        position = best[1]
+        lag_ms = (position["qpc"] - tick) / (FREQ / 1000.0)
+        expected_at_position = expected + lag_ms / 1000.0
+        reported_ms = (position["value"] / 1e6 - expected_at_position) * 1000.0
+        paired.append({"displayed": record["err"], "reported": reported_ms, "lagMs": lag_ms})
+    if not paired:
+        return {"unmatched": unmatched}
+    displayed = [item["displayed"] for item in paired]
+    reported = [item["reported"] for item in paired]
+    difference = [item["displayed"] - item["reported"] for item in paired]
+    lag = [item["lagMs"] for item in paired]
+    return {
+        "n": len(paired),
+        "unmatched": unmatched,
+        "displayed": summary_stats(displayed),
+        "reported": summary_stats(reported),
+        "difference": summary_stats(difference),
+        "lagMs": {"median": statistics.median(lag), "p95": percentile(lag, 95)},
+    }
+
+
 def report(run, backend, records, join_miss, publish_count):
     errors = [abs(r["err"]) for r in records]
     p10, p90 = percentile(errors, 10), percentile(errors, 90)
@@ -261,6 +324,27 @@ def report(run, backend, records, join_miss, publish_count):
                  f"（区間間 {100 * between / total_var:.0f}%、区間内 {100 * within / total_var:.0f}%）"
                  f"、区間内 σ は {min(statistics.pstdev(v) for v in segments.values() if len(v) > 1):.1f}"
                  f"〜{max(statistics.pstdev(v) for v in segments.values() if len(v) > 1):.1f} ms")
+    bases = two_bases(run, records)
+    lines.append("")
+    lines.append("### M3 報告位置基準と表示 PTS 基準（steady サンプル、ms）")
+    if bases is None:
+        lines.append("- run に events.jsonl または gst.position が無い")
+    elif "n" not in bases:
+        lines.append(f"- gst.position と突き合わせ不可（未対応 {bases['unmatched']}）")
+    else:
+        displayed = bases["displayed"]
+        reported = bases["reported"]
+        difference = bases["difference"]
+        lines.append(f"- 突き合わせ n={bases['n']} 未対応={bases['unmatched']} "
+                     f"位置取得 lag 中央値={bases['lagMs']['median']:.2f} p95={bases['lagMs']['p95']:.2f} ms")
+        lines.append("| 基準 | n | 平均 | σ | p95(|誤差|) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: |")
+        lines.append(f"| 表示 PTS（フレーム PTS − 期待メディア秒） | {displayed['n']} | "
+                     f"{displayed['mean']:+.2f} | {displayed['sigma']:.2f} | {displayed['p95Abs']:.2f} |")
+        lines.append(f"| 報告位置（position − 外挿期待） | {reported['n']} | "
+                     f"{reported['mean']:+.2f} | {reported['sigma']:.2f} | {reported['p95Abs']:.2f} |")
+        lines.append(f"| 差（表示 − 報告） | {difference['n']} | "
+                     f"{difference['mean']:+.2f} | {difference['sigma']:.2f} | {difference['p95Abs']:.2f} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -321,11 +405,15 @@ def resync_rows(run, records):
         clip, target_media = expected_media(fixture, target + 0.01)
         load = next((e for e in loads if t0 <= e["qpc"] <= t0 + FREQ), None)
         steady = [r["err"] for r in records if r["phase"] == phase]
+        if first_ltc is None:
+            continue
         add(phase, first_ltc, clip, target_media, load, steady, start_to_ltc=ms(first_ltc["ticks"] - t0))
 
     freeze_start = starts["freeze-sweep"]
     for boundary, clip_id in ((12, 2), (24, 3)):
         first_ltc = next((e for e in ltcs if e["ticks"] >= freeze_start and abs(e["seconds"] - boundary) <= 0.08), None)
+        if first_ltc is None:
+            continue
         clip = next(c for c in fixture["clips"] if c["id"] == clip_id)
         load = next((e for e in loads if first_ltc["ticks"] - 2 * FREQ <= e["qpc"] <= first_ltc["ticks"] + FREQ), None)
         steady = [r["err"] for r in records
