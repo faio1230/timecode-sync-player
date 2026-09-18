@@ -28,7 +28,7 @@ PHASES = {"black-sweep": (0, 35), "freeze-sweep": (0, 35),
 PHASE_START_LTC_LAG_PERIODS = 5
 THRESHOLDS = (20, 40, 80, 250)
 EPS = 1e-7
-TRACE_DATA_TYPES = ("ltc", "frame", "render-stage")
+TRACE_DATA_TYPES = ("ltc", "frame", "render-stage", "ltc-dispatch")
 # A1: reduced-preview events share the writer/footer but are not full-resolution evidence.
 TRACE_EXTENSION_TYPES = ("preview-frame",)
 TRACE_TYPES = ("meta", "end") + TRACE_DATA_TYPES + TRACE_EXTENSION_TYPES
