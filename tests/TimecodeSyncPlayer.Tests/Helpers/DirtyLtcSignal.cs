@@ -22,6 +22,10 @@ internal sealed record DirtyLevel
     public double? GenerateSampleRate { get; init; }
     /// <summary>速度差（ppm）。+ は信号が速い（波形を短くする）。</summary>
     public double Ppm { get; init; }
+    /// <summary>ハムの周波数（50/60Hz）。0 ならハムなし。</summary>
+    public double HumHz { get; init; }
+    /// <summary>ハムの SNR（dB）。1 次 + 3 次 + 5 次の合成 RMS を矩形波 RMS と比較する。</summary>
+    public double? HumDb { get; init; }
 }
 
 internal sealed record DirtyLtcPlan
@@ -50,9 +54,12 @@ internal sealed record DirtyLtcPlan
 /// </summary>
 internal static class DirtyLtcSignal
 {
+    /// <summary>sin + (1/3)sin3 + (1/5)sin5 の RMS 係数（振幅 1 あたり）。</summary>
+    internal const double HumHarmonicRms = 0.758654;
+
     public static LtcTestSignalGenerator.Options BuildOptions(DirtyLevel level)
     {
-        double amplitude = level.AmplitudeDb is double db ? Math.Pow(10.0, db / 20.0) : 1.0;
+        double amplitude = LevelAmplitude(level);
         double noise = level.NoiseDb is double snr ? NoiseAmplitudeFor(snr, amplitude) : 0.0;
         return new LtcTestSignalGenerator.Options
         {
@@ -61,6 +68,9 @@ internal static class DirtyLtcSignal
             NoiseSeed = 4242,
         };
     }
+
+    internal static double LevelAmplitude(DirtyLevel level) =>
+        level.AmplitudeDb is double db ? Math.Pow(10.0, db / 20.0) : 1.0;
 
     /// <summary>矩形波 RMS=amplitude、一様ノイズ RMS=N/√3 として SNR から N を求める。</summary>
     internal static double NoiseAmplitudeFor(double snrDb, double amplitude) =>
@@ -100,11 +110,33 @@ internal static class DirtyLtcSignal
     }
 
     /// <summary>
-    /// 欠落 → リサンプルの順に適用する。generatedRate は波形を生成したレート、
+    /// M6-b: ハム（基本波 + 3 次 + 5 次）を SNR 指定で加算する。
+    /// hum RMS = amplitude × 10^(−SNR/20) になるよう振幅を決める。
+    /// </summary>
+    internal static float[] ApplyHum(float[] samples, int sampleRate, DirtyLevel level, double amplitude)
+    {
+        if (level.HumDb is not double snrDb || level.HumHz <= 0)
+            return samples;
+        double humRms = amplitude * Math.Pow(10.0, -snrDb / 20.0);
+        double humAmplitude = humRms / HumHarmonicRms;
+        double omega = 2.0 * Math.PI * level.HumHz / sampleRate;
+        for (int n = 0; n < samples.Length; n++)
+        {
+            double angle = n * omega;
+            double hum = Math.Sin(angle) + (Math.Sin(3.0 * angle) / 3.0) + (Math.Sin(5.0 * angle) / 5.0);
+            samples[n] += (float)(humAmplitude * hum);
+        }
+        return samples;
+    }
+
+    /// <summary>
+    /// ハム → 欠落 → リサンプルの順に適用する。generatedRate は波形を生成したレート、
     /// deviceRate は送出先のミックスレート。ppm は generatedRate=deviceRate のときだけ使う。
     /// </summary>
     internal static float[] Process(float[] samples, int generatedRate, int deviceRate, DirtyLevel level)
     {
+        ApplyHum(samples, generatedRate, level, LevelAmplitude(level));
+
         if (level.DropoutMs is double dropoutMs && dropoutMs > 0)
             ApplyDropouts(samples, generatedRate, dropoutMs, level.DropoutPeriodSeconds);
 
