@@ -4164,7 +4164,7 @@ gop_percentile (const std::vector<double>& sorted, double frac)
 }
 
 TCS_GST_API int
-tcs_scan_gop (const char* utf8_path, int32_t timeout_ms, TcsGopScan* out)
+tcs_scan_gop (const char* utf8_path, int32_t budget_ms, TcsGopScan* out)
 {
   if (!utf8_path || !out)
     return TCS_ERR_INVALID_ARG;
@@ -4196,14 +4196,18 @@ tcs_scan_gop (const char* utf8_path, int32_t timeout_ms, TcsGopScan* out)
     LOG ("gop-scan: set_state PLAYING failed");
     rc = TCS_ERR_GENERIC;
   } else {
-    GstClockTime budget = (timeout_ms > 0 ? (GstClockTime) timeout_ms : 30000)
+    /* 既定は 10 分。全部読むのが正しい答え（長いギャップはどこにでもありうる）ので、
+     * この上限は「異常に遅い経路への保険」であって通常経路ではない。 */
+    GstClockTime budget = (budget_ms > 0 ? (GstClockTime) budget_ms : 600000)
         * GST_MSECOND;
     GstBus* bus = gst_element_get_bus (pipeline);
     GstMessage* msg = gst_bus_timed_pop_filtered (bus, budget,
         (GstMessageType) (GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
     if (!msg) {
-      rc = TCS_ERR_GENERIC;
-      LOG ("gop-scan: timeout");
+      /* 打ち切り。ここまでに見つけたギャップは下限として使える（見つけた長いギャップは
+       * 本物だが、「長いギャップが無い」は読んだ範囲までしか言えない）。 */
+      out->truncated = 1;
+      LOG ("gop-scan: budget reached, returning partial result");
     } else if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ERROR) {
       GError* err = nullptr;
       gchar* dbg = nullptr;

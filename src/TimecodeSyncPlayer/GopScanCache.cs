@@ -5,6 +5,8 @@ namespace TimecodeSyncPlayer;
 /// <summary>0.4.5-C3: 1 素材のスキャン結果。</summary>
 internal readonly record struct GopScanResult(
     int Keyframes,
+    /// <summary>上限で打ち切った。ギャップは下限としてしか使えない。</summary>
+    bool Truncated,
     double DurationSeconds,
     double HeadGapSeconds,
     double TailGapSeconds,
@@ -52,7 +54,7 @@ internal sealed class GopScanCache
         {
             GopScanResult? result = _scan(path);
             // 失敗は「キーフレーム 0」として覚える。毎回のロードで測り直さないため。
-            _byPath[path] = result ?? new GopScanResult(0, 0, 0, 0, 0, 0, 0);
+            _byPath[path] = result ?? new GopScanResult(0, false, 0, 0, 0, 0, 0, 0);
             return true;
         }
         finally

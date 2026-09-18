@@ -340,20 +340,24 @@ internal sealed class GstPlaybackApi : IPlaybackApi
     /// 黙って「判定しない」に落ちると、警告が出ない理由が「短い GOP だから」なのか
     /// 「スキャンが終わっていないから」なのか区別できない（検証機が実際に誤解した）。
     /// </remarks>
-    public static GopScanResult? ScanGop(string path, int timeoutMs = 60000)
+    public static GopScanResult? ScanGop(string path, int budgetMs = 0)
     {
         if (string.IsNullOrEmpty(path)) return null;
         if (_scanGopUnavailable) return null;
+        // 再生と同じディスクを読むので、読み取りの優先度を下げる。デコーダの読みと
+        // 取り合いになったとき、こちらが譲る（解析は遅れてよいが、再生は遅れてはいけない）。
+        System.Threading.ThreadPriority previous = System.Threading.Thread.CurrentThread.Priority;
+        System.Threading.Thread.CurrentThread.Priority = System.Threading.ThreadPriority.Lowest;
         try
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            int rc = GstNative.Imports.tcs_scan_gop(path, timeoutMs, out GstNative.TcsGopScan n);
+            int rc = GstNative.Imports.tcs_scan_gop(path, budgetMs, out GstNative.TcsGopScan n);
             sw.Stop();
             if (rc != 0)
             {
                 Log.Warning(
-                    "GOP scan failed: rc={Rc} elapsedMs={Elapsed} timeoutMs={Timeout} path={Path}",
-                    rc, sw.ElapsedMilliseconds, timeoutMs, path);
+                    "GOP scan failed: rc={Rc} elapsedMs={Elapsed} budgetMs={Budget} path={Path}",
+                    rc, sw.ElapsedMilliseconds, budgetMs, path);
                 return null;
             }
             if (n.Keyframes < 2)
@@ -370,8 +374,14 @@ internal sealed class GstPlaybackApi : IPlaybackApi
                     "GOP scan: keyframes={Keyframes} maxGapMs={Max:F0} elapsedMs={Elapsed} path={Path}",
                     n.Keyframes, n.MaxGapSec * 1000.0, sw.ElapsedMilliseconds, path);
             }
+            if (n.Truncated != 0)
+            {
+                Log.Warning(
+                    "GOP scan truncated: keyframes={Keyframes} maxGapMs={Max:F0} elapsedMs={Elapsed} path={Path}",
+                    n.Keyframes, n.MaxGapSec * 1000.0, sw.ElapsedMilliseconds, path);
+            }
             return new GopScanResult(
-                n.Keyframes, n.DurationSec, n.HeadGapSec, n.TailGapSec,
+                n.Keyframes, n.Truncated != 0, n.DurationSec, n.HeadGapSec, n.TailGapSec,
                 n.MedianGapSec, n.P95GapSec, n.MaxGapSec);
         }
         catch (EntryPointNotFoundException)
@@ -385,6 +395,10 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         {
             _scanGopUnavailable = true;
             return null;
+        }
+        finally
+        {
+            System.Threading.Thread.CurrentThread.Priority = previous;
         }
     }
 
