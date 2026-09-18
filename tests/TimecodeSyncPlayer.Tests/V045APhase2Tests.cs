@@ -77,3 +77,58 @@ public sealed class V045APhase2Tests
         withEval.DeltaSeconds.Should().BeApproximately(withoutEval.DeltaSeconds, 1e-9);
     }
 }
+
+/// <summary>
+/// D37-f: 追従開始とロード成立が同じフレームで起きても、発生元が Other に戻らない。
+///
+/// 検証機の実測: `windowActive=true origin="Other" learned=none hint=1.990` で
+/// `lookahead=0` になり、シーク先が LTC と同値のまま追従開始に 16 秒かかっていた。
+/// NotifyLanding(FollowStart) の直後に ReleaseFileLoad が OpenSeekLanding(Other) を
+/// 呼んでいたのが原因。
+/// </summary>
+public sealed class D37fLandingOriginTests
+{
+    private static TimecodeSyncService Service()
+        => new(new SyncDecisionEngine(new SyncDecisionOptions()), new TimecodeSyncSeekState());
+
+    [Fact]
+    public void 追従開始の発生元はロード成立で上書きされない()
+    {
+        TimecodeSyncService svc = Service();
+        svc.SetSeekCostHintSeconds(1.99);
+
+        svc.NotifyLanding(LandingOrigin.FollowStart);
+        // 同じフレームでロードが成立する（実機で観測された順序）。
+        svc.NotifyLanding(LandingOrigin.Other);
+
+        SyncDecision decision = svc.EvaluateDecision(10.0, State(playbackSeconds: 7.0));
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().BeApproximately(11.99, 1e-9,
+            "LTC 10.0 + ヒント 1.99。Other で上書きされていたら 10.0 になる");
+    }
+
+    [Fact]
+    public void ギャップ明けの着地は先行しない()
+    {
+        // 発生元が追従開始でなければ、従来どおり先行させない。
+        TimecodeSyncService svc = Service();
+        svc.SetSeekCostHintSeconds(1.99);
+
+        svc.NotifyLanding(LandingOrigin.Other);
+
+        SyncDecision decision = svc.EvaluateDecision(10.0, State(playbackSeconds: 7.0));
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().BeApproximately(10.0, 1e-9, "ギャップ明けは先行しない");
+    }
+
+    private static SyncPlaybackState State(double playbackSeconds) =>
+        new(SyncEnabled: true,
+            HasCurrentTrack: true,
+            IsSeeking: false,
+            PlaybackSeconds: playbackSeconds,
+            DurationSeconds: 600.0,
+            VideoFps: 60.0,
+            TimecodeFps: 25.0);
+}

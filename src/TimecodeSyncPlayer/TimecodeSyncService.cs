@@ -225,12 +225,25 @@ public sealed class TimecodeSyncService
 
     private void OpenSeekLanding(DateTime now, LandingOrigin origin)
     {
+        // D37-f: 追従開始の窓が生きている間は、Other で発生元を上書きしない。
+        //
+        // 追従開始とロード成立は同じフレームで起きうる。NotifyLanding(FollowStart) の直後に
+        // ReleaseFileLoad が OpenSeekLanding(Other) を呼ぶと、発生元が Other に戻り、
+        // D37-e の先行補償が効かなくなる（実測: windowActive=true・origin=Other・hint=1.990 で
+        // lookahead=0。シーク先が LTC と同値になり、追従開始に 16 秒かかっていた）。
+        //
+        // 窓そのものは開き直してよい（シーク回数と観測待ちはリセットする）。守りたいのは
+        // 「この着地は追従開始である」という事実だけ。
+        bool keepFollowStart = _seekLandingActive
+            && _landingOrigin == LandingOrigin.FollowStart
+            && origin != LandingOrigin.FollowStart;
         _seekLandingActive = true;
         _seekLandingOpenedAt = now;
         _seekLandingSeeks = 0;
         _landingAwaitingObservation = false;
         _landingSeekPreDeficitSeconds = double.NaN;
-        _landingOrigin = origin;
+        if (!keepFollowStart)
+            _landingOrigin = origin;
     }
 
     private void CloseSeekLanding()
