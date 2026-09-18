@@ -261,18 +261,35 @@ internal sealed class LtcSyncController
     }
 
     private void RequestSync(double rawSeconds, long frameEndTimestamp, string source = "frame")
-    {
-        _pendingSyncRawSeconds = rawSeconds;
-        _pendingSyncFrameEndTimestamp = frameEndTimestamp;
-        RequestSyncEffective(EffectiveSeconds(rawSeconds, frameEndTimestamp, source));
-    }
+        => ApplySyncRequest(EffectiveSeconds(rawSeconds, frameEndTimestamp, source), rawSeconds, frameEndTimestamp);
 
     private void RequestSyncEffective(double effectiveSeconds)
+        => ApplySyncRequest(effectiveSeconds, pendingRawSeconds: 0, pendingFrameEndTimestamp: 0);
+
+    /// <summary>
+    /// 同期要求を 1 回評価し、Deferred なら再送用に「評価した値」を丸ごと保持する。
+    /// 生値・フレーム終端はフレーム由来の要求だけが持ち、Tick の再送はそれがあるときだけ
+    /// age を取り直す（Jump・保持・再適用の要求を、古いフレームの生値で上書きしない）。
+    /// D37-a: ゲートが Seek を保留している間も、この保留が正しい値で再送される。
+    /// </summary>
+    private void ApplySyncRequest(double effectiveSeconds, double pendingRawSeconds, long pendingFrameEndTimestamp)
     {
         // U1 計測: コンボ変更・フレーム受信からギャップ状態再評価までの所要。
         long started = Stopwatch.GetTimestamp();
         SyncRequestResult result = ApplySync(effectiveSeconds);
-        _pendingSyncSeconds = result == SyncRequestResult.Deferred ? effectiveSeconds : null;
+        if (result == SyncRequestResult.Deferred)
+        {
+            _pendingSyncSeconds = effectiveSeconds;
+            _pendingSyncRawSeconds = pendingRawSeconds;
+            _pendingSyncFrameEndTimestamp = pendingFrameEndTimestamp;
+        }
+        else
+        {
+            _pendingSyncSeconds = null;
+            _pendingSyncRawSeconds = 0;
+            _pendingSyncFrameEndTimestamp = 0;
+        }
+
         Log.Debug("sync.apply: elapsedMs={ElapsedMs:F1} result={Result} ltc={Ltc:F3}",
             Stopwatch.GetElapsedTime(started).TotalMilliseconds, result, effectiveSeconds);
     }

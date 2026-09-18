@@ -39,7 +39,14 @@ internal sealed class SyncScenarioHarness
     public SyncScenarioHarness(TimeProvider? timeProvider = null, bool enableCorrection = false,
         bool? sampleClockEnabled = null, Func<long>? getQpc = null)
     {
-        _syncService = new(new SyncDecisionEngine(), new TimecodeSyncSeekState(), timeProvider);
+        // D37-a: ゲートの窓・変化量の判定に使う時計。ManualTimeProvider があれば同じ時計に
+        // 揃えて、テスト内の時間（clock.Advance / Tick100Milliseconds）で決定的にする。
+        _syncService = new(
+            timeProvider is null
+                ? new SyncDecisionEngine()
+                : new SyncDecisionEngine(new SyncDecisionOptions(), null,
+                    () => timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0),
+            new TimecodeSyncSeekState(), timeProvider);
         _audioControlCoordinator = new AudioControlCoordinator(
             new AudioControlState(isMuted: false, volume: 100),
             new AudioControlEffects(

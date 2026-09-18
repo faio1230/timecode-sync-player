@@ -14,22 +14,36 @@ internal readonly record struct FollowPerfSegment(double AtSeconds, double SpanS
 }
 
 /// <summary>
+/// L-1: シーク 1 回分（AtSeconds は監査開始からの経過、DurationSeconds はシークに
+/// かかっていた時間）。この間は新しい位置のフレームを待っているので絵が止まる。
+/// </summary>
+internal readonly record struct FollowSeekSpan(double AtSeconds, double DurationSeconds);
+
+/// <summary>
 /// L-1: 1 窓の集計結果。Settling は追従直後の過渡として判定から除外した窓（集計と報告には残す）。
 /// LtcAdvance と Samples は、位置が進まない窓の切り分け用。位置と LTC はどちらも画面の
 /// ラベルから読むので、両方が同時に止まっていれば表示側、LTC だけ進んでいれば再生側、
 /// と読み分けられる。IntervalSeconds は進みを測った実測区間（前の窓の最後のサンプルから
 /// この窓の最後のサンプルまで、最大 1.5 窓）。Sparse はその区間が窓長の半分未満で、
 /// 進みの判定に使えない窓（サンプル 0 の窓も含む。判定から外し、報告には残す）。
+/// PerfSegments はこの窓に割り当たったアプリの `Playback perf` 行の本数で、0 本の窓は
+/// 「アプリが 0 更新と報告した」のではなく「2 秒タイマーが滑って行が無い」状態を表す。
+/// SeekSeconds は窓と重なったシーク時間の合計、LongestSeekSeconds は窓にかかっている
+/// シーク 1 回の最大長（窓で切らない）。
 /// </summary>
 internal readonly record struct FollowWindow(
     int Index, double StartSeconds, int FrameUpdates, double PositionAdvance, double MaxAbsError,
-    bool Settling, double LtcAdvance, int Samples, double IntervalSeconds, bool Sparse);
+    bool Settling, double LtcAdvance, int Samples, double IntervalSeconds, bool Sparse,
+    double SeekSeconds, double LongestSeekSeconds, int PerfSegments);
 
 /// <summary>
 /// L-1: 全窓の集計。Windows は Settling を含む全窓。判定に使う数値（Stall*、MaxAbsError、
 /// MeanFrameUpdates、Worst*）は Settling を除いた窓だけから作る。StallAdvanceWindows は
 /// 「LTC が窓長の半分以上進んだのに位置がその半分も進まなかった」再生側の停滞だけを数え、
 /// 表示側が同時に止まった窓（LTC も止まる）や Sparse な窓は数えない。
+/// StallUpdateWindows はアプリが 0 更新と報告した窓だけを数える（判定対象）。
+/// WindowsWithoutPerf は `Playback perf` 行が 1 本も無く、0 更新と報告されていない窓で、
+/// 凍結の判定には数えない（報告には残す）。SeekSpans は検出したシーク区間の一覧。
 /// </summary>
 internal sealed record ContinuousFollowSummary(
     IReadOnlyList<FollowWindow> Windows,
@@ -42,7 +56,11 @@ internal sealed record ContinuousFollowSummary(
     FollowWindow? WorstError,
     int SettlingWindowCount,
     double SettlingMaxAbsError,
-    int SparseWindowCount);
+    int SparseWindowCount,
+    int WindowsWithoutPerf,
+    IReadOnlyList<FollowSeekSpan> SeekSpans,
+    double SeekSecondsTotal,
+    double LongestSeekSeconds);
 
 /// <summary>
 /// L-1: 連続追従（Single・1 トラック内）の詰まり監査。UI に依存しない純関数で、
@@ -58,8 +76,10 @@ internal static class ContinuousFollowAudit
         double windowSeconds,
         Func<double, double> expectedPosition,
         double settlingSeconds = 0.0,
-        double minAdvanceRatio = 0.5)
+        double minAdvanceRatio = 0.5,
+        IReadOnlyList<FollowSeekSpan>? seeks = null)
     {
+        IReadOnlyList<FollowSeekSpan> seekSpans = seeks ?? [];
         ArgumentNullException.ThrowIfNull(samples);
         ArgumentNullException.ThrowIfNull(perf);
         ArgumentNullException.ThrowIfNull(expectedPosition);
@@ -86,10 +106,14 @@ internal static class ContinuousFollowAudit
             double end = start + windowSeconds;
 
             int frameUpdates = 0;
+            int perfSegments = 0;
             foreach (FollowPerfSegment segment in perf)
             {
                 if (segment.MidpointSeconds >= start && segment.MidpointSeconds < end)
+                {
                     frameUpdates += segment.FrameUpdates;
+                    perfSegments++;
+                }
             }
 
             double firstPosition = double.NaN;
@@ -134,6 +158,19 @@ internal static class ContinuousFollowAudit
                 }
             }
 
+            // 窓にかかっているシーク: SeekSeconds は窓と重なった時間の合計、
+            // LongestSeekSeconds は窓にかかっているシーク 1 回の長さの最大（窓で切らない）。
+            double seekSeconds = 0.0;
+            double longestSeek = 0.0;
+            foreach (FollowSeekSpan span in seekSpans)
+            {
+                double overlap = Math.Min(end, span.AtSeconds + span.DurationSeconds) - Math.Max(start, span.AtSeconds);
+                if (overlap <= 0)
+                    continue;
+                seekSeconds += overlap;
+                longestSeek = Math.Max(longestSeek, span.DurationSeconds);
+            }
+
             double advance = hasPosition ? lastPosition - firstPosition : 0.0;
             double ltcAdvance = hasLtc ? lastLtc - firstLtc : 0.0;
             // 実測区間（前の窓の最後のサンプルからこの窓の最後のサンプルまで）。窓をまたいで
@@ -150,7 +187,8 @@ internal static class ContinuousFollowAudit
             if (hasLtc)
                 carryLtc = lastLtc;
             windows.Add(new FollowWindow(index, start, frameUpdates, advance, maxError,
-                start < settlingSeconds, ltcAdvance, sampleCount, intervalSeconds, sparse));
+                start < settlingSeconds, ltcAdvance, sampleCount, intervalSeconds, sparse,
+                seekSeconds, longestSeek, perfSegments));
         }
 
         List<FollowWindow> audited = windows.Where(window => !window.Settling).ToList();
@@ -159,9 +197,11 @@ internal static class ContinuousFollowAudit
 
         int stallUpdates = 0;
         int stallAdvance = 0;
+        // perf 行が無い窓は「アプリの 2 秒タイマーが滑って行が無い」だけで、アプリが 0 更新と
+        // 報告したわけではない。凍結として数えず、本物の 0 更新（perf 行があり updates=0）だけを拾う。
         foreach (FollowWindow window in audited)
         {
-            if (window.FrameUpdates == 0)
+            if (window.PerfSegments > 0 && window.FrameUpdates == 0)
                 stallUpdates++;
         }
         // 案 3: LTC は窓長の半分以上進んだのに、位置がその半分も進まない窓だけを
@@ -172,6 +212,10 @@ internal static class ContinuousFollowAudit
                 stallAdvance++;
         }
 
+        // 最悪更新の報告は perf 行のある窓を優先する（行が無い窓は 0 更新と報告された値ではない）。
+        List<FollowWindow> worstUpdatesPool = audited.Where(window => window.PerfSegments > 0).ToList();
+        if (worstUpdatesPool.Count == 0)
+            worstUpdatesPool = audited;
         List<FollowWindow> worstAdvancePool = measurable.Count > 0 ? measurable : audited;
         return new ContinuousFollowSummary(
             windows,
@@ -179,11 +223,15 @@ internal static class ContinuousFollowAudit
             stallUpdates,
             stallAdvance,
             audited.Count == 0 ? 0.0 : audited.Max(window => window.MaxAbsError),
-            audited.Count == 0 ? null : audited.MinBy(window => window.FrameUpdates),
+            worstUpdatesPool.Count == 0 ? null : worstUpdatesPool.MinBy(window => window.FrameUpdates),
             worstAdvancePool.Count == 0 ? null : worstAdvancePool.MinBy(window => window.PositionAdvance),
             audited.Count == 0 ? null : audited.MaxBy(window => window.MaxAbsError),
             settling.Count,
             settling.Count == 0 ? 0.0 : settling.Max(window => window.MaxAbsError),
-            audited.Count(window => window.Sparse));
+            audited.Count(window => window.Sparse),
+            audited.Count(window => window.PerfSegments == 0),
+            seekSpans,
+            seekSpans.Sum(span => span.DurationSeconds),
+            seekSpans.Count == 0 ? 0.0 : seekSpans.Max(span => span.DurationSeconds));
     }
 }

@@ -45,8 +45,12 @@ public class T9ConvergenceTests
         harness.AdvancePlayback(1.1, renderedFrames: 2);
 
         clock.Advance(TimeSpan.FromMilliseconds(400));            // ロード後デバウンス(250ms)を過ぎる
-        harness.SupplyLtc(4.0);                                   // ロード成立（デバウンス再開、シークは見送り）
+        harness.SupplyLtc(4.0);                                   // ロード成立。Jump は測定の乱れとして弾かれる
         clock.Advance(TimeSpan.FromMilliseconds(400));
+        harness.SupplyLtc(4.0);                                   // D37-a: ゲート 1 サンプル目
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        harness.SupplyLtc(4.0);                                   // 2 サンプル目
+        clock.Advance(TimeSpan.FromMilliseconds(100));
         harness.SupplyLtc(4.0);                                   // 粗い同期シーク発行（着地②、残差 2.9s）
 
         clock.Advance(TimeSpan.FromMilliseconds(600));

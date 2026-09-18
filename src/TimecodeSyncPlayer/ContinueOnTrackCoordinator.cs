@@ -119,6 +119,9 @@ internal sealed class ContinueOnTrackCoordinator
 
             if (!seekPlan.ShouldSeek)
             {
+                // D37-a: ゲートが Seek を保留している間は要求を維持し、次の評価で再試行する。
+                if (seekPlan.SkipReason == ContinueSyncSeekSkipReason.GateDeferred)
+                    return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "seek-gated");
                 if (seekPlan.SkipReason == ContinueSyncSeekSkipReason.NoSeekDecision &&
                     !_syncService.SeekState.HasPendingSeek)
                     return new ContinueFrameContext(SyncRequestResult.Complete, true, mediaPos, playbackSeconds);

@@ -75,12 +75,21 @@ public class SeekLatencyCompensatorTests
         compensator.IsMeasurementArmed.Should().BeFalse();
     }
 
+    /// <summary>D37-a: 粗い判定は 3 サンプル（250ms 窓）そろってから Seek を出す。</summary>
+    private static SyncDecision DecideAfterGate(SyncDecisionEngine engine, double ltcSeconds, SyncPlaybackState state)
+    {
+        SyncDecision decision = engine.Decide(ltcSeconds, state);
+        for (int i = 0; i < 2; i++)
+            decision = engine.Decide(ltcSeconds, state);
+        return decision;
+    }
+
     [Fact]
     public void CompensationDisabled_EngineKeepsCurrentTargetAndDelta()
     {
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), new SeekLatencyCompensator(enabled: false));
 
-        SyncDecision decision = engine.Decide(10.0, SeekYieldingState(4.0));
+        SyncDecision decision = DecideAfterGate(engine, 10.0, SeekYieldingState(4.0));
 
         decision.Action.Should().Be(SyncActionType.Seek);
         decision.TargetSeconds.Should().Be(10.0);
@@ -288,7 +297,7 @@ public class SeekLatencyCompensatorTests
     {
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), new SeekLatencyCompensator(enabled: true));
 
-        SyncDecision decision = engine.Decide(10.0, SeekYieldingState(4.0));
+        SyncDecision decision = DecideAfterGate(engine, 10.0, SeekYieldingState(4.0));
 
         decision.Action.Should().Be(SyncActionType.Seek);
         decision.TargetSeconds.Should().Be(10.0);
@@ -303,7 +312,7 @@ public class SeekLatencyCompensatorTests
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
 
-        SyncDecision decision = engine.Decide(10.0, SeekYieldingState(4.0));
+        SyncDecision decision = DecideAfterGate(engine, 10.0, SeekYieldingState(4.0));
 
         decision.Action.Should().Be(SyncActionType.Seek);
         decision.TargetSeconds.Should().BeApproximately(10.2, 1e-9);
@@ -318,10 +327,10 @@ public class SeekLatencyCompensatorTests
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
 
-        engine.Decide(10.0, SeekYieldingState(4.0)).TargetSeconds.Should().BeApproximately(10.2, 1e-9);
+        DecideAfterGate(engine, 10.0, SeekYieldingState(4.0)).TargetSeconds.Should().BeApproximately(10.2, 1e-9);
 
         compensator.SelectTrack(TrackB);
-        engine.Decide(10.0, SeekYieldingState(4.0)).TargetSeconds.Should().BeApproximately(10.0, 1e-9);
+        DecideAfterGate(engine, 10.0, SeekYieldingState(4.0)).TargetSeconds.Should().BeApproximately(10.0, 1e-9);
     }
 
     [Fact]
@@ -347,7 +356,7 @@ public class SeekLatencyCompensatorTests
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(), compensator);
 
-        SyncDecision decision = engine.Decide(199.99, SeekYieldingState(4.0));
+        SyncDecision decision = DecideAfterGate(engine, 199.99, SeekYieldingState(4.0));
 
         decision.Action.Should().Be(SyncActionType.Seek);
         decision.TargetSeconds.Should().Be(200.0);
@@ -361,6 +370,8 @@ public class SeekLatencyCompensatorTests
         var service = new TimecodeSyncService(engine, new TimecodeSyncSeekState(), null, compensator);
 
         SyncDecision decision = service.EvaluateDecision(10.0, SeekYieldingState(4.0));
+        decision = service.EvaluateDecision(10.0, SeekYieldingState(4.0));
+        decision = service.EvaluateDecision(10.0, SeekYieldingState(4.0));
         decision.Action.Should().Be(SyncActionType.Seek);
         compensator.IsMeasurementArmed.Should().BeFalse();
 
@@ -422,6 +433,8 @@ public class SeekLatencyCompensatorTests
         // T9: 製品既定は無効（TCS_SEEK_LATENCY_COMPENSATION=on のときだけ有効）。学習しても行き先は動かない。
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
         compensator.CompensationSeconds.Should().Be(0.0);
+        engine.Decide(10.0, SeekYieldingState(4.0));
+        engine.Decide(10.0, SeekYieldingState(4.0));
         engine.Decide(10.0, SeekYieldingState(4.0)).TargetSeconds.Should().Be(10.0);
     }
 

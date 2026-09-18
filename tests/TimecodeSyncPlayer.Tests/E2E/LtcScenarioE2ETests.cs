@@ -280,12 +280,17 @@ public sealed class LtcScenarioE2ETests
                 (segment.At - startedAt).TotalSeconds, segment.ElapsedSeconds, segment.FrameUpdates))
             .Where(segment => segment.AtSeconds <= followSeconds + 2.5)
             .ToList();
+        // 体感の「固まり」に対応する、シーク中（raw=yes→no）の区間。窓への割り当ては純関数側で行う。
+        List<FollowSeekSpan> seekSpans = scenario.SeekSpansSince(startedAt)
+            .Where(span => span.AtSeconds <= followSeconds)
+            .ToList();
         SeekLandingSummary seeks = SeekLandingStats.Summarize(
             scenario.CorrectionSeekSettleSecondsSince(startedAt));
         scenario.Signal.Stop();
 
         ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
-            samples, perf, followSeconds, windowSeconds, track.SingleTarget, settlingSeconds);
+            samples, perf, followSeconds, windowSeconds, track.SingleTarget, settlingSeconds,
+            seeks: seekSpans);
 
         foreach (FollowWindow window in summary.Windows)
             scenario.Journal.Write("l1-window", details: new
@@ -297,6 +302,9 @@ public sealed class LtcScenarioE2ETests
                 positionAdvance = Math.Round(window.PositionAdvance, 3),
                 ltcAdvance = Math.Round(window.LtcAdvance, 3),
                 samples = window.Samples,
+                seekSeconds = Math.Round(window.SeekSeconds, 3),
+                longestSeekSeconds = Math.Round(window.LongestSeekSeconds, 3),
+                perfSegments = window.PerfSegments,
                 intervalSeconds = Math.Round(window.IntervalSeconds, 3),
                 positionVelocity = window.IntervalSeconds > 0
                     ? Math.Round(window.PositionAdvance / window.IntervalSeconds, 3)
@@ -331,16 +339,24 @@ public sealed class LtcScenarioE2ETests
             maxAbsError = JsonNumberOrNull(summary.MaxAbsError),
             meanFrameUpdates = Math.Round(summary.MeanFrameUpdates, 2),
             expectedFrameUpdates = Math.Round(windowSeconds * MediaFpsForExpectation(scenario, track), 2),
-            seekCount = seeks.Count,
-            seekMedianSeconds = Math.Round(seeks.MedianSeconds, 3),
-            seekMaxSeconds = Math.Round(seeks.MaxSeconds, 3),
+            // `Playback perf` 行が 1 本も無かった窓。凍結の判定からは外し、報告にだけ残す。
+            windowsWithoutPerf = summary.WindowsWithoutPerf,
+            seekCount = summary.SeekSpans.Count,
+            seekSecondsTotal = Math.Round(summary.SeekSecondsTotal, 3),
+            longestSeekSeconds = Math.Round(summary.LongestSeekSeconds, 3),
+            // しきい値を決めるための分布。1 回ごとの長さ（ミリ秒）を出た順に並べる。
+            seekDurationsMs = summary.SeekSpans.Select(span => (int)Math.Round(span.DurationSeconds * 1000.0)).ToArray(),
+            // 保留（pending）がセトル／タイムアウトするまでの着地時間。上の seek*（raw=yes→no の区間）とは別測度。
+            seekSettleCount = seeks.Count,
+            seekSettleMedianSeconds = Math.Round(seeks.MedianSeconds, 3),
+            seekSettleMaxSeconds = Math.Round(seeks.MaxSeconds, 3),
             worstUpdateWindow = WindowDetail(summary.WorstUpdates),
             worstAdvanceWindow = WindowDetail(summary.WorstAdvance),
             worstErrorWindow = WindowDetail(summary.WorstError),
         });
 
         string excluded = $"除外 {summary.SettlingWindowCount} 窓（最大誤差 {summary.SettlingMaxAbsError:F3}s）" +
-            $"・疎 {summary.SparseWindowCount} 窓";
+            $"・疎 {summary.SparseWindowCount} 窓・perf 行なし {summary.WindowsWithoutPerf} 窓";
         summary.Windows.Count(window => !window.Settling)
             .Should().BeGreaterThan(0, $"{track.Symbol}: 判定対象の窓が 1 つ以上ある（{excluded}）");
         summary.StallUpdateWindows.Should().Be(0,
@@ -357,7 +373,9 @@ public sealed class LtcScenarioE2ETests
             ? "none"
             : $"index={value.Index} at={value.StartSeconds:F2}s updates={value.FrameUpdates} " +
               $"advance={value.PositionAdvance:F3}s ltcAdvance={value.LtcAdvance:F3}s " +
-              $"samples={value.Samples} interval={value.IntervalSeconds:F3}s sparse={value.Sparse} " +
+              $"samples={value.Samples} perfSegments={value.PerfSegments} " +
+              $"interval={value.IntervalSeconds:F3}s sparse={value.Sparse} " +
+              $"seek={value.SeekSeconds:F3}s longestSeek={value.LongestSeekSeconds:F3}s " +
               $"maxError={value.MaxAbsError:F3}s";
 
     private static double? JsonNumberOrNull(double value) =>
@@ -1946,6 +1964,42 @@ public sealed class LtcScenarioE2ETests
             }
 
             return segments;
+        }
+
+        /// <summary>
+        /// L-1: 監査開始からのシーク区間。`player.seeking raw=yes` から `raw=no` までを 1 回と数える。
+        /// この間は新しい位置のフレームを待っていて絵が止まるので、体感の「固まり」に対応する。
+        /// 閉じないまま終わった分は最後の行までを長さとする。
+        /// </summary>
+        public IReadOnlyList<FollowSeekSpan> SeekSpansSince(DateTime sinceLocal)
+        {
+            var spans = new List<FollowSeekSpan>();
+            DateTime? openedAt = null;
+            DateTime lastAt = sinceLocal;
+            foreach (string line in RunLogLinesSince(sinceLocal))
+            {
+                if (!line.Contains("player.seeking", StringComparison.Ordinal)) continue;
+                Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+                if (!timestamp.Success ||
+                    !DateTime.TryParse(timestamp.Groups[1].Value, CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out DateTime at)) continue;
+                lastAt = at;
+                if (line.Contains("raw=yes", StringComparison.Ordinal))
+                {
+                    openedAt ??= at;
+                }
+                else if (line.Contains("raw=no", StringComparison.Ordinal) && openedAt is { } started)
+                {
+                    spans.Add(new FollowSeekSpan(
+                        (started - sinceLocal).TotalSeconds, (at - started).TotalSeconds));
+                    openedAt = null;
+                }
+            }
+
+            if (openedAt is { } pending)
+                spans.Add(new FollowSeekSpan((pending - sinceLocal).TotalSeconds, (lastAt - pending).TotalSeconds));
+
+            return spans;
         }
 
         /// <summary>
