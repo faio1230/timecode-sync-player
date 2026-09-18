@@ -92,7 +92,11 @@ git -c credential.helper= -c "credential.helper=!gh auth git-credential" push or
 gh release create v0.4.0 --prerelease --title "v0.4.0 (beta)" --notes-file <リリースノート.md> artifacts\release\*.zip artifacts\release\*-setup.exe
 ```
 
-- リリースノートは `CHANGELOG.md` の 0.4.0 節（英語）を本文にし、日本語の要点は `docs/release-0.4-plan.md` 3 節へのリンクで補う
+- **リリース本文は `docs/release-notes/v<版>.md`（日本語）**。`--notes-file` でそのまま渡す。
+  **v0.4.0 の手順は「CHANGELOG の英語節を本文にする」と書いていたが、v0.4.1 以降は日本語の
+  リリースノートを本文にしている**（`gh release view v0.4.3 --json body` で確認、2026-09-19）。
+  `CHANGELOG.md` はリポジトリの記録として別に維持する（英語）
+- **本文に出す前に `（下書き）` と作業用の注記（「確定前に差し替えること」など）を消す**
 - **本文にローカルの絶対パスを入れない**
 
 ## 3. 公開後
