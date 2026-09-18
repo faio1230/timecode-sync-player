@@ -1,3 +1,4 @@
+using Serilog;
 using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Output;
 
@@ -132,13 +133,15 @@ public sealed class TimecodeSyncService
         // D37-d: その保護は前進が確認できる限り続ける（1 回の着地では収束しない素材のため）。
         // D37-e: 追従開始の窓だけは、シークの行き先に学習済みシーク所要を足す（上限なし。
         // 定常・ギャップ明け・切替では 0 のまま）。
-        SyncPlaybackState effectiveState = IsSeekLandingWindowActive()
+        bool landingActive = IsSeekLandingWindowActive();
+        double lookahead = landingActive && _landingOrigin == LandingOrigin.FollowStart
+            ? _seekState.LearnedSeekDurationSeconds ?? _seekCostHintSeconds
+            : 0.0;
+        SyncPlaybackState effectiveState = landingActive
             ? state with
             {
                 RateCatchUpAllowed = false,
-                SeekTargetLookaheadSeconds = _landingOrigin == LandingOrigin.FollowStart
-                    ? _seekState.LearnedSeekDurationSeconds ?? _seekCostHintSeconds
-                    : 0.0,
+                SeekTargetLookaheadSeconds = lookahead,
             }
             : state;
         SyncDecision decision = _engine.Decide(ltcSeconds, effectiveState);
@@ -149,6 +152,16 @@ public sealed class TimecodeSyncService
         // 前進ガード用: このシークの不足を覚えておく（ReportSeekSent で着地観測を arm する）。
         if (decision.Action == SyncActionType.Seek && _seekLandingActive)
             _landingSeekPreDeficitSeconds = Math.Abs(ltcSeconds - state.PlaybackSeconds);
+        // D37-f: 先行量がどう決まったかを、シークを出すときだけ残す。0 になる理由
+        // （窓が閉じている / 発生元が追従開始でない / 学習値もヒントも無い）を切り分ける。
+        if (decision.Action == SyncActionType.Seek)
+        {
+            Log.Information(
+                "Seek lookahead: value={Lookahead:F3}s windowActive={Active} origin={Origin} learned={Learned} hint={Hint:F3}s",
+                lookahead, landingActive, _landingOrigin,
+                _seekState.LearnedSeekDurationSeconds?.ToString("F3") ?? "none",
+                _seekCostHintSeconds);
+        }
         LogDecisionIfNeeded(decision, ltcSeconds, effectiveState.PlaybackSeconds);
         return decision;
     }
