@@ -67,6 +67,10 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
   - Seen on 2 of 8 runs under the same conditions, on material with a long keyframe interval.
   - **The cause is in how the playback position is obtained and predates this release.** It is not fixed here: fixing it means changing where the position comes from, which needs a full re-verification.
   - **It is believed to predate 0.4.5** (the position is obtained the same way as before, and closing the error by playback rate has been the default since v0.4.0). **That is a judgement from the code history, not a measurement on an earlier release.** Closing more of the error by rate in this release may make it surface more often.
+- **On high-bitrate 4K60 material the sync error occasionally widens to 0.3 to 0.7 seconds.** Decoding falls behind for about two seconds, the picture lags, and closing that lag by playback rate overshoots (measured on field material with a median of 103 Mbps and peaks of 117 Mbps: **3 runs out of 20**; delivery drops to 0.6 to 0.9x over a two-second window). The picture itself does not break up (at most 132 ms between updates).
+  - **It is not the heavy parts of the material.** One occurrence was in the lightest stretch of the file (50 Mbps).
+  - **This is not new in this release.** Running the same test the same number of times on the published v0.4.3 gives **4 runs out of 20, worst error 0.656s** — worse than this release (3 out of 20, worst 0.416s).
+  - The next release will detect that decoding is behind and stop raising the rate.
 - Over a 10-minute continuous follow the error widens temporarily a few times (measured: 4 times in 10 minutes, 0.61s at worst, 1.3s of stopped picture in total). Each one is recovered by a single seek and does not chain. **A 60-second test never shows this**, which is why it had not been observed before. Longer continuous runs remain to be checked.
 
 ## 0.4.3 - 2026-09-18
