@@ -49,8 +49,12 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
 
 ### Known limitations
 
+- On material with a long keyframe interval (10s between keyframes, say), an accurate seek during playback decodes from the keyframe to the target, so a jump can land 1 to 3 seconds late (measured on 60fps H.264 with a 10s interval). **Recommended for field use: export with a keyframe interval of 1 to 2 seconds (`-g 60` to `-g 120` at 60fps).** A seek while paused waits up to 4 seconds on the D24 pump budget (`TCS_PUMP_BUDGET_MS`).
 - On material with a long keyframe interval, a lag that appears while following is closed by playback rate rather than by seeking, so it can take several to a dozen seconds to clear (roughly 10 seconds per second of lag). Seeking there does not converge, because the landing carries a new error equal to the seek duration. Shortening the keyframe interval makes seeks fast and keeps this state from arising.
+- **When the timecode fps and the material fps do not match, a constant spread remains.** When they match (25fps material with 25fps timecode, say) the spread disappears and the error becomes a fixed one-frame offset. The further the ratio is from 1, the larger it gets (about 17ms for 60fps material with a 30fps timecode, about 27ms with a 25fps timecode). **Recommended for field use: match the material fps to the timecode fps where possible.**
+- Switching tracks takes 0.7 to 0.8 seconds before the first picture appears (measured on 4K60 field material: 0.42s to load, 0.3 to 0.4s to the first picture). A switch across a gap hides this because the screen is black, but **a switch with no gap leaves the previous picture on screen for 0.7 to 0.8 seconds**.
 - AV1 material gets no in-app keyframe-interval warning: the parser used for the scan does not mark keyframes, so the interval cannot be read (playback itself works). Long-GOP AV1 is therefore undetectable in the app, and H.264 is recommended for field use. `scripts/inspect-gop.ps1` does read AV1 correctly (it uses ffprobe; verified on a 3840x2160 AV1 file, 12 keyframes, 1.000s maximum gap), so AV1 material can be checked before a show.
+- Over a 10-minute continuous follow the error widens temporarily a few times (measured: 4 times in 10 minutes, 0.61s at worst, 1.3s of stopped picture in total). Each one is recovered by a single seek and does not chain. **A 60-second test never shows this**, which is why it had not been observed before. Longer continuous runs remain to be checked.
 
 ## 0.4.3 - 2026-09-18
 
