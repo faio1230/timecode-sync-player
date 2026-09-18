@@ -2400,10 +2400,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         RenderUpdateSchedulerStats renderStats = _renderSession.ConsumeUpdateStats();
 
         Log.Information(
-            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} gpuPublishedFrames={GpuPublishedFrames} gstRingOutsideFrames={GstRingOutsideFrames} frameBoundary=full-resolution-bitmap",
+            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderReschedules={RenderReschedules} missedReschedules={MissedReschedules} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} gpuPublishedFrames={GpuPublishedFrames} gstRingOutsideFrames={GstRingOutsideFrames} frameBoundary=full-resolution-bitmap",
             snapshot.Elapsed.TotalSeconds, _fps, snapshot.PlaybackRate,
             snapshot.DisplayedFps, snapshot.TickCount, renderStats.Requests,
-            renderStats.CoalescedRequests, snapshot.RenderUpdates,
+            renderStats.CoalescedRequests, renderStats.Reschedules, renderStats.MissedReschedules,
+            snapshot.RenderUpdates,
             snapshot.FrameUpdates, snapshot.RenderedFrames, snapshot.AvgRenderMs,
             snapshot.MaxRenderMs, snapshot.AvgBitmapMs, snapshot.MaxBitmapMs,
             snapshot.AvgSpoutMs, snapshot.MaxSpoutMs, snapshot.Width,
