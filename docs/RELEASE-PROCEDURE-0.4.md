@@ -41,6 +41,33 @@ powershell -File scripts\package-release.ps1            # Version は csproj か
 - 合格してから 2 節へ進む
 - **版番号は直ってから上げる（2026-09-17、利用者の方針）**: 検証機との往復の途中ビルドは csproj の `Version` を変えない。ビルドの識別は `ProductVersion` の `+<コミット SHA>` と配布物の SHA-256 で行い、記録にはその 2 つを書く。完了条件がすべて合格してから次の版番号に上げ、CHANGELOG・リリースノートをまとめてタグと公開を行う
 
+## 1.9 公開の直前に必ず見る（2026-09-19 追加。0.4.5 で踏みかけた）
+
+**`artifacts\release\` は候補を跨いで溜まる。同じ版番号の古い成果物がそのまま残る。**
+
+0.4.5 で実際に起きかけたこと:
+
+| 成果物 | 生成時刻 | 中身 |
+| --- | --- | --- |
+| `TimecodeSyncPlayer-v0.4.5-setup.exe` | 01:53 | **候補 5**（SHA-256 `81DD0AB0…`） |
+| `TimecodeSyncPlayer-v0.4.5-win-x64.zip` | 02:45 | 候補 6（検証したもの） |
+
+この状態で `gh release create ... artifacts\release\*.zip artifacts\release\*-setup.exe` を打つと、
+**検証していない候補のインストーラーを、検証した zip と一緒に公開する**。版番号が同じなので
+リリースページを見ても気づけない。
+
+**したがって:**
+
+1. **公開の直前に `package-release.ps1` を `-SkipInstaller` なしで通し直す**（zip と setup.exe を
+   同じコミットから同時に作る）
+2. **`Get-ChildItem artifacts\release -Filter '*<版>*' | Select Name, LastWriteTime` を見て、
+   zip と setup.exe の時刻が揃っていることを確認する**
+3. **glob ではなく明示のファイル名で `gh release create` に渡す**
+4. 古い候補の成果物は `.candidate<N>-stale` に改名して退避しておく（削除しない。SHA の突き合わせに要る）
+
+Inno Setup は `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` にある（Program Files ではない）。
+`package-release.ps1` はそこも探すので `-InnoSetupCompiler` は不要。
+
 ## 2. タグと公開
 
 ```powershell
