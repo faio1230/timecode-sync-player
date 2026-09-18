@@ -64,12 +64,11 @@ public sealed class DeferredLtcSyncTests
     }
 
     [Fact]
-    public void HeldValueFarFromLastApplied_WithinSeekCost_DoesNotSeek()
+    public void HeldValueFarFromLastApplied_AtLoadLanding_Seeks()
     {
         // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超ずれていれば
         // 1 回だけ適用する（S-2 の late landing 残差を詰める）。
-        // D37-b: 不足 0.84 秒はシーク 1 回の実測所要（未学習 1.0 秒）以内なので、
-        // シークを出さず速度補正に任せる（保持フレームでは補正は走らないため、位置は動かさない）。
+        // D37-b2: ロード解除（着地）の直後は速度補正に任せず、シークで着地させる。
         var (h, clock) = ArrangePendingLoadSync();
         Raw(h, 4, 12);  // 3.04 → 4.48 は Jump。1 回だけ適用（最後に適用 = 4.48）
         Raw(h, 2, 1);   // 4.48 → 2.04 も Jump。ラッチ中なので適用しない
@@ -78,7 +77,7 @@ public sealed class DeferredLtcSyncTests
 
         Tick(h, clock, 4);
 
-        h.Operations.Where(o => o.Name == "seek").Should().BeEmpty("1 秒未満の不足はシークせず速度補正に任せる");
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(2.04);
     }
 
     [Fact]

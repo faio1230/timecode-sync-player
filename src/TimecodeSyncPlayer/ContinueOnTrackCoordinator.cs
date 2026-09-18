@@ -48,6 +48,8 @@ internal sealed class ContinueOnTrackCoordinator
         {
             if (!_effects.SeekTo(mediaPos))
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "gap-exit-seek");
+            // D37-b2: ギャップ（黒・フリーズ）明けの着地。直後の不足は速度補正ではなくシークで詰める。
+            _syncService.NotifyLanding();
             CompleteGapExit(exitAction);
             // ギャップ出口のシークを発行したフレームでは補正を評価しない。
             return new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, 0.0, "gap-exit", ExitedGap: true);

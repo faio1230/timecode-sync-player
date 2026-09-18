@@ -210,6 +210,38 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
+    public void EvaluateDecision_AfterLanding_DisallowsRateCatchUpForOneSecond()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
+
+        service.NotifyLanding();
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("ギャップ明け・切替の着地直後はシークで詰める");
+
+        clock.Advance(TimeSpan.FromMilliseconds(1100));
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("着地から 1 秒を過ぎたら速度補正優先に戻る");
+    }
+
+    [Fact]
+    public void BeginFileLoad_StartsTheLandingWindow()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.BeginFileLoad(startPositionSeconds: 10.0, renderedFrameCount: 0);
+        service.EvaluateDecision(10.0, new SyncPlaybackState(true, true, false, 10.0, 100.0));
+
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("トラック切替のロード直後も着地として扱う");
+    }
+
+    [Fact]
     public void EvaluateDecision_PublishesLearnedSeekCost()
     {
         var engine = new MockSyncDecisionEngine();
