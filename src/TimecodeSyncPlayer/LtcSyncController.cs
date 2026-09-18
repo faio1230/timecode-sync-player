@@ -105,6 +105,15 @@ internal sealed class LtcSyncController
     private long _pendingSyncFrameEndTimestamp;
     private bool _sampleClockAgeWarned;
     private string _formatText = "LTC 停止中";
+    // D37-c: 追従開始（同期の有効化・監視開始）の最初の同期評価を、既存の着地窓
+    // （D37-b2 の NotifyLanding / RateCatchUpAllowed）と同じ扱いにする。追従開始の瞬間は
+    // 画面がまだ合っていないので、速度補正より速いシークで詰める。
+    private bool _followStartPending;
+    // D37-c: 速度補正の残差にも、粗い判定と同じ前処理（ありえない変化の除外・中央値）を通す。
+    // 窓は粗い判定と同じ既定（0.25 秒）から始める。Smooth の応答が遅れて V3 の収束が悪化する
+    // 場合は窓を短くする（判断は実機測定で行う）。
+    private readonly SeekDecisionGate _correctionResidualGate = new();
+    private bool _correctionRejectedLogged;
 
     public LtcSyncController(
         PlaylistState playlist, GapFreezeHandler gap, TimecodeSyncService syncService,
@@ -137,6 +146,9 @@ internal sealed class LtcSyncController
     public double LastLtcSeconds { get; private set; }
     public double LastTimecodeFps => _frames.LastTimecodeFps;
 
+    /// <summary>D37-c: 速度補正の入力から弾いた標本の累計（計測・テスト用）。</summary>
+    internal long CorrectionRejectedSamples => _correctionResidualGate.RejectedSamples;
+
     /// <summary>
     /// 環境変数の解釈（T2 段 3: 既定 on）。明示的な off（大文字小文字不問）のときだけ無効。
     /// </summary>
@@ -151,7 +163,16 @@ internal sealed class LtcSyncController
         ResetCorrection();
         _smoothAvailable = true;
         if (!_effects.GetContext().SyncEnabled)
+        {
             _syncService.ClearSeekState();
+            _followStartPending = false;
+        }
+        else
+        {
+            // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
+            // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
+            _followStartPending = true;
+        }
         ExitGapForManualControl();
         ReapplyLastAcceptedFrame();
     }
@@ -237,6 +258,10 @@ internal sealed class LtcSyncController
     /// </summary>
     private void OnSeekIssued()
     {
+        // D37-c: シークで位置が飛ぶため、速度補正の残差の系列も切る（粗い判定の
+        // ResetSeekGate と同じ考え方）。
+        _correctionResidualGate.Reset();
+        _correctionRejectedLogged = false;
         if (_effects.GetCorrectionMode?.Invoke() != SyncCorrectionMode.Smooth)
             return;
         _correction.NotifyLanding(_getUtcNow());
@@ -252,6 +277,9 @@ internal sealed class LtcSyncController
     private void ResetCorrection()
     {
         _correction.Reset();
+        // D37-c: 補正の入力系列も一緒に切る（前の系列の中央値・変化量を混ぜない）。
+        _correctionResidualGate.Reset();
+        _correctionRejectedLogged = false;
         if (_rateRestorePending || Math.Abs(_lastAppliedRate - 1.0) < 0.0005)
             return;
         if (_effects.ApplyRateInstant?.Invoke(1.0) == true)
@@ -353,11 +381,15 @@ internal sealed class LtcSyncController
             _monitoring.MarkStarted();
             _signalLoss.Reset();
             _formatText = "fps: 検出中...";
+            // D37-c: 監視開始時に既に同期が有効なら、最初の有効フレームを追従開始として扱う。
+            if (_effects.GetContext().SyncEnabled)
+                _followStartPending = true;
         }
         else if (!_monitoring.IsDetectionActive(isReportedRunning: false))
         {
             _signalLoss.Reset();
             _formatText = "LTC 停止中";
+            _followStartPending = false;
         }
         RefreshDisplay();
     }
@@ -379,6 +411,7 @@ internal sealed class LtcSyncController
         _pendingJumpFrameEndTimestamp = 0;
         _jumpAppliedOnce = false;
         _heldReapplyDone = false;
+        _followStartPending = false;
         if (_monitoring.MarkStopped(exception))
         {
             _signalLoss.Reset();
@@ -765,6 +798,23 @@ internal sealed class LtcSyncController
                 ltcSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         }
 
+        // D37-c: 粗い判定と同じ前処理を補正の残差にも通す。ありえない変化の標本は捨て、
+        // 採用した残差は直近窓の中央値にする（Smooth の制御則・Jump のしきい値は変えない）。
+        double rawResidualSeconds = residualSeconds;
+        double correctionToleranceSeconds =
+            SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
+        double correctionGranularitySeconds = LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04;
+        SeekDecisionGate.Result correctionGate = _correctionResidualGate.Observe(
+            residualSeconds, correctionToleranceSeconds,
+            _getQpc() / (double)Stopwatch.Frequency, correctionGranularitySeconds);
+        if (correctionGate.Rejected)
+        {
+            LogCorrectionRejectedSample(correctionGate);
+            return;
+        }
+        _correctionRejectedLogged = false;
+        residualSeconds = correctionGate.MedianSeconds;
+
         SyncCorrectionDecision decision = _correction.Evaluate(
             residualSeconds, targetSeconds, _effects.GetCorrectionMode(), _smoothAvailable, _getUtcNow());
 
@@ -780,8 +830,9 @@ internal sealed class LtcSyncController
                 {
                     _lastAppliedRate = decision.Rate;
                     Log.Information(
-                        "Smooth correction rate={Rate:F5} residualMs={ResidualMs:F1}",
-                        decision.Rate, residualSeconds * 1000.0);
+                        "Smooth correction rate={Rate:F5} residualMs={ResidualMs:F1} rawResidualMs={RawResidualMs:F1} rejectedTotal={RejectedTotal}",
+                        decision.Rate, residualSeconds * 1000.0, rawResidualSeconds * 1000.0,
+                        correctionGate.RejectedTotal);
                 }
                 break;
             case SyncCorrectionActionType.Seek:
@@ -791,8 +842,9 @@ internal sealed class LtcSyncController
                 if (_effects.SeekTo(decision.TargetSeconds))
                 {
                     Log.Information(
-                        "Jump correction seek target={Target:F3} residualMs={ResidualMs:F1}",
-                        decision.TargetSeconds, residualSeconds * 1000.0);
+                        "Jump correction seek target={Target:F3} residualMs={ResidualMs:F1} rawResidualMs={RawResidualMs:F1} rejectedTotal={RejectedTotal}",
+                        decision.TargetSeconds, residualSeconds * 1000.0, rawResidualSeconds * 1000.0,
+                        correctionGate.RejectedTotal);
                     _syncService.ReportSeekSent(decision.TargetSeconds);
                 }
                 break;
@@ -803,6 +855,21 @@ internal sealed class LtcSyncController
             : _correction.SmoothDisabled ? "Smooth 補正なし（効かない）"
             : "";
         _effects.SetCorrectionStatus?.Invoke(status);
+    }
+
+    /// <summary>
+    /// D37-c: 物理的にありえない変化の標本を速度補正の入力から弾いたことを、乱れの切れ目に
+    /// 1 回だけ残す（粗い判定の SeekDecisionGate と同じ形。除外回数を数えられる）。
+    /// </summary>
+    private void LogCorrectionRejectedSample(SeekDecisionGate.Result gate)
+    {
+        if (_correctionRejectedLogged)
+            return;
+        _correctionRejectedLogged = true;
+        Log.Information(
+            "Correction gate: rejected unstable sample residualMs={ResidualMs:F1} previousMs={PreviousMs:F1} changeMs={ChangeMs:F1} allowedMs={AllowedMs:F1} dtMs={DtMs:F1} rejectedTotal={RejectedTotal}",
+            gate.DeltaSeconds * 1000.0, gate.PreviousDeltaSeconds * 1000.0, gate.ChangeSeconds * 1000.0,
+            gate.AllowedChangeSeconds * 1000.0, gate.DtSeconds * 1000.0, gate.RejectedTotal);
     }
 
     private static void LogFrameDiagnostics(
@@ -1011,6 +1078,15 @@ internal sealed class LtcSyncController
         if (!state.IsPlayerReady || !state.IsMonitoring || !state.SyncEnabled ||
             state.IsSeeking || _signalLoss.ShouldSuppressSync)
             return SyncRequestResult.Complete;
+        // D37-c: 追従開始の最初の同期評価は、D37-b2 の着地窓と同じ扱いにする
+        // （着地まで速度補正を優先せず、シークで詰める）。古い値の再適用（gapDisplayOnly）では
+        // 消費せず、次の有効フレームに任せる。
+        if (!gapDisplayOnly && _followStartPending)
+        {
+            _followStartPending = false;
+            _syncService.NotifyLanding();
+            Log.Information("Timecode sync: follow start landing window opened ltc={Ltc:F3}", seconds);
+        }
         if (state.Mode != SyncMode.Continue)
         {
             // U1: 古い再適用では Single の同期（シーク目標）も次の有効フレームに任せる。
