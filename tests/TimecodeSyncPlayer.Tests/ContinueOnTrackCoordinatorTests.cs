@@ -504,6 +504,42 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
+    public void GapExitLanding_WithLearnedSeekCost_DoesNotLookAhead()
+    {
+        (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
+        // D37-e: 学習値 2.0 があっても、ギャップ出口のシークは先行しない（対象は追従開始だけ）。
+        service.SeekState.BeginSeek(1.0, clock.GetUtcNow().UtcDateTime);
+        clock.Advance(TimeSpan.FromSeconds(2.0));
+        service.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        service.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
+        service.SeekState.LearnedSeekDurationSeconds.Should().BeApproximately(2.0, 1e-6);
+        clock.Advance(TimeSpan.FromMilliseconds(600));
+
+        var track = CreateTrack(Guid.NewGuid());
+        var rec = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 10.0) };
+        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
+
+        // 定常で 1 サンプル（許容内）を消費し、起動直後の例外を使い切る。
+        coordinator.Handle(OnTrack(track, 10.0), 10.0);
+        // ギャップ出口: mediaPos 10.0 へ直接シークしてギャップを抜ける。
+        rec.GapExit = GapExitActionType.ResumePlayback;
+        coordinator.Handle(OnTrack(track, 10.0), 10.0);
+        rec.SeekTargets.Should().Equal(10.0);
+
+        // 出口直後の不足 1.2 秒（> 0.5 × 学習値 2.0、< 学習値）→ シーク。行き先は LTC のまま。
+        rec.GapExit = GapExitActionType.None;
+        rec.TimePos = (0, 9.0);
+        for (int i = 0; i < 4; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            coordinator.Handle(OnTrack(track, 10.2), 10.2);
+        }
+
+        rec.SeekTargets.Should().Equal(10.0, 10.2);
+    }
+
+    [Fact]
     public void GapExitLanding_SmallDeficitBelowHalfSeekCost_UsesRateCatchUp()
     {
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();

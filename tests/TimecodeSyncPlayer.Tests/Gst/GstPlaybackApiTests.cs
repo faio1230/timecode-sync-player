@@ -317,7 +317,7 @@ public class GstPlaybackApiTests
             State = 1,
             Active = 1,
             Keyframes = 4,
-            MaxIntervalSec = 10.1,
+            MedianIntervalSec = 10.1,
             PendingSec = 3.2,
             ThresholdSec = 3.0,
             WarningQpc = 987654,
@@ -328,7 +328,7 @@ public class GstPlaybackApiTests
         status.State.Should().Be(LongGopWarningMonitor.StateWarning);
         status.Active.Should().BeTrue();
         status.Keyframes.Should().Be(4);
-        status.MaxIntervalSeconds.Should().Be(10.1);
+        status.MedianIntervalSeconds.Should().Be(10.1);
         status.PendingSeconds.Should().Be(3.2);
         status.ThresholdSeconds.Should().Be(3.0);
         status.WarningQpc.Should().Be(987654);

@@ -33,6 +33,7 @@
 #include "tcs_decode_policy.h"
 #include "tcs_gop_policy.h"
 #include "tcs_load_policy.h"
+#include "tcs_position_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 
@@ -125,10 +126,12 @@ env_int (const char* name, int fallback)
   return atoi (buf);
 }
 
-/* 0.4.5-C: keyframe-absence threshold for the long-GOP warning. The site
- * recommendation is a 1..2 s GOP; 3 s leaves margin so a conforming source
- * cannot be flagged. Only used to initialize the tracker (reset keeps it). */
-static const double kGopWarnSecondsDefault = 3.0;
+/* 0.4.5-C2: keyframe-interval threshold for the long-GOP warning. The site
+ * recommendation is a 1..2 s GOP; the judgement is the median measured
+ * interval, so 2.0 s means "the typical GOP is longer than the recommendation"
+ * (C2: the old 3.0 s keyframe-absence rule fired on variable-GOP material).
+ * Only used to initialize the tracker (reset keeps it). */
+static const double kGopWarnSecondsDefault = 2.0;
 
 static double
 resolve_gop_warn_seconds (void)
@@ -170,8 +173,11 @@ static const char* kOutputTraceEnv = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
 
 /* TcsDeliveryEvent.flags bit 3: not a frame arrival but the snapshot
  * tcs_player_get_time_pos records while the output trace is enabled.
- * Bit 4 marks the snapshot taken by the delivered-PTS fallback (query failed). */
-enum { kDeliveryFlagPosition = 8, kDeliveryFlagPositionFallback = 16 };
+ * Bit 4 marks the snapshot taken by the delivered-PTS fallback (query failed);
+ * bit 5 marks a fallback that was rejected because the newest delivered frame
+ * belongs to an older generation (0.4.5-A phase 2). */
+enum { kDeliveryFlagPosition = 8, kDeliveryFlagPositionFallback = 16,
+       kDeliveryFlagPositionFallbackRejected = 32 };
 
 /* D2 diagnostics: pipeline/sink state around seeks, pause changes and steps.
  * The paused-seek bug is about state, so the report needs the state at each
@@ -1916,8 +1922,9 @@ on_gop_probe (GstPad* /*pad*/, GstPadProbeInfo* info, gpointer user)
   int is_keyframe = GST_BUFFER_FLAG_IS_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT) ? 0 : 1;
   const uint64_t now = qpc_now ();
   int latched = 0;
-  int64_t pending_ms = 0, max_ms = 0, threshold_ms = 0;
+  int64_t median_ms = 0, threshold_ms = 0;
   uint64_t keyframes = 0;
+  uint32_t intervals = 0;
   {
     std::lock_guard<std::mutex> g (p->gop_lock);
     if (p->gop_epoch.load (std::memory_order_acquire) != ctx->epoch)
@@ -1927,17 +1934,18 @@ on_gop_probe (GstPad* /*pad*/, GstPadProbeInfo* info, gpointer user)
     latched = tcs_gop_tracker_observe (&p->gop_tracker, is_keyframe,
         (int64_t) pts, now);
     if (latched) {
-      pending_ms = p->gop_tracker.pending_ns / 1000000;
-      max_ms = p->gop_tracker.max_interval_ns / 1000000;
+      median_ms = p->gop_tracker.median_interval_ns / 1000000;
       threshold_ms = p->gop_tracker.threshold_ns / 1000000;
       keyframes = p->gop_tracker.keyframes;
+      intervals = p->gop_tracker.interval_count < TCS_GOP_INTERVAL_CAPACITY
+          ? p->gop_tracker.interval_count : TCS_GOP_INTERVAL_CAPACITY;
     }
   }
   if (latched)
-    LOG ("long-gop: warning latched keyframes=%llu pending_ms=%lld "
-        "max_interval_ms=%lld threshold_ms=%lld",
-        (unsigned long long) keyframes, (long long) pending_ms,
-        (long long) max_ms, (long long) threshold_ms);
+    LOG ("long-gop: warning latched keyframes=%llu intervals=%u "
+        "median_interval_ms=%lld threshold_ms=%lld",
+        (unsigned long long) keyframes, (unsigned) intervals,
+        (long long) median_ms, (long long) threshold_ms);
   return GST_PAD_PROBE_OK;
 }
 
@@ -3587,16 +3595,28 @@ get_time_pos_locked (TcsPlayer* player, double* out_sec, TcsPositionSample* out)
     /* D10: the pipeline query reports stream time (so it already maps the
      * qtdemux post-seek shift back). When the query is unavailable, fall back
      * to the newest delivered frame's stream-mapped PTS - never the raw PTS.
-     * 0.4.5-A: record the fallback in the trace (bit 4). The value may belong
-     * to an older generation; the owner decides with basis/generation. */
+     * 0.4.5-A phase 2: the fallback value must belong to the CURRENT
+     * generation. The query fails 0.3-0.6 ms after a seek is issued, while
+     * latest_gen still points at the pre-seek pipeline; returning that PTS
+     * would hand the owner a position from before the seek. Without a
+     * current-generation value the position is unknown, so report
+     * TCS_ERR_NOT_LOADED: every caller already treats that as "no position"
+     * (the sync coordinator defers, the UI uses null, the freeze capture
+     * waits). A zero-valued basis NONE return is not an option here: the
+     * legacy getter has no basis field and 0.0 is a valid media position. */
     if (player->latest_pts_ns > 0) {
+      int allowed = tcs_position_fallback_allowed (player->latest_gen, player->generation);
       if (player->position_trace) {
         LARGE_INTEGER now;
         QueryPerformanceCounter (&now);
         delivery_append_locked (player, (uint64_t) now.QuadPart, player->latest_seq,
-            (int64_t) player->latest_pts_ns, (int64_t) player->latest_pts_ns,
-            (uint32_t) (kDeliveryFlagPosition | kDeliveryFlagPositionFallback));
+            (int64_t) player->latest_pts_ns,
+            allowed ? (int64_t) player->latest_pts_ns : 0,
+            (uint32_t) (kDeliveryFlagPosition | kDeliveryFlagPositionFallback |
+                (allowed ? 0 : kDeliveryFlagPositionFallbackRejected)));
       }
+      if (!allowed)
+        return TCS_ERR_NOT_LOADED;
       *out_sec = (double) player->latest_pts_ns / GST_SECOND;
       if (out) {
         out->seconds = *out_sec;
@@ -4012,7 +4032,7 @@ tcs_player_get_gop_status (TcsPlayer* player, TcsGopStatus* out)
   out->state = t.state;
   out->active = player->gop_active ? 1 : 0;
   out->keyframes = t.keyframes;
-  out->max_interval_sec = (double) t.max_interval_ns / 1e9;
+  out->median_interval_sec = (double) t.median_interval_ns / 1e9;
   out->pending_sec = (double) t.pending_ns / 1e9;
   out->threshold_sec = (double) t.threshold_ns / 1e9;
   out->warning_qpc = t.warning_qpc;

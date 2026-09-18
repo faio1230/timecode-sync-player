@@ -359,7 +359,7 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         new(native.State,
             native.Active != 0,
             native.Keyframes,
-            native.MaxIntervalSec,
+            native.MedianIntervalSec,
             native.PendingSec,
             native.ThresholdSec,
             native.WarningQpc);
@@ -451,13 +451,14 @@ internal sealed class GstPlaybackApi : IPlaybackApi
 /// <summary>
 /// 0.4.5-C: shim のロング GOP 検出スナップショット。State は
 /// <see cref="LongGopWarningMonitor.StateMeasuring"/> /
-/// <see cref="LongGopWarningMonitor.StateWarning"/>。
+/// <see cref="LongGopWarningMonitor.StateWarning"/>。MedianIntervalSeconds は
+/// 実測したキーフレーム間隔の中央値（C2。0 = 未確定）。
 /// </summary>
 internal readonly record struct GopStatus(
     int State,
     bool Active,
     ulong Keyframes,
-    double MaxIntervalSeconds,
+    double MedianIntervalSeconds,
     double PendingSeconds,
     double ThresholdSeconds,
     ulong WarningQpc);
