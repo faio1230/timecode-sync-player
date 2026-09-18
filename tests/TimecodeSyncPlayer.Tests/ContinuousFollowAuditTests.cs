@@ -168,15 +168,17 @@ public sealed class ContinuousFollowAuditTests
         summary.Windows[2].PositionAdvance.Should().BeApproximately(2.0, 0.001); // 15.9 − 13.9
         summary.Windows[1].LtcAdvance.Should().BeApproximately(2.0, 0.001);
         summary.Windows[2].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[1].IntervalSeconds.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[1].Sparse.Should().BeFalse("実測区間が窓長の半分以上ある");
         summary.StallAdvanceWindows.Should().Be(0);
+        summary.SparseWindowCount.Should().Be(0);
     }
 
     [Fact]
-    public void Summarize_SparseSamplesEarlyInWindow_MeasureShortInterval()
+    public void Summarize_SparseSamplesEarlyInWindow_IsExcludedFromAdvanceJudgment()
     {
-        // サンプルが窓の先頭に 1 個だけの場合、前の窓の最後からの差は「実際に読めた短い区間」の
-        // 進みになる（窓 1 は 0.1 秒）。現判定（窓長 ×0.5 未満で停滞）はまだ変えていないため、
-        // この窓は停滞として数えられる。サンプル不足の扱いは別途決める。
+        // サンプルが窓の先頭に 1 個だけの場合、前の窓の最後からの実測区間は 0.1 秒しかなく、
+        // 進みの判定には使えない（Sparse として判定から外し、報告には残す）。
         List<FollowSample> samples =
         [
             new FollowSample(0.0, 10.0, 10.0),
@@ -192,8 +194,62 @@ public sealed class ContinuousFollowAuditTests
         summary.Windows[1].Samples.Should().Be(1);
         summary.Windows[1].PositionAdvance.Should().BeApproximately(0.1, 0.001);
         summary.Windows[1].LtcAdvance.Should().BeApproximately(0.1, 0.001);
+        summary.Windows[1].IntervalSeconds.Should().BeApproximately(0.1, 0.001);
+        summary.Windows[1].Sparse.Should().BeTrue();
         summary.Windows[2].PositionAdvance.Should().BeApproximately(2.0, 0.001);
-        summary.StallAdvanceWindows.Should().Be(1, "現判定はそのまま（サンプル不足の扱いは別途）");
+        summary.SparseWindowCount.Should().Be(1);
+        summary.StallAdvanceWindows.Should().Be(0, "Sparse は進みの判定から外す");
+    }
+
+    [Fact]
+    public void Summarize_EmptyWindow_IsSparseAndCarrySurvives()
+    {
+        // サンプルが 1 つも入らない窓は Sparse。キャリーは残り、次の窓の実測区間は
+        // 最大 1.5 窓で頭打ちにして次の窓へ帰属する。
+        List<FollowSample> samples =
+        [
+            new FollowSample(0.0, 10.0, 10.0),
+            new FollowSample(1.9, 11.9, 11.9),
+            new FollowSample(5.9, 15.9, 15.9),
+        ];
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[1].Samples.Should().Be(0);
+        summary.Windows[1].Sparse.Should().BeTrue();
+        summary.Windows[2].PositionAdvance.Should().BeApproximately(4.0, 0.001); // 15.9 − 11.9
+        summary.Windows[2].IntervalSeconds.Should().BeApproximately(3.0, 0.001); // 1.5 窓で上限
+        summary.Windows[2].Sparse.Should().BeFalse();
+        summary.SparseWindowCount.Should().Be(1);
+        summary.StallAdvanceWindows.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_PlaybackStallRequiresLtcAdvance_DisplayFreezeIsNotCounted()
+    {
+        // 窓 1: LTC は 2 秒進むが位置が 0.2 秒しか進まない → 再生側の停滞。
+        // 窓 2: LTC も位置も止まる（表示側の同時停止）→ 再生側の停滞には数えない。
+        List<FollowSample> samples = Samples(6.0, 0.2, _ => 0.0);
+        for (int i = 0; i < samples.Count; i++)
+        {
+            double t = samples[i].WallSeconds;
+            double ltc = t < 4.0 ? 10.0 + t : 13.8;
+            double position = t < 2.0 ? 10.0 + t : 12.0;
+            samples[i] = new FollowSample(t, ltc, position);
+        }
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[1].PositionAdvance.Should().BeApproximately(0.2, 0.001);
+        summary.Windows[1].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[1].Sparse.Should().BeFalse();
+        summary.Windows[2].LtcAdvance.Should().BeApproximately(0.0, 0.001, "表示側が同時に止まった窓");
+        summary.StallAdvanceWindows.Should().Be(1, "LTC が進んだのに位置が進まない窓だけを数える");
+        summary.WorstAdvance!.Value.Index.Should().Be(2, "生の最小進みは表示側が同時に止まった窓（停滞判定とは別）");
     }
 
     [Fact]
