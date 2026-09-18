@@ -26,10 +26,24 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media'
 }
 
-if (Test-Path $FfmpegDir) { $env:PATH = "$env:PATH;$FfmpegDir" }
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    throw 'ffmpeg not found on PATH (pass -FfmpegDir)'
+# Resolve one concrete ffmpeg.exe and call it by full path. -FfmpegDir used to be
+# APPENDED to PATH, so an older ffmpeg earlier on PATH won: ImageMagick ships
+# ffmpeg 4.2.3 in its install directory, which has no libsvtav1, and the 4K AV1
+# fixture died with "Unknown encoder 'libsvtav1'" while a 2023 build with both
+# libsvtav1 and prores_ks sat in C:\Program Files\ffmpeg\bin (seen 2026-09-19).
+# -FfmpegDir now wins outright, and the build actually used is printed.
+$script:FfmpegExe = ''
+$ffmpegCandidate = Join-Path $FfmpegDir 'ffmpeg.exe'
+if (Test-Path -LiteralPath $ffmpegCandidate) {
+    $script:FfmpegExe = (Get-Item -LiteralPath $ffmpegCandidate).FullName
+} else {
+    $ffmpegOnPath = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($ffmpegOnPath) { $script:FfmpegExe = $ffmpegOnPath.Source }
 }
+if ([string]::IsNullOrWhiteSpace($script:FfmpegExe)) {
+    throw 'ffmpeg not found (pass -FfmpegDir)'
+}
+Write-Output ('ffmpeg: ' + $script:FfmpegExe)
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
@@ -44,7 +58,7 @@ function Invoke-Ffmpeg([string[]]$FfArgs, [string]$OutputPath, [string]$Name) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $messages = @(& ffmpeg @FfArgs 2>&1 | ForEach-Object { [string]$_ })
+        $messages = @(& $script:FfmpegExe @FfArgs 2>&1 | ForEach-Object { [string]$_ })
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous

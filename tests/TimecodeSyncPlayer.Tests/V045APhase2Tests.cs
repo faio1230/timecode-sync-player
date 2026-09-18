@@ -123,6 +123,42 @@ public sealed class D37fLandingOriginTests
         decision.TargetSeconds.Should().BeApproximately(10.0, 1e-9, "ギャップ明けは先行しない");
     }
 
+    [Fact]
+    public void 境界ホールドが解除されたら追従開始のエピソードは終わる()
+    {
+        // D37-g: Single の境界ホールド中は位置がクリップ端に固定され、誤差が許容内に入らない。
+        // そのため追従開始の窓が上限まで開いたままになり、ホールド解除後の「巻き戻した LTC への
+        // 復帰シーク」にまで先行量が乗っていた（E2E S-3 が 3/3 で落ちた形）。
+        TimecodeSyncService svc = Service();
+        svc.SetSeekCostHintSeconds(1.99);
+
+        svc.NotifyLanding(LandingOrigin.FollowStart);
+        svc.EndFollowStartLanding();
+
+        SyncDecision decision = svc.EvaluateDecision(10.0, State(playbackSeconds: 7.0));
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().BeApproximately(10.0, 1e-9,
+            "追従開始のエピソードが終わっているので先行しない");
+    }
+
+    [Fact]
+    public void エピソードを終わらせても次の追従開始は先行できる()
+    {
+        // 終わらせるのはそのエピソードだけ。状態を潰してはいけない。
+        TimecodeSyncService svc = Service();
+        svc.SetSeekCostHintSeconds(1.99);
+
+        svc.NotifyLanding(LandingOrigin.FollowStart);
+        svc.EndFollowStartLanding();
+        svc.NotifyLanding(LandingOrigin.FollowStart);
+
+        SyncDecision decision = svc.EvaluateDecision(10.0, State(playbackSeconds: 7.0));
+
+        decision.TargetSeconds.Should().BeApproximately(11.99, 1e-9,
+            "新しい追従開始なので先行量は戻る");
+    }
+
     private static SyncPlaybackState State(double playbackSeconds) =>
         new(SyncEnabled: true,
             HasCurrentTrack: true,
