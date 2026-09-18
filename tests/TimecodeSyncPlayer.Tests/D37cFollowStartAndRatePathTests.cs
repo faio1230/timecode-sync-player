@@ -82,6 +82,51 @@ public class D37cFollowStartAndRatePathTests
             .Which.Value.Should().BeApproximately(1.5, 1e-9);
     }
 
+    [Fact]
+    public void FollowStart_ForcesSeek_EvenWhenDeficitIsBelowLearnedSeekCost()
+    {
+        // 検証機の M3: 学習済みシーク所要 ≈ 2.0 秒、追従開始時の不足 1.8 秒。
+        // 定常なら 1.8 < 2.0 で速度補正だが、着地窓の中はその比較より手前で無効になる。
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: QpcFrom(clock));
+        h.AddTrack("track", 0, duration: 10);
+        h.ChangeMode(SyncMode.Single);
+        h.ManualPlay();
+        LearnSeekDuration(h, clock, seconds: 2.0);
+        h.SetSyncEnabled(false);                        // まだ追従していない
+        h.AdvancePlayback(1.0, renderedFrames: 2);
+        h.Operations.Clear();
+        h.RateAttempts.Clear();
+
+        h.SetSyncEnabled(true);
+        h.SupplyLtc(2.8);                               // 不足 1.8 秒（< 学習済み 2.0 秒）
+
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle()
+            .Which.Value.Should().BeApproximately(2.8, 1e-9);
+        h.RateAttempts.Should().BeEmpty("着地窓の中では速度補正を選ばない");
+    }
+
+    [Fact]
+    public void SteadyDeficitBelowLearnedSeekCost_WithoutLandingWindow_UsesRateCatchUp()
+    {
+        // 上の対照: 同じ 1.8 秒・同じ学習値でも、着地窓がなければ既存ルールどおり速度補正。
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: QpcFrom(clock));
+        h.AddTrack("track", 0, duration: 10);
+        h.ChangeMode(SyncMode.Single);
+        h.ManualPlay();
+        LearnSeekDuration(h, clock, seconds: 2.0);
+        h.AdvancePlayback(1.0, renderedFrames: 2);
+        h.Operations.Clear();
+        h.RateAttempts.Clear();
+
+        h.SupplyLtc(2.8);                               // 追従開始イベントなし
+
+        h.SeekState.LearnedSeekDurationSeconds.Should().BeApproximately(2.0, 1e-6);
+        h.Operations.Should().NotContain(o => o.Name == "seek");
+        h.RateAttempts.Should().NotBeEmpty("1.8 < 2.0 のときの既存ルール（速度補正）を変えない");
+    }
+
     // ── 穴 2: 速度補正の入力の前処理 ──────────────────────────────
 
     [Fact]
@@ -126,6 +171,21 @@ public class D37cFollowStartAndRatePathTests
         h.RateAttempts.Should().OnlyContain(
             rate => Math.Abs(rate - 1.0) < 0.099,
             "跳びを弾いた後の残差は +60ms 前後なので、rate は上下限（±0.10）に張り付かない");
+    }
+
+    /// <summary>保留状態を直接動かして、シーク所要の学習値を作る（製品経路は通らない）。</summary>
+    private static void LearnSeekDuration(SyncScenarioHarness harness, ManualTimeProvider clock, double seconds)
+    {
+        harness.SeekState.BeginSeek(1.0, clock.GetUtcNow().UtcDateTime);
+        clock.Advance(TimeSpan.FromSeconds(seconds));
+        // 最初の到達（クールダウン中はまだ settle しない）。
+        harness.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        // クールダウン明けの settle で、発行からの実測時間が学習される。
+        harness.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
+        harness.SeekState.LearnedSeekDurationSeconds.Should().BeApproximately(seconds, 1e-6);
+        // settle 後の PostSettleSuppress（500ms）を追い越して、次の判定に影響させない。
+        clock.Advance(TimeSpan.FromMilliseconds(600));
     }
 
     private static (SyncScenarioHarness Harness, ManualTimeProvider Clock) CreateSingleTrackHarness()
