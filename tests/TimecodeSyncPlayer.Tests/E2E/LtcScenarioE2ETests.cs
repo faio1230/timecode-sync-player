@@ -236,18 +236,35 @@ public sealed class LtcScenarioE2ETests
         double signalEndLtc = startLtc + signalSeconds;
         scenario.Play(startLtc, signalSeconds);
 
+        // 画面から読む誤差は 1 標本だと跳ねる（実測で真の誤差 1.8 秒のときに 0.033 秒と読めた）。
+        // 連続 GateStableSamples 回そろって許容内のときだけ追従開始とみなす。
         DateTime gateStartedAt = DateTime.Now;
         double lastError = double.NaN;
+        int stable = 0;
+        int gateSamples = 0;
+        double gateWorstAccepted = 0.0;
         while (true)
         {
             lastError = Math.Abs(scenario.Position() - track.SingleTarget(scenario.LtcSeconds()));
+            gateSamples++;
             if (lastError <= PositionToleranceSeconds)
-                break;
+            {
+                stable++;
+                gateWorstAccepted = Math.Max(gateWorstAccepted, lastError);
+                if (stable >= GateStableSamples)
+                    break;
+            }
+            else
+            {
+                stable = 0;
+                gateWorstAccepted = 0.0;
+            }
+
             double waited = (DateTime.Now - gateStartedAt).TotalSeconds;
             if (waited >= startGateSeconds)
                 throw new TimeoutException(
                     $"{track.Symbol}: 追従開始ゲート {startGateSeconds:F0}s を超えても誤差が許容内に入らない" +
-                    $"（待機 {waited:F1}s、最後の誤差 {lastError:F3}s）");
+                    $"（待機 {waited:F1}s、最後の誤差 {lastError:F3}s、連続 {stable}/{GateStableSamples}）");
             Thread.Sleep(100);
         }
         scenario.Journal.Write("l1-settle", details: new
@@ -256,6 +273,9 @@ public sealed class LtcScenarioE2ETests
             startGateSeconds,
             waitedSeconds = Math.Round((DateTime.Now - gateStartedAt).TotalSeconds, 3),
             lastErrorSeconds = JsonNumberOrNull(lastError),
+            stableSamples = GateStableSamples,
+            gateSamples,
+            worstAcceptedSeconds = JsonNumberOrNull(gateWorstAccepted),
         });
 
         // ゲート待ちで素材を消費しているため、残りに収まる長さに監査区間を丸める。基準は
@@ -387,6 +407,12 @@ public sealed class LtcScenarioE2ETests
             $"（{FreezeSecondsPerMinute:F1} 秒/60 秒 × 追従 {followSeconds:F1} 秒、" +
             $"実測 {summary.SeekSecondsTotal:F3}s／シーク {summary.SeekSpans.Count} 回、最長 {summary.LongestSeekSeconds:F3}s）");
     }
+
+    /// <summary>
+    /// L-1: 追従開始とみなすのに必要な「連続で許容内だった標本の数」。100ms 間隔で読むので
+    /// 5 回 = 0.4 秒ぶん。位置表示が 20Hz 前後で振れるため、1 標本では真の誤差を見誤る。
+    /// </summary>
+    private const int GateStableSamples = 5;
 
     /// <summary>L-1: 1 回の停止の上限（秒）。</summary>
     private const double LongestFreezeLimitSeconds = 0.5;
