@@ -348,6 +348,76 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
+    public void EvaluateDecision_LandingWindowWithDeficitBelowHalfSeekCost_PrefersRateCatchUp()
+    {
+        // D37-d: L-1 実機の小さい誤差の領域（初期誤差 0.344s < 0.5 × シーク所要 1.0s）。
+        // 着地窓中でもシークを強制せず、速度補正に任せる。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 6));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.NotifyLanding();
+        var state = new SyncPlaybackState(true, true, false, 1.744, 100.0, 60.0, 25.0);
+
+        SyncDecision decision = service.EvaluateDecision(2.089, state); // delta 0.345
+
+        decision.Action.Should().Be(SyncActionType.None);
+        decision.RateCatchUpPreferred.Should().BeTrue("シーク所要の半分以下はシークで悪化する");
+    }
+
+    [Fact]
+    public void EvaluateDecision_AfterTheSeekCap_ReturnsToNormalRateCatchUp()
+    {
+        // D37-d 上限の歯止め: シークが縮まらない素材でも、連続 3 シークで窓を閉じ、
+        // 通常の判断（残差 <= 学習値は速度補正）に戻る。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.0 };
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 6));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0, 30.0, 30.0);
+
+        void Land()
+        {
+            seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+            service.ShouldSuppressSeek(10.6, 0.2);
+        }
+
+        service.NotifyLanding();
+        service.ReportSeekSent(10.6);
+        Land();
+        service.ReportSeekSent(10.6);
+        Land();
+        service.ReportSeekSent(10.6);
+        Land();
+
+        SyncDecision afterCap = service.EvaluateDecision(10.6, state); // 0.6 <= 学習値 1.0
+
+        afterCap.Action.Should().Be(SyncActionType.None);
+        afterCap.RateCatchUpPreferred.Should().BeTrue("上限で窓が閉じた後は通常の判断に戻る");
+    }
+
+    [Fact]
+    public void EvaluateDecision_AfterTheAgeCap_ReturnsToNormalRateCatchUp()
+    {
+        // D37-d 上限の歯止め（時間側）: 窓が開いて 5 秒たったら、残差が 0.5× を超えていても
+        // 通常の判断に戻す（シークの連鎖にしない）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.0 };
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 6));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0, 30.0, 30.0);
+
+        service.NotifyLanding();
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        SyncDecision afterCap = service.EvaluateDecision(10.6, state); // 0.6 <= 学習値 1.0
+
+        afterCap.Action.Should().Be(SyncActionType.None);
+        afterCap.RateCatchUpPreferred.Should().BeTrue("5 秒の上限で窓が閉じたら通常の判断に戻る");
+    }
+
+    [Fact]
     public void NotifyLanding_ReopensTheWindowAfterArrival()
     {
         var engine = new MockSyncDecisionEngine();
