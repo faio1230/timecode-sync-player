@@ -52,6 +52,8 @@
 
 #include <mutex>
 #include <string>
+#include <vector>
+#include <algorithm>
 #include <atomic>
 #include <thread>
 #include <deque>
@@ -4082,6 +4084,178 @@ TCS_GST_API int
 tcs_player_spout_ready (TcsPlayer* player)
 {
   return player && player->spout_ready ? 1 : 0;
+}
+
+
+/* ---- 0.4.5-C3: static keyframe scan ------------------------------------
+ * filesrc ! parsebin ! fakesink with a pad probe on every parsebin src pad.
+ * Nothing is decoded. Own pipeline, no TcsPlayer state, no frame_lock. */
+
+struct GopScanCtx {
+  std::mutex            lock;
+  std::vector<double>   key_times;   /* seconds */
+  GstElement*           pipeline = nullptr;
+};
+
+static GstPadProbeReturn
+gop_scan_probe (GstPad* /*pad*/, GstPadProbeInfo* info, gpointer user_data)
+{
+  GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER (info);
+  if (!buf)
+    return GST_PAD_PROBE_OK;
+  /* A keyframe is a buffer WITHOUT the delta-unit flag. Read it on the parsed
+   * (still encoded) stream: after decoding the flag is not meaningful. */
+  if (GST_BUFFER_FLAG_IS_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT))
+    return GST_PAD_PROBE_OK;
+  GstClockTime pts = GST_BUFFER_PTS (buf);
+  if (!GST_CLOCK_TIME_IS_VALID (pts))
+    return GST_PAD_PROBE_OK;
+  GopScanCtx* ctx = static_cast<GopScanCtx*> (user_data);
+  std::lock_guard<std::mutex> g (ctx->lock);
+  ctx->key_times.push_back ((double) pts / (double) GST_SECOND);
+  return GST_PAD_PROBE_OK;
+}
+
+/* parsebin exposes one pad per elementary stream. Every pad needs a sink or the
+ * unlinked branch stops the whole pipeline with not-linked, so each pad gets its
+ * own fakesink; only the video pad carries the keyframe probe. */
+static void
+gop_scan_pad_added (GstElement* /*parsebin*/, GstPad* pad, gpointer user_data)
+{
+  GopScanCtx* ctx = static_cast<GopScanCtx*> (user_data);
+  /* At pad-added the pad may not carry current caps yet; fall back to the
+   * negotiable set, which parsebin has already narrowed to the real media. */
+  GstCaps* caps = gst_pad_get_current_caps (pad);
+  if (!caps)
+    caps = gst_pad_query_caps (pad, nullptr);
+  bool is_video = false;
+  if (caps) {
+    const GstStructure* st = gst_caps_get_structure (caps, 0);
+    const char* name = st ? gst_structure_get_name (st) : nullptr;
+    is_video = name && g_str_has_prefix (name, "video/");
+    gst_caps_unref (caps);
+  }
+  if (is_video)
+    gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_BUFFER, gop_scan_probe, ctx, nullptr);
+
+  GstElement* sink = gst_element_factory_make ("fakesink", nullptr);
+  if (!sink)
+    return;
+  g_object_set (sink, "sync", FALSE, "async", FALSE, nullptr);
+  gst_bin_add (GST_BIN (ctx->pipeline), sink);
+  gst_element_sync_state_with_parent (sink);
+  GstPad* sinkpad = gst_element_get_static_pad (sink, "sink");
+  if (sinkpad) {
+    gst_pad_link (pad, sinkpad);
+    gst_object_unref (sinkpad);
+  }
+}
+
+static double
+gop_percentile (const std::vector<double>& sorted, double frac)
+{
+  if (sorted.empty ()) return 0.0;
+  if (sorted.size () == 1) return sorted[0];
+  double pos = frac * (double) (sorted.size () - 1);
+  size_t lo = (size_t) pos;
+  size_t hi = lo + 1 < sorted.size () ? lo + 1 : lo;
+  double t = pos - (double) lo;
+  return sorted[lo] + t * (sorted[hi] - sorted[lo]);
+}
+
+TCS_GST_API int
+tcs_scan_gop (const char* utf8_path, int32_t timeout_ms, TcsGopScan* out)
+{
+  if (!utf8_path || !out)
+    return TCS_ERR_INVALID_ARG;
+  memset (out, 0, sizeof (*out));
+  std::call_once (g_gst_once, [] {
+    int argc = 0;
+    gst_init (&argc, nullptr);
+  });
+
+  GstElement* pipeline = gst_pipeline_new ("tcs-gop-scan");
+  GstElement* src = gst_element_factory_make ("filesrc", nullptr);
+  GstElement* parse = gst_element_factory_make ("parsebin", nullptr);
+  if (!pipeline || !src || !parse) {
+    if (src) gst_object_unref (src);
+    if (parse) gst_object_unref (parse);
+    if (pipeline) gst_object_unref (pipeline);
+    return TCS_ERR_GENERIC;
+  }
+
+  GopScanCtx ctx;
+  ctx.pipeline = pipeline;
+  g_object_set (src, "location", utf8_path, nullptr);
+  gst_bin_add_many (GST_BIN (pipeline), src, parse, nullptr);
+  gst_element_link (src, parse);
+  g_signal_connect (parse, "pad-added", G_CALLBACK (gop_scan_pad_added), &ctx);
+
+  int rc = TCS_OK;
+  if (gst_element_set_state (pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+    LOG ("gop-scan: set_state PLAYING failed");
+    rc = TCS_ERR_GENERIC;
+  } else {
+    GstClockTime budget = (timeout_ms > 0 ? (GstClockTime) timeout_ms : 30000)
+        * GST_MSECOND;
+    GstBus* bus = gst_element_get_bus (pipeline);
+    GstMessage* msg = gst_bus_timed_pop_filtered (bus, budget,
+        (GstMessageType) (GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
+    if (!msg) {
+      rc = TCS_ERR_GENERIC;
+      LOG ("gop-scan: timeout");
+    } else if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ERROR) {
+      GError* err = nullptr;
+      gchar* dbg = nullptr;
+      gst_message_parse_error (msg, &err, &dbg);
+      LOG ("gop-scan: error %s (%s)", err ? err->message : "?", dbg ? dbg : "");
+      if (err) g_error_free (err);
+      if (dbg) g_free (dbg);
+      rc = TCS_ERR_GENERIC;
+    }
+    if (msg)
+      gst_message_unref (msg);
+    gint64 dur = 0;
+    if (gst_element_query_duration (pipeline, GST_FORMAT_TIME, &dur) && dur > 0)
+      out->duration_sec = (double) dur / (double) GST_SECOND;
+    gst_object_unref (bus);
+  }
+  gst_element_set_state (pipeline, GST_STATE_NULL);
+
+  std::vector<double> keys;
+  {
+    std::lock_guard<std::mutex> g (ctx.lock);
+    keys = ctx.key_times;
+  }
+  gst_object_unref (pipeline);
+
+  if (rc != TCS_OK)
+    return rc;
+  if (keys.empty ())
+    return TCS_OK;   /* keyframes = 0 tells the caller the scan found nothing */
+
+  std::sort (keys.begin (), keys.end ());
+  if (out->duration_sec <= 0.0)
+    out->duration_sec = keys.back ();
+
+  /* head gap, each inter-keyframe gap, tail gap */
+  std::vector<double> gaps;
+  gaps.reserve (keys.size () + 1);
+  gaps.push_back (keys.front ());
+  for (size_t i = 1; i < keys.size (); i++)
+    gaps.push_back (keys[i] - keys[i - 1]);
+  double tail = out->duration_sec - keys.back ();
+  if (tail < 0.0) tail = 0.0;
+  gaps.push_back (tail);
+
+  out->keyframes    = (int32_t) keys.size ();
+  out->head_gap_sec = keys.front ();
+  out->tail_gap_sec = tail;
+  std::sort (gaps.begin (), gaps.end ());
+  out->median_gap_sec = gop_percentile (gaps, 0.5);
+  out->p95_gap_sec    = gop_percentile (gaps, 0.95);
+  out->max_gap_sec    = gaps.back ();
+  return TCS_OK;
 }
 
 } /* extern C */

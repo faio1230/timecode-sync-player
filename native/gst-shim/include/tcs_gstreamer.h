@@ -299,6 +299,32 @@ TCS_GST_API int tcs_player_get_stats(TcsPlayer* player, TcsStats* out);
 /* 0.4.5-C: snapshot of the long-GOP detector. Takes no lock the streaming
  * thread needs (dedicated gop lock only). TCS_OK or TCS_ERR_GENERIC. */
 TCS_GST_API int tcs_player_get_gop_status(TcsPlayer* player, TcsGopStatus* out);
+
+/* ---- 0.4.5-C3: static keyframe scan (no player, no decoding) ----
+ * Reads the container with filesrc ! parsebin ! fakesink and records the PTS of
+ * every non-DELTA_UNIT buffer. Nothing is decoded, so 4K material scans at I/O
+ * speed. The scan has its own pipeline and shares no state with any TcsPlayer,
+ * so it never touches the playback/seek state machine.
+ *
+ * The judgement uses the MAXIMUM gap: material whose median sits inside the
+ * recommendation can still hold a 7s gap, and a seek landing there is slow
+ * (measured: 244ms right after a keyframe, 2164ms just before the next one on
+ * a 6.6s gap). head_gap (0 -> first keyframe) and tail_gap (last keyframe ->
+ * duration) are part of the gap list for the same reason. */
+typedef struct TcsGopScan {
+  int32_t  keyframes;          /* keyframes found (0 = scan produced nothing) */
+  double   duration_sec;       /* container duration (0 = unknown) */
+  double   head_gap_sec;       /* 0 -> first keyframe */
+  double   tail_gap_sec;       /* last keyframe -> duration */
+  double   median_gap_sec;
+  double   p95_gap_sec;
+  double   max_gap_sec;        /* the value the judgement uses */
+} TcsGopScan;
+
+/* Returns TCS_OK on a completed scan. The call blocks for the length of the
+ * scan (I/O bound; sub-second for short clips, a few seconds for a 1GB 4K
+ * file), so call it off the UI thread. timeout_ms <= 0 uses 30000. */
+TCS_GST_API int tcs_scan_gop(const char* utf8_path, int32_t timeout_ms, TcsGopScan* out);
 /* Convenience getters (avoid struct marshalling from .NET). */
 TCS_GST_API int tcs_player_decoder_name(TcsPlayer* player, char* out, size_t out_len);
 TCS_GST_API int tcs_player_spout_ready(TcsPlayer* player);
