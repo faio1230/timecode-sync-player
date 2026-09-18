@@ -10,8 +10,8 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
 ### Added
 
 - A material whose keyframe interval is long is flagged when it is loaded, in the status line
-  and in the playlist. The judgement reads the container (no decoding, 0.3s for a 928MB 4K60
-  file) and uses the **longest** gap, including the head gap (0 to the first keyframe) and the
+  and in the playlist. The judgement reads the container (no decoding: 0.3s for a 928MB 4K60 file,
+  22.8s on the first read of a 13.7GB one and 5.8 to 6.3s after that) and uses the **longest** gap, including the head gap (0 to the first keyframe) and the
   tail gap (last keyframe to the end). Material whose median sits inside the recommendation can
   still hold a 7s gap, and seeking into it is slow: measured 244ms right after a keyframe
   against 2164ms just before the next one. Playback is not stopped and this is not an error.
