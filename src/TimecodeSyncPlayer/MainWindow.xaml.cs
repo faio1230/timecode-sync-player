@@ -1269,6 +1269,18 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_vm.Sync.LongGopWarning != text)
             _vm.Sync.LongGopWarning = text;
 
+        // D37-f: シーク所要の見積もりを同期へ渡す。ロード直後の 1 回目のシークには学習値が
+        // 無く（ロードで学習を捨てるため）、D37-e の先行補償が 0 になっていた。所要は
+        // キーフレームからの距離にほぼ比例する（実測: 距離 0 で 244ms、6.6 秒先で 2,164ms）。
+        if (scan is { Keyframes: > 0 } hintScan)
+        {
+            double hint = hintScan.MaxGapSeconds * SeekCostPerGapSecond;
+            _syncService.SetSeekCostHintSeconds(hint);
+            Log.Information(
+                "Seek cost hint: track={Track} maxGapMs={Max:F0} hintMs={Hint:F0} keyframes={Keyframes}",
+                track?.Name, hintScan.MaxGapSeconds * 1000.0, hint * 1000.0, hintScan.Keyframes);
+        }
+
         if (track != null && quality is GopSeekQuality.Warning or GopSeekQuality.Error
             && !track.LongGopWarning)
         {
