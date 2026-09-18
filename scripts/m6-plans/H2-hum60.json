@@ -1,0 +1,14 @@
+{
+  "condition": "H2-hum60",
+  "ltcFps": 25,
+  "ltcFpsMode": "fixed",
+  "settlingSeconds": 2.0,
+  "gapSeconds": 0.5,
+  "levels": [
+    { "name": "clean", "seconds": 20 },
+    { "name": "hum60_snr12", "seconds": 20, "humHz": 60, "humDb": 12 },
+    { "name": "hum60_snr6", "seconds": 20, "humHz": 60, "humDb": 6 },
+    { "name": "hum60_snr3", "seconds": 20, "humHz": 60, "humDb": 3 },
+    { "name": "hum60_snr0", "seconds": 20, "humHz": 60, "humDb": 0 }
+  ]
+}
