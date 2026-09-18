@@ -236,16 +236,24 @@ public sealed class LtcScenarioE2ETests
         double signalEndLtc = startLtc + signalSeconds;
         scenario.Play(startLtc, signalSeconds);
 
-        // D37-c: 追従開始時の誤差そのもの（待ち時間だけでなく不足の大きさ）を記録する。
-        double followStartPosition = scenario.Position();
-        double followStartLtc = scenario.LtcSeconds();
-        double followStartError = Math.Abs(followStartPosition - track.SingleTarget(followStartLtc));
-
         DateTime gateStartedAt = DateTime.Now;
         double lastError = double.NaN;
+        // D37-c: 追従開始時の誤差そのもの（待ち時間だけでなく不足の大きさ）を記録する。
+        // 開始直後は位置がまだ読めないことがあるため、最初に有限だったサンプルを採る。
+        double? followStartPosition = null;
+        double? followStartLtc = null;
+        double? followStartError = null;
         while (true)
         {
-            lastError = Math.Abs(scenario.Position() - track.SingleTarget(scenario.LtcSeconds()));
+            double position = scenario.Position();
+            double ltc = scenario.LtcSeconds();
+            lastError = Math.Abs(position - track.SingleTarget(ltc));
+            if (followStartError is null && double.IsFinite(lastError))
+            {
+                followStartPosition = position;
+                followStartLtc = ltc;
+                followStartError = lastError;
+            }
             if (lastError <= PositionToleranceSeconds)
                 break;
             double waited = (DateTime.Now - gateStartedAt).TotalSeconds;
@@ -260,9 +268,9 @@ public sealed class LtcScenarioE2ETests
             track = track.Symbol,
             startGateSeconds,
             waitedSeconds = Math.Round((DateTime.Now - gateStartedAt).TotalSeconds, 3),
-            firstPositionSeconds = Math.Round(followStartPosition, 3),
-            firstLtcSeconds = Math.Round(followStartLtc, 3),
-            firstErrorSeconds = JsonNumberOrNull(followStartError),
+            firstPositionSeconds = followStartPosition is double firstPosition ? Math.Round(firstPosition, 3) : (double?)null,
+            firstLtcSeconds = followStartLtc is double firstLtc ? Math.Round(firstLtc, 3) : (double?)null,
+            firstErrorSeconds = JsonNumberOrNull(followStartError ?? double.NaN),
             lastErrorSeconds = JsonNumberOrNull(lastError),
         });
 
