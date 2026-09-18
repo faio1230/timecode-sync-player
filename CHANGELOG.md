@@ -43,9 +43,17 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
 - Rate correction now rejects momentary measurement spikes as well. D37-a shielded only the seek decision; the rate path was still fed the raw values (D37-c).
 - The follow-start landing no longer ends after a single seek: it continues until the error is inside tolerance. On long-GOP media the first seek takes 1.8 to 2 seconds and leaves the same error behind, so returning to the normal decision there could take 19 seconds (D37-d).
 - The follow-start seek now aims ahead by how far the timecode will advance before the landing. On media where a seek takes 2 seconds the landing was already 2 seconds behind, so no number of seeks converged (D37-e).
-- That estimate is now derived from the keyframe interval read when the file is loaded. Previously the duration was unknown until a seek had actually happened, so the estimate did not apply to the first seek, which is the one that matters (D37-f).
-- The estimate is now calibrated to "until the picture actually moves" rather than "until the position reaches the target". The stall after the landing was missing from it, and that stall is proportional to the keyframe interval (measured: 6.633s gap gives 0.79s, 0.501s gives 0.15s, 0.017s gives 0.10s) (D37-f).
+- Deriving that estimate from the keyframe interval read at load time is implemented but **off by default in this release** (D37-f / D37-h; see Not shipped below).
 - The follow-start lookahead no longer leaks into unrelated seeks. While Single mode holds an out-of-range timecode the position is pinned to the clip boundary, so the error can never fall inside tolerance and the follow-start landing never closed; the recovery seek taken when the timecode came back into range then overshot by the lookahead (measured 0.3s). That scenario also has a stopped timecode, so no later correction ran and the position kept drifting (D37-g).
+
+### Not shipped
+
+- **Estimating the seek duration from the keyframe interval and aiming that far ahead is off by default** (D37-h). It was meant to speed up the start of following on material with a long keyframe interval, but it broke more than it fixed.
+  - The estimate is `longest keyframe interval x coefficient`, which assumes **the landing falls at the worst place in the file**. In practice it lands near a keyframe, and then it **overshoots badly**: measured on the test machine, the first seek of a follow-start overshot on **12 runs out of 12, by +2.53 to +2.69 seconds** (estimate 2.79s against an actual cost of 0.19 to 0.31s).
+  - Every run then needed one backward seek to undo the overshoot, and that seek landed in a bad region and took over 2 seconds.
+  - **Five scenario tests that had been passing started failing** (the landing position fell outside the test tolerance), and the material it was meant to help still exceeded the criterion on 1 run in 13.
+  - **Tuning the coefficient does not fix this.** Any single-point estimate built on "the worst place in the file" keeps the same spread. The next release replaces it with a target chosen from the keyframe positions themselves.
+  - `TCS_SEEK_COST_HINT=on` enables it for measurement. **Do not use it in the field.**
 
 ### Known limitations
 
@@ -54,6 +62,8 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
 - **When the timecode fps and the material fps do not match, a constant spread remains.** When they match (25fps material with 25fps timecode, say) the spread disappears and the error becomes a fixed one-frame offset. The further the ratio is from 1, the larger it gets (about 17ms for 60fps material with a 30fps timecode, about 27ms with a 25fps timecode). **Recommended for field use: match the material fps to the timecode fps where possible.**
 - Switching tracks takes 0.7 to 0.8 seconds before the first picture appears (measured on 4K60 field material: 0.42s to load, 0.3 to 0.4s to the first picture). A switch across a gap hides this because the screen is black, but **a switch with no gap leaves the previous picture on screen for 0.7 to 0.8 seconds**.
 - AV1 material gets no in-app keyframe-interval warning: the parser used for the scan does not mark keyframes, so the interval cannot be read (playback itself works). Long-GOP AV1 is therefore undetectable in the app, and H.264 is recommended for field use. `scripts/inspect-gop.ps1` does read AV1 correctly (it uses ffprobe; verified on a 3840x2160 AV1 file, 12 keyframes, 1.000s maximum gap), so AV1 material can be checked before a show.
+- **On material with a long keyframe interval, sync can take about 8 seconds to lock on after following starts** (measured on field material with a 6.6s interval). A single seek leaves an error equal to the seek duration, so the landing is repeated until it converges. **A keyframe interval of 1 to 2 seconds brings this down to about 1.4 seconds.**
+- **Occasionally the measured sync error alternates between two values and the playback rate swings up and down** (measured: alternating at about 10 Hz, 0.66s apart; while it lasts the error grows to 0.55s). Seen on 2 of 8 runs under the same conditions. **The cause is under investigation** and is not fixed in this release.
 - Over a 10-minute continuous follow the error widens temporarily a few times (measured: 4 times in 10 minutes, 0.61s at worst, 1.3s of stopped picture in total). Each one is recovered by a single seek and does not chain. **A 60-second test never shows this**, which is why it had not been observed before. Longer continuous runs remain to be checked.
 
 ## 0.4.3 - 2026-09-18
