@@ -19,12 +19,17 @@ dotnet test tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj
 ```
 
 実行ファイルとログは `src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/` 以下。
-動画再生には `native/libmpv-2.dll`（従来名 `mpv-2.dll` も対応）、Spout 出力には `SpoutDX.dll` が必要。
+動画再生には `native/tcs_gstreamer.dll`（GStreamer shim）と GStreamer ランタイム、
+Spout 出力には `SpoutDX.dll` が必要。**mpv は v0.4 で完全に除去した。**
 
 ## 実装上の要点
 
-- mpv レンダー API は単一の専用スレッドで直列実行する。シーク発行と WriteableBitmap・Spout へのフレーム公開は UI スレッドで行う。
-- mpv の設定は `vo=libmpv`。ネイティブ構造体の ABI とコールバックデリゲートの寿命を維持する。
+- **GPU 出力は D3D11.4 が必須**。`ID3D11Device5` / `ID3D11DeviceContext4` が無い環境では
+  起動時にダイアログを出して再生だけを無効にする。CPU 合成へのフォールバックは無い。
+- **shim のロック規則（I13）**: GStreamer の状態変更・シークを `frame_lock` 保持中に呼ばない。
+  検査は `scripts/check-shim-lock-rule.py`。
+- **レンダー更新コールバックのデリゲートはフィールドで保持する**（ローカル変数だけだと GC で回収されクラッシュ）。
+- **再生 API は型付き・失敗は結果型**。相対シークは無い（`Seek` は絶対秒）。
 - `Path`・`File`・`Directory` を使用するファイルでは `using System.IO;` を明記する。
 
-必要時の参照先: [内部構造・mpv/LTC の制約](docs/ARCHITECTURE.md)、[セットアップ](docs/SETUP.md)、[DLL の入手](native/README.md)、[実機検証](docs/verification-checklist.md)。
+必要時の参照先: [内部構造・LTC の制約](docs/ARCHITECTURE.md)、[セットアップ](docs/SETUP.md)、[DLL の入手](native/README.md)、[現場準備ガイド](docs/USER-MANUAL.md)、[実機検証](docs/verification-checklist.md)。
