@@ -125,8 +125,10 @@ TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample*
 - 評価位置:
   - `delivered_generation >= current_generation`（着地済み）→ **`Seconds`（クエリ値）**。定常は現行と同値。
   - `delivered_generation < current_generation`（着地未確認）→
-    `DeliveredSeconds + min(now − サンプル時刻, 0.5) × レート`。0.5 秒の上限は LTC 側の前例に合わせる
-    （`LtcSyncController.cs:58 MaxSampleClockAgeSeconds`）。
+    `DeliveredSeconds + clamp(now − サンプル時刻, 0, 上限) × レート`。
+    **上限 = 2 × (1 / videoFps)**（素材のフレーム 2 枚ぶん。60fps なら 33ms、25fps なら 80ms。
+    fps は更新時に `state.VideoFps` を渡す。不明はシーク判定と同じ解決済み fps（既定 30）で 67ms）。
+    上限では配信 PTS で頭打ちにする。
   - `delivered_generation == 0`（まだ 1 枚も配信されていない）→ クエリ値 + 旧ガード（サンプル無しと同じ）。
 - リセット: `BeginFileLoad`（素材が変わる: `TimecodeSyncService.cs:172`）と `Stop`。
   手動シークは素材が変わらないので保持する（凍結した絵の続きとして外挿する）。
@@ -134,8 +136,24 @@ TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample*
 - 公開: `EvaluationSeconds` / `EvaluationBasis` / `IsLandingConfirmed`（= 直近サンプルが着地済み。
   §2-3 のシーク抑止に使う）。
 
-外挿の意味は「絵が止まっていれば頭打ち」。配信が来なければ 0.5 秒で伸びが止まり、LTC は進み続けるので
-**シーク中に育つ誤差がそのまま見える**（再格付けの訂正どおり）。
+外挿の意味は「絵が止まっていれば頭打ち」。配信が来なければ上限（フレーム 2 枚ぶん）で伸びが止まり、
+LTC は進み続けるので**シーク中に育つ誤差がそのまま見える**（再格付けの訂正どおり）。
+
+**上限を実時間 0.5 秒にしてはいけない（親の訂正、2026-09-19）。** LTC 側の
+`MaxSampleClockAgeSeconds = 0.5`（`LtcSyncController.cs:58`）との類推は成り立たない。
+
+- **LTC 側**: 音源は実時間で走り続ける。フレームを取りこぼしても信号は進んでいるので、経過時間 × 1.0 の
+  外挿が正しい。
+- **映像側**: 配信が止まったら**画面上の映像も進まない**。経過時間 × レートを足すのは「実在しない前進」で、
+  育った誤差を外挿そのものが埋めてしまう。4K60 のシーク所要は中央値 555ms・最長 2,038ms なので、
+  0.5 秒上限だと**誤差のほぼ全部が隠れ、今回の目的（誤差を見えるようにする）が壊れる**。
+
+外挿の正当な目的は**配信の離散性を埋めることだけ**（60fps なら 16.7ms 間隔）。フレーム 2 枚ぶん来なければ
+その絵は実際に止まっている、と線を引く。1 枚は離散性の下限、もう 1 枚は配信サンプルを取ってから次の評価
+までの遅れ（最大で LTC 1 フレーム周期 ≈ 40ms）に対する余裕。60fps ではこの古さがフレーム 2.4 枚
+（= 40ms）に達しうるが、上限 33ms との差は高々 7ms で、切り捨て側（誤差を少し大きく見せる側）に
+倒れるため許容する。2 秒のシーク中は評価位置が「シーク前 PTS + 33〜80ms」に留まり、**誤差 2 秒が
+そのまま見える**。
 
 ### 2-3. 既存のどこを置き換えるか（評価位置の適用箇所）
 
@@ -167,12 +185,20 @@ TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample*
   残差の計算前に return する。shadow はその分岐で、`TimecodeSyncService` が公開する直近の評価位置から
   残差を作る（Continue は素材位置 − 評価位置、Single は LTC − 評価位置）。
 
-### 2-4. なぜ「保留・settle・学習」はクエリ値のままか
+### 2-4. なぜ「保留・settle・学習」はクエリ値のままか（変更なし）
 
-`TimecodeSyncSeekState.ShouldSuppressSeek` は `playback >= target − tol` で settle する（144-151）。
-ここに外挿値を入れると、シーク距離が 0.5 秒以下のとき**着地前に目標を跨いで誤 settle** する。
-settle は保留管理とシーク所要の学習（`LearnedSeekDurationSeconds`）を兼ねているため、**入力を変えない**。
-着地の真偽は §2-2 の世代で別に持ち、評価とシーク抑止にだけ使う。
+`TimecodeSyncSeekState.ShouldSuppressSeek` は `playback >= target − tol` で settle し、保留管理と
+シーク所要の学習（`LearnedSeekDurationSeconds`）を兼ねる（144-151）。**この入力はクエリ値のまま
+変えない。**
+
+- 現行の settle は `IsNativeSeeking`（配信到着数）でゲートされた「クエリ値が目標に跳んだか」で決まり、
+  **D37-b 以降で校正した「着地までの実測時間」がこの系列に乗っている**。外挿値に替えると学習値の意味が
+  変わり、D37-b2 の速度補正／シーク分岐（実測所要との比較）に波及する。
+- 上限をフレーム 2 枚に下げたことで「外挿が先に tolerance 圏へ届く」誤 settle の危険はほぼ消える
+  （tolerance は 6 フレーム > 上限 2 フレーム。そもそも `|delta| > tolerance` のシークしか発行されない）
+  が、入力の意味を変えない方針自体は維持する。
+
+着地の真偽は §2-2 の世代で別に持ち、評価とシーク抑止（§2-3）にだけ使う。
 
 ## 3. 段階導入: 「判定しない」抑制をいつ外すか
 
@@ -244,7 +270,7 @@ settle は保留管理とシーク所要の学習（`LearnedSeekDurationSeconds`
 ## 5. 実装時のテスト（追加分）
 
 - shim: `_ex` の basis/gen、フォールバックの bit 4 trace、旧 API 不変。
-- C# 単体: 外挿（レート EMA、0.5 秒上限、逆行リセット、未計測 1.0）、着地判定（世代）、
+- C# 単体: 外挿（レート EMA、上限 2 フレーム、逆行リセット、未計測 1.0）、着地判定（世代）、
   古い世代の配信 PTS を着地に使わない、サンプル無しの旧ガード、着地未確認でシークを出さない、
   shadow が判断を変えない、`shadowRate` の計算が補正の状態（`SyncCorrectionController` の
   `_rateActive` / `_smoothDisabled`）を変えない。
