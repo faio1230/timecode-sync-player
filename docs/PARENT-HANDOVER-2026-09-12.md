@@ -558,6 +558,23 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
   **切り替える前に、会話にしか無い情報を文書へ書き写す**
 - **実機は 1 本ずつ。** 片方が測定中はもう片方の GPU・ディスプレイ・重い CPU を止める
 - **モデル障害の罠**: 途中で止まり追加指示も即終了するなら、`pane read | grep -i 'error\|opt in'` で確認する
+- **他の作業ツリーを読もうとして止まるのが最頻の `blocked`**（2026-09-18 に 4 回）。
+  エージェントは既存の測定データを再利用しようとして `wt-a` ⇄ `wt-b` を読みに行く。**これは正しい動機なので止めない。**
+  **対処は `Escape` で解除し、親が必要なデータを相手の作業ツリーへハードリンクで置く**（許可範囲を広げない）:
+
+  ```powershell
+  $src = "C:\Users\<user>\Documents\timecode-sync-player-wt-a\TestResults\v3\<run>"
+  $dst = "C:\Users\<user>\Documents\timecode-sync-player-wt-b\TestResults\<name>\<run>"
+  New-Item -ItemType Directory -Force $dst | Out-Null
+  Get-ChildItem -LiteralPath $src -File -Recurse | ForEach-Object {
+    $t = Join-Path $dst $_.FullName.Substring($src.Length).TrimStart('\')
+    New-Item -ItemType Directory -Force (Split-Path $t) | Out-Null
+    if (-not (Test-Path $t)) { New-Item -ItemType HardLink -Path $t -Target $_.FullName | Out-Null }
+  }
+  ```
+
+  **ハードリンクなので容量は増えない**（928MB の素材でも同じ）。**置いた場所を必ず伝えること。**
+  伝えないと同じ場所を読みに行って再び止まる
 
 ## 7. 未完了と次の順（2026-09-16 14:00）
 
