@@ -13,6 +13,8 @@ namespace TimecodeSyncPlayer.Gst;
 internal sealed class GstPlaybackApi : IPlaybackApi
 {
     private readonly GstBackendState _state;
+    // 0.4.5-A: 旧 DLL に _ex が無い場合、1 回だけ警告して以後は旧経路に固定する。
+    private bool _timePosExUnavailable;
 
     public GstPlaybackApi(GstBackendState state)
     {
@@ -238,6 +240,53 @@ internal sealed class GstPlaybackApi : IPlaybackApi
             return false;
         }
     }
+
+    public bool TryGetPositionSample(out PlaybackPositionSample sample)
+    {
+        sample = default;
+        IntPtr player = Player;
+        if (player == IntPtr.Zero) return false;
+
+        if (!_timePosExUnavailable)
+        {
+            try
+            {
+                if (!_state.Native.TryGetTimePosEx(player, out GstNative.TcsPositionSample native))
+                    return false;
+                sample = MapPositionSample(native);
+                return true;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // 0.4.5-A: 旧 DLL（_ex なし）。1 回だけ警告し、以後は旧経路に固定する。
+                _timePosExUnavailable = true;
+                Log.Warning("GstPlaybackApi: tcs_player_get_time_pos_ex が DLL に無いため旧経路（TryGetTimePos）へフォールバックします");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "GstPlaybackApi.TryGetPositionSample 失敗");
+                return false;
+            }
+        }
+
+        if (!TryGetTimePos(out double seconds))
+            return false;
+        sample = new PlaybackPositionSample(seconds, PlaybackPositionBasis.Pipeline, 0, 0, 0, 0);
+        return true;
+    }
+
+    private static PlaybackPositionSample MapPositionSample(GstNative.TcsPositionSample native) =>
+        new(native.Seconds,
+            native.Basis switch
+            {
+                1 => PlaybackPositionBasis.Pipeline,
+                2 => PlaybackPositionBasis.Delivered,
+                _ => PlaybackPositionBasis.None,
+            },
+            native.Generation,
+            native.DeliveredSeconds,
+            native.DeliveredGeneration,
+            native.CurrentGeneration);
 
     public bool TryGetDuration(out double seconds)
     {

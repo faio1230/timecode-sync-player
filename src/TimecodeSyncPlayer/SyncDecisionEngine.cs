@@ -74,6 +74,15 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         return SyncDecision.Untrusted(fps, toleranceSeconds);
     }
 
+    /// <summary>0.4.5-A フェーズ 1: shadow の評価位置だけを sync.evaluate に残す。</summary>
+    public void RecordShadow(double ltcSeconds, SyncPlaybackState state, string reason)
+    {
+        if (!OutputTrace.Current.IsEnabled) return;
+        SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
+        double toleranceSeconds = ToleranceSeconds(fps.VideoFps, fps.TimecodeFps, _options.ToleranceFrames);
+        RecordEvaluate(ltcSeconds, state, toleranceSeconds, RawDelta(ltcSeconds, state), reason);
+    }
+
     public SyncDecision Decide(double ltcSeconds, SyncPlaybackState state)
     {
         SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
@@ -202,6 +211,12 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     {
         string detail = FormattableString.Invariant(
             $"playback={state.PlaybackSeconds:F6} delta={delta ?? double.NaN:F6} tolerance={toleranceSeconds:F6} syncEnabled={state.SyncEnabled} hasTrack={state.HasCurrentTrack} isSeeking={state.IsSeeking} reason={reason}");
+        // 0.4.5-A フェーズ 1: 評価位置（shadow）は追記のみ。playback= / delta= の意味は変えない。
+        if (state.EvalPositionSeconds is double evalPosition)
+        {
+            detail = FormattableString.Invariant(
+                $"{detail} evalPosition={evalPosition:F6} evalDelta={state.EvalDeltaSeconds.GetValueOrDefault(double.NaN):F6} evalBasis={state.EvalBasis ?? "none"} deliveredGen={state.EvalDeliveredGeneration} currentGen={state.EvalCurrentGeneration}");
+        }
         if (!string.IsNullOrEmpty(gateDetail))
             detail = detail + " " + gateDetail;
         OutputTrace.Current.Record(new("sync.evaluate", "SYNC", Stopwatch.GetTimestamp(),
@@ -364,7 +379,13 @@ public sealed record SyncPlaybackState(
     double? MediaOutSeconds = null,
     // D37-b2: ギャップ明け・トラック切替の着地直後は false。速度補正優先をやめてシークで着地する
     // （着地の瞬間は画面が黒／フリーズで、シークによる静止が見えないため）。
-    bool RateCatchUpAllowed = true);
+    bool RateCatchUpAllowed = true,
+    // 0.4.5-A フェーズ 1: 評価位置（shadow）。trace に eval* として併記するだけで、判断には使わない。
+    double? EvalPositionSeconds = null,
+    double? EvalDeltaSeconds = null,
+    string? EvalBasis = null,
+    ulong EvalDeliveredGeneration = 0,
+    ulong EvalCurrentGeneration = 0);
 
 public enum SyncActionType
 {
