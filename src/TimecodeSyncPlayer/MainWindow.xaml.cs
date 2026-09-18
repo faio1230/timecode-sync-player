@@ -1891,9 +1891,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (transition == LongGopWarningTransition.Latch && hasStatus && track != null)
         {
             Log.Information(
-                "Long GOP warning: track={Track} path={Path} maxIntervalMs={Max:F0} thresholdMs={Threshold:F0} keyframes={Keyframes}",
+                "Long GOP warning: track={Track} path={Path} medianIntervalMs={Median:F0} thresholdMs={Threshold:F0} keyframes={Keyframes}",
                 track.Name, track.FilePath,
-                status.MaxIntervalSeconds * 1000.0, status.ThresholdSeconds * 1000.0,
+                status.MedianIntervalSeconds * 1000.0, status.ThresholdSeconds * 1000.0,
                 status.Keyframes);
             _playlist.MarkLongGopWarning(track.Id);
             RecordLongGopTrace(status);
@@ -1919,10 +1919,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (!OutputTrace.Current.IsEnabled) return;
         string detail = FormattableString.Invariant(
-            $"state={status.State} keyframes={status.Keyframes} pendingMs={status.PendingSeconds * 1000.0:F0} thresholdMs={status.ThresholdSeconds * 1000.0:F0} maxIntervalMs={status.MaxIntervalSeconds * 1000.0:F0}");
+            $"state={status.State} keyframes={status.Keyframes} pendingMs={status.PendingSeconds * 1000.0:F0} thresholdMs={status.ThresholdSeconds * 1000.0:F0} medianIntervalMs={status.MedianIntervalSeconds * 1000.0:F0}");
         OutputTrace.Current.Record(new("gst.gop", "GST",
             Stopwatch.GetTimestamp(),
-            Value: (long)Math.Round(status.MaxIntervalSeconds * 1_000_000),
+            Value: (long)Math.Round(status.MedianIntervalSeconds * 1_000_000),
             Detail: detail));
     }
 

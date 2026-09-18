@@ -194,7 +194,7 @@ internal sealed class FakeGstNative : IGstNativeApi
         State = 1,
         Active = 1,
         Keyframes = 2,
-        MaxIntervalSec = 10.1,
+        MedianIntervalSec = 10.1,
         PendingSec = 3.2,
         ThresholdSec = 3.0,
         WarningQpc = 12345,

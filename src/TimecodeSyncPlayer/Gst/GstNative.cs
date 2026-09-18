@@ -67,14 +67,14 @@ internal static class GstNative
         public ulong LastQpc;
     }
 
-    /// <summary>0.4.5-C: ロング GOP 警告（キーフレーム間隔）のポーリング用スナップショット。</summary>
+    /// <summary>0.4.5-C: ロング GOP 警告（キーフレーム間隔の中央値）のポーリング用スナップショット。</summary>
     [StructLayout(LayoutKind.Sequential)]
     internal struct TcsGopStatus
     {
         public int State;
         public int Active;
         public ulong Keyframes;
-        public double MaxIntervalSec;
+        public double MedianIntervalSec;
         public double PendingSec;
         public double ThresholdSec;
         public ulong WarningQpc;

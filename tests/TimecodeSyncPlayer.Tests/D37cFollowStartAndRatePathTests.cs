@@ -81,6 +81,7 @@ public class D37cFollowStartAndRatePathTests
     {
         // 検証機の M3: 学習済みシーク所要 ≈ 2.0 秒、追従開始時の不足 1.8 秒。
         // 定常なら 1.8 < 2.0 で速度補正だが、着地窓の中はその比較より手前で無効になる。
+        // D37-e: さらに追従開始の行き先は LTC + 学習値（2.8 + 2.0 = 4.8）になる。
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: QpcFrom(clock));
         h.AddTrack("track", 0, duration: 10);
@@ -96,7 +97,7 @@ public class D37cFollowStartAndRatePathTests
         h.SupplyLtc(2.8);                               // 不足 1.8 秒（< 学習済み 2.0 秒）
 
         h.Operations.Where(o => o.Name == "seek").Should().ContainSingle()
-            .Which.Value.Should().BeApproximately(2.8, 1e-9);
+            .Which.Value.Should().BeApproximately(4.8, 1e-9, "LTC 2.8 + 学習値 2.0（D37-e）");
         h.RateAttempts.Should().BeEmpty("着地窓の中では速度補正を選ばない");
     }
 

@@ -472,6 +472,74 @@ public class TimecodeSyncServiceTests
         engine.LastState!.RateCatchUpAllowed.Should().BeFalse("新しい着地で窓を開き直す");
     }
 
+    // ---- D37-e: 追従開始のシークだけ LTC + 学習済みシーク所要を狙う ----
+
+    [Fact]
+    public void EvaluateDecision_FollowStartLanding_UsesLearnedSeekCostAsLookahead()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.87 };
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.NotifyLanding(LandingOrigin.FollowStart);
+        service.EvaluateDecision(7.368, new SyncPlaybackState(true, true, false, 4.711, 100.0));
+
+        engine.LastState!.SeekTargetLookaheadSeconds.Should().BeApproximately(1.87, 1e-9,
+            "追従開始は学習済みシーク所要を先行量に使う");
+    }
+
+    [Fact]
+    public void EvaluateDecision_GapExitLanding_DoesNotUseLookahead()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.87 };
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.NotifyLanding(LandingOrigin.Other);
+        service.EvaluateDecision(7.368, new SyncPlaybackState(true, true, false, 4.711, 100.0));
+
+        engine.LastState!.SeekTargetLookaheadSeconds.Should().Be(0.0,
+            "ギャップ明け・切替には広げない（所要が短く過剰打ちになる）");
+    }
+
+    [Fact]
+    public void EvaluateDecision_FollowStartWithoutLearnedSeekCost_HasNoLookahead()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState(); // 未学習
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.NotifyLanding(LandingOrigin.FollowStart);
+        service.EvaluateDecision(7.368, new SyncPlaybackState(true, true, false, 4.711, 100.0));
+
+        engine.LastState!.SeekTargetLookaheadSeconds.Should().Be(0.0,
+            "未学習は測れていないので先行しない（最初のシークが所要の測定になる）");
+    }
+
+    [Fact]
+    public void EvaluateDecision_AfterArrival_StopsUsingLookahead()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.87 };
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
+
+        service.NotifyLanding(LandingOrigin.FollowStart);
+        engine.DecisionToReturn = new SyncDecision(
+            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
+        service.EvaluateDecision(10.0, state);
+
+        engine.DecisionToReturn = SyncDecision.None;
+        service.EvaluateDecision(10.0, state);
+
+        engine.LastState!.SeekTargetLookaheadSeconds.Should().Be(0.0,
+            "窓が閉じたら先行量も戻す");
+    }
+
     [Fact]
     public void BeginFileLoad_StartsTheLandingWindow()
     {
