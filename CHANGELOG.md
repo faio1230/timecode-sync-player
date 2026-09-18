@@ -38,7 +38,7 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
 ### Known limitations
 
 - On long-GOP media, a lag that appears while following is closed by playback rate rather than by seeking, so it can take several to a dozen seconds to clear (roughly 10 seconds per second of lag). Seeking there does not converge, because the landing carries a new error equal to the seek duration. Shortening the keyframe interval makes seeks fast and keeps this state from arising.
-- AV1 material gets no keyframe-interval warning: the parser used for the scan does not mark keyframes, so the interval cannot be read (playback itself works). Long-GOP AV1 is therefore undetectable, and H.264 is recommended for field use.
+- AV1 material gets no in-app keyframe-interval warning: the parser used for the scan does not mark keyframes, so the interval cannot be read (playback itself works). Long-GOP AV1 is therefore undetectable in the app, and H.264 is recommended for field use. `scripts/inspect-gop.ps1` does read AV1 correctly (it uses ffprobe; verified on a 3840x2160 AV1 file, 12 keyframes, 1.000s maximum gap), so AV1 material can be checked before a show.
 
 ### Fixed
 
