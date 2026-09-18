@@ -309,6 +309,43 @@ public class GstPlaybackApiTests
     }
 
     [Fact]
+    public void TryGetGopStatus_MapsNativeFields()
+    {
+        var (_, api, native) = Create();
+        native.GopStatus = new GstNative.TcsGopStatus
+        {
+            State = 1,
+            Active = 1,
+            Keyframes = 4,
+            MaxIntervalSec = 10.1,
+            PendingSec = 3.2,
+            ThresholdSec = 3.0,
+            WarningQpc = 987654,
+        };
+
+        api.TryGetGopStatus(out GopStatus status).Should().BeTrue();
+
+        status.State.Should().Be(LongGopWarningMonitor.StateWarning);
+        status.Active.Should().BeTrue();
+        status.Keyframes.Should().Be(4);
+        status.MaxIntervalSeconds.Should().Be(10.1);
+        status.PendingSeconds.Should().Be(3.2);
+        status.ThresholdSeconds.Should().Be(3.0);
+        status.WarningQpc.Should().Be(987654);
+    }
+
+    [Fact]
+    public void TryGetGopStatus_WhenExportMissing_ReturnsFalseAndStaysDisabled()
+    {
+        var (_, api, native) = Create();
+        native.ThrowEntryPointNotFoundOnGopStatus = true;
+
+        api.TryGetGopStatus(out _).Should().BeFalse();
+        native.ThrowEntryPointNotFoundOnGopStatus = false;
+        api.TryGetGopStatus(out _).Should().BeFalse("旧 DLL は 1 回で無効化に固定する");
+    }
+
+    [Fact]
     public void Getters_WithoutPlayer_ReturnFalseOrEmpty()
     {
         var (_, api, _) = Create(createPlayer: false);
@@ -317,6 +354,7 @@ public class GstPlaybackApiTests
         api.TryGetPositionSample(out _).Should().BeFalse();
         api.TryGetDuration(out _).Should().BeFalse();
         api.TryGetFps(out _).Should().BeFalse();
+        api.TryGetGopStatus(out _).Should().BeFalse();
         api.TryGetSize(out _, out _).Should().BeFalse();
         api.GetPath().Should().BeEmpty();
         api.GetVideoCodec().Should().BeEmpty();

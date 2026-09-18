@@ -60,6 +60,12 @@ internal interface IGstNativeApi
     int GetDeliveryStats(IntPtr player, out GstNative.TcsDeliveryStats stats);
 
     /// <summary>
+    /// 0.4.5-C: ロング GOP 警告の状態（ポーリング用）。active=0 は「未計測」。
+    /// 専用ロックのみで、フレーム供給のロックには触れない。
+    /// </summary>
+    bool TryGetGopStatus(IntPtr player, out GstNative.TcsGopStatus status);
+
+    /// <summary>
     /// ステージ 6b: 共有リングの NT ハンドル・共有フェンス・寸法を取得する。
     /// リング未作成（load 前/CPU 経路）は TCS_ERR_NO_FRAME。ハンドルは shim 所有。
     /// </summary>

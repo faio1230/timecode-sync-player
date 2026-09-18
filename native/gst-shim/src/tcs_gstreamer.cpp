@@ -31,6 +31,7 @@
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
+#include "tcs_gop_policy.h"
 #include "tcs_load_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
@@ -122,6 +123,29 @@ env_int (const char* name, int fallback)
   if (n == 0 || n >= sizeof (buf))
     return fallback;
   return atoi (buf);
+}
+
+/* 0.4.5-C: keyframe-absence threshold for the long-GOP warning. The site
+ * recommendation is a 1..2 s GOP; 3 s leaves margin so a conforming source
+ * cannot be flagged. Only used to initialize the tracker (reset keeps it). */
+static const double kGopWarnSecondsDefault = 3.0;
+
+static double
+resolve_gop_warn_seconds (void)
+{
+  char buf[32];
+  DWORD n = GetEnvironmentVariableA ("TCS_GOP_WARN_SECONDS", buf, sizeof (buf));
+  if (n == 0 || n >= sizeof (buf))
+    return kGopWarnSecondsDefault;
+  char* end = nullptr;
+  double value = strtod (buf, &end);
+  if (end == buf || !(value > 0.0) || !(value < 3600.0))
+    {
+      LOG ("gop warn: invalid TCS_GOP_WARN_SECONDS '%s' -> %.1f",
+          buf, kGopWarnSecondsDefault);
+      return kGopWarnSecondsDefault;
+    }
+  return value;
 }
 
 /* diagnostics: dump every delivered sample (pacing analysis) */
@@ -413,6 +437,17 @@ struct TcsPlayer {
   uint64_t pump_frames_at_arm = 0;       /* frame_lock (D24 diagnostics) */
   bool pump_muted = false;               /* frame_lock */
   uint64_t pump_faults = 0;              /* frame_lock (diagnostics) */
+
+  /* 0.4.5-C long-GOP detector. gop_lock is a leaf lock: only the pad probe
+   * (streaming thread), the getter and teardown's reset take it; it is never
+   * held together with frame_lock / state_mutex and no GStreamer call runs
+   * under it. gop_epoch invalidates probe contexts of a torn-down pipeline. */
+  std::mutex gop_lock;
+  TcsGopTracker gop_tracker = {};
+  bool gop_active = false;               /* gop_lock: video chain with GOP probe built */
+  bool gop_probe_installed = false;      /* gop_lock: at most one probe per pipeline */
+  std::atomic<uint64_t> gop_epoch{0};    /* +1 on teardown; probe contexts carry it */
+  std::atomic<bool> gop_reanchor{false}; /* seek_prepare_locked -> probe clears it */
 
   /* audio priming: a paused load must not yank the audio sink down while it
    * is still initializing (wasapi2 stopped mid-init never recovers). */
@@ -1845,6 +1880,86 @@ configure_video_queue (GstElement* q)
       "max-size-time", (guint64) 0, "max-size-bytes", (guint) 0, nullptr);
 }
 
+/* ---------------- 0.4.5-C: long-GOP probe ---------------- */
+
+/* One probe per built chain. The context carries the epoch it was installed
+ * for so a late callback from a torn-down pipeline removes itself without
+ * touching the player's state (D34-style stale-callback guard). */
+struct GopProbeContext {
+  TcsPlayer* player;
+  uint64_t epoch;
+};
+
+static void
+gop_probe_context_free (gpointer data)
+{
+  delete (GopProbeContext*) data;
+}
+
+/* Streaming thread. Reads PTS / DELTA_UNIT only (never maps, copies or drops
+ * a buffer) and always reports GST_PAD_PROBE_OK, except for the stale-epoch
+ * REMOVE. Holds gop_lock, a leaf (see TcsPlayer); the single LOG on latch
+ * runs after the lock is released. */
+static GstPadProbeReturn
+on_gop_probe (GstPad* /*pad*/, GstPadProbeInfo* info, gpointer user)
+{
+  GopProbeContext* ctx = (GopProbeContext*) user;
+  TcsPlayer* p = ctx->player;
+  if (p->gop_epoch.load (std::memory_order_acquire) != ctx->epoch)
+    return GST_PAD_PROBE_REMOVE;
+  GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER (info);
+  if (!buf)
+    return GST_PAD_PROBE_OK;
+  GstClockTime pts = GST_BUFFER_PTS (buf);
+  if (!GST_CLOCK_TIME_IS_VALID (pts))
+    return GST_PAD_PROBE_OK;
+  int is_keyframe = GST_BUFFER_FLAG_IS_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT) ? 0 : 1;
+  const uint64_t now = qpc_now ();
+  int latched = 0;
+  int64_t pending_ms = 0, max_ms = 0, threshold_ms = 0;
+  uint64_t keyframes = 0;
+  {
+    std::lock_guard<std::mutex> g (p->gop_lock);
+    if (p->gop_epoch.load (std::memory_order_acquire) != ctx->epoch)
+      return GST_PAD_PROBE_REMOVE;
+    if (p->gop_reanchor.exchange (false, std::memory_order_acq_rel))
+      tcs_gop_tracker_reanchor (&p->gop_tracker);
+    latched = tcs_gop_tracker_observe (&p->gop_tracker, is_keyframe,
+        (int64_t) pts, now);
+    if (latched) {
+      pending_ms = p->gop_tracker.pending_ns / 1000000;
+      max_ms = p->gop_tracker.max_interval_ns / 1000000;
+      threshold_ms = p->gop_tracker.threshold_ns / 1000000;
+      keyframes = p->gop_tracker.keyframes;
+    }
+  }
+  if (latched)
+    LOG ("long-gop: warning latched keyframes=%llu pending_ms=%lld "
+        "max_interval_ms=%lld threshold_ms=%lld",
+        (unsigned long long) keyframes, (long long) pending_ms,
+        (long long) max_ms, (long long) threshold_ms);
+  return GST_PAD_PROBE_OK;
+}
+
+/* Attach the detector to the pad that carries encoded frames: the parser src
+ * pad when the profile has one, otherwise the demux video pad (ProRes). The
+ * decodebin fallback never calls this and reports active=0. */
+static void
+install_gop_probe (TcsPlayer* p, GstPad* pad)
+{
+  {
+    std::lock_guard<std::mutex> g (p->gop_lock);
+    if (p->gop_probe_installed)
+      return;
+    p->gop_probe_installed = true;
+    p->gop_active = true;
+  }
+  GopProbeContext* ctx = new GopProbeContext {
+      p, p->gop_epoch.load (std::memory_order_acquire) };
+  gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_BUFFER, on_gop_probe, ctx,
+      gop_probe_context_free);
+}
+
 /* Build the static video tail for profile index idx (-1 = decodebin
  * fallback). Elements are added, given the device context and linked;
  * on_demux_pad_added only links the demux pad to p->vhead. */
@@ -1949,6 +2064,13 @@ build_video_chain_static (TcsPlayer* p, int idx)
     prev = chain[i];
   }
   log_video_chain (prof->name, chain, nChain);
+  if (p->vparse) {
+    GstPad* srcpad = gst_element_get_static_pad (p->vparse, "src");
+    if (srcpad) {
+      install_gop_probe (p, srcpad);
+      gst_object_unref (srcpad);
+    }
+  }
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->decoder_name = prof->dec ? prof->dec : "raw";
@@ -2049,6 +2171,10 @@ on_video_pad (TcsPlayer* p, GstPad* pad, GstCaps* caps)
     p->vchain_built = (lr == GST_PAD_LINK_OK);
     if (p->vchain_built)
       record_video_caps (p, caps);
+    /* 0.4.5-C: profiles without a parser (ProRes) expose keyframes on the
+     * demux src pad only; parser-based profiles were probed at build time. */
+    if (p->vchain_built && !prof->parse)
+      install_gop_probe (p, pad);
     gst_object_unref (sink);
   }
 }
@@ -2440,6 +2566,18 @@ teardown_pipeline (TcsPlayer* p)
     pump_reset_locked (p);
   }
 
+  /* 0.4.5-C: invalidate probe contexts before the old pipeline goes away and
+   * clear the measurement outside frame_lock (gop_lock is a leaf, never
+   * nested with frame_lock). */
+  p->gop_epoch.fetch_add (1, std::memory_order_acq_rel);
+  {
+    std::lock_guard<std::mutex> g (p->gop_lock);
+    tcs_gop_tracker_reset (&p->gop_tracker);
+    p->gop_active = false;
+    p->gop_probe_installed = false;
+  }
+  p->gop_reanchor.store (false, std::memory_order_release);
+
   if (p->pipeline) {
     gst_element_set_state (p->pipeline, GST_STATE_NULL);
     gst_object_unref (p->pipeline);
@@ -2498,6 +2636,10 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
   if (!p->pipeline)
     return p->generation;
   p->generation++;
+  /* 0.4.5-C: a seek can jump the PTS far ahead; the probe re-anchors on the
+   * next keyframe so the jump cannot look like a long keyframe gap. The
+   * latched warning is kept (per-track, monotone). */
+  p->gop_reanchor.store (true, std::memory_order_release);
   /* D25: this seek's segment is the next downstream SEGMENT event, so the
    * expected boundary is "seen + 1". Back-to-back seeks are deliberately not
    * stacked (the earlier max(seen, pending)+1): when two flushing seeks
@@ -3091,6 +3233,7 @@ tcs_player_create (const char* sender_name, void* external_d3d11_device,
   LARGE_INTEGER qpc_freq;
   if (QueryPerformanceFrequency (&qpc_freq))
     p->qpc_freq = qpc_freq.QuadPart;
+  tcs_gop_tracker_init (&p->gop_tracker, resolve_gop_warn_seconds ());
 
   demote_foreign_gpu_decoders ();
   p->audioEnabled = !env_flag ("TCS_NO_AUDIO");
@@ -3856,6 +3999,23 @@ tcs_player_get_stats (TcsPlayer* player, TcsStats* out)
   out->frames_decoded = player->frames_decoded;
   out->spout_sends = player->spout_sends;
   out->generation = player->generation;
+  return TCS_OK;
+}
+
+TCS_GST_API int
+tcs_player_get_gop_status (TcsPlayer* player, TcsGopStatus* out)
+{
+  if (!player || !out) return TCS_ERR_GENERIC;
+  memset (out, 0, sizeof (*out));
+  std::lock_guard<std::mutex> g (player->gop_lock);
+  const TcsGopTracker& t = player->gop_tracker;
+  out->state = t.state;
+  out->active = player->gop_active ? 1 : 0;
+  out->keyframes = t.keyframes;
+  out->max_interval_sec = (double) t.max_interval_ns / 1e9;
+  out->pending_sec = (double) t.pending_ns / 1e9;
+  out->threshold_sec = (double) t.threshold_ns / 1e9;
+  out->warning_qpc = t.warning_qpc;
   return TCS_OK;
 }
 

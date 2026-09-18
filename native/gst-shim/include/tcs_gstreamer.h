@@ -89,6 +89,21 @@ typedef struct TcsStats {
   uint64_t generation;
 } TcsStats;
 
+/* 0.4.5-C: long-GOP warning state, safe to poll from the owner thread.
+ * active=0 means "no GOP probe" (not loaded, decodebin fallback, or the
+ * probe was torn down): the owner must not read that as "no problem".
+ * max_interval_sec = 0 while the interval is unconfirmed. The warning
+ * latches; it is never cleared before the next load. */
+typedef struct TcsGopStatus {
+  int32_t  state;              /* 0 = measuring, 1 = warning (latched) */
+  int32_t  active;             /* 1 = a video chain with the GOP probe is built */
+  uint64_t keyframes;          /* keyframes observed since load */
+  double   max_interval_sec;   /* max keyframe interval (0 = unconfirmed) */
+  double   pending_sec;        /* current buffer PTS - anchor PTS */
+  double   threshold_sec;      /* effective threshold */
+  uint64_t warning_qpc;        /* QPC when latched (0 = none) */
+} TcsGopStatus;
+
 /* ---- delivery trace (problem H instrumentation) ----
  * Every on_new_sample arrival appends one event. qpc is the same
  * QueryPerformanceCounter clock the compositor uses, so the owner can
@@ -275,6 +290,9 @@ TCS_GST_API int tcs_player_send_image(TcsPlayer* player, const uint8_t* bgra,
                                       int width, int height, int pitch);
 
 TCS_GST_API int tcs_player_get_stats(TcsPlayer* player, TcsStats* out);
+/* 0.4.5-C: snapshot of the long-GOP detector. Takes no lock the streaming
+ * thread needs (dedicated gop lock only). TCS_OK or TCS_ERR_GENERIC. */
+TCS_GST_API int tcs_player_get_gop_status(TcsPlayer* player, TcsGopStatus* out);
 /* Convenience getters (avoid struct marshalling from .NET). */
 TCS_GST_API int tcs_player_decoder_name(TcsPlayer* player, char* out, size_t out_len);
 TCS_GST_API int tcs_player_spout_ready(TcsPlayer* player);

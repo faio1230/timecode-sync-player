@@ -116,6 +116,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private Guid?                  _loadedTrackId;
     private bool                   _endAdvanceTriggered;
     private readonly PlaylistDragDropCoordinator _playlistDragDropCoordinator;
+    // 0.4.5-C: ロング GOP 警告（表示のみ。同期の制御則には触れない）。
+    private readonly LongGopWarningMonitor _longGopWarningMonitor = new();
 
     // ── 同期コーディネータ（遅延生成キャッシュ。ラムダは this のフィールドのみを参照するため
     //    呼び出しごとの再生成は不要。初回呼び出し時に確定する） ──
@@ -1849,6 +1851,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _duration = dur;
 
         TickMetadataFetch();
+        TickLongGopWarning();
 
         // Gap 状態ではレンダーコールバックが止まるため、
         // タイマーでタイムライン位置を更新する
@@ -1871,6 +1874,56 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             Log.Warning("Continue mode: gap freeze final-frame capture timed out, holding current frame");
             _gapFreezeHandler.ForceFreezeComplete();
         }
+    }
+
+    // ── 0.4.5-C: ロング GOP 警告（表示のみ） ─────────────────────
+    // 100ms タイマーで shim の検出値をポーリングする。同期の制御則・再生の可否には
+    // 一切触れず、ステータス行とプレイリスト行の表示だけを更新する。
+
+    private void TickLongGopWarning()
+    {
+        Guid? trackId = _loadedTrackId;
+        bool hasStatus = _gstPlaybackApi.TryGetGopStatus(out GopStatus status);
+        PlaylistTrack? track = trackId.HasValue ? _playlist.FindTrackById(trackId.Value) : null;
+        LongGopWarningTransition transition = _longGopWarningMonitor.Observe(
+            trackId, hasStatus ? status : null, track?.LongGopWarning == true);
+
+        if (transition == LongGopWarningTransition.Latch && hasStatus && track != null)
+        {
+            Log.Information(
+                "Long GOP warning: track={Track} path={Path} maxIntervalMs={Max:F0} thresholdMs={Threshold:F0} keyframes={Keyframes}",
+                track.Name, track.FilePath,
+                status.MaxIntervalSeconds * 1000.0, status.ThresholdSeconds * 1000.0,
+                status.Keyframes);
+            _playlist.MarkLongGopWarning(track.Id);
+            RecordLongGopTrace(status);
+        }
+        else if (transition == LongGopWarningTransition.IntervalUpdated && hasStatus)
+        {
+            RecordLongGopTrace(status);
+        }
+
+        UpdateLongGopWarningText();
+    }
+
+    private void UpdateLongGopWarningText()
+    {
+        string text = _longGopWarningMonitor.IsWarningActive
+            ? LongGopWarningMessages.Format(_longGopWarningMonitor.MeasuredSeconds)
+            : string.Empty;
+        if (_vm.Sync.LongGopWarning != text)
+            _vm.Sync.LongGopWarning = text;
+    }
+
+    private static void RecordLongGopTrace(GopStatus status)
+    {
+        if (!OutputTrace.Current.IsEnabled) return;
+        string detail = FormattableString.Invariant(
+            $"state={status.State} keyframes={status.Keyframes} pendingMs={status.PendingSeconds * 1000.0:F0} thresholdMs={status.ThresholdSeconds * 1000.0:F0} maxIntervalMs={status.MaxIntervalSeconds * 1000.0:F0}");
+        OutputTrace.Current.Record(new("gst.gop", "GST",
+            Stopwatch.GetTimestamp(),
+            Value: (long)Math.Round(status.MaxIntervalSeconds * 1_000_000),
+            Detail: detail));
     }
 
     private void TryAdvancePlaylistAtEnd(double positionSeconds)

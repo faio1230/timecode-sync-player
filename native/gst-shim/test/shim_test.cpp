@@ -5,6 +5,7 @@
 #include "tcs_gstreamer.h"
 #include "tcs_delivery_policy.h"
 #include "tcs_decode_policy.h"
+#include "tcs_gop_policy.h"
 #include "tcs_load_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
@@ -535,6 +536,118 @@ run_delivery_policy_tests ()
     check (tcs_load_failure_is_caps_missing (1, 0) == 0,
         "D34 label: caps ready without mismatch -> preroll-timeout");
   }
+}
+
+/* 0.4.5-C: long-GOP warning tracker (pure; no media, no GStreamer).
+ * Clock is the buffer PTS in ns; `now` is any monotone counter. */
+static void
+run_gop_policy_tests ()
+{
+  const int64_t s = 1000000000LL;
+  const uint64_t t0 = 1000;
+  TcsGopTracker t;
+
+  tcs_gop_tracker_init (&t, 3.0);
+  check (t.state == TCS_GOP_STATE_MEASURING, "gop: init -> measuring");
+  check (t.threshold_ns == 3 * s, "gop: init threshold 3 s");
+  check (t.anchor_valid == 0 && t.keyframes == 0 && t.max_interval_ns == 0,
+      "gop: init clears measurement");
+
+  /* 1 s keyframe spacing: no warning, interval recorded. */
+  check (tcs_gop_tracker_observe (&t, 1, 0, t0) == 0, "gop: first keyframe anchors");
+  check (t.anchor_valid == 1 && t.keyframes == 1, "gop: anchor after keyframe");
+  check (tcs_gop_tracker_observe (&t, 0, s / 2, t0 + 1) == 0,
+      "gop: delta under threshold -> no warning");
+  check (t.pending_ns == s / 2, "gop: pending tracks the delta PTS");
+  check (tcs_gop_tracker_observe (&t, 1, s, t0 + 2) == 0,
+      "gop: 1 s interval -> no warning");
+  check (t.state == TCS_GOP_STATE_MEASURING, "gop: state stays measuring");
+  check (t.max_interval_ns == s, "gop: measured 1 s interval");
+  check (t.pending_ns == 0, "gop: keyframe clears pending");
+  check (tcs_gop_tracker_observe (&t, 0, s + s / 2, t0 + 3) == 0,
+      "gop: second 1 s GOP stays quiet");
+
+  /* No keyframe for 3 s: latch on the pending path, exactly once. */
+  tcs_gop_tracker_reset (&t);
+  check (tcs_gop_tracker_observe (&t, 1, 0, t0) == 0, "gop: warn-case anchor");
+  check (tcs_gop_tracker_observe (&t, 0, 2 * s, t0 + 1) == 0,
+      "gop: pending just under threshold -> no warning");
+  check (tcs_gop_tracker_observe (&t, 0, 3 * s, t0 + 2) == 1,
+      "gop: 3 s without a keyframe -> warning latches");
+  check (t.state == TCS_GOP_STATE_WARNING, "gop: warning state");
+  check (t.warning_qpc == t0 + 2, "gop: latch records now");
+  check (tcs_gop_tracker_observe (&t, 0, 4 * s, t0 + 3) == 0,
+      "gop: latched warning does not fire twice");
+  check (t.keyframes == 1 && t.max_interval_ns == 0,
+      "gop: pending latch does not invent an interval");
+
+  /* A keyframe interval >= threshold latches too (delta frames never seen). */
+  tcs_gop_tracker_reset (&t);
+  check (tcs_gop_tracker_observe (&t, 1, 0, t0) == 0, "gop: long-GOP keyframe 1");
+  check (tcs_gop_tracker_observe (&t, 1, 3 * s, t0 + 1) == 1,
+      "gop: 3 s keyframe interval -> warning latches");
+  check (t.max_interval_ns == 3 * s, "gop: 3 s interval recorded");
+  check (tcs_gop_tracker_observe (&t, 1, 6 * s, t0 + 2) == 0,
+      "gop: warning latches only once");
+  check (t.max_interval_ns == 3 * s, "gop: later intervals update max only");
+
+  /* Exactly at the threshold latches (>=). */
+  tcs_gop_tracker_init (&t, 2.0);
+  tcs_gop_tracker_observe (&t, 1, 0, t0);
+  check (tcs_gop_tracker_observe (&t, 0, 2 * s, t0 + 1) == 1,
+      "gop: pending == threshold -> warning");
+
+  /* reset (load) clears the latch and the measurement, keeps the threshold. */
+  tcs_gop_tracker_reset (&t);
+  check (t.state == TCS_GOP_STATE_MEASURING && t.keyframes == 0 &&
+         t.max_interval_ns == 0 && t.warning_qpc == 0,
+      "gop: reset clears state/keyframes/max/latch");
+  check (t.threshold_ns == 2 * s, "gop: reset keeps the threshold");
+
+  /* reanchor (seek) keeps the latch but drops the anchor: delta frames after
+   * the re-anchor are ignored until the next keyframe re-anchors. */
+  tcs_gop_tracker_observe (&t, 1, 0, t0);
+  tcs_gop_tracker_observe (&t, 0, 2 * s, t0 + 1);
+  check (t.state == TCS_GOP_STATE_WARNING, "gop: reanchor case latched");
+  tcs_gop_tracker_reanchor (&t);
+  check (t.state == TCS_GOP_STATE_WARNING && t.anchor_valid == 0,
+      "gop: reanchor keeps the warning, drops the anchor");
+  check (tcs_gop_tracker_observe (&t, 0, 10 * s, t0 + 2) == 0,
+      "gop: post-seek PTS jump with no anchor -> no false warning");
+  check (tcs_gop_tracker_observe (&t, 1, 20 * s, t0 + 3) == 0,
+      "gop: first keyframe after reanchor re-anchors quietly");
+  check (t.anchor_pts_ns == 20 * s && t.max_interval_ns == 0,
+      "gop: re-anchor starts a new interval from the keyframe");
+
+  /* reanchor keeps the measured interval as well. */
+  tcs_gop_tracker_init (&t, 3.0);
+  tcs_gop_tracker_observe (&t, 1, 0, t0);
+  check (tcs_gop_tracker_observe (&t, 1, 3 * s, t0 + 1) == 1,
+      "gop: interval latch before reanchor");
+  tcs_gop_tracker_reanchor (&t);
+  check (t.max_interval_ns == 3 * s && t.state == TCS_GOP_STATE_WARNING,
+      "gop: reanchor keeps the measured interval");
+
+  /* Backward PTS (wrap / EOS restart): discard the interval, re-anchor. */
+  tcs_gop_tracker_init (&t, 3.0);
+  tcs_gop_tracker_observe (&t, 1, 10 * s, t0);
+  check (tcs_gop_tracker_observe (&t, 0, 5 * s, t0 + 1) == 0,
+      "gop: backward delta PTS -> no warning");
+  check (t.anchor_valid == 0, "gop: backward delta drops the anchor");
+  check (tcs_gop_tracker_observe (&t, 0, 6 * s, t0 + 2) == 0,
+      "gop: no anchor -> deltas ignored");
+  check (tcs_gop_tracker_observe (&t, 1, 7 * s, t0 + 3) == 0,
+      "gop: next keyframe re-anchors");
+  check (t.anchor_pts_ns == 7 * s, "gop: anchor is the post-wrap keyframe");
+  check (tcs_gop_tracker_observe (&t, 1, 5 * s, t0 + 4) == 0,
+      "gop: backward keyframe re-anchors without interval math");
+  check (t.anchor_pts_ns == 5 * s && t.max_interval_ns == 0,
+      "gop: backward keyframe discards the interval");
+
+  /* Invalid PTS is ignored. */
+  tcs_gop_tracker_reset (&t);
+  check (tcs_gop_tracker_observe (&t, 1, -1, t0) == 0, "gop: negative PTS ignored");
+  check (t.keyframes == 0 && t.anchor_valid == 0, "gop: ignored PTS changes nothing");
 }
 
 /* --seek-loop <file> [iters]: consecutive seeks (V5). Every target must land
@@ -1399,10 +1512,12 @@ main (int argc, char** argv)
   setvbuf (stdout, nullptr, _IONBF, 0);
   if (strcmp (argv[1], "--policy-only") == 0) {
     run_delivery_policy_tests ();
+    run_gop_policy_tests ();
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
   run_delivery_policy_tests ();
+  run_gop_policy_tests ();
   if (strcmp (argv[1], "--stress") == 0)
     return run_stress (argc, argv);
   if (strcmp (argv[1], "--load-bench") == 0) {
