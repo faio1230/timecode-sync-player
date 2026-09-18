@@ -1,7 +1,7 @@
-# D37-d: 着地窓を「誤差が許容内に入るまで」開く（2026-09-19）
+# D37-d: 着地窓を「誤差が許容内に入るまで」開く（前進ガード付き）（2026-09-19）
 
 実装: `src/TimecodeSyncPlayer/TimecodeSyncService.cs`、`SyncDecisionEngine.cs`。表示・制御則の
-分岐は着地窓の閉じ方と、窓の中でのシーク優先条件だけを変える。
+分岐は着地窓の閉じ方と、窓の中でのシーク選択だけを変える。
 
 ## 1. 検証機が特定した機構
 
@@ -15,36 +15,43 @@
 
 と、ほぼ五分五分の分岐になる。これが「穴 1 の再発」の正体。
 
-## 2. 変更
+## 2. 変更（最終形）
 
 `TimecodeSyncService` の着地エピソードを「回数・時間で無条件に閉じる」から
-「**誤差が許容内に入るまで開く**」に変更する。
+「**誤差が許容内に入るまで、前進が確認できる限り開く**」に変更する。
 
 - 窓は `NotifyLanding()`（ギャップ明け・切替ロード開始/成立・追従開始）で**新規に開く**。
-- `ReportSeekSent` は窓が開いている間のシークを数える。
-- 閉じる条件は 3 つ:
+- 閉じる条件は 4 つ:
   1. **到達**: エンジンが誤差 ≦ 許容を観測（`SyncDecision.WithinTolerance`）→ 即座に閉じる。
-  2. **上限 1**: 窓が開いてから **5 秒**（`SeekLandingMaxWindow`）。
-  3. **上限 2**: 連続シーク **3 回**（`SeekLandingMaxSeeks`）。
-- **窓の中のシーク優先には下限を付ける（0.5× ルール）**: 残差が
+  2. **前進なし（D37-d 前進ガード）**: 窓の中で発行したシークの着地で、不足が実際に減って
+     いなければ（`post >= pre - ε`）閉じる。**事前予測ではなく観測**なので、シークが効かない
+     帯でも 1 回で止まる。
+  3. **上限 1**: 窓が開いてから **5 秒**（`SeekLandingMaxWindow`）。
+  4. **上限 2**: 連続シーク **3 回**（`SeekLandingMaxSeeks`）。
+- **窓の中のシーク選択には 0.5× しきい値も併用**: 残差が
   `0.5 × シーク所要見積り` を超えるときだけシークを優先し、それ以下は速度補正に任せる
   （`SyncDecisionEngine.LandingSeekPriorityFraction = 0.5`）。
-- 上限で閉じたらログに残す（`landing window closed at the seek cap/age cap`）。到達も
-  `landing window closed on arrival` で残す。
+- 上限・前進なしで閉じたらログに残す（`landing window closed ...`）。到達も同様。
 
-### 0.5× ルールが必要だった理由（実測）
+## 3. 前進ガードだけにできるか（実測で確認した）
 
-L-1 を M1（4K60 10s GOP）で 3 回実行し、**3/3 失敗（追従開始 10.66 / 10.73 / 11.07 秒、
-上限 5 秒）**。初期誤差が 0.344 秒と小さく、シーク所要（0.4〜1.8 秒）より小さい領域で、
-窓がシークを強制すると 1 回ごとに残差が増えた（0.34 → 0.40 → 0.50 → 0.69）。3 シークで
-上限に達した後も、残差が学習値を超えているため通常則がシークを続け（計 8 回）、
-最後は速度補正で 10.7 秒だった。**シークは残差を減らせない（着地後残差 ≈ シーク所要）。**
+親の提案「1 回目は無条件シーク、2 回目以降は前進ガード」を、**前進ガードのみ（0.5× なし）**で
+L-1 ×5 を実測して確かめた。
 
-- 検証機の帯（残差 3.5 秒 > 所要 1.9 秒）ではシーク優先が正しい。
-- 小さい残差（数百 ms）では速度補正が正しい。
-- この 2 つを分けるのが 0.5× ルール。
+| 方式 | L-1 ×5 の追従開始 | 判定 |
+| --- | --- | --- |
+| 0.5× のみ（前進ガードなし） | 1.77 / 1.78 / 2.24 / 2.56 / 2.85 秒 | 5/5 だが境界帯は未カバー |
+| **前進ガードのみ（0.5× なし）** | 0.86 / 2.55 / 4.43 / 4.78 / **5.15 秒（失敗）** | **4/5。止まり切らない** |
+| **0.5× + 前進ガード（採用）** | **0.85 / 0.85 / 0.87 / 0.98 / 1.16 秒** | **5/5。最良** |
 
-## 3. 0.5 の根拠（調整値。理論値ではない）
+**結論: 0.5× を残し、前進ガードを併用する。** 前進ガードだけでは 1 件が 5.146 秒で上限を
+超えた（「1 回でも超えたら報告」の条件に該当）。前進ガードは境界帯（0.5〜1.0 倍）と、シークが
+縮まらない素材で効く最後の観測であり、0.5× は無駄な初回シークを減らす。役割が違うため両方入れる。
+
+証跡: `TestResults/d37d/l1-both-1..5`（両方）、`l1-guard-1..5`（前進ガードのみ）、
+`l1-fixed-1..5`（0.5× のみ）、`l1-run1..3`（D37-d 以前の 3/3 失敗）。
+
+## 4. 0.5 の根拠（調整値。理論値ではない）
 
 **0.5 は理論から導いた値ではない。調整値である。** 分かっているのは次の 2 点だけ:
 
@@ -52,12 +59,10 @@ L-1 を M1（4K60 10s GOP）で 3 回実行し、**3/3 失敗（追従開始 10.
    0.933 秒が境界で、1.829 秒は余裕をもって超える。
 2. L-1 実測の小さい残差（0.344 秒 < 0.5 × 未学習の既定 1.0 秒）で**速度補正側に落ちる**こと。
 
-「なぜ 0.5 が最適か」は説明できない。境界付近（残差 ≈ 0.5 × 所要）の挙動は未検証で、
-別の素材で破綻したらこの 1 か所（`LandingSeekPriorityFraction`）を調整する。
-**理論値だと思って原因を他の場所に探さないこと。**
-
-将来「その時点の目標距離から見積もる」に置き換える候補として、次の理由が考えられる:
-2 回目の実測所要（検証機 0.97 秒）が学習値（EMA 1.866 秒）より短いこと。
+「なぜ 0.5 が最適か」は説明できない。境界付近（残差 ≈ 0.5 × 所要）は前進ガードが
+観測で塞ぐが、0.5 と 1.0 の間の選び方は未検証で、別の素材で破綻したら
+`LandingSeekPriorityFraction` を調整する。**理論値だと思って原因を他の場所に
+探さないこと。**
 
 ### 2 回目のシークが速い理由（分かった範囲）
 
@@ -66,10 +71,11 @@ L-1 を M1（4K60 10s GOP）で 3 回実行し、**3/3 失敗（追従開始 10.
 - それが「目標までの距離が短いから」か「1 回目で近くのキーフレームまで復号済みだから」かは、
   **手元の証跡では分離できない**。検証機の trace から `seek.issue` ごとの所要と目標距離
   （decide の delta）を突き合わせれば分離できる見込み。ここでは**見えない**と記録する。
-- 参考: ローカル L-1 のシークは 0.4〜1.8 秒で、残差が所要より小さい領域では所要が縮まなかった
-  （縮まない素材があることの実例）。
+- 参考: ローカル L-1 の display-check3（境界帯、不足 0.579 秒）では 3 シークで上限に達し、
+  残差が 0.4 → 0.5 → 0.7 と増えて 11.35 秒だった。前進ガードはこの「増える」着地を
+  観測で切る。
 
-## 4. D37-b2（ギャップ明け・切替）も同じ扱いにする — 判断と根拠
+## 5. D37-b2（ギャップ明け・切替）も同じ扱いにする — 判断と根拠
 
 **同じ扱いにする（統一）。** 根拠:
 
@@ -83,21 +89,28 @@ L-1 を M1（4K60 10s GOP）で 3 回実行し、**3/3 失敗（追従開始 10.
 
 なお、別物（Smooth の速度上限を ±0.20 に上げる `SyncCorrectionController` の窓）は変更しない。
 
-## 5. 単体テスト
+## 6. 単体テスト
 
 | 固定する内容 | テスト |
 | --- | --- |
 | 1 回目の着地後も窓が開き、2 回目にシークを選ぶ（初期誤差 3.5 秒、所要/学習値 1.866 秒、残差 1.829 秒） | `TimecodeSyncServiceTests.EvaluateDecision_AfterFirstSeekLanding_KeepsWindowOpen_AndSecondSeekIsChosen` |
-| 小さい残差（0.344 秒 < 0.5 × 1.0 秒）は速度補正 | `EvaluateDecision_LandingWindowWithDeficitBelowHalfSeekCost_PrefersRateCatchUp`、`SyncDecisionEngineTests.Decide_DeficitBelowHalfSeekCost_WhenRateCatchUpDisallowed_PrefersRateCatchUp` |
+| **前進なしの着地で窓を閉じる（境界帯 0.579 → 0.600）** | `EvaluateDecision_AfterASeekWithoutProgress_ClosesTheLandingWindow` |
+| **前進ありの着地では窓を開いたまま（3.5 → 1.8）** | `EvaluateDecision_AfterASeekWithProgress_KeepsTheLandingWindow` |
+| 小さい残差（0.4 秒 <= 0.5 × 1.0 秒）は速度補正 | `EvaluateDecision_LandingWindow...`（エンジン: `Decide_DeficitBelowHalfSeekCost_...`） |
 | 0.5× を超える帯はシーク | `SyncDecisionEngineTests.Decide_DeficitWithinSeekCost_WhenRateCatchUpDisallowed_Seeks` |
 | 誤差が許容内に入ったら閉じる | `EvaluateDecision_WithinToleranceClosesLandingWindow`、`EvaluateDecision_AfterLanding_StaysOpenUntilArrival` |
 | **上限の歯止め: 連続 3 シークで閉じ、通常の判断（速度補正）に戻る** | `EvaluateDecision_LandingWindowClosesAtTheSeekCap`、`EvaluateDecision_AfterTheSeekCap_ReturnsToNormalRateCatchUp` |
 | **上限の歯止め: 5 秒で閉じ、通常の判断に戻る** | `EvaluateDecision_LandingWindowClosesAtTheAgeCap`、`EvaluateDecision_AfterTheAgeCap_ReturnsToNormalRateCatchUp` |
 | 新しい着地で開き直す / ロード成立でも開く | `NotifyLanding_ReopensTheWindowAfterArrival`、`BeginFileLoad_StartsTheLandingWindow` |
 
-## 6. 実機の確認（予定）
+## 7. 実機の確認（結果）
 
-1. M3 相当（4K60 ロング GOP）で **L-1 を最低 5 回、全部 5 秒以内**。1 回でも超えたら報告。
-2. V3 を 1 本（定常の平均・ばらつきが基準内）。
-3. 既存シナリオ 22 + LTC ループ 14。
-4. `waitedSeconds` の上限 5 秒は変更しない。これを超える結果になったら D37-d が不十分。
+1. **L-1 ×5（M1 = 4K60 10s GOP）: 5/5、追従開始 0.85 / 0.85 / 0.87 / 0.98 / 1.16 秒**（上限 5 秒）。
+   証跡 `TestResults/d37d/l1-both-1..5`。
+2. **V3 ×1**: SyncAccuracy 20/20、定常 **-27.8ms / p95-p5 38.2ms**（従来同水準）、
+   回復 120〜400ms。証跡 `TestResults/v3/d37d-final-ltc25-gst`。
+3. **既存シナリオ 22 + LTC ループ 14**: 22/22 + ループ 14/14。統合 run で
+   `CableLoop_WhenSignalIsLost_TimecodeStopsProgressing` が 1 件タイムアウトしたが、
+   ループ 14 本の単独再実行で **14/14 合格**（VB-CABLE の信号断タイミングのフレーク）。
+   証跡 `TestResults/d37d/scenarios-and-loop-final`（統合）と `TestResults/d37d/loop-rerun`（再実行）。
+4. `waitedSeconds` の上限 5 秒は変更しない。

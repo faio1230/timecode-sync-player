@@ -9,8 +9,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     /// <summary>
     /// D37-d: 着地窓でシークを優先する下限（シーク所要見積りに対する比）。これは理論値では
     /// なく調整値: 検証機の帯（残差 1,829ms / 学習値 1,866ms）でシーク側に倒れ、L-1 実測の
-    /// 小さい残差（数百 ms）で速度補正側に落ちるように選んだ。将来「その時点の目標距離から
-    /// 見積もる」に置き換えるときは、この 1 か所を変える。
+    /// 小さい残差（数百 ms）で速度補正側に落ちるように選んだ。前進ガードと併用し、この
+    /// しきい値の境界帯（0.5〜1.0 倍）は着地後の観測で塞ぐ。
     /// </summary>
     internal const double LandingSeekPriorityFraction = 0.5;
 
@@ -160,7 +160,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         // D37-b2: ギャップ明け・切替の着地直後は、速度補正に任せずシークで着地させる。
         // D37-d: ただし着地窓中でも、不足がシーク所要の半分以下ならシークは誤差を増やすだけ
         // （着地後残差 ≈ シーク所要。L-1 の 4K60 ロング GOP で実測: 0.34 秒 → シーク後 0.4〜1.8 秒）なので
-        // 速度補正に任せる。半分を超える帯（五分五分を含む）は着地優先でシークする。
+        // 速度補正に任せる。半分を超える帯（五分五分を含む）は着地優先でシークし、前進が
+        // 無ければサービス側の前進ガードが窓を閉じる。
         double absDelta = Math.Abs(delta);
         bool landingSeekPriority = !state.RateCatchUpAllowed &&
             _rateCatchUpLimitSeconds > 0 &&

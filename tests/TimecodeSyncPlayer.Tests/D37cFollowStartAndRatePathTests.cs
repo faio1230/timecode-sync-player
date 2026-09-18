@@ -37,8 +37,8 @@ public class D37cFollowStartAndRatePathTests
     public void FollowStart_SmallDeficitBelowHalfSeekCost_DoesNotSeek()
     {
         // D37-d: L-1 実機の小さい誤差（0.3 秒 < 0.5 × 既定 1.0 秒）では、着地窓中でも
-        // シークを強制しない（シークは誤差を増やすだけ）。速度補正が選ばれることは
-        // エンジン単体・サービス単体で固定する。
+        // シークを強制しない（シークは誤差を増やすだけ）。前進ガードは境界帯用に残る
+        // （サービス単体で固定）。
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: QpcFrom(clock));
         h.AddTrack("track", 0, duration: 5);
