@@ -118,6 +118,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly PlaylistDragDropCoordinator _playlistDragDropCoordinator;
     // 0.4.5-C: ロング GOP 警告（表示のみ。同期の制御則には触れない）。
     private readonly LongGopWarningMonitor _longGopWarningMonitor = new();
+    // 0.4.4 は既定で無効（判定方式が誤っており実素材で誤検出する。詳細は TickLongGopWarning）。
+    private readonly bool _longGopWarningEnabled =
+        string.Equals(Environment.GetEnvironmentVariable("TCS_LONG_GOP_WARNING"), "on",
+            StringComparison.OrdinalIgnoreCase);
 
     // ── 同期コーディネータ（遅延生成キャッシュ。ラムダは this のフィールドのみを参照するため
     //    呼び出しごとの再生成は不要。初回呼び出し時に確定する） ──
@@ -1882,6 +1886,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void TickLongGopWarning()
     {
+        // 0.4.4: 既定で無効。判定が「素材の GOP」ではなく「読み込み位置から次のキーフレームまでの
+        // 距離」を見ており、可変 GOP の実素材で誤検出する（検証機の実測: 中央値 0.708 秒の素材で
+        // 187 回発報）。正しい判定は読み込み時の静的解析（C3、最大ギャップ基準）で、0.4.5 で入れる。
+        // それまでは TCS_LONG_GOP_WARNING=on のときだけ動かす。
+        if (!_longGopWarningEnabled)
+            return;
+
         Guid? trackId = _loadedTrackId;
         bool hasStatus = _gstPlaybackApi.TryGetGopStatus(out GopStatus status);
         PlaylistTrack? track = trackId.HasValue ? _playlist.FindTrackById(trackId.Value) : null;
