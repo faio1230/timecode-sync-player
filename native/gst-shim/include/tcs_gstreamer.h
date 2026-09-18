@@ -313,6 +313,7 @@ TCS_GST_API int tcs_player_get_gop_status(TcsPlayer* player, TcsGopStatus* out);
  * duration) are part of the gap list for the same reason. */
 typedef struct TcsGopScan {
   int32_t  keyframes;          /* keyframes found (0 = scan produced nothing) */
+  int32_t  truncated;          /* 1 = stopped on the time budget; the gaps are a LOWER bound */
   double   duration_sec;       /* container duration (0 = unknown) */
   double   head_gap_sec;       /* 0 -> first keyframe */
   double   tail_gap_sec;       /* last keyframe -> duration */
@@ -321,10 +322,17 @@ typedef struct TcsGopScan {
   double   max_gap_sec;        /* the value the judgement uses */
 } TcsGopScan;
 
-/* Returns TCS_OK on a completed scan. The call blocks for the length of the
- * scan (I/O bound; sub-second for short clips, a few seconds for a 1GB 4K
- * file), so call it off the UI thread. timeout_ms <= 0 uses 30000. */
-TCS_GST_API int tcs_scan_gop(const char* utf8_path, int32_t timeout_ms, TcsGopScan* out);
+/* Returns TCS_OK whether the scan completed or hit the budget; `truncated` says
+ * which. The call blocks for the length of the scan (I/O bound: ~1.2 GB/s
+ * measured), so call it off the UI thread.
+ *
+ * budget_ms caps the work. Field material runs to 50GB, and all-intra ProRes
+ * masters reach 200-300GB; reading those end to end would take minutes, and for
+ * all-intra material the answer is obvious within the first seconds. On a
+ * truncated scan the caller must treat the gaps as a LOWER bound: a long gap
+ * that was found is real, but "no long gap" only covers the part that was read.
+ * budget_ms <= 0 uses 10000. */
+TCS_GST_API int tcs_scan_gop(const char* utf8_path, int32_t budget_ms, TcsGopScan* out);
 /* Convenience getters (avoid struct marshalling from .NET). */
 TCS_GST_API int tcs_player_decoder_name(TcsPlayer* player, char* out, size_t out_len);
 TCS_GST_API int tcs_player_spout_ready(TcsPlayer* player);
