@@ -14,6 +14,7 @@ public class SyncAccuracyTraceTests
         Assert.False(trace.IsEnabled);
         trace.RecordFrame("normal", new IntPtr(1), 1920, 1080, 7680, 1);
         trace.RecordLtc(new(new(0, 0, 1, 12, false), 0, 0));
+        trace.RecordDispatch(1, 2, 3, 4);
     }
 
     [Fact]
@@ -144,6 +145,30 @@ public class SyncAccuracyTraceTests
             Assert.Equal(111_000, ltc.GetProperty("sampleTicks").GetInt64());
             Assert.Equal(222_000, ltc.GetProperty("callbackTicks").GetInt64());
             Assert.Equal(4.5, ltc.GetProperty("anchorSpreadMs").GetDouble());
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void RecordDispatch_WritesUiHandoffTimestamps()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".jsonl");
+        try
+        {
+            using (var trace = SyncAccuracyTrace.Create(path))
+                trace.RecordDispatch(sampleTicks: 111, enqueuedTicks: 222, uiStartTicks: 333, uiEndTicks: 444);
+
+            var lines = Read(path);
+            Assert.Equal(new[] { "meta", "ltc-dispatch", "end" },
+                lines.Select(x => x.GetProperty("type").GetString()));
+            JsonElement dispatch = lines.Single(x => x.GetProperty("type").GetString() == "ltc-dispatch");
+            Assert.Equal(444, dispatch.GetProperty("ticks").GetInt64());
+            Assert.Equal(111, dispatch.GetProperty("sampleTicks").GetInt64());
+            Assert.Equal(222, dispatch.GetProperty("enqueueTicks").GetInt64());
+            Assert.Equal(333, dispatch.GetProperty("uiStartTicks").GetInt64());
+            Assert.Equal(444, dispatch.GetProperty("uiEndTicks").GetInt64());
+            Assert.Equal(1, lines[^1].GetProperty("events").GetInt64());
+            Assert.Equal(0, lines[^1].GetProperty("errors").GetInt64());
         }
         finally { File.Delete(path); }
     }

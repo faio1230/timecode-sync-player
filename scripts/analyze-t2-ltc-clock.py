@@ -160,6 +160,48 @@ def resolve_trace(path):
     return target
 
 
+def dispatch_analysis(clocked, dispatches, frequency):
+    """M1: サンプル終端 → enqueue → UI 開始 → UI 終了 の内訳（ms）。
+
+    ltc-dispatch イベントはサンプル終端・enqueue・UI 開始・UI 終了を持つ。同じ sampleTicks の
+    ltc イベントがあれば、サンプル→コールバック→ハンドラも分けられる。
+    """
+    by_sample = {event["sampleTicks"]: event for event in clocked}
+    sample_to_enqueue, enqueue_to_ui, ui_to_end, total = [], [], [], []
+    callback_to_sample, sample_to_handler, handler_to_enqueue = [], [], []
+    joined = 0
+    for event in dispatches:
+        sample = event.get("sampleTicks")
+        enqueue = event.get("enqueueTicks")
+        ui_start = event.get("uiStartTicks")
+        ui_end = event.get("uiEndTicks")
+        if not all(isinstance(value, int) for value in (sample, enqueue, ui_start, ui_end)):
+            continue
+        if not 0 < sample <= enqueue <= ui_start <= ui_end:
+            continue
+        sample_to_enqueue.append(enqueue - sample)
+        enqueue_to_ui.append(ui_start - enqueue)
+        ui_to_end.append(ui_end - ui_start)
+        total.append(ui_end - sample)
+        source = by_sample.get(sample)
+        if source and isinstance(source.get("callbackTicks"), int) and source["callbackTicks"] > 0:
+            joined += 1
+            callback_to_sample.append(sample - source["callbackTicks"])
+            sample_to_handler.append(source["ticks"] - sample)
+            handler_to_enqueue.append(enqueue - source["ticks"])
+    return {
+        "count": len(sample_to_enqueue),
+        "joined": joined,
+        "sampleToEnqueue": stats(ticks_to_ms(sample_to_enqueue, frequency)),
+        "enqueueToUiStart": stats(ticks_to_ms(enqueue_to_ui, frequency)),
+        "uiStartToUiEnd": stats(ticks_to_ms(ui_to_end, frequency)),
+        "total": stats(ticks_to_ms(total, frequency)),
+        "callbackToSample": stats(ticks_to_ms(callback_to_sample, frequency)),
+        "sampleToHandler": stats(ticks_to_ms(sample_to_handler, frequency)),
+        "handlerToEnqueue": stats(ticks_to_ms(handler_to_enqueue, frequency)),
+    }
+
+
 def analyze(events):
     frequency = next((event.get("frequency") for event in events
                       if event.get("type") == "meta" and event.get("frequency")), None)
@@ -186,6 +228,7 @@ def analyze(events):
             anchor_spreads.append(event["anchorSpreadMs"])
 
     pair_ppm, speed_segments = speed_analysis(clocked, frequency)
+    dispatches = [event for event in events if event.get("type") == "ltc-dispatch"]
 
     return {
         "frequency": frequency,
@@ -207,6 +250,7 @@ def analyze(events):
             statistics.pstdev([value for value in pair_ppm if abs(value) <= 100])
             if len([value for value in pair_ppm if abs(value) <= 100]) > 1 else None),
         "speedSegments": speed_segments,
+        "dispatch": dispatch_analysis(clocked, dispatches, frequency) if dispatches else None,
     }
 
 
@@ -269,6 +313,18 @@ def main():
     else:
         print("[6] 連続区間の回帰（ppm）: no segment >= 5s")
     print("    注: ペア比は 1 フレーム（1/fps）分の量子化を含む。長区間の傾きは sePpm と robustPpm を併記。")
+    dispatch = result.get("dispatch")
+    if dispatch:
+        print(f"[7] M1 age の内訳（ltc-dispatch、ms）: n={dispatch['count']} / ltc と結合 {dispatch['joined']}")
+        print(f"    サンプル終端→enqueue             {format_stats(dispatch['sampleToEnqueue'])}")
+        print(f"    enqueue→UI 開始（Dispatcher 待ち）{format_stats(dispatch['enqueueToUiStart'])}")
+        print(f"    UI 開始→UI 終了（UI 処理）       {format_stats(dispatch['uiStartToUiEnd'])}")
+        print(f"    サンプル終端→UI 終了（合計）     {format_stats(dispatch['total'])}")
+        print(f"    内訳: callback→サンプル終端      {format_stats(dispatch['callbackToSample'])}")
+        print(f"          サンプル終端→handler       {format_stats(dispatch['sampleToHandler'])}")
+        print(f"          handler→enqueue            {format_stats(dispatch['handlerToEnqueue'])}")
+    else:
+        print("[7] M1 age の内訳: no ltc-dispatch events（この記録より前の trace）")
     if result["clockedEvents"] == 0:
         print("  note: sampleTicks が無い trace です（T2 段 1 より前に記録された run）")
 

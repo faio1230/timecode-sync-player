@@ -92,6 +92,17 @@ internal sealed class SyncAccuracyTrace : IDisposable
             frame.FrameEndTimestamp, frame.CallbackTimestamp, frame.AnchorSpreadMs));
     }
 
+    /// <summary>
+    /// M1 計測: サンプル終端（FrameEndTimestamp）・Dispatcher への enqueue・UI 処理の開始・
+    /// 終了を 1 行で残す。記録専用で、製品の処理には関与しない（無効時は何もしない）。
+    /// </summary>
+    public void RecordDispatch(long sampleTicks, long enqueuedTicks, long uiStartTicks, long uiEndTicks)
+    {
+        if (!IsEnabled) return;
+        Enqueue(new UiDispatchEvent("ltc-dispatch", uiEndTicks, sampleTicks, enqueuedTicks,
+            uiStartTicks, uiEndTicks));
+    }
+
     internal long AllocateRenderSessionId() => IsEnabled ? Interlocked.Increment(ref _renderSessions) : 0;
 
     internal void RecordRenderStage(long sessionId, long? attemptId, int generation, long? sequence,
@@ -211,6 +222,8 @@ internal sealed class SyncAccuracyTrace : IDisposable
 
     private sealed record LtcEvent(string Type, long Ticks, double Seconds, double Fps,
         long SampleTicks, long CallbackTicks, double AnchorSpreadMs);
+    private sealed record UiDispatchEvent(string Type, long Ticks, long SampleTicks, long EnqueueTicks,
+        long UiStartTicks, long UiEndTicks);
     private sealed record FrameEvent(string Type, long Ticks, string Kind, int Width, int Height,
         int? ClipId, int? FrameIndex, bool IsBlack, bool MarkerValid, long ProbeTicks);
     private sealed record RenderStageEvent(string Type, long Ticks, long SessionId, long? AttemptId,
