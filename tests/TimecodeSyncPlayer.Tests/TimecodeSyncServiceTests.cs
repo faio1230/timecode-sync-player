@@ -12,12 +12,26 @@ public class TimecodeSyncServiceTests
         public SyncDecision DecisionToReturn { get; set; } = SyncDecision.None;
         public double LastLtcSeconds { get; private set; }
         public SyncPlaybackState? LastState { get; private set; }
+        public int DecideCallCount { get; private set; }
+        public int UntrustedCallCount { get; private set; }
+        public List<double> SeekCosts { get; } = new();
+        public SyncDecision UntrustedDecision { get; set; } = new(
+            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, PositionUntrusted: true);
 
         public SyncDecision Decide(double ltcSeconds, SyncPlaybackState state)
         {
+            DecideCallCount++;
             LastLtcSeconds = ltcSeconds;
             LastState = state;
             return DecisionToReturn;
+        }
+
+        public void UpdateSeekCostSeconds(double seconds) => SeekCosts.Add(seconds);
+
+        public SyncDecision WhilePositionUntrusted(SyncPlaybackState state)
+        {
+            UntrustedCallCount++;
+            return UntrustedDecision;
         }
     }
 
@@ -26,6 +40,14 @@ public class TimecodeSyncServiceTests
         public bool HasPendingSeek { get; set; }
         public double TargetSeconds { get; set; }
         public TimecodeSyncSeekPendingStatus LastStatus { get; set; } = TimecodeSyncSeekPendingStatus.None;
+        public double? LearnedSeekDurationSeconds { get; set; }
+        public int ResetLearningCallCount { get; private set; }
+
+        public void ResetLearning()
+        {
+            ResetLearningCallCount++;
+            LearnedSeekDurationSeconds = null;
+        }
 
         public double LastBeginSeekTarget { get; private set; }
         public DateTime LastBeginSeekSentAt { get; private set; }
@@ -107,6 +129,128 @@ public class TimecodeSyncServiceTests
 
         engine.LastLtcSeconds.Should().Be(42.5);
         engine.LastState.Should().Be(state);
+    }
+
+    // ---- D37-b: シーク中の位置を信用しない ----
+
+    [Fact]
+    public void EvaluateDecision_WhilePending_DoesNotCallEngine()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.ReportSeekSent(10.0);
+        seekState.HasPendingSeek = true;
+
+        SyncDecision result = service.EvaluateDecision(10.0,
+            new SyncPlaybackState(true, true, false, PlaybackSeconds: 5.0, DurationSeconds: 100.0));
+
+        result.PositionUntrusted.Should().BeTrue();
+        result.Action.Should().Be(SyncActionType.None);
+        engine.DecideCallCount.Should().Be(0);
+        engine.UntrustedCallCount.Should().Be(1);
+        service.IsPlaybackPositionUsable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EvaluateDecision_AfterSettledLanding_ResumesEngine()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.ReportSeekSent(10.0);
+
+        service.EvaluateDecision(10.0, new SyncPlaybackState(true, true, false, 10.0, 100.0))
+            .PositionUntrusted.Should().BeTrue();
+        service.ShouldSuppressSeek(10.05, toleranceSeconds: 0.2);
+        clock.Advance(TimeSpan.FromMilliseconds(300));
+        service.ShouldSuppressSeek(10.05, toleranceSeconds: 0.2);
+
+        SyncDecision result = service.EvaluateDecision(10.0,
+            new SyncPlaybackState(true, true, false, 10.05, 100.0));
+
+        result.PositionUntrusted.Should().BeFalse();
+        engine.DecideCallCount.Should().Be(1);
+        service.IsPlaybackPositionUsable.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EvaluateDecision_AfterTimeout_RequiresStableSamples()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.ReportSeekSent(10.0);
+        clock.Advance(TimeSpan.FromSeconds(3));
+
+        // 位置が目標から離れている → 時間切れで解除 → 位置の再確認が必要。
+        service.ShouldSuppressSeek(5.0, toleranceSeconds: 0.2);
+        service.EvaluateDecision(5.0, new SyncPlaybackState(true, true, false, 5.0, 100.0))
+            .PositionUntrusted.Should().BeTrue();
+
+        double position = 5.0;
+        for (int i = 1; i <= 3; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            position += 0.1;
+            service.EvaluateDecision(5.0, new SyncPlaybackState(true, true, false, position, 100.0))
+                .PositionUntrusted.Should().BeTrue($"位置の再確認中 {i} サンプル目");
+        }
+
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        position += 0.1;
+        SyncDecision resumed = service.EvaluateDecision(5.0,
+            new SyncPlaybackState(true, true, false, position, 100.0));
+
+        resumed.PositionUntrusted.Should().BeFalse();
+        engine.DecideCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void EvaluateDecision_AfterLanding_DisallowsRateCatchUpForOneSecond()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
+
+        service.NotifyLanding();
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("ギャップ明け・切替の着地直後はシークで詰める");
+
+        clock.Advance(TimeSpan.FromMilliseconds(1100));
+        service.EvaluateDecision(10.0, state);
+        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("着地から 1 秒を過ぎたら速度補正優先に戻る");
+    }
+
+    [Fact]
+    public void BeginFileLoad_StartsTheLandingWindow()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.BeginFileLoad(startPositionSeconds: 10.0, renderedFrameCount: 0);
+        service.EvaluateDecision(10.0, new SyncPlaybackState(true, true, false, 10.0, 100.0));
+
+        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("トラック切替のロード直後も着地として扱う");
+    }
+
+    [Fact]
+    public void EvaluateDecision_PublishesLearnedSeekCost()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 0.6 };
+        var service = new TimecodeSyncService(engine, seekState);
+
+        service.EvaluateDecision(10.0, new SyncPlaybackState(true, true, false, 10.0, 100.0));
+
+        engine.SeekCosts.Should().Equal(new[] { 0.6 });
     }
 
     [Fact]

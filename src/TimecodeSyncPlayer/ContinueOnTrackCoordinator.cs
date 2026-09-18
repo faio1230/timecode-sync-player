@@ -48,6 +48,8 @@ internal sealed class ContinueOnTrackCoordinator
         {
             if (!_effects.SeekTo(mediaPos))
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "gap-exit-seek");
+            // D37-b2: ギャップ（黒・フリーズ）明けの着地。直後の不足は速度補正ではなくシークで詰める。
+            _syncService.NotifyLanding();
             CompleteGapExit(exitAction);
             // ギャップ出口のシークを発行したフレームでは補正を評価しない。
             return new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, 0.0, "gap-exit", ExitedGap: true);
@@ -115,6 +117,9 @@ internal sealed class ContinueOnTrackCoordinator
             double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
             bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
                 requestedTarget);
+            // D37-b: シーク中・着地未確認のフレームでは、粗い判定も補正も評価しない。
+            if (decision.PositionUntrusted)
+                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "position-untrusted");
             ContinueSyncSeekPlan seekPlan = ContinueSyncSeekPlanner.Decide(decision, suppressSeek, _syncService.IsDebounced());
 
             if (!seekPlan.ShouldSeek)

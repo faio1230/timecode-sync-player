@@ -54,6 +54,9 @@ internal sealed class SingleModeSyncCoordinator
         double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
         bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
             requestedTarget);
+        // D37-b: シーク中・着地未確認のフレームでは、粗い判定も補正も評価しない。
+        if (decision.PositionUntrusted)
+            return SyncRequestResult.Deferred;
         if (decision.Action != SyncActionType.Seek)
             // D37-a: ゲートが Seek を保留している間は要求を Deferred のまま維持し、
             // 次の評価（フレーム／Tick）で窓が埋まったら発行する。

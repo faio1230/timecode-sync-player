@@ -56,7 +56,9 @@ public class T9ConvergenceTests
         clock.Advance(TimeSpan.FromMilliseconds(600));
         harness.SupplyLtc(4.2);                                   // シークのセトル開始（まだ抑止中）
 
-        clock.Advance(TimeSpan.FromMilliseconds(300));            // 着地②から 0.9 秒、セトル確定後
+        clock.Advance(TimeSpan.FromMilliseconds(250));            // セトル確定（このフレームはまだ判定しない）
+        harness.SupplyLtc(4.2);
+        clock.Advance(TimeSpan.FromMilliseconds(100));            // 着地②から 0.95 秒
         harness.SupplyLtc(4.2);                                   // 最初の補正評価、残差 +200ms
 
         harness.AppliedRates.Should().NotBeEmpty();
