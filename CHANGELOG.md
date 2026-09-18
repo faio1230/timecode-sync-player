@@ -2,7 +2,30 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.4.4 - 未定
+## 0.4.5 - 未定
+
+0.4.4 was never published; its entries are folded in here because the two are a single
+dependency chain (the long-GOP warning explains the condition the seek fixes work around).
+
+### Added
+
+- A material whose keyframe interval is long is flagged when it is loaded, in the status line
+  and in the playlist. The judgement reads the container (no decoding, 0.3s for a 928MB 4K60
+  file) and uses the **longest** gap, including the head gap (0 to the first keyframe) and the
+  tail gap (last keyframe to the end). Material whose median sits inside the recommendation can
+  still hold a 7s gap, and seeking into it is slow: measured 244ms right after a keyframe
+  against 2164ms just before the next one. Playback is not stopped and this is not an error.
+- `scripts/inspect-gop.ps1` reports the same distribution for files or folders without running
+  the app. Requires ffprobe.
+
+### Changed
+
+- While a seek has not been confirmed to have landed, the position used for sync decisions is
+  derived from the frame actually on screen. The position query returns the seek target during
+  that window, so a growing error was invisible (measured: 0.39s growing to 0.75s before the
+  landing). Off by default; `TCS_SYNC_POSITION_FEEDBACK=on` enables it. Steady playback is
+  unchanged (the two differ by less than a sixth of a frame there).
+
 
 ### Added
 
