@@ -50,6 +50,15 @@
 > **開発機の検証**: 非E2E **2043 合格**、**E2E 83 合格 / 0 失敗 / 12 スキップ（総数 95）**、ロック規則 PASS、
 > 実機ログで `hintMs=420`・`hintMs=3500`・`follow-start episode ended` を確認。
 >
+> **開発機で V3 精度ハーネスが回せる（2026-09-19 に確認）**
+> `powershell -File scriptsun-v3-accuracy.ps1 -Backends gst -Label <名前>` が開発機で完走した
+> （VB-CABLE 経由の実 LTC、出力トレースつき、所要 5 分程度）。結果は
+> 定常ばらつき 35.8ms / 復帰 120ms で健全。**出力トレース（`TestResults/v3/<label>/<run>/events.jsonl`）が
+> 手に入るので、位置・配信・合成の関係を開発機だけで調べられる。**
+> ただし**トレースの `imageId` は段ごとに別の ID 空間**（`compose.publish` は合成画像の連番、
+> `gst.delivery` はソースフレームの連番）なので、突き合わせには一手間いる。
+> `source.acquire` の `generatedQpc` は PTS（100ns 単位）。
+>
 > **0.4.5 の後にやること（順番つき）**
 > 1. **開発機で L-1 を回せるようにする。** いま `L1_Single_ContinuousFollow_DoesNotStall` は
 >    `Skip.If(followSeconds < 30.0)` で必ずスキップされる（シナリオ素材 `ltc_a/b/c.mp4` が 20 秒、
