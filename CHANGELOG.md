@@ -2,6 +2,18 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.4.4 - 未定
+
+### Added
+
+- Output traces now record the age breakdown from the LTC sample end to the sync evaluation (Dispatcher enqueue, queue wait, UI processing) when the accuracy trace is enabled (M1). Behaviour is unchanged.
+
+### Fixed
+
+- Fixed correction seeks firing on momentary measurement jitter: the coarse decision now uses a recent median with a consecutive-exceedance gate and rejects physically impossible spikes (D37-a). On heavy media (4K60 long-GOP) this removes the seek chain and the associated freezes of up to 1.8 seconds.
+- Fixed the UI update scheduler rarely losing one reschedule request: the request handoff is now a single atomic operation (D36). The picture never stopped and the worst remaining delay was about 100 ms, but the loss itself is gone.
+- (D37-b entry to be added here: distrust the reported position during a seek and respond to a real shortfall with rate correction.)
+
 ## 0.4.3 - 2026-09-18
 
 ### Added
