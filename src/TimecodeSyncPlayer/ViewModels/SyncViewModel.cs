@@ -199,6 +199,18 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
         }
     }
 
+    // 0.4.5-C: ロング GOP 素材の注意書き（表示のみ。空文字 = 非表示）。
+    private string _longGopWarning = "";
+    public string LongGopWarning
+    {
+        get => _longGopWarning;
+        set
+        {
+            _longGopWarning = value;
+            OnPropertyChanged();
+        }
+    }
+
     // T3: 全体に効く同期オフセット（ms）。UI には ms のみを出し、フレーム換算はしない。
     private double _syncOffsetMs;
     public double SyncOffsetMs

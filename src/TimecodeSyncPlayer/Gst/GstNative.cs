@@ -67,6 +67,19 @@ internal static class GstNative
         public ulong LastQpc;
     }
 
+    /// <summary>0.4.5-C: ロング GOP 警告（キーフレーム間隔）のポーリング用スナップショット。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TcsGopStatus
+    {
+        public int State;
+        public int Active;
+        public ulong Keyframes;
+        public double MaxIntervalSec;
+        public double PendingSec;
+        public double ThresholdSec;
+        public ulong WarningQpc;
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal delegate void TcsFrameNotifyDelegate(IntPtr userData, ulong generation, ulong seq);
 
@@ -176,6 +189,10 @@ internal static class GstNative
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_delivery_stats(
             IntPtr player, out TcsDeliveryStats outStats);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_get_gop_status(
+            IntPtr player, out TcsGopStatus outStatus);
 
         // ステージ 6b: 共有テクスチャリングの NT ハンドル + 共有フェンス。
         // ハンドルは shim 所有（CloseHandle 禁止）。

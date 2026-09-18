@@ -491,9 +491,9 @@ public class ContinueOnTrackCoordinatorTests
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
         rec.SeekTargets.Should().Equal(10.0);
 
-        // 出口直後の不足 0.5 秒（着地窓の中）→ 速度補正に回さずシークで着地する。
+        // 出口直後の不足 0.7 秒（着地窓の中、0.5× シーク所要 1.0 秒を超える）→ シークで着地する。
         rec.GapExit = GapExitActionType.None;
-        rec.TimePos = (0, 9.7);
+        rec.TimePos = (0, 9.5);
         for (int i = 0; i < 4; i++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
@@ -501,6 +501,33 @@ public class ContinueOnTrackCoordinatorTests
         }
 
         rec.SeekTargets.Should().Equal(10.0, 10.2);
+    }
+
+    [Fact]
+    public void GapExitLanding_SmallDeficitBelowHalfSeekCost_UsesRateCatchUp()
+    {
+        (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
+        var track = CreateTrack(Guid.NewGuid());
+        var rec = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 10.0) };
+        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
+
+        // 定常で 1 サンプル（許容内）を消費し、起動直後の例外を使い切る。
+        coordinator.Handle(OnTrack(track, 10.0), 10.0);
+        // ギャップ出口: mediaPos 10.0 へ直接シークしてギャップを抜ける。
+        rec.GapExit = GapExitActionType.ResumePlayback;
+        coordinator.Handle(OnTrack(track, 10.0), 10.0);
+        rec.SeekTargets.Should().Equal(10.0);
+
+        // 出口直後の不足 0.3 秒（0.5× 1.0 秒以下）→ シークは誤差を増やすだけなので速度補正に任せる。
+        rec.GapExit = GapExitActionType.None;
+        rec.TimePos = (0, 9.9);
+        for (int i = 0; i < 4; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            coordinator.Handle(OnTrack(track, 10.2), 10.2);
+        }
+
+        rec.SeekTargets.Should().Equal(10.0);
     }
 
     [Fact]

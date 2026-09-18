@@ -574,7 +574,7 @@ public class SyncDecisionEngineTests
     [Fact]
     public void Decide_DeficitWithinSeekCost_WhenRateCatchUpDisallowed_Seeks()
     {
-        // D37-b2: ギャップ明け・切替の着地直後は、実測所要以内でもシークで着地する。
+        // D37-b2/D37-d: 着地直後は、残差がシーク所要の半分を超える帯ならシークで着地する。
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
         engine.UpdateSeekCostSeconds(1.0);
         var state = new SyncPlaybackState(
@@ -587,10 +587,33 @@ public class SyncDecisionEngineTests
             TimecodeFps: 30.0,
             RateCatchUpAllowed: false);
 
-        SyncDecision decision = engine.Decide(4.5, state); // delta 0.5 <= 実測所要 1.0
+        SyncDecision decision = engine.Decide(4.6, state); // delta 0.6 > 0.5 × 実測所要 1.0
 
         decision.Action.Should().Be(SyncActionType.Seek);
         decision.RateCatchUpPreferred.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Decide_DeficitBelowHalfSeekCost_WhenRateCatchUpDisallowed_PrefersRateCatchUp()
+    {
+        // D37-d: 着地窓中でも、残差がシーク所要の半分以下ならシークは誤差を増やすだけなので
+        // 速度補正に任せる（L-1 の 4K60 ロング GOP 実測: 初期誤差 0.34s でシーク後 0.4〜1.8s）。
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
+        engine.UpdateSeekCostSeconds(1.0);
+        var state = new SyncPlaybackState(
+            SyncEnabled: true,
+            HasCurrentTrack: true,
+            IsSeeking: false,
+            PlaybackSeconds: 4.0,
+            DurationSeconds: 20.0,
+            VideoFps: 30.0,
+            TimecodeFps: 30.0,
+            RateCatchUpAllowed: false);
+
+        SyncDecision decision = engine.Decide(4.4, state); // delta 0.4 <= 0.5 × 実測所要 1.0
+
+        decision.Action.Should().Be(SyncActionType.None);
+        decision.RateCatchUpPreferred.Should().BeTrue();
     }
 
     [Fact]
