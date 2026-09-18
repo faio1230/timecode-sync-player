@@ -650,6 +650,70 @@ run_gop_policy_tests ()
   check (t.keyframes == 0 && t.anchor_valid == 0, "gop: ignored PTS changes nothing");
 }
 
+/* --gop-warn <file> [max_secs]: real-media check of the 0.4.5-C detector.
+ * Loads the file PLAYING (audio off via TCS_NO_AUDIO), polls
+ * tcs_player_get_gop_status every 20 ms and prints the wall time from load
+ * return to the warning latch and to the first confirmed keyframe interval.
+ * Prints a single GOP-WARN summary line for the evidence log. */
+static int
+run_gop_warn_measure (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --gop-warn <file> [max_secs]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+  double max_secs = argc > 3 ? atof (argv[3]) : 25.0;
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimGopWarn", nullptr, err, sizeof (err));
+  check (p != nullptr, "gop-warn: create");
+  if (!p) return 1;
+
+  auto t0 = std::chrono::steady_clock::now ();
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "gop-warn: load playing");
+  if (rc != TCS_OK) {
+    printf ("  load failed: %s\n", err);
+    tcs_player_destroy (p);
+    return 1;
+  }
+
+  TcsGopStatus st = {};
+  int warned = 0;
+  double warn_at = 0.0, interval_at = 0.0, max_interval = 0.0;
+  while (true) {
+    if (tcs_player_get_gop_status (p, &st) != TCS_OK)
+      break;
+    double now = std::chrono::duration<double> (
+        std::chrono::steady_clock::now () - t0).count ();
+    if (!warned && st.state == 1) {
+      warned = 1;
+      warn_at = now;
+      printf ("  latch t=%.3fs active=%d keyframes=%llu pending=%.3fs threshold=%.3fs\n",
+          now, st.active, (unsigned long long) st.keyframes, st.pending_sec, st.threshold_sec);
+      fflush (stdout);
+    }
+    if (warned && st.max_interval_sec > 0.0) {
+      interval_at = now;
+      max_interval = st.max_interval_sec;
+      printf ("  interval t=%.3fs max_interval=%.3fs\n", now, st.max_interval_sec);
+      break;
+    }
+    if (now > max_secs)
+      break;
+    std::this_thread::sleep_for (std::chrono::milliseconds (20));
+  }
+
+  printf ("GOP-WARN file=%s active=%d state=%d keyframes=%llu latch_s=%.3f "
+      "interval_s=%.3f max_interval_s=%.3f pending_s=%.3f threshold_s=%.3f\n",
+      file, st.active, st.state, (unsigned long long) st.keyframes,
+      warn_at, interval_at, max_interval, st.pending_sec, st.threshold_sec);
+  tcs_player_destroy (p);
+  check (st.active == 1, "gop-warn: probe active");
+  return failures ? 1 : 0;
+}
+
 /* --seek-loop <file> [iters]: consecutive seeks (V5). Every target must land
  * within one frame and within the 500ms budget, and the last three seeks must
  * not be worse than the first three (no accumulated correction). */
@@ -1518,6 +1582,11 @@ main (int argc, char** argv)
   }
   run_delivery_policy_tests ();
   run_gop_policy_tests ();
+  if (strcmp (argv[1], "--gop-warn") == 0) {
+    int rc = run_gop_warn_measure (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return rc;
+  }
   if (strcmp (argv[1], "--stress") == 0)
     return run_stress (argc, argv);
   if (strcmp (argv[1], "--load-bench") == 0) {
