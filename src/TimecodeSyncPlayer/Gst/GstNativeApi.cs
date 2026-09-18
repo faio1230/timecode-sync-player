@@ -63,6 +63,9 @@ internal sealed class GstNativeApi : IGstNativeApi
     public bool TryGetTimePos(IntPtr player, out double seconds) =>
         GstNative.Imports.tcs_player_get_time_pos(player, out seconds) == 0;
 
+    public bool TryGetTimePosEx(IntPtr player, out GstNative.TcsPositionSample sample) =>
+        GstNative.Imports.tcs_player_get_time_pos_ex(player, out sample) == 0;
+
     public bool TryGetDuration(IntPtr player, out double seconds) =>
         GstNative.Imports.tcs_player_get_duration(player, out seconds) == 0;
 

@@ -44,6 +44,18 @@ internal static class GstNative
         public uint Flags;
     }
 
+    /// <summary>0.4.5-A: tcs_player_get_time_pos_ex が返す 1 スナップショット。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TcsPositionSample
+    {
+        public double Seconds;
+        public int Basis;
+        public ulong Generation;
+        public double DeliveredSeconds;
+        public ulong DeliveredGeneration;
+        public ulong CurrentGeneration;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct TcsDeliveryStats
     {
@@ -109,6 +121,10 @@ internal static class GstNative
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_time_pos(IntPtr player, out double outSec);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_get_time_pos_ex(
+            IntPtr player, out TcsPositionSample outSample);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_duration(IntPtr player, out double outSec);

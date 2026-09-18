@@ -62,4 +62,21 @@ public class GstDeliveryTraceMapperTests
     public void Map_PositionBitWithOtherBits_StaysPosition()
         => GstDeliveryTraceMapper.Map(Delivery(flags: GstDeliveryTraceMapper.PositionFlag | 4u))
             .Stage.Should().Be("gst.position");
+
+    [Fact]
+    public void Map_PositionFallback_UsesDedicatedStage()
+    {
+        GstNative.TcsDeliveryEvent e = Delivery(
+            flags: GstDeliveryTraceMapper.PositionFlag | GstDeliveryTraceMapper.PositionFallbackFlag);
+        e.PtsNs = 2_000_000;
+        e.RunningNs = 1_500_000_000;
+
+        OutputTraceEvent mapped = GstDeliveryTraceMapper.Map(e);
+
+        mapped.Stage.Should().Be("gst.positionFallback");
+        mapped.Qpc.Should().Be(1_000);
+        mapped.ImageId.Should().Be(7);
+        mapped.PtsNs.Should().Be(2_000_000);
+        mapped.Value.Should().Be(1_500_000);
+    }
 }

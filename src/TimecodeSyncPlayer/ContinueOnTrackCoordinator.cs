@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Serilog;
+using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -87,14 +89,31 @@ internal sealed class ContinueOnTrackCoordinator
         }
         else
         {
+            // 0.4.5-A フェーズ 1: shadow は trace 有効時だけ読む（無効時は従来どおり位置を読まない）。
+            bool traceEnabled = OutputTrace.Current.IsEnabled;
+
             // Track switches and gap exits above may replace the pending operation.
             // For this clip, native time-pos is not stable until seeking has finished.
             if (_effects.IsNativeSeeking?.Invoke() == true)
+            {
+                if (traceEnabled)
+                {
+                    (int shadowRc, double shadowPlayback) = _effects.GetTimePos();
+                    if (shadowRc == 0)
+                    {
+                        PlaybackPositionSample? shadowSample = _effects.GetPositionSample?.Invoke();
+                        SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowPlayback);
+                        _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowSample, "native-seeking");
+                    }
+                }
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "native-seeking");
+            }
 
             (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
             if (timePosRc != 0)
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "time-pos");
+
+            PlaybackPositionSample? positionSample = traceEnabled ? _effects.GetPositionSample?.Invoke() : null;
 
             if (!_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
             {
@@ -111,8 +130,7 @@ internal sealed class ContinueOnTrackCoordinator
             _fileLoadStabilityLogState.Reset();
 
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
-
-            SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state);
+            SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state, positionSample);
             // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
             double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
             bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
@@ -199,4 +217,6 @@ internal sealed record ContinueOnTrackEffects(
     Func<long> GetTotalRenderedFrames,
     Func<(int rc, double playbackSeconds)> GetTimePos,
     Func<double, SyncPlaybackState> BuildPlaybackState,
-    Func<bool>? IsNativeSeeking = null);
+    Func<bool>? IsNativeSeeking = null,
+    // 0.4.5-A フェーズ 1: 評価位置（shadow）用の位置サンプル。未指定は shadow なし。
+    Func<PlaybackPositionSample?>? GetPositionSample = null);
