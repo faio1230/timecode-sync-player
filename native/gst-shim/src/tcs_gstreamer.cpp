@@ -145,8 +145,9 @@ static bool lease_log = env_flag ("TCS_LEASE_LOG");
 static const char* kOutputTraceEnv = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
 
 /* TcsDeliveryEvent.flags bit 3: not a frame arrival but the snapshot
- * tcs_player_get_time_pos records while the output trace is enabled. */
-enum { kDeliveryFlagPosition = 8 };
+ * tcs_player_get_time_pos records while the output trace is enabled.
+ * Bit 4 marks the snapshot taken by the delivered-PTS fallback (query failed). */
+enum { kDeliveryFlagPosition = 8, kDeliveryFlagPositionFallback = 16 };
 
 /* D2 diagnostics: pipeline/sink state around seeks, pause changes and steps.
  * The paused-seek bug is about state, so the report needs the state at each
@@ -3408,12 +3409,20 @@ tcs_player_set_mute (TcsPlayer* player, int mute)
   return TCS_OK;
 }
 
-TCS_GST_API int
-tcs_player_get_time_pos (TcsPlayer* player, double* out_sec)
+/* Shared body for tcs_player_get_time_pos / _ex. Caller holds frame_lock.
+ * The legacy function passes out == nullptr and sees exactly the old values;
+ * _ex additionally gets the basis, generations and the delivered PTS. */
+static int
+get_time_pos_locked (TcsPlayer* player, double* out_sec, TcsPositionSample* out)
 {
   if (!player || !out_sec) return TCS_ERR_GENERIC;
-  std::lock_guard<std::mutex> g (player->frame_lock);
   if (!player->pipeline || player->path.empty ()) return TCS_ERR_NOT_LOADED;
+  if (out) {
+    out->seconds = 0.0;
+    out->basis = TCS_POSITION_BASIS_NONE;
+    out->generation = 0;
+    out->current_generation = player->generation;
+  }
   /* D25-c: while paused (and the paused-seek pump has finished) report the
    * newest delivered video frame's stream-time PTS. The pipeline position is
    * dominated by the audio sink, which keeps advancing during the muted pump
@@ -3425,19 +3434,44 @@ tcs_player_get_time_pos (TcsPlayer* player, double* out_sec)
   bool paused_frame_pos = player->paused && !player->pump_active &&
       player->latest_pts_ns > 0 && player->latest_gen == player->generation;
   gint64 pos = 0;
+  int32_t basis = TCS_POSITION_BASIS_PIPELINE;
+  uint64_t generation = player->generation;
   if (paused_frame_pos) {
     pos = (gint64) player->latest_pts_ns;
+    basis = TCS_POSITION_BASIS_DELIVERED;
+    generation = player->latest_gen;
   } else if (!gst_element_query_position (player->pipeline, GST_FORMAT_TIME, &pos) || pos < 0) {
     /* D10: the pipeline query reports stream time (so it already maps the
      * qtdemux post-seek shift back). When the query is unavailable, fall back
-     * to the newest delivered frame's stream-mapped PTS - never the raw PTS. */
+     * to the newest delivered frame's stream-mapped PTS - never the raw PTS.
+     * 0.4.5-A: record the fallback in the trace (bit 4). The value may belong
+     * to an older generation; the owner decides with basis/generation. */
     if (player->latest_pts_ns > 0) {
+      if (player->position_trace) {
+        LARGE_INTEGER now;
+        QueryPerformanceCounter (&now);
+        delivery_append_locked (player, (uint64_t) now.QuadPart, player->latest_seq,
+            (int64_t) player->latest_pts_ns, (int64_t) player->latest_pts_ns,
+            (uint32_t) (kDeliveryFlagPosition | kDeliveryFlagPositionFallback));
+      }
       *out_sec = (double) player->latest_pts_ns / GST_SECOND;
+      if (out) {
+        out->seconds = *out_sec;
+        out->basis = TCS_POSITION_BASIS_DELIVERED;
+        out->generation = player->latest_gen;
+      }
       return TCS_OK;
     }
     return TCS_ERR_NOT_LOADED;
   }
   *out_sec = (double) pos / GST_SECOND;
+  if (out) {
+    out->seconds = *out_sec;
+    out->basis = basis;
+    out->generation = generation;
+    out->delivered_seconds = (double) player->latest_pts_ns / GST_SECOND;
+    out->delivered_generation = player->latest_gen;
+  }
   if (player->position_trace) {
     /* One snapshot per query. frame_lock freezes latest_seq/latest_pts_ns
      * while the QPC is taken, so the owner gets the queried position and the
@@ -3449,6 +3483,26 @@ tcs_player_get_time_pos (TcsPlayer* player, double* out_sec)
         (int64_t) player->latest_pts_ns, (int64_t) pos, (uint32_t) kDeliveryFlagPosition);
   }
   return TCS_OK;
+}
+
+TCS_GST_API int
+tcs_player_get_time_pos (TcsPlayer* player, double* out_sec)
+{
+  if (!player || !out_sec) return TCS_ERR_GENERIC;
+  std::lock_guard<std::mutex> g (player->frame_lock);
+  return get_time_pos_locked (player, out_sec, nullptr);
+}
+
+TCS_GST_API int
+tcs_player_get_time_pos_ex (TcsPlayer* player, TcsPositionSample* out)
+{
+  if (!player || !out) return TCS_ERR_GENERIC;
+  std::lock_guard<std::mutex> g (player->frame_lock);
+  double seconds = 0.0;
+  int rc = get_time_pos_locked (player, &seconds, out);
+  if (rc == TCS_OK)
+    out->seconds = seconds;
+  return rc;
 }
 
 TCS_GST_API int

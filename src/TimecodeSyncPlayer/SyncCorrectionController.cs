@@ -117,6 +117,29 @@ internal sealed class SyncCorrectionController
     /// <summary>レートを出しても残差が縮まないため Smooth を諦めた。</summary>
     public bool SmoothDisabled => _smoothDisabled;
 
+    /// <summary>
+    /// 0.4.5-A フェーズ 1: 状態を変えずに「出したとしたら」の Smooth レートだけを計算する
+    /// （shadow 記録用。<see cref="Evaluate"/> は呼ばないので _rateActive / _smoothDisabled に
+    /// 触れない）。式は Smooth と同じ（戻りバンド・デッドバンド・着地窓の上限）。
+    /// </summary>
+    public static (double Rate, string Reason) PreviewSmoothRate(
+        double residualSeconds, bool landingWindowActive)
+    {
+        if (!double.IsFinite(residualSeconds))
+            return (1.0, "invalid");
+        double abs = Math.Abs(residualSeconds);
+        if (abs <= RateReturnBandSeconds)
+            return (1.0, "smooth-idle");
+        if (abs <= DeadbandSeconds)
+            return (1.0, "smooth-deadband");
+        double maxDelta = landingWindowActive ? LandingMaxRateDelta : MaxRateDelta;
+        return (RateFor(residualSeconds, maxDelta), landingWindowActive ? "smooth-landing" : "smooth");
+    }
+
+    /// <summary>0.4.5-A: 着地直後の上限窓（±0.20）が開いているか。状態は変えない。</summary>
+    public bool IsLandingWindowActive(DateTime now) =>
+        _landingAt != DateTime.MinValue && now - _landingAt < LandingWindow;
+
     public SyncCorrectionDecision Evaluate(
         double residualSeconds,
         double targetSeconds,

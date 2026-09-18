@@ -8,16 +8,24 @@ namespace TimecodeSyncPlayer.Output;
 /// tcs_player_get_time_pos が同時点で記録した position スナップショットで、gst.position
 /// として区別する: imageId = 最新 delivery の seq、ptsNs = 最新 delivery の PTS、
 /// value = クエリで得た position（µs、gst.position のみ）。
+/// 0.4.5-A: bit 4 (16) が付いたスナップショットはクエリ失敗のフォールバックで、
+/// gst.positionFallback として区別する（value = 返した配信 PTS、µs）。
 /// </summary>
 internal static class GstDeliveryTraceMapper
 {
     /// <summary>tcs_gstreamer.h の flags bit 3（position スナップショット）。</summary>
     internal const uint PositionFlag = 8;
 
+    /// <summary>tcs_gstreamer.h の flags bit 4（クエリ失敗のフォールバック）。</summary>
+    internal const uint PositionFallbackFlag = 16;
+
     internal static OutputTraceEvent Map(GstNative.TcsDeliveryEvent e) =>
         (e.Flags & PositionFlag) != 0
-            ? new OutputTraceEvent("gst.position", "GST", (long)e.Qpc, ImageId: (long)e.Seq,
-                Value: e.RunningNs / 1000, PtsNs: (long)e.PtsNs)
+            ? (e.Flags & PositionFallbackFlag) != 0
+                ? new OutputTraceEvent("gst.positionFallback", "GST", (long)e.Qpc, ImageId: (long)e.Seq,
+                    Value: e.RunningNs / 1000, PtsNs: (long)e.PtsNs)
+                : new OutputTraceEvent("gst.position", "GST", (long)e.Qpc, ImageId: (long)e.Seq,
+                    Value: e.RunningNs / 1000, PtsNs: (long)e.PtsNs)
             : new OutputTraceEvent("gst.delivery", "GST", (long)e.Qpc, ImageId: (long)e.Seq,
                 Detail: $"{e.PtsNs}:{e.RunningNs}:{e.Flags}", Value: e.CallbackUs);
 }

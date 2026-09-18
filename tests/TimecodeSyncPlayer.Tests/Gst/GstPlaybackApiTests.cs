@@ -271,11 +271,50 @@ public class GstPlaybackApiTests
     }
 
     [Fact]
+    public void TryGetPositionSample_MapsNativeFields()
+    {
+        var (_, api, native) = Create();
+        native.PositionSample = new GstNative.TcsPositionSample
+        {
+            Seconds = 12.34,
+            Basis = 2,
+            Generation = 7,
+            DeliveredSeconds = 12.30,
+            DeliveredGeneration = 6,
+            CurrentGeneration = 7,
+        };
+
+        api.TryGetPositionSample(out PlaybackPositionSample sample).Should().BeTrue();
+
+        sample.Seconds.Should().Be(12.34);
+        sample.Basis.Should().Be(PlaybackPositionBasis.Delivered);
+        sample.Generation.Should().Be(7);
+        sample.DeliveredSeconds.Should().Be(12.30);
+        sample.DeliveredGeneration.Should().Be(6);
+        sample.CurrentGeneration.Should().Be(7);
+    }
+
+    [Fact]
+    public void TryGetPositionSample_WhenExMissing_FallsBackToLegacy()
+    {
+        var (_, api, native) = Create();
+        native.ThrowEntryPointNotFoundOnTimePosEx = true;
+        native.TimePos = 3.5;
+
+        api.TryGetPositionSample(out PlaybackPositionSample sample).Should().BeTrue();
+
+        sample.Seconds.Should().Be(3.5);
+        sample.Basis.Should().Be(PlaybackPositionBasis.Pipeline);
+        sample.DeliveredGeneration.Should().Be(0);
+    }
+
+    [Fact]
     public void Getters_WithoutPlayer_ReturnFalseOrEmpty()
     {
         var (_, api, _) = Create(createPlayer: false);
 
         api.TryGetTimePos(out _).Should().BeFalse();
+        api.TryGetPositionSample(out _).Should().BeFalse();
         api.TryGetDuration(out _).Should().BeFalse();
         api.TryGetFps(out _).Should().BeFalse();
         api.TryGetSize(out _, out _).Should().BeFalse();

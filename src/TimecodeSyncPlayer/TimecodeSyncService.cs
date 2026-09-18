@@ -1,3 +1,6 @@
+using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Output;
+
 namespace TimecodeSyncPlayer;
 
 public sealed class TimecodeSyncService
@@ -8,6 +11,9 @@ public sealed class TimecodeSyncService
     private readonly SeekLatencyCompensator _latencyCompensator;
     // D37-b: シーク中・着地未確認の位置を判定に使わないための状態。
     private readonly PlaybackPositionTrust _positionTrust = new();
+    // 0.4.5-A フェーズ 1: 評価位置（基準・世代から求めた shadow）を trace に併記する。
+    // 判断には使わない。
+    private readonly PlaybackPositionFeedback _positionFeedback = new();
     private TimecodeSyncSeekPendingStatus _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
     private double _publishedSeekCostSeconds = double.NaN;
     // D37-b2: ギャップ明け・トラック切替の着地直後は、速度補正優先をやめてシークで着地させる。
@@ -66,15 +72,21 @@ public sealed class TimecodeSyncService
         _latencyCompensator = latencyCompensator ?? new SeekLatencyCompensator();
     }
 
-    public SyncDecision EvaluateDecision(double ltcSeconds, SyncPlaybackState state)
+    public SyncDecision EvaluateDecision(double ltcSeconds, SyncPlaybackState state,
+        PlaybackPositionSample? positionSample = null)
     {
         PublishSeekCost();
+
+        // 0.4.5-A フェーズ 1: 評価位置は trace に併記するだけ（判断は現行のまま）。
+        if (positionSample is { } sample)
+            state = WithShadow(state, ltcSeconds, sample);
 
         // D37-b: シーク中・着地未確認の間は位置を使った判定をしない。
         if (!_positionTrust.IsTrusted)
         {
             if (_positionTrust.IsReacquiring)
                 _positionTrust.Observe(state.PlaybackSeconds, NowSeconds());
+            _engine.RecordShadow(ltcSeconds, state, "position-untrusted");
             return _engine.WhilePositionUntrusted(state);
         }
 
@@ -85,6 +97,52 @@ public sealed class TimecodeSyncService
         SyncDecision decision = _engine.Decide(ltcSeconds, effectiveState);
         LogDecisionIfNeeded(decision, ltcSeconds, effectiveState.PlaybackSeconds);
         return decision;
+    }
+
+    /// <summary>
+    /// 0.4.5-A フェーズ 1: ネイティブシーク中など、通常の同期評価が走らないフレームでも
+    /// 評価位置（shadow）だけを trace に残す。判断には使わない。
+    /// </summary>
+    public void RecordPositionShadow(double ltcSeconds, SyncPlaybackState state,
+        PlaybackPositionSample? positionSample, string reason)
+    {
+        if (!OutputTrace.Current.IsEnabled) return;
+        if (positionSample is { } sample)
+            state = WithShadow(state, ltcSeconds, sample);
+        _engine.RecordShadow(ltcSeconds, state, reason);
+    }
+
+    /// <summary>0.4.5-A フェーズ 1: shadow の補正モード（MainWindow が配線。未配線は Smooth）。</summary>
+    public Func<SyncCorrectionMode>? CorrectionModeSource { get; set; }
+
+    /// <summary>0.4.5-A フェーズ 1: shadow の着地窓（±0.20）判定（MainWindow が配線。未配線は false）。</summary>
+    public Func<bool>? CorrectionLandingActiveSource { get; set; }
+
+    private SyncPlaybackState WithShadow(SyncPlaybackState state, double ltcSeconds,
+        in PlaybackPositionSample sample)
+    {
+        PlaybackPositionReading reading = _positionFeedback.Observe(sample, state.VideoFps);
+        double residualSeconds = ltcSeconds - reading.EvaluationSeconds;
+        SyncCorrectionMode mode = CorrectionModeSource?.Invoke() ?? SyncCorrectionMode.Smooth;
+        (double previewRate, string previewReason) = mode == SyncCorrectionMode.Smooth
+            ? SyncCorrectionController.PreviewSmoothRate(
+                residualSeconds, CorrectionLandingActiveSource?.Invoke() ?? false)
+            : (0.0, "not-smooth");
+        return state with
+        {
+            EvalPositionSeconds = reading.EvaluationSeconds,
+            EvalDeltaSeconds = residualSeconds,
+            EvalBasis = reading.Basis switch
+            {
+                PlaybackPositionBasis.Delivered => "delivered",
+                PlaybackPositionBasis.Pipeline => "pipeline",
+                _ => "none",
+            },
+            EvalDeliveredGeneration = sample.DeliveredGeneration,
+            EvalCurrentGeneration = sample.CurrentGeneration,
+            ShadowRate = previewRate,
+            ShadowRateReason = previewReason,
+        };
     }
 
     /// <summary>D37-b: いま再生位置を粗い判定・補正に使えるか。</summary>
@@ -186,6 +244,8 @@ public sealed class TimecodeSyncService
         _seekState.ResetLearning();
         _publishedSeekCostSeconds = double.NaN;
         _positionTrust.Reset();
+        // 0.4.5-A: 素材が変わるので、配信 PTS の基準と実測レートを捨てる。
+        _positionFeedback.Reset();
         _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
         // D37-b2: ロード（切替）も着地として扱い、直後の不足はシークで詰める。
         NotifyLanding();
