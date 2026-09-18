@@ -349,6 +349,8 @@ public sealed class LtcScenarioE2ETests
             seekCount = summary.SeekSpans.Count,
             seekSecondsTotal = Math.Round(summary.SeekSecondsTotal, 3),
             longestSeekSeconds = Math.Round(summary.LongestSeekSeconds, 3),
+            freezeBudgetSeconds = Math.Round(FreezeBudgetSeconds(followSeconds), 3),
+            longestFreezeLimitSeconds = LongestFreezeLimitSeconds,
             // しきい値を決めるための分布。1 回ごとの長さ（ミリ秒）を出た順に並べる。
             seekDurationsMs = summary.SeekSpans.Select(span => (int)Math.Round(span.DurationSeconds * 1000.0)).ToArray(),
             // 保留（pending）がセトル／タイムアウトするまでの着地時間。上の seek*（raw=yes→no の区間）とは別測度。
@@ -371,7 +373,29 @@ public sealed class LtcScenarioE2ETests
             $"（{excluded}、最悪 {WindowDetail(summary.WorstAdvance)}）");
         summary.MaxAbsError.Should().BeLessThanOrEqualTo(PositionToleranceSeconds,
             $"{track.Symbol}: 判定対象の各窓の最大誤差が ±{PositionToleranceSeconds} 秒以内（{excluded}、最悪 {WindowDetail(summary.WorstError)}）");
+
+        // 体感に合わせた凍結の判定。シークの間は新しい位置のフレームを待って絵が止まるので、
+        // 停止の長さそのものを見る。検証機の実測では、利用者が「引っかかる」と言った回は
+        // 最長 1,285ms 以上・合計 5.36 秒以上、問題にならない回は最長 203ms・合計 0.203 秒で、
+        // その間に入る回が無かった。しきい値はその空白の中に置いている。
+        double freezeBudget = FreezeBudgetSeconds(followSeconds);
+        summary.LongestSeekSeconds.Should().BeLessThanOrEqualTo(LongestFreezeLimitSeconds,
+            $"{track.Symbol}: 1 回の停止が {LongestFreezeLimitSeconds:F1} 秒以内" +
+            $"（シーク {summary.SeekSpans.Count} 回、最長 {summary.LongestSeekSeconds:F3}s、合計 {summary.SeekSecondsTotal:F3}s）");
+        summary.SeekSecondsTotal.Should().BeLessThanOrEqualTo(freezeBudget,
+            $"{track.Symbol}: 停止の合計が {freezeBudget:F2} 秒以内" +
+            $"（{FreezeSecondsPerMinute:F1} 秒/60 秒 × 追従 {followSeconds:F1} 秒、" +
+            $"実測 {summary.SeekSecondsTotal:F3}s／シーク {summary.SeekSpans.Count} 回、最長 {summary.LongestSeekSeconds:F3}s）");
     }
+
+    /// <summary>L-1: 1 回の停止の上限（秒）。</summary>
+    private const double LongestFreezeLimitSeconds = 0.5;
+
+    /// <summary>L-1: 60 秒あたりの停止合計の上限（秒）。追従秒数に比例させる。</summary>
+    private const double FreezeSecondsPerMinute = 1.0;
+
+    private static double FreezeBudgetSeconds(double followSeconds) =>
+        FreezeSecondsPerMinute * followSeconds / 60.0;
 
     private static string WindowDetail(FollowWindow? window) =>
         window is not { } value
