@@ -143,7 +143,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             EndRateCatchUp(escalated: false, Math.Abs(delta));
             if (traceEnabled)
                 RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "within-tolerance");
-            return SyncDecision.NoneWith(fps, toleranceSeconds);
+            // D37-d: 到達。サービスは着地窓をここで閉じる。
+            return SyncDecision.NoneWith(fps, toleranceSeconds, withinTolerance: true);
         }
 
         // D37-b: 実在の不足は、シーク 1 回の実測所要（未学習は 1.0 秒）以内ならシークを出さず
@@ -416,7 +417,9 @@ public sealed record SyncDecision(
     // D37-b: 不足がシーク 1 回の実測所要以内なので、シークではなく速度補正に任せる。
     bool RateCatchUpPreferred = false,
     // D37-b: シーク中・着地未確認のため、このフレームの位置を使った判定をしてはいけない。
-    bool PositionUntrusted = false)
+    bool PositionUntrusted = false,
+    // D37-d: 誤差が許容内に入った（着地エピソードの到達）。サービスは着地窓を閉じる。
+    bool WithinTolerance = false)
 {
     public static SyncDecision None { get; } = new(
         SyncActionType.None,
@@ -429,7 +432,7 @@ public sealed record SyncDecision(
         false);
 
     public static SyncDecision NoneWith(SyncFpsResolution fps, double toleranceSeconds,
-        bool gateDeferred = false, bool rateCatchUp = false) => new(
+        bool gateDeferred = false, bool rateCatchUp = false, bool withinTolerance = false) => new(
         SyncActionType.None,
         0.0,
         0.0,
@@ -439,7 +442,8 @@ public sealed record SyncDecision(
         fps.UsedDefaultVideoFps,
         fps.UsedDefaultTimecodeFps,
         gateDeferred,
-        rateCatchUp);
+        rateCatchUp,
+        WithinTolerance: withinTolerance);
 
     /// <summary>
     /// D37-b: 位置を信用できないフレーム（シークの保留中・時間切れ後の再確認中）。
