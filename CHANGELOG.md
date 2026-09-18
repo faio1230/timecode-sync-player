@@ -21,6 +21,9 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
   (keyframe interval, codec, fps), the timecode signal conditions, how to read the warning, and
   what to check when sync misbehaves. Every figure in it is measured; items that were not
   measured (bitrate) say so.
+- Output traces now record the age breakdown from the LTC sample end to the sync evaluation
+  (Dispatcher enqueue, queue wait, UI processing) when the accuracy trace is enabled (M1).
+  Behaviour is unchanged.
 
 ### Changed
 
@@ -30,19 +33,9 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
   landing). Off by default; `TCS_SYNC_POSITION_FEEDBACK=on` enables it. Steady playback is
   unchanged (the two differ by less than a sixth of a frame there).
 
-
-### Added
-
-- Output traces now record the age breakdown from the LTC sample end to the sync evaluation (Dispatcher enqueue, queue wait, UI processing) when the accuracy trace is enabled (M1). Behaviour is unchanged.
-
-### Known limitations
-
-- On long-GOP media, a lag that appears while following is closed by playback rate rather than by seeking, so it can take several to a dozen seconds to clear (roughly 10 seconds per second of lag). Seeking there does not converge, because the landing carries a new error equal to the seek duration. Shortening the keyframe interval makes seeks fast and keeps this state from arising.
-- AV1 material gets no in-app keyframe-interval warning: the parser used for the scan does not mark keyframes, so the interval cannot be read (playback itself works). Long-GOP AV1 is therefore undetectable in the app, and H.264 is recommended for field use. `scripts/inspect-gop.ps1` does read AV1 correctly (it uses ffprobe; verified on a 3840x2160 AV1 file, 12 keyframes, 1.000s maximum gap), so AV1 material can be checked before a show.
-
 ### Fixed
 
-- Fixed correction seeks firing on momentary measurement jitter: the coarse decision now uses a recent median with a consecutive-exceedance gate and rejects physically impossible spikes (D37-a). On heavy media (4K60 long-GOP) this removes the seek chain and the associated freezes of up to 1.8 seconds.
+- Fixed correction seeks firing on momentary measurement jitter: the coarse decision now uses a recent median with a consecutive-exceedance gate and rejects physically impossible spikes (D37-a). On material with a long keyframe interval (4K60, 6.6s between keyframes) this removes the seek chain and the associated freezes of up to 1.8 seconds. **The cause is the keyframe interval, not the resolution or the bitrate**: at the same 4K60, material with a 0.5s interval catches up in 1.4s from a 5.8s offset and issues no seek at all, while 6.6s material takes 16s.
 - Fixed the UI update scheduler rarely losing one reschedule request: the request handoff is now a single atomic operation (D36). The picture never stopped and the worst remaining delay was about 100 ms, but the loss itself is gone.
 - A real shortfall during follow is now closed by nudging the playback rate instead of seeking, so a lag of around half a second clears within a few seconds without freezing the picture. Gap exits and track-switch landings still seek, because the picture is black at that moment and a seek lands faster than a rate ramp (D37-b).
 - The reported playback position is no longer used for decisions until a seek is confirmed to have landed. During a seek the position query can be off by 0.5 to 0.8 seconds, and that value was triggering the next seek (D37-b).
@@ -53,6 +46,11 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
 - That estimate is now derived from the keyframe interval read when the file is loaded. Previously the duration was unknown until a seek had actually happened, so the estimate did not apply to the first seek, which is the one that matters (D37-f).
 - The estimate is now calibrated to "until the picture actually moves" rather than "until the position reaches the target". The stall after the landing was missing from it, and that stall is proportional to the keyframe interval (measured: 6.633s gap gives 0.79s, 0.501s gives 0.15s, 0.017s gives 0.10s) (D37-f).
 - The follow-start lookahead no longer leaks into unrelated seeks. While Single mode holds an out-of-range timecode the position is pinned to the clip boundary, so the error can never fall inside tolerance and the follow-start landing never closed; the recovery seek taken when the timecode came back into range then overshot by the lookahead (measured 0.3s). That scenario also has a stopped timecode, so no later correction ran and the position kept drifting (D37-g).
+
+### Known limitations
+
+- On material with a long keyframe interval, a lag that appears while following is closed by playback rate rather than by seeking, so it can take several to a dozen seconds to clear (roughly 10 seconds per second of lag). Seeking there does not converge, because the landing carries a new error equal to the seek duration. Shortening the keyframe interval makes seeks fast and keeps this state from arising.
+- AV1 material gets no in-app keyframe-interval warning: the parser used for the scan does not mark keyframes, so the interval cannot be read (playback itself works). Long-GOP AV1 is therefore undetectable in the app, and H.264 is recommended for field use. `scripts/inspect-gop.ps1` does read AV1 correctly (it uses ffprobe; verified on a 3840x2160 AV1 file, 12 keyframes, 1.000s maximum gap), so AV1 material can be checked before a show.
 
 ## 0.4.3 - 2026-09-18
 
