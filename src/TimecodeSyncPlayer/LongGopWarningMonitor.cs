@@ -31,7 +31,7 @@ internal sealed class LongGopWarningMonitor
     /// <summary>警告を表示すべきか（ラッチ済み、又は印付きトラックの再ロード直後）。</summary>
     public bool IsWarningActive => _warningActive;
 
-    /// <summary>確定したキーフレーム間隔（秒）。0 = 未確定。</summary>
+    /// <summary>確定したキーフレーム間隔の中央値（秒）。0 = 未確定。</summary>
     public double MeasuredSeconds => _measuredSeconds;
 
     public LongGopWarningTransition Observe(Guid? trackId, GopStatus? status, bool trackAlreadyMarked)
@@ -52,9 +52,9 @@ internal sealed class LongGopWarningMonitor
         if (status is not { Active: true } sample)
             return LongGopWarningTransition.None;
 
-        bool measuredIncreased = sample.MaxIntervalSeconds > _measuredSeconds;
+        bool measuredIncreased = sample.MedianIntervalSeconds > _measuredSeconds;
         if (measuredIncreased)
-            _measuredSeconds = sample.MaxIntervalSeconds;
+            _measuredSeconds = sample.MedianIntervalSeconds;
 
         if (!_warningActive && sample.State == StateWarning)
         {
@@ -75,8 +75,8 @@ internal static class LongGopWarningMessages
     public const string Recommendation =
         "キーフレーム間隔が長いため同期が不安定になることがあります（推奨: 1〜2 秒）";
 
-    public static string Format(double measuredSeconds) =>
-        measuredSeconds > 0
-            ? FormattableString.Invariant($"{Recommendation}（実測 {measuredSeconds:F1} 秒）")
+    public static string Format(double medianIntervalSeconds) =>
+        medianIntervalSeconds > 0
+            ? FormattableString.Invariant($"{Recommendation}（キーフレーム間隔 約 {medianIntervalSeconds:F1} 秒）")
             : Recommendation;
 }

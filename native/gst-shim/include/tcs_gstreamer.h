@@ -92,13 +92,15 @@ typedef struct TcsStats {
 /* 0.4.5-C: long-GOP warning state, safe to poll from the owner thread.
  * active=0 means "no GOP probe" (not loaded, decodebin fallback, or the
  * probe was torn down): the owner must not read that as "no problem".
- * max_interval_sec = 0 while the interval is unconfirmed. The warning
- * latches; it is never cleared before the next load. */
+ * median_interval_sec = 0 while the interval is unconfirmed. The judgement is
+ * the median of the measured keyframe intervals (0.4.5-C2); the warning
+ * latches once at least two intervals are known and never clears before the
+ * next load. */
 typedef struct TcsGopStatus {
   int32_t  state;              /* 0 = measuring, 1 = warning (latched) */
   int32_t  active;             /* 1 = a video chain with the GOP probe is built */
   uint64_t keyframes;          /* keyframes observed since load */
-  double   max_interval_sec;   /* max keyframe interval (0 = unconfirmed) */
+  double   median_interval_sec;/* median keyframe interval (0 = unconfirmed) */
   double   pending_sec;        /* current buffer PTS - anchor PTS */
   double   threshold_sec;      /* effective threshold */
   uint64_t warning_qpc;        /* QPC when latched (0 = none) */

@@ -188,11 +188,23 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 
         // 行き先だけを先行補償する。シーク可否（delta と tolerance）は補償前の値で判定する。
         // 補償後もトラックの範囲（D29）へ収める。
-        double compensatedTarget = _latencyCompensator is null
-            ? target
-            : Math.Clamp(
-                _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds),
-                clipIn, clipOut);
+        // D37-e: 追従開始のシークだけは「LTC + 学習済みシーク所要」を狙う（上限を付けない。
+        // 0.4.2 の先行補償が効かなかったのは 400ms 上限で頭打ちになったため）。既存の
+        // D7-a 先行補償（既定無効・上限 400ms）より優先する。未学習（0）は現行どおり。
+        double compensatedTarget;
+        if (state.SeekTargetLookaheadSeconds > 0.0)
+        {
+            compensatedTarget = Math.Clamp(
+                ltcSeconds + state.SeekTargetLookaheadSeconds, clipIn, clipOut);
+        }
+        else
+        {
+            compensatedTarget = _latencyCompensator is null
+                ? target
+                : Math.Clamp(
+                    _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds),
+                    clipIn, clipOut);
+        }
         long decideQpc = traceEnabled || _latencyCompensator != null ? Stopwatch.GetTimestamp() : 0;
         _latencyCompensator?.MarkSeekDecision(decideQpc);
 
@@ -204,7 +216,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             OutputTrace.Current.Record(new("seek.decide", "SYNC", decideQpc,
                 Value: (long)Math.Round(compensatedTarget * 1_000_000.0),
                 Detail: FormattableString.Invariant(
-                    $"delta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6} compensation={_latencyCompensator?.CompensationSeconds ?? 0.0:F6}")));
+                    $"delta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6} compensation={_latencyCompensator?.CompensationSeconds ?? 0.0:F6} lookahead={state.SeekTargetLookaheadSeconds:F6}")));
         }
 
         return new SyncDecision(
@@ -410,7 +422,10 @@ public sealed record SyncPlaybackState(
     ulong EvalCurrentGeneration = 0,
     // 0.4.5-A フェーズ 1: 着地未確認中に「出したとしたら」の Smooth レート（適用はしない）。
     double? ShadowRate = null,
-    string? ShadowRateReason = null);
+    string? ShadowRateReason = null,
+    // D37-e: 追従開始の着地窓だけで使うシーク目標の先行量（学習済みシーク所要）。
+    // 0 = 現行どおり（先行なし）。定常の補正シークとギャップ明け・切替では 0 にする。
+    double SeekTargetLookaheadSeconds = 0.0);
 
 public enum SyncActionType
 {

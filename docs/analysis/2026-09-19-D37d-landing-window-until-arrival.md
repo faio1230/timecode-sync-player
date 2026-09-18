@@ -114,3 +114,52 @@ L-1 ×5 を実測して確かめた。
    ループ 14 本の単独再実行で **14/14 合格**（VB-CABLE の信号断タイミングのフレーク）。
    証跡 `TestResults/d37d/scenarios-and-loop-final`（統合）と `TestResults/d37d/loop-rerun`（再実行）。
 4. `waitedSeconds` の上限 5 秒は変更しない。
+
+## 8. D37-e: 追従開始のシークは「LTC + 学習済みシーク所要」を狙う（2026-09-19 追加）
+
+**検証機の M3 で D37-d が効かなかった。前進ガードは設計どおり動いており、機構の問題。**
+
+```
++0.21s follow start landing window opened
++0.49s seek #1 delta=2.657 → 着地 +2.34s（所要 1.83 秒）→ 残差 1.800 秒
++2.59s seek #2 delta=1.795 → 着地 +4.62s（所要 1.98 秒）→ 残差 2.271 秒（増えた）
++4.86s landing window closed without progress preMs=1795 postMs=2271 ageMs=4653 seeks=2
+以降は通常規則。ゲートを抜けるまで合計 16.07 秒
+```
+
+M3 では**シーク所要（1.8〜2.0 秒）と詰めたい誤差（1.8〜2.3 秒）が同じ大きさ**なので、
+シークが自分の所要ぶんの誤差を作り直す（原理的に前進しない）。開発機の素材は所要 0.5 秒台
+なので再現しない。
+
+### 変更
+
+- **追従開始の着地エピソードだけ**、シークの行き先を `LTC + 学習済みシーク所要` にする
+  （`SyncPlaybackState.SeekTargetLookaheadSeconds`、`LandingOrigin.FollowStart`）。
+- **上限を付けない。** 0.4.2 の `TCS_SEEK_LATENCY_COMPENSATION` が効かなかった原因は
+  上限 400ms で頭打ちだったこと（シークは最長 2,029ms）。学習値（1.87 秒）をそのまま使う。
+- **適用範囲は追従開始だけ。** 定常の補正シーク・ギャップ明け・トラック切替は 0 のまま
+  （そちらは所要が短く、先行補償が過剰打ちになる）。`LandingOrigin` で区別する。
+- **未学習（学習値なし）は 0（現行どおり）。** 根拠: 測れていない値で先行すると過剰打ちに
+  なるだけで、最初のシークが所要の測定になり 2 回目から効く（M3 でも 2 回で収束する）。
+- **行き過ぎ（着地時に LTC より先）の扱い**: クリップ範囲 `[MediaIn, MediaOut]` へクランプ
+  （D29 の既存クランプ）し、終端は越えない。範囲内の行き過ぎは Smooth の速度補正が
+  遅い側（< 1.0）で吸収する。**遅れより扱いやすい**（速度を落とすだけで絵は止まらない）。
+- 既存の D7-a 先行補償（既定無効・上限 400ms）より優先する。`seek.decide` の trace に
+  `lookahead=` を追記して、実機で狙いを確認できるようにする。
+
+### 単体
+
+| 固定する内容 | テスト |
+| --- | --- |
+| 目標 = LTC + 学習値（M3 の 7.368 + 1.87 = 9.238） | `SyncDecisionEngineTests.Decide_WithSeekTargetLookahead_UsesLtcPlusLookahead` |
+| 行き過ぎはクリップ終端でクランプ | `Decide_WithSeekTargetLookahead_ClampsToClipEnd` |
+| 追従開始だけ先行する（ギャップ明けは 0） | `TimecodeSyncServiceTests.EvaluateDecision_FollowStartLanding_UsesLearnedSeekCostAsLookahead` / `..._GapExitLanding_DoesNotUseLookahead` |
+| 未学習は 0 / 窓が閉じたら 0 | `..._FollowStartWithoutLearnedSeekCost_HasNoLookahead` / `..._AfterArrival_StopsUsingLookahead` |
+| ハーネス: 追従開始の seek 目標が LTC + 学習値 | `D37eFollowStartLookaheadTests.FollowStart_WithLearnedSeekCost_TargetsLtcPlusLearnedCost` |
+| ギャップ出口は学習値があっても LTC のまま | `ContinueOnTrackCoordinatorTests.GapExitLanding_WithLearnedSeekCost_DoesNotLookAhead` |
+
+### 実機の確認（開発機では効果を確認できない）
+
+開発機の素材は所要 0.5 秒台なので、L-1 ×5 は**回帰が無いこと**の確認まで。効果の確認は
+検証機の M3（1 回目のシークで着地時の残差が 0.2 秒程度になり、16 秒が数秒に縮むこと）。
+V3 ×1、既存シナリオ 22 + LTC ループ 14 も回す。
