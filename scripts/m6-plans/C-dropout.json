@@ -1,0 +1,14 @@
+{
+  "condition": "C-dropout",
+  "ltcFps": 25,
+  "ltcFpsMode": "fixed",
+  "settlingSeconds": 2.0,
+  "gapSeconds": 0.5,
+  "levels": [
+    { "name": "clean", "seconds": 30 },
+    { "name": "drop10ms", "seconds": 30, "dropoutMs": 10, "dropoutPeriodSeconds": 5 },
+    { "name": "drop50ms", "seconds": 30, "dropoutMs": 50, "dropoutPeriodSeconds": 5 },
+    { "name": "drop200ms", "seconds": 30, "dropoutMs": 200, "dropoutPeriodSeconds": 5 },
+    { "name": "drop600ms", "seconds": 30, "dropoutMs": 600, "dropoutPeriodSeconds": 5 }
+  ]
+}
