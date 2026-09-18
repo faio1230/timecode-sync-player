@@ -14,6 +14,12 @@ public sealed class TimecodeSyncService
     // 0.4.5-A フェーズ 1: 評価位置（基準・世代から求めた shadow）を trace に併記する。
     // 判断には使わない。
     private readonly PlaybackPositionFeedback _positionFeedback = new();
+    // D37-f: シーク所要の見積もり（0.4.5-C3 のスキャンから）。学習値が無い間だけ使う。
+    // ロード直後の 1 回目のシークには学習値が無く（ロードで ResetLearning するため）、
+    // D37-e の先行補償が 0 になっていた。その 1 回目が問題の起点だったので、
+    // 素材のキーフレーム分布から所要を見積もって埋める。
+    private double _seekCostHintSeconds;
+
     // 0.4.5-A フェーズ 2: 評価位置を判断にも使う。既定 off（フェーズ 1 の挙動）。
     // 実機で同等以上を確認してから既定を on にする。評価位置が得られないとき
     // （旧 DLL、世代不一致）は on でも従来の抑制に落ちる。
@@ -131,7 +137,7 @@ public sealed class TimecodeSyncService
             {
                 RateCatchUpAllowed = false,
                 SeekTargetLookaheadSeconds = _landingOrigin == LandingOrigin.FollowStart
-                    ? _seekState.LearnedSeekDurationSeconds ?? 0.0
+                    ? _seekState.LearnedSeekDurationSeconds ?? _seekCostHintSeconds
                     : 0.0,
             }
             : state;
@@ -472,10 +478,23 @@ public sealed class TimecodeSyncService
     private double NowSeconds() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
 
     /// <summary>D37-b: 学習したシーク所要（未学習は保守的に 1.0 秒）をエンジンへ公開する。</summary>
+    /// <summary>
+    /// D37-f: 読み込んだ素材のキーフレーム分布から、シーク 1 回の所要を見積もって渡す。
+    /// 学習値が入るまでの間だけ使われる（実測が入ればそちらが勝つ）。
+    /// 0 以下で解除。
+    /// </summary>
+    public void SetSeekCostHintSeconds(double seconds)
+    {
+        _seekCostHintSeconds = double.IsFinite(seconds) && seconds > 0 ? seconds : 0.0;
+        PublishSeekCost();
+    }
+
     private void PublishSeekCost()
     {
         const double DefaultSeekCostSeconds = 1.0;
-        double cost = _seekState.LearnedSeekDurationSeconds ?? DefaultSeekCostSeconds;
+        // 学習値 > スキャンの見積もり > 既定値。実測が入ったらそちらが常に勝つ。
+        double cost = _seekState.LearnedSeekDurationSeconds
+            ?? (_seekCostHintSeconds > 0 ? _seekCostHintSeconds : DefaultSeekCostSeconds);
         if (Math.Abs(cost - _publishedSeekCostSeconds) <= 1e-9)
             return;
         _engine.UpdateSeekCostSeconds(cost);
