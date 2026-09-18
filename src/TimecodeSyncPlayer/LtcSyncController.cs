@@ -1066,6 +1066,7 @@ internal sealed class LtcSyncController
     /// <summary>
     /// D35-b: D33 の境界ホールド（Single）が解除されたときに呼ぶ。ホールド中に残った端への
     /// 保留シークと保持着地のラッチを必ず解除し、解除後の範囲内 LTC への着地を抑止しない。
+    /// D37-g: 追従開始のエピソードもここで終わらせる（先行量を引き継がせない）。
     /// </summary>
     internal void NotifyClipBoundaryHoldReleased()
     {
@@ -1073,6 +1074,7 @@ internal sealed class LtcSyncController
         _heldReapplyDone = false;
         _pendingSyncSeconds = null;
         _syncService.SeekState.Clear();
+        _syncService.EndFollowStartLanding();
         Log.Information("Single mode: boundary hold released; pending seek state and held landing latch cleared");
     }
 

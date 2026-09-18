@@ -17,6 +17,10 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
   against 2164ms just before the next one. Playback is not stopped and this is not an error.
 - `scripts/inspect-gop.ps1` reports the same distribution for files or folders without running
   the app. Requires ffprobe.
+- `docs/USER-MANUAL.md`: a field preparation guide covering the recommended material format
+  (keyframe interval, codec, fps), the timecode signal conditions, how to read the warning, and
+  what to check when sync misbehaves. Every figure in it is measured; items that were not
+  measured (bitrate) say so.
 
 ### Changed
 
@@ -34,6 +38,7 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
 ### Known limitations
 
 - On long-GOP media, a lag that appears while following is closed by playback rate rather than by seeking, so it can take several to a dozen seconds to clear (roughly 10 seconds per second of lag). Seeking there does not converge, because the landing carries a new error equal to the seek duration. Shortening the keyframe interval makes seeks fast and keeps this state from arising.
+- AV1 material gets no keyframe-interval warning: the parser used for the scan does not mark keyframes, so the interval cannot be read (playback itself works). Long-GOP AV1 is therefore undetectable, and H.264 is recommended for field use.
 
 ### Fixed
 
@@ -43,6 +48,11 @@ dependency chain (the long-GOP warning explains the condition the seek fixes wor
 - The reported playback position is no longer used for decisions until a seek is confirmed to have landed. During a seek the position query can be off by 0.5 to 0.8 seconds, and that value was triggering the next seek (D37-b).
 - Fixed the offset present when sync starts following being closed by playback rate instead of by seeking. On long-GOP media the initial offset can exceed a second, and closing it by rate took close to 20 seconds, during which the picture ran about 10% fast. Like a gap exit or a track switch, nothing meaningful is on screen at that moment, so a seek lands faster (D37-c).
 - Rate correction now rejects momentary measurement spikes as well. D37-a shielded only the seek decision; the rate path was still fed the raw values (D37-c).
+- The follow-start landing no longer ends after a single seek: it continues until the error is inside tolerance. On long-GOP media the first seek takes 1.8 to 2 seconds and leaves the same error behind, so returning to the normal decision there could take 19 seconds (D37-d).
+- The follow-start seek now aims ahead by how far the timecode will advance before the landing. On media where a seek takes 2 seconds the landing was already 2 seconds behind, so no number of seeks converged (D37-e).
+- That estimate is now derived from the keyframe interval read when the file is loaded. Previously the duration was unknown until a seek had actually happened, so the estimate did not apply to the first seek, which is the one that matters (D37-f).
+- The estimate is now calibrated to "until the picture actually moves" rather than "until the position reaches the target". The stall after the landing was missing from it, and that stall is proportional to the keyframe interval (measured: 6.633s gap gives 0.79s, 0.501s gives 0.15s, 0.017s gives 0.10s) (D37-f).
+- The follow-start lookahead no longer leaks into unrelated seeks. While Single mode holds an out-of-range timecode the position is pinned to the clip boundary, so the error can never fall inside tolerance and the follow-start landing never closed; the recovery seek taken when the timecode came back into range then overshot by the lookahead (measured 0.3s). That scenario also has a stopped timecode, so no later correction ran and the position kept drifting (D37-g).
 
 ## 0.4.3 - 2026-09-18
 

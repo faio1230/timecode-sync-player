@@ -85,6 +85,7 @@ Spout出力を使う場合は、x64版`SpoutDX.dll`も`native`フォルダーへ
 
 ## ドキュメント
 
+- **[現場準備ガイド](docs/USER-MANUAL.md)** — 推奨する素材の形式（キーフレーム間隔・コーデック・fps）、タイムコード信号の条件、警告の読み方
 - [セットアップとビルド](docs/SETUP.md)
 - [ネイティブDLL](native/README.md)
 - [アーキテクチャ](docs/ARCHITECTURE.md)

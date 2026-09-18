@@ -246,6 +246,29 @@ public sealed class TimecodeSyncService
             _landingOrigin = origin;
     }
 
+    /// <summary>
+    /// D37-g: 追従開始のエピソードを終わらせる（着地窓そのものは残す）。
+    ///
+    /// Single の境界ホールド中は位置がクリップ端に固定されるため、誤差が許容内に入ることは
+    /// 設計上ありえず、<see cref="ObserveArrivalWhileLanding"/> が呼ばれない。結果として
+    /// 追従開始の窓が上限の 5 秒まで開いたままになり、その間に起きた<b>無関係な</b>シーク
+    /// （範囲外 LTC が範囲内へ巻き戻ったときの復帰シーク）まで D37-e の先行量を足していた。
+    ///
+    /// 実測（E2E S-3、1280x720・キーフレーム間隔 1 秒のフィクスチャ）: LTC 10.022 への復帰で
+    /// 行き先が 10.322 になり、判定許容 0.3 秒をちょうど超えて着地。さらに LTC が止まっている
+    /// 場面のため以後の同期評価が走らず、そのまま前へ流れて 15.0 まで離れた。
+    ///
+    /// 先行量は「シークの間にタイムコードが進むぶん」の見積もりなので、追従開始という
+    /// 文脈が終わったら外す。窓（シーク優先・速度補正の抑止）は残してよい。
+    /// </summary>
+    public void EndFollowStartLanding()
+    {
+        if (!_seekLandingActive || _landingOrigin != LandingOrigin.FollowStart)
+            return;
+        _landingOrigin = LandingOrigin.Other;
+        Log.Information("Seek landing: follow-start episode ended (boundary hold released)");
+    }
+
     private void CloseSeekLanding()
     {
         _seekLandingActive = false;
@@ -518,7 +541,14 @@ public sealed class TimecodeSyncService
     private void PublishSeekCost()
     {
         const double DefaultSeekCostSeconds = 1.0;
-        // 学習値 > スキャンの見積もり > 既定値。実測が入ったらそちらが常に勝つ。
+        // 学習値 > スキャンの見積もり > 既定値。
+        // 既知の欠点（0.4.6 で直す）: 学習値は TimecodeSyncSeekState.LearnSeekDuration が
+        // 「位置が目標に初めて到達した時刻」で時計を止めるため、その後の再開までの停止
+        // （実測でギャップの 0.12 倍、M3 で 0.79 秒）が入っておらず、常に短く出る。
+        // スキャンの見積もりは停止込みで較正してある（SeekCostPerGapSecond = 0.42）。
+        // それでも学習値を優先するのは、1 回目のシークにはまだ学習値が無く、
+        // そこではヒントが使われる（D37-f の狙いはそこ）ため。2 回目以降の過小評価は
+        // 従来からの挙動で、ここで一緒に変えると効果の帰属が分からなくなる。
         double cost = _seekState.LearnedSeekDurationSeconds
             ?? (_seekCostHintSeconds > 0 ? _seekCostHintSeconds : DefaultSeekCostSeconds);
         if (Math.Abs(cost - _publishedSeekCostSeconds) <= 1e-9)
