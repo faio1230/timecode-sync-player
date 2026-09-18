@@ -84,13 +84,14 @@ TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample*
   `sync.evaluate` / `player.seeking` と突き合わせれば、どのシーク窓で何回起きたかを直接数えられる
   （§2 memo の消去法は不要になる）。
 
-### 1-3. 世代チェック本体（優先度低。後続でよい）
+### 1-3. 世代チェック本体 — 0.4.5-A には入れない（親の判断）
 
 - アプリは §2-2 で `delivered_generation` を見て採用可否を決める。これが実質のチェック。
-- shim 側で `:3434` のフォールバックを「古い世代なら返さない」に変えるのは**別変更**にする。
-  旧 `get_time_pos` の戻り値を変えると他呼び出し側（UI・ギャップ凍結）の挙動が変わるため。
-  やるなら `_ex` に限定し、古い世代では `basis = NONE / seconds = 0`（`delivered_seconds` は残す）に
-  落とす。小さいコミット + shim テストで。
+- shim 側で `:3434` のフォールバックに世代チェックを足すのは**次以降**にする。この経路は
+  6 trace・9,644 評価で発火が観測されておらず（メモ §1-2）、**測っていない経路の挙動を変えない**。
+  まず §1-2 の trace で実測し、発火が観測されたら直す。
+- 入れるときの形（参考）: `_ex` に限定し、古い世代では `basis = NONE / seconds = 0`
+  （`delivered_seconds` は残す）。旧 `get_time_pos` の戻り値は変えない（UI・ギャップ凍結を巻き込まない）。
 
 ### 1-4. 実装時に触るドキュメント・テスト
 
@@ -145,14 +146,26 @@ TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample*
 | `ContinueOnTrackCoordinator.HandleFrame`（88-147） | 同（92-93） | 同 | 1→2 |
 | `TimecodeSyncService.ShouldSuppressSeek` / `TimecodeSyncSeekState` | クエリ値で settle・時間切れ・学習 | **変えない**（§2-4） | - |
 | `PlaybackPositionTrust` | 通常経路の判定停止 | フォールバック専用に縮小（フェーズ 3 で通常経路から削除） | 2→3 |
-| `LtcSyncController.ApplyCorrection`（717-730） | `HasPendingSeek`・`IsPlaybackPositionUsable` で抑止 | **変えない**（保留中は補正しない。着地後はクエリ値≈配信 PTS なので現状のまま） | - |
+| `LtcSyncController.ApplyCorrection`（717-730） | `HasPendingSeek`・`IsPlaybackPositionUsable` で抑止 | 着地まで**適用しない**（現行どおり）。着地未確認の抑止分岐で「出したとしたら」の Smooth レートだけ trace に記録（下記） | 1→2 |
 | UI・タイムライン・ギャップ凍結の `TryGetTimePos` | - | **触らない**（定常の見た目を変えない） | - |
 
 フェーズ 2 で追加する安全弁: **着地未確認の間に新しいシークを出さない**。
 `HasPendingSeek` が時間切れした後でも、世代の合うフレームが届く前に `Seek` を選んだら抑止する
 （ログ理由 `unlanded`）。現行はここを D37-b の判定停止で塞いでいる。**連鎖の再発防止の要**なので、
-フェーズ 2 の必須項目にする。速度補正は保留中と同じく着地まで出さない（フラッシュ中に
-`rate.instant` を重ねない。着地未確認中の速度補正解禁はフェーズ 1 の測定後に判断）。
+フェーズ 2 の必須項目にする。
+
+着地未確認中の速度補正（親の判断）: **実際には出さない。** フラッシュ中は効かないうえ副作用が
+読めないため。ただし「出したとしたら」の値を `sync.evaluate` に追記する（`shadowRate=` /
+`shadowRateReason=`）。後から「シーク中にも出した方が良かったか」を測定で判断できるようにする。
+
+- 残差は評価位置から作り、`SyncCorrectionController` と同じ式（`RateFor` とデッドバンド・
+  戻りバンド・着地窓）で計算する。**`Evaluate` は `_rateActive` / `_smoothDisabled` 等の状態を
+  変えるため shadow では呼ばない**（純関数の shadow ヘルパを追加する）。Jump モードはレートを
+  出さないので記録対象外（`shadowRateReason=not-smooth` の 1 語だけ残す）。
+- 適用はフェーズ 1・2 ともに行わない。解禁の是非はこのデータを見て 0.4.6 以降に判断する。
+- 現在位置: `ApplyCorrection` は `HasPendingSeek` / `!IsPlaybackPositionUsable`（726-730）で
+  残差の計算前に return する。shadow はその分岐で、`TimecodeSyncService` が公開する直近の評価位置から
+  残差を作る（Continue は素材位置 − 評価位置、Single は LTC − 評価位置）。
 
 ### 2-4. なぜ「保留・settle・学習」はクエリ値のままか
 
@@ -165,27 +178,52 @@ settle は保留管理とシーク所要の学習（`LearnedSeekDurationSeconds`
 
 **先に両方を並べて測り、同等以上を示してから外す**（指示書 §3-3、メモ §4-2）。
 
-- **フェーズ 1（shadow）**: `PlaybackPositionFeedback` と `_ex` を入れる。判定・シーク・補正は
-  **現行のまま**（D37-b ガードも生かす）。着地未確認の評価位置は `sync.evaluate` に追記フィールドとして
-  記録する: `feedbackPlayback=` / `feedbackDelta=` / `feedbackBasis=` / `deliveredGen=` / `currentGen=`。
-  `playback=` / `delta=` の既存の意味は変えない。これで 1 本の run に「現行の判断」と「新入力での判断」が
-  並ぶ。ネイティブシーク中（`IsNativeSeeking`）も、早期 return の前にこの記録だけは行う。
-- **フェーズ 2（delivered）**: 内部スイッチで既定を切替（例 `TCS_SYNC_POSITION_FEEDBACK=delivered`。
-  フェーズ 1 の既定は shadow）。通常経路で
-  1. 評価位置を `playback` に使う（`sync.evaluate` は `playback=` が評価位置、`rawPlayback=` がクエリ値、
-     `basis=` を追加）、
+- **フェーズ 1（shadow）**: `PlaybackPositionFeedback` と `_ex` を入れる。判定・シーク・補正の適用は
+  **現行のまま**（D37-b ガードも生かす）。着地未確認の評価位置と「出したとしたら」の補正レートは
+  `sync.evaluate` に**追記フィールド**として記録する: `evalPosition=` / `evalDelta=` / `evalBasis=` /
+  `shadowRate=` / `shadowRateReason=` / `deliveredGen=` / `currentGen=`。
+  `playback=` / `delta=` の既存の意味は変えない（§3-1）。これで 1 本の run に「現行の判断」と
+  「新入力での判断」が並ぶ。ネイティブシーク中（`IsNativeSeeking`）も、早期 return の前にこの記録
+  だけは行う。記録は出力トレース有効時のみ（無効時は先頭で即 return。既存と同じ）。
+- **フェーズ 2（delivered）**: 環境変数 `TCS_SYNC_POSITION_FEEDBACK` で切替（既定 `off` = フェーズ 1、
+  `on` = フェーズ 2。実機で同等以上を確認したら既定を `on` にする。前例:
+  `TCS_LTC_SAMPLE_CLOCK` / `TCS_SEEK_LATENCY_COMPENSATION` / `TCS_PUMP_BUDGET_MS`。
+  検証機がビルドし直さずに A/B できる）。通常経路で
+  1. 判定に評価位置を使う（`sync.evaluate` は `playback=` のまま + `evalPosition=` を併記）、
   2. `WhilePositionUntrusted` を通常経路から外す（サンプル無しのときだけ旧ガード）、
   3. §2-3 の着地未確認シーク抑止を入れる。
-  残すもの: D37-b2 の着地窓、D37-b 2-2 の速度補正方針、`ShouldSuppressSeek` の入力。
+  残すもの: D37-b2 の着地窓、D37-b 2-2 の速度補正方針、`ShouldSuppressSeek` の入力、
+  速度補正を出さない方針（値だけ shadow で残す）。
 - **フェーズ 3（後片付け）**: shadow の記録経路と `PlaybackPositionTrust` の通常経路を削除する
-  （旧 DLL フォールバックに必要な最小分は残す）。
+  （旧 DLL フォールバックに必要な最小分は残す）。**切替スイッチは 0.4.5 では消さない**
+  （先行補償の前例に合わせ、0.4.6 で判断する）。
+
+### 3-1. trace フィールドの契約（親の判断。最も取り違えやすい点）
+
+**既存フィールドの意味を変えない。** `playback=` は今までどおり「クエリ値」、`delta=` は
+「LTC（clamp 後）− `playback=`」のまま。評価に使う位置は**新しい名前**で足す:
+
+| フィールド | 意味 | フェーズ 1 | フェーズ 2 |
+| --- | --- | --- | --- |
+| `playback=` | クエリ値（`tcs_player_get_time_pos` / `_ex` の `seconds`） | 従来どおり | **従来どおり（変えない）** |
+| `delta=` | `target − playback=` | 従来どおり | **従来どおり（変えない）** |
+| `evalPosition=` | フィードバック位置（着地済みはクエリ値、着地未確認は配信 PTS + 外挿） | 追記 | 判定に使用 |
+| `evalDelta=` | `target − evalPosition=` | 追記 | 判定に使用 |
+| `evalBasis=` | `pipeline` / `delivered` | 追記 | 追記 |
+| `shadowRate=` / `shadowRateReason=` | 着地未確認中に「出したとしたら」の Smooth レート | 追記 | 追記（適用はしない） |
+
+理由: フィールド名は過去のトレースとの契約であり、**意味を黙って変えると過去 run との比較が全部壊れる**。
+今日それに類する取り違えを 3 回踏んでいる（監査区間の基準ずれ、25fps で測った M1、ロング GOP でない素材）。
+意味を変えるより名前を増やす方が常に安い（親の判断）。`seek.decide` の `playback=` も同じ規則にする。
 
 **外す前提としてフェーズ 1 で示すもの**（数字と証跡だけ。合否は親が決める）:
 
-- 着地未確認の窓で `feedbackDelta` が育ち、着地直後の `delta` に連続すること（窓ごとの時系列。
-  既存の `TestResults/x1-v045a/` のスクリプトを再利用）。
+- 着地未確認の窓で `evalDelta` が育ち、着地直後の `delta`（クエリ値基準）に連続すること
+  （窓ごとの時系列。既存の `TestResults/x1-v045a/` のスクリプトを再利用）。
 - 窓内でフィードバックを使った場合にシークが増えないこと（安全弁の効き。ログ `unlanded` の件数）。
-- 定常で `feedbackBasis=pipeline` が 100% であること（§4-2）。
+- 定常で `evalBasis=pipeline` が 100% であること（§4-2）。
+- 着地未確認中の `shadowRate`（出さなかったレート）が、着地後の実補正と比べてどうだったか
+  （0.4.6 以降で解禁を判断する材料）。
 - フォールバック回数の実数（§1-2 の bit 4）。
 
 ## 4. 定常の非回帰をどう確かめるか
@@ -193,8 +231,8 @@ settle は保留管理とシーク所要の学習（`LearnedSeekDurationSeconds`
 1. **構造**: 定常は `delivered_generation == current_generation` なので評価位置はクエリ値そのもの。
    フェーズ 1 は判断に入らないため挙動は変わらない。フェーズ 2 でも入力が同一のため、差が出るのは
    着地未確認の区間だけ。
-2. **trace の不変条件**: `events.jsonl` で「`basis=delivered`（または `feedbackBasis=delivered`）の
-   `sync.evaluate` が、`seek.issue` / `gst.generation` / `loadfile` の窓の外に 1 件も無い」ことを数える。
+2. **trace の不変条件**: `events.jsonl` で「`evalBasis=delivered` の `sync.evaluate` が、
+   `seek.issue` / `gst.generation` / `loadfile` の窓の外に 1 件も無い」ことを数える。
    窓の特定は `player.seeking raw=yes` と `gst.delivery` の世代を使う。
 3. **実機（親の合図後）**: V3 を Smooth・LTC25 で 1 本（`scripts/run-v3-accuracy.ps1 -Backends gst`）。
    比較は同じ条件の 0.4.4 の値（例: v0.4.4 の定常 平均 −25.7ms / p95−p5 38.2ms、D37-b2 の
@@ -208,16 +246,21 @@ settle は保留管理とシーク所要の学習（`LearnedSeekDurationSeconds`
 - shim: `_ex` の basis/gen、フォールバックの bit 4 trace、旧 API 不変。
 - C# 単体: 外挿（レート EMA、0.5 秒上限、逆行リセット、未計測 1.0）、着地判定（世代）、
   古い世代の配信 PTS を着地に使わない、サンプル無しの旧ガード、着地未確認でシークを出さない、
-  shadow が判断を変えない。
+  shadow が判断を変えない、`shadowRate` の計算が補正の状態（`SyncCorrectionController` の
+  `_rateActive` / `_smoothDisabled`）を変えない。
 - 既存の非E2E がすべて通ること。
 
-## 6. 親の判断待ち（あれば）
+## 6. 親の判断（2026-09-19 に確定）
 
-- 着地未確認中の速度補正の扱い（推奨: 着地まで出さない。フラッシュ中の `rate.instant` を避ける）。
-- フェーズ 2 で `sync.evaluate` の `playback=` の意味が評価位置に変わる点（`rawPlayback=` を併記して
-  旧系列を残す案でよいか）。
-- 切替スイッチの既定の運用（コード定数 vs 環境変数。フェーズ 3 で shadow を消す前提）。
-- shim 側フォールバックの世代チェック（§1-3）を 0.4.5-A に含めるか、次にするか。
+1. **着地未確認中の速度補正**: 出さない。`shadowRate=` / `shadowRateReason=` で「出したとしたら」だけ
+   残し、解禁の是非は測定で判断する（0.4.6 以降）。
+2. **`sync.evaluate` の `playback=`**: 意味を変えない。評価位置は `evalPosition=` / `evalDelta=` /
+   `evalBasis=` を追加する（§3-1。過去トレースとの比較を壊さないため）。
+3. **切替スイッチ**: 環境変数 `TCS_SYNC_POSITION_FEEDBACK`。shadow の間は既定 `off`、実機で同等以上を
+   確認したら既定 `on`。検証機がビルドし直さずに A/B できる。**スイッチ自体は 0.4.5 では消さず、
+   0.4.6 で判断する**（先行補償の前例）。
+4. **shim 側フォールバックの世代チェック**: 0.4.5-A に含めない（§1-3）。`gst.positionFallback` の
+   trace は必須で入れる（§1-2）。未発火の経路の挙動は変えず、まず測る。
 
 ## 7. 触らないもの（指示書 §4 と本設計の追記）
 
@@ -226,3 +269,4 @@ settle は保留管理とシーク所要の学習（`LearnedSeekDurationSeconds`
 - D37-a のゲート、D37-b2 の着地窓、D37-b 2-2 の速度補正方針。
 - `ShouldSuppressSeek` / `TimecodeSyncSeekState` の入力。
 - 定常で使う値そのもの（評価位置は着地済みならクエリ値）。
+- 既存の trace フィールド（`playback=` / `delta=`）の意味（§3-1）。
