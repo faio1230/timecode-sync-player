@@ -115,6 +115,9 @@ internal sealed class ContinueOnTrackCoordinator
             double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
             bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
                 requestedTarget);
+            // D37-b: シーク中・着地未確認のフレームでは、粗い判定も補正も評価しない。
+            if (decision.PositionUntrusted)
+                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "position-untrusted");
             ContinueSyncSeekPlan seekPlan = ContinueSyncSeekPlanner.Decide(decision, suppressSeek, _syncService.IsDebounced());
 
             if (!seekPlan.ShouldSeek)

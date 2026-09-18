@@ -9,10 +9,11 @@ public sealed class DeferredLtcSyncTests
     private static void Raw(SyncScenarioHarness h, int seconds, int frame = 0, long at = 10_000) =>
         h.Controller.ReceiveFrame(new(new LtcTimecode(0, seconds / 60, seconds % 60, frame, false), 25, seconds + frame / 25d), at);
 
-    private static (SyncScenarioHarness h, ManualTimeProvider clock) ArrangePendingLoadSync()
+    private static (SyncScenarioHarness h, ManualTimeProvider clock) ArrangePendingLoadSync(
+        bool enableCorrection = false)
     {
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var h = new SyncScenarioHarness(clock) { SignalLossMode = LtcSignalLossMode.RunThrough };
+        var h = new SyncScenarioHarness(clock, enableCorrection: enableCorrection) { SignalLossMode = LtcSignalLossMode.RunThrough };
         h.AddTrack("first", 0);
         Raw(h, 1);
         Raw(h, 3); // diagnostic jump
@@ -63,10 +64,12 @@ public sealed class DeferredLtcSyncTests
     }
 
     [Fact]
-    public void HeldValueFarFromLastApplied_AppliesOnce()
+    public void HeldValueFarFromLastApplied_WithinSeekCost_DoesNotSeek()
     {
         // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超ずれていれば
         // 1 回だけ適用する（S-2 の late landing 残差を詰める）。
+        // D37-b: 不足 0.84 秒はシーク 1 回の実測所要（未学習 1.0 秒）以内なので、
+        // シークを出さず速度補正に任せる（保持フレームでは補正は走らないため、位置は動かさない）。
         var (h, clock) = ArrangePendingLoadSync();
         Raw(h, 4, 12);  // 3.04 → 4.48 は Jump。1 回だけ適用（最後に適用 = 4.48）
         Raw(h, 2, 1);   // 4.48 → 2.04 も Jump。ラッチ中なので適用しない
@@ -75,7 +78,7 @@ public sealed class DeferredLtcSyncTests
 
         Tick(h, clock, 4);
 
-        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(2.04);
+        h.Operations.Where(o => o.Name == "seek").Should().BeEmpty("1 秒未満の不足はシークせず速度補正に任せる");
     }
 
     [Fact]
@@ -198,13 +201,14 @@ public sealed class DeferredLtcSyncTests
         h.AdvancePlayback(1.2, 2);
         Tick(h, clock, 4); // first request is sent
         h.Operations.Clear();
-        Raw(h, 4);
-        Raw(h, 4, 1); // a new request while the previous native seek is settling
-        Raw(h, 4, 1);
+        Raw(h, 4, 5);
+        Raw(h, 4, 5); // a new request while the previous native seek is settling
+        Raw(h, 4, 5);
 
         Tick(h, clock, 12);
 
-        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(4.04);
+        // D37-b: シーク所要（未学習 1.0 秒）を超える不足なので、新しい要求でシークする。
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle().Which.Value.Should().Be(4.2);
         h.AdvancePlayback(4.9, 20);
         Tick(h, clock, 30);
         h.Operations.Should().ContainSingle(o => o.Name == "seek");

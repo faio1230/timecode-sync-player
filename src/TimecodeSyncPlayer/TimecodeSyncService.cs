@@ -6,6 +6,10 @@ public sealed class TimecodeSyncService
     private readonly ITimecodeSyncSeekState _seekState;
     private readonly TimeProvider _timeProvider;
     private readonly SeekLatencyCompensator _latencyCompensator;
+    // D37-b: シーク中・着地未確認の位置を判定に使わないための状態。
+    private readonly PlaybackPositionTrust _positionTrust = new();
+    private TimecodeSyncSeekPendingStatus _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
+    private double _publishedSeekCostSeconds = double.NaN;
 
     private DateTime _lastSyncSeekAt = DateTime.MinValue;
     private volatile bool _isLoadingFile;
@@ -61,10 +65,23 @@ public sealed class TimecodeSyncService
 
     public SyncDecision EvaluateDecision(double ltcSeconds, SyncPlaybackState state)
     {
+        PublishSeekCost();
+
+        // D37-b: シーク中・着地未確認の間は位置を使った判定をしない。
+        if (!_positionTrust.IsTrusted)
+        {
+            if (_positionTrust.IsReacquiring)
+                _positionTrust.Observe(state.PlaybackSeconds, NowSeconds());
+            return _engine.WhilePositionUntrusted(state);
+        }
+
         SyncDecision decision = _engine.Decide(ltcSeconds, state);
         LogDecisionIfNeeded(decision, ltcSeconds, state.PlaybackSeconds);
         return decision;
     }
+
+    /// <summary>D37-b: いま再生位置を粗い判定・補正に使えるか。</summary>
+    public bool IsPlaybackPositionUsable => _positionTrust.IsTrusted;
 
     public bool IsLoadingFile => _isLoadingFile;
 
@@ -97,6 +114,9 @@ public sealed class TimecodeSyncService
                 _seekState.LastStatus, playbackSeconds, toleranceSeconds);
         }
 
+        // D37-b: 保留の決着を位置の信頼状態へ反映する（着地 = その場で再開、
+        // 時間切れ = 位置が安定するまで判定を止める）。
+        TrackSeekStatusTransition();
         return suppress;
     }
 
@@ -114,6 +134,9 @@ public sealed class TimecodeSyncService
         _seekState.BeginSeek(targetSeconds, now);
         // D37-a: シーク後は位置が飛ぶため、粗い判定のゲート履歴を切る。
         _engine.ResetSeekGate();
+        // D37-b: 着地が確認できるまで、位置を使った判定をしない。
+        _positionTrust.InvalidateForPendingSeek();
+        _lastSeekStatus = TimecodeSyncSeekPendingStatus.Pending;
         SeekIssued?.Invoke();
     }
 
@@ -141,6 +164,11 @@ public sealed class TimecodeSyncService
         _seekState.Clear();                    // 古い保留シーク状態をクリア（2.1 fix）
         // D37-a: ロードで位置が飛ぶため、粗い判定のゲート履歴を切る。
         _engine.ResetSeekGate();
+        // D37-b: 素材が変わるので着地時間の学習を捨てる。保留はクリア済みなので位置は使える。
+        _seekState.ResetLearning();
+        _publishedSeekCostSeconds = double.NaN;
+        _positionTrust.Reset();
+        _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
     }
 
     /// <summary>
@@ -186,6 +214,9 @@ public sealed class TimecodeSyncService
         _seekState.Clear();
         // D37-a: 保留の破棄・手動移動の後はゲートの系列を切る。
         _engine.ResetSeekGate();
+        // D37-b: 保留を破棄したので位置は使える（着地の確認は要求しない）。
+        _positionTrust.Reset();
+        _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
     }
 
     /// <summary>
@@ -224,6 +255,37 @@ public sealed class TimecodeSyncService
 
     /// <summary>先行補償の学習状態（トラックの引き当てとフレーム Ready 通知に使う）。</summary>
     internal SeekLatencyCompensator LatencyCompensator => _latencyCompensator;
+
+    private double NowSeconds() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
+
+    /// <summary>D37-b: 学習したシーク所要（未学習は保守的に 1.0 秒）をエンジンへ公開する。</summary>
+    private void PublishSeekCost()
+    {
+        const double DefaultSeekCostSeconds = 1.0;
+        double cost = _seekState.LearnedSeekDurationSeconds ?? DefaultSeekCostSeconds;
+        if (Math.Abs(cost - _publishedSeekCostSeconds) <= 1e-9)
+            return;
+        _engine.UpdateSeekCostSeconds(cost);
+        _publishedSeekCostSeconds = cost;
+    }
+
+    /// <summary>D37-b: 保留の状態遷移を位置の信頼状態へ反映する。</summary>
+    private void TrackSeekStatusTransition()
+    {
+        TimecodeSyncSeekPendingStatus status = _seekState.LastStatus;
+        if (status == _lastSeekStatus)
+            return;
+        TimecodeSyncSeekPendingStatus previous = _lastSeekStatus;
+        _lastSeekStatus = status;
+        if (status == TimecodeSyncSeekPendingStatus.Settled)
+            _positionTrust.MarkLanded();
+        else if (status == TimecodeSyncSeekPendingStatus.TimedOut)
+            _positionTrust.RequireReacquire();
+        else if (previous == TimecodeSyncSeekPendingStatus.Pending &&
+                 status == TimecodeSyncSeekPendingStatus.None)
+            // D37-b: 保留が外から破棄された（境界ホールド解除など）。着地を要求せず位置を使い直す。
+            _positionTrust.Reset();
+    }
 
     private void LogDecisionIfNeeded(SyncDecision decision, double ltcSeconds, double playbackSeconds)
     {

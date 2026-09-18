@@ -725,6 +725,9 @@ internal sealed class LtcSyncController
             return;
         if (_syncService.SeekState.HasPendingSeek)
             return;
+        // D37-b: シーク中・着地未確認の位置では補正を評価しない。
+        if (!_syncService.IsPlaybackPositionUsable)
+            return;
 
         if (_rateRestorePending)
         {

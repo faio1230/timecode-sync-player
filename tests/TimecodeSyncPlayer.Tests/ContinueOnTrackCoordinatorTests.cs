@@ -109,6 +109,17 @@ public class ContinueOnTrackCoordinatorTests
 
         rec.NativeSeeking = false;
         rec.TimePos = (0, 11);
+        // D37-b: セトル窓内 → 時間切れ → 位置が安定するまで（3 サンプル）判定しない。
+        coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Deferred);
+        for (int i = 1; i <= 4; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            rec.TimePos = (0, 11 + i * 0.1);
+            coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Deferred, $"位置の再確認中 {i} サンプル目");
+        }
+        // 再確認が完了した次のフレームで、新しい要求（30）が発行される。
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        rec.TimePos = (0, 11.6);
         coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Complete);
         rec.SeekTargets.Should().Equal(30);
         service.SeekState.TargetSeconds.Should().Be(30);

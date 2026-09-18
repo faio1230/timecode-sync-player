@@ -220,7 +220,10 @@ public sealed class HeldLtcStopAndRunThroughTests
         Tick(h, clock, 8);
 
         h.IsPaused.Should().BeFalse();
-        h.PlaybackSeconds.Should().BeApproximately(2.16, 0.05, "保持が明けたら LTC 側へ戻る");
+        // D37-b: 不足が 1 秒未満なのでシークせず速度補正に任せる（ハーネスはレートで位置を動かさない）。
+        h.Operations.Should().NotContain(o => o.Name == "seek");
+        h.AppliedRates.Should().NotBeEmpty();
+        h.AppliedRates[^1].Should().BeApproximately(0.9, 1e-9, "行き過ぎを緩めて LTC 側へ寄せる");
     }
 
     [Fact]

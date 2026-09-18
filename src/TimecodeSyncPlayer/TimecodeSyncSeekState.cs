@@ -12,6 +12,12 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     private const double ContinuousPlaybackSettleSlackMultiplier = 2.0;
     // D20-b: 到達不能な pending を置き換える距離（tolerance の倍数）。
     private const double PendingSupersedeToleranceMultiplier = 4.0;
+    // D37-b: 着地までの実測時間（秒）。素材ごとに学習し、シークと速度補正の分岐に使う。
+    // 異常値（復帰不能なほど長い、0 に近すぎる）は学習に混ぜない。
+    private const double LearnedSeekMinSeconds = 0.05;
+    private const double LearnedSeekMaxSeconds = 10.0;
+    private const double LearnedSeekEmaKeep = 0.7;
+    private double _learnedSeekSeconds = double.NaN;
 
     public TimecodeSyncSeekState()
         : this(TimeSpan.FromSeconds(2))
@@ -26,6 +32,13 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     public bool HasPendingSeek { get; private set; }
     public double TargetSeconds { get; private set; }
     public TimecodeSyncSeekPendingStatus LastStatus { get; private set; } = TimecodeSyncSeekPendingStatus.None;
+
+    /// <summary>D37-b: 着地までの実測時間（移動平均）。未学習は null。</summary>
+    public double? LearnedSeekDurationSeconds =>
+        double.IsFinite(_learnedSeekSeconds) ? _learnedSeekSeconds : null;
+
+    /// <summary>D37-b: 素材が変わったとき（ロード）に学習を捨てる。</summary>
+    public void ResetLearning() => _learnedSeekSeconds = double.NaN;
 
     public void BeginSeek(double targetSeconds, DateTime sentAt)
     {
@@ -73,6 +86,9 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
                 return true;
             }
 
+            // D37-b: 着地までの実測時間を学習する（目標に到達したと最初に観測した時刻まで）。
+            if (_sentAt != DateTime.MinValue)
+                LearnSeekDuration((_settledAt == DateTime.MinValue ? now : _settledAt) - _sentAt);
             _lastSettledAt = now;
             _lastSettledTargetSeconds = TargetSeconds;
             Clear();
@@ -113,6 +129,16 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
 
         double distance = Math.Abs(requestedTargetSeconds - TargetSeconds);
         return distance > Math.Max(0, toleranceSeconds) * PendingSupersedeToleranceMultiplier;
+    }
+
+    private void LearnSeekDuration(TimeSpan elapsed)
+    {
+        double seconds = elapsed.TotalSeconds;
+        if (seconds < LearnedSeekMinSeconds || seconds > LearnedSeekMaxSeconds)
+            return;
+        _learnedSeekSeconds = double.IsFinite(_learnedSeekSeconds)
+            ? _learnedSeekSeconds * LearnedSeekEmaKeep + seconds * (1.0 - LearnedSeekEmaKeep)
+            : seconds;
     }
 
     private bool HasReachedSeekTarget(double playbackSeconds, double toleranceSeconds)
