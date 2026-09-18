@@ -311,10 +311,11 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.IsPaused.Should().BeFalse();
 
         // 尺が確定して保持フレームが届いたら、解除の 1 回適用が clamp 位置へ着地する
-        // （解除でデバウンスが再スタートするため 1 回は Deferred、次の Tick で再送される）。
+        // （解除でデバウンスが再スタートし、D37-a のゲートも窓が埋まるまで保留を維持するため、
+        //  Tick の再送で 3 サンプルそろってから着地する）。
         h.SetDurationSeconds(5);
         Raw(h, 8, 0, 10_400);
-        Tick(h, clock, 1);
+        Tick(h, clock, 3);
 
         h.Operations.Where(o => o.Name == "seek")
             .Should().ContainSingle().Which.Value.Should().BeApproximately(5.0, 0.05);

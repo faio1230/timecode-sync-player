@@ -55,7 +55,9 @@ internal sealed class SingleModeSyncCoordinator
         bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
             requestedTarget);
         if (decision.Action != SyncActionType.Seek)
-            return _syncService.SeekState.HasPendingSeek
+            // D37-a: ゲートが Seek を保留している間は要求を Deferred のまま維持し、
+            // 次の評価（フレーム／Tick）で窓が埋まったら発行する。
+            return decision.GateDeferred || _syncService.SeekState.HasPendingSeek
                 ? SyncRequestResult.Deferred : SyncRequestResult.Complete;
 
         if (suppressSeek)

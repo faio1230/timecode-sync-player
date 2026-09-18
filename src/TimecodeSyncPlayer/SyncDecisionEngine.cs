@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Serilog;
 using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
@@ -7,6 +8,15 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 {
     private readonly SyncDecisionOptions _options;
     private readonly SeekLatencyCompensator? _latencyCompensator;
+    private readonly Func<double> _clockSeconds;
+    // D37-a: 瞬間値の跳ねで粗いシークを出さないためのゲート。位置が飛ぶ操作の後は Reset する。
+    private readonly SeekDecisionGate _seekGate = new();
+    private bool _rejectedSampleLogged;
+    private bool _gatedSeekLogged;
+    // 起動後の最初の 1 サンプルだけは履歴が無い。追従開始の大きなずれに即応するため、
+    // この 1 回だけ瞬間値で判定する（ResetSeekGate では戻さない。シーク後・ロード後まで
+    // 例外を広げると、位置が飛んだ直後の 1 サンプルで連鎖が始まる）。
+    private bool _gateWarmed;
 
     public SyncDecisionEngine()
         : this(new SyncDecisionOptions(), null)
@@ -19,9 +29,29 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     }
 
     public SyncDecisionEngine(SyncDecisionOptions options, SeekLatencyCompensator? latencyCompensator)
+        : this(options, latencyCompensator, null)
+    {
+    }
+
+    /// <summary>時計を差し替えられるのは単体テスト用（既定は QPC 秒）。</summary>
+    internal SyncDecisionEngine(
+        SyncDecisionOptions options,
+        SeekLatencyCompensator? latencyCompensator,
+        Func<double>? clockSeconds)
     {
         _options = options;
         _latencyCompensator = latencyCompensator;
+        _clockSeconds = clockSeconds ?? (() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
+    }
+
+    /// <summary>
+    /// D37-a: ゲートの系列を切る。シークの発行・ロード・手動移動の後に呼ぶ。
+    /// </summary>
+    public void ResetSeekGate()
+    {
+        _seekGate.Reset();
+        _rejectedSampleLogged = false;
+        _gatedSeekLogged = false;
     }
 
     public SyncDecision Decide(double ltcSeconds, SyncPlaybackState state)
@@ -33,6 +63,10 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 
         if (!state.SyncEnabled || !state.HasCurrentTrack || state.IsSeeking)
         {
+            // D37-a: 手動移動中は位置が飛ぶため、ゲートの系列を切る（離した後の 1 サンプル目から
+            // 新しい位置で測り直す）。
+            if (state.IsSeeking)
+                ResetSeekGate();
             if (traceEnabled)
                 RecordEvaluate(ltcSeconds, state, toleranceSeconds, RawDelta(ltcSeconds, state),
                     !state.SyncEnabled ? "disabled" : !state.HasCurrentTrack ? "no-track" : "seeking");
@@ -58,12 +92,37 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         double target = Math.Clamp(ltcSeconds, clipIn, clipOut);
         double delta = target - state.PlaybackSeconds;
+
+        // D37-a: 瞬間値では Seek を出さない。直近の窓の中央値（または許容超えの連続）が
+        // 条件を満たすまで待ち、物理的にありえない変化のサンプルは測定の乱れとして弾く。
+        double ltcGranularitySeconds = 1.0 / fps.TimecodeFps;
+        SeekDecisionGate.Result gate = _seekGate.Observe(
+            delta, toleranceSeconds, _clockSeconds(), ltcGranularitySeconds);
+        if (gate.Rejected)
+        {
+            LogRejectedSample(gate);
+            if (traceEnabled)
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "unstable", GateDetail(gate));
+            return SyncDecision.NoneWith(fps, toleranceSeconds, gateDeferred: true);
+        }
+        _rejectedSampleLogged = false;
+        bool gateWasCold = !_gateWarmed;
+        _gateWarmed = true;
+
         if (Math.Abs(delta) <= toleranceSeconds)
         {
             if (traceEnabled)
                 RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "within-tolerance");
             return SyncDecision.NoneWith(fps, toleranceSeconds);
         }
+        if (!gate.ShouldSeek && !gateWasCold)
+        {
+            LogGatedSeek(gate, toleranceSeconds);
+            if (traceEnabled)
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "seek-gated", GateDetail(gate));
+            return SyncDecision.NoneWith(fps, toleranceSeconds, gateDeferred: true);
+        }
+        _gatedSeekLogged = false;
 
         // 行き先だけを先行補償する。シーク可否（delta と tolerance）は補償前の値で判定する。
         // 補償後もトラックの範囲（D29）へ収める。
@@ -103,12 +162,43 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 
     // 計測専用（呼び出し側で IsEnabled を確認済み）。reason は None を返した理由を 1 語で残す。
     private static void RecordEvaluate(double ltcSeconds, SyncPlaybackState state, double toleranceSeconds,
-        double? delta, string reason)
+        double? delta, string reason, string? gateDetail = null)
     {
+        string detail = FormattableString.Invariant(
+            $"playback={state.PlaybackSeconds:F6} delta={delta ?? double.NaN:F6} tolerance={toleranceSeconds:F6} syncEnabled={state.SyncEnabled} hasTrack={state.HasCurrentTrack} isSeeking={state.IsSeeking} reason={reason}");
+        if (!string.IsNullOrEmpty(gateDetail))
+            detail = detail + " " + gateDetail;
         OutputTrace.Current.Record(new("sync.evaluate", "SYNC", Stopwatch.GetTimestamp(),
             Value: ToMicroseconds(ltcSeconds),
-            Detail: FormattableString.Invariant(
-                $"playback={state.PlaybackSeconds:F6} delta={delta ?? double.NaN:F6} tolerance={toleranceSeconds:F6} syncEnabled={state.SyncEnabled} hasTrack={state.HasCurrentTrack} isSeeking={state.IsSeeking} reason={reason}")));
+            Detail: detail));
+    }
+
+    private static string GateDetail(SeekDecisionGate.Result gate) =>
+        FormattableString.Invariant(
+            $"gate_samples={gate.Samples} gate_median={gate.MedianSeconds:F6} gate_consecutive={gate.ConsecutiveExceeded} gate_rejected={gate.RejectedTotal}");
+
+    /// <summary>D37-a: ありえない跳ねを弾いたことを、乱れの切れ目に 1 回だけ残す。</summary>
+    private void LogRejectedSample(SeekDecisionGate.Result gate)
+    {
+        if (_rejectedSampleLogged)
+            return;
+        _rejectedSampleLogged = true;
+        Log.Information(
+            "Seek decision gate: rejected unstable sample deltaMs={DeltaMs:F1} previousMs={PreviousMs:F1} changeMs={ChangeMs:F1} allowedMs={AllowedMs:F1} dtMs={DtMs:F1} rejectedTotal={RejectedTotal}",
+            gate.DeltaSeconds * 1000.0, gate.PreviousDeltaSeconds * 1000.0, gate.ChangeSeconds * 1000.0,
+            gate.AllowedChangeSeconds * 1000.0, gate.DtSeconds * 1000.0, gate.RejectedTotal);
+    }
+
+    /// <summary>D37-a: 瞬間値では超えているがゲートが抑えたことを、抑えの切れ目に 1 回だけ残す。</summary>
+    private void LogGatedSeek(SeekDecisionGate.Result gate, double toleranceSeconds)
+    {
+        if (_gatedSeekLogged)
+            return;
+        _gatedSeekLogged = true;
+        Log.Information(
+            "Timecode sync seek gated medianMs={MedianMs:F1} consecutive={Consecutive} samples={Samples} rejectedTotal={RejectedTotal} deltaMs={DeltaMs:F1} toleranceMs={ToleranceMs:F1}",
+            gate.MedianSeconds * 1000.0, gate.ConsecutiveExceeded, gate.Samples, gate.RejectedTotal,
+            gate.DeltaSeconds * 1000.0, toleranceSeconds * 1000.0);
     }
 
     private static long ToMicroseconds(double seconds) =>
@@ -210,7 +300,10 @@ public sealed record SyncDecision(
     double VideoFpsUsed,
     double TimecodeFpsUsed,
     bool UsedDefaultVideoFps,
-    bool UsedDefaultTimecodeFps)
+    bool UsedDefaultTimecodeFps,
+    // D37-a: ゲートが Seek を保留した（瞬間値では許容を超えるが、窓が埋まるまで待つ）。
+    // Action は None のままだが、呼び出し側は要求を Deferred のまま維持し、次の評価で再試行する。
+    bool GateDeferred = false)
 {
     public static SyncDecision None { get; } = new(
         SyncActionType.None,
@@ -222,7 +315,8 @@ public sealed record SyncDecision(
         false,
         false);
 
-    public static SyncDecision NoneWith(SyncFpsResolution fps, double toleranceSeconds) => new(
+    public static SyncDecision NoneWith(SyncFpsResolution fps, double toleranceSeconds,
+        bool gateDeferred = false) => new(
         SyncActionType.None,
         0.0,
         0.0,
@@ -230,7 +324,8 @@ public sealed record SyncDecision(
         fps.VideoFps,
         fps.TimecodeFps,
         fps.UsedDefaultVideoFps,
-        fps.UsedDefaultTimecodeFps);
+        fps.UsedDefaultTimecodeFps,
+        gateDeferred);
 }
 
 public sealed record SyncFpsResolution(
