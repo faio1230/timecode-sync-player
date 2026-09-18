@@ -243,10 +243,23 @@ public sealed class LtcScenarioE2ETests
         int stable = 0;
         int gateSamples = 0;
         double gateWorstAccepted = 0.0;
+        // D37-c: 追従開始時の誤差そのもの（待ち時間だけでなく不足の大きさ）を記録する。
+        // 開始直後は位置がまだ読めないことがあるため、最初に有限だったサンプルを採る。
+        double? followStartPosition = null;
+        double? followStartLtc = null;
+        double? followStartError = null;
         while (true)
         {
-            lastError = Math.Abs(scenario.Position() - track.SingleTarget(scenario.LtcSeconds()));
+            double position = scenario.Position();
+            double ltc = scenario.LtcSeconds();
+            lastError = Math.Abs(position - track.SingleTarget(ltc));
             gateSamples++;
+            if (followStartError is null && double.IsFinite(lastError))
+            {
+                followStartPosition = position;
+                followStartLtc = ltc;
+                followStartError = lastError;
+            }
             if (lastError <= PositionToleranceSeconds)
             {
                 stable++;
@@ -274,6 +287,9 @@ public sealed class LtcScenarioE2ETests
             startGateSeconds,
             waitedSeconds = Math.Round(gateWaitedSeconds, 3),
             waitedLimitSeconds = FollowStartLimitSeconds,
+            firstPositionSeconds = followStartPosition is double firstPosition ? Math.Round(firstPosition, 3) : (double?)null,
+            firstLtcSeconds = followStartLtc is double firstLtc ? Math.Round(firstLtc, 3) : (double?)null,
+            firstErrorSeconds = JsonNumberOrNull(followStartError ?? double.NaN),
             lastErrorSeconds = JsonNumberOrNull(lastError),
             stableSamples = GateStableSamples,
             gateSamples,

@@ -202,6 +202,9 @@ internal sealed class SyncScenarioHarness
     public string TimecodeText { get; private set; } = "--:--:--:--";
     public string RealTimeText { get; private set; } = "-.--- s";
 
+    /// <summary>D37-c: 学習済みシーク所要を用意するテスト用（保留の状態を直接操作する）。</summary>
+    public ITimecodeSyncSeekState SeekState => _syncService.SeekState;
+
     public PlaylistState Playlist { get; } = new();
     public List<ScenarioPlaybackOperation> Operations { get; } = [];
     public List<ScenarioLtcDisplayState> DisplayStates { get; } = [];
