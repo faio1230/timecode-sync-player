@@ -286,7 +286,7 @@ public sealed class LtcScenarioE2ETests
             track = track.Symbol,
             startGateSeconds,
             waitedSeconds = Math.Round(gateWaitedSeconds, 3),
-            waitedLimitSeconds = FollowStartLimitSeconds,
+            waitedLimitSeconds = FollowStartLimitSecondsFromEnvironment(),
             firstPositionSeconds = followStartPosition is double firstPosition ? Math.Round(firstPosition, 3) : (double?)null,
             firstLtcSeconds = followStartLtc is double firstLtc ? Math.Round(firstLtc, 3) : (double?)null,
             firstErrorSeconds = JsonNumberOrNull(followStartError ?? double.NaN),
@@ -298,8 +298,9 @@ public sealed class LtcScenarioE2ETests
 
         // 追従開始までの時間そのものを判定する。ここを見ないと、追従開始の遅さが
         // 「ゲート待ち」に吸収されて合否に出ない（監査は追い付いた後から始まるため）。
-        gateWaitedSeconds.Should().BeLessThanOrEqualTo(FollowStartLimitSeconds,
-            $"{track.Symbol}: 追従開始まで {FollowStartLimitSeconds:F0} 秒以内" +
+        double followStartLimitSeconds = FollowStartLimitSecondsFromEnvironment();
+        gateWaitedSeconds.Should().BeLessThanOrEqualTo(followStartLimitSeconds,
+            $"{track.Symbol}: 追従開始まで {followStartLimitSeconds:F0} 秒以内" +
             $"（実測 {gateWaitedSeconds:F2}s、標本 {gateSamples} 回、採用時の最悪 {gateWorstAccepted:F3}s）");
 
         // ゲート待ちで素材を消費しているため、残りに収まる長さに監査区間を丸める。基準は
@@ -444,6 +445,15 @@ public sealed class LtcScenarioE2ETests
     /// 2 秒前後の素材で着地に 2〜3 秒かかることを見込み、両側から離れた 5 秒に置く。
     /// </summary>
     private const double FollowStartLimitSeconds = 5.0;
+
+    /// <summary>
+    /// L-1: 追従開始の上限を実行ごとに上書きする（既定は <see cref="FollowStartLimitSeconds"/>）。
+    /// 事前登録した 5 秒はそのままで、**追従開始が遅い素材の監査本体を測りたいときだけ**
+    /// 緩める。緩めた実行は l1-settle の waitedLimitSeconds にその値が残るので、
+    /// 報告を読む側が「5 秒の判定を通った回」と取り違えない。
+    /// </summary>
+    private static double FollowStartLimitSecondsFromEnvironment() =>
+        ReadPositiveDouble("TCS_L1_FOLLOW_START_LIMIT_SECONDS", FollowStartLimitSeconds);
 
     /// <summary>
     /// 保持中に「黒でない絵」を待つ上限。実素材の 4K60 はトラック切替からロード 0.42 秒 +
