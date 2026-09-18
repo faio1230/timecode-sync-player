@@ -8,7 +8,7 @@ namespace TimecodeSyncPlayer.Tests;
 /// </summary>
 public sealed class GopScanVerdictTests
 {
-    // 検証機の実測（M8 はプロダクション素材、M1〜M7 は YouTube から落としたサンプル）。
+    // 検証機の実測（M8 はプロダクション素材、M1〜M7 は GOP が不規則なダーティー素材）。
     // 出る / 出ないがこの表のとおりになることが受け入れ条件。
     [Theory]
     [InlineData("M8 production h264 4K59.94", 2438, 0.501, GopSeekQuality.Ok)]

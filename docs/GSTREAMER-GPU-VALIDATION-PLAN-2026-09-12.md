@@ -2774,7 +2774,7 @@ harness `passed`、切替 9 件に対しロード完了 10 件。
 
 | # | 内容 | 裏取り | 影響 |
 | --- | --- | --- | --- |
-| **D12** | shim の音声分岐 `audioconvert ! queue ! audioconvert ! autoaudiosink` に **audioresample が無い**。wasapi2sink（共有モード）は端末のミックスレートしか受けないので、44.1kHz の音声は not-negotiated → qtdemux が `Internal data stream error` → 全プロファイル失敗 | `tcs_gstreamer.cpp` 1653〜1660 行。検証機は `TCS_NO_AUDIO=1` で av1-gpu 200ms で成功 | **48kHz 端末で 44.1kHz 音声の素材が全滅**（yt-dlp 由来・音楽素材に多い） |
+| **D12** | shim の音声分岐 `audioconvert ! queue ! audioconvert ! autoaudiosink` に **audioresample が無い**。wasapi2sink（共有モード）は端末のミックスレートしか受けないので、44.1kHz の音声は not-negotiated → qtdemux が `Internal data stream error` → 全プロファイル失敗 | `tcs_gstreamer.cpp` 1653〜1660 行。検証機は `TCS_NO_AUDIO=1` で av1-gpu 200ms で成功 | **48kHz 端末で 44.1kHz 音声の素材が全滅**（配信向けエンコード・音楽素材に多い） |
 | **D13** | 映像分岐に **queue が無い**。demux が映像サンプルを先に出す MP4（ffmpeg 既定のトラック順）では appsink の preroll で demux スレッドが止まり、音声シンクが preroll できず 15 秒タイムアウト | 検証機: 音声 48kHz 版で再現、`-itsoffset` で音声先頭にした版は成功。`TCS_FAKE_AUDIO=1` でも停止（wasapi 起因ではない） | D12 を直しても、映像先頭の音声付き MP4 は読めない |
 | **D14** | 不一致プロファイル 1 つにつき約 6 秒待つ（bus スレッド起動前に `gst_element_get_state` 3 秒 × 2）。AV1 は av1-gpu まで 18 秒 | `tcs_gstreamer.cpp` 2277〜2283 行 | ロードの体感遅延。ライブでの切替に不利 |
 | **D15** | 同梱一覧（`package-release.ps1`）に `gstaudioresample.dll` と `gsttypefindfunctions.dll` が無く、decodebin フォールバックは `Could not determine type of stream` で常に失敗 | 一覧 17 個を親が確認。検証機の GST_DEBUG に typefind の `Internal data stream error` | 拡張子で選べない素材はすべて失敗 |

@@ -205,6 +205,9 @@ internal sealed class SyncScenarioHarness
     /// <summary>D37-c: 学習済みシーク所要を用意するテスト用（保留の状態を直接操作する）。</summary>
     public ITimecodeSyncSeekState SeekState => _syncService.SeekState;
 
+    /// <summary>D37-f: スキャンから渡すシーク所要の見積もりを、テストから直接設定する。</summary>
+    public TimecodeSyncService SyncService => _syncService;
+
     public PlaylistState Playlist { get; } = new();
     public List<ScenarioPlaybackOperation> Operations { get; } = [];
     public List<ScenarioLtcDisplayState> DisplayStates { get; } = [];
