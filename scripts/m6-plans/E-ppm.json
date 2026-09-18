@@ -1,0 +1,14 @@
+{
+  "condition": "E-ppm",
+  "ltcFps": 25,
+  "ltcFpsMode": "fixed",
+  "settlingSeconds": 2.0,
+  "gapSeconds": 0.5,
+  "levels": [
+    { "name": "clean", "seconds": 20 },
+    { "name": "ppm-minus100", "seconds": 20, "ppm": -100 },
+    { "name": "ppm-minus50", "seconds": 20, "ppm": -50 },
+    { "name": "ppm-plus50", "seconds": 20, "ppm": 50 },
+    { "name": "ppm-plus100", "seconds": 20, "ppm": 100 }
+  ]
+}
