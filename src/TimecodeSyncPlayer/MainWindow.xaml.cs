@@ -118,6 +118,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly PlaylistDragDropCoordinator _playlistDragDropCoordinator;
     // 0.4.5-C: ロング GOP 警告（表示のみ。同期の制御則には触れない）。
     private readonly LongGopWarningMonitor _longGopWarningMonitor = new();
+    /// <summary>
+    /// D37-f: 最大ギャップ 1 秒あたりのシーク所要の見積もり係数。<b>理論値ではなく調整値</b>。
+    /// 実測（検証機）: M3 は最大ギャップ 6.633 秒で所要 1.79〜2.0 秒（≒ 0.30）、
+    /// M8 は 0.501 秒で 0.31〜0.41 秒（基底が支配的）。
+    /// 長いギャップの素材で外さないことを優先して 0.3 を置いた。
+    /// </summary>
+    private const double SeekCostPerGapSecond = 0.3;
+
     // 0.4.5-C3: 読み込み時にコンテナを読んでキーフレーム分布を測る（デコードしない）。
     // 再生経路には触れない独立したパイプラインなので、ロードの状態機械に影響しない。
     private readonly GopScanCache _gopScanCache =
