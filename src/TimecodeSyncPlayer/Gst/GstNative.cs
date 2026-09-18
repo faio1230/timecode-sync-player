@@ -84,6 +84,8 @@ internal static class GstNative
     internal struct TcsGopScan
     {
         public int Keyframes;
+        /// <summary>1 = 上限で打ち切った。ギャップは下限としてしか使えない。</summary>
+        public int Truncated;
         public double DurationSec;
         public double HeadGapSec;
         public double TailGapSec;
@@ -209,7 +211,7 @@ internal static class GstNative
         // 0.4.5-C3: プレイヤー不要。コンテナを読むだけで、再生経路には触れない。
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         internal static extern int tcs_scan_gop(
-            [MarshalAs(UnmanagedType.LPUTF8Str)] string utf8Path, int timeoutMs, out TcsGopScan outScan);
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string utf8Path, int budgetMs, out TcsGopScan outScan);
 
         // ステージ 6b: 共有テクスチャリングの NT ハンドル + 共有フェンス。
         // ハンドルは shim 所有（CloseHandle 禁止）。

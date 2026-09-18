@@ -324,14 +324,19 @@ typedef struct TcsGopScan {
 
 /* Returns TCS_OK whether the scan completed or hit the budget; `truncated` says
  * which. The call blocks for the length of the scan (I/O bound: ~1.2 GB/s
- * measured), so call it off the UI thread.
+ * measured on a SATA SSD), so call it off the UI thread.
  *
- * budget_ms caps the work. Field material runs to 50GB, and all-intra ProRes
- * masters reach 200-300GB; reading those end to end would take minutes, and for
- * all-intra material the answer is obvious within the first seconds. On a
- * truncated scan the caller must treat the gaps as a LOWER bound: a long gap
- * that was found is real, but "no long gap" only covers the part that was read.
- * budget_ms <= 0 uses 10000. */
+ * The scan reads the whole file by default, because the answer must cover the
+ * whole file: a long gap can sit anywhere. Field material runs to 50GB and
+ * all-intra ProRes masters reach 200-300GB, so budget_ms exists only as a guard
+ * against pathological cases (a very slow share), not as the normal path.
+ * On a truncated scan the caller must treat the gaps as a LOWER bound: a long
+ * gap that was found is real, but "no long gap" only covers what was read.
+ * budget_ms <= 0 uses 600000 (10 minutes).
+ *
+ * The scan shares no state with any TcsPlayer, but it does compete for disk
+ * bandwidth with playback. Callers that care about playback smoothness should
+ * measure the impact on the material they actually use. */
 TCS_GST_API int tcs_scan_gop(const char* utf8_path, int32_t budget_ms, TcsGopScan* out);
 /* Convenience getters (avoid struct marshalling from .NET). */
 TCS_GST_API int tcs_player_decoder_name(TcsPlayer* player, char* out, size_t out_len);

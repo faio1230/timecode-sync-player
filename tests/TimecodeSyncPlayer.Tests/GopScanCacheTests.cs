@@ -5,7 +5,7 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class GopScanCacheTests
 {
     private static GopScanResult Result(double maxGap, int keyframes = 10) =>
-        new(keyframes, 60.0, 0.0, 0.0, maxGap, maxGap, maxGap);
+        new(keyframes, false, 60.0, 0.0, 0.0, maxGap, maxGap, maxGap);
 
     [Fact]
     public void 同じ素材を二度測らない()
