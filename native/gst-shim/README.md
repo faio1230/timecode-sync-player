@@ -127,6 +127,18 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 - `running_ns`（`gst_segment_to_running_time()`）は表示スケジューリング用に従来の意味のまま。
 - segment が無い／`GST_CLOCK_TIME_NONE` のときは生 PTS へフォールバックする。
 
+#### `tcs_player_get_time_pos_ex` とフォールバックの世代チェック（0.4.5-A）
+
+- `_ex` は位置・基準（pipeline / delivered）・世代・最新配信 PTS を 1 回の `frame_lock` で
+  同時に返す（`TcsPositionSample`）。旧 `tcs_player_get_time_pos` は従来どおり値だけを返す。
+- `gst_element_query_position` が失敗したときは最新配信フレームの stream-time PTS へ
+  フォールバックするが、**そのフレームが現在の世代のときだけ**使う
+  （`include/tcs_position_policy.h`）。シーク直後 0.3〜0.6ms はクエリが失敗し、最新配信が
+  旧世代のままなので、その PTS は返さず `TCS_ERR_NOT_LOADED`（位置なし）を返す。
+- 出力トレース有効時は受理したフォールバックを flags bit 4 の `gst.positionFallback`、
+  旧世代で弾いた回を bit 5 の `gst.positionFallbackRejected` として記録する
+  （`events.jsonl` の stage 行数で数えられる）。
+
 ### 保持枚数と破棄規則
 
 - 未配信キューは容量 4。GPU 経路は最大 3 アイテムが共有リング slot（3 枚のいずれか）を
