@@ -333,14 +333,43 @@ internal sealed class GstPlaybackApi : IPlaybackApi
     private static bool _scanGopUnavailable;
 
     /// <summary>素材のキーフレーム分布を測る。測れなければ null。</summary>
-    public static GopScanResult? ScanGop(string path, int timeoutMs = 30000)
+    /// <remarks>
+    /// 所要はファイルの大きさにほぼ比例する。実測: 928MB で 0.27 秒、13.7GB で 11.1 秒
+    /// （検証機、SATA SSD）。上限は 60 秒にしてある——13.7GB の 5 倍強の余裕があり、
+    /// より遅いストレージでも届きにくい。**失敗・時間切れは必ずログに残す**。
+    /// 黙って「判定しない」に落ちると、警告が出ない理由が「短い GOP だから」なのか
+    /// 「スキャンが終わっていないから」なのか区別できない（検証機が実際に誤解した）。
+    /// </remarks>
+    public static GopScanResult? ScanGop(string path, int timeoutMs = 60000)
     {
         if (string.IsNullOrEmpty(path)) return null;
         if (_scanGopUnavailable) return null;
         try
         {
-            if (GstNative.Imports.tcs_scan_gop(path, timeoutMs, out GstNative.TcsGopScan n) != 0)
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int rc = GstNative.Imports.tcs_scan_gop(path, timeoutMs, out GstNative.TcsGopScan n);
+            sw.Stop();
+            if (rc != 0)
+            {
+                Log.Warning(
+                    "GOP scan failed: rc={Rc} elapsedMs={Elapsed} timeoutMs={Timeout} path={Path}",
+                    rc, sw.ElapsedMilliseconds, timeoutMs, path);
                 return null;
+            }
+            if (n.Keyframes < 2)
+            {
+                // キーフレームが取れない素材（実測: AV1 でパーサが DELTA_UNIT を立てない）。
+                // 判定にもヒントにも使えないが、「測ったが使えなかった」ことは残す。
+                Log.Warning(
+                    "GOP scan unusable: keyframes={Keyframes} durationSec={Duration:F1} elapsedMs={Elapsed} path={Path}",
+                    n.Keyframes, n.DurationSec, sw.ElapsedMilliseconds, path);
+            }
+            else
+            {
+                Log.Information(
+                    "GOP scan: keyframes={Keyframes} maxGapMs={Max:F0} elapsedMs={Elapsed} path={Path}",
+                    n.Keyframes, n.MaxGapSec * 1000.0, sw.ElapsedMilliseconds, path);
+            }
             return new GopScanResult(
                 n.Keyframes, n.DurationSec, n.HeadGapSec, n.TailGapSec,
                 n.MedianGapSec, n.P95GapSec, n.MaxGapSec);
