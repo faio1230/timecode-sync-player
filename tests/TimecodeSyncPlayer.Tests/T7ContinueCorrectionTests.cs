@@ -413,10 +413,24 @@ public class T7ContinueCorrectionTests
         var track = Track();
         var recorder = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 0.0) };
 
-        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 1.0), 1.0);
+        // D37-b: シーク 1 回の実測所要（未学習は 1.0 秒）を超える不足ではシークを出す。
+        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 2.0), 2.0);
 
         frame.CorrectionAllowed.Should().BeFalse();
         frame.CorrectionBlockedReason.Should().Be("seek-issued");
+    }
+
+    [Fact]
+    public void FrameContext_DeficitWithinSeekCost_AllowsCorrection()
+    {
+        // D37-b: 実測所要以内の不足はシークではなく速度補正に任せる（補正は評価してよい）。
+        var track = Track();
+        var recorder = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 0.0) };
+
+        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 0.5), 0.5);
+
+        frame.CorrectionAllowed.Should().BeTrue();
+        frame.Request.Should().Be(SyncRequestResult.Complete);
     }
 
     [Fact]

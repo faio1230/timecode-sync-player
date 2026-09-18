@@ -130,4 +130,44 @@ public class TimecodeSyncSeekStateTests
         state.HasPendingSeek.Should().BeTrue();
         state.TargetSeconds.Should().Be(10.0);
     }
+
+    // ---- D37-b: シークの着地時間の学習 ----
+
+    [Fact]
+    public void SettledSeek_LearnsTheLandingDuration()
+    {
+        var state = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        DateTime now = new DateTime(2026, 9, 18, 0, 0, 0, DateTimeKind.Utc);
+        state.LearnedSeekDurationSeconds.Should().BeNull("未学習の間は保守的な既定値を使う");
+
+        state.BeginSeek(10.0, now);
+        // t=500ms: 目標に到達（クールダウン開始）。学習は到達時刻までで数える。
+        state.ShouldSuppressSeek(10.05, toleranceSeconds: 0.1, now.AddMilliseconds(500));
+        // t=800ms: セトル確定。
+        state.ShouldSuppressSeek(10.05, toleranceSeconds: 0.1, now.AddMilliseconds(800));
+
+        state.LearnedSeekDurationSeconds.Should().BeApproximately(0.5, 1e-9);
+
+        state.ResetLearning();
+        state.LearnedSeekDurationSeconds.Should().BeNull();
+    }
+
+    [Fact]
+    public void SettledSeek_SecondSampleUsesMovingAverage()
+    {
+        var state = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        DateTime now = new DateTime(2026, 9, 18, 0, 0, 0, DateTimeKind.Utc);
+
+        state.BeginSeek(10.0, now);
+        state.ShouldSuppressSeek(10.05, 0.1, now.AddMilliseconds(500));
+        state.ShouldSuppressSeek(10.05, 0.1, now.AddMilliseconds(800));
+
+        DateTime second = now.AddSeconds(2);
+        state.BeginSeek(20.0, second);
+        state.ShouldSuppressSeek(20.05, 0.1, second.AddMilliseconds(1500));
+        state.ShouldSuppressSeek(20.05, 0.1, second.AddMilliseconds(1800));
+
+        // 0.5 * 0.7 + 1.5 * 0.3 = 0.8
+        state.LearnedSeekDurationSeconds.Should().BeApproximately(0.8, 1e-9);
+    }
 }
