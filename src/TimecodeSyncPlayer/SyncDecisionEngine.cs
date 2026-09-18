@@ -17,6 +17,11 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     // この 1 回だけ瞬間値で判定する（ResetSeekGate では戻さない。シーク後・ロード後まで
     // 例外を広げると、位置が飛んだ直後の 1 サンプルで連鎖が始まる）。
     private bool _gateWarmed;
+    // D37-b: シーク 1 回の実測所要（サービスが学習値を公開する。0 は未設定 = 速度補正優先なし）。
+    private double _rateCatchUpLimitSeconds;
+    private bool _rateCatchUpActive;
+    private double _rateCatchUpStartAbsSeconds;
+    private double _rateCatchUpStartedAtSeconds;
 
     public SyncDecisionEngine()
         : this(new SyncDecisionOptions(), null)
@@ -52,6 +57,21 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         _seekGate.Reset();
         _rejectedSampleLogged = false;
         _gatedSeekLogged = false;
+        ClearRateCatchUp();
+    }
+
+    /// <summary>D37-b: シーク 1 回の実測所要を公開する（0 以下は「速度補正優先なし」）。</summary>
+    public void UpdateSeekCostSeconds(double seconds)
+    {
+        _rateCatchUpLimitSeconds = double.IsFinite(seconds) && seconds > 0 ? seconds : 0.0;
+    }
+
+    /// <summary>D37-b: 位置を信用できないフレームの決定（粗い判定は評価しない）。</summary>
+    public SyncDecision WhilePositionUntrusted(SyncPlaybackState state)
+    {
+        SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
+        double toleranceSeconds = ToleranceSeconds(fps.VideoFps, fps.TimecodeFps, _options.ToleranceFrames);
+        return SyncDecision.Untrusted(fps, toleranceSeconds);
     }
 
     public SyncDecision Decide(double ltcSeconds, SyncPlaybackState state)
@@ -111,10 +131,23 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 
         if (Math.Abs(delta) <= toleranceSeconds)
         {
+            EndRateCatchUp(escalated: false, Math.Abs(delta));
             if (traceEnabled)
                 RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "within-tolerance");
             return SyncDecision.NoneWith(fps, toleranceSeconds);
         }
+
+        // D37-b: 実在の不足は、シーク 1 回の実測所要（未学習は 1.0 秒）以内ならシークを出さず
+        // 速度補正に任せる。絵を止めずに 93ms/秒（着地窓は 200ms/秒）で詰める。
+        double absDelta = Math.Abs(delta);
+        if (_rateCatchUpLimitSeconds > 0 && absDelta <= _rateCatchUpLimitSeconds)
+        {
+            BeginOrContinueRateCatchUp(absDelta);
+            if (traceEnabled)
+                RecordEvaluate(ltcSeconds, state, toleranceSeconds, delta, "rate-catch-up", GateDetail(gate));
+            return SyncDecision.NoneWith(fps, toleranceSeconds, rateCatchUp: true);
+        }
+
         if (!gate.ShouldSeek && !gateWasCold)
         {
             LogGatedSeek(gate, toleranceSeconds);
@@ -123,6 +156,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             return SyncDecision.NoneWith(fps, toleranceSeconds, gateDeferred: true);
         }
         _gatedSeekLogged = false;
+        EndRateCatchUp(escalated: true, absDelta);
 
         // 行き先だけを先行補償する。シーク可否（delta と tolerance）は補償前の値で判定する。
         // 補償後もトラックの範囲（D29）へ収める。
@@ -187,6 +221,47 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             "Seek decision gate: rejected unstable sample deltaMs={DeltaMs:F1} previousMs={PreviousMs:F1} changeMs={ChangeMs:F1} allowedMs={AllowedMs:F1} dtMs={DtMs:F1} rejectedTotal={RejectedTotal}",
             gate.DeltaSeconds * 1000.0, gate.PreviousDeltaSeconds * 1000.0, gate.ChangeSeconds * 1000.0,
             gate.AllowedChangeSeconds * 1000.0, gate.DtSeconds * 1000.0, gate.RejectedTotal);
+    }
+
+    /// <summary>D37-b: 速度補正で詰め始めたことを 1 回だけ残す。</summary>
+    private void BeginOrContinueRateCatchUp(double absDeltaSeconds)
+    {
+        if (_rateCatchUpActive)
+            return;
+        _rateCatchUpActive = true;
+        _rateCatchUpStartAbsSeconds = absDeltaSeconds;
+        _rateCatchUpStartedAtSeconds = _clockSeconds();
+        Log.Information(
+            "Timecode sync: rate catch-up preferred deltaMs={DeltaMs:F1} limitMs={LimitMs:F1}",
+            absDeltaSeconds * 1000.0, _rateCatchUpLimitSeconds * 1000.0);
+    }
+
+    /// <summary>
+    /// D37-b: 速度補正での詰めを終える。settled は何秒かけて何 ms 詰めたかを残す（escalated は
+    /// シークへ切り替えたことを残す）。
+    /// </summary>
+    private void EndRateCatchUp(bool escalated, double currentAbsSeconds)
+    {
+        if (!_rateCatchUpActive)
+            return;
+        double startAbs = _rateCatchUpStartAbsSeconds;
+        double elapsed = _clockSeconds() - _rateCatchUpStartedAtSeconds;
+        ClearRateCatchUp();
+        if (escalated)
+        {
+            Log.Information("Timecode sync: rate catch-up escalated to seek deltaMs={DeltaMs:F1}", currentAbsSeconds * 1000.0);
+            return;
+        }
+        Log.Information(
+            "Timecode sync: rate catch-up settled recoveredMs={RecoveredMs:F1} elapsedSeconds={ElapsedSeconds:F1}",
+            Math.Max(0.0, startAbs - currentAbsSeconds) * 1000.0, elapsed);
+    }
+
+    private void ClearRateCatchUp()
+    {
+        _rateCatchUpActive = false;
+        _rateCatchUpStartAbsSeconds = 0.0;
+        _rateCatchUpStartedAtSeconds = 0.0;
     }
 
     /// <summary>D37-a: 瞬間値では超えているがゲートが抑えたことを、抑えの切れ目に 1 回だけ残す。</summary>
@@ -303,7 +378,11 @@ public sealed record SyncDecision(
     bool UsedDefaultTimecodeFps,
     // D37-a: ゲートが Seek を保留した（瞬間値では許容を超えるが、窓が埋まるまで待つ）。
     // Action は None のままだが、呼び出し側は要求を Deferred のまま維持し、次の評価で再試行する。
-    bool GateDeferred = false)
+    bool GateDeferred = false,
+    // D37-b: 不足がシーク 1 回の実測所要以内なので、シークではなく速度補正に任せる。
+    bool RateCatchUpPreferred = false,
+    // D37-b: シーク中・着地未確認のため、このフレームの位置を使った判定をしてはいけない。
+    bool PositionUntrusted = false)
 {
     public static SyncDecision None { get; } = new(
         SyncActionType.None,
@@ -316,7 +395,7 @@ public sealed record SyncDecision(
         false);
 
     public static SyncDecision NoneWith(SyncFpsResolution fps, double toleranceSeconds,
-        bool gateDeferred = false) => new(
+        bool gateDeferred = false, bool rateCatchUp = false) => new(
         SyncActionType.None,
         0.0,
         0.0,
@@ -325,7 +404,25 @@ public sealed record SyncDecision(
         fps.TimecodeFps,
         fps.UsedDefaultVideoFps,
         fps.UsedDefaultTimecodeFps,
-        gateDeferred);
+        gateDeferred,
+        rateCatchUp);
+
+    /// <summary>
+    /// D37-b: 位置を信用できないフレーム（シークの保留中・時間切れ後の再確認中）。
+    /// 粗い判定も補正も評価せず、要求は Deferred のまま維持する。
+    /// </summary>
+    public static SyncDecision Untrusted(SyncFpsResolution fps, double toleranceSeconds) => new(
+        SyncActionType.None,
+        0.0,
+        0.0,
+        toleranceSeconds,
+        fps.VideoFps,
+        fps.TimecodeFps,
+        fps.UsedDefaultVideoFps,
+        fps.UsedDefaultTimecodeFps,
+        GateDeferred: false,
+        RateCatchUpPreferred: false,
+        PositionUntrusted: true);
 }
 
 public sealed record SyncFpsResolution(
