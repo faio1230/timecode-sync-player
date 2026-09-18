@@ -8,6 +8,10 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 
 - Output traces now record the age breakdown from the LTC sample end to the sync evaluation (Dispatcher enqueue, queue wait, UI processing) when the accuracy trace is enabled (M1). Behaviour is unchanged.
 
+### Improved
+
+- On heavy media (4K60 long-GOP), the wait before sync starts following dropped from around 9 seconds to about 2. The initial offset used to be closed by seeking, which chained; it is now closed by rate correction.
+
 ### Fixed
 
 - Fixed correction seeks firing on momentary measurement jitter: the coarse decision now uses a recent median with a consecutive-exceedance gate and rejects physically impossible spikes (D37-a). On heavy media (4K60 long-GOP) this removes the seek chain and the associated freezes of up to 1.8 seconds.
