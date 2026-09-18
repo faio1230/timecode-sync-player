@@ -1089,7 +1089,7 @@ internal sealed class LtcSyncController
         if (!gapDisplayOnly && _followStartPending)
         {
             _followStartPending = false;
-            _syncService.NotifyLanding();
+            _syncService.NotifyLanding(LandingOrigin.FollowStart);
             Log.Information("Timecode sync: follow start landing window opened ltc={Ltc:F3}", seconds);
         }
         if (state.Mode != SyncMode.Continue)

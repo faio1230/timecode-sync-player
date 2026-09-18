@@ -616,6 +616,52 @@ public class SyncDecisionEngineTests
         decision.RateCatchUpPreferred.Should().BeTrue();
     }
 
+    // ---- D37-e: 追従開始のシークは LTC + 学習済みシーク所要を狙う ----
+
+    [Fact]
+    public void Decide_WithSeekTargetLookahead_UsesLtcPlusLookahead()
+    {
+        // 検証機 M3: LTC 7.368 を狙って 1.83 秒後に着地すると LTC は 9.42。
+        // 最初から 7.368 + 1.87 を狙えば着地時の誤差は 0.2 秒程度になる。
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
+        var state = new SyncPlaybackState(
+            SyncEnabled: true,
+            HasCurrentTrack: true,
+            IsSeeking: false,
+            PlaybackSeconds: 4.711,
+            DurationSeconds: 20.0,
+            VideoFps: 30.0,
+            TimecodeFps: 30.0,
+            SeekTargetLookaheadSeconds: 1.87);
+
+        SyncDecision decision = engine.Decide(7.368, state); // delta 2.657 > tolerance
+
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().BeApproximately(9.238, 1e-9,
+            "着地までに LTC が進むぶんを先に狙う（上限なし）");
+    }
+
+    [Fact]
+    public void Decide_WithSeekTargetLookahead_ClampsToClipEnd()
+    {
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
+        var state = new SyncPlaybackState(
+            SyncEnabled: true,
+            HasCurrentTrack: true,
+            IsSeeking: false,
+            PlaybackSeconds: 8.0,
+            DurationSeconds: 20.0,
+            VideoFps: 30.0,
+            TimecodeFps: 30.0,
+            MediaOutSeconds: 10.0,
+            SeekTargetLookaheadSeconds: 1.87);
+
+        SyncDecision decision = engine.Decide(9.5, state); // 9.5 + 1.87 = 11.37
+
+        decision.TargetSeconds.Should().BeApproximately(10.0, 1e-9,
+            "行き過ぎてもクリップ終端は越えない（D29 の範囲クランプ）");
+    }
+
     [Fact]
     public void Decide_DeficitBeyondSeekCost_Seeks()
     {

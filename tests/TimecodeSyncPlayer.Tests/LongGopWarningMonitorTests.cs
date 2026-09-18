@@ -8,10 +8,10 @@ public class LongGopWarningMonitorTests
     private static GopStatus Status(
         int state,
         bool active = true,
-        double maxIntervalSeconds = 0,
+        double medianIntervalSeconds = 0,
         double pendingSeconds = 0,
-        double thresholdSeconds = 3.0) =>
-        new(state, active, 0, maxIntervalSeconds, pendingSeconds, thresholdSeconds, 0);
+        double thresholdSeconds = 2.0) =>
+        new(state, active, 0, medianIntervalSeconds, pendingSeconds, thresholdSeconds, 0);
 
     [Fact]
     public void Observe_WithoutStatus_DoesNotWarn()
@@ -32,7 +32,7 @@ public class LongGopWarningMonitorTests
 
         for (int i = 0; i < 20; i++)
         {
-            monitor.Observe(track, Status(LongGopWarningMonitor.StateMeasuring, maxIntervalSeconds: 1.0),
+            monitor.Observe(track, Status(LongGopWarningMonitor.StateMeasuring, medianIntervalSeconds: 1.0),
                 trackAlreadyMarked: false).Should().Be(LongGopWarningTransition.None);
         }
 
@@ -70,11 +70,11 @@ public class LongGopWarningMonitorTests
             trackAlreadyMarked: false).Should().Be(LongGopWarningTransition.Latch);
         monitor.MeasuredSeconds.Should().Be(0, "未確定のうちは 0");
 
-        monitor.Observe(track, Status(LongGopWarningMonitor.StateWarning, maxIntervalSeconds: 10.1),
+        monitor.Observe(track, Status(LongGopWarningMonitor.StateWarning, medianIntervalSeconds: 10.1),
             trackAlreadyMarked: false).Should().Be(LongGopWarningTransition.IntervalUpdated);
         monitor.MeasuredSeconds.Should().Be(10.1);
 
-        monitor.Observe(track, Status(LongGopWarningMonitor.StateWarning, maxIntervalSeconds: 10.1),
+        monitor.Observe(track, Status(LongGopWarningMonitor.StateWarning, medianIntervalSeconds: 10.1),
             trackAlreadyMarked: false).Should().Be(LongGopWarningTransition.None);
     }
 
@@ -84,7 +84,7 @@ public class LongGopWarningMonitorTests
         var monitor = new LongGopWarningMonitor();
         Guid track = Guid.NewGuid();
 
-        monitor.Observe(track, Status(LongGopWarningMonitor.StateWarning, maxIntervalSeconds: 10.1),
+        monitor.Observe(track, Status(LongGopWarningMonitor.StateWarning, medianIntervalSeconds: 10.1),
             trackAlreadyMarked: false).Should().Be(LongGopWarningTransition.Latch);
         monitor.MeasuredSeconds.Should().Be(10.1);
         monitor.IsWarningActive.Should().BeTrue();
@@ -101,7 +101,7 @@ public class LongGopWarningMonitorTests
         monitor.IsWarningActive.Should().BeTrue("プレイリストの印で即表示");
         monitor.MeasuredSeconds.Should().Be(0);
 
-        monitor.Observe(track, Status(LongGopWarningMonitor.StateWarning, maxIntervalSeconds: 10.1),
+        monitor.Observe(track, Status(LongGopWarningMonitor.StateWarning, medianIntervalSeconds: 10.1),
             trackAlreadyMarked: true).Should().Be(LongGopWarningTransition.IntervalUpdated);
     }
 
@@ -112,7 +112,7 @@ public class LongGopWarningMonitorTests
         Guid first = Guid.NewGuid();
         Guid second = Guid.NewGuid();
 
-        monitor.Observe(first, Status(LongGopWarningMonitor.StateWarning, maxIntervalSeconds: 10.1),
+        monitor.Observe(first, Status(LongGopWarningMonitor.StateWarning, medianIntervalSeconds: 10.1),
             trackAlreadyMarked: false).Should().Be(LongGopWarningTransition.Latch);
         monitor.IsWarningActive.Should().BeTrue();
 
@@ -154,11 +154,11 @@ public class LongGopWarningMonitorTests
     }
 
     [Fact]
-    public void Messages_FormatIncludesMeasuredSecondsOnlyWhenKnown()
+    public void Messages_FormatIncludesMeasuredMedianOnlyWhenKnown()
     {
         LongGopWarningMessages.Format(0)
             .Should().Be(LongGopWarningMessages.Recommendation);
-        LongGopWarningMessages.Format(10.1)
-            .Should().Be(LongGopWarningMessages.Recommendation + "（実測 10.1 秒）");
+        LongGopWarningMessages.Format(5.1)
+            .Should().Be(LongGopWarningMessages.Recommendation + "（キーフレーム間隔 約 5.1 秒）");
     }
 }
