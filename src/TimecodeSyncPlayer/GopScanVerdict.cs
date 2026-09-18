@@ -37,8 +37,13 @@ internal static class GopScanVerdict
         double warningSeconds = DefaultWarningSeconds,
         double errorSeconds = DefaultErrorSeconds)
     {
-        // キーフレームが取れていない素材は判定しない。誤検出より無検出が安全。
-        if (keyframes <= 0 || !double.IsFinite(maxGapSeconds) || maxGapSeconds <= 0)
+        // キーフレームが 2 枚未満なら判定しない。誤検出より無検出が安全。
+        //
+        // 1 枚しか取れないのは「本当に 1 枚」か「パーサがキーフレームを立てていない」かの
+        // どちらかで、区別できない。実測（検証機）: AV1 3 本で 1 枚と出て、最大ギャップが
+        // 尺そのもの（181〜251 秒）になった。ProRes・H.264・VP9 は ffprobe と完全一致。
+        // この値はシークの行き先の見積もりにも使うので、誤ると数十秒先へ飛ぶ。
+        if (keyframes < 2 || !double.IsFinite(maxGapSeconds) || maxGapSeconds <= 0)
             return GopSeekQuality.Unknown;
         if (maxGapSeconds > errorSeconds) return GopSeekQuality.Error;
         if (maxGapSeconds > warningSeconds) return GopSeekQuality.Warning;

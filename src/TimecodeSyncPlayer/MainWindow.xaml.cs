@@ -126,6 +126,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// </summary>
     private const double SeekCostPerGapSecond = 0.3;
 
+    /// <summary>
+    /// D37-f: シーク所要の見積もりの上限。スキャンが壊れた値を返しても、行き先が
+    /// 壊れないようにするための歯止め。実測で最も遅い素材でも 2 秒台なので 5 秒で足りる。
+    /// </summary>
+    private const double MaxSeekCostHintSeconds = 5.0;
+
     // 0.4.5-C3: 読み込み時にコンテナを読んでキーフレーム分布を測る（デコードしない）。
     // 再生経路には触れない独立したパイプラインなので、ロードの状態機械に影響しない。
     private readonly GopScanCache _gopScanCache =
@@ -1272,9 +1278,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // D37-f: シーク所要の見積もりを同期へ渡す。ロード直後の 1 回目のシークには学習値が
         // 無く（ロードで学習を捨てるため）、D37-e の先行補償が 0 になっていた。所要は
         // キーフレームからの距離にほぼ比例する（実測: 距離 0 で 244ms、6.6 秒先で 2,164ms）。
-        if (scan is { Keyframes: > 0 } hintScan)
+        // キーフレーム 2 枚未満はスキャンが信用できない（パーサ次第で 1 枚しか立たない素材がある）。
+        // この値はシークの行き先に足すので、誤ると数十秒先へ飛ぶ。渡さない方が安全。
+        if (scan is { Keyframes: >= 2 } hintScan)
         {
-            double hint = hintScan.MaxGapSeconds * SeekCostPerGapSecond;
+            // 上限を付ける。スキャンが壊れても行き先が壊れないようにするための歯止め。
+            double hint = Math.Min(
+                hintScan.MaxGapSeconds * SeekCostPerGapSecond, MaxSeekCostHintSeconds);
             _syncService.SetSeekCostHintSeconds(hint);
             Log.Information(
                 "Seek cost hint: track={Track} maxGapMs={Max:F0} hintMs={Hint:F0} keyframes={Keyframes}",
