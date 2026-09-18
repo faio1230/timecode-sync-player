@@ -138,6 +138,7 @@ public sealed class LtcHeldValueChangeTests
         clock.Advance(TimeSpan.FromSeconds(1.2));
 
         h.SupplyHeldLtc(8.0);
+        h.Tick100Milliseconds(3);   // D37-a: ゲートの窓（3 サンプル）が開くまで保留を再送する
         List<LogEvent> events = capture.Snapshot();
         events.Count(e => IsApplyOnceWithReason(e, "held value change"))
             .Should().Be(1, "保持値の変化で 1 回だけ適用する");

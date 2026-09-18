@@ -112,6 +112,8 @@ public sealed class TimecodeSyncService
         _lastSyncSeekAt = now;
         _latencyCompensator.MarkSeekSent();
         _seekState.BeginSeek(targetSeconds, now);
+        // D37-a: シーク後は位置が飛ぶため、粗い判定のゲート履歴を切る。
+        _engine.ResetSeekGate();
         SeekIssued?.Invoke();
     }
 
@@ -137,6 +139,8 @@ public sealed class TimecodeSyncService
         _fileLoadStartedRenderedFrames = Math.Max(0, renderedFrameCount);
         _lastSyncSeekAt = now;                // デバウンスを更新（2.3 fix）
         _seekState.Clear();                    // 古い保留シーク状態をクリア（2.1 fix）
+        // D37-a: ロードで位置が飛ぶため、粗い判定のゲート履歴を切る。
+        _engine.ResetSeekGate();
     }
 
     /// <summary>
@@ -180,6 +184,8 @@ public sealed class TimecodeSyncService
     public void ClearSeekState()
     {
         _seekState.Clear();
+        // D37-a: 保留の破棄・手動移動の後はゲートの系列を切る。
+        _engine.ResetSeekGate();
     }
 
     /// <summary>

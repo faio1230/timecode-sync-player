@@ -5,7 +5,9 @@ public enum ContinueSyncSeekSkipReason
     None,
     NoSeekDecision,
     Suppressed,
-    Debounced
+    Debounced,
+    // D37-a: 粗い判定のゲートが Seek を保留している（要求は Deferred のまま維持する）。
+    GateDeferred
 }
 
 public sealed record ContinueSyncSeekPlan(
@@ -20,6 +22,9 @@ public static class ContinueSyncSeekPlanner
 {
     public static ContinueSyncSeekPlan Decide(SyncDecision decision, bool suppressSeek, bool isDebounced)
     {
+        if (decision.GateDeferred)
+            return ContinueSyncSeekPlan.Skip(ContinueSyncSeekSkipReason.GateDeferred);
+
         if (decision.Action != SyncActionType.Seek)
             return ContinueSyncSeekPlan.Skip(ContinueSyncSeekSkipReason.NoSeekDecision);
 

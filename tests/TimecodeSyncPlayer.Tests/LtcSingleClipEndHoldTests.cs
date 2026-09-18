@@ -141,6 +141,7 @@ public sealed class LtcSingleClipEndHoldTests
 
         clock.Advance(TimeSpan.FromSeconds(1));   // デバウンス窓を明ける
         h.SupplyHeldLtc(10.0);   // 10 保持 → 解除 → pending に抑止されず 10 へ
+        Tick(h, clock, 3);       // D37-a: 粗い判定のゲート（3 サンプル）が開くまで保留を再送する
 
         h.Operations.Should().Contain(o => o.Name == "clip-end-release");
         SeekTargets(h).Should().Equal(new[] { 10.0 }, "解除後は新しい範囲内 LTC へ 1 回だけ着地する");
