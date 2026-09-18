@@ -1,6 +1,7 @@
 # AGENTS.md
 
-LTC に同期して動画を再生する Windows WPF アプリ（.NET 8 / x64）。mpv で再生し、Spout2 へ映像を出力する。
+LTC に同期して動画を再生する Windows WPF アプリ（.NET 8 / x64）。GStreamer で復号し、
+D3D11 で合成して全画面と Spout2 へ出力する。
 
 ## 作業の基本
 
