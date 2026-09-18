@@ -1358,6 +1358,27 @@ internal sealed class OutputEngine : IDisposable
             pending.Acquired?.Release();
             if (pending.Lease != null)
             {
+                // D38: D28（完了待ちの期限切れで資源を保留）と I1/D25-b（リング fence 未完了の
+                // リースを保持して次 tick で同じフレームを描く）の合流点。
+                //
+                // 保持中のリース（pendingFenceLease）を持つ tick で完了待ちが期限切れになると、
+                // <b>同じリース実体が pendingWrites にも入る</b>（ComposeTick は holdLease を見ずに
+                // 保留へ移す）。ここで破棄すると pendingFenceLease が破棄済みを指したままになり、
+                // 次に fence が完了した tick で DrawRingLease がそれを返し、BeginGpuUse が
+                // 「Lease is returned or already in GPU use.」を投げる。例外は ComposeTick →
+                // Loop → Run まで抜けて<b>GPU ワーカーのループごと終了し、映像が出なくなる</b>
+                // （検証機で実測。198 本中 1 本、40 秒間まったく復帰しなかった）。
+                //
+                // 所有権はこちらに移すので、破棄の前に保持側の参照を落とす。
+                // ReleasePendingFenceLease は使わない（あちらも Dispose するので二重破棄になる）。
+                if (ReferenceEquals(pending.Lease, pendingFenceLease))
+                {
+                    settings.Trace.Record(new("compose.fencePending", "GPU", Stopwatch.GetTimestamp(), 0,
+                        pendingFenceSequence, 0, Detail: "release:deferredDiscarded", Value: 0));
+                    pendingFenceLease = null;
+                    pendingFenceSequence = 0;
+                    pendingFenceSinceQpc = 0;
+                }
                 pending.Lease.CompleteGpuUse();
                 pending.Lease.Dispose();
             }
