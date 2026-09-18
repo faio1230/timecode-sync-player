@@ -463,4 +463,64 @@ public class ContinueOnTrackCoordinatorTests
         rec.SeekTargets.Should().ContainSingle().Which.Should().Be(100.0);
         service.SeekState.HasPendingSeek.Should().BeFalse();
     }
+
+    // ---- D37-b2: 着地直後は速度補正に任せずシークで詰める ----
+
+    private static (SyncDecisionEngine Engine, TimecodeSyncService Service, ManualTimeProvider Clock)
+        CreateServiceWithSimulatedEngineClock()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 18, 0, 0, 0, TimeSpan.Zero));
+        var engine = new SyncDecisionEngine(new SyncDecisionOptions(), null,
+            () => clock.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0);
+        var service = new TimecodeSyncService(engine, new TimecodeSyncSeekState(), clock);
+        return (engine, service, clock);
+    }
+
+    [Fact]
+    public void GapExitLanding_SubsequentDeficit_SeeksInsteadOfRateCatchUp()
+    {
+        (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
+        var track = CreateTrack(Guid.NewGuid());
+        var rec = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 10.0) };
+        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
+
+        // 定常で 1 サンプル（許容内）を消費し、起動直後の例外を使い切る。
+        coordinator.Handle(OnTrack(track, 10.0), 10.0);
+        // ギャップ出口: mediaPos 10.0 へ直接シークしてギャップを抜ける。
+        rec.GapExit = GapExitActionType.ResumePlayback;
+        coordinator.Handle(OnTrack(track, 10.0), 10.0);
+        rec.SeekTargets.Should().Equal(10.0);
+
+        // 出口直後の不足 0.5 秒（着地窓の中）→ 速度補正に回さずシークで着地する。
+        rec.GapExit = GapExitActionType.None;
+        rec.TimePos = (0, 9.7);
+        for (int i = 0; i < 4; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            coordinator.Handle(OnTrack(track, 10.2), 10.2);
+        }
+
+        rec.SeekTargets.Should().Equal(10.0, 10.2);
+    }
+
+    [Fact]
+    public void SteadyDeficit_WithinSeekCost_UsesRateCatchUp()
+    {
+        (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
+        var track = CreateTrack(Guid.NewGuid());
+        var rec = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 10.0) };
+        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
+
+        // 定常で 1 サンプル（許容内）を消費し、起動直後の例外を使い切る。
+        coordinator.Handle(OnTrack(track, 10.0), 10.0);
+        // 定常中の同じ大きさの不足 0.5 秒 → シークを出さず速度補正に任せる。
+        rec.TimePos = (0, 9.7);
+        for (int i = 0; i < 4; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            coordinator.Handle(OnTrack(track, 10.2), 10.2);
+        }
+
+        rec.SeekTargets.Should().BeEmpty();
+    }
 }

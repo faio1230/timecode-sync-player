@@ -10,6 +10,9 @@ public sealed class TimecodeSyncService
     private readonly PlaybackPositionTrust _positionTrust = new();
     private TimecodeSyncSeekPendingStatus _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
     private double _publishedSeekCostSeconds = double.NaN;
+    // D37-b2: ギャップ明け・トラック切替の着地直後は、速度補正優先をやめてシークで着地させる。
+    private DateTime _seekLandingAt = DateTime.MinValue;
+    private static readonly TimeSpan SeekLandingWindow = TimeSpan.FromSeconds(1.0);
 
     private DateTime _lastSyncSeekAt = DateTime.MinValue;
     private volatile bool _isLoadingFile;
@@ -75,13 +78,28 @@ public sealed class TimecodeSyncService
             return _engine.WhilePositionUntrusted(state);
         }
 
-        SyncDecision decision = _engine.Decide(ltcSeconds, state);
-        LogDecisionIfNeeded(decision, ltcSeconds, state.PlaybackSeconds);
+        // D37-b2: 着地直後（ギャップ明け・トラック切替）は速度補正に任せず、シークで着地させる。
+        SyncPlaybackState effectiveState = IsSeekLandingWindowActive()
+            ? state with { RateCatchUpAllowed = false }
+            : state;
+        SyncDecision decision = _engine.Decide(ltcSeconds, effectiveState);
+        LogDecisionIfNeeded(decision, ltcSeconds, effectiveState.PlaybackSeconds);
         return decision;
     }
 
     /// <summary>D37-b: いま再生位置を粗い判定・補正に使えるか。</summary>
     public bool IsPlaybackPositionUsable => _positionTrust.IsTrusted;
+
+    /// <summary>
+    /// D37-b2: ギャップ明け・トラック切替の着地を通知する。着地から
+    /// <see cref="SeekLandingWindow"/> の間は速度補正優先を止める（画面が黒／フリーズで
+    /// シークによる静止が見えず、ずれた内容が流れ続ける方が目立つため）。
+    /// </summary>
+    public void NotifyLanding() => _seekLandingAt = _timeProvider.GetUtcNow().UtcDateTime;
+
+    private bool IsSeekLandingWindowActive() =>
+        _seekLandingAt != DateTime.MinValue &&
+        _timeProvider.GetUtcNow().UtcDateTime - _seekLandingAt < SeekLandingWindow;
 
     public bool IsLoadingFile => _isLoadingFile;
 
@@ -169,6 +187,8 @@ public sealed class TimecodeSyncService
         _publishedSeekCostSeconds = double.NaN;
         _positionTrust.Reset();
         _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
+        // D37-b2: ロード（切替）も着地として扱い、直後の不足はシークで詰める。
+        NotifyLanding();
     }
 
     /// <summary>
@@ -204,6 +224,7 @@ public sealed class TimecodeSyncService
         _fileLoadReleasePending = true;
         _fileLoadReleasedAt = now;
         _lastSyncSeekAt = now;                // ロード後デバウンスを再スタート
+        _seekLandingAt = now;                 // D37-b2: ロード成立が実際の着地
         if (reason != "progress")
             Serilog.Log.Information("Timecode sync: file load released ({Reason})", reason);
         return true;

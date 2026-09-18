@@ -139,8 +139,10 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 
         // D37-b: 実在の不足は、シーク 1 回の実測所要（未学習は 1.0 秒）以内ならシークを出さず
         // 速度補正に任せる。絵を止めずに 93ms/秒（着地窓は 200ms/秒）で詰める。
+        // D37-b2: ギャップ明け・切替の着地直後だけは、速度補正に任せずシークで着地させる。
         double absDelta = Math.Abs(delta);
-        if (_rateCatchUpLimitSeconds > 0 && absDelta <= _rateCatchUpLimitSeconds)
+        if (state.RateCatchUpAllowed && _rateCatchUpLimitSeconds > 0 &&
+            absDelta <= _rateCatchUpLimitSeconds)
         {
             BeginOrContinueRateCatchUp(absDelta);
             if (traceEnabled)
@@ -359,7 +361,10 @@ public sealed record SyncPlaybackState(
     // D29: Single の LTC → 素材位置の範囲。MediaIn はクリップ開始（既定 0）、
     // MediaOut はクリップ終端（未設定 = null で尺を使う）。
     double MediaInSeconds = 0.0,
-    double? MediaOutSeconds = null);
+    double? MediaOutSeconds = null,
+    // D37-b2: ギャップ明け・トラック切替の着地直後は false。速度補正優先をやめてシークで着地する
+    // （着地の瞬間は画面が黒／フリーズで、シークによる静止が見えないため）。
+    bool RateCatchUpAllowed = true);
 
 public enum SyncActionType
 {
