@@ -99,6 +99,33 @@ TCS_GST_API int tcs_player_get_time_pos_ex(TcsPlayer* player, TcsPositionSample*
 旧世代の配信 PTS そのもの）。「発火が観測されていない」という後回しの根拠は消えたため、
 **世代チェックの優先度を上げ、0.4.5-C の後に着手する**（親の決定）。
 
+**2026-09-19 実装追記（フェーズ 2 の前提。同期担当）**: 世代チェックを実装した。上の参考形
+（`basis = NONE / seconds = 0`）は**採用しない**。
+
+- **方針: 旧世代の PTS しか無いときは `TCS_ERR_NOT_LOADED`（失敗）を返す。**
+  - 旧世代の値は現在のシーク／ロードの位置ではないため、返せば偽の位置になる。
+  - 旧 `tcs_player_get_time_pos` には basis が無く、`0.0` は有効な素材位置なので
+    「不明 = 0」は呼び出し側で実位置と区別できない。`_ex` だけ NONE を返すと 2 つの API で
+    成否が食い違う（`GstPlaybackApi.TryGetPositionSample` → 失敗時に旧 `TryGetTimePos` を
+    再試行する経路がある）。
+  - 失敗は呼び出し側で既に「位置なし」として扱われている: 同期コーディネーターは
+    `Blocked("time-pos")` で 1 フレーム保留、UI は null、ギャップ凍結は `hasPosition=false`、
+    `TryGetPositionSample` は false。フェーズ 2 が `PlaybackPositionTrust` の抑制を外しても、
+    古い値が評価に入らない。
+  - `paused_frame_pos` 分岐は元から `latest_gen == generation` を要求している。修正は
+    クエリ失敗時のフォールバックだけ。
+- **純関数の継ぎ目**: `include/tcs_position_policy.h` の
+  `tcs_position_fallback_allowed(latest_gen, generation)`（同一世代のときだけ 1）。
+  `shim_test.cpp` の `run_position_policy_tests` で、着地済み → 許可、seek 直後 → 拒否、
+  最初の新世代フレーム → 再許可、を固定する。
+- **数え方**: trace は残す。受理したフォールバックは従来どおり bit 4 の
+  `gst.positionFallback`。**拒否したフォールバックは bit 5（32）を足して
+  `gst.positionFallbackRejected`** として出す（`running_ns = 0`、`pts_ns` は旧 PTS）。
+  `events.jsonl` の stage 行数で「弾いた回数」を直接数えられる。アプリ側は
+  `GstDeliveryTraceMapper` の写像テストで stage を固定する。
+- **ABI は変えない**: `TcsStats` / `TcsDeliveryStats` / `TcsDeliveryEvent` のサイズ・
+  シグネチャはそのまま（flags の未使用ビットを使う）。旧 DLL との組み合わせでも壊れない。
+
 ### 1-4. 実装時に触るドキュメント・テスト
 
 - `native/gst-shim/README.md` の位置クエリ節（119-128）に `_ex` と bit 4 を追記。

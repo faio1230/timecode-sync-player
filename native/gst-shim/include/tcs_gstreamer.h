@@ -122,7 +122,11 @@ typedef struct TcsDeliveryEvent {
                           * while the output trace is enabled,
                           * 16=the position snapshot took the delivered-PTS
                           * fallback (pipeline query failed): running_ns=the
-                          * returned fallback value (= pts_ns) */
+                          * returned fallback value (= pts_ns),
+                          * 32=the fallback was rejected because the newest
+                          * delivered frame belongs to an older generation
+                          * (running_ns=0, pts_ns=the stale PTS); that query
+                          * returned TCS_ERR_NOT_LOADED */
 } TcsDeliveryEvent;
 
 typedef struct TcsDeliveryStats {

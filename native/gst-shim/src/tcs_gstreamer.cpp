@@ -33,6 +33,7 @@
 #include "tcs_decode_policy.h"
 #include "tcs_gop_policy.h"
 #include "tcs_load_policy.h"
+#include "tcs_position_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 
@@ -170,8 +171,11 @@ static const char* kOutputTraceEnv = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
 
 /* TcsDeliveryEvent.flags bit 3: not a frame arrival but the snapshot
  * tcs_player_get_time_pos records while the output trace is enabled.
- * Bit 4 marks the snapshot taken by the delivered-PTS fallback (query failed). */
-enum { kDeliveryFlagPosition = 8, kDeliveryFlagPositionFallback = 16 };
+ * Bit 4 marks the snapshot taken by the delivered-PTS fallback (query failed);
+ * bit 5 marks a fallback that was rejected because the newest delivered frame
+ * belongs to an older generation (0.4.5-A phase 2). */
+enum { kDeliveryFlagPosition = 8, kDeliveryFlagPositionFallback = 16,
+       kDeliveryFlagPositionFallbackRejected = 32 };
 
 /* D2 diagnostics: pipeline/sink state around seeks, pause changes and steps.
  * The paused-seek bug is about state, so the report needs the state at each
@@ -3587,16 +3591,28 @@ get_time_pos_locked (TcsPlayer* player, double* out_sec, TcsPositionSample* out)
     /* D10: the pipeline query reports stream time (so it already maps the
      * qtdemux post-seek shift back). When the query is unavailable, fall back
      * to the newest delivered frame's stream-mapped PTS - never the raw PTS.
-     * 0.4.5-A: record the fallback in the trace (bit 4). The value may belong
-     * to an older generation; the owner decides with basis/generation. */
+     * 0.4.5-A phase 2: the fallback value must belong to the CURRENT
+     * generation. The query fails 0.3-0.6 ms after a seek is issued, while
+     * latest_gen still points at the pre-seek pipeline; returning that PTS
+     * would hand the owner a position from before the seek. Without a
+     * current-generation value the position is unknown, so report
+     * TCS_ERR_NOT_LOADED: every caller already treats that as "no position"
+     * (the sync coordinator defers, the UI uses null, the freeze capture
+     * waits). A zero-valued basis NONE return is not an option here: the
+     * legacy getter has no basis field and 0.0 is a valid media position. */
     if (player->latest_pts_ns > 0) {
+      int allowed = tcs_position_fallback_allowed (player->latest_gen, player->generation);
       if (player->position_trace) {
         LARGE_INTEGER now;
         QueryPerformanceCounter (&now);
         delivery_append_locked (player, (uint64_t) now.QuadPart, player->latest_seq,
-            (int64_t) player->latest_pts_ns, (int64_t) player->latest_pts_ns,
-            (uint32_t) (kDeliveryFlagPosition | kDeliveryFlagPositionFallback));
+            (int64_t) player->latest_pts_ns,
+            allowed ? (int64_t) player->latest_pts_ns : 0,
+            (uint32_t) (kDeliveryFlagPosition | kDeliveryFlagPositionFallback |
+                (allowed ? 0 : kDeliveryFlagPositionFallbackRejected)));
       }
+      if (!allowed)
+        return TCS_ERR_NOT_LOADED;
       *out_sec = (double) player->latest_pts_ns / GST_SECOND;
       if (out) {
         out->seconds = *out_sec;

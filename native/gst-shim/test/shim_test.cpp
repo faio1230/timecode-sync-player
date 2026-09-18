@@ -7,6 +7,7 @@
 #include "tcs_decode_policy.h"
 #include "tcs_gop_policy.h"
 #include "tcs_load_policy.h"
+#include "tcs_position_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 #include <gst/gstversion.h>
@@ -712,6 +713,32 @@ run_gop_warn_measure (int argc, char** argv)
   tcs_player_destroy (p);
   check (st.active == 1, "gop-warn: probe active");
   return failures ? 1 : 0;
+}
+
+/* 0.4.5-A phase 2: the delivered-PTS fallback may only use a frame of the
+ * current generation (pure; no media). */
+static void
+run_position_policy_tests ()
+{
+  check (tcs_position_fallback_allowed (5, 5) == 1,
+      "position fallback: same generation -> allowed");
+  check (tcs_position_fallback_allowed (4, 5) == 0,
+      "position fallback: pre-seek generation -> rejected");
+  check (tcs_position_fallback_allowed (6, 5) == 0,
+      "position fallback: newer-than-current generation -> rejected");
+  check (tcs_position_fallback_allowed (0, 5) == 0,
+      "position fallback: no delivered frame -> rejected");
+  check (tcs_position_fallback_allowed (0, 0) == 0,
+      "position fallback: no frame and no generation -> rejected");
+
+  /* The phase-1 failure shape: gen 1 landed, a seek bumps the current
+   * generation to 2 while the query is failing, the next frame lands as 2. */
+  check (tcs_position_fallback_allowed (1, 1) == 1,
+      "position fallback: landed frame may be returned");
+  check (tcs_position_fallback_allowed (1, 2) == 0,
+      "position fallback: 0.3-0.6ms after a seek the old PTS is rejected");
+  check (tcs_position_fallback_allowed (2, 2) == 1,
+      "position fallback: the first post-seek frame is usable again");
 }
 
 /* --seek-loop <file> [iters]: consecutive seeks (V5). Every target must land
@@ -1577,11 +1604,13 @@ main (int argc, char** argv)
   if (strcmp (argv[1], "--policy-only") == 0) {
     run_delivery_policy_tests ();
     run_gop_policy_tests ();
+    run_position_policy_tests ();
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
   run_delivery_policy_tests ();
   run_gop_policy_tests ();
+  run_position_policy_tests ();
   if (strcmp (argv[1], "--gop-warn") == 0) {
     int rc = run_gop_warn_measure (argc, argv);
     printf ("RESULT failures=%d\n", failures);

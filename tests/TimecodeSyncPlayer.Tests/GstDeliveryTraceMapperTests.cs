@@ -79,4 +79,24 @@ public class GstDeliveryTraceMapperTests
         mapped.PtsNs.Should().Be(2_000_000);
         mapped.Value.Should().Be(1_500_000);
     }
+
+    [Fact]
+    public void Map_RejectedPositionFallback_CountsAsItsOwnStage()
+    {
+        // 0.4.5-A フェーズ 2: 旧世代の PTS を返さなかった回数を events.jsonl で数えられる。
+        GstNative.TcsDeliveryEvent e = Delivery(
+            flags: GstDeliveryTraceMapper.PositionFlag |
+                   GstDeliveryTraceMapper.PositionFallbackFlag |
+                   GstDeliveryTraceMapper.PositionFallbackRejectedFlag);
+        e.PtsNs = 2_000_000;
+        e.RunningNs = 0;
+
+        OutputTraceEvent mapped = GstDeliveryTraceMapper.Map(e);
+
+        mapped.Stage.Should().Be("gst.positionFallbackRejected");
+        mapped.Qpc.Should().Be(1_000);
+        mapped.ImageId.Should().Be(7);
+        mapped.PtsNs.Should().Be(2_000_000);
+        mapped.Value.Should().Be(0, "返した位置は無い");
+    }
 }
