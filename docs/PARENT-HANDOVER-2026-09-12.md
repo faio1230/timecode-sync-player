@@ -50,6 +50,19 @@
 > **開発機の検証**: 非E2E **2043 合格**、**E2E 83 合格 / 0 失敗 / 12 スキップ（総数 95）**、ロック規則 PASS、
 > 実機ログで `hintMs=420`・`hintMs=3500`・`follow-start episode ended` を確認。
 >
+> **0.4.5 の後にやること（順番つき）**
+> 1. **開発機で L-1 を回せるようにする。** いま `L1_Single_ContinuousFollow_DoesNotStall` は
+>    `Skip.If(followSeconds < 30.0)` で必ずスキップされる（シナリオ素材 `ltc_a/b/c.mp4` が 20 秒、
+>    `Used - 4.0 = 16 秒`）。**追従開始の経路は開発機で一切テストされておらず、D37-g は
+>    `make-e2e-media.ps1` の ffmpeg を直した副産物として偶然見つかった。**
+>    直すには 2 つを同時に変える: (a) `make-e2e-media.ps1` の 720p フィクスチャを `d=20` → `d=40`、
+>    (b) `tests/TimecodeSyncPlayer.Tests/Fixtures/ltc-scenario.tsp` の MediaIn/MediaOut を広げる。
+>    **シナリオ試験全体のタイミングが変わるので、公開直後の落ち着いたときにやる。**
+>    なお VB-CABLE は開発機にあり、L-1 のスキップ理由は尺だけ（ケーブルではない）。
+> 2. **`LearnSeekDuration` の終点を「絵が動き出すまで」にする**（`docs/analysis/2026-09-19-seek-cost-endpoint.md`）
+> 3. **キーフレーム列を使った目標選択 + `LandingWindow` の延長**（同文書。**対で入れないと効かない**）
+> 4. AV1 の根因（parsebin がキーフレームを立てない）。`inspect-gop.ps1` は ffprobe なので読める
+>
 > **次**: 候補 6 で M3 の L-1 を 1 本 → 5 秒に入れば標準セット + M3 ×8 の本番。
 > 入らなければ (b)（`SyncCorrectionController.LandingWindow` 1.0 秒 → 着地窓と同じ長さへ延長。
 > **±20% の上限 `LandingMaxRateDelta` は T9 として既に存在する**）を次の候補に入れる。
