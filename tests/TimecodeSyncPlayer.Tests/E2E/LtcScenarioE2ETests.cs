@@ -445,6 +445,12 @@ public sealed class LtcScenarioE2ETests
     /// </summary>
     private const double FollowStartLimitSeconds = 5.0;
 
+    /// <summary>
+    /// 保持中に「黒でない絵」を待つ上限。実素材の 4K60 はトラック切替からロード 0.42 秒 +
+    /// 最初の絵まで 0.3〜0.4 秒かかるため、1.5 秒あれば足りる。
+    /// </summary>
+    private static readonly TimeSpan HoldPictureWait = TimeSpan.FromSeconds(1.5);
+
     /// <summary>L-1: 1 回の停止の上限（秒）。</summary>
     private const double LongestFreezeLimitSeconds = 0.5;
 
@@ -1697,6 +1703,26 @@ public sealed class LtcScenarioE2ETests
         public FrameSignature Capture(string imageName) =>
             LtcScenarioFrameProbe.Capture(App, ReportDir, imageName, Journal);
 
+        /// <summary>
+        /// 条件を満たす絵を待つが、時間切れでも例外にせず最後の 1 枚を返す。判定は呼び出し側の
+        /// アサーションが行うため、ここで失敗させると失敗理由が分かりにくくなる。
+        /// </summary>
+        public FrameSignature WaitForFrameOrLast(
+            string imageName, TimeSpan timeout, Func<FrameSignature, bool> predicate, out int attempts)
+        {
+            DateTime deadline = DateTime.UtcNow + timeout;
+            FrameSignature last = default;
+            attempts = 0;
+            while (true)
+            {
+                attempts++;
+                last = Capture($"{imageName}-{attempts:D2}");
+                if (predicate(last) || DateTime.UtcNow >= deadline)
+                    return last;
+                Thread.Sleep(60);
+            }
+        }
+
         public FrameSignature WaitForFrame(
             string imageName, TimeSpan timeout, Func<FrameSignature, ReferenceMatch, bool> predicate, string description)
         {
@@ -1927,7 +1953,17 @@ public sealed class LtcScenarioE2ETests
                 $" に入る (runThrough={runThrough} elapsed={lastElapsed:F3} range=[{lastRange.Min:F3}, {lastRange.Max:F3}]" +
                 $" expected={lastExpected:F3} observed={lastObserved:F3})");
             double observed = Position();
-            FrameSignature signature = Capture($"hold-{name}");
+            // 黒でないことを見る判定では 1 枚撮って終わりにしない。実素材の 4K60 では
+            // トラック切替の最初の絵が出るまでロードから 0.7〜0.8 秒かかり、1 枚だけだと
+            // その境目で黒を掴む（実測で 5 回に 1 回）。黒でない絵が出るまで待ち、
+            // 時間切れなら最後の 1 枚で判定する（判定の意味は変えない）。
+            int holdAttempts = 1;
+            FrameSignature signature;
+            if (blackJudgment)
+                signature = WaitForFrameOrLast($"hold-{name}", HoldPictureWait,
+                    frame => !frame.IsBlack, out holdAttempts);
+            else
+                signature = Capture($"hold-{name}");
             ReferenceMatch match = References.Match(signature);
             Journal.Write("hold-observation", details: new
             {
@@ -1936,6 +1972,7 @@ public sealed class LtcScenarioE2ETests
                 ltcTarget,
                 expectedPosition,
                 observedPosition = observed,
+                attempts = holdAttempts,
                 matrixExpectation = Expectation(matrixExpectation),
                 isBlack = signature.IsBlack,
                 blackJudgment,

@@ -108,6 +108,26 @@ internal sealed class FakeGstNative : IGstNativeApi
         return SetDecodeModeResult;
     }
     public bool TryGetTimePos(IntPtr player, out double seconds) { seconds = TimePos; return true; }
+
+    /// <summary>0.4.5-A: 旧 DLL の EntryPointNotFoundException を再現するテストフック。</summary>
+    public bool ThrowEntryPointNotFoundOnTimePosEx { get; set; }
+    public GstNative.TcsPositionSample PositionSample { get; set; } = new()
+    {
+        Seconds = 1.0,
+        Basis = 1,
+        Generation = 1,
+        DeliveredSeconds = 1.0,
+        DeliveredGeneration = 1,
+        CurrentGeneration = 1,
+    };
+
+    public bool TryGetTimePosEx(IntPtr player, out GstNative.TcsPositionSample sample)
+    {
+        if (ThrowEntryPointNotFoundOnTimePosEx)
+            throw new EntryPointNotFoundException("tcs_player_get_time_pos_ex");
+        sample = PositionSample;
+        return true;
+    }
     public bool TryGetDuration(IntPtr player, out double seconds) { seconds = Duration; return true; }
     public bool TryGetFps(IntPtr player, out double fps) { fps = Fps; return true; }
     public string GetPath(IntPtr player) => Path;
@@ -165,6 +185,27 @@ internal sealed class FakeGstNative : IGstNativeApi
     {
         stats = new GstNative.TcsDeliveryStats { Arrivals = DeliveryArrivals };
         return 0;
+    }
+
+    /// <summary>0.4.5-C: 旧 DLL の EntryPointNotFoundException を再現するテストフック。</summary>
+    public bool ThrowEntryPointNotFoundOnGopStatus { get; set; }
+    public GstNative.TcsGopStatus GopStatus { get; set; } = new()
+    {
+        State = 1,
+        Active = 1,
+        Keyframes = 2,
+        MaxIntervalSec = 10.1,
+        PendingSec = 3.2,
+        ThresholdSec = 3.0,
+        WarningQpc = 12345,
+    };
+
+    public bool TryGetGopStatus(IntPtr player, out GstNative.TcsGopStatus status)
+    {
+        if (ThrowEntryPointNotFoundOnGopStatus)
+            throw new EntryPointNotFoundException("tcs_player_get_gop_status");
+        status = GopStatus;
+        return true;
     }
 
     public int GetRingInfo(IntPtr player, IntPtr[] handles, uint capacity, out uint count,

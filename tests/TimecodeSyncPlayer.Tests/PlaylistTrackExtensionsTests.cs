@@ -92,6 +92,19 @@ public class PlaylistTrackExtensionsTests
         result.Should().Be(TimeSpan.FromSeconds(25));
     }
 
+    [Fact]
+    public void LongGopWarningText_EmptyUntilMarked_ThenShowsLabel()
+    {
+        var track = CreateTrack();
+        track.LongGopWarningText.Should().BeEmpty();
+        track.LongGopWarningTooltip.Should().BeEmpty();
+
+        var marked = track with { LongGopWarning = true };
+
+        marked.LongGopWarningText.Should().Be("⚠ 長GOP");
+        marked.LongGopWarningTooltip.Should().Contain("推奨: 1〜2 秒");
+    }
+
     private static PlaylistTrack CreateTrack(
         TimeSpan? mediaIn = null,
         TimeSpan? mediaOut = null,

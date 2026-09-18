@@ -18,6 +18,8 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 - Fixed the UI update scheduler rarely losing one reschedule request: the request handoff is now a single atomic operation (D36). The picture never stopped and the worst remaining delay was about 100 ms, but the loss itself is gone.
 - A real shortfall during follow is now closed by nudging the playback rate instead of seeking, so a lag of around half a second clears within a few seconds without freezing the picture. Gap exits and track-switch landings still seek, because the picture is black at that moment and a seek lands faster than a rate ramp (D37-b).
 - The reported playback position is no longer used for decisions until a seek is confirmed to have landed. During a seek the position query can be off by 0.5 to 0.8 seconds, and that value was triggering the next seek (D37-b).
+- Fixed the offset present when sync starts following being closed by playback rate instead of by seeking. On long-GOP media the initial offset can exceed a second, and closing it by rate took close to 20 seconds, during which the picture ran about 10% fast. Like a gap exit or a track switch, nothing meaningful is on screen at that moment, so a seek lands faster (D37-c).
+- Rate correction now rejects momentary measurement spikes as well. D37-a shielded only the seek decision; the rate path was still fed the raw values (D37-c).
 
 ## 0.4.3 - 2026-09-18
 

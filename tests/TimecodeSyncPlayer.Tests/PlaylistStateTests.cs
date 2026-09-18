@@ -304,4 +304,34 @@ public class PlaylistStateTests
         state.CurrentIndex.Should().Be(0);
         state.Current.Should().BeSameAs(state.Tracks[0]);
     }
+
+    [Fact]
+    public void MarkLongGopWarning_SetsTheFlagOnce()
+    {
+        var state = new PlaylistState();
+        state.AddFiles(["C:\\Videos\\one.mov", "C:\\Videos\\two.mov"]);
+        Guid targetId = state.Tracks[0].Id;
+
+        state.MarkLongGopWarning(targetId).Should().BeTrue();
+        state.Tracks[0].LongGopWarning.Should().BeTrue();
+        state.Tracks[1].LongGopWarning.Should().BeFalse();
+
+        state.MarkLongGopWarning(targetId).Should().BeFalse("既に印があるので no-op");
+        state.Tracks[0].LongGopWarning.Should().BeTrue();
+
+        state.MarkLongGopWarning(Guid.NewGuid()).Should().BeFalse("未知の ID は no-op");
+    }
+
+    [Fact]
+    public void MarkLongGopWarning_DoesNotRecalculateTimeline()
+    {
+        var state = new PlaylistState();
+        state.AddFiles(["C:\\Videos\\one.mov", "C:\\Videos\\two.mov"]);
+        state.UpdateMediaDuration(state.Tracks[0].Id, TimeSpan.FromSeconds(10));
+        TimeSpan offsetBefore = state.Tracks[1].TimelineOffset;
+
+        state.MarkLongGopWarning(state.Tracks[0].Id);
+
+        state.Tracks[1].TimelineOffset.Should().Be(offsetBefore);
+    }
 }

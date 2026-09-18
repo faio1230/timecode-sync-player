@@ -44,6 +44,18 @@ internal static class GstNative
         public uint Flags;
     }
 
+    /// <summary>0.4.5-A: tcs_player_get_time_pos_ex が返す 1 スナップショット。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TcsPositionSample
+    {
+        public double Seconds;
+        public int Basis;
+        public ulong Generation;
+        public double DeliveredSeconds;
+        public ulong DeliveredGeneration;
+        public ulong CurrentGeneration;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct TcsDeliveryStats
     {
@@ -53,6 +65,19 @@ internal static class GstNative
         public ulong DecoderOut;
         public ulong RingDropped;
         public ulong LastQpc;
+    }
+
+    /// <summary>0.4.5-C: ロング GOP 警告（キーフレーム間隔）のポーリング用スナップショット。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TcsGopStatus
+    {
+        public int State;
+        public int Active;
+        public ulong Keyframes;
+        public double MaxIntervalSec;
+        public double PendingSec;
+        public double ThresholdSec;
+        public ulong WarningQpc;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -111,6 +136,10 @@ internal static class GstNative
         internal static extern int tcs_player_get_time_pos(IntPtr player, out double outSec);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_get_time_pos_ex(
+            IntPtr player, out TcsPositionSample outSample);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_duration(IntPtr player, out double outSec);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
@@ -160,6 +189,10 @@ internal static class GstNative
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_delivery_stats(
             IntPtr player, out TcsDeliveryStats outStats);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_get_gop_status(
+            IntPtr player, out TcsGopStatus outStatus);
 
         // ステージ 6b: 共有テクスチャリングの NT ハンドル + 共有フェンス。
         // ハンドルは shim 所有（CloseHandle 禁止）。

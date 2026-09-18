@@ -1,4 +1,6 @@
 using Serilog;
+using TimecodeSyncPlayer.Contracts;
+using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -29,15 +31,31 @@ internal sealed class SingleModeSyncCoordinator
 
     public SyncRequestResult Apply(double ltcSeconds)
     {
+        // 0.4.5-A フェーズ 1: shadow は trace 有効時だけ読む（無効時は従来どおり位置を読まない）。
+        bool traceEnabled = OutputTrace.Current.IsEnabled;
+
         // During a native seek, time-pos can still be the synthetic requested target.
         // Do not let it settle the pending seek or complete file-load stability checks.
         if (_effects.IsNativeSeeking?.Invoke() == true)
+        {
+            if (traceEnabled)
+            {
+                (int shadowRc, double shadowPlayback) = _effects.GetTimePos();
+                if (shadowRc == 0)
+                {
+                    PlaybackPositionSample? shadowSample = _effects.GetPositionSample?.Invoke();
+                    SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowPlayback);
+                    _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowSample, "native-seeking");
+                }
+            }
             return SyncRequestResult.Deferred;
+        }
 
         (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
         if (timePosRc != 0) return SyncRequestResult.Deferred;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
+        PlaybackPositionSample? positionSample = traceEnabled ? _effects.GetPositionSample?.Invoke() : null;
 
         if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
             !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
@@ -49,7 +67,7 @@ internal sealed class SingleModeSyncCoordinator
         if (ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state))
             return SyncRequestResult.Complete;
 
-        SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state);
+        SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state, positionSample);
         // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
         double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
         bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
@@ -189,4 +207,6 @@ internal sealed record SingleModeSyncEffects(
     // D33: 終端ホールドの pause/resume（true = 端で一時停止、false = 解除して再開）。
     Action<bool>? SetEndHold = null,
     // D35-b: 終端ホールドの解除通知。保留シーク状態と保持着地のラッチを解除する。
-    Action? OnBoundaryHoldReleased = null);
+    Action? OnBoundaryHoldReleased = null,
+    // 0.4.5-A フェーズ 1: 評価位置（shadow）用の位置サンプル。未指定は shadow なし。
+    Func<PlaybackPositionSample?>? GetPositionSample = null);
