@@ -31,6 +31,20 @@ show instead of changing how the player reacts.
   measurement, every drift coincided with a decode shortfall).
 - Field preparation guide: how to read the two new indicators and what to do when they appear.
 
+### Known limitations
+
+- **When decoding falls behind for a moment, the sync can drift by 0.3 to 0.7 seconds afterwards**
+  (the picture lags, and closing the lag by playback rate overshoots). It recovers within seconds and
+  the picture does not break up. Measured in 2-second windows: about 18% on VP9 4K60, about 0.9% on
+  H.264 4K60 field material (median 103 Mbps), 0% on recommended material; it comes in clusters.
+  **The v0.4.5 notes said the next release would stop raising the rate when decoding is behind. This
+  release only reports it**; changing the control is deferred until the indicator has been used in the
+  field. This merges two earlier entries (the "few times in a 10-minute follow" one was the same thing).
+- Seeking into very high-bitrate ProRes 4K60 (about 1.7 Gbps) occasionally leaves the new position's
+  picture more than 2 seconds late (1 to 2 runs in 10 of an automated test: 1 in 10 with the v0.4.6
+  code, 2 in 10 with this release, which is no real difference at that count). It predates this release.
+- The other limitations listed for 0.4.5 still apply.
+
 ## 0.4.6 - 2026-09-19
 
 Bug fixes only; the sync control policy is unchanged. These came out of an external code review (and,
