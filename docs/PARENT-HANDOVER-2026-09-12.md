@@ -2,6 +2,24 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-19 22:55 更新（50 回目、TSP-Opus）**: **v0.4.7 を公開した。目標「v0.4.7 まで自律的に進める」は完了。**
+> タグ `v0.4.7`、main = `b50a180`。zip `FA0ADAEB…C9A3` / setup.exe `EF68372C…06B1`（digest 一致）。
+> https://github.com/faio1230/timecode-sync-player/releases/tag/v0.4.7
+>
+> **中身**: 推奨外コーデックの警告（`CodecAdvice`）と「デコードが追いついていません」（`DecodeHealthMonitor`、**表示のみ**）。
+> **候補 1 は M3 ×10 で誤検知 10/11**: 届いた枚数は perf の 2 秒窓、期待値の速度積分は「前回の判定から」で、
+> **perf の窓が位置の後退で黙って作り直されると区間がずれた**。候補 2 で `PlaybackPerformanceStats.WindowGeneration` と
+> `DecodeHealthMonitor.BeginWindow` を足して窓に合わせた → 誤り 0・漏れ 0。ログに `elapsed=` `rate=` を足し、行だけで検算できる。
+> **L-1 の判定を変えた**: 全素材で `sync.evaluate` の delta（UI の誤差 ≒ 1.09 × 読取 T + 0.019、R² 0.989）。
+> 歯止め: UI と delta の中央値の差 ≥ 0.1 秒で報告、ただし読取 T 中央 ≤ 0.1 秒の素材だけで見る。
+> **既知の制限に追加**: ProRes 4K60・1.7 Gbps のロード・シーク遅れ（通しで 59 回中 9 回、0.4.5 以前から）、
+> 範囲外の端で 0.18 秒先に止まる（ふだん 2〜3 フレーム、v0.4.6 のコードでも端を越えて流れた回あり）。
+> **v0.4.5 の「次の版で復号が遅れたら速度を上げない」予告とは食い違う**（表示だけにした）ことをノートに明記。
+> 検証機の比較用スクリプトが一度、条件違いで回っていた（無効化して回し直し）。受け取った数字を文書に書く前に条件を確かめる。
+>
+> **次（利用者と相談）**: 現場でデコード表示が出るかを見てから、復号律速の行き過ぎへの対処を入れるか判断。
+> 棚上げ: 交番・キーフレームを見た着地先・Codex のリファクタ・自動化用に LTC と位置を 1 回で読む口（0.4.8 以降）。
+>
 > **2026-09-19 18:50 更新（49 回目、TSP-Opus）**: **v0.4.6 を公開した。**
 > タグ `v0.4.6`、main = `774ff06`。zip `89C43C49…AF58` / setup.exe `0E95E6EC…B550`（アップロード後の digest も一致）。
 > https://github.com/faio1230/timecode-sync-player/releases/tag/v0.4.6
