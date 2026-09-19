@@ -37,6 +37,26 @@ public class GstBackendStateTests
     }
 
     [Fact]
+    public void RecreatePlayer_KeepsTheFrameCallbackRegistered()
+    {
+        // 0.4.6: Codex のレビューで再現されたもの。GPU 復旧でプレイヤーを作り直すと、
+        // 作り直す前に通知の登録情報ごと消していたため、新しいプレイヤーへ登録されなかった
+        // （登録状態が True → False）。
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(0x21) };
+        var state = new GstBackendState(native);
+        state.EnsurePlayer().Should().BeTrue();
+        int notified = 0;
+        state.AttachRenderCallback(_ => notified++, IntPtr.Zero);
+        native.LastFrameCallback.Should().NotBeNull();
+
+        state.RecreatePlayer(new IntPtr(0x99)).Should().BeTrue();
+
+        native.LastFrameCallback.Should().NotBeNull("作り直したプレイヤーにも通知が登録されている");
+        native.LastFrameCallback!(IntPtr.Zero, 1, 1);
+        notified.Should().Be(1, "登録された通知が、元の受け手へ届く");
+    }
+
+    [Fact]
     public void DisposePlayer_IsIdempotentAndBlocksEnsure()
     {
         var native = new FakeGstNative { PlayerCreateResult = new IntPtr(5) };

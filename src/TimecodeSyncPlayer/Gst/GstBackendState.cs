@@ -129,7 +129,12 @@ internal sealed class GstBackendState : IDisposable
         {
             if (_player != IntPtr.Zero)
             {
-                DetachRenderCallbackLocked();
+                // 0.4.6: 通知の登録情報（_renderCallback / _thunk）は残し、古いプレイヤーからだけ外す。
+                // EnsurePlayer が新しいプレイヤーへ登録し直す。以前は DetachRenderCallbackLocked で
+                // 登録情報ごと消していたため、作り直したプレイヤーにフレーム通知が戻らなかった
+                // （Codex のレビュー。Fake で登録状態が True → False になるのを確認）。
+                if (_thunk is not null)
+                    _native.SetFrameCallback(_player, null);
                 _native.PlayerDestroy(_player);
                 _player = IntPtr.Zero;
             }
