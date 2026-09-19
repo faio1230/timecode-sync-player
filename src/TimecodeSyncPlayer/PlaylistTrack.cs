@@ -12,7 +12,8 @@ public sealed record PlaylistTrack(
     double? FrameRate,
     bool IsEnabled,
     string? Fit = null,
-    bool LongGopWarning = false)
+    bool LongGopWarning = false,
+    bool CodecWarning = false)
 {
     /// <summary>
     /// トラックの実効再生時間を取得する。
@@ -68,4 +69,10 @@ public sealed record PlaylistTrack(
     /// <summary>0.4.5-C: 警告のツールチップ（全文）。</summary>
     public string LongGopWarningTooltip =>
         LongGopWarning ? LongGopWarningMessages.Recommendation : string.Empty;
+
+    /// <summary>0.4.7: 推奨外コーデックの行内表示。警告なしは空文字（幅 0）。</summary>
+    public string CodecWarningText => CodecWarning ? CodecAdvice.PlaylistMark : string.Empty;
+
+    /// <summary>0.4.7: 推奨外コーデックのツールチップ。</summary>
+    public string CodecWarningTooltip => CodecWarning ? CodecAdvice.PlaylistTooltip : string.Empty;
 }

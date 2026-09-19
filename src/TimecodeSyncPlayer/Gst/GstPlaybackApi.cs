@@ -23,6 +23,12 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         _state = state;
     }
 
+    /// <summary>
+    /// 0.4.7: フレームの流れを乱す操作と、指示した再生速度の台帳。ネイティブ操作は必ずここを
+    /// 通るので、呼び出し元に関係なく記録が漏れない（「デコードが追いついていない」表示の判定に使う）。
+    /// </summary>
+    public PlaybackActivityLedger Activity { get; } = new();
+
     private IntPtr Player => _state.Player;
 
     /// <summary>
@@ -67,6 +73,7 @@ internal sealed class GstPlaybackApi : IPlaybackApi
 
         _state.Seeking.Clear();
         _state.IsPaused = paused;
+        Activity.NoteDisturbance();
         try
         {
             long started = Stopwatch.GetTimestamp();
@@ -81,6 +88,8 @@ internal sealed class GstPlaybackApi : IPlaybackApi
                 Log.Warning("GstPlaybackApi: load 失敗 path={Path} err={Error}", path, error);
                 return PlaybackResult.Fail(string.IsNullOrEmpty(error) ? $"load failed rc={rc}" : error);
             }
+            // shim はロードで速度を 1.0 に戻す。
+            Activity.NoteRate(1.0);
             return PlaybackResult.Ok;
         }
         catch (Exception ex)
@@ -100,6 +109,7 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         try
         {
             ulong baseline = _state.Seeking.ReadArrivalBaseline(player);
+            Activity.NoteDisturbance();
             ulong generation = _state.Native.Seek(player, Math.Max(seconds, 0.0));
             if (generation == 0)
                 return PlaybackResult.Fail("seek was rejected");
@@ -120,6 +130,7 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         if (player == IntPtr.Zero)
             return PlaybackResult.Fail("player is not created");
         _state.Seeking.Clear();
+        Activity.NoteDisturbance();
         try
         {
             int rc = _state.Native.Stop(player);
@@ -138,6 +149,7 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         if (player == IntPtr.Zero)
             return PlaybackResult.Fail("player is not created");
         _state.IsPaused = paused;
+        Activity.NoteDisturbance();
         try
         {
             int rc = _state.Native.SetPaused(player, paused);
@@ -159,7 +171,10 @@ internal sealed class GstPlaybackApi : IPlaybackApi
             return PlaybackResult.Fail("player is not created");
         try
         {
+            // 速度切替（フラッシュあり）はフレームの流れを乱す。
+            Activity.NoteDisturbance();
             int rc = _state.Native.SetSpeed(player, rate);
+            if (rc == 0) Activity.NoteRate(rate);
             return rc == 0 ? PlaybackResult.Ok : PlaybackResult.Fail($"set rate failed rc={rc}");
         }
         catch (Exception ex)
@@ -177,6 +192,7 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         try
         {
             int rc = _state.Native.SetRateInstant(player, rate);
+            if (rc == 0) Activity.NoteRate(rate);
             return rc == 0 ? PlaybackResult.Ok : PlaybackResult.Fail($"set rate instant failed rc={rc}");
         }
         catch (Exception ex)

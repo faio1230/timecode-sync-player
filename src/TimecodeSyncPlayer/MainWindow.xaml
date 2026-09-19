@@ -290,6 +290,16 @@
                                    Foreground="#D7A24B" FontSize="11" Margin="0,2,0,0"
                                    TextWrapping="Wrap"
                                    Text="{Binding Sync.LongGopWarning}"/>
+                        <TextBlock x:Name="CodecWarningText"
+                                   AutomationProperties.AutomationId="CodecWarningText"
+                                   Foreground="#D7A24B" FontSize="11" Margin="0,2,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Sync.CodecWarning}"/>
+                        <TextBlock x:Name="DecodeHealthWarningText"
+                                   AutomationProperties.AutomationId="DecodeHealthWarningText"
+                                   Foreground="#FF8A65" FontSize="11" Margin="0,2,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Sync.DecodeHealthWarning}"/>
                     </StackPanel>
                     <TextBlock Text="オフセット:" Foreground="#BBBBBB"
                                Grid.Row="2" Grid.Column="0"
@@ -541,6 +551,14 @@
                                                DockPanel.Dock="Right"
                                                Text="{Binding LongGopWarningText}"
                                                ToolTip="{Binding LongGopWarningTooltip}"
+                                               Foreground="#D7A24B"
+                                               FontSize="10"
+                                               Margin="6,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="CodecWarningText"
+                                               DockPanel.Dock="Right"
+                                               Text="{Binding CodecWarningText}"
+                                               ToolTip="{Binding CodecWarningTooltip}"
                                                Foreground="#D7A24B"
                                                FontSize="10"
                                                Margin="6,0,0,0"

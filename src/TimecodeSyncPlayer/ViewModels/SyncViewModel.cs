@@ -211,6 +211,32 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
         }
     }
 
+    // 0.4.7: 推奨外コーデックの注意書き（表示のみ。空文字 = 非表示）。
+    private string _codecWarning = "";
+    public string CodecWarning
+    {
+        get => _codecWarning;
+        set
+        {
+            if (_codecWarning == value) return;
+            _codecWarning = value;
+            OnPropertyChanged();
+        }
+    }
+
+    // 0.4.7: 「デコードが追いついていない」表示（表示のみ。空文字 = 非表示）。
+    private string _decodeHealthWarning = "";
+    public string DecodeHealthWarning
+    {
+        get => _decodeHealthWarning;
+        set
+        {
+            if (_decodeHealthWarning == value) return;
+            _decodeHealthWarning = value;
+            OnPropertyChanged();
+        }
+    }
+
     // T3: 全体に効く同期オフセット（ms）。UI には ms のみを出し、フレーム換算はしない。
     private double _syncOffsetMs;
     public double SyncOffsetMs

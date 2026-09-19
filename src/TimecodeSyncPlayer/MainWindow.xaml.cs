@@ -141,6 +141,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // 0.4.5-C3: 読み込み時にコンテナを読んでキーフレーム分布を測る（デコードしない）。
     // 再生経路には触れない独立したパイプラインなので、ロードの状態機械に影響しない。
+    // 0.4.7: 「デコードが追いついていない」表示（表示だけ。同期の制御は変えない）。
+    private readonly DecodeHealthMonitor _decodeHealth = new();
+
     private readonly GopScanCache _gopScanCache =
         new(path => Gst.GstPlaybackApi.ScanGop(path));
     // 0.4.4 は既定で無効（判定方式が誤っており実素材で誤検出する。詳細は TickLongGopWarning）。
@@ -2419,8 +2422,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             PlaybackPerformanceSnapshot? performance = _playbackPerformanceStats.RecordTick(pos, DateTime.UtcNow);
             if (performance != null)
+            {
                 LogPlaybackPerformance(performance);
+                ObserveDecodeHealth(performance, pos);
+            }
         }
+        // 表示は最後の落ち込みから一定時間で消える。毎 tick 見直す（変わらなければ何もしない）。
+        _vm.Sync.DecodeHealthWarning = _decodeHealth.StatusText(DateTime.UtcNow);
 
         if (!_seekBarInteraction.IsSeeking)
         {
@@ -2571,12 +2579,28 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
+    /// <summary>
+    /// 0.4.7: 読み込んだ素材のコーデックが推奨外なら、ステータス行とプレイリストで知らせる
+    /// （<see cref="CodecAdvice"/>。表示だけで、再生は止めない）。
+    /// </summary>
+    private void ApplyCodecAdvice(string decoderName)
+    {
+        string text = CodecAdvice.StatusText(decoderName);
+        _vm.Sync.CodecWarning = text;
+        if (text.Length == 0 || !_loadedTrackId.HasValue) return;
+        PlaylistTrack? track = _playlist.FindTrackById(_loadedTrackId.Value);
+        if (track is null || track.CodecWarning) return;
+        Log.Information("Codec warning: track={Track} decoder={Decoder}", track.Name, decoderName);
+        _playlist.MarkCodecWarning(track.Id);
+    }
+
     private void FetchMetadata()
     {
         if (_playbackApi.TryGetFps(out double fps) && fps > 0)
             _fps = fps;
 
         string vcodec = _playbackApi.GetVideoCodec();
+        ApplyCodecAdvice(vcodec);
         // GStreamer 実装に音声デコーダ名の問い合わせは無い（常に空）。
         string acodec = "";
 
@@ -2648,6 +2672,28 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             source, commit.SliderValue, _duration, commit.TargetSeconds, success, timePos);
     }
 
+    /// <summary>
+    /// 0.4.7: 2 秒の窓で届いたフレームが期待より明らかに少なければ「デコードが追いついていない」と
+    /// 表示する。シーク・一時停止・読み込みなどをまたいだ窓と、止まっている・ギャップの中は判定しない
+    /// （<see cref="DecodeHealthMonitor"/>）。表示するだけで、同期の制御は変えない。
+    /// </summary>
+    private void ObserveDecodeHealth(PlaybackPerformanceSnapshot snapshot, double position)
+    {
+        PlaybackActivityLedger activity = _gstPlaybackApi.Activity;
+        DecodeWindowVerdict verdict = _decodeHealth.Observe(
+            snapshot.FrameUpdates, snapshot.Elapsed.TotalSeconds, _fps,
+            activity.Disturbances, activity.RateIntegralSeconds(),
+            position, _duration,
+            pausedOrInGap: _playbackApi.IsPaused() || !_gapFreezeHandler.IsInactive,
+            DateTime.UtcNow);
+        if (verdict != DecodeWindowVerdict.Behind) return;
+        (int delivered, int expected) = _decodeHealth.LastBehind;
+        Log.Warning(
+            "Decode behind: delivered={Delivered} expected={Expected} ratio={Ratio:F2} fps={Fps:F3} position={Position:F3} codec={Codec} count={Count}",
+            delivered, expected, expected > 0 ? delivered / (double)expected : 0, _fps, position,
+            _playbackApi.GetVideoCodec(), _decodeHealth.BehindCount);
+    }
+
     private void LogPlaybackPerformance(PlaybackPerformanceSnapshot snapshot)
     {
         RenderUpdateSchedulerStats renderStats = _renderSession.ConsumeUpdateStats();
@@ -2697,6 +2743,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _fps = 0;
         _renderSession.ResetUpdateStats();
         ResetPlaybackPerformanceStats();
+        // 0.4.7: 素材ごとに数え直す。コーデックの警告も次の素材で判定し直す。
+        _decodeHealth.Reset();
+        _vm.Sync.DecodeHealthWarning = string.Empty;
+        _vm.Sync.CodecWarning = string.Empty;
         _seekState.Clear();
         _endAdvanceTriggered = false;
     }
