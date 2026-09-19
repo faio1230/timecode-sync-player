@@ -50,8 +50,9 @@ internal sealed class DecodeHealthMonitor
     private const double MinimumElapsedSeconds = 1.0;
 
     private int _settleRemaining;
-    private long? _lastDisturbances;
-    private double? _lastRateIntegral;
+    // いまの perf の窓が始まった時点の基準。窓の中の乱れと、指示した速度の平均はここからの差で見る。
+    private long? _windowStartDisturbances;
+    private double _windowStartRateIntegral;
     private DateTime _lastBehindAt = DateTime.MinValue;
 
     /// <summary>このセッション（読み込み以後）で Behind だった窓の数。</summary>
@@ -59,6 +60,25 @@ internal sealed class DecodeHealthMonitor
 
     /// <summary>直近の Behind の窓で、届いた枚数と期待した枚数。</summary>
     public (int Delivered, int Expected) LastBehind { get; private set; }
+
+    /// <summary>
+    /// perf の窓が snapshot 無しで作り直されたとき（位置が戻ったとき）に呼ぶ。窓の基準
+    /// （乱れの数・速度の積分）をここで取り直す。snapshot と同時に始まる窓は <see cref="Observe"/> が取り直す。
+    ///
+    /// 基準を窓に合わせないと、作り直しで捨てた部分の積分まで窓の期待値に入る。検証機（M3 ×10、
+    /// 047cand1）で表示 11 件のうち 10 件がこれによる誤検知だった（前回の perf 行から 5.57 秒の積分を
+    /// 2.01 秒の窓で割り、「123 / 334」）。
+    ///
+    /// 捨てた部分に乱れがあったら（シークで位置が戻って作り直された場合など）、着地の遅れはこれからの
+    /// 窓に出るので、ここから <see cref="SettleWindows"/> 窓は判定しない。
+    /// </summary>
+    public void BeginWindow(long disturbances, double rateIntegralSeconds)
+    {
+        if (_windowStartDisturbances is long previous && disturbances != previous)
+            _settleRemaining = SettleWindows;
+        _windowStartDisturbances = disturbances;
+        _windowStartRateIntegral = rateIntegralSeconds;
+    }
 
     /// <summary>新しい素材を読み込んだとき。数え直す。</summary>
     public void Reset()
@@ -70,18 +90,19 @@ internal sealed class DecodeHealthMonitor
 
     /// <summary>
     /// 1 つの窓を評価する。<paramref name="disturbances"/> と <paramref name="rateIntegralSeconds"/> は
-    /// <see cref="PlaybackActivityLedger"/> の窓の終わりの値（前回の呼び出しとの差を内部で取る）。
+    /// <see cref="PlaybackActivityLedger"/> の窓の終わりの値（窓の始まりの基準との差を内部で取る）。
+    /// perf の窓は snapshot と同時に切り替わるので、ここでの値が次の窓の基準になる。
     /// </summary>
     public DecodeWindowVerdict Observe(int deliveredFrames, double elapsedSeconds, double fps,
         long disturbances, double rateIntegralSeconds,
         double positionSeconds, double durationSeconds, bool pausedOrInGap, DateTime now)
     {
-        long? previousDisturbances = _lastDisturbances;
-        double? previousRateIntegral = _lastRateIntegral;
-        _lastDisturbances = disturbances;
-        _lastRateIntegral = rateIntegralSeconds;
+        long? startDisturbances = _windowStartDisturbances;
+        double startRateIntegral = _windowStartRateIntegral;
+        _windowStartDisturbances = disturbances;
+        _windowStartRateIntegral = rateIntegralSeconds;
 
-        if (previousDisturbances is null || previousRateIntegral is null || disturbances != previousDisturbances)
+        if (startDisturbances is null || disturbances != startDisturbances)
         {
             _settleRemaining = SettleWindows;
             return DecodeWindowVerdict.Skipped;
@@ -98,7 +119,7 @@ internal sealed class DecodeHealthMonitor
             && positionSeconds >= durationSeconds - EndMarginSeconds)
             return DecodeWindowVerdict.Skipped;
 
-        double averageRate = (rateIntegralSeconds - previousRateIntegral.Value) / elapsedSeconds;
+        double averageRate = (rateIntegralSeconds - startRateIntegral) / elapsedSeconds;
         if (!double.IsFinite(averageRate) || averageRate <= 0) averageRate = 1.0;
         double expected = fps * elapsedSeconds * averageRate;
         if (deliveredFrames >= expected * BehindRatio) return DecodeWindowVerdict.Ok;

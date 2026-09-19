@@ -114,6 +114,58 @@ public sealed class DecodeHealthMonitorTests
     }
 
     [Fact]
+    public void AWindowRestartedMidwayIsJudgedOverItsOwnSpan()
+    {
+        // 検証機（M3 ×10、候補 047cand1）: 表示 11 件のうち 10 件が誤検知だった。perf の窓は再生位置が
+        // 後ろへ戻ると作り直される（VP9 4K60 の位置の交番で起きる）。速度の積分の差を「前回の判定から」
+        // 取っていたので、4〜8 秒ぶんの積分を 2 秒で割り、期待値が膨らんでいた。
+        // 実例: 前回の perf 行から 5.57 秒、窓は 2.01 秒・123 枚（比 1.02）なのに「123 / 334」と出た。
+        var (monitor, integral, now) = Settled();
+        integral += 3.56;
+        now += TimeSpan.FromSeconds(3.56);
+        monitor.BeginWindow(0, integral);
+
+        DecodeWindowVerdict verdict = monitor.Observe(123, 2.01, Fps, 0, integral + 2.01, 40, 600, false,
+            now + TimeSpan.FromSeconds(2.01));
+
+        verdict.Should().Be(DecodeWindowVerdict.Ok, "窓の中では 2.01 秒で 123 枚届いている");
+    }
+
+    [Fact]
+    public void TheCommandedRateIsAveragedOverTheWindowOnly()
+    {
+        // 作り直しで捨てた部分の速度（着地窓の 1.2 倍速）を、窓の期待値に混ぜない。
+        // 前回の判定からの平均（1.12 倍速）で割ると 120 / 134 = 0.89 で誤って Behind になる。
+        var (monitor, integral, now) = Settled();
+        integral += 3.0 * 1.2;
+        now += TimeSpan.FromSeconds(3.0);
+        monitor.BeginWindow(0, integral);
+
+        monitor.Observe(120, Window, Fps, 0, integral + Window, 40, 600, false, now + TimeSpan.FromSeconds(Window))
+            .Should().Be(DecodeWindowVerdict.Ok);
+    }
+
+    [Fact]
+    public void ASeekBeforeTheWindowRestartStillSettles()
+    {
+        // シークで位置が戻ると、perf の窓はシークの直後に作り直される。乱れはその前（捨てた部分）に
+        // あるが、着地の遅れはこれからの窓に出るので、あと 2 窓は判定しない。
+        var (monitor, integral, now) = Settled();
+        now += TimeSpan.FromSeconds(1);
+        integral += 1;
+        monitor.BeginWindow(disturbances: 1, integral);
+        DecodeWindowVerdict[] verdicts = new DecodeWindowVerdict[3];
+        for (int i = 0; i < 3; i++)
+        {
+            integral += Window;
+            now += TimeSpan.FromSeconds(Window);
+            verdicts[i] = monitor.Observe(40, Window, Fps, disturbances: 1, integral, 40, 600, false, now);
+        }
+
+        verdicts.Should().Equal(DecodeWindowVerdict.Skipped, DecodeWindowVerdict.Skipped, DecodeWindowVerdict.Behind);
+    }
+
+    [Fact]
     public void ResetStartsTheCountOver()
     {
         var (monitor, integral, now) = Settled();

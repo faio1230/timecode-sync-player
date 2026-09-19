@@ -2420,11 +2420,18 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         if (!_playbackControl.IsPaused)
         {
+            long windowGeneration = _playbackPerformanceStats.WindowGeneration;
             PlaybackPerformanceSnapshot? performance = _playbackPerformanceStats.RecordTick(pos, DateTime.UtcNow);
             if (performance != null)
             {
                 LogPlaybackPerformance(performance);
                 ObserveDecodeHealth(performance, pos);
+            }
+            else if (_playbackPerformanceStats.WindowGeneration != windowGeneration)
+            {
+                // 0.4.7: 窓が snapshot 無しで作り直された（位置が戻った）。判定の基準を窓に合わせる。
+                PlaybackActivityLedger activity = _gstPlaybackApi.Activity;
+                _decodeHealth.BeginWindow(activity.Disturbances, activity.RateIntegralSeconds());
             }
         }
         // 表示は最後の落ち込みから一定時間で消える。毎 tick 見直す（変わらなければ何もしない）。
@@ -2688,9 +2695,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             DateTime.UtcNow);
         if (verdict != DecodeWindowVerdict.Behind) return;
         (int delivered, int expected) = _decodeHealth.LastBehind;
+        double elapsed = snapshot.Elapsed.TotalSeconds;
+        // 窓の長さと平均の指示速度も残す（expected = fps × elapsed × rate）。期待値の基準が窓とずれていないかを
+        // ログだけで確かめられるように（047cand1 の誤検知は、ここが窓より長い区間になっていた）。
         Log.Warning(
-            "Decode behind: delivered={Delivered} expected={Expected} ratio={Ratio:F2} fps={Fps:F3} position={Position:F3} codec={Codec} count={Count}",
-            delivered, expected, expected > 0 ? delivered / (double)expected : 0, _fps, position,
+            "Decode behind: delivered={Delivered} expected={Expected} ratio={Ratio:F2} elapsed={Elapsed:F2}s rate={Rate:F3} fps={Fps:F3} position={Position:F3} codec={Codec} count={Count}",
+            delivered, expected, expected > 0 ? delivered / (double)expected : 0,
+            elapsed, _fps > 0 && elapsed > 0 ? expected / (_fps * elapsed) : 0, _fps, position,
             _playbackApi.GetVideoCodec(), _decodeHealth.BehindCount);
     }
 
