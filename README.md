@@ -14,9 +14,11 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 
 **インストーラーとzipは[GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases)からダウンロードできます。**
 
-- 通常は、管理者権限不要の`TimecodeSyncPlayer-v0.2.0-setup.exe`を推奨します。
-- 展開して使う場合は`TimecodeSyncPlayer-v0.2.0-win-x64.zip`を選択してください。
+- 通常は、管理者権限不要のインストーラー`TimecodeSyncPlayer-v<版>-setup.exe`を推奨します。
+- 展開して使う場合は`TimecodeSyncPlayer-v<版>-win-x64.zip`を選択してください。
+- `<版>`は最新のリリースの版番号です（例: `v0.4.5`）。
 - GStreamer 1.28.2ランタイムは同梱しています。追加のインストールは不要です。
+- 本番の前に[現場準備ガイド](docs/USER-MANUAL.md)を読んでください。素材の書き出し方しだいで同期の安定性が大きく変わります。
 
 ## 主な機能
 
@@ -32,6 +34,9 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 ## 動作要件
 
 - Windows 10/11 x64
+- **Direct3D 11.4 に対応した GPU とドライバ**（映像の合成と出力に使います）。
+  対応していない環境では、起動時にそのことを知らせ、再生だけを無効にします
+  （アプリは開いたままで、CPU での合成に切り替えることはしません）
 - 配布パッケージの実行には[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
 - **Microsoft Visual C++ 2015-2022 再頒布可能パッケージ（x64）**
   インストーラーが自動で導入します。zip版では未導入の場合に手動で導入してください
@@ -42,7 +47,7 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 
 ## インストーラーの使い方
 
-1. Releasesから`TimecodeSyncPlayer-v0.2.0-setup.exe`を実行します。ユーザー単位のため
+1. Releasesから`TimecodeSyncPlayer-v<版>-setup.exe`を実行します。ユーザー単位のため
    管理者権限は不要です。
 2. スタートメニューからTimecodeSyncPlayerを起動します。
 
@@ -52,7 +57,7 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 
 ## zipの使い方
 
-1. `TimecodeSyncPlayer-v0.2.0-win-x64.zip`を、書き込み可能なフォルダーへ展開します。
+1. `TimecodeSyncPlayer-v<版>-win-x64.zip`を、書き込み可能なフォルダーへ展開します。
 2. Visual C++ 2015-2022 再頒布可能パッケージ（x64）が未導入なら
    [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)を実行します。
 3. `TimecodeSyncPlayer.exe`を起動します。
