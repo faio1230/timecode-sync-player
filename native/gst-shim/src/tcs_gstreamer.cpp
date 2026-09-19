@@ -3521,7 +3521,11 @@ tcs_player_set_rate_instant (TcsPlayer* player, double rate)
     std::lock_guard<std::mutex> g (player->frame_lock);
     /* A non-flushing seek in PAUSED is undefined; refuse instead of guessing. */
     if (player->paused) return TCS_ERR_GENERIC;
-    player->rate = rate;
+    /* 0.4.6: player->rate is written only after GStreamer accepted the change
+     * (below). It used to be written here, before the call: a rejected change
+     * left the new rate stored, and the next ordinary seek (seek_prepare_locked
+     * uses player->rate) applied it, so the app's idea of the rate and the
+     * pipeline's diverged. */
     /* The instant rate change rewrites the segment like a rate seek: the TS
      * rebase rewrite does not apply to it (same reasoning as set_speed). */
     player->rebase_armed = false;
@@ -3535,7 +3539,16 @@ tcs_player_set_rate_instant (TcsPlayer* player, double rate)
       GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE,
       GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
   LOG ("seek: send end (rate.instant) ok=%d", ok ? 1 : 0);
-  return ok ? TCS_OK : TCS_ERR_GENERIC;
+  if (!ok)
+    return TCS_ERR_GENERIC;
+  {
+    /* Same lock order as above (state_mutex -> frame_lock); no GStreamer call
+     * under either (I13). */
+    std::lock_guard<std::mutex> st (player->state_mutex);
+    std::lock_guard<std::mutex> g (player->frame_lock);
+    player->rate = rate;
+  }
+  return TCS_OK;
 #else
   /* GST_SEEK_FLAG_INSTANT_RATE_CHANGE needs GStreamer 1.18+. */
   return TCS_ERR_GENERIC;
