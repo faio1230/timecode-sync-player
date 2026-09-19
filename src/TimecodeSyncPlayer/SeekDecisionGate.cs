@@ -92,6 +92,9 @@ internal sealed class SeekDecisionGate
             _samples.Clear();
             _lastAcceptedAt = double.NaN;
             _lastAcceptedDelta = double.NaN;
+            // 0.4.6: 連続回数も切る。残すと、切った直後の 1 サンプル目が「連続 5 回超過」になり、
+            // この守り（瞬間値でシークしない）をすり抜けてシークしていた（Codex のレビューで再現）。
+            _consecutiveExceeded = 0;
             return new Result(false, true, medianBeforeClear, _consecutiveExceeded, 0, RejectedSamples,
                 deltaSeconds, previousDelta, change, allowedChange, dt);
         }
