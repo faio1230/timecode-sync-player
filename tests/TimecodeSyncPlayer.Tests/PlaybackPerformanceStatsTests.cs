@@ -98,4 +98,26 @@ public class PlaybackPerformanceStatsTests
         nextSnapshot.Should().NotBeNull();
         nextSnapshot!.PlaybackRate.Should().BeApproximately(1.0, 0.0001);
     }
+
+    [Fact]
+    public void WindowGeneration_AdvancesOnEveryNewWindow_WithOrWithoutASnapshot()
+    {
+        // 0.4.7: 「デコードが追いついていない」判定は、窓が始まった時点の基準（速度の積分・乱れの数）を
+        // 取り直す必要がある。窓は snapshot と同時にも、位置が戻ったときに黙っても作り直される。
+        var stats = new PlaybackPerformanceStats(TimeSpan.FromSeconds(2));
+        DateTime start = new(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+        long g0 = stats.WindowGeneration;
+
+        stats.RecordTick(10.0, start);
+        stats.WindowGeneration.Should().Be(g0 + 1, "最初の tick で窓が始まる");
+
+        stats.RecordTick(11.0, start.AddSeconds(1));
+        stats.WindowGeneration.Should().Be(g0 + 1, "窓の途中では変わらない");
+
+        stats.RecordTick(10.6, start.AddSeconds(1.5)).Should().BeNull();
+        stats.WindowGeneration.Should().Be(g0 + 2, "位置が戻ると snapshot 無しで作り直される");
+
+        stats.RecordTick(12.6, start.AddSeconds(3.5)).Should().NotBeNull();
+        stats.WindowGeneration.Should().Be(g0 + 3, "snapshot を返すと同時に次の窓が始まる");
+    }
 }

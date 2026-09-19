@@ -101,8 +101,15 @@ public sealed class PlaybackPerformanceStats
 
     public long TotalRenderedFrames => _totalRenderedFrames;
 
+    /// <summary>
+    /// 0.4.7: 窓が新しく始まるたびに 1 増える。窓は snapshot を返すときだけでなく、位置が戻ったときにも
+    /// 黙って作り直される。窓ごとの基準を取り直したい側（<see cref="DecodeHealthMonitor"/>）が使う。
+    /// </summary>
+    public long WindowGeneration { get; private set; }
+
     private void StartWindow(double playbackSeconds, DateTime now)
     {
+        WindowGeneration++;
         _windowStartedAt = now;
         _firstPlaybackSeconds = playbackSeconds;
         _lastPlaybackSeconds = playbackSeconds;
