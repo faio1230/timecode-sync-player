@@ -1,7 +1,12 @@
 namespace TimecodeSyncPlayer.Tests.Helpers;
 
 /// <summary>L-1: 連続追従の 1 サンプル（WallSeconds は監査開始からの経過、PositionSeconds は画面の位置ラベル）。</summary>
-internal readonly record struct FollowSample(double WallSeconds, double LtcSeconds, double PositionSeconds);
+/// <summary>
+/// L-1 の 1 標本。ReadSkewSeconds は「LTC と位置を読むのにかかった時間の半分」で、
+/// 読み取りの系統誤差がどれだけ乗り得たかを後から確かめるために残す（判定には使わない）。
+/// </summary>
+internal readonly record struct FollowSample(double WallSeconds, double LtcSeconds, double PositionSeconds,
+    double ReadSkewSeconds = 0.0);
 
 /// <summary>
 /// L-1: アプリの `Playback perf` 行 1 本。AtSeconds はログ時刻（監査開始からの経過）、
@@ -34,7 +39,7 @@ internal readonly record struct FollowSeekSpan(double AtSeconds, double Duration
 internal readonly record struct FollowWindow(
     int Index, double StartSeconds, int FrameUpdates, double PositionAdvance, double MaxAbsError,
     bool Settling, double LtcAdvance, int Samples, double IntervalSeconds, bool Sparse,
-    double SeekSeconds, double LongestSeekSeconds, int PerfSegments);
+    double SeekSeconds, double LongestSeekSeconds, int PerfSegments, double ReadSkewSeconds = 0.0);
 
 /// <summary>
 /// L-1: 全窓の集計。Windows は Settling を含む全窓。判定に使う数値（Stall*、MaxAbsError、
@@ -57,6 +62,8 @@ internal sealed record ContinuousFollowSummary(
     int SettlingWindowCount,
     double SettlingMaxAbsError,
     int SparseWindowCount,
+    int ThinWindowCount,
+    bool ErrorUndecidable,
     int WindowsWithoutPerf,
     IReadOnlyList<FollowSeekSpan> SeekSpans,
     double SeekSecondsTotal,
@@ -69,6 +76,13 @@ internal sealed record ContinuousFollowSummary(
 /// </summary>
 internal static class ContinuousFollowAudit
 {
+    /// <summary>
+    /// 最大誤差の判定に使う窓の最小標本数。検証機の実測（修正後 4 実行・108 窓）で、
+    /// 標本 8 個以上の窓は誤差 中央 0.04〜0.09 / 最大 0.146 秒、7 個以下は 中央 0.11〜0.23 /
+    /// 最大 0.357 秒と、8 個のところで段差がある。
+    /// </summary>
+    internal const int MinSamplesForError = 8;
+
     public static ContinuousFollowSummary Summarize(
         IReadOnlyList<FollowSample> samples,
         IReadOnlyList<FollowPerfSegment> perf,
@@ -123,6 +137,7 @@ internal static class ContinuousFollowAudit
             double firstLtc = double.NaN;
             double lastLtc = double.NaN;
             double maxError = 0.0;
+            var readSkews = new List<double>();
             bool hasPosition = false;
             bool hasLtc = false;
             int sampleCount = 0;
@@ -131,6 +146,8 @@ internal static class ContinuousFollowAudit
                 if (sample.WallSeconds < start || sample.WallSeconds >= end)
                     continue;
                 sampleCount++;
+                if (double.IsFinite(sample.ReadSkewSeconds) && sample.ReadSkewSeconds > 0.0)
+                    readSkews.Add(sample.ReadSkewSeconds);
                 if (double.IsFinite(sample.LtcSeconds))
                 {
                     if (!hasLtc)
@@ -186,14 +203,24 @@ internal static class ContinuousFollowAudit
             }
             if (hasLtc)
                 carryLtc = lastLtc;
+            readSkews.Sort();
+            double medianSkew = readSkews.Count == 0 ? 0.0 : readSkews[readSkews.Count / 2];
             windows.Add(new FollowWindow(index, start, frameUpdates, advance, maxError,
                 start < settlingSeconds, ltcAdvance, sampleCount, intervalSeconds, sparse,
-                seekSeconds, longestSeek, perfSegments));
+                seekSeconds, longestSeek, perfSegments, medianSkew));
         }
 
         List<FollowWindow> audited = windows.Where(window => !window.Settling).ToList();
         List<FollowWindow> settling = windows.Where(window => window.Settling).ToList();
         List<FollowWindow> measurable = audited.Where(window => !window.Sparse).ToList();
+        // 誤差は「窓の中で LTC と位置を何回読めたか」に依存する。読みが遅い素材では 1 窓あたり
+        // 2〜4 標本しか取れず、最大値が荒れて 0.3 秒を超える（検証機の実測: 標本 8 個以上の窓は
+        // 最大 0.146 秒、7 個以下では 0.357 秒まで出た）。標本の薄い窓は最大誤差の判定から外し、
+        // 外れた窓が過半を占める実行は「判定不能」にする（黙って合格にしない）。
+        List<FollowWindow> errorMeasurable = audited
+            .Where(window => window.Samples >= MinSamplesForError).ToList();
+        int thinWindows = audited.Count - errorMeasurable.Count;
+        bool errorUndecidable = audited.Count == 0 || thinWindows * 2 > audited.Count;
 
         int stallUpdates = 0;
         int stallAdvance = 0;
@@ -222,13 +249,15 @@ internal static class ContinuousFollowAudit
             audited.Count == 0 ? 0.0 : audited.Average(window => (double)window.FrameUpdates),
             stallUpdates,
             stallAdvance,
-            audited.Count == 0 ? 0.0 : audited.Max(window => window.MaxAbsError),
+            errorMeasurable.Count == 0 ? 0.0 : errorMeasurable.Max(window => window.MaxAbsError),
             worstUpdatesPool.Count == 0 ? null : worstUpdatesPool.MinBy(window => window.FrameUpdates),
             worstAdvancePool.Count == 0 ? null : worstAdvancePool.MinBy(window => window.PositionAdvance),
-            audited.Count == 0 ? null : audited.MaxBy(window => window.MaxAbsError),
+            errorMeasurable.Count == 0 ? null : errorMeasurable.MaxBy(window => window.MaxAbsError),
             settling.Count,
             settling.Count == 0 ? 0.0 : settling.Max(window => window.MaxAbsError),
             audited.Count(window => window.Sparse),
+            thinWindows,
+            errorUndecidable,
             audited.Count(window => window.PerfSegments == 0),
             seekSpans,
             seekSpans.Sum(span => span.DurationSeconds),
