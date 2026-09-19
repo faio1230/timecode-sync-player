@@ -267,13 +267,19 @@ public sealed class TimecodeSyncService
     /// 止まっており、<b>行き過ぎたまま補正が走らない</b>ほうが害が大きいため。
     /// 本来は「タイムコードが進んでいるか」で先行量を決めるべきだが、その信号を同期側へ
     /// 渡す仕組みがまだない（0.4.6 以降の課題）。
+    ///
+    /// 0.4.6: <b>LTC の Jump を適用したときにも終わらせる</b>（<paramref name="reason"/> = "ltc jump"）。
+    /// ホールド解除だけでは足りなかった。検証機の S-3 で、端へのシークの着地に 0.655 秒かかり、
+    /// ホールドが成立しないまま LTC が範囲内へ戻った。復帰シークに学習値 0.655 が乗り、
+    /// 10.060 に対して 10.714 へ着地した。LTC が不連続に動いた時点で「シークの間に LTC が
+    /// 進むぶん」という前提が崩れるので、ホールドの成否に関係なくそこで外す。
     /// </summary>
-    public void EndFollowStartLanding()
+    public void EndFollowStartLanding(string reason)
     {
         if (!_seekLandingActive || _landingOrigin != LandingOrigin.FollowStart)
             return;
         _landingOrigin = LandingOrigin.Other;
-        Log.Information("Seek landing: follow-start episode ended (boundary hold released)");
+        Log.Information("Seek landing: follow-start episode ended ({Reason})", reason);
     }
 
     private void CloseSeekLanding()

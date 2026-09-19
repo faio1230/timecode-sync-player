@@ -599,6 +599,9 @@ internal sealed class LtcSyncController
             // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
             // （ObserveValidFrame を呼ばない）。保持損失からの復帰は上の D27-b の経路。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
+            // 0.4.6: LTC が不連続に動いたので、追従開始の先行量の前提（LTC が進み続ける）が崩れた。
+            // このフレームで始まる追従開始は ApplySync で開くので、終わるのはそれより前のものだけ。
+            _syncService.EndFollowStartLanding("ltc jump");
             RequestSyncEffective(effectiveSeconds);
             ApplyCorrection(effectiveSeconds);
             return;
@@ -644,6 +647,7 @@ internal sealed class LtcSyncController
         _lastAcceptedFrameEndTimestamp = frameEndTimestamp;
         _lastAppliedLtcSeconds = effectiveSeconds;
         Log.Information("Timecode sync: applying the confirmed Jump frame once ltc={Ltc:F3}", rawSeconds);
+        _syncService.EndFollowStartLanding("ltc jump");
         RequestSyncEffective(effectiveSeconds);
         ApplyCorrection(effectiveSeconds);
     }
@@ -1074,7 +1078,7 @@ internal sealed class LtcSyncController
         _heldReapplyDone = false;
         _pendingSyncSeconds = null;
         _syncService.SeekState.Clear();
-        _syncService.EndFollowStartLanding();
+        _syncService.EndFollowStartLanding("boundary hold released");
         Log.Information("Single mode: boundary hold released; pending seek state and held landing latch cleared");
     }
 
