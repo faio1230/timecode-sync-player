@@ -270,6 +270,24 @@ public sealed class RenderSessionTests
         fixture.Api.Calls.Select(c => c.Operation).Should().Equal("create", "callback", "update", "free");
     });
 
+    [Fact]
+    public async Task DetachAndAttachPlayer_NeverReadsTheOldHandle()
+    {
+        // 0.4.6: このセッションのコンテキストはプレイヤーのハンドルそのもの。GPU 復旧で
+        // プレイヤーを作り直すとき、外さずに作り直すと破棄済みのハンドルを読み続けていた。
+        using var fixture = new Fixture();
+        await fixture.Session.ProcessUpdateAsync((_, _) => Task.CompletedTask);
+
+        fixture.Session.DetachPlayer();
+        await fixture.Session.ProcessUpdateAsync((_, _) => Task.CompletedTask);
+        fixture.Session.AttachPlayer(new IntPtr(7));
+        await fixture.Session.ProcessUpdateAsync((_, _) => Task.CompletedTask);
+
+        fixture.Api.ConsumedContexts.Should().Equal(
+            [new IntPtr(2), new IntPtr(7)],
+            "外している間は何も読まず、つなぎ直した後は新しいハンドルだけを読む");
+    }
+
     private sealed class Fixture : IDisposable
     {
         public readonly FakeApi Api = new();
@@ -309,8 +327,11 @@ public sealed class RenderSessionTests
             return CreateSucceeds;
         }
 
+        public readonly ConcurrentQueue<IntPtr> ConsumedContexts = new();
+
         public ulong ConsumeUpdate(IntPtr ctx)
         {
+            ConsumedContexts.Enqueue(ctx);
             Record("update");
             UpdateStarted.TrySetResult();
             UpdateRelease?.Wait();

@@ -167,6 +167,26 @@ internal sealed class RenderSession : IDisposable
         barrier.GetAwaiter().GetResult();
     }
 
+    /// <summary>
+    /// 0.4.6: GPU 復旧でプレイヤーを作り直す前に、UI スレッドから呼ぶ。
+    /// このセッションのコンテキストはプレイヤーのハンドルそのもの（GstRenderUpdateSource）なので、
+    /// 外さずに作り直すと、描画スレッドが破棄済みのプレイヤーへ ConsumeUpdate を呼び続けていた。
+    /// ハンドルの書き換えは描画スレッドで行い、それが終わるまで待つ（Stop と同じく、
+    /// 待つのはネイティブ側の処理だけで UI の続きは待たない）。以後の読み出しは何もしない。
+    /// </summary>
+    public void DetachPlayer()
+    {
+        if (_stopped) return;
+        _thread.InvokeAsync(() => _context = IntPtr.Zero).GetAwaiter().GetResult();
+    }
+
+    /// <summary>0.4.6: 作り直したプレイヤーへつなぎ直す（<see cref="DetachPlayer"/> の対）。</summary>
+    public void AttachPlayer(IntPtr player)
+    {
+        if (_stopped) return;
+        _thread.InvokeAsync(() => _context = player).GetAwaiter().GetResult();
+    }
+
     /// <summary>Must succeed before the shim player is destroyed. Called on the owning UI thread.</summary>
     public void FreeContext()
     {

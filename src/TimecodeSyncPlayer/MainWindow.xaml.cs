@@ -750,11 +750,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             {
                 if (_disposed || _outputEngine == null) return;
                 double position = ReadPlaybackTimePos() ?? 0;
+                // 0.4.6: 描画側は古いプレイヤーのハンドルを持っているので、破棄の前に外し、
+                // 作り直した後で新しいハンドルへつなぎ直す（外さないと破棄済みのプレイヤーへ
+                // 通知の読み出しを続けていた。Codex のレビュー）。
+                _renderSession.DetachPlayer();
                 if (!_gstBackendState.RecreatePlayer(devicePointer))
                 {
                     Log.Error("GPU 復旧: GStreamer player の再生成に失敗");
                     return;
                 }
+                _renderSession.AttachPlayer(_gstBackendState.Player);
+                Log.Information("GPU 復旧: フレーム通知を新しいプレイヤーへつなぎ直した");
                 _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
                     _gstBackendState.Seeking.NotifyEnded);
                 PlaylistTrack? track = _playlist.Current;
