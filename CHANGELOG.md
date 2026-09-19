@@ -24,6 +24,10 @@ affect recommended material too.
   count, so the first sample of the new series counted as the fifth in a row.
 - **A rejected playback-rate change left the new rate stored in the shim**, and the next ordinary seek
   applied it. The rate is now stored only after GStreamer accepts the change.
+- **A seek that GStreamer rejected was reported as issued.** The app then waited for a landing that could
+  not come, and a paused player was pumped for a flush that never happened. A rejected seek now returns
+  failure. In the test machine's logs this happened 7 times, all while a load was still settling, and
+  never while following.
 - **After recovering from a GPU device loss, picture updates could fail to resume.** Recreating the
   player dropped the frame-callback registration, and the render session kept reading the destroyed
   player's handle. Both are now reconnected to the new player.
