@@ -1,6 +1,9 @@
 namespace TimecodeSyncPlayer;
 
-internal sealed record ProjectLoadApplyResult(int SyncModeIndex, int GapBehaviorIndex);
+internal sealed record ProjectLoadApplyResult(
+    int SyncModeIndex,
+    int GapBehaviorIndex,
+    IReadOnlyList<SkippedProjectTrack> SkippedTracks);
 
 public sealed class ProjectLoadApplicator
 {
@@ -13,9 +16,10 @@ public sealed class ProjectLoadApplicator
 
     internal ProjectLoadApplyResult Apply(ProjectData project)
     {
-        ProjectSerializer.ApplyToPlaylist(project, _playlist);
+        IReadOnlyList<SkippedProjectTrack> skipped = ProjectSerializer.ApplyToPlaylist(project, _playlist);
         return new ProjectLoadApplyResult(
             ProjectSyncSelectionMapper.GetSyncModeIndex(project.SyncMode),
-            ProjectSyncSelectionMapper.GetGapBehaviorIndex(project.GapBehavior));
+            ProjectSyncSelectionMapper.GetGapBehaviorIndex(project.GapBehavior),
+            skipped);
     }
 }

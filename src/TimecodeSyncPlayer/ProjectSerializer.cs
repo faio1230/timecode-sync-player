@@ -5,6 +5,9 @@ using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
+/// <summary>プロジェクトを開いたときに反映できなかったトラック（0.4.6: 利用者へ一覧で知らせる）。</summary>
+public sealed record SkippedProjectTrack(string Name, string Path, string Reason);
+
 /// <summary>
 /// プロジェクトファイルの保存・読み込みを担当する。
 /// </summary>
@@ -188,45 +191,57 @@ internal static class ProjectSerializer
         }
     }
 
-    public static void ApplyToPlaylist(ProjectData project, PlaylistState playlist)
+    /// <summary>
+    /// プロジェクトをプレイリストへ反映する。反映できなかったトラックを返す
+    /// （0.4.6: 以前はログに残すだけで黙って除外していた。呼び出し側が利用者へ一覧で知らせる）。
+    /// </summary>
+    public static IReadOnlyList<SkippedProjectTrack> ApplyToPlaylist(ProjectData project, PlaylistState playlist)
     {
         playlist.Clear();
+        var skipped = new List<SkippedProjectTrack>();
 
         if (project.Tracks == null)
         {
             Serilog.Log.Warning("プロジェクトデータにトラック情報がありません");
-            return;
+            return skipped;
         }
 
         foreach (var trackData in project.Tracks)
         {
+            string trackName = trackData.Name ?? "無名トラック";
+
             if (string.IsNullOrEmpty(trackData.FilePath))
             {
                 Serilog.Log.Warning("プロジェクトトラックのファイルパスが空です: {Name}", trackData.Name);
+                skipped.Add(new SkippedProjectTrack(trackName, "", "ファイルの場所が記録されていません"));
                 continue;
             }
 
             if (trackData.FrameRate is <= 0 or > 120)
             {
                 Serilog.Log.Warning("プロジェクトトラックのフレームレートが無効です: {Name} FrameRate={FrameRate}", trackData.Name, trackData.FrameRate);
+                skipped.Add(new SkippedProjectTrack(trackName, trackData.FilePath, "フレームレートが無効です"));
                 continue;
             }
 
             if (trackData.TimelineOffset < TimeSpan.Zero)
             {
                 Serilog.Log.Warning("プロジェクトトラックのタイムラインオフセットが無効です: {Name} Offset={Offset}", trackData.Name, trackData.TimelineOffset);
+                skipped.Add(new SkippedProjectTrack(trackName, trackData.FilePath, "タイムライン上の位置が無効です"));
                 continue;
             }
 
             if (trackData.MediaDuration < TimeSpan.Zero)
             {
                 Serilog.Log.Warning("プロジェクトトラックのメディア長が無効です: {Name} Duration={Duration}", trackData.Name, trackData.MediaDuration);
+                skipped.Add(new SkippedProjectTrack(trackName, trackData.FilePath, "素材の長さが無効です"));
                 continue;
             }
 
             if (trackData.MediaIn < TimeSpan.Zero)
             {
                 Serilog.Log.Warning("負のMediaInをスキップ: {MediaIn}", trackData.MediaIn);
+                skipped.Add(new SkippedProjectTrack(trackName, trackData.FilePath, "開始位置が無効です"));
                 continue;
             }
 
@@ -235,6 +250,7 @@ internal static class ProjectSerializer
             if (!File.Exists(resolvedPath))
             {
                 Serilog.Log.Warning("プロジェクトトラックのファイルが見つかりません: {Path} (スキップ)", resolvedPath);
+                skipped.Add(new SkippedProjectTrack(trackName, resolvedPath, "ファイルが見つかりません"));
                 continue;
             }
 
@@ -257,6 +273,7 @@ internal static class ProjectSerializer
 
         if (playlist.Tracks.Count > 0)
             playlist.Select(0);
+        return skipped;
     }
 
     /// <summary>
@@ -312,6 +329,10 @@ internal static class ProjectSerializer
         try
         {
             string resolved;
+            // 0.4.6: プロジェクトのフォルダーの外（別フォルダー・別ドライブ）もそのまま読む。
+            // 以前はフォルダーの外を絶対パスでも拒否していたため、保存側が作る `..\media\clip.mp4`
+            // のような相対パスや `D:\media\clip.mp4` が、開き直すと黙って消えていた（v0.1.0 から）。
+            // プロジェクトファイルは利用者が自分で作るもので、外を拒否して守るものが無い。
             if (Path.IsPathRooted(path))
             {
                 resolved = Path.GetFullPath(path);
@@ -319,18 +340,6 @@ internal static class ProjectSerializer
             else
             {
                 resolved = Path.GetFullPath(Path.Combine(projectDirectory, path));
-            }
-
-            // パス正規化後の検証
-            string normalizedProjectDir = Path.GetFullPath(projectDirectory);
-            string baseDir = normalizedProjectDir;
-            if (!baseDir.EndsWith(Path.DirectorySeparatorChar.ToString()))
-                baseDir += Path.DirectorySeparatorChar;
-            if (!resolved.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(resolved, normalizedProjectDir, StringComparison.OrdinalIgnoreCase))
-            {
-                Serilog.Log.Warning("プロジェクトディレクトリ外のパスを拒否: {ResolvedPath}", resolved);
-                return string.Empty;
             }
 
             return resolved;
