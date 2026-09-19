@@ -2,6 +2,35 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.4.7 - 未定
+
+Warnings only; the sync control is unchanged. Measurements showed that most sync trouble comes from
+the media (keyframe interval, codec), so this release makes risky media visible before and during a
+show instead of changing how the player reacts.
+
+### Added
+
+- **A warning when the loaded media is not in a recommended format.** Anything other than H.264 or
+  ProRes (VP9, AV1, H.265 and so on) shows a note in the status line and `⚠ 形式` in the playlist.
+  Playback is not stopped. The check is only "does it match the field guide's recommendation"; no
+  bitrate threshold is used, because no measurement supports one. Basis: VP9 4K60 fell behind in
+  about one in five 2-second windows, and AV1's keyframe interval cannot be read, so the long-keyframe
+  warning cannot be shown for it.
+- **A "decoding is falling behind" indicator.** When fewer than 90% of the expected frames arrive in a
+  2-second window (expected = media fps × elapsed × the commanded rate), the status line says so
+  (for example "2 秒で 74 / 120 枚") and a `Decode behind:` line is logged. **Display only; it does
+  not change sync behaviour.** It clears 10 s after the last occurrence. Windows that straddle a seek,
+  pause, rate change, load or stop, the two windows after one, gaps, and the last 3 s of the media are
+  not judged. At 2× or 4× the expected count scales with the rate, so heavy media can show it at 4×
+  (that is a true shortfall).
+
+### Changed
+
+- Known limitations: "the drift widens a few times in a 10-minute follow" and "high-bitrate 4K60
+  media can drift" are merged into one entry. They were the same phenomenon (in a 10-minute
+  measurement, every drift coincided with a decode shortfall).
+- Field preparation guide: how to read the two new indicators and what to do when they appear.
+
 ## 0.4.6 - 2026-09-19
 
 Bug fixes only; the sync control policy is unchanged. These came out of an external code review (and,
