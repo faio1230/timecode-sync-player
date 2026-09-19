@@ -49,6 +49,29 @@ public sealed class SeekDecisionGateTests
     }
 
     [Fact]
+    public void Observe_RejectionAlsoResetsTheConsecutiveCount()
+    {
+        // 0.4.6: Codex のレビューで再現されたもの。異常値を弾いて系列を切っても
+        // 連続超過の回数だけが残り、切った直後の 1 サンプル目が「連続 5 回超過」になっていた。
+        // 標本の間隔が広い（200ms）と窓（250ms）に 3 標本そろわず中央値の判定は働かないので、
+        // 連続回数だけが積み上がる。
+        const double wideStep = 0.200;
+        var gate = new SeekDecisionGate();
+        double now = 0.0;
+        for (int i = 0; i < 4; i++)
+            gate.Observe(0.25, Tolerance, now += wideStep, Granularity).ShouldSeek.Should().BeFalse(
+                $"{i + 1} 回目の超過（まだ 5 回に届かない）");
+        gate.ConsecutiveExceeded.Should().Be(4);
+
+        gate.Observe(0.70, Tolerance, now += wideStep, Granularity).Rejected.Should().BeTrue(
+            "200ms で 0.45 秒は動けない");
+        gate.ConsecutiveExceeded.Should().Be(0, "系列を切ったなら連続回数も切る");
+
+        gate.Observe(0.25, Tolerance, now += wideStep, Granularity).ShouldSeek.Should().BeFalse(
+            "切った直後の 1 サンプル目。以前はここで連続 5 回と数えてシークしていた");
+    }
+
+    [Fact]
     public void Observe_SustainedOffset_SeeksAfterTheWindowFills()
     {
         var gate = new SeekDecisionGate();
