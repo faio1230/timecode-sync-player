@@ -275,6 +275,20 @@ public sealed class PlaylistState : IPlaylistService
         return true;
     }
 
+    /// <summary>
+    /// 0.4.7: 指定トラックに推奨外コーデックの印を付ける（表示のみ・セッション内）。
+    /// 既に印があれば何もしない。
+    /// </summary>
+    public bool MarkCodecWarning(Guid trackId)
+    {
+        int index = FindIndexById(trackId);
+        if (index < 0 || Tracks[index].CodecWarning)
+            return false;
+
+        Tracks[index] = Tracks[index] with { CodecWarning = true };
+        return true;
+    }
+
     public PlaylistTrack? FindTrackById(Guid id)
     {
         foreach (var track in Tracks)
