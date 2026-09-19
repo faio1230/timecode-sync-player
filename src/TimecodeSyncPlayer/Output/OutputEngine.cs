@@ -977,7 +977,13 @@ internal sealed class OutputEngine : IDisposable
             var stamp = new ImageStamp(++nextImageId, Stopwatch.GetTimestamp());
             long composeStartedQpc = Stopwatch.GetTimestamp();
             settings.Trace.Add("compose.start", "GPU", scheduled, stamp);
-            if (lease != null) { lease.BeginGpuUse(); inFlight = true; }
+            // 0.4.6（D38 の根治）: 保持中のリース（リングの fence 待ち）はこの tick の合成に使わない
+            // （acquired が null で、直前の Held を描くだけ）。GPU 使用中にもしないし、下の保留へも移さない。
+            // 以前は保持中でも BeginGpuUse を呼び、完了待ちが切れると保留（pendingWrites）へ移していた。
+            // 同じリースを保持（pendingFenceLease）と保留の両方が持つ二重所有になり、次に fence が
+            // 完了した tick で保持側がそれを描こうとして BeginGpuUse が例外 → GPU ワーカーが終了した
+            // （検証機で 198 本中 1 本、映像が 40 秒止まった。Codex のレビューで残り経路も指摘）。
+            if (lease != null && !holdLease) { lease.BeginGpuUse(); inFlight = true; }
             // D5 決定再現: フック有効時は切替後の最初のフレームまで Black を強制する（既定は上書きなし）。
             OutputGapMode gapMode = effective?.Gap ?? OutputGapMode.None;
             if (armedForceGapBlack) gapMode = OutputGapMode.Black;
@@ -997,7 +1003,13 @@ internal sealed class OutputEngine : IDisposable
             // 面とリースを保留して次 tick 以降に回収する（fault はデバイス消失か 3 秒連続の未完了だけ）。
             if (!gpu!.Fence.Wait("compose.source", deferOnSliceExpiry: true))
             {
-                pendingWrites.Add(new PendingComposeWrite(current, slot, lease, acquired));
+                // 保持中のリースは保持側（pendingFenceLease）が持ち続ける。保留へは渡さない。
+                // この組み合わせ（fence 待ちの保持中に完了待ちも切れた）が、以前 GPU ワーカーを
+                // 止めた経路。安全に通ったことを検証機で確かめられるよう、印を残す。
+                if (holdLease)
+                    settings.Trace.Record(new("compose.fencePending", "GPU", Stopwatch.GetTimestamp(), 0,
+                        pendingFenceSequence, 0, Detail: "hold:composeDeferred", Value: 0));
+                pendingWrites.Add(new PendingComposeWrite(current, slot, holdLease ? null : lease, acquired));
                 inFlight = false;
                 lease = null;
                 acquired = null;
@@ -1358,27 +1370,8 @@ internal sealed class OutputEngine : IDisposable
             pending.Acquired?.Release();
             if (pending.Lease != null)
             {
-                // D38: D28（完了待ちの期限切れで資源を保留）と I1/D25-b（リング fence 未完了の
-                // リースを保持して次 tick で同じフレームを描く）の合流点。
-                //
-                // 保持中のリース（pendingFenceLease）を持つ tick で完了待ちが期限切れになると、
-                // <b>同じリース実体が pendingWrites にも入る</b>（ComposeTick は holdLease を見ずに
-                // 保留へ移す）。ここで破棄すると pendingFenceLease が破棄済みを指したままになり、
-                // 次に fence が完了した tick で DrawRingLease がそれを返し、BeginGpuUse が
-                // 「Lease is returned or already in GPU use.」を投げる。例外は ComposeTick →
-                // Loop → Run まで抜けて<b>GPU ワーカーのループごと終了し、映像が出なくなる</b>
-                // （検証機で実測。198 本中 1 本、40 秒間まったく復帰しなかった）。
-                //
-                // 所有権はこちらに移すので、破棄の前に保持側の参照を落とす。
-                // ReleasePendingFenceLease は使わない（あちらも Dispose するので二重破棄になる）。
-                if (ReferenceEquals(pending.Lease, pendingFenceLease))
-                {
-                    settings.Trace.Record(new("compose.fencePending", "GPU", Stopwatch.GetTimestamp(), 0,
-                        pendingFenceSequence, 0, Detail: "release:deferredDiscarded", Value: 0));
-                    pendingFenceLease = null;
-                    pendingFenceSequence = 0;
-                    pendingFenceSinceQpc = 0;
-                }
+                // 保留が持つのは、その tick の合成に実際に使ったリースだけ（保持中のリースは
+                // ComposeTick が渡さない）。保持側（pendingFenceLease）と同じ実体になることは無い。
                 pending.Lease.CompleteGpuUse();
                 pending.Lease.Dispose();
             }
