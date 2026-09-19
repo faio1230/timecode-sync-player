@@ -874,6 +874,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         ProjectLoadApplyResult result = _projectLoadApplicator.Apply(project);
         _vm.Sync.SyncModeIndex = result.SyncModeIndex;
         _vm.Sync.GapBehaviorIndex = result.GapBehaviorIndex;
+
+        // 0.4.6: 反映できなかったトラックを黙って捨てずに知らせる。モーダルにするのは、
+        // そのまま上書き保存するとトラックがプロジェクトから外れるため（気づかずに保存させない）。
+        if (SkippedProjectTracksMessage.Format(result.SkippedTracks) is { } message)
+        {
+            Log.Warning("プロジェクトの読み込み: {Count} 件のトラックを反映できませんでした", result.SkippedTracks.Count);
+            _ = Dispatcher.BeginInvoke(() => MessageBox.Show(this, message,
+                SkippedProjectTracksMessage.Caption, MessageBoxButton.OK, MessageBoxImage.Warning));
+        }
     }
 
     private void InitializeTimeline()

@@ -554,8 +554,10 @@ public class ProjectSerializerTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplyToPlaylist_RejectsPathTraversalPaths()
+    public async Task ApplyToPlaylist_MissingFile_IsSkippedAndReported()
     {
+        // 0.4.6: 以前はこのテストが「フォルダーの外を拒否する」ことを固定していた。
+        // 外を拒否するのをやめたので、ここで固定するのは「無いファイルは除外し、理由つきで返す」こと。
         var tempFile = GetTempPath("valid.mp4");
         await File.WriteAllTextAsync(tempFile, "");
 
@@ -572,7 +574,7 @@ public class ProjectSerializerTests : IDisposable
                     {
                         Id = Guid.NewGuid(),
                         FilePath = "../../../Windows/System32/nonexistent_file_xyz.exe",
-                        Name = "Traversal Track",
+                        Name = "Missing Track",
                         MediaIn = TimeSpan.Zero,
                         MediaOut = null,
                         TimelineOffset = TimeSpan.Zero,
@@ -586,14 +588,105 @@ public class ProjectSerializerTests : IDisposable
 
             var playlist = new PlaylistState();
 
-            ProjectSerializer.ApplyToPlaylist(project, playlist);
+            IReadOnlyList<SkippedProjectTrack> skipped = ProjectSerializer.ApplyToPlaylist(project, playlist);
 
             playlist.Tracks.Should().BeEmpty();
+            skipped.Should().ContainSingle();
+            skipped[0].Name.Should().Be("Missing Track");
+            skipped[0].Reason.Should().Be("ファイルが見つかりません");
         }
         finally
         {
             File.Delete(tempFile);
         }
+    }
+
+    [Fact]
+    public async Task SaveAndLoad_MediaInSiblingFolder_IsRestored()
+    {
+        // 0.4.6: Codex のレビューで再現した形。projects\show.tsp と media\clip.mp4。
+        // 保存側は ..\media\clip.mp4 を書くが、読込側がフォルダーの外を拒否し、1 トラック → 0 トラックになっていた。
+        string projectsDir = Path.Combine(_tempDir, "projects");
+        string mediaDir = Path.Combine(_tempDir, "media");
+        Directory.CreateDirectory(projectsDir);
+        Directory.CreateDirectory(mediaDir);
+        string clip = Path.Combine(mediaDir, "clip.mp4");
+        await File.WriteAllTextAsync(clip, "");
+        string projectPath = Path.Combine(projectsDir, "show.tsp");
+
+        var playlist = new PlaylistState();
+        playlist.AddFiles([clip]);
+        await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Continue, GapBehavior.Black);
+
+        (await File.ReadAllTextAsync(projectPath)).Should().Contain(@"..\\media\\clip.mp4",
+            "保存側は相対パスで書く（この形が読めなかった）");
+
+        ProjectData? loaded = await ProjectSerializer.LoadAsync(projectPath);
+        var restored = new PlaylistState();
+        IReadOnlyList<SkippedProjectTrack> skipped = ProjectSerializer.ApplyToPlaylist(loaded!, restored);
+
+        skipped.Should().BeEmpty();
+        restored.Tracks.Should().ContainSingle();
+        restored.Tracks[0].FilePath.Should().Be(Path.GetFullPath(clip));
+    }
+
+    [Fact]
+    public async Task Load_AbsolutePathOutsideProjectFolder_IsRestored()
+    {
+        // 別ドライブの素材は保存側が絶対パスのまま書く。読込側はそれも拒否していた。
+        // 別ドライブはテスト環境で作れないので、プロジェクトのフォルダーの外にある絶対パスで代える。
+        string projectsDir = Path.Combine(_tempDir, "nested", "projects");
+        string elsewhere = Path.Combine(_tempDir, "elsewhere");
+        Directory.CreateDirectory(projectsDir);
+        Directory.CreateDirectory(elsewhere);
+        string clip = Path.Combine(elsewhere, "far.mp4");
+        await File.WriteAllTextAsync(clip, "");
+        string projectPath = Path.Combine(projectsDir, "show.tsp");
+        await File.WriteAllTextAsync(projectPath, $$"""
+            {
+              "version": 1,
+              "tracks": [
+                { "id": "{{Guid.NewGuid()}}", "filePath": "{{clip.Replace(@"\", @"\\")}}", "name": "far",
+                  "frameRate": 30, "mediaDuration": "00:00:10", "isEnabled": true }
+              ]
+            }
+            """);
+
+        ProjectData? loaded = await ProjectSerializer.LoadAsync(projectPath);
+        var restored = new PlaylistState();
+        IReadOnlyList<SkippedProjectTrack> skipped = ProjectSerializer.ApplyToPlaylist(loaded!, restored);
+
+        skipped.Should().BeEmpty();
+        restored.Tracks.Should().ContainSingle();
+        restored.Tracks[0].FilePath.Should().Be(Path.GetFullPath(clip));
+    }
+
+    [Fact]
+    public void SkippedTracksMessage_ListsEachTrackAndWarnsAboutSaving()
+    {
+        string? message = SkippedProjectTracksMessage.Format(
+        [
+            new SkippedProjectTrack("clip-a", @"D:\media\clip-a.mp4", "ファイルが見つかりません"),
+            new SkippedProjectTrack("clip-b", @"D:\media\clip-b.mp4", "ファイルが見つかりません"),
+        ]);
+
+        message.Should().NotBeNull();
+        message.Should().Contain("2 件").And.Contain("clip-a").And.Contain(@"D:\media\clip-b.mp4");
+        message.Should().Contain("上書き保存すると", "気づかずに保存するとトラックが外れるので、それを伝える");
+        SkippedProjectTracksMessage.Format([]).Should().BeNull("何も落ちていなければ知らせない");
+    }
+
+    [Fact]
+    public void SkippedTracksMessage_CapsTheList()
+    {
+        var many = Enumerable.Range(0, SkippedProjectTracksMessage.MaxListed + 3)
+            .Select(i => new SkippedProjectTrack($"t{i}", "", "ファイルが見つかりません"))
+            .ToList();
+
+        string message = SkippedProjectTracksMessage.Format(many)!;
+
+        message.Should().Contain("ほか 3 件");
+        message.Should().NotContain($"t{SkippedProjectTracksMessage.MaxListed}（");
     }
 
     private PlaylistState CreateNamedPlaylist(string name)
