@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.4.6 - 未定
+## 0.4.6 - 2026-09-19
 
 Bug fixes only; the sync control policy is unchanged. These came out of an external code review (and,
 for the last one, the test-machine run that verified those fixes) and affect recommended material too.
