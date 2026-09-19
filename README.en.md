@@ -14,10 +14,13 @@ video clips in a playlist.
 
 **Download the installer or zip from [GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases).**
 
-- For most users, the per-user `TimecodeSyncPlayer-v0.2.0-setup.exe` installer is recommended and
+- For most users, the per-user installer `TimecodeSyncPlayer-v<version>-setup.exe` is recommended and
   does not require administrator privileges.
-- Choose `TimecodeSyncPlayer-v0.2.0-win-x64.zip` for a portable extracted copy.
+- Choose `TimecodeSyncPlayer-v<version>-win-x64.zip` for a portable extracted copy.
+- `<version>` is the latest release (for example `v0.4.5`).
 - The GStreamer 1.28.2 runtime is included; no separate GStreamer installation is required.
+- Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show. How the material is
+  exported makes a large difference to sync stability.
 
 ## Features
 
@@ -33,6 +36,9 @@ video clips in a playlist.
 ## Requirements
 
 - Windows 10/11 x64
+- **A GPU and driver supporting Direct3D 11.4** (used to composite and output the picture).
+  On a system without it, the app says so at startup and disables playback only
+  (the app stays open; there is no fallback to CPU compositing)
 - [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) for release packages
 - **Microsoft Visual C++ 2015-2022 Redistributable (x64)**
   The setup installs it automatically. For the zip, install it manually when missing
@@ -43,7 +49,7 @@ video clips in a playlist.
 
 ## Using the installer
 
-1. Run `TimecodeSyncPlayer-v0.2.0-setup.exe` from Releases. It installs per user and does not
+1. Run `TimecodeSyncPlayer-v<version>-setup.exe` from Releases. It installs per user and does not
    require administrator privileges.
 2. Start TimecodeSyncPlayer from the Start menu.
 
@@ -53,7 +59,7 @@ reinstallation. Delete that file manually to remove the preferences completely.
 
 ## Using the zip
 
-1. Extract `TimecodeSyncPlayer-v0.2.0-win-x64.zip` to a writable folder.
+1. Extract `TimecodeSyncPlayer-v<version>-win-x64.zip` to a writable folder.
 2. If the Visual C++ 2015-2022 Redistributable (x64) is missing, run
    [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 3. Start `TimecodeSyncPlayer.exe`.
