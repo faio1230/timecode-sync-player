@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.4.7 - 未定
+## 0.4.7 - 2026-09-19
 
 Warnings only; the sync control is unchanged. Measurements showed that most sync trouble comes from
 the media (keyframe interval, codec), so this release makes risky media visible before and during a
