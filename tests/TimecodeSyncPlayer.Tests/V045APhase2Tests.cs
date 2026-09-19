@@ -133,7 +133,7 @@ public sealed class D37fLandingOriginTests
         svc.SetSeekCostHintSeconds(1.99);
 
         svc.NotifyLanding(LandingOrigin.FollowStart);
-        svc.EndFollowStartLanding();
+        svc.EndFollowStartLanding("boundary hold released");
 
         SyncDecision decision = svc.EvaluateDecision(10.0, State(playbackSeconds: 7.0));
 
@@ -150,7 +150,7 @@ public sealed class D37fLandingOriginTests
         svc.SetSeekCostHintSeconds(1.99);
 
         svc.NotifyLanding(LandingOrigin.FollowStart);
-        svc.EndFollowStartLanding();
+        svc.EndFollowStartLanding("boundary hold released");
         svc.NotifyLanding(LandingOrigin.FollowStart);
 
         SyncDecision decision = svc.EvaluateDecision(10.0, State(playbackSeconds: 7.0));

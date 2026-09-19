@@ -183,4 +183,26 @@ public sealed class LtcSingleClipEndHoldTests
         decision.TargetSeconds.Should().BeApproximately(10.0, 1e-9,
             "境界ホールド解除で追従開始のエピソードが終わる。12.0 なら配線が入っていない");
     }
+
+    [Fact]
+    public void LtcJump_WithoutBoundaryHold_EndsTheFollowStartEpisode()
+    {
+        // 0.4.6（検証機のシナリオ 22、S-3）: 「LTC 40 → 範囲外 → LTC を 10 へ戻す」で、
+        // 端（25.000）へのシークの着地に 0.655 秒かかり、境界ホールドが成立しないまま
+        // LTC が 10 へ戻った。D37-g はホールド解除でしか追従開始を終わらせないので、
+        // 復帰シークに学習値 0.655 が先行量として乗り、10.714 へ着地して許容 ±0.3 秒を外れた。
+        // 先行量は「シークの間に LTC が進むぶん」の見積もりで、LTC が不連続に動いた時点で
+        // 前提が崩れる。ホールドの成否に関係なく、Jump の適用で追従開始を終わらせる。
+        (SyncScenarioHarness h, ManualTimeProvider clock) = Arrange();
+        h.AdvancePlayback(20.0);
+        h.SyncService.SetSeekCostHintSeconds(2.0);
+        h.SyncService.NotifyLanding(LandingOrigin.FollowStart);
+
+        clock.Advance(TimeSpan.FromSeconds(1));   // デバウンス窓を明ける
+        h.Controller.ReceiveProcessedFrame(Processed(10.0, TimecodeFrameDiagnosticStatus.Jump), 10_000);
+        Tick(h, clock, 3);   // D37-a: 粗い判定のゲートが開くまで保留を再送する
+
+        h.Operations.Should().NotContain(o => o.Name == "clip-end-hold", "この場面ではホールドは成立していない");
+        SeekTargets(h).Should().Equal(new[] { 10.0 }, "12.0 なら追従開始の先行量が残っている");
+    }
 }
