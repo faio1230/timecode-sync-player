@@ -2,6 +2,41 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.4.6 - 未定
+
+Bug fixes only; the sync control policy is unchanged. These came out of an external code review and
+affect recommended material too.
+
+### Fixed
+
+- **Tracks whose media lives outside the project folder disappeared when the project was reopened.**
+  The loader rejected every path outside the project folder, absolute paths included, while the saver
+  writes `..\media\clip.mp4`-style relative paths (or absolute paths on another drive). Paths outside the
+  folder, on any drive, are now read as they are. This had been there since v0.1.0.
+- **Tracks that cannot be loaded are now listed** (with the reason), instead of being dropped with only a
+  log line. The message also warns that saving over the project will drop them.
+- **The GPU worker could still stop and leave the output frozen.** The v0.4.5 fix (D38) closed only one
+  path. The root cause: a lease held while its ring fence was pending was marked as in GPU use and handed
+  to the deferred-write cleanup even though that tick did not draw it, so two owners held it. A held lease
+  is now neither marked in use nor deferred, so the double ownership cannot arise.
+- **A momentary spike in the measured sync error could still trigger a seek right after it.** When the
+  seek gate discarded an impossible sample and restarted its series, it kept the consecutive-exceedance
+  count, so the first sample of the new series counted as the fifth in a row.
+- **A rejected playback-rate change left the new rate stored in the shim**, and the next ordinary seek
+  applied it. The rate is now stored only after GStreamer accepts the change.
+- **After recovering from a GPU device loss, picture updates could fail to resume.** Recreating the
+  player dropped the frame-callback registration, and the render session kept reading the destroyed
+  player's handle. Both are now reconnected to the new player.
+
+### Changed
+
+- README (both languages): the Direct3D 11.4 GPU requirement is listed, and the download and install
+  steps no longer name v0.2.0 files.
+- Settings reference: the missing keys (`syncOffsetMs`, `syncCorrectionMode`, `decodeMode`,
+  `outputBackend`) and a list of environment variables were added.
+- Field preparation guide: statements such as "the spread is zero" are narrowed to the conditions that
+  were measured.
+
 ## 0.4.5 - 2026-09-19
 
 0.4.4 was never published; its entries are folded in here because the two are a single
