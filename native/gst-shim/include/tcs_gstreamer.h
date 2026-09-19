@@ -194,7 +194,9 @@ TCS_GST_API int tcs_player_stop(TcsPlayer* player);
 TCS_GST_API int tcs_player_set_paused(TcsPlayer* player, int paused);
 TCS_GST_API int tcs_player_get_paused(TcsPlayer* player);
 /* Bump the generation on a manual seek (the owner decides what counts as a
- * new source/seek generation). */
+ * new source/seek generation). Returns 0 when there is no player or when
+ * GStreamer rejected the seek (0.4.6; it used to return the new generation
+ * even then). */
 TCS_GST_API uint64_t tcs_player_seek(TcsPlayer* player, double seconds);
 TCS_GST_API uint64_t tcs_player_step_frame(TcsPlayer* player);
 TCS_GST_API uint64_t tcs_player_set_generation(TcsPlayer* player,

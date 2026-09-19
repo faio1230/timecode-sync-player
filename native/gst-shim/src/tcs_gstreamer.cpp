@@ -2740,12 +2740,14 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
   return p->generation;
 }
 
-/* Send a prepared seek with NO lock held (see SeekRequest). */
-static void
+/* Send a prepared seek with NO lock held (see SeekRequest). Returns false when
+ * GStreamer rejected it (0.4.6: callers used to ignore that and report the seek
+ * as issued). An invalid request (no pipeline) is not a rejection. */
+static bool
 seek_send (TcsPlayer* p, const SeekRequest& req)
 {
   if (!req.valid || !req.pipeline)
-    return;
+    return true;
   gboolean ok;
   if (req.keyunit) {
     LOG ("seek: send begin (ts) method=keyunit container=%s target_ns=%llu seq=%u",
@@ -2772,6 +2774,7 @@ seek_send (TcsPlayer* p, const SeekRequest& req)
     p->seek_boundary_expect.store (0, std::memory_order_release);
     LOG ("%s", msg);
   }
+  return ok != FALSE;
 }
 
 static int
@@ -3420,10 +3423,19 @@ tcs_player_seek (TcsPlayer* player, double seconds)
     gen = seek_prepare_locked (player, seconds, player->rate, &req);
   }
   /* The flushing seek goes out with no lock held (see SeekRequest). */
-  seek_send (player, req);
+  bool sent = seek_send (player, req);
   log_pipe_state (player, "seek.after");
   /* EOS restart deferred out of seek_prepare_locked (frame_lock was held there). */
   apply_pending_play_restart (player);
+  /* 0.4.6: a rejected seek is reported as a failure (0). It used to return the
+   * new generation, so the owner treated it as issued and waited for a landing
+   * that could never come, and the pump below was armed for a flush that never
+   * happened. Seen only while a load was still settling (7 times in the
+   * 2026-09-18 test logs, never while following). seek_send already stopped
+   * the pre-seek filtering, so frames keep flowing; the owner decides whether
+   * to retry. */
+  if (!sent)
+    return 0;
   /* A paused pipeline cannot render the post-flush preroll (appsink sync=true
    * with a stopped clock). Arm the non-blocking pump: <=0.1ms here, delivery
    * and the PAUSED return happen on the bus thread. */
