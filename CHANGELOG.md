@@ -40,9 +40,16 @@ show instead of changing how the player reacts.
   **The v0.4.5 notes said the next release would stop raising the rate when decoding is behind. This
   release only reports it**; changing the control is deferred until the indicator has been used in the
   field. This merges two earlier entries (the "few times in a 10-minute follow" one was the same thing).
-- Seeking into very high-bitrate ProRes 4K60 (about 1.7 Gbps) occasionally leaves the new position's
-  picture more than 2 seconds late (1 to 2 runs in 10 of an automated test: 1 in 10 with the v0.4.6
-  code, 2 in 10 with this release, which is no real difference at that count). It predates this release.
+- **Very high-bitrate ProRes 4K60 (about 1.7 Gbps) occasionally loads or seeks several seconds late.**
+  The cause is not known; it has been seen since before 0.4.5.
+  - After a seek, the new position's picture can take more than 2 seconds to arrive (9 of 59 full
+    automated runs; it swings from 0% to 27% by day and can come in runs).
+  - A load can fail to return the duration and never finish (on the same file: 6 times in tests of
+    pre-0.4.5 candidates, 2 times in tests of this release).
+- **When an out-of-range timecode stops the picture at the clip edge, it occasionally stops a little
+  past the edge** (0.18 s measured). Normally it stops 2 to 3 frames past (0.03 to 0.05 s over about 20
+  runs). It happens when the check that stops playback runs late after landing on the edge; the v0.4.6
+  code has also been seen to run past the edge.
 - The other limitations listed for 0.4.5 still apply.
 
 ## 0.4.6 - 2026-09-19
