@@ -318,8 +318,20 @@ public sealed class LtcScenarioE2ETests
         var samples = new List<FollowSample>();
         while ((DateTime.Now - startedAt).TotalSeconds < followSeconds)
         {
+            // LTC と位置は UI Automation で別々に読むため、順に読むと「LTC は位置より
+            // 読み取り時間だけ前の値」になり、誤差に系統バイアスが乗る（検証機の実測で
+            // 読みが遅い素材ほど誤差が大きく見えた）。LTC を位置の前後で読んで平均し、
+            // 位置を読んだ瞬間の LTC に合わせる。ReadSkew は残して後から検算できるようにする。
             double elapsed = (DateTime.Now - startedAt).TotalSeconds;
-            samples.Add(new FollowSample(elapsed, scenario.LtcSeconds(), scenario.Position()));
+            DateTime readStartedAt = DateTime.Now;
+            double ltcBefore = scenario.LtcSeconds();
+            double position = scenario.Position();
+            double ltcAfter = scenario.LtcSeconds();
+            double readSeconds = (DateTime.Now - readStartedAt).TotalSeconds;
+            double ltc = double.IsFinite(ltcBefore) && double.IsFinite(ltcAfter)
+                ? (ltcBefore + ltcAfter) / 2.0
+                : (double.IsFinite(ltcBefore) ? ltcBefore : ltcAfter);
+            samples.Add(new FollowSample(elapsed, ltc, position, readSeconds / 2.0));
             Thread.Sleep(50);
         }
 
@@ -355,6 +367,7 @@ public sealed class LtcScenarioE2ETests
                 seekSeconds = Math.Round(window.SeekSeconds, 3),
                 longestSeekSeconds = Math.Round(window.LongestSeekSeconds, 3),
                 perfSegments = window.PerfSegments,
+                readSkewSeconds = Math.Round(window.ReadSkewSeconds, 4),
                 intervalSeconds = Math.Round(window.IntervalSeconds, 3),
                 positionVelocity = window.IntervalSeconds > 0
                     ? Math.Round(window.PositionAdvance / window.IntervalSeconds, 3)
@@ -384,6 +397,9 @@ public sealed class LtcScenarioE2ETests
             settlingWindows = summary.SettlingWindowCount,
             settlingMaxAbsError = JsonNumberOrNull(summary.SettlingMaxAbsError),
             sparseWindows = summary.SparseWindowCount,
+            thinWindows = summary.ThinWindowCount,
+            errorUndecidable = summary.ErrorUndecidable,
+            minSamplesForError = ContinuousFollowAudit.MinSamplesForError,
             stallUpdateWindows = summary.StallUpdateWindows,
             stallAdvanceWindows = summary.StallAdvanceWindows,
             maxAbsError = JsonNumberOrNull(summary.MaxAbsError),
@@ -408,7 +424,8 @@ public sealed class LtcScenarioE2ETests
         });
 
         string excluded = $"除外 {summary.SettlingWindowCount} 窓（最大誤差 {summary.SettlingMaxAbsError:F3}s）" +
-            $"・疎 {summary.SparseWindowCount} 窓・perf 行なし {summary.WindowsWithoutPerf} 窓";
+            $"・疎 {summary.SparseWindowCount} 窓・標本不足 {summary.ThinWindowCount} 窓" +
+            $"・perf 行なし {summary.WindowsWithoutPerf} 窓";
         summary.Windows.Count(window => !window.Settling)
             .Should().BeGreaterThan(0, $"{track.Symbol}: 判定対象の窓が 1 つ以上ある（{excluded}）");
         summary.StallUpdateWindows.Should().Be(0,
@@ -416,6 +433,12 @@ public sealed class LtcScenarioE2ETests
         summary.StallAdvanceWindows.Should().Be(0,
             $"{track.Symbol}: 判定対象で再生側の停滞（LTC は窓長の半分以上進み、位置がその半分も進まない）の窓が無い" +
             $"（{excluded}、最悪 {WindowDetail(summary.WorstAdvance)}）");
+        // 標本の薄い窓（UI の読みが遅い素材）は最大誤差が荒れるので判定から外す。外れた窓が
+        // 過半を占める実行は「判定不能」で、合格にも失敗にもしない（黙って合格にしない）。
+        summary.ErrorUndecidable.Should().BeFalse(
+            $"{track.Symbol}: 最大誤差を判定できる窓が過半を占める" +
+            $"（標本 {ContinuousFollowAudit.MinSamplesForError} 個未満の窓が {summary.ThinWindowCount} / " +
+            $"{summary.Windows.Count(window => !window.Settling)}。UI の読み取りが遅すぎて測れていない）");
         summary.MaxAbsError.Should().BeLessThanOrEqualTo(PositionToleranceSeconds,
             $"{track.Symbol}: 判定対象の各窓の最大誤差が ±{PositionToleranceSeconds} 秒以内（{excluded}、最悪 {WindowDetail(summary.WorstError)}）");
 
@@ -1129,7 +1152,7 @@ public sealed class LtcScenarioE2ETests
             // シナリオは音を使わないので、設定が未作成ならミュートで起動する。
             string settingsPath = Path.Combine(ReportDir, "settings.json");
             if (!File.Exists(settingsPath))
-                File.WriteAllText(settingsPath, "{\n  \"isMuted\": true\n}\n");
+                File.WriteAllText(settingsPath, E2ESettingsIsolation.SeedJson("{\n  \"isMuted\": true\n}\n"));
 
             App = E2EAppRunner.Start(_exePath, $"--load-project \"{projectPath}\"",
                 settingsPath, pausePlaybackIfNeeded: false);
