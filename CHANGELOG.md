@@ -4,8 +4,8 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 
 ## 0.4.6 - 未定
 
-Bug fixes only; the sync control policy is unchanged. These came out of an external code review and
-affect recommended material too.
+Bug fixes only; the sync control policy is unchanged. These came out of an external code review (and,
+for the last one, the test-machine run that verified those fixes) and affect recommended material too.
 
 ### Fixed
 
@@ -31,6 +31,12 @@ affect recommended material too.
 - **After recovering from a GPU device loss, picture updates could fail to resume.** Recreating the
   player dropped the frame-callback registration, and the render session kept reading the destroyed
   player's handle. Both are now reconnected to the new player.
+- **Moving the timecode back into range after it had run past the clip could land about 0.65 s off.**
+  The follow-start lookahead (the estimated seek time, added to the seek target) stayed active for the
+  return seek. v0.4.5 only ended the follow-start episode when the clip-boundary hold was released, and
+  the hold is never established if the timecode moves back before the player reaches the clip edge
+  (on the test machine the seek to the edge took 0.655 s). A timecode jump now ends the episode too. The
+  path predates this release; the seek-gate fix above only changed the timing so that it was hit.
 
 ### Changed
 
