@@ -33,4 +33,8 @@ ID3D11Texture2D* tcs_hap_gpu_decode (TcsHapGpu* gpu, const uint8_t* bc_data, siz
 /* 直近の失敗の理由（ログ用。無ければ空文字）。 */
 const char* tcs_hap_gpu_last_error (const TcsHapGpu* gpu);
 
+/* 扱えない変種だったときのテクスチャ形式（無ければ -1）。
+ * 呼び出し側は、これが立っていたら**黙って再生を続けず**、読み込みを理由つきで失敗させる。 */
+int tcs_hap_gpu_unsupported_format (const TcsHapGpu* gpu);
+
 #endif /* TCS_HAP_GPU_H */

@@ -1532,6 +1532,12 @@ on_new_sample (GstAppSink* sink, gpointer user)
                   cw, ch, hap_info.texture_format,
                   p->hap_gpu ? tcs_hap_gpu_last_error (p->hap_gpu) : "no gpu helper",
                   (unsigned long long) p->hap_decode_failures);
+              /* 扱えない変種（Hap 7 / Hap HDR など）は、黙って絵を出さずに読み込みを失敗させる。
+               * set_error は frame_lock を取るのでここからは呼べない。直接書く。 */
+              if (p->hap_gpu && tcs_hap_gpu_unsupported_format (p->hap_gpu) >= 0) {
+                p->failed = true;
+                p->last_error = tcs_hap_gpu_last_error (p->hap_gpu);
+              }
             } else {
               hap_tex->GetDesc (&src_desc);
               /* 以降は復号済みフレームと同じ扱いになり、最後に src_tex を Release する。

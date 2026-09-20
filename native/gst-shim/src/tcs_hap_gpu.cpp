@@ -23,6 +23,9 @@ struct TcsHapGpu {
   ID3D11RenderTargetView* output_view = nullptr;
   int width = 0, height = 0, format = 0;
 
+  /* 扱えない変種だと分かったときの形式（-1 は「無い」）。呼び出し側が読み込みを
+   * 理由つきで失敗させるために見る。 */
+  int unsupported_format = -1;
   char last_error[256] = {};
 };
 
@@ -47,16 +50,19 @@ release_textures (TcsHapGpu* gpu)
   gpu->width = gpu->height = gpu->format = 0;
 }
 
+/* v0.5.0 で扱うのは、実際に絵を確かめた 3 つだけ。
+ *
+ * ほかの変種（Hap Alpha Only=RGTC1 / Hap 7=BC7 / Hap HDR=BC6H）は、テクスチャとしては
+ * D3D11 で作れてしまうが、**色の戻し方が違う**ので、このままサンプリングすると
+ * 間違った絵が出る（BC6H は HDR の浮動小数、RGTC1 は 1 成分）。
+ * **黙って違う絵を出すより、未対応として断る。**素材が手に入って絵を確認できたら足す。 */
 static DXGI_FORMAT
 dxgi_format_for (int texture_format)
 {
   switch (texture_format) {
-    case TCS_HAP_FORMAT_RGB_DXT1: return DXGI_FORMAT_BC1_UNORM;
-    case TCS_HAP_FORMAT_RGBA_DXT5:
-    case TCS_HAP_FORMAT_YCOCG_DXT5: return DXGI_FORMAT_BC3_UNORM;
-    case TCS_HAP_FORMAT_RGTC1: return DXGI_FORMAT_BC4_UNORM;
-    case TCS_HAP_FORMAT_RGBA_BPTC: return DXGI_FORMAT_BC7_UNORM;
-    case TCS_HAP_FORMAT_RGB_BPTC_FLOAT: return DXGI_FORMAT_BC6H_UF16;
+    case TCS_HAP_FORMAT_RGB_DXT1: return DXGI_FORMAT_BC1_UNORM;        /* Hap */
+    case TCS_HAP_FORMAT_RGBA_DXT5: return DXGI_FORMAT_BC3_UNORM;       /* Hap Alpha */
+    case TCS_HAP_FORMAT_YCOCG_DXT5: return DXGI_FORMAT_BC3_UNORM;      /* Hap Q */
     default: return DXGI_FORMAT_UNKNOWN;
   }
 }
@@ -124,9 +130,12 @@ ensure_textures (TcsHapGpu* gpu, int texture_format, int width, int height)
 
   DXGI_FORMAT format = dxgi_format_for (texture_format);
   if (format == DXGI_FORMAT_UNKNOWN) {
-    set_error (gpu, "unsupported hap texture format 0x%02X", texture_format);
+    gpu->unsupported_format = texture_format;
+    set_error (gpu, "unsupported hap variant (texture format 0x%02X); supported: Hap, Hap Alpha, Hap Q",
+        texture_format);
     return false;
   }
+  gpu->unsupported_format = -1;
 
   D3D11_TEXTURE2D_DESC desc = {};
   desc.Width = (UINT) width;
@@ -207,4 +216,10 @@ const char*
 tcs_hap_gpu_last_error (const TcsHapGpu* gpu)
 {
   return gpu ? gpu->last_error : "";
+}
+
+int
+tcs_hap_gpu_unsupported_format (const TcsHapGpu* gpu)
+{
+  return gpu ? gpu->unsupported_format : -1;
 }
