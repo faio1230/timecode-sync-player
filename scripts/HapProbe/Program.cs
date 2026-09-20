@@ -24,6 +24,11 @@ internal static class Program
         int seconds = int.TryParse(ArgValue(args, "--seconds"), out int parsed) ? parsed : DefaultSeconds;
         string? only = ArgValue(args, "--set");
         string? dump = ArgValue(args, "--dump");   // 絵の確認用に 1 枚書き出して終わる
+        if (args.Contains("--emit-vectors"))
+        {
+            Vectors.Emit(root, ArgValue(args, "--emit-vectors") ?? "tcs_hap_vectors.h");
+            return 0;
+        }
         if (args.Contains("--diskread"))
         {
             foreach (string directory in Directory.GetDirectories(root))

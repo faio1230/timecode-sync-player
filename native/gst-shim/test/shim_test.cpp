@@ -10,6 +10,8 @@
 #include "tcs_position_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
+#include "tcs_hap.h"
+#include "tcs_hap_vectors.h"
 #include <gst/gstversion.h>
 #include <d3d11.h>
 #include <d3d11_4.h>
@@ -735,6 +737,101 @@ run_gop_warn_measure (int argc, char** argv)
   tcs_player_destroy (p);
   check (st.active == 1, "gop-warn: probe active");
   return failures ? 1 : 0;
+}
+
+/* v0.5.0: HAP の解析と Snappy 展開（純粋なデータ処理。実データで固定する）。
+ * 検査用の値は scripts/HapProbe の --emit-vectors が ffmpeg 製の 1 コマから作る。 */
+static void
+run_hap_tests ()
+{
+  printf ("\n-- HAP parsing and Snappy decompression --\n");
+
+  auto fnv1a = [] (const uint8_t* data, size_t size) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (size_t i = 0; i < size; i++) { hash ^= data[i]; hash *= 1099511628211ULL; }
+    return hash;
+  };
+
+  auto run_vector = [&] (const char* name, const uint8_t* data, size_t size, int expect_format,
+                         int expect_chunks, uint32_t expect_length, uint64_t expect_hash) {
+    TcsHapFrameInfo info = {};
+    char what[160];
+    snprintf (what, sizeof (what), "%s: parses", name);
+    check (tcs_hap_parse (data, size, &info) != 0, what);
+    if (info.chunk_count == 0)
+      return;
+    snprintf (what, sizeof (what), "%s: format 0x%02X / %d chunk(s) / %u bytes",
+        name, expect_format, expect_chunks, expect_length);
+    check (info.texture_format == expect_format && info.chunk_count == expect_chunks
+            && info.decompressed_length == expect_length, what);
+    std::vector<uint8_t> out (info.decompressed_length ? info.decompressed_length : 1, 0);
+    snprintf (what, sizeof (what), "%s: decompresses", name);
+    if (!tcs_hap_decompress_frame (data, size, &info, out.data (), out.size ())) {
+      check (false, what);
+      return;
+    }
+    check (true, what);
+    snprintf (what, sizeof (what), "%s: decompressed bytes match the reference", name);
+    check (fnv1a (out.data (), info.decompressed_length) == expect_hash, what);
+  };
+
+  /* 実データ（ffmpeg で作った 64x64 の 1 コマ）。同じ絵を 4 通りの入れ方で書き出してある。 */
+  run_vector ("Hap1(DXT1/Snappy)", kTcsHapVector_d1, sizeof (kTcsHapVector_d1),
+      kTcsHapVector_d1_format, kTcsHapVector_d1_chunks, kTcsHapVector_d1_decompressed,
+      kTcsHapVector_d1_hash);
+  run_vector ("HapQ(1 chunk/Snappy)", kTcsHapVector_q1, sizeof (kTcsHapVector_q1),
+      kTcsHapVector_q1_format, kTcsHapVector_q1_chunks, kTcsHapVector_q1_decompressed,
+      kTcsHapVector_q1_hash);
+  run_vector ("HapQ(4 chunks)", kTcsHapVector_q4, sizeof (kTcsHapVector_q4),
+      kTcsHapVector_q4_format, kTcsHapVector_q4_chunks, kTcsHapVector_q4_decompressed,
+      kTcsHapVector_q4_hash);
+  run_vector ("HapQ(uncompressed)", kTcsHapVector_qn, sizeof (kTcsHapVector_qn),
+      kTcsHapVector_qn_format, kTcsHapVector_qn_chunks, kTcsHapVector_qn_decompressed,
+      kTcsHapVector_qn_hash);
+
+  /* 同じ絵なので、入れ方が違っても展開結果は一致する（分割・圧縮は中身を変えない）。 */
+  check (kTcsHapVector_q1_hash == kTcsHapVector_q4_hash
+          && kTcsHapVector_q1_hash == kTcsHapVector_qn_hash,
+      "same picture: 1 chunk / 4 chunks / uncompressed all match");
+
+  /* 壊れた入力を受け取っても、範囲外を書かずに失敗を返す。 */
+  {
+    TcsHapFrameInfo info = {};
+    check (tcs_hap_parse (nullptr, 100, &info) == 0, "null input fails");
+    uint8_t truncated[8] = { 0xFF, 0xFF, 0x0F, 0xBF, 0x00, 0x00, 0x00, 0x00 };
+    check (tcs_hap_parse (truncated, sizeof (truncated), &info) == 0,
+        "section longer than the file fails");
+    uint8_t unknown[8] = { 0x04, 0x00, 0x00, 0xDF, 0x00, 0x00, 0x00, 0x00 };
+    check (tcs_hap_parse (unknown, sizeof (unknown), &info) == 0, "unknown second-stage compressor fails");
+  }
+  {
+    /* 展開先が足りない場合に、1 バイトも書かずに失敗すること。 */
+    TcsHapFrameInfo info = {};
+    if (tcs_hap_parse (kTcsHapVector_q1, sizeof (kTcsHapVector_q1), &info)) {
+      std::vector<uint8_t> tooSmall (info.decompressed_length - 1, 0xCD);
+      bool ok = tcs_hap_decompress_frame (kTcsHapVector_q1, sizeof (kTcsHapVector_q1), &info,
+          tooSmall.data (), tooSmall.size ()) != 0;
+      bool untouched = true;
+      for (uint8_t value : tooSmall) if (value != 0xCD) { untouched = false; break; }
+      check (!ok && untouched, "too small destination fails and writes nothing");
+    }
+  }
+  {
+    /* Snappy の壊れたコピー（出力がまだ無いのに前を参照する）を弾く。 */
+    uint8_t broken[] = { 0x08, 0x01, 0x10 };
+    uint8_t out[8] = {};
+    size_t written = 0;
+    check (tcs_snappy_decompress (broken, sizeof (broken), out, sizeof (out), &written) == 0,
+        "snappy copy before any output fails");
+  }
+
+  /* 幅・高さから期待される大きさ。 */
+  check (tcs_hap_expected_size (TCS_HAP_FORMAT_YCOCG_DXT5, 3840, 2160) == 8294400u,
+      "4K HapQ is 8,294,400 bytes");
+  check (tcs_hap_expected_size (TCS_HAP_FORMAT_RGB_DXT1, 3840, 2160) == 4147200u,
+      "4K Hap1 is 4,147,200 bytes");
+  check (tcs_hap_expected_size (TCS_HAP_FORMAT_YCOCG_DXT5, 1920, 1080) == 2073600u,
+      "1080p HapQ is 2,073,600 bytes");
 }
 
 /* 0.4.5-A phase 2: the delivered-PTS fallback may only use a frame of the
@@ -1627,12 +1724,14 @@ main (int argc, char** argv)
     run_delivery_policy_tests ();
     run_gop_policy_tests ();
     run_position_policy_tests ();
+    run_hap_tests ();
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
   run_delivery_policy_tests ();
   run_gop_policy_tests ();
   run_position_policy_tests ();
+  run_hap_tests ();
   if (strcmp (argv[1], "--gop-warn") == 0) {
     int rc = run_gop_warn_measure (argc, argv);
     printf ("RESULT failures=%d\n", failures);
