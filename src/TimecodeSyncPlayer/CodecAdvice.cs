@@ -33,6 +33,10 @@ internal static class CodecAdvice
         if (string.IsNullOrWhiteSpace(decoderName)) return CodecStanding.Unknown;
         string name = decoderName.Trim().ToLowerInvariant();
         if (name.Contains("h264")) return CodecStanding.Recommended;
+        // v0.5.0: HAP は圧縮テクスチャのまま GPU へ渡すので、復号の重さは問題にならない
+        // （開発機の実測: 4K60 HapQ で 1 コマ 2.0ms、落ちコマ 0）。ただし読み出しは絵柄によって
+        // 57〜475MB/s と重くなるので、推奨（H.264）とは分けて「使える」に置く。
+        if (name.Contains("hap")) return CodecStanding.Acceptable;
         if (name.Contains("prores")) return CodecStanding.Acceptable;
         if (name.Contains("vp9") || name.Contains("av1") || name.Contains("dav1d")
             || name.Contains("h265") || name.Contains("hevc") || name.Contains("vp8")
@@ -49,6 +53,7 @@ internal static class CodecAdvice
         if (string.IsNullOrWhiteSpace(decoderName)) return string.Empty;
         string name = decoderName.Trim().ToLowerInvariant();
         if (name.Contains("h264")) return "H.264";
+        if (name.Contains("hap")) return "HAP";
         if (name.Contains("prores")) return "ProRes";
         if (name.Contains("vp9")) return "VP9";
         if (name.Contains("av1") || name.Contains("dav1d")) return "AV1";

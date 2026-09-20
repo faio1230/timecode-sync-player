@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -43,7 +43,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly PlaylistDurationBackfillCoordinator _playlistDurationBackfillCoordinator;
     private readonly PlaylistLoadCoordinator _playlistLoadCoordinator;
     private readonly ProjectLoadApplicator _projectLoadApplicator;
-    private readonly ProjectSaveExecutor _projectSaveExecutor;
     private readonly ProjectFileCoordinator _projectFileCoordinator;
     private readonly IPlaybackApi _playbackApi;
     private readonly GstPlaybackApi _gstPlaybackApi;
@@ -116,8 +115,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private Guid?                  _loadedTrackId;
     private bool                   _endAdvanceTriggered;
     private readonly PlaylistDragDropCoordinator _playlistDragDropCoordinator;
-    // 0.4.5-C: ロング GOP 警告（表示のみ。同期の制御則には触れない）。
-    private readonly LongGopWarningMonitor _longGopWarningMonitor = new();
     /// <summary>
     /// D37-f: 最大ギャップ 1 秒あたりの「シークを出してから絵が実際に動き出すまで」の
     /// 見積もり係数。<b>理論値ではなく調整値</b>。
@@ -146,11 +143,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private readonly GopScanCache _gopScanCache =
         new(path => Gst.GstPlaybackApi.ScanGop(path));
-    // 0.4.4 は既定で無効（判定方式が誤っており実素材で誤検出する。詳細は TickLongGopWarning）。
-    private readonly bool _longGopWarningEnabled =
-        string.Equals(Environment.GetEnvironmentVariable("TCS_LONG_GOP_WARNING"), "on",
-            StringComparison.OrdinalIgnoreCase);
-
     /// <summary>
     /// D37-h: スキャン由来のシーク所要の見積もりを同期へ渡すか。<b>0.4.5 では既定で無効。</b>
     ///
@@ -232,7 +224,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _playlistDurationBackfillService = playlistDurationBackfillService;
         _playlistLoadCoordinator = playlistLoadCoordinator;
         _projectLoadApplicator = projectLoadApplicator;
-        _projectSaveExecutor = new ProjectSaveExecutor(SaveProjectAsync);
         _seekState = seekState;
         _playbackPerformanceStats = playbackPerformanceStats;
         // GStreamer 内部型は公開せず、DI 経由で取得する（Gpu 出力時のみ使用）。
@@ -393,7 +384,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _projectFileCoordinator = new ProjectFileCoordinator(
             new ProjectFileActionRunner(),
             new ProjectFileEffects(
-                SaveAsync: path => _projectSaveExecutor.SaveAsync(path, _vm.Sync.SyncMode, _vm.Sync.GapBehavior),
+                SaveAsync: path => SaveProjectAsync(path, _vm.Sync.SyncMode, _vm.Sync.GapBehavior),
                 LogSaved: path =>
                 {
                     RememberProjectPath(path);
@@ -582,16 +573,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void InitializeWindowLoadedUi()
     {
-        var uiInitializer = new WindowLoadedUiInitializer(
-            bindPlaylist: () => PlaylistList.ItemsSource = _playlist.Tracks,
-            subscribeLtc: () =>
-            {
-                _ltcMonitor.FrameReceived += LtcMonitor_FrameReceived;
-                _ltcMonitor.Stopped += LtcMonitor_Stopped;
-            },
-            refreshLtcDevices: RefreshLtcDevices,
-            applyAutoOffset: () => AutoOffsetCheckBox.IsChecked = _settingsManager.Current.AutoOffsetOnAdd);
-        uiInitializer.Initialize();
+        PlaylistList.ItemsSource = _playlist.Tracks;
+        _ltcMonitor.FrameReceived += LtcMonitor_FrameReceived;
+        _ltcMonitor.Stopped += LtcMonitor_Stopped;
+        RefreshLtcDevices();
+        AutoOffsetCheckBox.IsChecked = _settingsManager.Current.AutoOffsetOnAdd;
     }
 
     /// <summary>現在の再生位置（秒）。取得できないときは null。</summary>
@@ -821,7 +807,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         var launchActionExecutor = new ProjectLaunchActionExecutor(
             LoadProjectFromLaunchAsync,
             paths => ReplacePlaylistAndLoadAsync(paths),
-            path => _projectSaveExecutor.SaveAsync(path, _vm.Sync.SyncMode, _vm.Sync.GapBehavior));
+            path => SaveProjectAsync(path, _vm.Sync.SyncMode, _vm.Sync.GapBehavior));
         var launchActionScheduler = new ProjectLaunchActionScheduler(
             scheduleStartup: action => _ = Dispatcher.InvokeAsync(async () => await action()),
             scheduleSave: action => _ = Dispatcher.BeginInvoke(async () => await action(), DispatcherPriority.Normal),
@@ -2016,12 +2002,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _duration = dur;
 
         TickMetadataFetch();
-        // 0.4.5-C3: ロング GOP の判定は読み込み時の静的スキャン（BeginGopScan）に移した。
-        // 再生中の観測による判定（C2）は「読み込み位置から次のキーフレームまでの距離」を
-        // 見ており、可変 GOP の実素材で誤検出したため使わない。TCS_LONG_GOP_WARNING=on の
-        // ときだけ、比較用に旧経路も動かす。
-        if (_longGopWarningEnabled)
-            TickLongGopWarning();
+        // ロング GOP の判定は読み込み時の静的スキャン（0.4.5-C3、BeginGopScan）で行う。
+        // 再生中の観測による旧判定（C2）は「読み込み位置から次のキーフレームまでの距離」を
+        // 見ており、可変 GOP の実素材で誤検出した（中央値 0.708 秒の素材で 187 回発報）。
+        // 比較のために残していた経路は v0.5.0 で削除した。
 
         // Gap 状態ではレンダーコールバックが止まるため、
         // タイマーでタイムライン位置を更新する
@@ -2050,58 +2034,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // 100ms タイマーで shim の検出値をポーリングする。同期の制御則・再生の可否には
     // 一切触れず、ステータス行とプレイリスト行の表示だけを更新する。
 
-    private void TickLongGopWarning()
-    {
-        // 0.4.4: 既定で無効。判定が「素材の GOP」ではなく「読み込み位置から次のキーフレームまでの
-        // 距離」を見ており、可変 GOP の実素材で誤検出する（検証機の実測: 中央値 0.708 秒の素材で
-        // 187 回発報）。正しい判定は読み込み時の静的解析（C3、最大ギャップ基準）で、0.4.5 で入れる。
-        // それまでは TCS_LONG_GOP_WARNING=on のときだけ動かす。
-        if (!_longGopWarningEnabled)
-            return;
-
-        Guid? trackId = _loadedTrackId;
-        bool hasStatus = _gstPlaybackApi.TryGetGopStatus(out GopStatus status);
-        PlaylistTrack? track = trackId.HasValue ? _playlist.FindTrackById(trackId.Value) : null;
-        LongGopWarningTransition transition = _longGopWarningMonitor.Observe(
-            trackId, hasStatus ? status : null, track?.LongGopWarning == true);
-
-        if (transition == LongGopWarningTransition.Latch && hasStatus && track != null)
-        {
-            Log.Information(
-                "Long GOP warning: track={Track} path={Path} medianIntervalMs={Median:F0} thresholdMs={Threshold:F0} keyframes={Keyframes}",
-                track.Name, track.FilePath,
-                status.MedianIntervalSeconds * 1000.0, status.ThresholdSeconds * 1000.0,
-                status.Keyframes);
-            _playlist.MarkLongGopWarning(track.Id);
-            RecordLongGopTrace(status);
-        }
-        else if (transition == LongGopWarningTransition.IntervalUpdated && hasStatus)
-        {
-            RecordLongGopTrace(status);
-        }
-
-        UpdateLongGopWarningText();
-    }
-
-    private void UpdateLongGopWarningText()
-    {
-        string text = _longGopWarningMonitor.IsWarningActive
-            ? LongGopWarningMessages.Format(_longGopWarningMonitor.MeasuredSeconds)
-            : string.Empty;
-        if (_vm.Sync.LongGopWarning != text)
-            _vm.Sync.LongGopWarning = text;
-    }
-
-    private static void RecordLongGopTrace(GopStatus status)
-    {
-        if (!OutputTrace.Current.IsEnabled) return;
-        string detail = FormattableString.Invariant(
-            $"state={status.State} keyframes={status.Keyframes} pendingMs={status.PendingSeconds * 1000.0:F0} thresholdMs={status.ThresholdSeconds * 1000.0:F0} medianIntervalMs={status.MedianIntervalSeconds * 1000.0:F0}");
-        OutputTrace.Current.Record(new("gst.gop", "GST",
-            Stopwatch.GetTimestamp(),
-            Value: (long)Math.Round(status.MedianIntervalSeconds * 1_000_000),
-            Detail: detail));
-    }
 
     private void TryAdvancePlaylistAtEnd(double positionSeconds)
     {

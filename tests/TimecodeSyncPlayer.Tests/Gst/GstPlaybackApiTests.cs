@@ -325,7 +325,9 @@ public class GstPlaybackApiTests
 
         api.TryGetGopStatus(out GopStatus status).Should().BeTrue();
 
-        status.State.Should().Be(LongGopWarningMonitor.StateWarning);
+        // 1 = 警告状態（旧 C2 の state。判定側の LongGopWarningMonitor は v0.5.0 で削除したが、
+        // shim の口はまだ残っているので、値の受け渡しだけを固定する）。
+        status.State.Should().Be(1);
         status.Active.Should().BeTrue();
         status.Keyframes.Should().Be(4);
         status.MedianIntervalSeconds.Should().Be(10.1);
