@@ -45,7 +45,7 @@ set(TCS_COMMON_INCLUDES
 #--------------------------------------
 # the shim DLL (C ABI)
 #--------------------------------------
-add_library(tcs_gstreamer SHARED src/tcs_gstreamer.cpp ${SPOUT_SOURCES})
+add_library(tcs_gstreamer SHARED src/tcs_gstreamer.cpp src/tcs_hap_gpu.cpp ${SPOUT_SOURCES})
 target_compile_definitions(tcs_gstreamer PRIVATE
   TCS_GST_BUILDING_DLL SPOUT_BUILD_STATIC GST_USE_UNSTABLE_API)
 target_include_directories(tcs_gstreamer PRIVATE ${TCS_COMMON_INCLUDES})

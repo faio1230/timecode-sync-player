@@ -45,6 +45,8 @@
 
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
+#include "tcs_hap.h"
+#include "tcs_hap_gpu.h"
 #include <gst/video/video.h>
 #include <gst/d3d11/gstd3d11.h>
 
@@ -293,6 +295,12 @@ struct TcsPlayer {
   GstElement* vconvert = nullptr;
   GstElement* vupload = nullptr;          /* CPU decode: sysmem BGRA -> D3D11 */
   GstElement* vgpuconvert = nullptr;      /* CPU decode: uploaded -> BGRA on the GPU (V11-h) */
+  /* v0.5.0: HAP は圧縮テクスチャのまま appsink で受け、shim 内で BGRA へ展開してリングへ載せる。
+   * hap_stream はこのファイルが HAP だと分かった時点で立ち、次の試行で HAP の連鎖を組む。 */
+  bool hap_stream = false;
+  TcsHapGpu* hap_gpu = nullptr;
+  std::vector<uint8_t> hap_buffer;        /* 展開先（コマごとに使い回す） */
+  uint64_t hap_decode_failures = 0;
   bool vchain_built = false;
   bool capsMismatch = false;
   bool rejected = false;
@@ -1489,6 +1497,55 @@ on_new_sample (GstAppSink* sink, gpointer user)
             (double) ((uint64_t) arrival.QuadPart - p->gate_armed_qpc) * ms_per_tick);
       }
     }
+    /* v0.5.0: HAP は圧縮テクスチャのまま届く。ここで展開して BGRA のテクスチャにし、
+     * 以降は復号済みのフレームと同じ扱いにする（リングへのコピーは共通の経路）。
+     * context は shim のものを使うので、frame_lock の中で行う。 */
+    if (p->hap_stream && !gated && buf) {
+      GstMapInfo map = {};
+      if (!gst_buffer_map (buf, &map, GST_MAP_READ)) {
+        p->hap_decode_failures++;
+        LOG ("hap: buffer map failed (failures=%llu)", (unsigned long long) p->hap_decode_failures);
+      } else {
+        TcsHapFrameInfo hap_info = {};
+        if (!tcs_hap_parse (map.data, map.size, &hap_info)) {
+          p->hap_decode_failures++;
+          LOG ("hap: parse failed size=%zu (failures=%llu)", (size_t) map.size,
+              (unsigned long long) p->hap_decode_failures);
+        } else {
+          if (p->hap_buffer.size () < hap_info.decompressed_length)
+            p->hap_buffer.resize (hap_info.decompressed_length);
+          if (!tcs_hap_decompress_frame (map.data, map.size, &hap_info, p->hap_buffer.data (),
+                  p->hap_buffer.size ())) {
+            p->hap_decode_failures++;
+            LOG ("hap: decompress failed bytes=%u (failures=%llu)", hap_info.decompressed_length,
+                (unsigned long long) p->hap_decode_failures);
+          } else {
+            if (!p->hap_gpu)
+              p->hap_gpu = tcs_hap_gpu_create (p->device, p->context);
+            ID3D11Texture2D* hap_tex = p->hap_gpu
+                ? tcs_hap_gpu_decode (p->hap_gpu, p->hap_buffer.data (),
+                      hap_info.decompressed_length, hap_info.texture_format, cw, ch)
+                : nullptr;
+            if (!hap_tex) {
+              p->hap_decode_failures++;
+              LOG ("hap: gpu decode failed %dx%d format=0x%02X reason=%s (failures=%llu)",
+                  cw, ch, hap_info.texture_format,
+                  p->hap_gpu ? tcs_hap_gpu_last_error (p->hap_gpu) : "no gpu helper",
+                  (unsigned long long) p->hap_decode_failures);
+            } else {
+              hap_tex->GetDesc (&src_desc);
+              /* 以降は復号済みフレームと同じ扱いになり、最後に src_tex を Release する。
+               * このテクスチャは HAP の展開器が持ち続けるので、参照を 1 つ足して釣り合わせる。 */
+              hap_tex->AddRef ();
+              src_tex = hap_tex;
+              src_sub = 0;
+              gpu = true;
+            }
+          }
+        }
+        gst_buffer_unmap (buf, &map);
+      }
+    }
     if (!gated) {
       if (cw > 0) p->width = cw;
       if (ch > 0) p->height = ch;
@@ -1659,7 +1716,7 @@ record_video_caps (TcsPlayer* p, GstCaps* caps)
 
 static gboolean sync_pacing = TRUE;
 
-static void create_appsink_tail (TcsPlayer* p, gboolean d3d);
+static void create_appsink_tail (TcsPlayer* p, gboolean d3d, const char* caps_override = nullptr);
 
 typedef TcsVideoProfile VideoProfile;
 static const VideoProfile* const g_profiles = kTcsVideoProfiles;
@@ -1675,6 +1732,20 @@ static bool
 profile_is_software (int idx)
 {
   return tcs_video_profile_is_software (idx) != 0;
+}
+
+/* v0.5.0: HAP の経路を通すか（既定は無効。全条件に通ってから既定で有効にする）。 */
+static bool
+hap_enabled ()
+{
+  static const bool enabled = [] {
+    char buf[16] = {};
+    DWORD n = GetEnvironmentVariableA ("TCS_HAP", buf, sizeof (buf));
+    bool on = n > 0 && n < sizeof (buf) && _stricmp (buf, "on") == 0;
+    LOG ("hap: %s (TCS_HAP=on で有効)", on ? "enabled" : "disabled");
+    return on;
+  } ();
+  return enabled;
 }
 
 static gboolean
@@ -1981,6 +2052,33 @@ build_video_chain_static (TcsPlayer* p, int idx)
   p->rejected = FALSE;
   p->vProfile = idx;
 
+  if (p->hap_stream) {
+    /* v0.5.0: HAP は復号せずに受ける。queue -> appsink(video/x-hap) だけの連鎖にして、
+     * 圧縮テクスチャのまま on_new_sample へ渡す（展開と BGRA 化は shim の中で行う）。
+     * デコーダを挟まないので d3d11upload も色変換も要らない。 */
+    p->vqueue = gst_element_factory_make ("queue", nullptr);
+    p->vhead = p->vqueue;
+    create_appsink_tail (p, FALSE, "video/x-hap");
+    if (!p->vqueue || !p->vcaps || !p->appsink) {
+      set_error (p, "hap chain factory failed");
+      return FALSE;
+    }
+    configure_video_queue (p->vqueue);
+    gst_bin_add_many (GST_BIN (p->pipeline), p->vqueue, p->vcaps, p->appsink, nullptr);
+    give_device_context (p, p->pipeline);
+    if (!gst_element_link_many (p->vqueue, p->vcaps, p->appsink, nullptr)) {
+      set_error (p, "hap chain link failed");
+      return FALSE;
+    }
+    {
+      GstElement* chain[] = { p->vqueue, p->vcaps, p->appsink };
+      log_video_chain ("hap-gpu", chain, 3);
+    }
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    p->decoder_name = "hap(gpu)";
+    return TRUE;
+  }
+
   if (idx == PROFILE_INDEX_FALLBACK) {
     /* Last resort for unmatched video/*: the container is decodebin, so its
      * src pad is already decoded raw video. videoconvert -> d3d11upload ->
@@ -2107,15 +2205,17 @@ appsink_max_buffers ()
   return (uint32_t) value;
 }
 
-/* Create appsink + capsfilter for the tail. d3d selects D3D11Memory BGRA. */
+/* Create appsink + capsfilter for the tail. d3d selects D3D11Memory BGRA.
+ * caps_override (v0.5.0) lets the HAP chain ask for the compressed pad instead. */
 static void
-create_appsink_tail (TcsPlayer* p, gboolean d3d)
+create_appsink_tail (TcsPlayer* p, gboolean d3d, const char* caps_override)
 {
   p->vcaps = gst_element_factory_make ("capsfilter", nullptr);
   p->appsink = gst_element_factory_make ("appsink", nullptr);
   GstCaps* caps = gst_caps_from_string (
-      d3d ? "video/x-raw(memory:D3D11Memory),format=BGRA"
-          : "video/x-raw,format=BGRA");
+      caps_override ? caps_override
+          : d3d ? "video/x-raw(memory:D3D11Memory),format=BGRA"
+                : "video/x-raw,format=BGRA");
   g_object_set (p->vcaps, "caps", caps, nullptr);
   gst_caps_unref (caps);
   GstAppSinkCallbacks cbs = {};
@@ -2147,10 +2247,33 @@ on_video_pad (TcsPlayer* p, GstPad* pad, GstCaps* caps)
   if (p->vchain_built) /* extra video track: ignore, first one wins */
     return;
   if (caps_is_hap (caps)) {
-    /* reserved branch: compressed-texture passthrough (not implemented).
-     * Never hand this to a CPU decoder. */
+    /* v0.5.0: 圧縮テクスチャのまま受ける経路（hap-gpu）。**CPU デコーダには決して渡さない。**
+     * 既定では無効で、TCS_HAP=on のときだけ通す。 */
+    if (!hap_enabled ()) {
+      p->rejected = true;
+      set_error (p, "video/x-hap requires the reserved compressed-texture branch (refusing decodebin/avdec)");
+      return;
+    }
+    if (!p->hap_stream || !p->vhead) {
+      /* この試行はほかの形式向けに組んである。HAP だと分かったので、組み直して次の試行で通す。 */
+      p->hap_stream = true;
+      p->capsMismatch = true;
+      LOG ("hap: video/x-hap detected; rebuilding the chain for the compressed-texture path");
+      return;
+    }
+    /* hap の連鎖はすでに組んである（vhead = queue）。プロファイルの照合は通さずに直結する。 */
+    GstPad* hap_sink = gst_element_get_static_pad (p->vhead, "sink");
+    if (hap_sink) {
+      gst_pad_link_full (pad, hap_sink, GST_PAD_LINK_CHECK_NOTHING);
+      gst_object_unref (hap_sink);
+    }
+    p->vchain_built = true;
+    return;
+  }
+  if (p->hap_stream) {
+    /* HAP の素材なのに raw の pad が来た = decodebin が CPU で展開している。使わない。 */
     p->rejected = true;
-    set_error (p, "video/x-hap requires the reserved compressed-texture branch (refusing decodebin/avdec)");
+    set_error (p, "video/x-hap must not be decoded on the CPU (decodebin/avdec)");
     return;
   }
   if (p->vProfile == PROFILE_INDEX_FALLBACK) {
@@ -2803,6 +2926,11 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
   for (int attempt = 0; attempt < nOrder; attempt++) {
     int idx = order[attempt];
     const char* container = (idx == PROFILE_INDEX_FALLBACK) ? "decodebin" : demux_name;
+    if (p->hap_stream && idx == PROFILE_INDEX_FALLBACK) {
+      /* v0.5.0: HAP に decodebin の最終手段は使わない（avdec_hap が CPU で展開してしまう）。 */
+      LOG ("hap: skipping the decodebin fallback (never CPU-decode HAP)");
+      continue;
+    }
 
     /* S4 phase timing (QPC). Anchors are set as the load advances so a failed
      * attempt still reports where it stopped. */
@@ -3298,6 +3426,7 @@ tcs_player_destroy (TcsPlayer* player)
         p->ring_width, p->ring_height, TcsPlayer::kRingSlots,
         (p->leased || p->leased_slot >= 0) ? 1 : 0);
   destroy_ring (p);
+  if (p->hap_gpu) { tcs_hap_gpu_destroy (p->hap_gpu); p->hap_gpu = nullptr; }
   if (p->single_tex) p->single_tex->Release ();
   if (p->spout) {
     p->spout->ReleaseSender ();
@@ -3321,6 +3450,9 @@ tcs_player_load (TcsPlayer* player, const char* utf8_path, double start_sec,
   /* The first load fixes the decode mode (tcs_player_set_decode_mode). Both
    * this write and the setter run on the control thread only. */
   player->ever_loaded = true;
+  /* v0.5.0: HAP かどうかは素材ごとに決まる。読み込みのたびに判定し直す
+   * （展開器そのものは使い回す。作り直しはテクスチャの寸法が変わったときだけ）。 */
+  player->hap_stream = false;
   int rc = build_pipeline (player, utf8_path, start_sec, paused);
   if (rc != TCS_OK && errbuf && errbuf_len)
     snprintf (errbuf, errbuf_len, "%s", player->last_error.c_str ());
