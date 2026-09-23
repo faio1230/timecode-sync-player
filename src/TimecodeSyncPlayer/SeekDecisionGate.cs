@@ -7,6 +7,10 @@ namespace TimecodeSyncPlayer;
 /// 前の採用サンプルからの変化が「経過時間 × 最大再生レート + LTC の粒度」を超えるサンプルは、
 /// 再生位置が物理的に動けない量なので測定の乱れとして採用しない（弾いた回数を数える）。
 /// 位置が飛ぶ操作（シーク発行・手動移動・ロード）の後は <see cref="Reset"/> で系列を切る。
+/// 0.4.8: 弾いた直後の 1 サンプルを無条件に採用しない。弾く前の系列とつながれば系列を続け、
+/// 弾いたサンプルとつながれば（本物の跳び）そこから新しい系列を始める。どちらでもなければ
+/// また弾く。以前は弾くたびに系列を消していたため、真値と外れ値が交互に来ると外れ値が
+/// 1 つおきに採用され、補正が 0.9 倍と 1.1 倍を往復した（UIA 50ms 監査の失敗で実測）。
 /// </summary>
 internal sealed class SeekDecisionGate
 {
@@ -31,6 +35,9 @@ internal sealed class SeekDecisionGate
     private int _consecutiveExceeded;
     private double _lastAcceptedAt = double.NaN;
     private double _lastAcceptedDelta = double.NaN;
+    // 0.4.8: 直前に弾いたサンプル（本物の跳びなら次のサンプルがこれとつながる）。
+    private double _candidateAt = double.NaN;
+    private double _candidateDelta = double.NaN;
 
     public SeekDecisionGate(
         double windowSeconds = 0.25,
@@ -78,26 +85,36 @@ internal sealed class SeekDecisionGate
         bool hasPrevious = double.IsFinite(_lastAcceptedAt) && double.IsFinite(_lastAcceptedDelta);
         double dt = hasPrevious ? nowSeconds - _lastAcceptedAt : double.NaN;
         double allowedChange = hasPrevious && double.IsFinite(dt) && dt >= 0
-            ? dt * _maxPlaybackRate + Math.Max(0.0, ltcGranularitySeconds)
+            ? AllowedChange(dt, ltcGranularitySeconds)
             : double.PositiveInfinity;
         double change = hasPrevious ? deltaSeconds - _lastAcceptedDelta : double.NaN;
 
         if (hasPrevious && double.IsFinite(change) && Math.Abs(change) > allowedChange)
         {
-            // ありえない変化の後は、その前の系列もつながっていない可能性がある（着地・ロード・
-            // 取りこぼし）。乱れの前後を混ぜず、次のサンプルから測り直す。弾いた回数は残す。
-            double previousDelta = _lastAcceptedDelta;
-            RejectedSamples++;
-            double medianBeforeClear = Median();
+            bool confirmsCandidate = double.IsFinite(_candidateAt) && double.IsFinite(_candidateDelta) &&
+                nowSeconds >= _candidateAt &&
+                Math.Abs(deltaSeconds - _candidateDelta) <=
+                    AllowedChange(nowSeconds - _candidateAt, ltcGranularitySeconds);
+            if (!confirmsCandidate)
+            {
+                // 弾く。弾く前の系列は残し、このサンプルを「跳びの候補」として覚える。
+                // 0.4.6: 連続回数は切る（瞬間値でシークしない守りを、弾いた直後にすり抜けさせない）。
+                double previousDelta = _lastAcceptedDelta;
+                RejectedSamples++;
+                _candidateAt = nowSeconds;
+                _candidateDelta = deltaSeconds;
+                _consecutiveExceeded = 0;
+                return new Result(false, true, Median(), _consecutiveExceeded, _samples.Count, RejectedSamples,
+                    deltaSeconds, previousDelta, change, allowedChange, dt);
+            }
+
+            // 候補とつながった＝本物の跳び（着地・ロード・取りこぼし）。乱れの前後を混ぜず、
+            // このサンプルから新しい系列を始める（以前の「弾いた次から測り直す」と同じ時機）。
             _samples.Clear();
-            _lastAcceptedAt = double.NaN;
-            _lastAcceptedDelta = double.NaN;
-            // 0.4.6: 連続回数も切る。残すと、切った直後の 1 サンプル目が「連続 5 回超過」になり、
-            // この守り（瞬間値でシークしない）をすり抜けてシークしていた（Codex のレビューで再現）。
             _consecutiveExceeded = 0;
-            return new Result(false, true, medianBeforeClear, _consecutiveExceeded, 0, RejectedSamples,
-                deltaSeconds, previousDelta, change, allowedChange, dt);
         }
+        _candidateAt = double.NaN;
+        _candidateDelta = double.NaN;
 
         _samples.Add((nowSeconds, deltaSeconds));
         _lastAcceptedAt = nowSeconds;
@@ -119,7 +136,12 @@ internal sealed class SeekDecisionGate
         _consecutiveExceeded = 0;
         _lastAcceptedAt = double.NaN;
         _lastAcceptedDelta = double.NaN;
+        _candidateAt = double.NaN;
+        _candidateDelta = double.NaN;
     }
+
+    private double AllowedChange(double dtSeconds, double ltcGranularitySeconds) =>
+        dtSeconds * _maxPlaybackRate + Math.Max(0.0, ltcGranularitySeconds);
 
     private void Prune(double nowSeconds)
     {

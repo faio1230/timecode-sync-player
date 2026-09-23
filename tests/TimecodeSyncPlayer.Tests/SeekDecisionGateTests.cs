@@ -29,23 +29,64 @@ public sealed class SeekDecisionGateTests
 
         shouldSeek.Should().BeFalse("振動の中央値は許容の内側に留まる");
         gate.RejectedSamples.Should().Be(2, "+118.4ms と +253ms は物理的にありえない変化");
-        gate.Samples.Should().Be(0, "弾いた後は系列を切って測り直す（乱れの前後を混ぜない）");
+        // 0.4.8: 外れ値を弾いても、弾く前の系列（-11.4 は -1.0 とつながる）は続ける。
+        gate.Samples.Should().BeGreaterThan(0);
         gate.ConsecutiveExceeded.Should().Be(0);
     }
 
     [Fact]
-    public void Observe_RejectionClearsTheSeries_AndTheNextSamplesStartOver()
+    public void Observe_ConfirmedJump_StartsANewSeriesAtTheSameTimingAsBefore()
     {
+        // 0.4.8: 弾いた値が次のサンプルでも続けば本物の跳びとして、そこから新しい系列を始める。
+        // シークまでのサンプル数は以前（弾いた次から測り直す）と同じ。
         var gate = new SeekDecisionGate();
         double now = 0.0;
         gate.Observe(0.0, Tolerance, now += Step, Granularity);
         gate.Observe(0.3, Tolerance, now += Step, Granularity).Rejected.Should().BeTrue(
             "50ms で 0.3 秒は動けない");
-        gate.Samples.Should().Be(0);
+        gate.Samples.Should().Be(1, "弾いたサンプルは窓に入れず、前の系列は残す");
 
         gate.Observe(0.3, Tolerance, now += Step, Granularity).ShouldSeek.Should().BeFalse("1 サンプル目");
         gate.Observe(0.3, Tolerance, now += Step, Granularity).ShouldSeek.Should().BeFalse("2 サンプル目");
         gate.Observe(0.3, Tolerance, now += Step, Granularity).ShouldSeek.Should().BeTrue("3 サンプル目");
+    }
+
+    [Fact]
+    public void Observe_AlternatingOutliers_AreNeverAdoptedAsTheSeries()
+    {
+        // 0.4.8: UIA 50ms 監査の失敗で実測した形。復号が追いつかずパイプライン位置が 2 系列を
+        // 行き来すると、残差が 1 サンプルおきに約 +150ms 跳ねる。以前は弾くたびに系列を消したので、
+        // 弾いた次の外れ値が採用され、中央値が真値と外れ値の間を往復した。
+        var gate = new SeekDecisionGate();
+        double now = 0.0;
+        var medians = new List<double>();
+        for (int i = 0; i < 40; i++)
+        {
+            double truth = -0.003 - 0.001 * i;           // ゆっくり動く真の残差
+            double observed = i % 2 == 0 ? truth : truth + 0.15;
+            SeekDecisionGate.Result result = gate.Observe(observed, Tolerance, now += Step, Granularity);
+            if (!result.Rejected)
+                medians.Add(result.MedianSeconds);
+            result.ShouldSeek.Should().BeFalse();
+        }
+
+        gate.RejectedSamples.Should().Be(20, "外れ値はすべて弾く");
+        medians.Should().OnlyContain(m => m < 0.0, "採用される系列は真値だけ");
+    }
+
+    [Fact]
+    public void Observe_OutlierThenReturnToTheSeries_KeepsTheSeries()
+    {
+        var gate = new SeekDecisionGate();
+        double now = 0.0;
+        gate.Observe(0.30, Tolerance, now += Step, Granularity);
+        gate.Observe(0.30, Tolerance, now += Step, Granularity);
+        gate.Observe(0.90, Tolerance, now += Step, Granularity).Rejected.Should().BeTrue();
+        SeekDecisionGate.Result back = gate.Observe(0.30, Tolerance, now += Step, Granularity);
+
+        back.Rejected.Should().BeFalse("弾く前の系列とつながる");
+        back.Samples.Should().Be(3, "外れ値 1 つで系列を捨てない");
+        back.ShouldSeek.Should().BeTrue("続いている不足は外れ値に邪魔されずにシークへ進む");
     }
 
     [Fact]
@@ -103,7 +144,7 @@ public sealed class SeekDecisionGateTests
 
         result.Rejected.Should().BeTrue("50ms で 0.5 秒は動けない");
         result.RejectedTotal.Should().Be(1);
-        gate.Samples.Should().Be(0, "弾いた後は系列を切る");
+        gate.Samples.Should().Be(1, "弾いたサンプルは窓に入れない（前の系列は残す）");
     }
 
     [Fact]

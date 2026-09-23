@@ -42,7 +42,9 @@ internal sealed record LtcSyncEffects(
     Func<double, bool>? ApplyRateInstant = null,
     Func<double, bool>? SeekTo = null,
     Action<string>? SetCorrectionStatus = null,
-    Func<double>? GetSyncOffsetMilliseconds = null);
+    Func<double>? GetSyncOffsetMilliseconds = null,
+    // 0.4.8: 直近に再生位置が後退した（復号が追いつかずパイプライン位置が 2 系列を行き来する）か。
+    Func<bool>? IsPlaybackPositionUnstable = null);
 
 /// <summary>
 /// UI-thread LTC session orchestration shared by the window and integration scenarios.
@@ -79,6 +81,8 @@ internal sealed class LtcSyncController
     private bool _smoothAvailable = true;
     private double _lastAppliedRate = 1.0;
     private bool _rateRestorePending;
+    // 0.4.8: 位置が不安定で速度補正を止めている間 true（開始と終了を 1 回ずつログに残す）。
+    private bool _correctionPausedForPosition;
     private double? _lastAcceptedLtcSeconds;
     private double _lastAcceptedRawSeconds;
     private long _lastAcceptedFrameEndTimestamp;
@@ -778,6 +782,28 @@ internal sealed class LtcSyncController
                 return;
             _lastAppliedRate = 1.0;
             _rateRestorePending = false;
+        }
+
+        // 0.4.8: 再生位置が後退した直後は、位置を補正の入力として信用しない。復号が一時的に
+        // 追いつかないとパイプライン位置が 2 系列を行き来し、残差が 1 標本ごとに 100ms 以上跳ねる。
+        // その値で速度を上げ下げすると 0.9 倍と 1.1 倍の往復が続き、速度を上げるほど復号の負担も増える。
+        // 不安定な間は倍率を 1.0 に戻して待ち、補正の系列（ゲート・中央値）も切る。
+        if (_effects.IsPlaybackPositionUnstable?.Invoke() == true)
+        {
+            if (!_correctionPausedForPosition)
+            {
+                _correctionPausedForPosition = true;
+                Log.Information(
+                    "Smooth correction paused: playback position went backward (unstable); rate held at 1.0 rate={Rate:F5}",
+                    _lastAppliedRate);
+            }
+            ResetCorrection();
+            return;
+        }
+        if (_correctionPausedForPosition)
+        {
+            _correctionPausedForPosition = false;
+            Log.Information("Smooth correction resumed: playback position is stable again");
         }
 
         double residualSeconds;

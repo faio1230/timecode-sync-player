@@ -191,7 +191,8 @@ internal sealed class SyncScenarioHarness
                     }
                     : null,
                 SeekTo: enableCorrection ? Seek : null,
-                SetCorrectionStatus: enableCorrection ? text => CorrectionStatus = text : null),
+                SetCorrectionStatus: enableCorrection ? text => CorrectionStatus = text : null,
+                IsPlaybackPositionUnstable: () => PlaybackPositionUnstable),
             () => single, () => _continueCoordinator, () => _gapCoordinator,
             getUtcNow: timeProvider is null ? null : () => timeProvider.GetUtcNow().UtcDateTime,
             sampleClockEnabled: sampleClockEnabled,
@@ -252,6 +253,9 @@ internal sealed class SyncScenarioHarness
     public SyncCorrectionMode CorrectionMode { get; set; } = SyncCorrectionMode.Smooth;
     public bool RateApplySucceeds { get; set; } = true;
     public List<double> AppliedRates { get; } = [];
+
+    /// <summary>0.4.8: 再生位置が直近に後退した（位置を補正の入力として信用しない）状態を与える。</summary>
+    public bool PlaybackPositionUnstable { get; set; }
     public List<double> RateAttempts { get; } = [];
     public string CorrectionStatus { get; private set; } = "";
 

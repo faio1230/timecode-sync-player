@@ -98,4 +98,45 @@ public class MainWindowResourceDisposerTests
 
         calls.Should().Equal("timer", "render", "player", "ltc", "spout", "timeline", "buffer");
     }
+
+    [Fact]
+    public void DisposeAll_StopsOutputAndReturnsLeasesBeforeDestroyingThePlayer()
+    {
+        // テスト 10: worker 停止（リース返却）→ shim 破棄 → 出力の解放、の順。
+        var calls = new List<string>();
+        var disposer = new MainWindowResourceDisposer(
+            () => calls.Add("timer"), () => calls.Add("render"), () => calls.Add("player"),
+            () => calls.Add("ltc"), () => calls.Add("spout"), () => calls.Add("timeline"),
+            () => calls.Add("buffer"),
+            stopRender: () => calls.Add("stop"),
+            closeFullscreen: () => calls.Add("fullscreen"),
+            stopOutput: () => calls.Add("outputStop"),
+            disposeOutput: () => calls.Add("outputDispose"));
+
+        disposer.DisposeAll();
+
+        calls.Should().Equal("stop", "outputStop", "fullscreen", "timer", "render", "player", "ltc",
+            "outputDispose", "spout", "timeline", "buffer");
+    }
+
+    [Fact]
+    public void DisposeAll_OutputStopFailure_KeepsThePlayerAlive()
+    {
+        // 0.4.8: worker が止まったと確認できないうちは、リングを参照され得る shim を消さない。
+        var calls = new List<string>();
+        var failure = new InvalidOperationException("output stop");
+        var disposer = new MainWindowResourceDisposer(
+            () => calls.Add("timer"), () => calls.Add("render"), () => calls.Add("player"),
+            () => calls.Add("ltc"), () => calls.Add("spout"), () => calls.Add("timeline"),
+            () => calls.Add("buffer"),
+            stopRender: () => calls.Add("stop"),
+            closeFullscreen: () => calls.Add("fullscreen"),
+            stopOutput: () => { calls.Add("outputStop"); throw failure; },
+            disposeOutput: () => calls.Add("outputDispose"));
+
+        Assert.Throws<AggregateException>(disposer.DisposeAll).InnerExceptions.Should().Equal(failure);
+
+        calls.Should().NotContain("player");
+        calls.Should().NotContain("outputDispose");
+    }
 }
