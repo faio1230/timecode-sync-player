@@ -676,7 +676,13 @@ internal sealed class LtcSyncController
             if (result.Status != TimelineQueryStatus.OnTrack || result.Track?.Id != state.LoadedTrackId)
                 return "track-or-gap";
         }
-        return null;
+        // v0.5.1: 同じトラックの中の Jump も次の 1 フレームで確かめる。LTC には誤り検出が無く、
+        // 化けた 1 枚（検証機の 2 時間試験で 1 回）をそのまま採ると +2.3 秒シークして 0.8 秒後に
+        // 戻していた。本物の Jump は次のフレームが続くので、遅れは 1 フレーム（30fps で 33ms）。
+        // 保持損失中の Jump は D27-b/c のとおり 1 枚で復帰させる（止まった値からの再開を遅らせない）。
+        if (_signalLoss.IsLost)
+            return null;
+        return "in-track";
     }
 
     /// <summary>

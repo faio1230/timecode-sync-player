@@ -11,7 +11,8 @@ namespace TimecodeSyncPlayer.Tests;
 /// <summary>
 /// D30: 誤デコードの単発 Jump をそのまま適用しない。写像がギャップ（先頭オフセットを含む）か
 /// 現在と別トラックになる Jump は、次の 1 フレームで値の連続（同値の Duplicate または +1 フレーム）
-/// を確認してから適用する。同一トラック内の Jump は従来どおり即時。Fixed fps モードでデコーダ
+/// を確認してから適用する。v0.5.1 から同一トラック内の Jump も同じく確認する（保持損失中の同一トラック内
+/// の Jump だけは D27-b/c のとおり 1 枚で復帰する）。Fixed fps モードでデコーダ
 /// 推定 fps が解決 fps と食い違う Jump も未確認扱い。保持損失からの復帰も確認済み Jump に限る。
 /// D31: 確認窓の時計はサンプル時計（FrameEndTimestamp）を優先する。
 /// </summary>
@@ -211,6 +212,24 @@ public sealed class LtcJumpConfirmationTests
 
         h.Operations.Should().Contain(o => o.Name == "seek", "窓が埋まれば同一トラック内の Jump を適用する");
         h.IsGapActive.Should().BeFalse();
+    }
+
+    [Fact]
+    public void SameTrackJump_SingleCorruptFrame_IsNotApplied()
+    {
+        // v0.5.1: 検証機の 2 時間試験で、化けた 1 枚（+2.8 秒）を「最初の Jump」として採り、
+        // +2.3 秒シークして 0.8 秒後に戻していた。同じトラック内でも次のフレームで確かめる。
+        using var capture = new LoggerCapture(new ListSink());
+        (SyncScenarioHarness h, _, _, _) = ArrangeContinueWithA();
+
+        Raw(h, 9.88, 10_120);          // 化けた 1 枚（同じトラック内、+2.8 秒）
+        Raw(h, 7.12, 10_160);          // 元の流れに戻る
+        Raw(h, 7.16, 10_200);
+        Raw(h, 7.20, 10_240);
+        Raw(h, 7.24, 10_280);
+
+        h.Operations.Should().NotContain(o => o.Name == "seek", "確かめられなかった Jump では動かない");
+        capture.Snapshot().Should().Contain(e => e.MessageTemplate.Text.Contains("holding unconfirmed Jump frame"));
     }
 
     [Fact]

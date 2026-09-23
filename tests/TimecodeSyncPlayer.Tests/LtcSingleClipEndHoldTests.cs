@@ -200,9 +200,12 @@ public sealed class LtcSingleClipEndHoldTests
 
         clock.Advance(TimeSpan.FromSeconds(1));   // デバウンス窓を明ける
         h.Controller.ReceiveProcessedFrame(Processed(10.0, TimecodeFrameDiagnosticStatus.Jump), 10_000);
+        // v0.5.1: 同じトラック内の Jump も次の 1 フレーム（+1 フレーム）で確かめてから適用する。
+        h.Controller.ReceiveProcessedFrame(Processed(10.0 + 1.0 / 30.0, TimecodeFrameDiagnosticStatus.Normal), 10_033);
         Tick(h, clock, 3);   // D37-a: 粗い判定のゲートが開くまで保留を再送する
 
         h.Operations.Should().NotContain(o => o.Name == "clip-end-hold", "この場面ではホールドは成立していない");
-        SeekTargets(h).Should().Equal(new[] { 10.0 }, "12.0 なら追従開始の先行量が残っている");
+        SeekTargets(h).Should().ContainSingle().Which.Should().BeApproximately(10.0 + 1.0 / 30.0, 1e-6,
+            "12.0 付近なら追従開始の先行量が残っている");
     }
 }
