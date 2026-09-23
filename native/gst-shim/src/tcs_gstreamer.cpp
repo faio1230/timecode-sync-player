@@ -2941,6 +2941,11 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
   for (int attempt = 0; attempt < nOrder; attempt++) {
     int idx = order[attempt];
     const char* container = (idx == PROFILE_INDEX_FALLBACK) ? "decodebin" : demux_name;
+    /* v0.5.0: この試行で組む経路の名前。HAP だと分かっている試行（2 回目以降）は hap の連鎖で組むので
+     * hap-gpu、それ以外は番号上のプロファイル名。試行の途中で HAP と分かっても、その試行は元の名前のまま
+     * （組もうとした経路の名前）。load.attempt と load.summary で同じ名前を使う（試験側が突き合わせる）。 */
+    const char* attempt_profile = p->hap_stream ? "hap-gpu"
+        : idx >= 0 ? g_profiles[idx].name : "decodebin-fallback";
     if (p->hap_stream && idx == PROFILE_INDEX_FALLBACK) {
       /* v0.5.0: HAP に decodebin の最終手段は使わない（avdec_hap が CPU で展開してしまう）。 */
       LOG ("hap: skipping the decodebin fallback (never CPU-decode HAP)");
@@ -2962,8 +2967,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
           "first_frame_ms=%.1f audio_prime_ms=%.1f pause_ms=%.1f seek_ms=%.1f "
           "duration_ms=%.1f total_ms=%.1f frames=%lld",
           utf8_path, paused ? 1 : 0, attempt,
-          /* v0.5.0: HAP の試行は、番号上のプロファイルではなく hap の連鎖で組む */
-          p->hap_stream ? "hap-gpu" : idx >= 0 ? g_profiles[idx].name : "decodebin-fallback", result,
+          attempt_profile, result,
           teardown_ms, build_ms, set_state_ms, preroll_ms, first_frame_ms,
           audio_prime_ms, pause_ms, seek_ms, duration_ms,
           qpc_diff_ms (t_attempt0, now, p->qpc_freq),
@@ -3288,8 +3292,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
         p->width, p->height, p->fps, p->use_d3d11_caps ? "d3d11" : "sysmem");
     LOG ("load.summary path=%s paused=%d total_ms=%.1f attempt=%d profile=%s",
         utf8_path, paused ? 1 : 0,
-        qpc_diff_ms (t_load, qpc_now (), p->qpc_freq), attempt,
-        idx >= 0 ? g_profiles[idx].name : "decodebin-fallback");
+        qpc_diff_ms (t_load, qpc_now (), p->qpc_freq), attempt, attempt_profile);
     return TCS_OK;
   }
 
