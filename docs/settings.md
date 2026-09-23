@@ -81,6 +81,7 @@ Set these before starting the app. Most exist for measurement; only `TCS_GOP_SCA
 | Variable | Default | Effect / 効果 |
 | --- | --- | --- |
 | `TCS_GOP_SCAN=off` | on | Skips the keyframe-interval scan done when a file is loaded. Use it to avoid the first full read of very large files (a 300 GB file is expected to take about 8 minutes). **The long-keyframe-interval warning is not shown while this is off** / 読み込み時のキーフレーム間隔の解析を止める。非常に大きい素材で初回の読み切りを避けたいときに使う（300GB で 8 分程度の見込み）。**止めている間は、キーフレーム間隔の警告も出ない** |
+| `TCS_HAP=on` | off | v0.5.0, experimental. Plays HAP files by decompressing them on the GPU (Hap, Hap Alpha, Hap Q). Without it, HAP files fail to load. Hap 7 and Hap HDR are refused with a reason; Hap Q Alpha is untested / v0.5.0、試験的。HAP の素材を GPU で展開して再生する（Hap・Hap Alpha・Hap Q）。設定しないと HAP の素材は読み込みに失敗する。Hap 7・Hap HDR は理由を出して断る。Hap Q Alpha は未確認 |
 | `TCS_PUMP_BUDGET_MS` | `4000` | Upper bound (1–60000 ms) on waiting for the first frame after a seek while paused / 一時停止中のシークで最初のフレームを待つ上限（1～60000ms） |
 | `TCS_SEEK_COST_HINT=on` | off | Measurement only. Aims the follow-start seek ahead by an estimate derived from the keyframe interval. Off by default because it broke other cases; **do not use in the field** / 計測用。追従開始のシークを、キーフレーム間隔から見積もったぶん先へ狙う。別の場面を壊したため既定で無効。**現場では使わない** |
 | `TCS_SYNC_POSITION_FEEDBACK=on` | off | Measurement only. While a seek has not been confirmed to have landed, derives the position used for sync decisions from the frame actually delivered / 計測用。シークの着地が確認できるまで、同期の判断に使う位置を実際に届いたフレームから求める |
