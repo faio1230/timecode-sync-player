@@ -181,14 +181,21 @@ public class PlaybackPerformanceStatsTests
     }
 
     [Fact]
-    public void RecordTick_ForwardJumpAfterAnOperation_KeepsTheWindow()
+    public void RecordTick_ForwardJumpAfterAnOperation_AlsoStartsANewWindow()
     {
-        // 前へのシークは従来どおり窓を保つ（以前から作り直すのは戻ったときだけ）。
+        // 0.4.8 以降: 読み込みと先頭の暗転をまたいで位置が前へ進んだ窓（6.2 秒・1.6 倍・フレーム不足 5.15 秒）が
+        // 検証機の HAP の L-2 で出た。操作をまたいだら、向きに関係なく作り直す。
         var stats = new PlaybackPerformanceStats(TimeSpan.FromSeconds(2));
         DateTime start = new(2026, 9, 23, 12, 0, 0, DateTimeKind.Utc);
-        stats.RecordTick(10.0, start, operationEpoch: 1);
+        stats.RecordTick(0.5, start, operationEpoch: 1);
         long generation = stats.WindowGeneration;
-        stats.RecordTick(20.0, start.AddSeconds(1), operationEpoch: 2).Should().BeNull();
-        stats.WindowGeneration.Should().Be(generation);
+
+        stats.RecordTick(0.6, start.AddSeconds(5.0), operationEpoch: 2).Should().BeNull("読み込みの後の最初の tick");
+        stats.WindowGeneration.Should().Be(generation + 1);
+
+        PlaybackPerformanceSnapshot? snapshot = stats.RecordTick(2.6, start.AddSeconds(7.0), operationEpoch: 2);
+        snapshot.Should().NotBeNull();
+        snapshot!.Elapsed.Should().Be(TimeSpan.FromSeconds(2));
+        snapshot.PlaybackRate.Should().BeApproximately(1.0, 0.0001);
     }
 }

@@ -45,7 +45,7 @@ public sealed class PlaybackPerformanceStats
     /// 畳んで持ち越し、戻りは <see cref="PlaybackPerformanceSnapshot.BackwardJumps"/> として別に数える
     /// （以前は窓が黙って作り直され、揺れが続くと性能ログが 20 秒以上途切れた）。
     /// <paramref name="operationEpoch"/>（シーク・読み込み・一時停止などの回数）が窓の開始から変わって
-    /// いれば、戻りは操作によるものなので従来どおり窓を作り直す（操作をまたいだ窓は意味を持たない）。
+    /// いれば、位置の向きに関係なく窓を作り直す（操作をまたいだ窓は意味を持たない）。
     /// </summary>
     public PlaybackPerformanceSnapshot? RecordTick(double playbackSeconds, TimeSpan monotonicNow, long operationEpoch = 0)
     {
@@ -59,7 +59,10 @@ public sealed class PlaybackPerformanceStats
             return null;
         }
 
-        if (playbackSeconds < _lastPlaybackSeconds && operationEpoch != _windowOperationEpoch)
+        // 操作（シーク・読み込み・一時停止など）をまたいだ窓は意味を持たないので、向きに関係なく作り直す。
+        // 0.4.8 候補 2 は「戻ったときだけ」作り直していたため、読み込みと先頭の暗転をまたいで位置が前へ
+        // 進む形（HAP の L-2）で、6.2 秒・1.6 倍の窓ができた。
+        if (operationEpoch != _windowOperationEpoch)
         {
             StartWindow(playbackSeconds, now, operationEpoch);
             return null;
@@ -131,7 +134,7 @@ public sealed class PlaybackPerformanceStats
     /// <summary>
     /// 0.4.7: 窓が新しく始まるたびに 1 増える。窓ごとの基準を取り直したい側（<see cref="DecodeHealthMonitor"/>）が使う。
     /// 0.4.8: 窓が始まるのは最初の tick・snapshot を返したとき・<see cref="Reset"/> の後と、
-    /// 操作（シークなど）をまたいで位置が戻ったとき（操作の無い戻りでは始まらない）。
+    /// 操作（シークなど）の後の最初の tick（操作の無い位置の戻りでは始まらない）。
     /// </summary>
     public long WindowGeneration { get; private set; }
 
