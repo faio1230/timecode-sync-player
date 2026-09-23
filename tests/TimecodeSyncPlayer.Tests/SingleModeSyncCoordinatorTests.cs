@@ -465,4 +465,77 @@ public class SingleModeSyncCoordinatorTests
 
         holdCalls.Should().Equal(true);
     }
+
+    [Fact]
+    public void Apply_LtcBeforeClipIn_PlaybackFarBeforeClipIn_SeeksToClipInThenHolds()
+    {
+        // 検証機の S-2（クリップ [10,18]）: 読み込み直後（位置 1.0）に LTC が入口より手前（8.0）。
+        // 以前は入口へシークせずに 1.0 の絵でホールドしていた。まず入口へ着地させてからホールドする。
+        double playback = 1.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 10.0, mediaOut: 18.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 8.0);
+
+        holdCalls.Should().BeEmpty("入口に着く前はホールドしない");
+        seekCalls.Should().ContainSingle().Which.Should().Be(10.0);
+
+        playback = 10.0;
+        coordinator.Apply(ltcSeconds: 8.2);
+        holdCalls.Should().Equal(true);
+    }
+
+    [Fact]
+    public void Apply_LtcBeforeClipIn_AfterBoundarySeek_LandingEarly_StillHolds()
+    {
+        // キーフレームの都合で入口より手前に着地しても、入口へのシークを出した後なら着いたとみなす
+        // （長い GOP の素材でのこれまでの挙動を保つ）。
+        double playback = 1.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 10.0, mediaOut: 18.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 8.0);
+        seekCalls.Should().Equal(10.0);
+
+        playback = 8.5;                                  // 入口の 1.5 秒手前に着地
+        coordinator.Apply(ltcSeconds: 8.2);
+
+        holdCalls.Should().Equal(true);
+        seekCalls.Should().Equal(10.0);
+    }
+
+    [Fact]
+    public void Apply_LtcAboveClipOut_PlaybackFarBeyondClipOut_SeeksBackToClipOut()
+    {
+        // 出口の外側（50 秒）にいるときも、まず出口へシークしてからホールドする。
+        double playback = 50.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 10.0, mediaOut: 30.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 40.0);
+
+        holdCalls.Should().BeEmpty();
+        seekCalls.Should().ContainSingle().Which.Should().Be(30.0);
+    }
 }
