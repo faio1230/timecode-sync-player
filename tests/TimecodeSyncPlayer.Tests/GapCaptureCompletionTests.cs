@@ -14,30 +14,30 @@ public class GapCaptureCompletionTests
     }
 
     [Fact]
-    public async Task FailedPixelCopy_DoesNotCompleteOrCacheTarget()
+    public void FailedConfirm_DoesNotCompleteOrCacheTarget()
     {
         var handler = new GapFreezeHandler();
         handler.EnterFreezeCapture(Guid.NewGuid(), 9.983, "clip.mp4");
-        Assert.False(await GapFreezeCaptureOperation.RunAsync(handler, null,
-            () => true, _ => Task.FromResult(false)));
+        Assert.False(GapFreezeCaptureOperation.Run(handler, null,
+            () => true, _ => false));
         Assert.Equal(GapState.EnteringFreeze, handler.CurrentState);
         Assert.Null(handler.CachedTrackId);
     }
 
     [Fact]
-    public async Task GapExitAndReentry_CannotBeCompletedByPreviousCapture()
+    public void GapExitAndReentry_CannotBeCompletedByPreviousCapture()
     {
         var handler = new GapFreezeHandler();
         Guid track = Guid.NewGuid();
         handler.EnterFreezeCapture(track, 9.983, "clip.mp4");
-        bool result = await GapFreezeCaptureOperation.RunAsync(handler, track, () => true, stillCurrent =>
+        bool result = GapFreezeCaptureOperation.Run(handler, track, () => true, stillCurrent =>
         {
             Assert.True(stillCurrent());
             handler.Reset();
             handler.EnterFreezeCapture(track, 9.983, "clip.mp4");
             handler.CurrentState = GapState.WaitingForFrameStep;
             Assert.False(stillCurrent());
-            return Task.FromResult(true);
+            return true;
         });
         Assert.False(result);
         Assert.Equal(GapState.WaitingForFrameStep, handler.CurrentState);
@@ -45,26 +45,26 @@ public class GapCaptureCompletionTests
     }
 
     [Fact]
-    public async Task OnlySuccessfulCurrentCopy_ConfirmsTarget()
+    public void OnlySuccessfulCurrentConfirm_ConfirmsTarget()
     {
         var handler = new GapFreezeHandler();
         Guid track = Guid.NewGuid();
         handler.EnterFreezeCapture(track, 9.983, "clip.mp4");
-        Assert.True(await GapFreezeCaptureOperation.RunAsync(handler, track, () => true,
-            guard => Task.FromResult(guard())));
+        Assert.True(GapFreezeCaptureOperation.Run(handler, track, () => true,
+            guard => guard()));
         Assert.Equal(GapState.FreezeComplete, handler.CurrentState);
         Assert.Equal(track, handler.CachedTrackId);
         Assert.Equal(9.983, handler.CachedTargetSeconds);
     }
 
     [Fact]
-    public async Task RenderInvalidation_CannotConfirmSuccessfulOldCopy()
+    public void RenderInvalidation_CannotConfirmSuccessfulOldAttempt()
     {
         var handler = new GapFreezeHandler();
         handler.EnterFreezeCapture(Guid.NewGuid(), 9.983, "clip.mp4");
         bool current = true;
-        Assert.False(await GapFreezeCaptureOperation.RunAsync(handler, null, () => current,
-            _ => { current = false; return Task.FromResult(true); }));
+        Assert.False(GapFreezeCaptureOperation.Run(handler, null, () => current,
+            _ => { current = false; return true; }));
         Assert.Null(handler.CachedTrackId);
     }
 

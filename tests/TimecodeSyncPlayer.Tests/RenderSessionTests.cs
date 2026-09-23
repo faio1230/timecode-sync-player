@@ -12,17 +12,17 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class RenderSessionTests
 {
     [Fact]
-    public async Task TryCaptureGapFreezeFrameAsync_RequiresCurrentGenerationAndAttempt()
+    public void CanConfirmGapFreeze_RequiresCurrentGenerationAndAttempt()
     {
         using var fixture = new Fixture();
         int generation = fixture.Session.CaptureGeneration();
 
-        (await fixture.Session.TryCaptureGapFreezeFrameAsync(generation, () => true)).Should().BeTrue();
-        (await fixture.Session.TryCaptureGapFreezeFrameAsync(generation - 1, () => true)).Should().BeFalse();
-        (await fixture.Session.TryCaptureGapFreezeFrameAsync(generation, () => false)).Should().BeFalse();
+        fixture.Session.CanConfirmGapFreeze(generation, () => true).Should().BeTrue();
+        fixture.Session.CanConfirmGapFreeze(generation - 1, () => true).Should().BeFalse();
+        fixture.Session.CanConfirmGapFreeze(generation, () => false).Should().BeFalse();
 
         fixture.Session.Invalidate();
-        (await fixture.Session.TryCaptureGapFreezeFrameAsync(generation, () => true)).Should().BeFalse();
+        fixture.Session.CanConfirmGapFreeze(generation, () => true).Should().BeFalse();
     }
 
     [Fact]

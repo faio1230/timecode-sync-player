@@ -145,12 +145,12 @@ internal sealed class RenderSession : IDisposable
 
     /// <summary>
     /// Gap フリーズの最終フレームは GPU 合成層が進入時に保存する（ComposeLayer.SaveFreeze）。
-    /// ここは状態機械の「キャプチャ完了」を、世代が変わっていないことだけで確認する。
+    /// ここは状態機械の「確定してよいか」を、世代が変わっていないことだけで確かめる（待つものは無い）。
     /// </summary>
-    public Task<bool> TryCaptureGapFreezeFrameAsync(int generation, Func<bool> isAttemptCurrent)
+    public bool CanConfirmGapFreeze(int generation, Func<bool> isAttemptCurrent)
     {
         ArgumentNullException.ThrowIfNull(isAttemptCurrent);
-        return Task.FromResult(IsCurrent(generation) && isAttemptCurrent() && _context != IntPtr.Zero);
+        return IsCurrent(generation) && isAttemptCurrent() && _context != IntPtr.Zero;
     }
 
     /// <summary>Disable callbacks and wait only for native work, never UI continuations.</summary>

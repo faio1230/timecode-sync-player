@@ -2019,9 +2019,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // A paused seek may finish after its final FRAME callback. Explicitly redraw
         // once native completion is observable; the capture operation excludes duplicates.
         if (_gapFreezeHandler.CurrentState == GapState.EnteringFreeze)
-            _ = AsyncOperationExceptionBoundary.RunAsync(
-                () => TryCompleteGapFreezeAsync(_renderSession.CaptureGeneration(), false, allowRedraw: true),
-                ex => Log.Error(ex, "Gap freeze completion retry failed"));
+        {
+            try
+            {
+                TryCompleteGapFreeze(_renderSession.CaptureGeneration(), false, allowRedraw: true);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Gap freeze completion retry failed");
+            }
+        }
 
         if (_gapFreezeHandler.HasTimedOut())
         {
@@ -2105,16 +2112,21 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// Gap のキャプチャ状態を接続し、フレームごとの UI 更新と GPU への状態送信を行う。
     /// 画像の合成は OutputEngine（GPU worker）が行う。
     /// </summary>
-    private async Task ProcessRenderFrameUpdateAsync(int renderGeneration, bool hasFrame)
+    private Task ProcessRenderFrameUpdateAsync(int renderGeneration, bool hasFrame)
     {
-        await TryCompleteGapFreezeAsync(renderGeneration, hasFrame);
-        if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
+        TryCompleteGapFreeze(renderGeneration, hasFrame);
+        if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return Task.CompletedTask;
         SubmitOutputState();
-        if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return;
+        if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return Task.CompletedTask;
         UpdatePerFrameUI();
+        return Task.CompletedTask;
     }
 
-    private async Task TryCompleteGapFreezeAsync(int renderGeneration, bool hasFrame, bool allowRedraw = false)
+    /// <summary>
+    /// ギャップのフリーズを確定できるか見て、できれば確定する（同期。待つものは無い）。
+    /// 最終フレームの画像は GPU 合成層が進入時に保存している。
+    /// </summary>
+    private void TryCompleteGapFreeze(int renderGeneration, bool hasFrame, bool allowRedraw = false)
     {
         // D21-b: 最終フレームの到着は OnSourceFrameReady（ソースフレームの位置）で判定する。
         // 描画コールバックだけではシーク前の実行中フレームを最終フレームと誤認する。
@@ -2136,10 +2148,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
             if (decision == GapFrameCaptureDecision.RenderAndCapture)
             {
-                bool captured = await GapFreezeCaptureOperation.RunAsync(
+                bool captured = GapFreezeCaptureOperation.Run(
                     _gapFreezeHandler, _loadedTrackId,
                     () => !_disposed && _renderSession.IsCurrent(renderGeneration),
-                    stillCurrent => _renderSession.TryCaptureGapFreezeFrameAsync(renderGeneration,
+                    stillCurrent => _renderSession.CanConfirmGapFreeze(renderGeneration,
                         () => stillCurrent() && IsNativeGapFreezeTargetReady()));
                 if (captured)
                 {
