@@ -215,6 +215,10 @@ public sealed class LtcScenarioE2ETests
     [SkippableFact(Timeout = 3_600_000)]
     public void U1_Continue_HighRateUiaAudit_KeepsSyncAndOutput()
     {
+        // 実素材（ギャップ無しの Continue）のプロジェクトでだけ回す。既定の色素材プロジェクトは
+        // ギャップを含むため、ギャップ中の静止と perf の空きを「中身が止まった」と数えてしまう。
+        Skip.If(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ProjectVariable)),
+            $"U-1 は {ProjectVariable} に実素材のプロジェクト（ギャップ無し）を指定したときだけ回す");
         int intervalMs = int.TryParse(Environment.GetEnvironmentVariable(UiaIntervalVariable),
             NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed > 0 ? parsed : 50;
         string traceRoot = Environment.GetEnvironmentVariable("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE") ?? "";
