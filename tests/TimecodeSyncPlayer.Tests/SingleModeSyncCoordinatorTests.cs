@@ -400,4 +400,69 @@ public class SingleModeSyncCoordinatorTests
         seekCalls.Should().BeEmpty();
         holdCalls.Should().Equal(new[] { true, false });
     }
+
+    [Fact]
+    public void Apply_HeldAtClipOut_LtcReturnsExactlyToClipIn_ReleasesAndSeeks()
+    {
+        // 検証機の S-3（クリップ [10,30]）: 出口で止まったまま LTC が入口ちょうど（10.000）へ戻った。
+        // 解除の余白を両端に効かせていたため、どちらにも当たらず出口に取り残されていた。
+        double playback = 30.033;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 10.0, mediaOut: 30.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 40.0);
+        holdCalls.Should().Equal(true);
+
+        coordinator.Apply(ltcSeconds: 10.0);
+
+        holdCalls.Should().Equal(true, false);
+        seekCalls.Should().ContainSingle().Which.Should().Be(10.0);
+    }
+
+    [Fact]
+    public void ApplyClipBoundaryHoldOnly_HeldAtClipOut_HeldLtcAtClipIn_Releases()
+    {
+        // 保持（Duplicate）の LTC が入口ちょうどに止まっている場合も、出口のホールドは解く。
+        double playback = 30.033;
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 10.0, mediaOut: 30.0),
+                SeekTo: _ => true,
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.ApplyClipBoundaryHoldOnly(40.0).Should().BeTrue();
+        coordinator.ApplyClipBoundaryHoldOnly(10.0).Should().BeFalse();
+
+        holdCalls.Should().Equal(true, false);
+    }
+
+    [Fact]
+    public void Apply_HeldAtClipOut_LtcJustInsideClipOut_KeepsTheHold()
+    {
+        // 余白は止まっている側の端には今までどおり効く（端の近くでのばたつきを防ぐ）。
+        double playback = 30.0;
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            CreateService(),
+            new SingleModeSyncEffects(
+                GetTimePos: () => (rc: 0, playbackSeconds: playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 10.0, mediaOut: 30.0),
+                SeekTo: _ => true,
+                SetEndHold: held => holdCalls.Add(held)));
+
+        coordinator.Apply(ltcSeconds: 40.0);
+        coordinator.Apply(ltcSeconds: 29.99);
+
+        holdCalls.Should().Equal(true);
+    }
 }

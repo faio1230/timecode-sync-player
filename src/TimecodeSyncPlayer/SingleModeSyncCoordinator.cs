@@ -150,10 +150,18 @@ internal sealed class SingleModeSyncCoordinator
         bool aboveOut = ltcSeconds > clipOut;
         if (!belowIn && !aboveOut)
         {
-            if (_clipBoundaryHeld &&
-                ltcSeconds >= clipIn + boundaryTolerance && ltcSeconds <= clipOut - boundaryTolerance)
+            // 解除の余白（端から 2 フレーム）は、いま止まっている側の端にだけ効かせる。
+            // 以前は両端に効かせていたため、出口で止まったまま LTC が入口ちょうど（clipIn）に
+            // 戻ると、どちらの条件にも当たらず出口に取り残された（検証機の S-3、クリップ [10,30] で
+            // LTC を 10.000 に戻した回）。
+            if (_clipBoundaryHeld)
             {
-                ReleaseBoundaryHold("", ltcSeconds, playbackSeconds, clipIn, clipOut);
+                bool heldAtOut = playbackSeconds >= (clipIn + clipOut) * 0.5;
+                bool leftHeldEdge = heldAtOut
+                    ? ltcSeconds <= clipOut - boundaryTolerance
+                    : ltcSeconds >= clipIn + boundaryTolerance;
+                if (leftHeldEdge)
+                    ReleaseBoundaryHold("", ltcSeconds, playbackSeconds, clipIn, clipOut);
             }
             return _clipBoundaryHeld;
         }
