@@ -1754,11 +1754,13 @@ static bool
 hap_enabled ()
 {
   static const bool enabled = [] {
+    /* v0.5.0: 検証機で全条件に通ったので既定で有効。TCS_HAP=off のときだけ無効にする
+     * （無効のときは従来どおり、CPU の展開へは流さずに読み込みを断る）。 */
     char buf[16] = {};
     DWORD n = GetEnvironmentVariableA ("TCS_HAP", buf, sizeof (buf));
-    bool on = n > 0 && n < sizeof (buf) && _stricmp (buf, "on") == 0;
-    LOG ("hap: %s (TCS_HAP=on で有効)", on ? "enabled" : "disabled");
-    return on;
+    bool off = n > 0 && n < sizeof (buf) && _stricmp (buf, "off") == 0;
+    LOG ("hap: %s (TCS_HAP=off で無効)", off ? "disabled" : "enabled");
+    return !off;
   } ();
   return enabled;
 }

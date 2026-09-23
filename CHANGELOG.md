@@ -2,6 +2,32 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.5.0 - 2026-09-24
+
+HAP playback on the GPU, plus fixes for how Single mode handles clip edges.
+
+### Added
+
+- **HAP playback (Hap, Hap Alpha, Hap Q).** Compressed textures are uploaded to the GPU and decoded there;
+  HAP is never decompressed on the CPU. No setting is needed; set `TCS_HAP=off` before launch to turn it off.
+  Hap 7 and Hap HDR are refused with a reason at load time. Hap Q Alpha is not guaranteed until verified with
+  footage written by a real HAP exporter. The keyframe scan does not read HAP files (every frame is a keyframe).
+
+### Fixed (present in earlier releases)
+
+- Single: with the hold at the clip out point, LTC returning exactly to the in point left the picture stuck at
+  the out point.
+- Single: LTC before the clip in point held the picture wherever it was (for example right after loading)
+  instead of moving to the in point first. The held-value landing in stop mode could also land outside the clip.
+- When the clip out point equals the end of the media, the seek now targets the last frame instead of the end
+  of the media, where the position did not settle.
+- The first `Playback perf` window could stretch over a load and the leading black gap (log only).
+
+### Removed
+
+- Two pass-through classes and the old keyframe warning path (`TCS_LONG_GOP_WARNING`), already replaced by
+  the load-time scan. No behaviour change.
+
 ## 0.4.8 - 2026-09-23
 
 Keeps sync from oscillating when video decoding briefly falls behind. Found by an external tool reading
