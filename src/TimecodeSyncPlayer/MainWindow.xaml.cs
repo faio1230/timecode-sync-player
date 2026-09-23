@@ -2423,7 +2423,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             long windowGeneration = _playbackPerformanceStats.WindowGeneration;
             PlaybackPerformanceSnapshot? performance =
-                _playbackPerformanceStats.RecordTick(pos, Stopwatch.GetElapsedTime(0));
+                _playbackPerformanceStats.RecordTick(pos, Stopwatch.GetElapsedTime(0), _gstPlaybackApi.Activity.Disturbances);
             if (performance != null)
             {
                 LogPlaybackPerformance(performance);
@@ -2431,7 +2431,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             }
             else if (_playbackPerformanceStats.WindowGeneration != windowGeneration)
             {
-                // 0.4.7: 窓が snapshot 無しで作り直された（0.4.8 以降は最初の tick だけ）。判定の基準を窓に合わせる。
+                // 0.4.7: 窓が snapshot 無しで作り直された（最初の tick か、シークなどの操作をまたいで位置が戻った）。
+                // 判定の基準を窓に合わせる。
                 PlaybackActivityLedger activity = _gstPlaybackApi.Activity;
                 _decodeHealth.BeginWindow(activity.Disturbances, activity.RateIntegralSeconds());
             }

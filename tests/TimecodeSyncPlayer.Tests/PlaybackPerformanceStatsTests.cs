@@ -157,4 +157,38 @@ public class PlaybackPerformanceStatsTests
         snapshot!.BackwardJumps.Should().Be(1);
         stats.WindowGeneration.Should().Be(g0 + 2, "snapshot を返すと同時に次の窓が始まる");
     }
+
+    [Fact]
+    public void RecordTick_BackwardJumpAfterAnOperation_StartsANewWindow()
+    {
+        // 0.4.8 候補 2: シークなどの操作をまたいで位置が戻ったら、従来どおり窓を作り直す。
+        // 候補 1 では窓を保ったため、参照採取の後の先頭へのシークをまたいで 6.4 秒・0.23 倍の窓ができた。
+        var stats = new PlaybackPerformanceStats(TimeSpan.FromSeconds(2));
+        DateTime start = new(2026, 9, 23, 12, 0, 0, DateTimeKind.Utc);
+        stats.RecordTick(10.0, start, operationEpoch: 5);
+        stats.RecordTick(11.0, start.AddSeconds(1), operationEpoch: 5);
+        long generation = stats.WindowGeneration;
+
+        // 操作（epoch 6）の後に 1.36 秒戻った。
+        stats.RecordTick(9.64, start.AddSeconds(1.5), operationEpoch: 6).Should().BeNull();
+        stats.WindowGeneration.Should().Be(generation + 1, "操作をまたいだ戻りでは窓を作り直す");
+
+        PlaybackPerformanceSnapshot? snapshot = stats.RecordTick(11.64, start.AddSeconds(3.5), operationEpoch: 6);
+        snapshot.Should().NotBeNull();
+        snapshot!.Elapsed.Should().Be(TimeSpan.FromSeconds(2));
+        snapshot.PlaybackRate.Should().BeApproximately(1.0, 0.0001);
+        snapshot.BackwardJumps.Should().Be(0);
+    }
+
+    [Fact]
+    public void RecordTick_ForwardJumpAfterAnOperation_KeepsTheWindow()
+    {
+        // 前へのシークは従来どおり窓を保つ（以前から作り直すのは戻ったときだけ）。
+        var stats = new PlaybackPerformanceStats(TimeSpan.FromSeconds(2));
+        DateTime start = new(2026, 9, 23, 12, 0, 0, DateTimeKind.Utc);
+        stats.RecordTick(10.0, start, operationEpoch: 1);
+        long generation = stats.WindowGeneration;
+        stats.RecordTick(20.0, start.AddSeconds(1), operationEpoch: 2).Should().BeNull();
+        stats.WindowGeneration.Should().Be(generation);
+    }
 }
