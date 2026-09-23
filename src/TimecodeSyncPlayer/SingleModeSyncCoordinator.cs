@@ -17,6 +17,10 @@ internal sealed class SingleModeSyncCoordinator
     // D33: 終端ホールドのラッチ。LTC が範囲外で再生位置が clipIn/clipOut に達したら立て、
     // 許容分だけ内側へ戻ったら解除する。
     private bool _clipBoundaryHeld;
+    // 範囲外の LTC で、端（clipIn / clipOut）へのシークを出したか。出した後は、キーフレームの都合で
+    // 端の外側に着地しても「端に着いた」とみなしてホールドする。出す前は、端の ±2 フレームに
+    // いるときだけホールドし、それ以外はまず端へシークする。
+    private double? _boundarySeekTarget;
 
     /// <summary>D35-b: 終端ホールド中か（保持値への明示着地を抑止する判定に使う）。</summary>
     public bool IsBoundaryHeld => _clipBoundaryHeld;
@@ -95,7 +99,10 @@ internal sealed class SingleModeSyncCoordinator
 
         bool success = _effects.SeekTo(decision.TargetSeconds);
         if (success)
+        {
             _syncService.ReportSeekSent(decision.TargetSeconds);
+            NoteBoundarySeek(decision.TargetSeconds, state);
+        }
         Log.Information(
             "Timecode sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} videoFps={VideoFps:F3} timecodeFps={TimecodeFps:F3} defaultVideoFps={DefaultVideoFps} defaultTimecodeFps={DefaultTimecodeFps} success={Success}",
             ltcSeconds, playbackSeconds, decision.TargetSeconds, decision.DeltaSeconds,
@@ -148,6 +155,7 @@ internal sealed class SingleModeSyncCoordinator
         bool aboveOut = ltcSeconds > clipOut;
         if (!belowIn && !aboveOut)
         {
+            _boundarySeekTarget = null;
             // 解除の余白（端から 2 フレーム）は、いま止まっている側の端にだけ効かせる。
             // 以前は両端に効かせていたため、出口で止まったまま LTC が入口ちょうど（clipIn）に
             // 戻ると、どちらの条件にも当たらず出口に取り残された（検証機の S-3、クリップ [10,30] で
@@ -164,8 +172,13 @@ internal sealed class SingleModeSyncCoordinator
             return _clipBoundaryHeld;
         }
 
-        bool atOut = aboveOut && playbackSeconds >= clipOut - boundaryTolerance;
-        bool atIn = belowIn && playbackSeconds <= clipIn + boundaryTolerance;
+        // 端に「着いた」: 端の ±2 フレーム、またはその端へのシークを出した後で端の外側。
+        // 以前は外側を無条件に「着いた」としていたため、読み込み直後（位置 1.0）に LTC が入口
+        // （10.0）より手前に来ると、入口へシークせずに 1.0 の絵でホールドしていた（検証機の S-2）。
+        bool atOut = aboveOut && playbackSeconds >= clipOut - boundaryTolerance &&
+            (playbackSeconds <= clipOut + boundaryTolerance || BoundarySeekSentTo(clipOut, boundaryTolerance));
+        bool atIn = belowIn && playbackSeconds <= clipIn + boundaryTolerance &&
+            (playbackSeconds >= clipIn - boundaryTolerance || BoundarySeekSentTo(clipIn, boundaryTolerance));
         if (!atOut && !atIn)
         {
             // 端に居ない（トラック差し替え後のロード直後など）。古いラッチを解除して、
@@ -190,10 +203,27 @@ internal sealed class SingleModeSyncCoordinator
     /// D35-b: 境界ホールドの解除。解除と同時に保留シーク状態と保持着地のラッチを解除する
     /// （ホールド中に残った端への pending が、新しい範囲内 LTC への着地シークを抑止するのを防ぐ）。
     /// </summary>
+    private bool BoundarySeekSentTo(double edge, double tolerance) =>
+        _boundarySeekTarget is double target && Math.Abs(target - edge) <= tolerance;
+
+    /// <summary>端へのシーク（範囲外 LTC の着地先）を出したことを覚える。</summary>
+    private void NoteBoundarySeek(double targetSeconds, SyncPlaybackState state)
+    {
+        (double clipIn, double clipOut) = SyncDecisionEngine.ClipRange(
+            state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
+        double fps = state.VideoFps > 0 ? state.VideoFps
+            : state.TimecodeFps > 0 ? state.TimecodeFps : 30.0;
+        double tolerance = 2.0 / fps;
+        _boundarySeekTarget = Math.Abs(targetSeconds - clipIn) <= tolerance ? clipIn
+            : double.IsFinite(clipOut) && Math.Abs(targetSeconds - clipOut) <= tolerance ? clipOut
+            : null;
+    }
+
     private void ReleaseBoundaryHold(string suffix, double ltcSeconds, double playbackSeconds,
         double clipIn, double clipOut)
     {
         _clipBoundaryHeld = false;
+        _boundarySeekTarget = null;
         _effects.SetEndHold?.Invoke(false);
         _effects.OnBoundaryHoldReleased?.Invoke();
         Log.Information(
