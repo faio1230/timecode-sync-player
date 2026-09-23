@@ -589,27 +589,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     // 0.4.5-A フェーズ 1: 同期評価の位置は 1 回の _ex 照会から値とサンプルの両方を作る。
-    // コーディネーターは GetTimePos の直後に GetPositionSample を呼ぶため、同じ照会結果を渡す。
-    private PlaybackPositionSample? _lastSyncPositionSample;
-
-    private (int rc, double playbackSeconds) ReadSyncTimePos()
+    // v0.5.1: 秒とサンプルを 1 つの結果で返す（呼び出し順の暗黙の約束を無くした）。
+    private SyncPositionRead ReadSyncPosition()
     {
         if (_playbackApi.TryGetPositionSample(out PlaybackPositionSample sample))
-        {
-            _lastSyncPositionSample = sample;
-            return (0, sample.Seconds);
-        }
-        _lastSyncPositionSample = null;
+            return new SyncPositionRead(true, sample.Seconds, sample);
         return _playbackApi.TryGetTimePos(out double playbackSeconds)
-            ? (0, playbackSeconds)
-            : (-1, 0.0);
-    }
-
-    private PlaybackPositionSample? ReadSyncPositionSample()
-    {
-        PlaybackPositionSample? sample = _lastSyncPositionSample;
-        _lastSyncPositionSample = null;
-        return sample;
+            ? new SyncPositionRead(true, playbackSeconds, null)
+            : SyncPositionRead.Failed;
     }
 
     // Gpu backend: ギャップ・カード・世代・位置を GPU worker の mailbox へ渡す（最新1件）。
@@ -1017,8 +1004,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _singleModeSyncCoordinator ??= new SingleModeSyncCoordinator(
             _syncService,
             new SingleModeSyncEffects(
-                GetTimePos: ReadSyncTimePos,
-                GetPositionSample: ReadSyncPositionSample,
+                ReadPosition: ReadSyncPosition,
                 BuildPlaybackState: playbackSeconds => new SyncPlaybackState(
                     SyncEnabled: _vm.Sync.SyncEnabled,
                     HasCurrentTrack: _playlist.Current != null,
@@ -1064,8 +1050,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 SetLoadedTrackId: id => SetLoadedTrack(id),
                 LoadFile: (path, start) => LoadFile(path, startPosition: start),
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
-                GetTimePos: ReadSyncTimePos,
-                GetPositionSample: ReadSyncPositionSample,
+                ReadPosition: ReadSyncPosition,
                 BuildPlaybackState: playbackSeconds => new SyncPlaybackState(
                     SyncEnabled: true,
                     HasCurrentTrack: true,

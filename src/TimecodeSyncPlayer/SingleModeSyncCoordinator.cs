@@ -40,22 +40,23 @@ internal sealed class SingleModeSyncCoordinator
         {
             if (traceEnabled)
             {
-                (int shadowRc, double shadowPlayback) = _effects.GetTimePos();
-                if (shadowRc == 0)
+                SyncPositionRead shadowRead = _effects.ReadPosition();
+                if (shadowRead.Succeeded)
                 {
-                    PlaybackPositionSample? shadowSample = _effects.GetPositionSample?.Invoke();
-                    SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowPlayback);
-                    _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowSample, "native-seeking");
+                    SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowRead.PlaybackSeconds);
+                    _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowRead.Sample, "native-seeking");
                 }
             }
             return SyncRequestResult.Deferred;
         }
 
-        (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
-        if (timePosRc != 0) return SyncRequestResult.Deferred;
+        SyncPositionRead read = _effects.ReadPosition();
+        if (!read.Succeeded) return SyncRequestResult.Deferred;
+        double playbackSeconds = read.PlaybackSeconds;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
-        PlaybackPositionSample? positionSample = traceEnabled ? _effects.GetPositionSample?.Invoke() : null;
+        // 位置サンプルは秒と同じ照会の結果。shadow は trace 有効時だけ渡す。
+        PlaybackPositionSample? positionSample = traceEnabled ? read.Sample : null;
 
         if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
             !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
@@ -113,9 +114,10 @@ internal sealed class SingleModeSyncCoordinator
         if (_effects.IsNativeSeeking?.Invoke() == true)
             return _clipBoundaryHeld;
 
-        (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
-        if (timePosRc != 0)
+        SyncPositionRead read = _effects.ReadPosition();
+        if (!read.Succeeded)
             return _clipBoundaryHeld;
+        double playbackSeconds = read.PlaybackSeconds;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
         if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
@@ -199,7 +201,8 @@ internal sealed class SingleModeSyncCoordinator
 /// MainWindow のフィールド・メソッドをフェイク可能な形で注入する。
 /// </summary>
 internal sealed record SingleModeSyncEffects(
-    Func<(int rc, double playbackSeconds)> GetTimePos,
+    // v0.5.1: 再生位置（秒）と位置サンプルを同じ 1 回の照会で返す。
+    Func<SyncPositionRead> ReadPosition,
     Func<double, SyncPlaybackState> BuildPlaybackState,
     Func<double, bool> SeekTo,
     Func<long>? GetTotalRenderedFrames = null,
@@ -207,6 +210,4 @@ internal sealed record SingleModeSyncEffects(
     // D33: 終端ホールドの pause/resume（true = 端で一時停止、false = 解除して再開）。
     Action<bool>? SetEndHold = null,
     // D35-b: 終端ホールドの解除通知。保留シーク状態と保持着地のラッチを解除する。
-    Action? OnBoundaryHoldReleased = null,
-    // 0.4.5-A フェーズ 1: 評価位置（shadow）用の位置サンプル。未指定は shadow なし。
-    Func<PlaybackPositionSample?>? GetPositionSample = null);
+    Action? OnBoundaryHoldReleased = null);

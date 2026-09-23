@@ -66,6 +66,9 @@ public class ContinueOnTrackCoordinatorTests
         public (int rc, double playbackSeconds) TimePos = (0, 1.0);
         public Func<double, SyncPlaybackState> BuildState = SeekYieldingState;
 
+        private static SyncPositionRead ToRead((int rc, double playbackSeconds) timePos) =>
+            timePos.rc == 0 ? new SyncPositionRead(true, timePos.playbackSeconds) : SyncPositionRead.Failed;
+
         public ContinueOnTrackEffects Build() => new(
             PeekGapExit: () => new GapExitAction(GapExit),
             IsPlaybackPaused: () => true,
@@ -79,7 +82,7 @@ public class ContinueOnTrackCoordinatorTests
             SetLoadedTrackId: id => { Calls.Add("SetLoadedTrackId"); SetLoadedTrackIds.Add(id); LoadedTrackId = id; },
             LoadFile: (path, start) => { Calls.Add("LoadFile"); LoadFileArgs.Add((path, start)); return LoadFileResult; },
             GetTotalRenderedFrames: () => { Calls.Add("GetTotalRenderedFrames"); return TotalRenderedFrames; },
-            GetTimePos: () => { Calls.Add("GetTimePos"); return TimePos; },
+            ReadPosition: () => { Calls.Add("ReadPosition"); return ToRead(TimePos); },
             BuildPlaybackState: ps => { Calls.Add("BuildPlaybackState"); return BuildState(ps); },
             IsNativeSeeking: () => NativeSeeking);
     }
@@ -101,7 +104,7 @@ public class ContinueOnTrackCoordinatorTests
         clock.Advance(TimeSpan.FromSeconds(3));
         coordinator.Handle(OnTrack(track, 10), 10).Should().Be(SyncRequestResult.Deferred);
         coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Deferred);
-        rec.Calls.Should().NotContain(new[] { "GetTimePos", "GetTotalRenderedFrames", "BuildPlaybackState" });
+        rec.Calls.Should().NotContain(new[] { "ReadPosition", "GetTotalRenderedFrames", "BuildPlaybackState" });
         service.SeekState.HasPendingSeek.Should().BeTrue();
         service.SeekState.TargetSeconds.Should().Be(10);
         service.SeekState.LastStatus.Should().Be(TimecodeSyncSeekPendingStatus.Pending);
@@ -163,7 +166,7 @@ public class ContinueOnTrackCoordinatorTests
 
         rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
         rec.LoadedTrackId.Should().Be(track.Id);
-        rec.Calls.Should().NotContain("GetTimePos");
+        rec.Calls.Should().NotContain("ReadPosition");
         if (exitingGap)
             rec.Calls.IndexOf("LoadFile").Should().BeLessThan(rec.Calls.IndexOf("ResumePlayback"));
     }
@@ -183,7 +186,7 @@ public class ContinueOnTrackCoordinatorTests
 
         rec.SeekTargets.Should().Equal(12.5);
         rec.Calls.Should().Contain("ResumePlayback");
-        rec.Calls.Should().NotContain("GetTimePos");
+        rec.Calls.Should().NotContain("ReadPosition");
     }
 
     // ---- (a) Gap 終了（ResumePlayback）分岐 ----
@@ -206,8 +209,8 @@ public class ContinueOnTrackCoordinatorTests
             "ApplyPauseState(False)",
             "UpdateCurrentTrackLabel");
         rec.SeekTargets.Should().ContainSingle().Which.Should().Be(42.0);
-        // 他分岐（トラック判定・LoadFile・GetTimePos）には進まない
-        rec.Calls.Should().NotContain(new[] { "LoadFile", "GetTimePos" });
+        // 他分岐（トラック判定・LoadFile・ReadPosition）には進まない
+        rec.Calls.Should().NotContain(new[] { "LoadFile", "ReadPosition" });
     }
 
     [Fact]
@@ -235,7 +238,7 @@ public class ContinueOnTrackCoordinatorTests
                 SetLoadedTrackId: id => rec.LoadedTrackId = id,
                 LoadFile: (_, _) => true,
                 GetTotalRenderedFrames: () => 0,
-                GetTimePos: () => (0, 0),
+                ReadPosition: () => new SyncPositionRead(true, 0),
                 BuildPlaybackState: SeekYieldingState));
 
         coordinator.Handle(OnTrack(track, mediaPos: 42.0), ltcSeconds: 42.0);
@@ -273,7 +276,7 @@ public class ContinueOnTrackCoordinatorTests
         rec.LoadFileArgs[0].path.Should().Be("C:/next.mp4");
         rec.LoadFileArgs[0].start.Should().BeApproximately(12.75, 1e-9);
         rec.SetLoadedTrackIds.Should().ContainSingle().Which.Should().Be(newTrack.Id);
-        rec.Calls.Should().NotContain("GetTimePos");
+        rec.Calls.Should().NotContain("ReadPosition");
     }
 
     [Fact]
@@ -321,7 +324,7 @@ public class ContinueOnTrackCoordinatorTests
         // BeginFileLoad が呼ばれると以後のシークが抑止される
         service.ShouldSuppressSeek(playbackSeconds: 12.5, toleranceSeconds: 0.2).Should().BeTrue();
         // 同一トラック分岐へは進まない
-        rec.Calls.Should().NotContain("GetTimePos");
+        rec.Calls.Should().NotContain("ReadPosition");
     }
 
     [Fact]
@@ -362,7 +365,7 @@ public class ContinueOnTrackCoordinatorTests
 
         coordinator.Handle(OnTrack(track, mediaPos: 100.0), ltcSeconds: 100.0);
 
-        rec.Calls.Should().Contain("GetTimePos");
+        rec.Calls.Should().Contain("ReadPosition");
         rec.Calls.Should().NotContain(new[] { "BuildPlaybackState", "SeekTo" });
     }
 

@@ -75,6 +75,86 @@ public class PositionShadowTraceTests
         recorded.Detail.Should().Contain("shadowRateReason=smooth");
     }
 
+    [Fact]
+    public void SingleModeCoordinator_ShadowSampleAndPlaybackComeFromSameRead()
+    {
+        // v0.5.1: 秒と位置サンプルは 1 回の ReadPosition の結果から取る（別々に照会しない）。
+        // 秒 10.0 とサンプル 10.5 をわざとずらし、両方が同じ読み取りから trace に出ることを見る。
+        var trace = new OutputTrace(CreateTempDirectory(), capacity: 1000) { OriginQpc = Stopwatch.GetTimestamp() };
+        OutputTrace.Current = trace;
+        int reads = 0;
+        try
+        {
+            var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState());
+            var sample = new PlaybackPositionSample(10.5, PlaybackPositionBasis.Pipeline, 3, 10.5, 3, 3);
+            var coordinator = new SingleModeSyncCoordinator(service, new SingleModeSyncEffects(
+                ReadPosition: () => { reads++; return new SyncPositionRead(true, 10.0, sample); },
+                BuildPlaybackState: playback => new SyncPlaybackState(true, true, false,
+                    PlaybackSeconds: playback, DurationSeconds: 60, VideoFps: 25, TimecodeFps: 25),
+                SeekTo: _ => true));
+
+            _ = coordinator.Apply(10.5);
+        }
+        finally
+        {
+            OutputTrace.Current = OutputTrace.Disabled;
+        }
+
+        reads.Should().Be(1, "1 フレームの評価で位置の照会は 1 回だけ");
+        OutputTraceEvent recorded = trace.Snapshot().Single(e => e.Stage == "sync.evaluate");
+        recorded.Detail.Should().Contain("playback=10.000000");
+        recorded.Detail.Should().Contain("evalPosition=10.500000");
+        recorded.Detail.Should().Contain("evalBasis=pipeline");
+    }
+
+    [Fact]
+    public void ContinueCoordinator_NativeSeekingShadow_UsesSampleAndPlaybackFromSameRead()
+    {
+        var trace = new OutputTrace(CreateTempDirectory(), capacity: 1000) { OriginQpc = Stopwatch.GetTimestamp() };
+        OutputTrace.Current = trace;
+        int reads = 0;
+        try
+        {
+            var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState());
+            var track = new PlaylistTrack(
+                Guid.NewGuid(), "C:/clip.mp4", "track", TimeSpan.Zero, null, TimeSpan.Zero,
+                TimeSpan.FromSeconds(60), TimeSpan.Zero, 25, true);
+            var sample = new PlaybackPositionSample(10.5, PlaybackPositionBasis.Delivered, 4, 10.5, 4, 4);
+            var coordinator = new ContinueOnTrackCoordinator(service,
+                new FileLoadStabilityLogState(TimeSpan.FromSeconds(1)),
+                new ContinueOnTrackEffects(
+                    PeekGapExit: () => new GapExitAction(GapExitActionType.None),
+                    DecideGapExit: () => new GapExitAction(GapExitActionType.None),
+                    IsPlaybackPaused: () => false,
+                    ClearGapFreezeFrame: () => { },
+                    SeekTo: _ => true,
+                    ResumePlayback: () => { },
+                    ApplyPauseState: _ => { },
+                    UpdateCurrentTrackLabel: () => { },
+                    GetLoadedTrackId: () => track.Id,
+                    SetLoadedTrackId: _ => { },
+                    LoadFile: (_, _) => true,
+                    GetTotalRenderedFrames: () => 0,
+                    ReadPosition: () => { reads++; return new SyncPositionRead(true, 10.0, sample); },
+                    BuildPlaybackState: playback => new SyncPlaybackState(true, true, false,
+                        PlaybackSeconds: playback, DurationSeconds: 60, VideoFps: 25, TimecodeFps: 25),
+                    IsNativeSeeking: () => true));
+
+            _ = coordinator.Handle(new TimelineQueryResult(TimelineQueryStatus.OnTrack, track, 10.5, null), 10.5);
+        }
+        finally
+        {
+            OutputTrace.Current = OutputTrace.Disabled;
+        }
+
+        reads.Should().Be(1);
+        OutputTraceEvent recorded = trace.Snapshot().Single(e => e.Stage == "sync.evaluate");
+        recorded.Detail.Should().Contain("native-seeking");
+        recorded.Detail.Should().Contain("playback=10.000000");
+        recorded.Detail.Should().Contain("evalPosition=10.500000");
+        recorded.Detail.Should().Contain("evalBasis=delivered");
+    }
+
     private static string CreateTempDirectory()
     {
         string directory = Path.Combine(Path.GetTempPath(), "tcs-shadow-trace", Guid.NewGuid().ToString("N"));

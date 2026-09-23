@@ -98,22 +98,23 @@ internal sealed class ContinueOnTrackCoordinator
             {
                 if (traceEnabled)
                 {
-                    (int shadowRc, double shadowPlayback) = _effects.GetTimePos();
-                    if (shadowRc == 0)
+                    SyncPositionRead shadowRead = _effects.ReadPosition();
+                    if (shadowRead.Succeeded)
                     {
-                        PlaybackPositionSample? shadowSample = _effects.GetPositionSample?.Invoke();
-                        SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowPlayback);
-                        _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowSample, "native-seeking");
+                        SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowRead.PlaybackSeconds);
+                        _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowRead.Sample, "native-seeking");
                     }
                 }
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "native-seeking");
             }
 
-            (int timePosRc, double playbackSeconds) = _effects.GetTimePos();
-            if (timePosRc != 0)
+            SyncPositionRead read = _effects.ReadPosition();
+            if (!read.Succeeded)
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "time-pos");
+            double playbackSeconds = read.PlaybackSeconds;
 
-            PlaybackPositionSample? positionSample = traceEnabled ? _effects.GetPositionSample?.Invoke() : null;
+            // 位置サンプルは秒と同じ照会の結果。shadow は trace 有効時だけ渡す。
+            PlaybackPositionSample? positionSample = traceEnabled ? read.Sample : null;
 
             if (!_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
             {
@@ -215,8 +216,7 @@ internal sealed record ContinueOnTrackEffects(
     Action<Guid> SetLoadedTrackId,
     Func<string, double, bool> LoadFile,
     Func<long> GetTotalRenderedFrames,
-    Func<(int rc, double playbackSeconds)> GetTimePos,
+    // v0.5.1: 再生位置（秒）と位置サンプルを同じ 1 回の照会で返す。
+    Func<SyncPositionRead> ReadPosition,
     Func<double, SyncPlaybackState> BuildPlaybackState,
-    Func<bool>? IsNativeSeeking = null,
-    // 0.4.5-A フェーズ 1: 評価位置（shadow）用の位置サンプル。未指定は shadow なし。
-    Func<PlaybackPositionSample?>? GetPositionSample = null);
+    Func<bool>? IsNativeSeeking = null);

@@ -78,7 +78,7 @@ internal sealed class SyncScenarioHarness
                 SetLoadedTrackId: id => _loadedTrackId = id,
                 LoadFile: LoadFile,
                 GetTotalRenderedFrames: () => _renderedFrames,
-                GetTimePos: () => (0, _playbackSeconds),
+                ReadPosition: () => new SyncPositionRead(true, _playbackSeconds),
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled,
                     Playlist.Current != null,
@@ -122,7 +122,7 @@ internal sealed class SyncScenarioHarness
         var single = new SingleModeSyncCoordinator(
             _syncService,
             new SingleModeSyncEffects(
-                GetTimePos: () => (0, _playbackSeconds),
+                ReadPosition: () => new SyncPositionRead(true, _playbackSeconds),
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled, Playlist.Current != null, IsSeeking, playback,
                     _durationSeconds, _videoFps, 25,

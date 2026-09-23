@@ -311,7 +311,7 @@ public class T7ContinueCorrectionTests
             SetLoadedTrackId: id => LoadedTrackId = id,
             LoadFile: (_, _) => LoadFileResult,
             GetTotalRenderedFrames: () => TotalRenderedFrames,
-            GetTimePos: () => TimePos,
+            ReadPosition: () => TimePos.rc == 0 ? new SyncPositionRead(true, TimePos.playbackSeconds) : SyncPositionRead.Failed,
             BuildPlaybackState: BuildState,
             IsNativeSeeking: () => NativeSeeking);
     }

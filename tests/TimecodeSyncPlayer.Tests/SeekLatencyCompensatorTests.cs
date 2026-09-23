@@ -448,7 +448,7 @@ public class SeekLatencyCompensatorTests
         var service = new TimecodeSyncService(engine, new TimecodeSyncSeekState(), null, compensator);
         var seekTargets = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(service, new SingleModeSyncEffects(
-            GetTimePos: () => (0, 4.0),
+            ReadPosition: () => new SyncPositionRead(true, 4.0),
             BuildPlaybackState: playback => SeekYieldingState(playback),
             SeekTo: target => { seekTargets.Add(target); return true; }));
 
