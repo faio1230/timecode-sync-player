@@ -1061,7 +1061,11 @@ internal sealed class LtcSyncController
                     heldSeconds);
                 return;
             }
-            target = Math.Clamp(heldSeconds, 0, state.DurationSeconds);
+            // D29: 着地先はほかの経路と同じくクリップの [MediaIn, MediaOut ?? 尺] に収める。
+            // 以前は尺だけで収めていたため、LTC が入口より手前で止まると、クリップの外（入口の手前）の
+            // 絵へ着地した（検証機の S-2、クリップ [10,18] で LTC を 8.0 に止めた回）。
+            target = SyncDecisionEngine.ClampToClip(
+                heldSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         }
 
         // D31-b: この損失で着地を試みた保持値を覚え、値が変わったときだけ再度着地する。
