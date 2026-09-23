@@ -1455,6 +1455,38 @@ on_new_sample (GstAppSink* sink, gpointer user)
     /* D2 rework diagnostics: the streaming thread holds the appsink stream lock
      * here. If a state change holds frame_lock (the documented deadlock), this
      * contention line is the last one before the hang. */
+    /* v0.5.0: HAP の解析と Snappy の展開は CPU だけの処理なので、frame_lock の外で行う。
+     * 4K では 1 コマ数 ms かかり、ロックの中でやると位置の問い合わせ（UI）と取得（GPU worker）を
+     * 待たせていた（内蔵 GPU の検証機で、開始直後に frame_lock の競合が増えてコマが落ちた）。
+     * hap_buffer はこのストリーミングスレッドだけが触る。GPU への転送は shim の context を使うので、
+     * これまでどおりロックの中で行う。 */
+    bool hap_ready = false;
+    TcsHapFrameInfo hap_info = {};
+    if (p->hap_stream && buf) {
+      GstMapInfo map = {};
+      if (!gst_buffer_map (buf, &map, GST_MAP_READ)) {
+        p->hap_decode_failures++;
+        LOG ("hap: buffer map failed (failures=%llu)", (unsigned long long) p->hap_decode_failures);
+      } else {
+        if (!tcs_hap_parse (map.data, map.size, &hap_info)) {
+          p->hap_decode_failures++;
+          LOG ("hap: parse failed size=%zu (failures=%llu)", (size_t) map.size,
+              (unsigned long long) p->hap_decode_failures);
+        } else {
+          if (p->hap_buffer.size () < hap_info.decompressed_length)
+            p->hap_buffer.resize (hap_info.decompressed_length);
+          if (!tcs_hap_decompress_frame (map.data, map.size, &hap_info, p->hap_buffer.data (),
+                  p->hap_buffer.size ())) {
+            p->hap_decode_failures++;
+            LOG ("hap: decompress failed bytes=%u (failures=%llu)", hap_info.decompressed_length,
+                (unsigned long long) p->hap_decode_failures);
+          } else {
+            hap_ready = true;
+          }
+        }
+        gst_buffer_unmap (buf, &map);
+      }
+    }
     std::unique_lock<std::mutex> g (p->frame_lock, std::try_to_lock);
     if (!g.owns_lock()) {
       LOG ("on_new_sample: frame_lock busy; waiting (state change in progress?)");
@@ -1497,59 +1529,36 @@ on_new_sample (GstAppSink* sink, gpointer user)
             (double) ((uint64_t) arrival.QuadPart - p->gate_armed_qpc) * ms_per_tick);
       }
     }
-    /* v0.5.0: HAP は圧縮テクスチャのまま届く。ここで展開して BGRA のテクスチャにし、
-     * 以降は復号済みのフレームと同じ扱いにする（リングへのコピーは共通の経路）。
-     * context は shim のものを使うので、frame_lock の中で行う。 */
-    if (p->hap_stream && !gated && buf) {
-      GstMapInfo map = {};
-      if (!gst_buffer_map (buf, &map, GST_MAP_READ)) {
+    /* v0.5.0: 展開済み（ロックの外）の HAP を GPU で BGRA のテクスチャにし、以降は復号済みの
+     * フレームと同じ扱いにする（リングへのコピーは共通の経路）。context は shim のものを使うので、
+     * frame_lock の中で行う。 */
+    if (hap_ready && !gated) {
+      if (!p->hap_gpu)
+        p->hap_gpu = tcs_hap_gpu_create (p->device, p->context);
+      ID3D11Texture2D* hap_tex = p->hap_gpu
+          ? tcs_hap_gpu_decode (p->hap_gpu, p->hap_buffer.data (),
+                hap_info.decompressed_length, hap_info.texture_format, cw, ch)
+          : nullptr;
+      if (!hap_tex) {
         p->hap_decode_failures++;
-        LOG ("hap: buffer map failed (failures=%llu)", (unsigned long long) p->hap_decode_failures);
-      } else {
-        TcsHapFrameInfo hap_info = {};
-        if (!tcs_hap_parse (map.data, map.size, &hap_info)) {
-          p->hap_decode_failures++;
-          LOG ("hap: parse failed size=%zu (failures=%llu)", (size_t) map.size,
-              (unsigned long long) p->hap_decode_failures);
-        } else {
-          if (p->hap_buffer.size () < hap_info.decompressed_length)
-            p->hap_buffer.resize (hap_info.decompressed_length);
-          if (!tcs_hap_decompress_frame (map.data, map.size, &hap_info, p->hap_buffer.data (),
-                  p->hap_buffer.size ())) {
-            p->hap_decode_failures++;
-            LOG ("hap: decompress failed bytes=%u (failures=%llu)", hap_info.decompressed_length,
-                (unsigned long long) p->hap_decode_failures);
-          } else {
-            if (!p->hap_gpu)
-              p->hap_gpu = tcs_hap_gpu_create (p->device, p->context);
-            ID3D11Texture2D* hap_tex = p->hap_gpu
-                ? tcs_hap_gpu_decode (p->hap_gpu, p->hap_buffer.data (),
-                      hap_info.decompressed_length, hap_info.texture_format, cw, ch)
-                : nullptr;
-            if (!hap_tex) {
-              p->hap_decode_failures++;
-              LOG ("hap: gpu decode failed %dx%d format=0x%02X reason=%s (failures=%llu)",
-                  cw, ch, hap_info.texture_format,
-                  p->hap_gpu ? tcs_hap_gpu_last_error (p->hap_gpu) : "no gpu helper",
-                  (unsigned long long) p->hap_decode_failures);
-              /* 扱えない変種（Hap 7 / Hap HDR など）は、黙って絵を出さずに読み込みを失敗させる。
-               * set_error は frame_lock を取るのでここからは呼べない。直接書く。 */
-              if (p->hap_gpu && tcs_hap_gpu_unsupported_format (p->hap_gpu) >= 0) {
-                p->failed = true;
-                p->last_error = tcs_hap_gpu_last_error (p->hap_gpu);
-              }
-            } else {
-              hap_tex->GetDesc (&src_desc);
-              /* 以降は復号済みフレームと同じ扱いになり、最後に src_tex を Release する。
-               * このテクスチャは HAP の展開器が持ち続けるので、参照を 1 つ足して釣り合わせる。 */
-              hap_tex->AddRef ();
-              src_tex = hap_tex;
-              src_sub = 0;
-              gpu = true;
-            }
-          }
+        LOG ("hap: gpu decode failed %dx%d format=0x%02X reason=%s (failures=%llu)",
+            cw, ch, hap_info.texture_format,
+            p->hap_gpu ? tcs_hap_gpu_last_error (p->hap_gpu) : "no gpu helper",
+            (unsigned long long) p->hap_decode_failures);
+        /* 扱えない変種（Hap 7 / Hap HDR など）は、黙って絵を出さずに読み込みを失敗させる。
+         * set_error は frame_lock を取るのでここからは呼べない。直接書く。 */
+        if (p->hap_gpu && tcs_hap_gpu_unsupported_format (p->hap_gpu) >= 0) {
+          p->failed = true;
+          p->last_error = tcs_hap_gpu_last_error (p->hap_gpu);
         }
-        gst_buffer_unmap (buf, &map);
+      } else {
+        hap_tex->GetDesc (&src_desc);
+        /* 以降は復号済みフレームと同じ扱いになり、最後に src_tex を Release する。
+         * このテクスチャは HAP の展開器が持ち続けるので、参照を 1 つ足して釣り合わせる。 */
+        hap_tex->AddRef ();
+        src_tex = hap_tex;
+        src_sub = 0;
+        gpu = true;
       }
     }
     if (!gated) {
@@ -2953,7 +2962,8 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
           "first_frame_ms=%.1f audio_prime_ms=%.1f pause_ms=%.1f seek_ms=%.1f "
           "duration_ms=%.1f total_ms=%.1f frames=%lld",
           utf8_path, paused ? 1 : 0, attempt,
-          idx >= 0 ? g_profiles[idx].name : "decodebin-fallback", result,
+          /* v0.5.0: HAP の試行は、番号上のプロファイルではなく hap の連鎖で組む */
+          p->hap_stream ? "hap-gpu" : idx >= 0 ? g_profiles[idx].name : "decodebin-fallback", result,
           teardown_ms, build_ms, set_state_ms, preroll_ms, first_frame_ms,
           audio_prime_ms, pause_ms, seek_ms, duration_ms,
           qpc_diff_ms (t_attempt0, now, p->qpc_freq),
@@ -4258,6 +4268,9 @@ struct GopScanCtx {
   std::mutex            lock;
   std::vector<double>   key_times;   /* seconds */
   GstElement*           pipeline = nullptr;
+  /* v0.5.0: HAP は全フレームがキーフレーム。ファイルを読み切らずに打ち切る。 */
+  bool                  intra_only = false;
+  double                intra_fps = 0.0;
 };
 
 static GstPadProbeReturn
@@ -4292,14 +4305,31 @@ gop_scan_pad_added (GstElement* /*parsebin*/, GstPad* pad, gpointer user_data)
   if (!caps)
     caps = gst_pad_query_caps (pad, nullptr);
   bool is_video = false;
+  bool is_hap = false;
+  int fps_n = 0, fps_d = 0;
   if (caps) {
     const GstStructure* st = gst_caps_get_structure (caps, 0);
     const char* name = st ? gst_structure_get_name (st) : nullptr;
     is_video = name && g_str_has_prefix (name, "video/");
+    is_hap = name && g_str_equal (name, "video/x-hap");
+    if (st)
+      gst_structure_get_fraction (st, "framerate", &fps_n, &fps_d);
     gst_caps_unref (caps);
   }
-  if (is_video)
+  if (is_hap) {
+    /* v0.5.0: HAP は全フレームがキーフレーム（フレーム間の予測が無い）。答えは読む前に決まるので、
+     * 再生と同じディスクを数 GB 読み切らずに打ち切る（検証機で 10GB の HAP に 6.5 秒、
+     * 再生の開始直後と重なっていた）。 */
+    {
+      std::lock_guard<std::mutex> g (ctx->lock);
+      ctx->intra_only = true;
+      ctx->intra_fps = (fps_n > 0 && fps_d > 0) ? (double) fps_n / (double) fps_d : 0.0;
+    }
+    LOG ("gop-scan: video/x-hap is intra-only (every frame is a keyframe); stopping the read");
+    gst_element_post_message (ctx->pipeline, gst_message_new_eos (GST_OBJECT (ctx->pipeline)));
+  } else if (is_video) {
     gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_BUFFER, gop_scan_probe, ctx, nullptr);
+  }
 
   GstElement* sink = gst_element_factory_make ("fakesink", nullptr);
   if (!sink)
@@ -4390,14 +4420,32 @@ tcs_scan_gop (const char* utf8_path, int32_t budget_ms, TcsGopScan* out)
   gst_element_set_state (pipeline, GST_STATE_NULL);
 
   std::vector<double> keys;
+  bool intra_only = false;
+  double intra_fps = 0.0;
   {
     std::lock_guard<std::mutex> g (ctx.lock);
     keys = ctx.key_times;
+    intra_only = ctx.intra_only;
+    intra_fps = ctx.intra_fps;
   }
   gst_object_unref (pipeline);
 
   if (rc != TCS_OK)
     return rc;
+  if (intra_only) {
+    /* 全フレームがキーフレーム: 間隔はどこでも 1 フレーム。読んでいないので打ち切り扱いにはしない。 */
+    double frame = intra_fps > 0.0 ? 1.0 / intra_fps : 0.0;
+    out->truncated = 0;
+    out->keyframes = (intra_fps > 0.0 && out->duration_sec > 0.0)
+        ? (int32_t) (out->duration_sec * intra_fps + 0.5) : 2;
+    if (out->keyframes < 2) out->keyframes = 2;
+    out->head_gap_sec = 0.0;
+    out->tail_gap_sec = frame;
+    out->median_gap_sec = frame;
+    out->p95_gap_sec = frame;
+    out->max_gap_sec = frame;
+    return TCS_OK;
+  }
   if (keys.empty ())
     return TCS_OK;   /* keyframes = 0 tells the caller the scan found nothing */
 
