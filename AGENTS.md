@@ -20,8 +20,24 @@ dotnet test tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj
 ```
 
 実行ファイルとログは `src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/` 以下。
-動画再生には `native/tcs_gstreamer.dll`（GStreamer shim）と GStreamer ランタイム、
-Spout 出力には `SpoutDX.dll` が必要。**mpv は v0.4 で完全に除去した。**
+動画再生には `native/tcs_gstreamer.dll`（GStreamer shim。`native/gst-shim/build-shim.ps1` でビルド）と
+GStreamer ランタイム（`GSTREAMER_1_0_ROOT_MSVC_X86_64` または `Program Files\gstreamer`）、
+Spout 出力には `SpoutDX.dll` が必要。**再生バックエンドは GStreamer 固定で、mpv は v0.4 で完全に除去した。**
+v0.3 の設定キー `backend` と `outputBackend=Cpu` は値があっても無視し、警告を 1 行出す（設定ファイルは書き換えない）。
+
+## 再生と出力の構造
+
+- **再生**: `GstPlaybackApi`（`IPlaybackApi`）が shim を型付きで呼ぶ。shim は自前の D3D11 デバイスと
+  GStreamer のストリーミングスレッドを持ち、復号したフレームを**共有リング（GPU テクスチャ）と共有フェンス**で渡す。
+  アプリ側のデバイスとコンテキストを混ぜない。
+- **取り込み**: `Output/GStreamerSource`（`IVideoSource`）が GPU worker 上でリングの 1 枚を lease し、合成後に返す。
+  新しいフレームが無い tick は前の絵を描く（Held）。
+- **スレッドの持ち主**: 合成・全画面 Present・プレビュー読み戻しは GPU worker（`OutputEngine.GPU`）、
+  Spout 送信は Spout worker（`OutputEngine.Spout`、別デバイス）。UI スレッドから D3D11 の immediate context に触らない。
+  UI スレッドは同期判定と `TimelineOutputState`（最新 1 件の mailbox）の投入だけを行う。
+- **停止順**: worker を止めて lease をすべて返してから shim を破棄する。
+- LTC フレームはオーディオスレッドから UI スレッドへ渡して同期を判定する。レンダー更新通知は
+  `DispatcherPriority.Background` で UI へ投げる（UI が混むと遅れる）。
 
 ## 実装上の要点
 

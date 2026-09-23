@@ -30,7 +30,16 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 [Collection("E2E")]
 public sealed class LtcScenarioE2ETests
 {
-    private const int LtcFps = 25;
+    /// <summary>
+    /// 送る LTC の fps。既定は 25（既存のシナリオはすべて 25 で組んである）。
+    /// TCS_E2E_LTC_FPS に 24 / 25 / 30 を入れると変えられる（U-1 のフレームレート比較用）。
+    /// </summary>
+    private static readonly int LtcFps = ParseLtcFps(Environment.GetEnvironmentVariable("TCS_E2E_LTC_FPS"));
+
+    internal static int ParseLtcFps(string? value) =>
+        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fps) && fps is 24 or 25 or 30
+            ? fps
+            : 25;
     private const string ProjectVariable = "TIMECODE_LTC_SCENARIO_PROJECT";
     private const string ReportVariable = "TIMECODE_LTC_SCENARIO_REPORT_DIR";
     private const string CyclesVariable = "TIMECODE_LTC_SCENARIO_CYCLES";
@@ -182,6 +191,167 @@ public sealed class LtcScenarioE2ETests
         scenario.Journal.Write("switch-observation", details: new { loadedOther, loadedIndex = scenario.LoadedTrackIndex() });
         loadedOther.Should().Be(0, "Single ではアクティブ以外へ切り替わらない");
     });
+
+    // ---- U: 外部ツールの UI Automation 読み取り負荷（U-1、v0.4.8 hotfix） ----
+
+    private const string UiaIntervalVariable = "TCS_U1_UIA_INTERVAL_MS";
+
+    /// <summary>
+    /// U-1: 外部ツールが LTC 表示と再生位置表示を高頻度（既定 50ms）で UI Automation から読み続けても、
+    /// LTC 同期と映像の更新が乱れないこと。Continue でタイムライン全体を流す。
+    ///
+    /// **判定は UI Automation の読みではなく、アプリ自身の記録で行う**（UIA の読みは UI スレッドの
+    /// 遅れそのものに引きずられるため）。見るもの:
+    /// <list type="bullet">
+    /// <item>Playback perf の出力間隔（5 秒超の空きがあれば性能監視が止まっている）</item>
+    /// <item>rate catch-up の開始回数（開始と終了の反復＝補正のチャタリング）</item>
+    /// <item>出力トレースで「同じ絵が 250ms 以上続いた区間」のうち、**その間に shim から新しいフレームが
+    ///   届いていたもの**（届いていたのに合成が採らない＝合成側の停滞）</item>
+    /// <item>shim の配信の空き（100ms 以上。トラック切替の直後は除く）</item>
+    /// </list>
+    /// 読み取り間隔は TCS_U1_UIA_INTERVAL_MS（既定 50）、LTC の fps は TCS_E2E_LTC_FPS で変えられる。
+    /// 出力トレースは TIMECODE_SYNC_PLAYER_OUTPUT_TRACE が無ければ報告フォルダーの下に自動で有効にする。
+    /// </summary>
+    [SkippableFact(Timeout = 3_600_000)]
+    public void U1_Continue_HighRateUiaAudit_KeepsSyncAndOutput()
+    {
+        // 実素材（ギャップ無しの Continue）のプロジェクトでだけ回す。既定の色素材プロジェクトは
+        // ギャップを含むため、ギャップ中の静止と perf の空きを「中身が止まった」と数えてしまう。
+        Skip.If(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ProjectVariable)),
+            $"U-1 は {ProjectVariable} に実素材のプロジェクト（ギャップ無し）を指定したときだけ回す");
+        int intervalMs = int.TryParse(Environment.GetEnvironmentVariable(UiaIntervalVariable),
+            NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed > 0 ? parsed : 50;
+        string traceRoot = Environment.GetEnvironmentVariable("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE") ?? "";
+        bool ownTrace = string.IsNullOrWhiteSpace(traceRoot);
+        if (ownTrace)
+        {
+            traceRoot = Path.Combine(Path.GetTempPath(), $"tcs-u1-trace-{DateTime.Now:yyyyMMdd-HHmmss}");
+            Directory.CreateDirectory(traceRoot);
+            Environment.SetEnvironmentVariable("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", traceRoot);
+        }
+
+        var result = new UiaLoadRunResult();
+        try
+        {
+            Run("U-1", continueMode: true, blackGap: true, scenario =>
+            {
+                scenario.SetSync(true);
+                double start = scenario.A.Start + 1.0;
+                double end = scenario.Tracks[^1].End - 1.0;
+                double seconds = end - start;
+                scenario.Journal.Write("u1-plan", details: new
+                {
+                    intervalMs,
+                    ltcFps = LtcFps,
+                    startLtc = start,
+                    seconds,
+                    tracks = scenario.Tracks.Select(t => new { t.Symbol, t.Start, t.End }),
+                });
+
+                DateTime startedAt = DateTime.Now;
+                // 出力の監査は LTC を流し始めてからの区間だけ（読み込み中の一時停止を数えない）。
+                // 最初の追従シークの着地は許容として 3 秒あける。
+                result.AuditFromQpc = Stopwatch.GetTimestamp() + 3 * Stopwatch.Frequency;
+                scenario.Play(start, seconds);
+                int reads = 0;
+                double worstReadSeconds = 0.0;
+                while ((DateTime.Now - startedAt).TotalSeconds < seconds)
+                {
+                    // 外部ツールの読み方を再現する: LTC → 位置 → LTC（L-1 と同じ）。
+                    DateTime readStartedAt = DateTime.Now;
+                    _ = scenario.LtcSeconds();
+                    _ = scenario.Position();
+                    _ = scenario.LtcSeconds();
+                    worstReadSeconds = Math.Max(worstReadSeconds, (DateTime.Now - readStartedAt).TotalSeconds);
+                    reads++;
+                    Thread.Sleep(intervalMs);
+                }
+                scenario.Signal.Stop();
+                Thread.Sleep(2500);
+
+                result.StartedAt = startedAt;
+                result.Reads = reads;
+                result.WorstReadSeconds = worstReadSeconds;
+                result.Perf = scenario.PerfSegmentsSince(startedAt).Select(s => s.At).ToList();
+                result.RateCatchUpStarts = scenario.CountLogMatchesSince(@"rate catch-up preferred", startedAt);
+                result.RateCatchUpSettles = scenario.CountLogMatchesSince(@"rate catch-up settled", startedAt);
+                result.SyncSeeks = scenario.CountLogMatchesSince(SyncSeekLogPattern, startedAt);
+                result.Switches = scenario.CountLogMatchesSince(@"Continue mode: switching to track", startedAt);
+                result.SampleClockOutOfRange = scenario.CountLogMatchesSince(@"LTC sample clock: age=", startedAt);
+                scenario.Journal.Write("u1-log", details: new
+                {
+                    reads,
+                    worstReadMs = Math.Round(worstReadSeconds * 1000.0, 1),
+                    perfLines = result.Perf.Count,
+                    result.RateCatchUpStarts,
+                    result.RateCatchUpSettles,
+                    result.SyncSeeks,
+                    result.Switches,
+                    result.SampleClockOutOfRange,
+                });
+            });
+        }
+        finally
+        {
+            if (ownTrace)
+                Environment.SetEnvironmentVariable("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", null);
+        }
+
+        // ---- 判定（アプリ終了後に出力トレースが書かれてから） ----
+        var failures = new List<string>();
+
+        List<double> perfGaps = result.Perf.Zip(result.Perf.Skip(1), (a, b) => (b - a).TotalSeconds).ToList();
+        double worstPerfGap = perfGaps.Count == 0 ? double.PositiveInfinity : perfGaps.Max();
+        int perfGapsOver5 = perfGaps.Count(gap => gap > 5.0);
+        if (perfGapsOver5 > 0)
+            failures.Add($"Playback perf の 5 秒超の欠落 {perfGapsOver5} 件（最大 {worstPerfGap:F1}s）");
+        if (result.RateCatchUpStarts > 1)
+            failures.Add($"rate catch-up の開始 {result.RateCatchUpStarts} 回（0〜1 回まで）");
+
+        string? events = Directory.Exists(traceRoot)
+            ? Directory.GetFiles(traceRoot, "events.jsonl", SearchOption.AllDirectories)
+                .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault()
+            : null;
+        string traceNote = "出力トレース無し";
+        if (events is not null)
+        {
+            OutputContinuitySummary output = OutputContinuityAudit.Summarize(
+                OutputContinuityAudit.ReadEvents(events), Stopwatch.Frequency, fromQpc: result.AuditFromQpc);
+            // 届いていたのに採らなかった Held（合成側の停滞）と、配信そのものが止まった Held を分ける。
+            List<HeldSpan> heldWithDeliveries = output.HeldSpans.Where(s => s.DeliveriesDuring > 0).ToList();
+            traceNote = string.Create(CultureInfo.InvariantCulture,
+                $"compose {output.ComposeTicks} tick / 配信 {output.Deliveries} 件 / Held≥250ms {output.HeldSpans.Count} 件" +
+                $"（うち配信あり {heldWithDeliveries.Count}、最長 {(output.LongestHeld?.Seconds ?? 0) * 1000:F0}ms）" +
+                $" / 配信の空き≥100ms {output.DeliveryGaps.Count} 件（最長 {(output.LongestDeliveryGap?.Seconds ?? 0) * 1000:F0}ms）");
+            // トラック切替では読み込みの間は必ず配信が空く（既知の制限）。切替の回数ぶんは除いて数える。
+            int unexplainedHeld = Math.Max(0, output.HeldSpans.Count - result.Switches);
+            if (heldWithDeliveries.Count > 0)
+                failures.Add($"フレームが届いていたのに同じ絵を 250ms 以上出し続けた区間 {heldWithDeliveries.Count} 件");
+            if (unexplainedHeld > 0)
+                failures.Add($"切替以外で同じ絵が 250ms 以上続いた区間 {unexplainedHeld} 件（切替 {result.Switches} 回を除く）");
+        }
+
+        string summary = string.Create(CultureInfo.InvariantCulture,
+            $"U-1（UIA {intervalMs}ms / LTC {LtcFps}fps）: 読み取り {result.Reads} 回（最悪 {result.WorstReadSeconds * 1000:F0}ms）" +
+            $" / perf 最大間隔 {worstPerfGap:F1}s / rate catch-up 開始 {result.RateCatchUpStarts}・整定 {result.RateCatchUpSettles}" +
+            $" / 同期シーク {result.SyncSeeks} / 切替 {result.Switches} / LTC 遅延補正の範囲外 {result.SampleClockOutOfRange} / {traceNote}");
+        Console.WriteLine(summary);
+        failures.Should().BeEmpty(summary);
+    }
+
+    private sealed class UiaLoadRunResult
+    {
+        public DateTime StartedAt { get; set; }
+        public long AuditFromQpc { get; set; } = long.MinValue;
+        public int Reads { get; set; }
+        public double WorstReadSeconds { get; set; }
+        public List<DateTime> Perf { get; set; } = [];
+        public int RateCatchUpStarts { get; set; }
+        public int RateCatchUpSettles { get; set; }
+        public int SyncSeeks { get; set; }
+        public int Switches { get; set; }
+        public int SampleClockOutOfRange { get; set; }
+    }
 
     // ---- L: 連続追従の詰まり監査（L-1） ----
 
@@ -1177,9 +1347,12 @@ public sealed class LtcScenarioE2ETests
                 return index >= 0;
             }, 8, "CABLE Output の列挙");
             devices.Select(index);
-            App.Combo("LtcFpsModeCombo").Select(2);
-            WaitUntil(() => App.Combo("LtcFpsModeCombo").SelectedItem?.Name.Contains("25", StringComparison.Ordinal) == true,
-                3, "LTC 25fps 固定");
+            // コンボの並び: 0=Auto / 1=24 / 2=25 / 3=29.97 / 4=30（TimecodeFpsMode と同じ）。
+            int fpsIndex = LtcFps switch { 24 => 1, 30 => 4, _ => 2 };
+            App.Combo("LtcFpsModeCombo").Select(fpsIndex);
+            string fpsText = LtcFps.ToString(CultureInfo.InvariantCulture);
+            WaitUntil(() => App.Combo("LtcFpsModeCombo").SelectedItem?.Name.Contains(fpsText, StringComparison.Ordinal) == true,
+                3, $"LTC {fpsText}fps 固定");
             App.Combo("LtcSignalLossModeCombo").Select(0);
         }
 

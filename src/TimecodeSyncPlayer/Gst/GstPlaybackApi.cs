@@ -29,6 +29,15 @@ internal sealed class GstPlaybackApi : IPlaybackApi
     /// </summary>
     public PlaybackActivityLedger Activity { get; } = new();
 
+    /// <summary>
+    /// 0.4.8: 位置照会の連続性。同じ系列（乱れの回数・世代）の中では位置を後退させず、後退を
+    /// 「不安定」として数える。照会は必ずここを通るので、同期・表示・出力が同じ値を見る。
+    /// </summary>
+    public PlaybackPositionContinuity PositionContinuity { get; } = new();
+
+    /// <summary>0.4.8: 直近に位置が後退した（パイプライン位置を補正の入力として信用できない）か。</summary>
+    public bool IsPositionUnstable => PositionContinuity.IsUnstable();
+
     private IntPtr Player => _state.Player;
 
     /// <summary>
@@ -249,7 +258,10 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         if (player == IntPtr.Zero) return false;
         try
         {
-            return _state.Native.TryGetTimePos(player, out seconds);
+            if (!_state.Native.TryGetTimePos(player, out seconds))
+                return false;
+            seconds = PositionContinuity.Observe(seconds, Activity.Disturbances, generation: 0);
+            return true;
         }
         catch (Exception ex)
         {
@@ -272,6 +284,10 @@ internal sealed class GstPlaybackApi : IPlaybackApi
                 if (!_state.Native.TryGetTimePosEx(player, out GstNative.TcsPositionSample native))
                     return false;
                 sample = MapPositionSample(native);
+                sample = sample with
+                {
+                    Seconds = PositionContinuity.Observe(sample.Seconds, Activity.Disturbances, sample.CurrentGeneration),
+                };
                 return true;
             }
             catch (EntryPointNotFoundException)

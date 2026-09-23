@@ -325,7 +325,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 ApplyRateInstant: rate => _playbackApi.SetRateInstant(rate).Success,
                 SeekTo: target => SeekTo(target),
                 SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text,
-                GetSyncOffsetMilliseconds: () => _vm.Sync.SyncOffsetMs),
+                GetSyncOffsetMilliseconds: () => _vm.Sync.SyncOffsetMs,
+                IsPlaybackPositionUnstable: () => _gstPlaybackApi.IsPositionUnstable),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードと着地窓を渡す。
         _syncService.CorrectionModeSource = () => _vm.Sync.SyncCorrectionMode;
@@ -2350,7 +2351,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (!_playbackControl.IsPaused)
         {
             long windowGeneration = _playbackPerformanceStats.WindowGeneration;
-            PlaybackPerformanceSnapshot? performance = _playbackPerformanceStats.RecordTick(pos, DateTime.UtcNow);
+            PlaybackPerformanceSnapshot? performance =
+                _playbackPerformanceStats.RecordTick(pos, Stopwatch.GetElapsedTime(0), _gstPlaybackApi.Activity.Disturbances);
             if (performance != null)
             {
                 LogPlaybackPerformance(performance);
@@ -2358,7 +2360,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             }
             else if (_playbackPerformanceStats.WindowGeneration != windowGeneration)
             {
-                // 0.4.7: 窓が snapshot 無しで作り直された（位置が戻った）。判定の基準を窓に合わせる。
+                // 0.4.7: 窓が snapshot 無しで作り直された（最初の tick か、シークなどの操作をまたいで位置が戻った）。
+                // 判定の基準を窓に合わせる。
                 PlaybackActivityLedger activity = _gstPlaybackApi.Activity;
                 _decodeHealth.BeginWindow(activity.Disturbances, activity.RateIntegralSeconds());
             }
@@ -2650,6 +2653,26 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             snapshot.Height, snapshot.SpoutEnabled, _outputEngine?.PublishedFrameCount ?? 0,
             _outputEngine?.GstRingOutsideFrames ?? 0);
 
+        // 0.4.8: 前の絵を出し続けた tick の内訳。「送信は続いているのに中身が変わらない」を、理由
+        // （shim のコピー完了待ち＝fencePending / 新しいフレームが来ない＝noNewFrame）付きで残す。
+        // 1 フレーム程度の Held は平常なので、100ms 以上続いた窓だけ出す。
+        if (_outputEngine?.TakeHoldSnapshot() is { } hold && hold.LongestHeldMs >= 100.0)
+            Log.Information(
+                "Output held: longestHeldMs={LongestHeldMs:F0} fencePendingTicks={FencePendingTicks} noNewFrameTicks={NoNewFrameTicks} newFrameTicks={NewFrameTicks} maxFenceWaitMs={MaxFenceWaitMs:F0}",
+                hold.LongestHeldMs, hold.FencePendingTicks, hold.NoNewFrameTicks, hold.NewFrameTicks, hold.MaxFenceWaitMs);
+
+        // 0.4.8: 位置照会が後退した区間（同期の補正を止めた区間）が終わったら、回数と最大幅を残す。
+        if (_gstPlaybackApi.PositionContinuity.TakeEndedEpisode() is { } unstable)
+            Log.Information(
+                "Playback position was unstable: backward samples={Count} maxBackwardMs={MaxBackwardMs:F1} (held the latest position)",
+                unstable.Count, unstable.MaxBackSeconds * 1000.0);
+
+        // 0.4.8: 位置の戻りは窓を作り直さず、別の行で数える（性能ログを途切れさせない）。
+        if (snapshot.BackwardJumps > 0)
+            Log.Information(
+                "Playback position went backward count={Count} maxBackwardMs={MaxBackwardMs:F1} elapsed={Elapsed:F2}s",
+                snapshot.BackwardJumps, snapshot.MaxBackwardSeconds * 1000.0, snapshot.Elapsed.TotalSeconds);
+
         if (PlaybackPerformanceWarningPolicy.ShouldWarnDisplayedFps(snapshot, _fps))
         {
             Log.Warning(
@@ -2668,6 +2691,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void ResetPlaybackPerformanceStats()
     {
         _playbackPerformanceStats.Reset();
+        // 0.4.8: 一時停止・ロードをまたいだ Held を次の窓に持ち込まない。
+        _outputEngine?.TakeHoldSnapshot();
         _renderSession.ResetUpdateStats();
     }
 
