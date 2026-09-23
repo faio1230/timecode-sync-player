@@ -3,9 +3,15 @@ namespace TimecodeSyncPlayer;
 public sealed class PlaybackPerformanceStats
 {
     private readonly TimeSpan _window;
-    private DateTime? _windowStartedAt;
+    private TimeSpan? _windowStartedAt;
     private double _firstPlaybackSeconds;
     private double _lastPlaybackSeconds;
+    // 0.4.8: 位置が戻った区間の手前までに進んだ量。窓は作り直さず、戻りは回数と最大幅で数える。
+    private double _foldedAdvanceSeconds;
+    private int _backwardJumps;
+    private double _maxBackwardSeconds;
+    // 0.4.8 候補 2: 窓を始めた時点の操作の回数（シーク・読み込み・一時停止など）。
+    private long _windowOperationEpoch;
     private int _tickCount;
     private int _renderUpdates;
     private int _frameUpdates;
@@ -29,21 +35,42 @@ public sealed class PlaybackPerformanceStats
         _window = window;
     }
 
-    public PlaybackPerformanceSnapshot? RecordTick(double playbackSeconds, DateTime now)
+    /// <summary>テスト用: 壁時計の値をそのまま単調な経過時間として扱う。</summary>
+    public PlaybackPerformanceSnapshot? RecordTick(double playbackSeconds, DateTime now, long operationEpoch = 0)
+        => RecordTick(playbackSeconds, TimeSpan.FromTicks(now.Ticks), operationEpoch);
+
+    /// <summary>
+    /// <paramref name="monotonicNow"/> は単調時計（Stopwatch 由来）の経過時間。壁時計の補正で窓が伸び縮みしない。
+    /// 0.4.8: 操作が無いのに位置が戻ったとき（照会値の揺れ）は窓を作り直さない。戻る直前までの進みを
+    /// 畳んで持ち越し、戻りは <see cref="PlaybackPerformanceSnapshot.BackwardJumps"/> として別に数える
+    /// （以前は窓が黙って作り直され、揺れが続くと性能ログが 20 秒以上途切れた）。
+    /// <paramref name="operationEpoch"/>（シーク・読み込み・一時停止などの回数）が窓の開始から変わって
+    /// いれば、戻りは操作によるものなので従来どおり窓を作り直す（操作をまたいだ窓は意味を持たない）。
+    /// </summary>
+    public PlaybackPerformanceSnapshot? RecordTick(double playbackSeconds, TimeSpan monotonicNow, long operationEpoch = 0)
     {
         if (!double.IsFinite(playbackSeconds) || playbackSeconds < 0)
             return null;
 
+        TimeSpan now = monotonicNow;
         if (_windowStartedAt == null)
         {
-            StartWindow(playbackSeconds, now);
+            StartWindow(playbackSeconds, now, operationEpoch);
+            return null;
+        }
+
+        if (playbackSeconds < _lastPlaybackSeconds && operationEpoch != _windowOperationEpoch)
+        {
+            StartWindow(playbackSeconds, now, operationEpoch);
             return null;
         }
 
         if (playbackSeconds < _lastPlaybackSeconds)
         {
-            StartWindow(playbackSeconds, now);
-            return null;
+            _foldedAdvanceSeconds += _lastPlaybackSeconds - _firstPlaybackSeconds;
+            _backwardJumps++;
+            _maxBackwardSeconds = Math.Max(_maxBackwardSeconds, _lastPlaybackSeconds - playbackSeconds);
+            _firstPlaybackSeconds = playbackSeconds;
         }
 
         _tickCount++;
@@ -54,7 +81,7 @@ public sealed class PlaybackPerformanceStats
             return null;
 
         PlaybackPerformanceSnapshot snapshot = CreateSnapshot(elapsed);
-        StartWindow(playbackSeconds, now);
+        StartWindow(playbackSeconds, now, operationEpoch);
         return snapshot;
     }
 
@@ -102,17 +129,22 @@ public sealed class PlaybackPerformanceStats
     public long TotalRenderedFrames => _totalRenderedFrames;
 
     /// <summary>
-    /// 0.4.7: 窓が新しく始まるたびに 1 増える。窓は snapshot を返すときだけでなく、位置が戻ったときにも
-    /// 黙って作り直される。窓ごとの基準を取り直したい側（<see cref="DecodeHealthMonitor"/>）が使う。
+    /// 0.4.7: 窓が新しく始まるたびに 1 増える。窓ごとの基準を取り直したい側（<see cref="DecodeHealthMonitor"/>）が使う。
+    /// 0.4.8: 窓が始まるのは最初の tick・snapshot を返したとき・<see cref="Reset"/> の後と、
+    /// 操作（シークなど）をまたいで位置が戻ったとき（操作の無い戻りでは始まらない）。
     /// </summary>
     public long WindowGeneration { get; private set; }
 
-    private void StartWindow(double playbackSeconds, DateTime now)
+    private void StartWindow(double playbackSeconds, TimeSpan now, long operationEpoch)
     {
         WindowGeneration++;
+        _windowOperationEpoch = operationEpoch;
         _windowStartedAt = now;
         _firstPlaybackSeconds = playbackSeconds;
         _lastPlaybackSeconds = playbackSeconds;
+        _foldedAdvanceSeconds = 0;
+        _backwardJumps = 0;
+        _maxBackwardSeconds = 0;
         _tickCount = 1;
         ClearWindowCounters();
     }
@@ -137,7 +169,7 @@ public sealed class PlaybackPerformanceStats
     {
         double elapsedSeconds = elapsed.TotalSeconds;
         double playbackRate = elapsedSeconds > 0
-            ? (_lastPlaybackSeconds - _firstPlaybackSeconds) / elapsedSeconds
+            ? (_foldedAdvanceSeconds + _lastPlaybackSeconds - _firstPlaybackSeconds) / elapsedSeconds
             : 0;
         double displayedFps = elapsedSeconds > 0 ? _renderedFrames / elapsedSeconds : 0;
         double avgRenderMs = _renderedFrames > 0 ? _renderMsTotal / _renderedFrames : 0;
@@ -160,7 +192,9 @@ public sealed class PlaybackPerformanceStats
             _spoutMsMax,
             _width,
             _height,
-            _spoutEnabled);
+            _spoutEnabled,
+            _backwardJumps,
+            _maxBackwardSeconds);
     }
 }
 
@@ -180,4 +214,6 @@ public sealed record PlaybackPerformanceSnapshot(
     double MaxSpoutMs,
     int Width,
     int Height,
-    bool SpoutEnabled);
+    bool SpoutEnabled,
+    int BackwardJumps = 0,
+    double MaxBackwardSeconds = 0);

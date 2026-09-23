@@ -2,6 +2,37 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.4.8 - 2026-09-23
+
+Keeps sync from oscillating when video decoding briefly falls behind. Found by an external tool reading
+the on-screen text through UI Automation every 50 ms: the rate correction swung between 0.9x and 1.1x
+and the `Playback perf` log stopped for 10-20 s. The trigger was not the UI reads but decoding falling
+behind (4K60 H.264 on an integrated GPU); the correction then chased the resulting position jitter.
+
+### Changed
+
+- **Position jitter no longer drives the rate correction.** When decoding falls behind, the pipeline
+  position query can alternate between two values 100-300 ms apart. Within one playback run (no seek,
+  load or pause) the position is no longer allowed to go backward, and for 1 s after a backward sample
+  the Smooth correction is paused at 1.0x. Pause and resume are logged.
+- **The seek/correction gate no longer adopts the sample right after a rejected one unconditionally.**
+  It used to drop its history on every rejection, so alternating good/bad samples let every other bad
+  sample through. A new series now starts only when the next sample confirms the jump.
+- **`Playback perf` keeps its 2-second windows across position jitter.** Windows still restart after a
+  seek, load or pause. The clock is monotonic.
+- **`Output held:` log lines** give the reason when the same picture is shown for 100 ms or more in a
+  window (waiting for the decoder's copy fence vs. no new frame).
+- On shutdown the player is not destroyed unless the output engine is confirmed stopped.
+- Field guide: which GPU to run 4K60 media on.
+
+### Known limitations
+
+- An integrated GPU may not decode 4K60 in real time; the same picture then stays for 0.3-0.8 s and
+  sync can lag briefly. Run 4K60 media on a discrete GPU. The app uses the GPU of the display chosen as
+  the fullscreen output; with no fullscreen output (Spout only) it uses Windows' default GPU, which on
+  laptops is usually the integrated one. Set the app (and the Spout receiver) to "High performance" in
+  Windows graphics settings.
+
 ## 0.4.7 - 2026-09-19
 
 Warnings only; the sync control is unchanged. Measurements showed that most sync trouble comes from

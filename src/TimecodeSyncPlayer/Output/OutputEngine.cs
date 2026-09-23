@@ -214,6 +214,10 @@ internal sealed class OutputEngine : IDisposable
     /// </summary>
     internal long PublishedFrameCount => Interlocked.Read(ref publishedFrameCount);
 
+    /// <summary>0.4.8: 前の絵を出した合成 tick の内訳（性能ログ用。取り出すと数え直す）。</summary>
+    internal OutputHoldSnapshot TakeHoldSnapshot() => holdCounter.Take(Stopwatch.GetTimestamp());
+    private readonly OutputHoldCounter holdCounter = new();
+
     /// <summary>D8: リング外（旧サンプル経路）で拒否したフレーム数。2 秒ごとの統計に出す。</summary>
     internal long GstRingOutsideFrames => gstSource?.RingOutsideFrames ?? 0;
 
@@ -951,6 +955,14 @@ internal sealed class OutputEngine : IDisposable
             if (status == SourceStatus.Ready && acquired != null)
                 settings.SourceFrameReady?.Invoke(acquireEndedQpc, (int)gst.Stamp.Generation, gst.Stamp.Sequence,
                     gst.Stamp.PositionSeconds);
+            // 0.4.8: 前の絵を出した tick を理由ごとに数える（ギャップ中は仕様どおりの静止なので除く）。
+            if ((effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None && status != SourceStatus.Ended)
+                holdCounter.RecordTick(
+                    drewNewFrame: status == SourceStatus.Ready && acquired != null,
+                    fencePending: holdLease,
+                    acquireEndedQpc);
+            else
+                holdCounter.RecordExcludedTick(acquireEndedQpc);
             if (status == SourceStatus.Ended)
                 settings.Trace.Add("skip", "GPU", scheduled, detail: "compose.sourceEnded", value: 1);
             else if (status != SourceStatus.Ready && (effective?.Gap ?? OutputGapMode.None) == OutputGapMode.None)
@@ -1250,6 +1262,7 @@ internal sealed class OutputEngine : IDisposable
                 long waitedMs = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
                 settings.Trace.Record(new("compose.fencePending", "GPU", nowPending, 0,
                     pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "complete", Value: waitedMs));
+                holdCounter.RecordFenceWait(waitedMs / 1000.0);
                 ISourceImageLease completed = pendingFenceLease;
                 pendingFenceLease = null;
                 pendingFenceSequence = 0;

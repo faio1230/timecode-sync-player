@@ -363,4 +363,29 @@ public class GstPlaybackApiTests
         api.IsPaused().Should().BeFalse();
         api.IsSeeking().Should().BeTrue("player 未作成は位置未確定としてシーク中と同じ扱い");
     }
+
+    [Fact]
+    public void PositionQueries_DoNotGoBackwardWithinASeries_AndResetAfterASeek()
+    {
+        // 0.4.8: 位置照会は必ず連続性の見張りを通る（同期・表示・出力が同じ値を見る）。
+        var (_, api, native) = Create();
+        native.TimePos = 10.00;
+        api.TryGetTimePos(out double a).Should().BeTrue();
+        native.TimePos = 10.15;
+        api.TryGetTimePos(out double b).Should().BeTrue();
+        native.TimePos = 10.02;                         // 同じ系列の中で 130ms 戻った
+        api.TryGetTimePos(out double c).Should().BeTrue();
+
+        (a, b, c).Should().Be((10.00, 10.15, 10.15));
+        api.IsPositionUnstable.Should().BeTrue();
+
+        native.PositionSample = native.PositionSample with { Seconds = 10.05, CurrentGeneration = 1 };
+        api.TryGetPositionSample(out PlaybackPositionSample sample).Should().BeTrue();
+        sample.Seconds.Should().Be(10.15, "_ex の照会も同じ系列として扱う");
+
+        api.Seek(3.0).Success.Should().BeTrue();
+        native.TimePos = 3.0;
+        api.TryGetTimePos(out double afterSeek).Should().BeTrue();
+        afterSeek.Should().Be(3.0, "シークの後は戻ってよい");
+    }
 }

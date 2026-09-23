@@ -87,7 +87,9 @@ internal sealed class MainWindowResourceDisposer
             new(ReleaseResourcesStepName, RunsOffUiThread: true, () =>
             {
                 _contextFreed = _stopped && TryCleanup(_disposeRenderContext);
-                if (_contextFreed) TryCleanup(_disposePlayer);
+                // 0.4.8: shim の破棄は、GPU worker が止まってリースを返し終えた（OutputEngine.Stop が
+                // 成功した）ときだけ。止まっていない worker がリングを参照したまま shim を消さない。
+                if (_contextFreed && (_outputStopped || _stopOutput == null)) TryCleanup(_disposePlayer);
             }),
             new(ReleaseResourcesStepName, RunsOffUiThread: false, () => TryCleanup(_disposeLtc)),
             new(ReleaseResourcesStepName, RunsOffUiThread: true, () =>
