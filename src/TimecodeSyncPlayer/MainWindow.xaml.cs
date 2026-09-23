@@ -61,6 +61,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // D4: ロード安定ゲートが数える「表示経路に到達したフレーム数」の供給元。
     private readonly RenderedFrameCounter _syncGateRenderedFrames;
     private WriteableBitmap? _outputPreviewBitmap;
+    // v0.5.1: プレビューが 1 秒以上更新されないときにログへ出す（ギャップ入りで黒が映らなかった件の切り分け）。
+    private readonly PreviewStallWatch _previewStallWatch = new(Stopwatch.Frequency);
+    private long _lastShownPreviewSequence;
+    private int _lastShownPreviewLuma = -1;
 
     // ── 終了（段階 5.1） ──────────────────────────────────────────
     private ExitDialogHost? _exitDialogHost;
@@ -644,6 +648,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     }
                     _outputPreviewBitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), frame.Pixels, frame.Width * 4, 0);
                     VideoImage.Source = _outputPreviewBitmap;
+                    NotePreviewShown(frame);
                 }
                 catch (Exception ex)
                 {
@@ -656,6 +661,38 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             frame.Release();
         }
+    }
+
+    private void NotePreviewShown(PreviewFrame frame)
+    {
+        long now = Stopwatch.GetTimestamp();
+        long? stalledTicks = _previewStallWatch.Shown(now);
+        long previousSequence = _lastShownPreviewSequence;
+        _lastShownPreviewSequence = frame.Sequence;
+        _lastShownPreviewLuma = frame.MeanLuma;
+        if (OutputTrace.Current.IsEnabled)
+            OutputTrace.Current.Record(new("preview.shown", "UI", now, 0, frame.Sequence, 0, Value: frame.MeanLuma));
+        if (stalledTicks is long ticks)
+        {
+            Log.Warning(
+                "Preview resumed: stalledMs={StalledMs:F0} sequence={Sequence} previousSequence={Previous} luma={Luma}",
+                ticks * 1000.0 / Stopwatch.Frequency, frame.Sequence, previousSequence, frame.MeanLuma);
+        }
+    }
+
+    // v0.5.1: プレビューが 1 秒以上画面へ書き込まれていないとき、GPU 側の読み戻しが進んでいるかと一緒に 1 回だけ出す。
+    private void CheckPreviewStall()
+    {
+        if (_outputEngine == null) return;
+        long now = Stopwatch.GetTimestamp();
+        if (_previewStallWatch.Check(now) is not long ageTicks) return;
+        PreviewDiagnostics d = _outputEngine.GetPreviewDiagnostics();
+        Log.Warning(
+            "Preview stalled: sinceShownMs={SinceShownMs:F0} shownSequence={ShownSequence} shownLuma={ShownLuma} " +
+            "readbacks={Readbacks} sinceReadbackMs={SinceReadbackMs:F0} readbackLuma={ReadbackLuma} busySkips={BusySkips} noImageSkips={NoImageSkips} gap={Gap}",
+            ageTicks * 1000.0 / Stopwatch.Frequency, _lastShownPreviewSequence, _lastShownPreviewLuma,
+            d.Readbacks, d.LastReadbackQpc == 0 ? -1.0 : (now - d.LastReadbackQpc) * 1000.0 / Stopwatch.Frequency,
+            d.LastMeanLuma, d.BusySkips, d.NoImageSkips, _gapFreezeHandler.CurrentState);
     }
 
     // GPU worker から呼ばれる。UI は Dispatcher に投げるだけで待たない。
@@ -1981,6 +2018,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         SubmitOutputState();
         UpdateCanvasUiState();
+        CheckPreviewStall();
         _ltcSyncController.Tick(Environment.TickCount64);
 
         int durationRc = _playbackApi.TryGetDuration(out double dur) ? 0 : -1;

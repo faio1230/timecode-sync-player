@@ -9,7 +9,12 @@ using Vortice.DXGI;
 
 namespace TimecodeSyncPlayer.Output;
 
-internal readonly record struct PreviewFrame(byte[] Pixels, int Width, int Height, Action Release);
+internal readonly record struct PreviewFrame(byte[] Pixels, int Width, int Height, Action Release,
+    long Sequence = 0, int MeanLuma = -1);
+
+/// <summary>v0.5.1: プレビューの読み戻しの状態（プレビューが止まったときにログへ出す）。</summary>
+internal readonly record struct PreviewDiagnostics(
+    long LastReadbackQpc, long Readbacks, long BusySkips, long NoImageSkips, long LastMeanLuma);
 
 internal sealed class OutputEngineSettings
 {
@@ -135,6 +140,7 @@ internal sealed class OutputEngine : IDisposable
     private long nextImageId;
     private long publishedFrameCount;
     private long lastPreviewQpc;
+    private long previewReadbacks, previewBusySkips, previewNoImageSkips, previewLastMeanLuma = -1;
     private bool testCard;
     private bool spoutRunning;
     private bool displayEverAttached;
@@ -187,6 +193,12 @@ internal sealed class OutputEngine : IDisposable
     }
 
     public bool Faulted => Volatile.Read(ref faulted) != 0;
+
+    /// <summary>v0.5.1: プレビューの読み戻しの状態（UI スレッドから読む。値は GPU worker が書く）。</summary>
+    public PreviewDiagnostics GetPreviewDiagnostics() => new(
+        Interlocked.Read(ref lastPreviewQpc), Interlocked.Read(ref previewReadbacks),
+        Interlocked.Read(ref previewBusySkips), Interlocked.Read(ref previewNoImageSkips),
+        Interlocked.Read(ref previewLastMeanLuma));
     public string? FirstFault => firstFault;
     public GpuRecoveryPhase RecoveryPhase => recovery.Phase;
 
@@ -1404,13 +1416,13 @@ internal sealed class OutputEngine : IDisposable
     {
         long period = Stopwatch.Frequency / (target != null ? 10 : 30);
         if (now - lastPreviewQpc < period) return;
-        if (!previewHandoff.TryAcquire(out byte[]? buffer)) return;
+        if (!previewHandoff.TryAcquire(out byte[]? buffer)) { Interlocked.Increment(ref previewBusySkips); return; }
         byte[] pixels = buffer!;
         bool handedOff = false;
         try
         {
             var (lease, generation) = AcquireLatestImage();
-            if (lease == null || generation == null) return;
+            if (lease == null || generation == null) { Interlocked.Increment(ref previewNoImageSkips); return; }
             try
             {
                 lease.BeginGpuUse();
@@ -1440,11 +1452,17 @@ internal sealed class OutputEngine : IDisposable
                     }
                 }
                 finally { gpu.Context.Unmap(previewStaging!, 0); }
-                lastPreviewQpc = now;
+                Interlocked.Exchange(ref lastPreviewQpc, now);
+                long sequence = Interlocked.Increment(ref previewReadbacks);
+                int meanLuma = PreviewMeanLuma(pixels, 960, 540);
+                Interlocked.Exchange(ref previewLastMeanLuma, meanLuma);
+                if (settings.Trace.IsEnabled)
+                    settings.Trace.Record(new("preview.readback", "GPU", Stopwatch.GetTimestamp(), 0, sequence, 0,
+                        Value: meanLuma));
                 var callback = settings.PreviewFrameReady;
                 if (callback != null)
                 {
-                    var frame = new PreviewFrame(pixels, 960, 540, () => previewHandoff.Release(pixels));
+                    var frame = new PreviewFrame(pixels, 960, 540, () => previewHandoff.Release(pixels), sequence, meanLuma);
                     handedOff = true;
                     callback(frame);
                 }
@@ -1452,6 +1470,24 @@ internal sealed class OutputEngine : IDisposable
             finally { lease.Dispose(); }
         }
         finally { if (!handedOff) previewHandoff.Release(pixels); }
+    }
+
+    /// <summary>プレビュー（BGRA）の粗い平均輝度 0〜255。32 画素おきに間引いて数える。</summary>
+    internal static int PreviewMeanLuma(byte[] bgra, int width, int height)
+    {
+        long sum = 0;
+        int count = 0;
+        for (int y = 0; y < height; y += 32)
+        {
+            int row = y * width * 4;
+            for (int x = 0; x < width; x += 32)
+            {
+                int i = row + x * 4;
+                sum += (bgra[i] * 18 + bgra[i + 1] * 183 + bgra[i + 2] * 55) >> 8;   // Rec.709
+                count++;
+            }
+        }
+        return count == 0 ? 0 : (int)(sum / count);
     }
 
     private const int MaxVblankReadyWaitMs = 4;
