@@ -127,7 +127,9 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         // 既に範囲内のため、ここでは no-op になる。
         (double clipIn, double clipOut) = ClipRange(
             state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
-        double target = Math.Clamp(ltcSeconds, clipIn, clipOut);
+        // シークの行き先は最後のコマの頭まで（尺ちょうどは素材の終わりで、そこへのシークは位置が定まらない）。
+        double seekOut = SeekableOut(clipIn, clipOut, state.DurationSeconds, fps.VideoFps);
+        double target = Math.Clamp(ltcSeconds, clipIn, seekOut);
         // 0.4.5-A フェーズ 2: 判断は評価位置（着地未確認なら配信 PTS + 外挿、着地後はクエリ値）
         // で行う。フェーズ 1 では EvalPositionSeconds が null なので従来どおりクエリ値になる。
         // トレースの playback= / delta= はクエリ値のまま（§3-1 の契約）。
@@ -199,7 +201,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         if (state.SeekTargetLookaheadSeconds > 0.0)
         {
             compensatedTarget = Math.Clamp(
-                ltcSeconds + state.SeekTargetLookaheadSeconds, clipIn, clipOut);
+                ltcSeconds + state.SeekTargetLookaheadSeconds, clipIn, seekOut);
         }
         else
         {
@@ -207,7 +209,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
                 ? target
                 : Math.Clamp(
                     _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds),
-                    clipIn, clipOut);
+                    clipIn, seekOut);
         }
         long decideQpc = traceEnabled || _latencyCompensator != null ? Stopwatch.GetTimestamp() : 0;
         _latencyCompensator?.MarkSeekDecision(decideQpc);
@@ -376,12 +378,32 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         return (clipIn, clipOut);
     }
 
-    /// <summary>D33: 素材位置を [MediaIn, MediaOut ?? 尺] に収める（範囲内なら no-op）。</summary>
+    /// <summary>
+    /// D33: 素材位置を [MediaIn, MediaOut ?? 尺] に収める（範囲内なら no-op）。
+    /// <paramref name="videoFps"/> を渡すと、シークの行き先として出口を最後のコマの頭までにする
+    /// （<see cref="SeekableOut"/>）。
+    /// </summary>
     internal static double ClampToClip(
-        double seconds, double mediaInSeconds, double? mediaOutSeconds, double durationSeconds)
+        double seconds, double mediaInSeconds, double? mediaOutSeconds, double durationSeconds,
+        double videoFps = 0.0)
     {
         (double clipIn, double clipOut) = ClipRange(mediaInSeconds, mediaOutSeconds, durationSeconds);
-        return Math.Clamp(seconds, clipIn, clipOut);
+        double upper = videoFps > 0.0 ? SeekableOut(clipIn, clipOut, durationSeconds, videoFps) : clipOut;
+        return Math.Clamp(seconds, clipIn, upper);
+    }
+
+    /// <summary>
+    /// シークの行き先としての出口。出口が素材の終わり（尺）に届いていれば、最後のコマの頭（尺 − 1 コマ）に
+    /// する。尺ちょうどには絵が無く、そこへのシークは素材の終わりに当たって位置が定まらない
+    /// （検証機の S-4: MediaOut = 尺 = 20.000 の HAP で、シーク後の位置が 20.000 と 0.367 を行き来した）。
+    /// 終端ホールドの判定（端の ±2 フレーム）は出口（clipOut）のままで、最後のコマはその内側に入る。
+    /// </summary>
+    internal static double SeekableOut(double clipIn, double clipOut, double durationSeconds, double videoFps)
+    {
+        if (!IsFinite(durationSeconds) || durationSeconds <= 0.0 || !IsUsableFps(videoFps))
+            return clipOut;
+        double lastFrameStart = durationSeconds - 1.0 / videoFps;
+        return clipOut > lastFrameStart ? Math.Max(clipIn, lastFrameStart) : clipOut;
     }
 
     /// <summary>
