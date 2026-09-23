@@ -106,7 +106,8 @@ public class SyncDecisionEngineTests
         SyncDecision decision = DecideAfterGate(engine, 25.0, state);
 
         decision.Action.Should().Be(SyncActionType.Seek);
-        decision.TargetSeconds.Should().Be(20.0);
+        // 行き先は最後のコマの頭（尺ちょうどは素材の終わりで、そこへのシークは位置が定まらない）。
+        decision.TargetSeconds.Should().BeApproximately(20.0 - 1.0 / 30.0, 1e-9);
     }
 
     [Fact]
@@ -301,9 +302,11 @@ public class SyncDecisionEngineTests
 
     [Theory]
     [InlineData(0.0, 0.0, 0.0, SyncActionType.None)]
-    [InlineData(0.04, 0.0, 0.04, SyncActionType.Seek)]
-    [InlineData(0.04, 0.04, 0.04, SyncActionType.None)]
-    [InlineData(0.04, 0.0, 0.041, SyncActionType.Seek)]
+    // 1 コマだけの素材（25fps で 0.04 秒）: 最後のコマの頭は 0.0。位置 0.0 は既にそのコマ。
+    [InlineData(0.04, 0.0, 0.04, SyncActionType.None)]
+    // 位置が尺ちょうど（素材の終わり）なら、最後のコマの頭へ戻す。
+    [InlineData(0.04, 0.04, 0.04, SyncActionType.Seek)]
+    [InlineData(0.04, 0.0, 0.041, SyncActionType.None)]
     public void Decide_HandlesZeroOneFrameAndDurationEndBoundaries(
         double durationSeconds,
         double playbackSeconds,
@@ -324,7 +327,7 @@ public class SyncDecisionEngineTests
 
         decision.Action.Should().Be(expectedAction);
         if (expectedAction == SyncActionType.Seek)
-            decision.TargetSeconds.Should().Be(durationSeconds);
+            decision.TargetSeconds.Should().BeApproximately(Math.Max(0.0, durationSeconds - 1.0 / 25.0), 1e-9);
     }
 
     [Fact]
@@ -439,7 +442,7 @@ public class SyncDecisionEngineTests
         SyncDecision decision = DecideAfterGate(engine, 100.0, state);
 
         decision.Action.Should().Be(SyncActionType.Seek);
-        decision.TargetSeconds.Should().Be(58.5);
+        decision.TargetSeconds.Should().BeApproximately(58.5 - 1.0 / 30.0, 1e-9, "尺の最後のコマの頭");
     }
 
     [Fact]

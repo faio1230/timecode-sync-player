@@ -359,7 +359,7 @@ public class SeekLatencyCompensatorTests
         SyncDecision decision = DecideAfterGate(engine, 199.99, SeekYieldingState(4.0));
 
         decision.Action.Should().Be(SyncActionType.Seek);
-        decision.TargetSeconds.Should().Be(200.0);
+        decision.TargetSeconds.Should().BeApproximately(200.0 - 1.0 / 30.0, 1e-9, "補償後も最後のコマの頭まで");
     }
 
     [Fact]
