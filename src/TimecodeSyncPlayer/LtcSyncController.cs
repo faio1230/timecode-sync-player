@@ -1214,4 +1214,29 @@ internal sealed class LtcSyncController
             state.SyncEnabled, state.Mode);
         _effects.UpdateCurrentTrackLabel();
     }
+
+    /// <summary>
+    /// v0.5.2 段 0: ラッチ（一時状態）が立っているかの読み取り専用の写し（特性テスト用）。
+    /// キーはラッチの意味の名前で、内部の持ち方が変わっても同じ意味で返す。状態は変えない。
+    /// </summary>
+    internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
+    {
+        ["jumpAppliedOnce"] = _jumpAppliedOnce,
+        ["heldReapplyDone"] = _heldReapplyDone,
+        ["pendingJump"] = _pendingJumpSeconds is not null,
+        ["pendingSync"] = _pendingSyncSeconds is not null,
+        ["lastHeldEffective"] = _lastHeldEffectiveSeconds is not null,
+        ["heldLossLanding"] = _heldLossLandingSeconds is not null,
+        ["lastAppliedLtc"] = _lastAppliedLtcSeconds is not null,
+        ["lastAcceptedLtc"] = _lastAcceptedLtcSeconds is not null,
+        ["followStartPending"] = _followStartPending,
+        ["rateRestorePending"] = _rateRestorePending,
+        ["smoothUnavailable"] = !_smoothAvailable,
+        // 倍率が 1.0 でないまま残っているか（ResetCorrection と同じ判定幅）。
+        ["rateNotUnity"] = Math.Abs(_lastAppliedRate - 1.0) >= 0.0005,
+        ["correctionPausedForPosition"] = _correctionPausedForPosition,
+    };
+
+    /// <summary>v0.5.2 段 0: 信号断のポリシーのラッチの写し（特性テスト用。状態は変えない）。</summary>
+    internal IReadOnlyDictionary<string, bool> SignalLossLatchSnapshot() => _signalLoss.LatchSnapshot();
 }

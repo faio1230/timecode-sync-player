@@ -617,6 +617,22 @@ public sealed class TimecodeSyncService
             decision.TimecodeFpsUsed, decision.UsedDefaultVideoFps,
             decision.UsedDefaultTimecodeFps);
     }
+
+    /// <summary>
+    /// v0.5.2 段 0: ラッチが立っているかの読み取り専用の写し（特性テスト用。状態は変えない）。
+    /// seekLandingActive は着地エピソードが開いているか（上限による閉鎖は次の評価で起きるため、
+    /// ここでは判定しない）。
+    /// </summary>
+    internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
+    {
+        ["loadingFile"] = _isLoadingFile,
+        ["fileLoadReleasePending"] = _fileLoadReleasePending,
+        ["seekLandingActive"] = _seekLandingActive,
+        // 開いている着地エピソードが追従開始のものか（先行量が効く状態）。
+        ["followStartLanding"] = _seekLandingActive && _landingOrigin == LandingOrigin.FollowStart,
+        // 位置を判定に使わない状態か（シークの着地待ち・取り直し待ち）。
+        ["positionUntrusted"] = !_positionTrust.IsTrusted,
+    };
 }
 
 /// <summary>

@@ -197,9 +197,13 @@ internal sealed class SyncScenarioHarness
             getUtcNow: timeProvider is null ? null : () => timeProvider.GetUtcNow().UtcDateTime,
             sampleClockEnabled: sampleClockEnabled,
             getQpc: getQpc);
+        Single = single;
     }
 
     public LtcSyncController Controller { get; }
+
+    /// <summary>v0.5.2 段 0: Single の同期コーディネーター（ラッチの写しを読むため）。</summary>
+    public SingleModeSyncCoordinator Single { get; }
     public string TimecodeText { get; private set; } = "--:--:--:--";
     public string RealTimeText { get; private set; } = "-.--- s";
 

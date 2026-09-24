@@ -238,6 +238,18 @@ internal sealed class SingleModeSyncCoordinator
             "Single mode: clip boundary hold released{Suffix} ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
             suffix, ltcSeconds, playbackSeconds, clipIn, clipOut);
     }
+
+    /// <summary>
+    /// v0.5.2 段 0: ラッチが立っているかの読み取り専用の写し（特性テスト用。状態は変えない）。
+    /// boundarySeekTarget は「端へのシークの記録が、いまの読み込みに対して有効か」（読み込み番号が
+    /// 一致するときだけ BoundarySeekSentTo が参照する）。
+    /// </summary>
+    internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
+    {
+        ["clipBoundaryHeld"] = _clipBoundaryHeld,
+        ["boundarySeekTarget"] = _boundarySeekTarget is not null &&
+            _boundarySeekEpoch == _syncService.FileLoadEpoch,
+    };
 }
 
 /// <summary>

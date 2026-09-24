@@ -271,4 +271,12 @@ internal sealed class LtcSignalLossPolicy
 
     private static long ElapsedMilliseconds(long earlier, long later) =>
         Math.Max(0, later - earlier);
+
+    /// <summary>v0.5.2 段 0: ラッチが立っているかの読み取り専用の写し（特性テスト用。状態は変えない）。</summary>
+    internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
+    {
+        ["lost"] = _isLost,
+        ["pausedByPolicy"] = _pausedByPolicy,
+        ["manualResumeSuppressesPause"] = _manualResumeSuppressesPause,
+    };
 }

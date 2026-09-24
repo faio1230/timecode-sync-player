@@ -157,6 +157,19 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
 
         return Math.Abs(playbackSeconds - _lastSettledTargetSeconds) <= Math.Max(0, toleranceSeconds);
     }
+
+    /// <summary>
+    /// v0.5.2 段 0: ラッチが立っているかの読み取り専用の写し（特性テスト用。状態は変えない）。
+    /// lastSettledRecent は、直近の着地の記録が <paramref name="now"/> の時点でまだ着地後の抑止
+    /// （ShouldSuppressSeek の PostSettleSuppress）に効く状態か。
+    /// </summary>
+    internal IReadOnlyDictionary<string, bool> LatchSnapshot(DateTime now) => new Dictionary<string, bool>
+    {
+        ["pendingSeek"] = HasPendingSeek,
+        ["lastSettledRecent"] = _lastSettledAt != DateTime.MinValue &&
+            now - _lastSettledAt < PostSettleSuppress &&
+            !double.IsNaN(_lastSettledTargetSeconds),
+    };
 }
 
 public enum TimecodeSyncSeekPendingStatus
