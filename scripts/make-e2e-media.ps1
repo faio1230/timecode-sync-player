@@ -7,6 +7,7 @@
 #
 #   powershell -File scripts\make-e2e-media.ps1
 #   powershell -File scripts\make-e2e-media.ps1 -OutDir D:\media -Force
+#   powershell -File scripts\make-e2e-media.ps1 -IncludeA1Repro   # also the 4K ProRes/AV1 clips
 #
 # Requires ffmpeg (default C:\Program Files\ffmpeg\bin).
 #
@@ -17,7 +18,11 @@
 param(
     [string]$OutDir = '',
     [string]$FfmpegDir = 'C:\Program Files\ffmpeg\bin',
-    [switch]$Force
+    [switch]$Force,
+    # 4K ProRes / AV1 clips for reproducing A1. Off by default since v0.5.1: ProRes
+    # (a hardware decoder is being developed separately) and AV1 are outside the
+    # formats the sync work is judged on, and the clips cost disk and encode time.
+    [switch]$IncludeA1Repro
 )
 $ErrorActionPreference = 'Stop'
 # Windows PowerShell 5.1 leaves $PSScriptRoot empty inside param() defaults when the
@@ -183,6 +188,11 @@ $scenario4kSpecs = @(
        Base = '0x0000FF'; Head = '';       Tail = '0xFFA500';
        Encoder = @('-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le') }
 )
+
+if (-not $IncludeA1Repro) {
+    Write-Output 'skip: 4K ProRes/AV1 A1 reproduction clips (pass -IncludeA1Repro to make them)'
+    $scenario4kSpecs = @()
+}
 
 foreach ($s in $scenario4kSpecs) {
     $path = Join-Path $OutDir $s.Name
