@@ -67,6 +67,7 @@ internal sealed class OutputTrace
         try
         {
             string full = Path.GetFullPath(directory);
+            PruneOldRuns(full, RetainedBytes);
             string run = ResolveRunDirectory(full);
             System.IO.Directory.CreateDirectory(run);
             return new OutputTrace(run, ParseCapacity(Environment.GetEnvironmentVariable(CapacityEnvironmentVariable)));
@@ -75,6 +76,44 @@ internal sealed class OutputTrace
         {
             Log.Warning(ex, "出力トレースのディレクトリを作成できません: {Directory}", directory);
             return Disabled;
+        }
+    }
+
+    /// <summary>v0.5.1: 同じ置き場に残す過去のトレース（起動ごとのサブフォルダ）の合計の上限。</summary>
+    public const long RetainedBytes = 200L * 1024 * 1024;
+
+    /// <summary>
+    /// v0.5.1: 置き場の過去のトレース（<see cref="ResolveRunDirectory"/> が作る起動ごとのサブフォルダ）の
+    /// 合計が retainedBytes を超えていたら、古いものから消す。1 回の記録はイベント数の上限
+    /// （既定 1,000,000 件で約 140MB）で抑えているが、起動のたびに増えて開発機のディスクを埋めたため。
+    /// 置き場の直下のトレース（最初の 1 回）と、サブフォルダ以外のファイルには触れない。
+    /// </summary>
+    internal static void PruneOldRuns(string baseDirectory, long retainedBytes)
+    {
+        try
+        {
+            if (!System.IO.Directory.Exists(baseDirectory)) return;
+            var runs = new DirectoryInfo(baseDirectory).GetDirectories()
+                .Where(d => File.Exists(Path.Combine(d.FullName, "manifest.json"))
+                    || File.Exists(Path.Combine(d.FullName, "events.jsonl")))
+                .Select(d => (Dir: d, Bytes: d.EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length)))
+                .OrderByDescending(r => r.Dir.CreationTimeUtc)
+                .ToList();
+            long kept = 0;
+            for (int i = 0; i < runs.Count; i++)
+            {
+                var run = runs[i];
+                kept += run.Bytes;
+                // いちばん新しいトレースは大きくても残す（直前の回を取り出す前に消さない）。
+                if (i == 0 || kept <= retainedBytes) continue;
+                run.Dir.Delete(recursive: true);
+                Log.Information("出力トレース: 古いトレースを消しました {Directory} ({Megabytes:F0}MB)",
+                    run.Dir.FullName, run.Bytes / 1024.0 / 1024.0);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "出力トレース: 古いトレースの整理に失敗しました {Directory}", baseDirectory);
         }
     }
 

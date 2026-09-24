@@ -54,6 +54,62 @@ public class OutputTraceDirectoryTests
     }
 
     [Fact]
+    public void PruneOldRuns_DeletesOldestRunsOverTheLimit_KeepsNewestAndRootTrace()
+    {
+        // v0.5.1: 起動のたびに増えるトレースで開発機のディスクが埋まった。古い回から消す。
+        string dir = Path.Combine(Path.GetTempPath(), "tcs-trace-dir", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "manifest.json"), "{}");     // 置き場の直下のトレース
+        string MakeRun(string name, int bytes, DateTime created)
+        {
+            string run = Path.Combine(dir, name);
+            Directory.CreateDirectory(run);
+            File.WriteAllBytes(Path.Combine(run, "events.jsonl"), new byte[bytes]);
+            Directory.SetCreationTimeUtc(run, created);
+            return run;
+        }
+        try
+        {
+            var t0 = new DateTime(2026, 9, 24, 0, 0, 0, DateTimeKind.Utc);
+            string oldest = MakeRun("a", 400, t0);
+            string middle = MakeRun("b", 400, t0.AddMinutes(1));
+            string newest = MakeRun("c", 2000, t0.AddMinutes(2));        // 1 回で上限を超える
+            string notATrace = Path.Combine(dir, "notes");
+            Directory.CreateDirectory(notATrace);
+
+            OutputTrace.PruneOldRuns(dir, retainedBytes: 1000);
+
+            Directory.Exists(newest).Should().BeTrue("いちばん新しい回は大きくても残す");
+            Directory.Exists(middle).Should().BeFalse();
+            Directory.Exists(oldest).Should().BeFalse();
+            Directory.Exists(notATrace).Should().BeTrue("トレースでないフォルダには触れない");
+            File.Exists(Path.Combine(dir, "manifest.json")).Should().BeTrue("直下のトレースには触れない");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* 検証用一時なので失敗は無視 */ }
+        }
+    }
+
+    [Fact]
+    public void PruneOldRuns_UnderTheLimit_KeepsEverything()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "tcs-trace-dir", Guid.NewGuid().ToString("N"));
+        string run = Path.Combine(dir, "a");
+        Directory.CreateDirectory(run);
+        File.WriteAllBytes(Path.Combine(run, "events.jsonl"), new byte[100]);
+        try
+        {
+            OutputTrace.PruneOldRuns(dir, retainedBytes: 1000);
+            Directory.Exists(run).Should().BeTrue();
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* 検証用一時なので失敗は無視 */ }
+        }
+    }
+
+    [Fact]
     public void Create_UsesSubdirectoryWhenBaseAlreadyHasTrace()
     {
         string dir = Path.Combine(Path.GetTempPath(), "tcs-trace-dir", Guid.NewGuid().ToString("N"));
