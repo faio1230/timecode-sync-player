@@ -38,7 +38,6 @@ public partial class App : Application
         services.AddSingleton<ILtcMonitor, LtcAudioMonitor>();
         services.AddSingleton<PlaylistState>();
         services.AddSingleton<SeekLatencyCompensator>();
-        services.AddSingleton<TrackSwitchLoadLead>();
         services.AddSingleton<ISyncDecisionEngine>(sp => new SyncDecisionEngine(
             new SyncDecisionOptions(),
             sp.GetRequiredService<SeekLatencyCompensator>()));
@@ -47,8 +46,7 @@ public partial class App : Application
             sp.GetRequiredService<ISyncDecisionEngine>(),
             sp.GetRequiredService<ITimecodeSyncSeekState>(),
             null,
-            sp.GetRequiredService<SeekLatencyCompensator>(),
-            sp.GetRequiredService<TrackSwitchLoadLead>()));
+            sp.GetRequiredService<SeekLatencyCompensator>()));
         services.AddSingleton<PlaylistDurationBackfillService>();
         services.AddSingleton<PlaylistLoadCoordinator>();
         services.AddSingleton<GapPlaybackCommandExecutor>();

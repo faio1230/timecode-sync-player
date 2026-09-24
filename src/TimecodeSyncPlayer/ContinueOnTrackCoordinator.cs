@@ -31,20 +31,6 @@ internal sealed class ContinueOnTrackCoordinator
         HandleFrame(result, ltcSeconds).Request;
 
     /// <summary>
-    /// 先回りしてもクリップの最後のコマより手前に収まるときだけ先回りする（収まらないときは 0）。
-    /// 残りが短いクリップで出口の外へ読み込まない。
-    /// </summary>
-    internal static double LeadWithinClip(PlaylistTrack track, double mediaPos, double leadSeconds)
-    {
-        if (leadSeconds <= 0) return 0.0;
-        double duration = track.MediaDuration.TotalSeconds;
-        double clipOut = track.MediaOut?.TotalSeconds ?? duration;
-        double fps = track.FrameRate is > 0 ? track.FrameRate.Value : 30.0;
-        double lastFrame = SyncDecisionEngine.SeekableOut(track.MediaIn.TotalSeconds, clipOut, duration, fps);
-        return mediaPos + leadSeconds < lastFrame ? leadSeconds : 0.0;
-    }
-
-    /// <summary>
     /// T7: 補正（Smooth / Jump）が使う素材位置と、このフレームで評価してよいかも返す。
     /// MediaPositionSeconds / PlaybackSeconds は粗い同期判定（EvaluateDecision）に渡した値
     /// そのもので、補正の残差は MediaPositionSeconds − PlaybackSeconds（= sync.evaluate の
@@ -73,17 +59,14 @@ internal sealed class ContinueOnTrackCoordinator
 
         if (onTrackDecision.Action == ContinueOnTrackAction.SwitchTrack)
         {
-            // v0.5.1 項目 4: 読み込みの所要ぶん先から読み込む（このトラックの切替の実測から学習した値）。
-            // 読み込み後に再生が進むときだけ使い、測る。LoadFile は常に再生で読み込むが、ギャップ明けで
-            // 停止を戻すとき（読み込み直後に止める）は所要がずれにならないので使わない。
-            _syncService.LatencyCompensator.SelectTrack(track.Id);
-            bool runsAfterLoad = !(exitingGap && !exitAction.ShouldResumePlayback);
-            TrackSwitchLoadLead switchLead = _syncService.SwitchLoadLead;
-            double leadSeconds = runsAfterLoad ? LeadWithinClip(track, mediaPos, switchLead.LeadForTrack(track.Id)) : 0.0;
-            double loadPosition = mediaPos + leadSeconds;
+            // トラック切替はロードで着地位置が決まるため、ここでも先行補償を通す（学習はトラック単位）。
+            SeekLatencyCompensator compensator = _syncService.LatencyCompensator;
+            compensator.SelectTrack(track.Id);
+            double compensationSeconds = compensator.CompensationForTrack(track.Id);
+            double loadPosition = mediaPos + compensationSeconds;
             Log.Information(
                 "Continue mode: switching to track {TrackName} at media position {Pos:F3}s compensation={CompensationMs:F1}ms",
-                track.Name, mediaPos, leadSeconds * 1000.0);
+                track.Name, mediaPos, compensationSeconds * 1000.0);
             long loadIssuedQpc = Stopwatch.GetTimestamp();
             bool success = _effects.LoadFile(track.FilePath, loadPosition);
             if (success)
@@ -91,8 +74,6 @@ internal sealed class ContinueOnTrackCoordinator
                 _effects.SetLoadedTrackId(track.Id);
 
                 _syncService.BeginFileLoad(loadPosition, _effects.GetTotalRenderedFrames(), loadIssuedQpc);
-                if (runsAfterLoad)
-                    switchLead.MarkLoadSent(track.Id, loadIssuedQpc);
                 _fileLoadStabilityLogState.Reset();
                 _effects.UpdateCurrentTrackLabel();
                 if (exitingGap)

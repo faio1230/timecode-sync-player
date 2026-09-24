@@ -10,8 +10,6 @@ public sealed class TimecodeSyncService
     private readonly ITimecodeSyncSeekState _seekState;
     private readonly TimeProvider _timeProvider;
     private readonly SeekLatencyCompensator _latencyCompensator;
-    // v0.5.1 項目 4: Continue の切替で、読み込みの所要ぶん先から読み込む（学習はトラック単位）。
-    private readonly TrackSwitchLoadLead _switchLoadLead;
     // D37-b: シーク中・着地未確認の位置を判定に使わないための状態。
     private readonly PlaybackPositionTrust _positionTrust = new();
     // 0.4.5-A フェーズ 1: 評価位置（基準・世代から求めた shadow）を trace に併記する。
@@ -93,14 +91,12 @@ public sealed class TimecodeSyncService
         ISyncDecisionEngine engine,
         ITimecodeSyncSeekState seekState,
         TimeProvider? timeProvider,
-        SeekLatencyCompensator? latencyCompensator,
-        TrackSwitchLoadLead? switchLoadLead = null)
+        SeekLatencyCompensator? latencyCompensator)
     {
         _engine = engine;
         _seekState = seekState;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _latencyCompensator = latencyCompensator ?? new SeekLatencyCompensator();
-        _switchLoadLead = switchLoadLead ?? new TrackSwitchLoadLead();
     }
 
     public SyncDecision EvaluateDecision(double ltcSeconds, SyncPlaybackState state,
@@ -432,8 +428,6 @@ public sealed class TimecodeSyncService
     internal void BeginFileLoad(double startPositionSeconds, long renderedFrameCount, long loadIssuedQpc)
     {
         _latencyCompensator.MarkLoadSent(loadIssuedQpc);
-        // 切替の読み込みは、呼び出し側（Continue）がこの後で測定を始める。それ以外の読み込みは測らない。
-        _switchLoadLead.CancelMeasurement();
         _isLoadingFile = true;
         _fileLoadReleasePending = false;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
@@ -542,8 +536,6 @@ public sealed class TimecodeSyncService
 
     /// <summary>先行補償の学習状態（トラックの引き当てとフレーム Ready 通知に使う）。</summary>
     internal SeekLatencyCompensator LatencyCompensator => _latencyCompensator;
-
-    internal TrackSwitchLoadLead SwitchLoadLead => _switchLoadLead;
 
     private double NowSeconds() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
 

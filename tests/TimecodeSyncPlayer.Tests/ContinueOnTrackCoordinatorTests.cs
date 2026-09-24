@@ -252,28 +252,16 @@ public class ContinueOnTrackCoordinatorTests
 
     // ---- (b) SwitchTrack 分岐 ----
 
-    private static TimecodeSyncService CreateServiceWithLead(TrackSwitchLoadLead lead) =>
-        new(new SyncDecisionEngine(new SyncDecisionOptions(), new SeekLatencyCompensator(enabled: false)),
-            new TimecodeSyncSeekState(), null, new SeekLatencyCompensator(enabled: false), lead);
-
-    // 切替の読み込みを 1 回測ったことにする（発行 → 絵が出るまで loadSeconds）。
-    private static int s_generation;
-    private static void RecordSwitchLoad(TrackSwitchLoadLead lead, Guid track, double loadSeconds)
-    {
-        int generation = Interlocked.Increment(ref s_generation);
-        lead.MarkLoadSent(track, 1_000);
-        lead.ObserveFrameReady(1_000 + (long)(loadSeconds * System.Diagnostics.Stopwatch.Frequency), generation, sourceSequence: 1);
-    }
-
     [Fact]
-    public void SwitchTrack_LoadsAheadByLearnedSwitchLoadTime()
+    public void SwitchTrack_LoadsAtMediaPosPlusLearnedCompensation()
     {
         var loadedId = Guid.NewGuid();
         var newTrack = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
-        var lead = new TrackSwitchLoadLead(enabled: true);
-        RecordSwitchLoad(lead, newTrack.Id, 2.5);   // 1 回目（冷えた状態）は使わない
-        RecordSwitchLoad(lead, newTrack.Id, 0.25);
-        var service = CreateServiceWithLead(lead);
+        var service = CreateService();
+        var compensator = service.LatencyCompensator;
+        compensator.SelectTrack(newTrack.Id);
+        compensator.MarkLoadSent(1_000);
+        compensator.ObserveFrameReady(1_000 + (long)(0.25 * System.Diagnostics.Stopwatch.Frequency), generation: 1, sourceSequence: 1);
         var rec = new Recorder
         {
             LoadedTrackId = loadedId,   // != newTrack.Id → SwitchTrack
@@ -292,99 +280,21 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void SwitchTrack_WithLeadDisabled_LoadsAtMediaPos()
+    public void SwitchTrack_WithCompensationDisabled_LoadsAtMediaPos()
     {
-        var lead = new TrackSwitchLoadLead(enabled: false);
+        var compensator = new SeekLatencyCompensator(enabled: false);
+        var service = new TimecodeSyncService(
+            new SyncDecisionEngine(new SyncDecisionOptions(), compensator),
+            new TimecodeSyncSeekState(), null, compensator);
         var newTrack = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
-        RecordSwitchLoad(lead, newTrack.Id, 0.5);
-        RecordSwitchLoad(lead, newTrack.Id, 0.5);
-        var service = CreateServiceWithLead(lead);
+        compensator.SelectTrack(newTrack.Id);
+        compensator.MarkLoadSent(1_000);
+        compensator.ObserveFrameReady(1_000 + (long)(0.5 * System.Diagnostics.Stopwatch.Frequency), generation: 1, sourceSequence: 1);
         var rec = new Recorder
         {
             LoadedTrackId = Guid.NewGuid(),   // != newTrack.Id → SwitchTrack
             LoadFileResult = true,
         };
-        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
-
-        coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
-
-        rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
-    }
-
-    [Fact]
-    public void SwitchTrack_SeekCompensatorEnabled_DoesNotShiftSwitchLoad()
-    {
-        // シークの先行補償（TCS_SEEK_LATENCY_COMPENSATION=on）は切替の読み込みには使わない。
-        var service = CreateService();   // シーク補償が有効な共有インスタンス、切替の学習は空
-        var newTrack = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
-        var compensator = service.LatencyCompensator;
-        compensator.SelectTrack(newTrack.Id);
-        compensator.MarkLoadSent(1_000);
-        compensator.ObserveFrameReady(1_000 + (long)(0.25 * System.Diagnostics.Stopwatch.Frequency), generation: 1, sourceSequence: 1);
-        var rec = new Recorder { LoadedTrackId = Guid.NewGuid(), LoadFileResult = true };
-        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
-
-        coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
-
-        rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
-    }
-
-    [Fact]
-    public void SwitchTrack_FirstSwitchToTrack_LoadsAtMediaPos_AndMeasures()
-    {
-        var lead = new TrackSwitchLoadLead(enabled: true);
-        var service = CreateServiceWithLead(lead);
-        var newTrack = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
-        var rec = new Recorder { LoadedTrackId = Guid.NewGuid(), LoadFileResult = true };
-        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
-
-        coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
-
-        rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
-        // 切替の読み込みの測定が始まっている（次の新しいフレームで 1 標本入る）。
-        lead.ObserveFrameReady(long.MaxValue / 2, generation: int.MaxValue - 1, sourceSequence: 1);
-        lead.ObserveFrameReady(long.MaxValue / 2, generation: int.MaxValue, sourceSequence: 1);
-        lead.LeadForTrack(newTrack.Id).Should().Be(0.0, "1 回目は冷えた状態として学習に使わない");
-    }
-
-    [Fact]
-    public void SwitchTrack_GapExitKeepingPause_DoesNotLeadNorMeasure()
-    {
-        var lead = new TrackSwitchLoadLead(enabled: true);
-        var newTrack = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
-        RecordSwitchLoad(lead, newTrack.Id, 1.0);
-        RecordSwitchLoad(lead, newTrack.Id, 0.3);
-        var service = CreateServiceWithLead(lead);
-        var rec = new Recorder
-        {
-            LoadedTrackId = Guid.NewGuid(),
-            LoadFileResult = true,
-        };
-        var effects = rec.Build() with
-        {
-            PeekGapExit = () => new GapExitAction(GapExitActionType.ResumePlayback, ShouldResumePlayback: false),
-            DecideGapExit = () => new GapExitAction(GapExitActionType.ResumePlayback, ShouldResumePlayback: false),
-        };
-        var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), effects);
-
-        coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
-
-        rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
-        // 測定していないので、次のフレームで学習値は変わらない。
-        lead.ObserveFrameReady(long.MaxValue / 2, generation: int.MaxValue, sourceSequence: 1);
-        lead.LeadForTrack(newTrack.Id).Should().BeApproximately(0.3, 1e-6);
-    }
-
-    [Fact]
-    public void SwitchTrack_LeadPastLastFrame_LoadsAtMediaPos()
-    {
-        // 残り 0.2 秒のクリップへ 0.5 秒先回りすると出口の外になる → 先回りしない。
-        var lead = new TrackSwitchLoadLead(enabled: true);
-        var newTrack = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4") with { MediaOut = TimeSpan.FromSeconds(12.7) };
-        RecordSwitchLoad(lead, newTrack.Id, 0.5);
-        RecordSwitchLoad(lead, newTrack.Id, 0.5);
-        var service = CreateServiceWithLead(lead);
-        var rec = new Recorder { LoadedTrackId = Guid.NewGuid(), LoadFileResult = true };
         var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
 
         coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
