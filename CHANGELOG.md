@@ -2,6 +2,39 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.5.1 - 2026-09-24
+
+Steadier sync when the LTC input is briefly garbled, and a fix for a Single-mode bug introduced in 0.5.0.
+
+### Fixed
+
+- Single: with LTC before the clip in point, switching to another track played the new track from its start,
+  ignoring LTC (introduced in 0.5.0). The record of the seek to the in point was carried over to the next
+  file, so position 0 of the new file counted as "at the in point". The new track now seeks to the in point
+  and holds there.
+- A single garbled LTC frame inside the current track could move the picture (present in earlier releases).
+  LTC has no error check, so noise on the cable or mixer can decode as a jump. The first jump frame inside
+  the track used to be applied at once; in a 2-hour test one bad frame caused a +2.3 s seek that was undone
+  0.8 s later. Jumps inside the track now wait for the next frame to confirm them, as jumps into a gap or
+  another track already did. A real jump is applied one frame later (33 ms at 30 fps). Resuming from a
+  stopped (held) timecode still reacts on the first frame.
+
+### Added
+
+- The log reports when the on-screen preview stops updating for more than 1 s (`Preview stalled:` /
+  `Preview resumed:`), with whether the GPU side was still reading frames back. No behaviour change.
+
+### Changed (no behaviour change)
+
+- The sync position read returns the position and its sample from one query instead of two calls that had
+  to be made in order.
+- Gap freeze confirmation is a plain state transition instead of an asynchronous method that never waited.
+
+### Known limitations
+
+- Rarely, on entering a gap, only the on-screen preview does not turn black; the fullscreen output and Spout
+  do. Under investigation; 0.5.1 logs it when it happens.
+
 ## 0.5.0 - 2026-09-24
 
 HAP playback on the GPU, plus fixes for how Single mode handles clip edges.
