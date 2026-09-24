@@ -92,7 +92,7 @@ internal sealed class ContinueOnTrackCoordinator
 
                 _syncService.BeginFileLoad(loadPosition, _effects.GetTotalRenderedFrames(), loadIssuedQpc);
                 if (runsAfterLoad)
-                    switchLead.MarkLoadSent(track.Id, leadSeconds);
+                    switchLead.MarkLoadSent(track.Id, loadIssuedQpc);
                 _fileLoadStabilityLogState.Reset();
                 _effects.UpdateCurrentTrackLabel();
                 if (exitingGap)
@@ -148,9 +148,6 @@ internal sealed class ContinueOnTrackCoordinator
             }
 
             _fileLoadStabilityLogState.Reset();
-            // v0.5.1 項目 4: 切替の読み込みが安定した後の最初の評価で、残ったずれを先回りの学習へ渡す
-            // （測定中でなければ何もしない）。
-            _syncService.SwitchLoadLead.ObserveFirstResidual(track.Id, mediaPos - playbackSeconds);
 
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
             SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state, positionSample);

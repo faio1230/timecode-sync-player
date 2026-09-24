@@ -2198,6 +2198,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void OnSourceFrameReady(long qpc, int generation, long sequence, double positionSeconds)
     {
         _syncService.LatencyCompensator.ObserveFrameReady(qpc, generation, sequence);
+        _syncService.SwitchLoadLead.ObserveFrameReady(qpc, generation, sequence);
 
         GapFreezeHandler handler = _gapFreezeHandler;
         double fps = _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps;
