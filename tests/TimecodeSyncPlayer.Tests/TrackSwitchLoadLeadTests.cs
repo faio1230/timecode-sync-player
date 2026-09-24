@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using FluentAssertions;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -8,12 +7,11 @@ public class TrackSwitchLoadLeadTests
     private static readonly Guid TrackA = Guid.NewGuid();
     private static readonly Guid TrackB = Guid.NewGuid();
 
-    private int _generation;
-
-    private void Load(TrackSwitchLoadLead lead, Guid track, double seconds)
+    // 先回り lead で読み込み、最初の評価で residual が残った切替を 1 回。
+    private static void Switch(TrackSwitchLoadLead lead, Guid track, double usedLead, double residual)
     {
-        lead.MarkLoadSent(track, 1_000);
-        lead.ObserveFrameReady(1_000 + (long)(seconds * Stopwatch.Frequency), ++_generation, sourceSequence: 1);
+        lead.MarkLoadSent(track, usedLead);
+        lead.ObserveFirstResidual(track, residual);
     }
 
     [Fact]
@@ -23,97 +21,112 @@ public class TrackSwitchLoadLeadTests
     }
 
     [Fact]
-    public void FirstLoad_IsColdAndNotUsed()
+    public void FirstSwitch_IsColdAndNotUsed()
     {
         var lead = new TrackSwitchLoadLead(enabled: true);
-        Load(lead, TrackA, 2.4);
+        Switch(lead, TrackA, 0.0, 2.4);
 
         lead.LeadForTrack(TrackA).Should().Be(0.0);
 
-        Load(lead, TrackA, 0.15);
-        lead.LeadForTrack(TrackA).Should().BeApproximately(0.15, 1e-6);
+        Switch(lead, TrackA, 0.0, 0.06);
+        lead.LeadForTrack(TrackA).Should().BeApproximately(0.06, 1e-9);
     }
 
     [Fact]
-    public void Lead_IsMedianOfRecentWarmLoads()
+    public void Needed_IsUsedLeadPlusResidual()
+    {
+        // 候補 1 の M1: 0.15 秒先回りして、映像が 0.10 秒先に出た（residual −0.10）→ 必要だったのは 0.05 秒。
+        var lead = new TrackSwitchLoadLead(enabled: true);
+        Switch(lead, TrackA, 0.0, 0.06);            // 冷えた 1 回目
+        Switch(lead, TrackA, 0.15, -0.10);
+
+        lead.LeadForTrack(TrackA).Should().BeApproximately(0.05, 1e-9);
+    }
+
+    [Fact]
+    public void Lead_IsMedianOfRecentWarmSwitches()
     {
         var lead = new TrackSwitchLoadLead(enabled: true);
-        Load(lead, TrackA, 1.3);                       // 冷えた 1 回目
-        foreach (double s in new[] { 1.24, 1.25, 1.37, 1.23, 1.26 })
-            Load(lead, TrackA, s);
+        Switch(lead, TrackA, 0.0, 1.3);
+        foreach (double r in new[] { 1.24, 1.25, 1.37, 1.23, 1.26 })
+            Switch(lead, TrackA, 0.0, r);
 
-        lead.LeadForTrack(TrackA).Should().BeApproximately(1.25, 1e-6, "外れ値 1.37 に引っ張られない");
+        lead.LeadForTrack(TrackA).Should().BeApproximately(1.25, 1e-9, "外れ値 1.37 に引っ張られない");
     }
 
     [Fact]
     public void Lead_ForgetsOlderThanWindow()
     {
         var lead = new TrackSwitchLoadLead(enabled: true);
-        Load(lead, TrackA, 1.0);
+        Switch(lead, TrackA, 0.0, 1.0);
         for (int i = 0; i < TrackSwitchLoadLead.WarmWindow; i++)
-            Load(lead, TrackA, 0.9);
+            Switch(lead, TrackA, 0.0, 0.9);
         for (int i = 0; i < TrackSwitchLoadLead.WarmWindow; i++)
-            Load(lead, TrackA, 0.3);
+            Switch(lead, TrackA, 0.0, 0.3);
 
-        lead.LeadForTrack(TrackA).Should().BeApproximately(0.3, 1e-6);
+        lead.LeadForTrack(TrackA).Should().BeApproximately(0.3, 1e-9);
     }
 
     [Fact]
     public void Tracks_AreLearnedSeparately()
     {
         var lead = new TrackSwitchLoadLead(enabled: true);
-        Load(lead, TrackA, 2.0);
-        Load(lead, TrackB, 2.0);
-        Load(lead, TrackA, 0.06);
-        Load(lead, TrackB, 1.25);
+        Switch(lead, TrackA, 0.0, 2.0);
+        Switch(lead, TrackB, 0.0, 2.0);
+        Switch(lead, TrackA, 0.0, 0.06);
+        Switch(lead, TrackB, 0.0, 1.25);
 
-        lead.LeadForTrack(TrackA).Should().BeApproximately(0.06, 1e-6);
-        lead.LeadForTrack(TrackB).Should().BeApproximately(1.25, 1e-6);
+        lead.LeadForTrack(TrackA).Should().BeApproximately(0.06, 1e-9);
+        lead.LeadForTrack(TrackB).Should().BeApproximately(1.25, 1e-9);
+    }
+
+    [Theory]
+    [InlineData(-0.3)]                                       // 必要量が負（読み込み中に LTC が戻ったなど）
+    [InlineData(TrackSwitchLoadLead.MaxLeadSeconds + 0.5)]   // 上限超え
+    public void OutOfRangeNeeded_IsNotLearned(double residual)
+    {
+        var lead = new TrackSwitchLoadLead(enabled: true);
+        Switch(lead, TrackA, 0.0, 0.2);
+        Switch(lead, TrackA, 0.0, 0.2);
+        Switch(lead, TrackA, 0.0, residual);
+
+        lead.LeadForTrack(TrackA).Should().BeApproximately(0.2, 1e-9);
     }
 
     [Fact]
-    public void LeadAboveMax_IsNotUsed()
+    public void ResidualForAnotherTrack_OrWithoutSwitch_IsIgnored()
     {
         var lead = new TrackSwitchLoadLead(enabled: true);
-        Load(lead, TrackA, 5.0);
-        Load(lead, TrackA, TrackSwitchLoadLead.MaxLeadSeconds + 0.5);
+        Switch(lead, TrackA, 0.0, 1.0);
+        Switch(lead, TrackA, 0.0, 0.2);
 
-        lead.LeadForTrack(TrackA).Should().Be(0.0);
-    }
+        lead.ObserveFirstResidual(TrackA, 0.9);              // 測定中でない
+        lead.MarkLoadSent(TrackA, 0.2);
+        lead.ObserveFirstResidual(TrackB, 0.9);              // 別のトラック（測定は終わる）
+        lead.ObserveFirstResidual(TrackA, 0.9);
 
-    [Fact]
-    public void FrameFromBeforeTheLoad_IsNotCounted()
-    {
-        var lead = new TrackSwitchLoadLead(enabled: true);
-        lead.ObserveFrameReady(500, generation: 5, sourceSequence: 10);   // 読み込み前の絵
-        lead.MarkLoadSent(TrackA, 1_000);
-        lead.ObserveFrameReady(1_100, generation: 5, sourceSequence: 10);  // 同じ絵がもう一度
-        lead.ObserveFrameReady(1_000 + (long)(0.4 * Stopwatch.Frequency), generation: 6, sourceSequence: 1);
-        lead.MarkLoadSent(TrackA, 2_000);
-        lead.ObserveFrameReady(2_000 + (long)(0.2 * Stopwatch.Frequency), generation: 7, sourceSequence: 1);
-
-        lead.LeadForTrack(TrackA).Should().BeApproximately(0.2, 1e-6, "1 回目（0.4）は冷えた状態、2 回目が 0.2");
+        lead.LeadForTrack(TrackA).Should().BeApproximately(0.2, 1e-9);
     }
 
     [Fact]
     public void CancelledMeasurement_IsNotRecorded()
     {
         var lead = new TrackSwitchLoadLead(enabled: true);
-        Load(lead, TrackA, 1.0);
-        Load(lead, TrackA, 0.2);
-        lead.MarkLoadSent(TrackA, 1_000);
+        Switch(lead, TrackA, 0.0, 1.0);
+        Switch(lead, TrackA, 0.0, 0.2);
+        lead.MarkLoadSent(TrackA, 0.2);
         lead.CancelMeasurement();
-        lead.ObserveFrameReady(1_000 + (long)(3.0 * Stopwatch.Frequency), ++_generation, sourceSequence: 1);
+        lead.ObserveFirstResidual(TrackA, 2.0);
 
-        lead.LeadForTrack(TrackA).Should().BeApproximately(0.2, 1e-6);
+        lead.LeadForTrack(TrackA).Should().BeApproximately(0.2, 1e-9);
     }
 
     [Fact]
     public void Disabled_AlwaysZero()
     {
         var lead = new TrackSwitchLoadLead(enabled: false);
-        Load(lead, TrackA, 1.0);
-        Load(lead, TrackA, 0.5);
+        Switch(lead, TrackA, 0.0, 1.0);
+        Switch(lead, TrackA, 0.0, 0.5);
 
         lead.LeadForTrack(TrackA).Should().Be(0.0);
     }

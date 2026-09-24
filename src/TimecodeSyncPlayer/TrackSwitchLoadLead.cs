@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Serilog;
 
 namespace TimecodeSyncPlayer;
@@ -6,14 +5,18 @@ namespace TimecodeSyncPlayer;
 /// <summary>
 /// v0.5.1 項目 4: Continue のトラック切替で、読み込みにかかる時間ぶん先から読み込む。
 ///
-/// 切替の読み込みは、発行から新しいトラックの最初のフレームまでの所要ぶんタイムコードより手前から始まる
-/// （検証機の実測で、ずれは所要と 1 対 1 で一致）。所要は素材ごとにほぼ一定で（RTX、7 本 × 20 回で
-/// 同じトラックの 2 回目以降の中央値からの差はおおむね ±40ms）、最初の 1 回（冷えた状態）だけ大きい。
-/// そこで、トラックごとに**切替の読み込みの実測値**を覚え、2 回目以降の直近 <see cref="WarmWindow"/> 回の
-/// 中央値だけ先から読み込む。
+/// 切替の読み込みは、発行から再生が始まるまでの所要ぶんタイムコードより手前から始まる
+/// （検証機の実測で、切替直後のずれは所要と 1 対 1 で一致）。所要は素材ごとにほぼ一定で、
+/// 最初の 1 回（冷えた状態）だけ大きい。そこでトラックごとに「その切替で本当に必要だった先回り」を覚え、
+/// 2 回目以降の直近 <see cref="WarmWindow"/> 回の中央値だけ先から読み込む。
+///
+/// 必要だった先回り = 使った先回り + 読み込み後の最初の評価で残ったずれ（素材位置 − 再生位置）。
+/// 候補 1 では「発行 → 最初の絵が合成に届く」を測って使ったが、これは再生の開始より 0.1 秒ほど遅く、
+/// 軽い素材で 0.13〜0.17 秒先回りし過ぎた。また先から読み込むと長 GOP の素材では読み込みそのものが
+/// 伸びる。残ったずれを直接足し込めば、何が所要に含まれるかに関係なく、使った位置での実際の必要量を学べる。
 ///
 /// 0.4.5 の D37-h（キーフレーム間隔からの見積もりで先を狙い、行き過ぎた）とは、見積もりの出どころが違う:
-/// 同じトラック・同じ切替の読み込みを実際に測った値だけを使う。1 回目は冷えた状態なので学習にも使わない。
+/// 同じトラック・同じ切替の実測だけを使う。1 回目は冷えた状態なので学習にも使わない。
 /// シークの補償（<see cref="SeekLatencyCompensator"/>、既定で無効）とは別物で、シークには使わない。
 /// </summary>
 internal sealed class TrackSwitchLoadLead
@@ -23,7 +26,8 @@ internal sealed class TrackSwitchLoadLead
 
     /// <summary>
     /// これを超える学習値は使わない（先回りしない）。検証機で最も重い素材（4K60 ProRes）が約 1.25 秒。
-    /// 読み込みが異常に遅い状態で大きく先へ飛ばさないための上限。
+    /// 読み込みが異常に遅い状態で大きく先へ飛ばさないための上限。標本もこの範囲の外は捨てる
+    /// （読み込み中に LTC が飛んだなど、切替の所要と関係のないずれ）。
     /// </summary>
     public const double MaxLeadSeconds = 3.0;
 
@@ -35,11 +39,7 @@ internal sealed class TrackSwitchLoadLead
     private readonly Dictionary<Guid, TrackSamples> _byTrack = new();
     private bool _armed;
     private Guid _armedTrack;
-    private long _armedQpc;
-    private int _generationAtArm;
-    private long _sequenceAtArm;
-    private int _lastReadyGeneration = int.MinValue;
-    private long _lastReadySequence = long.MinValue;
+    private double _armedLeadSeconds;
 
     public TrackSwitchLoadLead()
         : this(IsEnabledValue(Environment.GetEnvironmentVariable(EnvironmentVariable)))
@@ -67,22 +67,19 @@ internal sealed class TrackSwitchLoadLead
         {
             if (!_byTrack.TryGetValue(trackId, out TrackSamples? samples) || samples.Warm.Count == 0)
                 return 0.0;
-            double lead = Median(samples.Warm);
-            return lead <= MaxLeadSeconds ? lead : 0.0;
+            return Median(samples.Warm);
         }
     }
 
-    /// <summary>切替の読み込みを発行したときに呼ぶ（issuedQpc は発行直前の QPC）。</summary>
-    public void MarkLoadSent(Guid trackId, long issuedQpc)
+    /// <summary>切替の読み込みを発行したときに呼ぶ（leadSeconds は実際に使った先回り）。</summary>
+    public void MarkLoadSent(Guid trackId, double leadSeconds)
     {
         if (!_enabled) return;
         lock (_gate)
         {
             _armed = true;
             _armedTrack = trackId;
-            _armedQpc = issuedQpc != 0 ? issuedQpc : Stopwatch.GetTimestamp();
-            _generationAtArm = _lastReadyGeneration;
-            _sequenceAtArm = _lastReadySequence;
+            _armedLeadSeconds = leadSeconds;
         }
     }
 
@@ -94,51 +91,33 @@ internal sealed class TrackSwitchLoadLead
     }
 
     /// <summary>
-    /// GPU worker。source.acquire が Ready になったときの QPC・世代・ソース sequence を受け取る。
-    /// 発行時点より新しいフレームの最初の 1 枚を「絵が出た」とみなす。
+    /// 読み込みが安定した後の最初の評価で呼ぶ（UI スレッド）。residualSeconds は素材位置 − 再生位置
+    /// （正 = 映像がタイムコードより手前）。測定中の切替と同じトラックのときだけ 1 回数える。
     /// </summary>
-    public void ObserveFrameReady(long qpc, int generation, long sourceSequence)
+    public void ObserveFirstResidual(Guid loadedTrackId, double residualSeconds)
     {
         if (!_enabled) return;
-        double seconds;
-        Guid track;
-        bool cold;
-        double lead;
+        double used, needed, lead;
+        bool cold, accepted;
         lock (_gate)
         {
-            if (generation > _lastReadyGeneration)
-            {
-                _lastReadyGeneration = generation;
-                _lastReadySequence = sourceSequence;
-            }
-            else if (generation == _lastReadyGeneration && sourceSequence > _lastReadySequence)
-            {
-                _lastReadySequence = sourceSequence;
-            }
-
             if (!_armed) return;
-            bool isNewFrame = generation > _generationAtArm
-                || (generation == _generationAtArm && sourceSequence > _sequenceAtArm);
-            if (!isNewFrame) return;
-
             _armed = false;
-            seconds = (qpc - _armedQpc) / (double)Stopwatch.Frequency;
-            if (!double.IsFinite(seconds) || seconds < 0) return;
+            if (loadedTrackId != _armedTrack || !double.IsFinite(residualSeconds)) return;
 
-            track = _armedTrack;
-            if (!_byTrack.TryGetValue(track, out TrackSamples? samples))
+            used = _armedLeadSeconds;
+            needed = used + residualSeconds;
+            if (!_byTrack.TryGetValue(_armedTrack, out TrackSamples? samples))
             {
                 samples = new TrackSamples();
-                _byTrack[track] = samples;
+                _byTrack[_armedTrack] = samples;
             }
             cold = !samples.SawFirstLoad;
-            if (cold)
+            samples.SawFirstLoad = true;
+            accepted = !cold && needed >= 0.0 && needed <= MaxLeadSeconds;
+            if (accepted)
             {
-                samples.SawFirstLoad = true;
-            }
-            else
-            {
-                samples.Warm.Add(seconds);
+                samples.Warm.Add(needed);
                 if (samples.Warm.Count > WarmWindow)
                     samples.Warm.RemoveAt(0);
             }
@@ -146,8 +125,8 @@ internal sealed class TrackSwitchLoadLead
         }
 
         Log.Information(
-            "Track switch load lead: loadMs={LoadMs:F1} cold={Cold} leadMs={LeadMs:F1} track={Track}",
-            seconds * 1000.0, cold, lead * 1000.0, track);
+            "Track switch load lead: usedMs={UsedMs:F1} residualMs={ResidualMs:F1} neededMs={NeededMs:F1} cold={Cold} accepted={Accepted} leadMs={LeadMs:F1} track={Track}",
+            used * 1000.0, residualSeconds * 1000.0, needed * 1000.0, cold, accepted, lead * 1000.0, loadedTrackId);
     }
 
     private static double Median(List<double> values)

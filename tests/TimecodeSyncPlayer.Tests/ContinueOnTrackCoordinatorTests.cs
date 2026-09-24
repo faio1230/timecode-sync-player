@@ -256,13 +256,11 @@ public class ContinueOnTrackCoordinatorTests
         new(new SyncDecisionEngine(new SyncDecisionOptions(), new SeekLatencyCompensator(enabled: false)),
             new TimecodeSyncSeekState(), null, new SeekLatencyCompensator(enabled: false), lead);
 
-    // 切替の読み込みを 1 回測ったことにする（発行 → 絵が出るまで loadSeconds）。
-    private static int s_generation;
+    // 先回りなしの切替を 1 回測ったことにする（最初の評価で loadSeconds のずれが残った）。
     private static void RecordSwitchLoad(TrackSwitchLoadLead lead, Guid track, double loadSeconds)
     {
-        int generation = Interlocked.Increment(ref s_generation);
-        lead.MarkLoadSent(track, 1_000);
-        lead.ObserveFrameReady(1_000 + (long)(loadSeconds * System.Diagnostics.Stopwatch.Frequency), generation, sourceSequence: 1);
+        lead.MarkLoadSent(track, 0.0);
+        lead.ObserveFirstResidual(track, loadSeconds);
     }
 
     [Fact]
@@ -330,7 +328,7 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void SwitchTrack_FirstSwitchToTrack_LoadsAtMediaPos_AndMeasures()
+    public void SwitchTrack_LearnsFromTheResidualAfterTheLoad_AndLeadsTheNextSwitch()
     {
         var lead = new TrackSwitchLoadLead(enabled: true);
         var service = CreateServiceWithLead(lead);
@@ -338,13 +336,28 @@ public class ContinueOnTrackCoordinatorTests
         var rec = new Recorder { LoadedTrackId = Guid.NewGuid(), LoadFileResult = true };
         var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
 
-        coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
+        // 読み込み → 安定後の最初の評価で、素材位置 − 再生位置 = residual が残る。
+        void SwitchAndSettle(double mediaPos, double residual)
+        {
+            rec.LoadedTrackId = Guid.NewGuid();                        // 別のトラックから切り替える
+            coordinator.Handle(OnTrack(newTrack, mediaPos), mediaPos);
+            double loaded = rec.LoadFileArgs[^1].start;
+            rec.TotalRenderedFrames += 5;
+            rec.TimePos = (0, loaded + 0.1);
+            coordinator.Handle(OnTrack(newTrack, loaded + 0.1 + residual), loaded + 0.1 + residual);
+        }
 
-        rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
-        // 切替の読み込みの測定が始まっている（次の新しいフレームで 1 標本入る）。
-        lead.ObserveFrameReady(long.MaxValue / 2, generation: int.MaxValue - 1, sourceSequence: 1);
-        lead.ObserveFrameReady(long.MaxValue / 2, generation: int.MaxValue, sourceSequence: 1);
-        lead.LeadForTrack(newTrack.Id).Should().Be(0.0, "1 回目は冷えた状態として学習に使わない");
+        SwitchAndSettle(12.5, residual: 0.9);    // 冷えた 1 回目（学習に使わない）
+        rec.LoadFileArgs[^1].start.Should().Be(12.5);
+        lead.LeadForTrack(newTrack.Id).Should().Be(0.0);
+
+        SwitchAndSettle(30.0, residual: 0.25);   // 先回りなしで 0.25 秒残った
+        rec.LoadFileArgs[^1].start.Should().Be(30.0);
+        lead.LeadForTrack(newTrack.Id).Should().BeApproximately(0.25, 1e-9);
+
+        SwitchAndSettle(40.0, residual: -0.05);  // 0.25 秒先回りして 0.05 秒先に出た → 必要だったのは 0.20
+        rec.LoadFileArgs[^1].start.Should().BeApproximately(40.25, 1e-9);
+        lead.LeadForTrack(newTrack.Id).Should().BeApproximately((0.25 + 0.20) / 2, 1e-9);
     }
 
     [Fact]
@@ -370,8 +383,8 @@ public class ContinueOnTrackCoordinatorTests
         coordinator.Handle(OnTrack(newTrack, mediaPos: 12.5), ltcSeconds: 12.5);
 
         rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
-        // 測定していないので、次のフレームで学習値は変わらない。
-        lead.ObserveFrameReady(long.MaxValue / 2, generation: int.MaxValue, sourceSequence: 1);
+        // 測定していないので、次の評価のずれで学習値は変わらない。
+        lead.ObserveFirstResidual(newTrack.Id, 2.0);
         lead.LeadForTrack(newTrack.Id).Should().BeApproximately(0.3, 1e-6);
     }
 
