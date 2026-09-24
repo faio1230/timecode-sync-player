@@ -49,6 +49,10 @@ internal readonly record struct FollowWindow(
 /// StallUpdateWindows はアプリが 0 更新と報告した窓だけを数える（判定対象）。
 /// WindowsWithoutPerf は `Playback perf` 行が 1 本も無く、0 更新と報告されていない窓で、
 /// 凍結の判定には数えない（報告には残す）。SeekSpans は検出したシーク区間の一覧。
+/// LtcStalledWindows は「標本はあるのに LTC が窓長の半分も進まなかった」窓で、
+/// アプリではなく送出側（試験装置）が止まったことを表す。4 時間の連続追従で LTC が
+/// 54.4 分で静かに止まったとき、この数が無かったために「誤差 11134 秒」という
+/// 読み取れない結果だけが残った。
 /// </summary>
 internal sealed record ContinuousFollowSummary(
     IReadOnlyList<FollowWindow> Windows,
@@ -67,7 +71,8 @@ internal sealed record ContinuousFollowSummary(
     int WindowsWithoutPerf,
     IReadOnlyList<FollowSeekSpan> SeekSpans,
     double SeekSecondsTotal,
-    double LongestSeekSeconds);
+    double LongestSeekSeconds,
+    int LtcStalledWindows);
 
 /// <summary>
 /// L-1: 連続追従（Single・1 トラック内）の詰まり監査。UI に依存しない純関数で、
@@ -261,6 +266,8 @@ internal static class ContinuousFollowAudit
             audited.Count(window => window.PerfSegments == 0),
             seekSpans,
             seekSpans.Sum(span => span.DurationSeconds),
-            seekSpans.Count == 0 ? 0.0 : seekSpans.Max(span => span.DurationSeconds));
+            seekSpans.Count == 0 ? 0.0 : seekSpans.Max(span => span.DurationSeconds),
+            // LTC そのものが止まった窓。標本が取れていて、なお LTC が窓長の半分も進まない。
+            audited.Count(window => window.Samples > 0 && window.LtcAdvance < sparseThreshold));
     }
 }

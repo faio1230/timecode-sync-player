@@ -28,22 +28,63 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection("E2E")]
-public sealed class LtcScenarioE2ETests
+public sealed partial class LtcScenarioE2ETests
 {
+    private const double DefaultLtcFps = 25.0;
+    private const string LtcFpsVariable = "TCS_LTC_FPS";
     /// <summary>
     /// 送る LTC の fps。既定は 25（既存のシナリオはすべて 25 で組んである）。
     /// TCS_E2E_LTC_FPS に 24 / 25 / 30 を入れると変えられる（U-1 のフレームレート比較用）。
     /// </summary>
-    private static readonly int LtcFps = ParseLtcFps(Environment.GetEnvironmentVariable("TCS_E2E_LTC_FPS"));
-
     internal static int ParseLtcFps(string? value) =>
         int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fps) && fps is 24 or 25 or 30
             ? fps
             : 25;
     private const string ProjectVariable = "TIMECODE_LTC_SCENARIO_PROJECT";
     private const string ReportVariable = "TIMECODE_LTC_SCENARIO_REPORT_DIR";
+
+    // "1" のとき、各シナリオは事前確認（重い処理・区間・黒い参照）だけして Skip で終える（空振り）。
+    private const string PreflightOnlyVariable = "TCS_PREFLIGHT_ONLY";
+
+    // 事前確認: 各トラックの使う区間の最短（S-2 が頭から 15 秒先まで跳ぶため）。
+    private const double MinUsedSeconds = 15.0;
     private const string CyclesVariable = "TIMECODE_LTC_SCENARIO_CYCLES";
     private const double PositionToleranceSeconds = 0.3;
+
+    /// <summary>
+    /// The production soak matrix uses fixed-rate LTC. 29.97 is intentionally not
+    /// accepted here yet: the app's selector is 29.97 DF, while the current test
+    /// signal generator numbers 29.97 frames as NDF.
+    /// </summary>
+    private static double LtcFps
+    {
+        get
+        {
+            string? value = Environment.GetEnvironmentVariable(LtcFpsVariable);
+            // 開発機の U-1 は TCS_E2E_LTC_FPS で fps を変える。runner は TCS_LTC_FPS を使う。どちらでもよい。
+            if (string.IsNullOrWhiteSpace(value))
+                value = Environment.GetEnvironmentVariable("TCS_E2E_LTC_FPS");
+            if (string.IsNullOrWhiteSpace(value))
+                return DefaultLtcFps;
+            if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double fps) ||
+                !IsSupportedScenarioLtcFps(fps))
+                throw new InvalidOperationException(
+                    $"{LtcFpsVariable} must be one of 24, 25, or 30 (actual: '{value}').");
+            return Math.Round(fps);
+        }
+    }
+
+    private static bool IsSupportedScenarioLtcFps(double fps) =>
+        Math.Abs(fps - 24.0) < 0.001 || Math.Abs(fps - 25.0) < 0.001 ||
+        Math.Abs(fps - 30.0) < 0.001;
+
+    private static int LtcFpsComboIndex(double fps) => (int)Math.Round(fps) switch
+    {
+        24 => 1,
+        25 => 2,
+        30 => 4,
+        _ => throw new ArgumentOutOfRangeException(nameof(fps)),
+    };
 
     // S-2: 停止モードは停止時に同期コントローラが保持値へ着地シークを 1 回発行するため、
     // 同期コーディネーターのシークと着地シークの両方を成功シークとして数える。
@@ -101,8 +142,14 @@ public sealed class LtcScenarioE2ETests
     public void S2_Single_RepeatedLtcJumps_LandWithinTolerance() => Run("S-2", continueMode: false, blackGap: true, scenario =>
     {
         int cycles = scenario.StressCycles(10);
-        double low = scenario.A.Start + 3;
-        double high = Math.Min(scenario.A.Start + 15, scenario.A.End - 0.5);
+        // Single は LTC＝メディア時刻なので、クリップ内の点は MediaIn/MediaOut で選ぶ（タイムラインの
+        // Start は MediaIn が 5 のときだけ一致する。MediaIn 182 の実素材で全部クリップ外になった）。
+        double low = scenario.A.MediaIn.TotalSeconds + 3;
+        double high = Math.Min(scenario.A.MediaIn.TotalSeconds + 15, scenario.A.MediaOut.TotalSeconds - 0.5);
+        string? s2Range = ScenarioPreflight.CheckRange("S-2 の跳び先", low, high - low,
+            scenario.A.MediaIn.TotalSeconds, scenario.A.MediaOut.TotalSeconds);
+        if (s2Range is not null)
+            scenario.Invalid(s2Range);
         scenario.SetSync(true);
         // D27: 停止モードで回す。保持中は位置が保持値で止まる（ランスルーでは走り続けるのが仕様）。
         scenario.SetSignalLossMode(stop: true);
@@ -132,7 +179,8 @@ public sealed class LtcScenarioE2ETests
     public void S3_Single_OutOfRangeLtc_StopsAtTrackEnd() => Run("S-3", continueMode: false, blackGap: true, scenario =>
     {
         // Single は LTC をメディア位置へ絶対マップし、製品と同じ [MediaIn, MediaOut] へクランプする（MediaOut 未設定は尺）。範囲外は終端で止まる。
-        double outOfRange = scenario.A.End + 15;
+        // 終端より後ろ（Single は LTC＝メディア時刻なので MediaOut 基準）。
+        double outOfRange = scenario.A.MediaOut.TotalSeconds + 15;
         scenario.SetSync(true);
         scenario.Hold(outOfRange, 6);
 
@@ -145,7 +193,7 @@ public sealed class LtcScenarioE2ETests
             6, "範囲外 LTC で A の終端に止まる");
         scenario.WaitReference("s3-tail", scenario.A.Symbol, "tail", 2.5, "終端フレームは A の最終フレーム");
 
-        scenario.Hold(scenario.A.Start + 5, 6);
+        scenario.Hold(scenario.A.MediaIn.TotalSeconds + 5, 6);
         scenario.WaitUntil(
             () => Math.Abs(scenario.Position() - scenario.A.SingleTarget(scenario.LtcSeconds())) <= PositionToleranceSeconds,
             6, "LTC を戻すと復帰する");
@@ -402,8 +450,14 @@ public sealed class LtcScenarioE2ETests
     {
         double startLtc = track.MediaIn.TotalSeconds + 2.0;
         // ゲート待ちの間もフレームを流し続ける必要があるため、素材の終端手前まで送る。
-        double signalSeconds = track.Used - startLtc - 1.0;
+        // Single では LTC＝メディア時刻なので、終端は MediaOut で測る（以前は使用尺から引いており、
+        // MediaIn 5 のときは 5 秒短いだけで済んだが、MediaIn が大きいと負になって開始できなかった）。
+        double signalSeconds = track.MediaOut.TotalSeconds - startLtc - 1.0;
         double signalEndLtc = startLtc + signalSeconds;
+        string? l1Range = ScenarioPreflight.CheckRange($"L-1 {track.Symbol} の LTC", startLtc, signalSeconds,
+            track.MediaIn.TotalSeconds, track.MediaOut.TotalSeconds);
+        if (l1Range is not null)
+            scenario.Invalid(l1Range);
         scenario.Play(startLtc, signalSeconds);
 
         // 画面から読む誤差は 1 標本だと跳ねる（実測で真の誤差 1.8 秒のときに 0.033 秒と読めた）。
@@ -490,18 +544,19 @@ public sealed class LtcScenarioE2ETests
         {
             // LTC と位置は UI Automation で別々に読むため、順に読むと「LTC は位置より
             // 読み取り時間だけ前の値」になり、誤差に系統バイアスが乗る（検証機の実測で
-            // 読みが遅い素材ほど誤差が大きく見えた）。LTC を位置の前後で読んで平均し、
-            // 位置を読んだ瞬間の LTC に合わせる。ReadSkew は残して後から検算できるようにする。
+            // 読みが遅い素材ほど誤差が大きく見えた）。LTC は実時間と同じ速さで進むので、
+            // 読み取り時刻の差だけ進めて、位置を読んだ瞬間に合わせる。前後 2 回読む形も
+            // 試したが、1 標本あたりの読みが 3 回になって標本数が 2/3 に減り、読みが遅い
+            // 素材で窓あたりの標本が足りなくなった。読みは 2 回のままにする。
             double elapsed = (DateTime.Now - startedAt).TotalSeconds;
-            DateTime readStartedAt = DateTime.Now;
-            double ltcBefore = scenario.LtcSeconds();
+            DateTime ltcStartedAt = DateTime.Now;
+            double ltcRaw = scenario.LtcSeconds();
+            DateTime ltcEndedAt = DateTime.Now;
             double position = scenario.Position();
-            double ltcAfter = scenario.LtcSeconds();
-            double readSeconds = (DateTime.Now - readStartedAt).TotalSeconds;
-            double ltc = double.IsFinite(ltcBefore) && double.IsFinite(ltcAfter)
-                ? (ltcBefore + ltcAfter) / 2.0
-                : (double.IsFinite(ltcBefore) ? ltcBefore : ltcAfter);
-            samples.Add(new FollowSample(elapsed, ltc, position, readSeconds / 2.0));
+            DateTime positionEndedAt = DateTime.Now;
+            double skewSeconds =
+                ((positionEndedAt - ltcEndedAt).TotalSeconds + (ltcEndedAt - ltcStartedAt).TotalSeconds) / 2.0;
+            samples.Add(new FollowSample(elapsed, ltcRaw + skewSeconds, position, skewSeconds));
             Thread.Sleep(50);
         }
 
@@ -568,6 +623,10 @@ public sealed class LtcScenarioE2ETests
             settlingMaxAbsError = JsonNumberOrNull(summary.SettlingMaxAbsError),
             sparseWindows = summary.SparseWindowCount,
             thinWindows = summary.ThinWindowCount,
+            // 送出側（試験装置）が止まった窓。アプリの数値より先にこれを見る。
+            ltcStalledWindows = summary.LtcStalledWindows,
+            ltcSentFrames = scenario.Signal.SentFrames,
+            ltcPlannedFrames = scenario.Signal.PlannedFrames,
             errorUndecidable = summary.ErrorUndecidable,
             minSamplesForError = ContinuousFollowAudit.MinSamplesForError,
             stallUpdateWindows = summary.StallUpdateWindows,
@@ -598,6 +657,15 @@ public sealed class LtcScenarioE2ETests
             $"・perf 行なし {summary.WindowsWithoutPerf} 窓";
         summary.Windows.Count(window => !window.Settling)
             .Should().BeGreaterThan(0, $"{track.Symbol}: 判定対象の窓が 1 つ以上ある（{excluded}）");
+        // アプリの数値を読む前に、LTC が最後まで流れたことを確かめる。4 時間の連続追従で
+        // 送出が 54.4 分で静かに止まり、「誤差 11134 秒」という読み取れない結果だけが残った。
+        // 送出側が止まっているときは、アプリの誤差は意味を持たない。
+        long missingFrames = scenario.Signal.PlannedFrames - scenario.Signal.SentFrames;
+        summary.LtcStalledWindows.Should().Be(0,
+            $"{track.Symbol}: LTC が最後まで流れている（止まって見える窓 {summary.LtcStalledWindows} / " +
+            $"{summary.Windows.Count(window => !window.Settling)}、送出 {scenario.Signal.SentFrames} / " +
+            $"{scenario.Signal.PlannedFrames} フレーム＝不足 {missingFrames / LtcFps:F1} 秒）。" +
+            "アプリではなく試験装置側の問題として先に見る");
         summary.StallUpdateWindows.Should().Be(0,
             $"{track.Symbol}: 判定対象で frameUpdates=0 の窓が無い（{excluded}、最悪 {WindowDetail(summary.WorstUpdates)}）");
         summary.StallAdvanceWindows.Should().Be(0,
@@ -1167,7 +1235,7 @@ public sealed class LtcScenarioE2ETests
             body(scenario);
             scenario.VerifyAndExit();
         }
-        catch (Exception error)
+        catch (Exception error) when (error is not SkipException)
         {
             scenario.Journal.Write("failure", details: new { error = error.ToString() });
             throw;
@@ -1192,7 +1260,7 @@ public sealed class LtcScenarioE2ETests
 
     private sealed record PerfSegment(DateTime At, double ElapsedSeconds, int FrameUpdates);
 
-    private sealed class Scenario : IDisposable
+    private sealed partial class Scenario : IDisposable
     {
         private readonly string _exePath;
         private readonly DateTime _startedAt;
@@ -1275,12 +1343,42 @@ public sealed class LtcScenarioE2ETests
                 scenario.Signal = signal!;
                 scenario.Journal.Write("scenario-start", details: new
                 {
-                    testId, continueMode, blackGap, isDefaultProject,
+                    testId, continueMode, blackGap, isDefaultProject, ltcFps = LtcFps,
                     tracks = tracks.Select(t => new { t.Symbol, t.Start, t.End, t.Used, t.MediaIn, t.MediaOut, t.Duration, t.FrameRate }),
                 });
+                // 事前確認 1: 重い処理と重なっていない（重なった回は UIA の読みが遅れて無効になる）。
+                string? busy = ScenarioPreflight.CheckMachineIdle();
+                if (busy is not null)
+                    scenario.Invalid(busy);
+                // 事前確認 2: 各トラックの区間が素材の中に収まる。
+                foreach (TrackInfo track in tracks)
+                {
+                    string? range = ScenarioPreflight.CheckRange($"{track.Symbol} の区間",
+                        track.MediaIn.TotalSeconds, track.Used, 0.0, track.Duration.TotalSeconds);
+                    if (range is not null)
+                        scenario.Invalid(range);
+                    // 生成スクリプトは MediaIn + 区間が尺を越えると黙って尺で切る。S-2 は頭から 15 秒先まで
+                    // 跳ぶので、それより短い区間では試験の前提が崩れる（MediaIn 240 の空振りで 11 秒になり、
+                    // 末尾の参照のシークが届かずに失敗した）。
+                    if (track.Used < MinUsedSeconds - 1e-6)
+                        scenario.Invalid($"{track.Symbol} の使う区間が {track.Used:F1}s しかない（{MinUsedSeconds:F0}s 未満。MediaIn が素材の終わりに近すぎる）");
+                }
+
                 scenario.StartApp(projectPath);
                 scenario.ConfigureLtc();
                 scenario.CaptureReferences();
+                // 事前確認 3: 使う区間が黒一色でない。頭が黒いだけなら正当（黒からのフェードイン）なので
+                // 警告に留め、頭も末尾も黒いトラックだけを無効にする（候補 4 の HAP 実素材は冒頭 16〜48 秒が真っ黒で、
+                // 絵が出たかを判定できずに L-2 の入りが全部時間切れになった）。
+                if (!isDefaultProject)
+                    scenario.CheckReferencesNotBlack();
+                // 空振り（事前確認だけ）: 事前確認を通ったことを残して、本体を回さずに終える。
+                if (Environment.GetEnvironmentVariable(PreflightOnlyVariable) == "1")
+                {
+                    scenario.Journal.Write("preflight-ok", details: new { testId });
+                    Skip.If(true, "事前確認のみ（通過）");
+                }
+
                 scenario.PrepareForTest(continueMode, blackGap);
                 return scenario;
             }
@@ -1324,8 +1422,14 @@ public sealed class LtcScenarioE2ETests
             if (!File.Exists(settingsPath))
                 File.WriteAllText(settingsPath, E2ESettingsIsolation.SeedJson("{\n  \"isMuted\": true\n}\n"));
 
+            // ネイティブ側のロード内訳には素材パスが含まれるため、run 固有の結果フォルダーへ
+            // 隔離する。Git 管理する集計へは LongRunTelemetryAudit の匿名数値だけを渡す。
+            var environment = new Dictionary<string, string?>
+            {
+                ["TCS_LOG_FILE"] = Path.Combine(ReportDir, "tcs-gst-raw.log"),
+            };
             App = E2EAppRunner.Start(_exePath, $"--load-project \"{projectPath}\"",
-                settingsPath, pausePlaybackIfNeeded: false);
+                settingsPath, pausePlaybackIfNeeded: false, environment: environment);
             MonkeyJson.WriteAppProcessMarker(Path.Combine(ReportDir, "app-process.json"), App.Process);
 
             DateTime? appStartedAt = null;
@@ -1347,12 +1451,10 @@ public sealed class LtcScenarioE2ETests
                 return index >= 0;
             }, 8, "CABLE Output の列挙");
             devices.Select(index);
-            // コンボの並び: 0=Auto / 1=24 / 2=25 / 3=29.97 / 4=30（TimecodeFpsMode と同じ）。
-            int fpsIndex = LtcFps switch { 24 => 1, 30 => 4, _ => 2 };
-            App.Combo("LtcFpsModeCombo").Select(fpsIndex);
-            string fpsText = LtcFps.ToString(CultureInfo.InvariantCulture);
-            WaitUntil(() => App.Combo("LtcFpsModeCombo").SelectedItem?.Name.Contains(fpsText, StringComparison.Ordinal) == true,
-                3, $"LTC {fpsText}fps 固定");
+            string fpsLabel = ((int)LtcFps).ToString(CultureInfo.InvariantCulture);
+            App.Combo("LtcFpsModeCombo").Select(LtcFpsComboIndex(LtcFps));
+            WaitUntil(() => App.Combo("LtcFpsModeCombo").SelectedItem?.Name.Contains(fpsLabel, StringComparison.Ordinal) == true,
+                3, $"LTC {fpsLabel}fps 固定");
             App.Combo("LtcSignalLossModeCombo").Select(0);
         }
 
@@ -1363,6 +1465,25 @@ public sealed class LtcScenarioE2ETests
         /// 前の採取と同じ絵でも位置が入れば採用する）。3 秒経っても位置が動かなければ同じ目標へ
         /// 1 回だけ再シークする。
         /// </summary>
+        private readonly Dictionary<string, (bool Head, bool Tail)> _referenceBlack = new();
+
+        /// <summary>事前確認で当たったら、理由を残してこの回を「無効」で終える（Skip 扱い）。</summary>
+        public void Invalid(string reason)
+        {
+            Journal.Write("preflight-invalid", details: new { reason });
+            Skip.If(true, $"無効（{reason}）");
+        }
+
+        /// <summary>頭も末尾も黒いトラックがあれば無効、頭だけ黒ければ警告を残す。</summary>
+        public void CheckReferencesNotBlack()
+        {
+            var bothBlack = _referenceBlack.Where(pair => pair.Value.Head && pair.Value.Tail).Select(pair => pair.Key).ToList();
+            foreach (var pair in _referenceBlack.Where(pair => pair.Value.Head && !pair.Value.Tail))
+                Journal.Write("preflight-warning", details: new { track = pair.Key, reason = "頭の参照が黒（フェードインなら正当）" });
+            if (bothBlack.Count > 0)
+                Invalid($"使う区間の頭と末尾が黒: {string.Join(", ", bothBlack)}（MediaIn をずらすこと）");
+        }
+
         private void CaptureReferences()
         {
             SetSync(false);
@@ -1380,6 +1501,7 @@ public sealed class LtcScenarioE2ETests
                 Seek(tail);
                 FrameSignature tailSignature = CaptureReferenceAfterSeek(track, "tail", tail, head);
                 References.Add(track.Symbol, "tail", $"ref_{track.Symbol}_tail", tailSignature);
+                _referenceBlack[track.Symbol] = (head.IsBlack, tailSignature.IsBlack);
                 Journal.Write("reference-captured", details: new
                 {
                     symbol = track.Symbol,
@@ -1489,6 +1611,14 @@ public sealed class LtcScenarioE2ETests
         public void Play(double startSeconds, double durationSeconds) =>
             Signal.Play(ToTimecode(startSeconds), LtcFps, TimeSpan.FromSeconds(durationSeconds));
 
+        /// <summary>L-2: プレイリスト 1 周ぶんを繰り返し送る（周回のたびに先頭へ戻る）。</summary>
+        public void PlayRepeating(double startSeconds, double lapSeconds, double totalSeconds) =>
+            Signal.PlayRepeating(ToTimecode(startSeconds), LtcFps,
+                TimeSpan.FromSeconds(lapSeconds), TimeSpan.FromSeconds(totalSeconds));
+
+        /// <summary>L-2: PNG を残さずに今の絵を測る（切替ごとに何十回も見るため）。</summary>
+        public FrameSignature Measure() => LtcScenarioFrameProbe.Measure(App);
+
         public void Hold(double targetSeconds, double durationSeconds = 2.5)
         {
             Signal.PlayHeld(targetSeconds, LtcFps, TimeSpan.FromSeconds(Math.Max(2.5, durationSeconds)));
@@ -1504,9 +1634,11 @@ public sealed class LtcScenarioE2ETests
 
         private static LtcTimecode ToTimecode(double seconds)
         {
-            int frame = (int)Math.Round(seconds * LtcFps);
+            int nominalFps = (int)Math.Round(LtcFps);
+            int frame = (int)Math.Round(seconds * nominalFps);
             return new LtcTimecode(
-                frame / (LtcFps * 3600), frame / (LtcFps * 60) % 60, frame / LtcFps % 60, frame % LtcFps, false);
+                frame / (nominalFps * 3600), frame / (nominalFps * 60) % 60,
+                frame / nominalFps % 60, frame % nominalFps, false);
         }
 
         // ---- UI ----
