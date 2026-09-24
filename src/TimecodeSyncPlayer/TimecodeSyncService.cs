@@ -10,6 +10,7 @@ public sealed class TimecodeSyncService
     private readonly ITimecodeSyncSeekState _seekState;
     private readonly TimeProvider _timeProvider;
     private readonly SeekLatencyCompensator _latencyCompensator;
+    private long _fileLoadEpoch;
     // D37-b: シーク中・着地未確認の位置を判定に使わないための状態。
     private readonly PlaybackPositionTrust _positionTrust = new();
     // 0.4.5-A フェーズ 1: 評価位置（基準・世代から求めた shadow）を trace に併記する。
@@ -428,6 +429,7 @@ public sealed class TimecodeSyncService
     internal void BeginFileLoad(double startPositionSeconds, long renderedFrameCount, long loadIssuedQpc)
     {
         _latencyCompensator.MarkLoadSent(loadIssuedQpc);
+        _fileLoadEpoch++;
         _isLoadingFile = true;
         _fileLoadReleasePending = false;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
@@ -536,6 +538,12 @@ public sealed class TimecodeSyncService
 
     /// <summary>先行補償の学習状態（トラックの引き当てとフレーム Ready 通知に使う）。</summary>
     internal SeekLatencyCompensator LatencyCompensator => _latencyCompensator;
+
+    /// <summary>
+    /// v0.5.1: ファイルを読み込むたびに 1 つ進む番号。読み込みをまたいで持ち越してはいけない判断
+    /// （Single の端へのシークを出したかどうか）を、読み込みごとに区切るために使う。
+    /// </summary>
+    internal long FileLoadEpoch => _fileLoadEpoch;
 
     private double NowSeconds() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0;
 

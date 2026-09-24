@@ -519,6 +519,52 @@ public class SingleModeSyncCoordinatorTests
     }
 
     [Fact]
+    public void Apply_LtcBeforeClipIn_HeldAtIn_ThenAnotherFileLoads_SeeksTheNewFileToClipIn()
+    {
+        // 検証機の S-4（クリップ [182,202]、LTC 35 で停止）: B で入口へシークしてホールドした後に C を読み込むと、
+        // v0.5.0 は B で出した「入口へのシーク」を持ち越し、C の位置 0 を入口に着いたとみなして
+        // シークせずに頭から流していた。読み込みごとに区切り、C もまず入口へシークしてからホールドする。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 24, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState(), clock);
+        double playback = 0.0;
+        var seekCalls = new List<double>();
+        var holdCalls = new List<bool>();
+        var coordinator = new SingleModeSyncCoordinator(
+            service,
+            new SingleModeSyncEffects(
+                ReadPosition: () => new SyncPositionRead(true, playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 182.0, mediaOut: 202.0, duration: 300.0),
+                SeekTo: t => { seekCalls.Add(t); return true; },
+                SetEndHold: held => holdCalls.Add(held)));
+
+        void ApplyRepeatedly(int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(100));
+                coordinator.Apply(ltcSeconds: 35.0);
+            }
+        }
+
+        service.BeginFileLoad(0.0, 0);                 // B を読み込む
+        service.TryMarkFileLoaded(0.2, 10);
+        playback = 0.2;
+        ApplyRepeatedly(10);
+        seekCalls.Should().Equal(182.0);
+        playback = 182.0;                              // 入口に着地
+        ApplyRepeatedly(10);
+        holdCalls.Should().Equal(true);
+
+        service.BeginFileLoad(0.0, 0);                 // C を読み込む（位置 0 付近から再生が始まる）
+        service.TryMarkFileLoaded(0.2, 10);
+        playback = 0.2;
+        ApplyRepeatedly(10);
+
+        holdCalls.Should().StartWith(new[] { true, false }, "前のファイルのホールドは解除する");
+        seekCalls.Should().Equal(new[] { 182.0, 182.0 }, "C もまず入口へシークする");
+    }
+
+    [Fact]
     public void Apply_LtcAboveClipOut_PlaybackFarBeyondClipOut_SeeksBackToClipOut()
     {
         // 出口の外側（50 秒）にいるときも、まず出口へシークしてからホールドする。

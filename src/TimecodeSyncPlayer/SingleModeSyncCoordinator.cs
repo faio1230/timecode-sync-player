@@ -21,6 +21,10 @@ internal sealed class SingleModeSyncCoordinator
     // 端の外側に着地しても「端に着いた」とみなしてホールドする。出す前は、端の ±2 フレームに
     // いるときだけホールドし、それ以外はまず端へシークする。
     private double? _boundarySeekTarget;
+    // v0.5.1: その端へのシークを出したときの読み込み番号。別のファイルを読み込んだ後には持ち越さない
+    // （v0.5.0 では持ち越したため、クリップの入口より手前の LTC でホールド中にトラックを切り替えると、
+    // 新しいトラックの位置 0 を「入口に着いた」とみなし、シークせずに頭から流していた。検証機の S-4）。
+    private long _boundarySeekEpoch;
 
     /// <summary>D35-b: 終端ホールド中か（保持値への明示着地を抑止する判定に使う）。</summary>
     public bool IsBoundaryHeld => _clipBoundaryHeld;
@@ -206,7 +210,8 @@ internal sealed class SingleModeSyncCoordinator
     /// （ホールド中に残った端への pending が、新しい範囲内 LTC への着地シークを抑止するのを防ぐ）。
     /// </summary>
     private bool BoundarySeekSentTo(double edge, double tolerance) =>
-        _boundarySeekTarget is double target && Math.Abs(target - edge) <= tolerance;
+        _boundarySeekTarget is double target && Math.Abs(target - edge) <= tolerance &&
+        _boundarySeekEpoch == _syncService.FileLoadEpoch;
 
     /// <summary>端へのシーク（範囲外 LTC の着地先）を出したことを覚える。</summary>
     private void NoteBoundarySeek(double targetSeconds, SyncPlaybackState state)
@@ -219,6 +224,7 @@ internal sealed class SingleModeSyncCoordinator
         _boundarySeekTarget = Math.Abs(targetSeconds - clipIn) <= tolerance ? clipIn
             : double.IsFinite(clipOut) && Math.Abs(targetSeconds - clipOut) <= tolerance ? clipOut
             : null;
+        _boundarySeekEpoch = _syncService.FileLoadEpoch;
     }
 
     private void ReleaseBoundaryHold(string suffix, double ltcSeconds, double playbackSeconds,
