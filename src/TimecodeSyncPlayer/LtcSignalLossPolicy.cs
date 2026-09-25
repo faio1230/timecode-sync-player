@@ -128,10 +128,8 @@ internal sealed class LtcSignalLossPolicy
         if (_consecutiveResumeFrames < _resumeFrameCount)
             return LtcSignalLossAction.None;
 
-        bool canApplyPolicyOwnedResume =
-            context.SyncEnabled &&
-            context.IsMonitoring &&
-            !context.IsGapActive;
+        bool canApplyPolicyOwnedResume = SyncRules.CanResumeAfterSignalLoss(
+            context.SyncEnabled, context.IsMonitoring, context.IsGapActive);
         if (_pausedByPolicy && !canApplyPolicyOwnedResume)
             return LtcSignalLossAction.None;
 
@@ -189,10 +187,8 @@ internal sealed class LtcSignalLossPolicy
             (_reason != LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(receivedAtMilliseconds)))
             return LtcSignalLossAction.None;
 
-        bool canApplyPolicyOwnedResume =
-            context.SyncEnabled &&
-            context.IsMonitoring &&
-            !context.IsGapActive;
+        bool canApplyPolicyOwnedResume = SyncRules.CanResumeAfterSignalLoss(
+            context.SyncEnabled, context.IsMonitoring, context.IsGapActive);
         if (_pausedByPolicy && !canApplyPolicyOwnedResume)
             return LtcSignalLossAction.None;
 
@@ -260,12 +256,9 @@ internal sealed class LtcSignalLossPolicy
 
     private LtcSignalLossAction EvaluatePause(LtcSignalLossContext context)
     {
-        if (context.Mode != LtcSignalLossMode.Stop ||
-            !context.SyncEnabled ||
-            context.IsGapActive ||
-            context.IsPlaybackPaused ||
-            _pausedByPolicy ||
-            _manualResumeSuppressesPause)
+        if (!SyncRules.CanPauseForSignalLoss(
+                context.Mode, context.SyncEnabled, context.IsGapActive,
+                context.IsPlaybackPaused, _pausedByPolicy, _manualResumeSuppressesPause))
         {
             return LtcSignalLossAction.None;
         }

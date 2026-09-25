@@ -259,9 +259,12 @@ internal sealed class LtcSyncController
     {
         _input.DiscardPendingSync();
         LtcSyncContext state = _effects.GetContext();
-        if (_input.Accepted is not { } accepted || !state.IsMonitoring ||
-            !state.SyncEnabled || state.IsSeeking || _signalLoss.ShouldSuppressSync)
+        LtcInputState.AcceptedFrame? acceptedOrNull = _input.Accepted;
+        if (!SyncRules.CanReapplyLastAccepted(
+                acceptedOrNull.HasValue, state.IsMonitoring,
+                state.SyncEnabled, state.IsSeeking, _signalLoss.ShouldSuppressSync))
             return;
+        LtcInputState.AcceptedFrame accepted = acceptedOrNull.GetValueOrDefault();
 
         bool stale = IsStaleReapply(accepted.FrameEndTimestamp);
         if (_sampleClockEnabled && accepted.FrameEndTimestamp > 0)
@@ -773,7 +776,8 @@ internal sealed class LtcSyncController
             return;
 
         LtcSyncContext state = _effects.GetContext();
-        if (!state.IsPlayerReady || !state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
+        if (!SyncRules.CanReapplyAfterFileLoadRelease(
+                state.IsPlayerReady, state.IsMonitoring, state.SyncEnabled, state.IsSeeking))
             return;
         // Single は尺が使えるまで待つ（保持値の clamp 着地先が決まらないため）。
         if (state.Mode != SyncMode.Continue && !SeekBarUpdateState.IsUsableDuration(state.DurationSeconds))
@@ -800,12 +804,10 @@ internal sealed class LtcSyncController
             return;
 
         LtcSyncContext state = _effects.GetContext();
-        if (!state.SyncEnabled || !state.IsMonitoring || state.IsPlaybackPaused || state.IsSeeking)
-            return;
-        if (_syncService.SeekState.HasPendingSeek)
-            return;
         // D37-b: シーク中・着地未確認の位置では補正を評価しない。
-        if (!_syncService.IsPlaybackPositionUsable)
+        if (!SyncRules.CanEvaluateCorrection(
+                state.SyncEnabled, state.IsMonitoring, state.IsPlaybackPaused, state.IsSeeking,
+                _syncService.SeekState.HasPendingSeek, _syncService.IsPlaybackPositionUsable))
             return;
 
         if (_rate.RateRestorePending)
@@ -1082,7 +1084,7 @@ internal sealed class LtcSyncController
         {
             // D35-b: D33 の境界ホールド中は端で受け持つ。端への明示着地は保留シークを作り、
             // 解除時の範囲内 LTC への着地を抑止するため発行しない。
-            if (_single().IsBoundaryHeld)
+            if (SyncRules.ShouldSkipHeldLanding(_single().IsBoundaryHeld))
             {
                 _input.MarkHeldLossLanding(heldSeconds);
                 Log.Debug(
@@ -1144,8 +1146,9 @@ internal sealed class LtcSyncController
     {
         _lastContinueFrame = null;
         LtcSyncContext state = _effects.GetContext();
-        if (!state.IsPlayerReady || !state.IsMonitoring || !state.SyncEnabled ||
-            state.IsSeeking || _signalLoss.ShouldSuppressSync)
+        if (!SyncRules.CanApplySync(
+                state.IsPlayerReady, state.IsMonitoring, state.SyncEnabled,
+                state.IsSeeking, _signalLoss.ShouldSuppressSync))
             return SyncRequestResult.Complete;
         // D37-c: 追従開始の最初の同期評価は、D37-b2 の着地窓と同じ扱いにする
         // （着地まで速度補正を優先せず、シークで詰める）。古い値の再適用（gapDisplayOnly）では
