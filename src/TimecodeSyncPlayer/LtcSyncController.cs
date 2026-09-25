@@ -629,7 +629,13 @@ internal sealed class LtcSyncController
                 {
                     ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
                     if (!_signalLoss.IsLost)
+                    {
+                        // v0.5.3 段 3k: 復帰したので、Jump 前の古い保持値と保持着地の記録を
+                        // 下ろす（§6 の 4。無音の再損失で古い保持値へ着地しない）。
                         _input.ClearJumpApplied();
+                        _input.ClearHeldLossLanding();
+                        _input.ClearHeldEffective();
+                    }
                 }
                 // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
                 if (!_input.JumpAppliedOnce)
