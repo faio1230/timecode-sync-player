@@ -2,6 +2,45 @@
 
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
+> **2026-09-25 14:25 更新（交代、Claude Opus 5.5 → 後任）**: **v0.5.1 を公開済み。v0.5.2 は段 0 まで完了、次は段 1。**
+> 交代の理由はコンテキストの上限（利用者の指示）。後任が最初に読むもの:
+> 1. この更新（現在地）と `docs/STATUS.md`
+> 2. `docs/design/v0.5.2-sync-state.md` の §3・§5・§7（承認済みの設計、版の分け方、決定事項）
+> 3. `tests/TimecodeSyncPlayer.Tests/LatchLifetime/LatchLifetimeTable.cs`（承認済みの寿命の表。段 1 の配線の入力）
+>
+> **公開**: v0.5.1 (beta) 2026-09-24 13:50、main = タグ `v0.5.1` = `767e326`。zip `5FEA1D93…1C1D` / setup.exe `CCFD4174…6BC0`。
+> 中身: 同じトラック内の LTC の Jump も次フレームで確認、v0.5.0 の Single の S-4（端へのシーク記録を読み込みまたぎで持ち越し）修正、
+> プレビュー停止のログ、位置読み取りの一体化・ギャップ確定の整理。切替の先回り読み込みは利用者判断で見送り
+> （推奨素材で足りる。ProRes はハードウェアデコーダーを別途開発中、長 GOP は書き出し直す方針）。
+> 既知の制限: まれにプレビューだけ黒にならない（出力と Spout は黒。原因未確定、`Preview stalled:` で記録）。
+>
+> **作業ツリーとブランチ**:
+> - `timecode-sync-player`（main、`767e326`）: **利用者の未コミットの変更がある**（README.md、docs/ARCHITECTURE.md、
+>   scripts/make-ltc-scenario-project.ps1、scripts/run-ltc-scenarios.ps1、docs/ROADMAP.md ほか）。触らない。
+>   v0.5.2 の harness パッチが後者 2 本を大きく変えるので、v0.5.2 を main へ入れる前に利用者に扱いを確認する
+> - `timecode-sync-player-v05`（ブランチ `v0.5.2`、`3378434`）: 作業場所。push 済み。ブランチ `v0.5.1` は `767e326`（公開済み）
+> - `timecode-sync-player-hotfix`（`hotfix/0.4.8-uia-load`、`227e0c0`）: 公開後の 4 件（362d38b、1d1a2fc、42c27a4、227e0c0）は
+>   **すべて v0.5.0 に入って公開済み**。このブランチで追加の作業は無い
+>
+> **v0.5.2 の状態**（設計書が正）:
+> - 承認済み（利用者、TSP-Fable 経由）: v0.5.2 = 段 0〜2 ＋ §6-11（読まれない SeekBarUpdateState の保留の削除）＋ §6-12（一時停止の持ち主を集合にし、空になったときだけ再開）。
+>   v0.5.3 = 段 3（§6 の 2 → 1、3、5、10、8、9 を赤いテストから 1 件 1 コミット）。6・7 は記録のみ、4 は再現テストの後に判断
+> - 段 0 完了（`3378434`）: 25 ラッチ × 17 できごと = 425 行、全 2,557 件緑。表は親が承認（設計書 §8 に方法）。未判断 2 件（§6 の 13・14）
+> - **次は段 1**: できごとを `SyncLifecycleEvent` に集め、`Sync lifecycle: <できごと>` をログに出す。いまラッチを消している場所・条件でだけ出す
+>   （4 経路の読み込みからは出さない）。判定は段 0 の 425 件が緑のまま。表の「現状」の列だけを配線の入力にする
+> - 同等の確かめ方: 固定の一式（標準シナリオ 3 通り＋L-1 6 本＋A 切替、RTX）を **2 回**。`Sync lifecycle:` の列を段 1 直後の候補と段 2 後の候補で突き合わせる
+> - 開発機で先に通す: `scripts/make-heavy-media.ps1`（推奨素材の重い条件、artifacts/media-heavy）で 3 本立て
+> - 同時進行は「候補 1 本 ＋ 解析 1 本」まで
+>
+> **検証機（TSP-TestMachine、Remote Control）**: 待ちの依頼なし。新しい harness（事前確認・計画 LTC・結果 JSON・境目の標本の除外）は
+> 空振りで確認済みで、パッチは v0.5.2 に取り込み済み（`4f597e6`。結果置き場のパスは環境変数 `TCS_LTC_RESULTS_ROOT` に置換）。
+> 報告は回ごとの結果 JSON＋3 行の所見を Taildrop でファイルとして受ける。候補を送るときは ProductVersion（`0.5.1+<SHA>`）を書き添える。
+> 残しているのは候補 5 の結果と v0.5.0 公開版の展開。直近の Taildrop: 開発機→検証機に `tcs-main-767e326.tar`、検証機→開発機に harness パッチ（取り込み済み）。
+>
+> **規則（今回増えたもの、メモリにもある）**: 性能の合否は RTX だけ、AMD は AMD 製 GPU の相性問題の検出だけ／改善は推奨素材で判断し、
+> ProRes・長 GOP のための仕組みを同期の中心に足さない／合否の一式は固定・無効な回は事前確認で止める・設計が固まる前に候補を送らない／
+> 試験データは作業ツリーの `artifactsnalysis-data` に置いて解析後に消す（`scripts/clean-artifacts.ps1`）。
+
 > **2026-09-19 22:55 更新（50 回目、TSP-Opus）**: **v0.4.7 を公開した。目標「v0.4.7 まで自律的に進める」は完了。**
 > タグ `v0.4.7`、main = `b50a180`。zip `FA0ADAEB…C9A3` / setup.exe `EF68372C…06B1`（digest 一致）。
 > https://github.com/faio1230/timecode-sync-player/releases/tag/v0.4.7
