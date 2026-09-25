@@ -321,11 +321,31 @@ public sealed class TimecodeSyncService
                 _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
                 break;
             case SyncLifecycleEvent.SyncModeChanged:
-            case SyncLifecycleEvent.SyncDisabled:
             case SyncLifecycleEvent.TimelineSeek:
                 ClearSeekState();
                 break;
+            case SyncLifecycleEvent.SyncDisabled:
+                ClearSeekState();
+                // v0.5.3 段 3d: 同期の無効化でロード中の印を取り消す（§6 の 3）。
+                CancelFileLoad(evt);
+                break;
+            case SyncLifecycleEvent.PlaybackStopped:
+                // v0.5.3 段 3d: 停止でロード中の印を取り消す（§6 の 3）。
+                CancelFileLoad(evt);
+                break;
         }
+    }
+
+    /// <summary>
+    /// v0.5.3 段 3d: ロード中と解除の回収待ちを取り消す（§6 の 3）。解除（<see cref="ReleaseFileLoad"/>）
+    /// ではないため、着地窓を開かずデバウンスも更新しない。ロード中だったときだけログを 1 行残す。
+    /// </summary>
+    private void CancelFileLoad(SyncLifecycleEvent evt)
+    {
+        bool wasLoading = _fileLoad.IsLoadingFile;
+        _fileLoad.Cancel();
+        if (wasLoading)
+            Log.Information("Timecode sync: file load cancelled by {Event}", evt);
     }
 
     /// <summary>

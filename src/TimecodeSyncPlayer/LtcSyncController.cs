@@ -344,6 +344,8 @@ internal sealed class LtcSyncController
     {
         SyncLifecycle.Record(SyncLifecycleEvent.PlaybackStopped, nameof(PlaybackStopped));
         OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
+        // v0.5.3 段 3d: 停止でロード中の印と解除の回収待ちを取り消す（§6 の 3）。
+        _syncService.OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
         // v0.5.3 段 3c: 再生の停止で Single の境界ホールドのラッチを消す（§6 の 1）。
         _single().OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
     }
