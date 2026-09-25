@@ -6,9 +6,9 @@ namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
 /// v0.5.3 段 3j: §6 の 4 の再現。保持（Duplicate）が理由の損失中に値が動いた Jump 1 枚で
-/// 即時復帰（D27-b）しても、保持値 2 つ（LastHeldEffective / HeldLossLanding）は下りない。
-/// Jump の直後に再び無音で損失すると、古い保持値へ着地するのではないか（段 0 の表は
-/// Keeps・意図 Clear）。製品コードは変えない（直すかは親が決める）。
+/// 即時復帰（D27-b）しても、保持値 2 つ（LastHeldEffective / HeldLossLanding）は下りず、
+/// Jump の直後に再び無音で損失すると古い保持値へ着地していた（段 0 の表は Keeps・意図 Clear）。
+/// v0.5.3 段 3k で直した（Jump の即時復帰で保持値 2 つを下ろす）。
 /// </summary>
 public sealed class HeldLandingAfterJumpReproTests
 {
@@ -77,7 +77,7 @@ public sealed class HeldLandingAfterJumpReproTests
         return (h, clock);
     }
 
-    [Fact(Skip = "v0.5.3 段 3j: §6 の 4 の再現（直すかは親が決める）")]
+    [Fact]
     public void HeldLossJumpRecovery_ThenSilentLoss_DoesNotLandOnTheOldHeldValue()
     {
         (SyncScenarioHarness h, ManualTimeProvider clock) = ArrangeRecoveredFromHeldLoss();
