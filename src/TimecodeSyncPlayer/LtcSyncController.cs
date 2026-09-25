@@ -143,6 +143,9 @@ internal sealed class LtcSyncController
         SyncLifecycle.Record(evt, nameof(SyncEnabledChanged));
         OnLifecycle(evt);
         _syncService.OnLifecycle(evt);
+        // v0.5.3 段 3c: 同期の無効化で Single の境界ホールドのラッチを消す（§6 の 1）。
+        if (evt == SyncLifecycleEvent.SyncDisabled)
+            _single().OnLifecycle(evt);
         ExitGapForManualControl();
         ReapplyLastAcceptedFrame();
     }
@@ -152,6 +155,8 @@ internal sealed class LtcSyncController
         SyncLifecycle.Record(SyncLifecycleEvent.SyncModeChanged, nameof(SyncModeChanged));
         OnLifecycle(SyncLifecycleEvent.SyncModeChanged);
         _syncService.OnLifecycle(SyncLifecycleEvent.SyncModeChanged);
+        // v0.5.3 段 3c: モード切替で Single の境界ホールドのラッチを消す（§6 の 1）。
+        _single().OnLifecycle(SyncLifecycleEvent.SyncModeChanged);
         ExitGapForManualControl();
         _effects.UpdateCurrentTrackLabel();
         ReapplyLastAcceptedFrame();
@@ -339,6 +344,8 @@ internal sealed class LtcSyncController
     {
         SyncLifecycle.Record(SyncLifecycleEvent.PlaybackStopped, nameof(PlaybackStopped));
         OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
+        // v0.5.3 段 3c: 再生の停止で Single の境界ホールドのラッチを消す（§6 の 1）。
+        _single().OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
     }
 
     /// <summary>T7: 操作者の再生・一時停止で補正状態を捨てる。</summary>

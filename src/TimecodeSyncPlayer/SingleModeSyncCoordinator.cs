@@ -130,6 +130,33 @@ internal sealed class SingleModeSyncCoordinator
     }
 
     /// <summary>
+    /// v0.5.3 段 3c: できごとで境界ホールドのラッチを消す（§6 の 1）。消すのはラッチ
+    /// （ホールドと端へのシークの記録）だけで、一時停止は変えない（SetEndHold を呼ばない。
+    /// 止まっている映像は利用者の再生で動く）。解除のできごと（BoundaryHoldReleased）も
+    /// 出さない（それは LTC がクリップへ戻ったときの解除）。
+    /// </summary>
+    internal void OnLifecycle(SyncLifecycleEvent evt)
+    {
+        switch (evt)
+        {
+            case SyncLifecycleEvent.SyncModeChanged:
+            case SyncLifecycleEvent.SyncDisabled:
+            case SyncLifecycleEvent.PlaybackStopped:
+                ClearBoundaryLatches(evt);
+                break;
+        }
+    }
+
+    private void ClearBoundaryLatches(SyncLifecycleEvent evt)
+    {
+        bool hadLatch = _boundary.IsHeld || _boundary.Seek is not null;
+        _boundary.ClearHeld();
+        _boundary.ClearSeek();
+        if (hadLatch)
+            Log.Information("Single mode: clip boundary hold cleared by {Event}", evt);
+    }
+
+    /// <summary>
     /// D33: 範囲外 LTC の端での終端ホールド。true を返したら呼び出し側はシーク・判定へ進まない。
     /// 端に達する前（シークで着地する前）は false を返し、通常の着地シークに任せる。
     /// </summary>
