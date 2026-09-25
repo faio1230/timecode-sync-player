@@ -259,6 +259,8 @@ internal sealed class LtcSyncController
                     _input.MarkFollowStart();
                 break;
             case SyncLifecycleEvent.MonitoringStopped:
+                // v0.5.3 段 3h: 監視の停止で倍率を 1.0 に戻す（§6 の 14、利用者決定 2026-09-25）。
+                ResetCorrection();
                 _input.ClearFrameHistory();
                 if (!_monitoring.IsDetectionActive(isReportedRunning: false))
                 {
@@ -268,6 +270,8 @@ internal sealed class LtcSyncController
                 break;
             case SyncLifecycleEvent.MonitorDeviceStopped:
                 // 信号断のポリシーの初期化は、正常な停止のときだけ入口（MonitorStopped）が行う。
+                // v0.5.3 段 3h: 監視の停止で倍率を 1.0 に戻す（§6 の 14、利用者決定 2026-09-25）。
+                ResetCorrection();
                 _input.ClearFrameHistory();
                 _input.ClearFollowStart();
                 break;
