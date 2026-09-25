@@ -1068,4 +1068,31 @@ public class TimecodeSyncServiceTests
         events.Should().Contain(e => e.MessageTemplate.Text.Contains("file load cancelled by"),
             "取り消したときだけ 1 行残す");
     }
+
+    [Fact]
+    public void BeginFileLoad_ForgetsLastSettled_SoTheNextSeekIsNotSuppressed()
+    {
+        // v0.5.3 段 3f: 着地の直後に読み込むと、新しいファイルでの最初のシークが、前のファイルの
+        // 着地目標による 0.5 秒の抑止を受けずに出る（§6 の 10）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        // 10.0 へシークして着地させる（直前の着地の記録が残る）。
+        service.ReportSeekSent(10.0);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地の冷却中");
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地を記録する");
+
+        // 着地の直後に読み込み、ロードの解除まで進める。
+        service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
+        clock.Advance(TimeSpan.FromMilliseconds(200));
+        service.TryMarkFileLoaded(playbackSeconds: 0.2, renderedFrameCount: 10).Should().BeTrue();
+
+        // 前のファイルの着地目標（10.0）のそばでも、最初のシークは抑止されない。
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeFalse(
+            "読み込みで直前の着地の記録を忘れるので、0.5 秒待たずにシークできる");
+    }
 }

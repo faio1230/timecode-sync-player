@@ -884,8 +884,8 @@ public static class LatchLifetimeTable
             "MainWindow.xaml.cs:484-490 設定の保存とログだけで、同期側の入口を呼ばない"),
 
         // ── TimecodeSyncSeekState.lastSettledRecent ──
-        new(LatchArrangements.LastSettledRecent, LifecycleEvent.FileLoad, Keeps, Clear,
-            "§6 の 10: TimecodeSyncService.cs:440 の Clear（TimecodeSyncSeekState.cs:52-59）は着地の記録（:92-93）を消さず、抑止は 500ms の間効く（:66-72）"),
+        new(LatchArrangements.LastSettledRecent, LifecycleEvent.FileLoad, Clears, Clear,
+            "v0.5.3 段 3f で忘れるようにした（TimecodeSyncService.OnLifecycle の FileLoad で _seekState.Clear() の後に ForgetLastSettled() を呼ぶ。TimecodeSyncService.cs:314・TimecodeSyncSeekState.cs:65）"),
         new(LatchArrangements.LastSettledRecent, LifecycleEvent.FileLoadWithoutBegin, Keeps, Clear,
             "§6 の 10: 着地の記録（TimecodeSyncSeekState.cs:92-93）を消す経路は無く、位置つきの読み込みも触れない"),
         new(LatchArrangements.LastSettledRecent, LifecycleEvent.SyncModeChanged, Keeps, Undecided,

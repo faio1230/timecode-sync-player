@@ -318,6 +318,9 @@ public sealed class TimecodeSyncService
             case SyncLifecycleEvent.FileLoad:
                 _fileLoad.ClearReleasePending();
                 _seekState.Clear();                    // 古い保留シーク状態をクリア（2.1 fix）
+                // v0.5.3 段 3f: 直前の着地の記録も忘れる（前のファイルの着地目標で
+                // 0.5 秒抑止しない。§6 の 10）。
+                _seekState.ForgetLastSettled();
                 // D37-a: ロードで位置が飛ぶため、粗い判定のゲート履歴を切る。
                 _engine.ResetSeekGate();
                 // D37-b: 素材が変わるので着地時間の学習を捨てる。保留はクリア済みなので位置は使える。
