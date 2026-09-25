@@ -1095,4 +1095,96 @@ public class TimecodeSyncServiceTests
         service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeFalse(
             "読み込みで直前の着地の記録を忘れるので、0.5 秒待たずにシークできる");
     }
+
+    // ---- v0.5.3 段 3g: ギャップの読み込みの口（ロード中の印を立てない） ----
+
+    [Fact]
+    public void BeginGapFreezeLoad_ClearsPendingSeekAndReleasePending_AndAdvancesEpoch()
+    {
+        // v0.5.3 段 3g: 口がするのは記録・読み込み番号・解除の回収待ち・シークの保留・着地の記録の 5 つ。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
+        service.TryMarkFileLoaded(playbackSeconds: 0.2, renderedFrameCount: 10).Should().BeTrue();
+        service.ReportSeekSent(10.0);
+        service.HasPendingFileLoadRelease.Should().BeTrue("前提: 解除の回収待ち");
+        service.SeekState.HasPendingSeek.Should().BeTrue("前提: 保留シーク");
+        long epoch = service.FileLoadEpoch;
+
+        service.BeginGapFreezeLoad("load-paused-at");
+
+        service.FileLoadEpoch.Should().Be(epoch + 1, "読み込み番号を進める");
+        service.HasPendingFileLoadRelease.Should().BeFalse("解除の回収待ちを下ろす");
+        service.SeekState.HasPendingSeek.Should().BeFalse("シークの保留を捨てる");
+    }
+
+    [Fact]
+    public void BeginGapFreezeLoad_ForgetsLastSettled_SoTheNextSeekIsNotSuppressed()
+    {
+        // v0.5.3 段 3g: 着地の直後にギャップの読み込みが起きても、前のファイルの着地目標で
+        // 0.5 秒抑止しない（設計の「直前の着地の記録を忘れる」）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.ReportSeekSent(10.0);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地の冷却中");
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地を記録する");
+
+        service.BeginGapFreezeLoad("path-guard");
+
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeFalse(
+            "直前の着地の記録を忘れるので、前の着地目標のそばでも抑止しない");
+    }
+
+    [Fact]
+    public void BeginGapFreezeLoad_DoesNotSetLoadingOrOpenLandingWindow()
+    {
+        // v0.5.3 段 3g: ロード中の印を立てず、着地窓を開かず、デバウンスも更新しない（設計 §1 の「しない」）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.BeginGapFreezeLoad("load-paused-at");
+
+        service.IsLoadingFile.Should().BeFalse("ロード中の印を立てない");
+        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("着地窓を開かない");
+        service.LatchSnapshot()["followStartLanding"].Should().BeFalse("追従開始の着地も開かない");
+        service.IsDebounced().Should().BeFalse("デバウンスを更新しない");
+
+        // 繰り返しても同じ（path-guard の 1 秒ごとの読み直し）。
+        service.BeginGapFreezeLoad("path-guard");
+        service.IsLoadingFile.Should().BeFalse();
+        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse();
+        service.SeekState.HasPendingSeek.Should().BeFalse();
+    }
+
+    [Fact]
+    public void BeginGapFreezeLoad_RecordsTheEvent_ButDoesNotRaiseLifecycleRaised()
+    {
+        // v0.5.3 段 3g（親の承認）: コントローラの 3 ラッチ（jumpAppliedOnce・heldReapplyDone・
+        // smoothUnavailable）はこの口では下ろさない（ギャップの読み込みは Jump の適用の途中で起きる）。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var service = new TimecodeSyncService(engine, seekState);
+        int raised = 0;
+        service.LifecycleRaised += _ => raised++;
+
+        using LoggerCapture capture = CaptureLogger();
+        service.BeginGapFreezeLoad("path-guard");
+
+        raised.Should().Be(0, "LifecycleRaised を上げない（コントローラのラッチを下ろさない）");
+        List<LogEvent> events = capture.Snapshot();
+        int lifecycleRows = events.Count(e =>
+            e.MessageTemplate.Text.StartsWith("Sync lifecycle:", StringComparison.Ordinal) &&
+            e.Properties.TryGetValue("Source", out LogEventPropertyValue? value) &&
+            value is ScalarValue scalar && scalar.Value?.ToString() == "path-guard");
+        lifecycleRows.Should().Be(1, "できごと GapFreezeLoad を source つきで 1 行残す");
+    }
 }

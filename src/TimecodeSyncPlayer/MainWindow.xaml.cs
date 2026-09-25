@@ -1130,7 +1130,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             GetFps: () => _fps,
             SetFps: f => _fps = f,
             GetGapBehavior: () => _vm.Sync.GapBehavior,
-            UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel()),
+            UpdateCurrentTrackLabel: () => UpdateCurrentTrackLabel(),
+            // v0.5.3 段 3g: ギャップの読み込みの後に通す同期側の口（ロード中の印を立てない）。
+            BeginGapFreezeLoad: source => _syncService.BeginGapFreezeLoad(source)),
         GapPlayerModePolicy.Current);
 
     private void RefreshCurrentVideoFrame()
@@ -2389,6 +2391,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (result.ReloadIssued)
         {
             _gapFreezeHandler.LastReloadAt = result.LastReloadAt;
+            // v0.5.3 段 3g: 読み直しが成功した後、同期側の口（ロード中の印を立てない）を通す。
+            if (result.Load?.Success == true)
+                _syncService.BeginGapFreezeLoad("path-guard");
             Log.Warning(
                 "Continue mode: ignored stale gap freeze frame currentPath={CurrentPath} expectedPath={ExpectedPath}; reissued load target={Target:F3} loadOk={LoadOk} pauseOk={PauseOk}",
                 result.CurrentPath, _gapFreezeHandler.PendingPath, _gapFreezeHandler.PendingTargetSeconds,

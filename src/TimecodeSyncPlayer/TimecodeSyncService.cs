@@ -307,6 +307,21 @@ public sealed class TimecodeSyncService
     }
 
     /// <summary>
+    /// v0.5.3 段 3g: ギャップの読み込み（Freeze の取り込みと読み直し）用の口（§6 の 2 の残り）。
+    /// <see cref="BeginFileLoad"/> と違い、ロード中の印を立てず、着地窓を開かず、デバウンスも更新せず、
+    /// 位置の信頼・ゲート・学習にも触らない（一時停止のまま解除が最大 5 秒遅れるのを避ける。
+    /// 設計 docs/design/v0.5.3-gap-load-entry.md とその親の承認）。
+    /// </summary>
+    internal void BeginGapFreezeLoad(string source)
+    {
+        SyncLifecycle.Record(SyncLifecycleEvent.GapFreezeLoad, source);
+        _fileLoadEpoch++;
+        _fileLoad.ClearReleasePending();
+        _seekState.Clear();
+        _seekState.ForgetLastSettled();
+    }
+
+    /// <summary>
     /// v0.5.2 段 1: できごとでこのクラス（と持っているシークの保留状態）のラッチを消す入口。
     /// 段 0 の寿命の表の「現状」の列どおりに消す（段 1 の前に BeginFileLoad と ClearSeekState の
     /// 呼び出し元にあった処理を、順番を変えずに移したもの）。

@@ -14,6 +14,11 @@ internal enum SyncLifecycleEvent
 {
     /// <summary>BeginFileLoad を通る読み込み（手動・一時停止の読み込み・Continue のトラック切替）。</summary>
     FileLoad,
+    /// <summary>
+    /// v0.5.3 段 3g: ギャップの読み込み（Freeze の取り込みと読み直し）。ロード中の印を立てない口
+    /// （<see cref="TimecodeSyncService.BeginGapFreezeLoad"/>）を通る。source は load-paused-at / path-guard。
+    /// </summary>
+    GapFreezeLoad,
     SyncModeChanged,
     SyncEnabled,
     SyncDisabled,

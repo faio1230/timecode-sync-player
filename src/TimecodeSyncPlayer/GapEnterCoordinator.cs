@@ -221,6 +221,9 @@ internal sealed class GapEnterCoordinator
                 return;
             }
 
+            // v0.5.3 段 3g: 読み込みが成功した後、同期側の口（ロード中の印を立てない）を通す。
+            _effects.BeginGapFreezeLoad?.Invoke("load-paused-at");
+
             _effects.SetLoadedTrackId(nextTrack.Id);
 
             _effects.ApplyPauseState(true);
@@ -263,6 +266,9 @@ internal sealed class GapEnterCoordinator
                 _gapFreezeHandler.ForceFreezeComplete();
                 return;
             }
+
+            // v0.5.3 段 3g: 読み込みが成功した後、同期側の口（ロード中の印を立てない）を通す。
+            _effects.BeginGapFreezeLoad?.Invoke("load-paused-at");
 
             _effects.SetLoadedTrackId(previousTrack.Id);
 
@@ -379,4 +385,6 @@ internal sealed record GapEnterEffects(
     Action<double> SetFps,
     Func<GapBehavior> GetGapBehavior,
     Action UpdateCurrentTrackLabel,
-    Func<bool>? IsPlaybackPaused = null);
+    Func<bool>? IsPlaybackPaused = null,
+    // v0.5.3 段 3g: ギャップの読み込みが成功した後に通す同期側の口（ロード中の印を立てない）。
+    Action<string>? BeginGapFreezeLoad = null);

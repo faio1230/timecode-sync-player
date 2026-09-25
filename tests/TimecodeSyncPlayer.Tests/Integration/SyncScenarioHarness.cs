@@ -378,8 +378,10 @@ internal sealed class SyncScenarioHarness
 
     public void LoadCurrentFile()
     {
-        if (Playlist.Current is { } current)
-            LoadFile(current.FilePath, current.MediaIn.TotalSeconds);
+        // v0.5.3 段 3g: ギャップの読み込み（LoadPausedAt / GapFreezePathGuard）を再現し、
+        // 読み込みの後にロード中の印を立てない口を通す。
+        if (Playlist.Current is { } current && LoadFile(current.FilePath, current.MediaIn.TotalSeconds))
+            _syncService.BeginGapFreezeLoad("load-paused-at");
     }
 
     /// <summary>D27-b: 手動ロード（次/前/プレイリスト）でアプリ側が立てるロードゲートを再現する。</summary>

@@ -185,8 +185,8 @@ internal sealed class LatchLifetimeScenario
                 h.BeginManualFileLoad();
                 break;
             case LifecycleEvent.FileLoadWithoutBegin:
-                // 位置つきの読み込み（GPU 復旧 MainWindow.xaml.cs:782、自動送り :2116、ギャップの
-                // LoadPausedAt）はプレイヤーを読み込むだけで、同期側の入口を呼ばない。
+                // ギャップの 2 経路（LoadPausedAt / GapFreezePathGuard）の読み込み。読み込みの後に
+                // ロード中の印を立てない口（BeginGapFreezeLoad、source load-paused-at）を通る。
                 h.LoadCurrentFile();
                 break;
             case LifecycleEvent.SyncModeChanged:

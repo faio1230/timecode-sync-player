@@ -54,7 +54,7 @@ public sealed class SyncLifecycleLogTests
         foreach (SyncMode mode in new[] { SyncMode.Continue, SyncMode.Single })
         {
             data.Add(mode, LifecycleEvent.FileLoad, ["FileLoad/load"]);
-            data.Add(mode, LifecycleEvent.FileLoadWithoutBegin, []);
+            data.Add(mode, LifecycleEvent.FileLoadWithoutBegin, ["GapFreezeLoad/load-paused-at"]);
             data.Add(mode, LifecycleEvent.SyncEnabledOff, ["SyncDisabled/SyncEnabledChanged"]);
             data.Add(mode, LifecycleEvent.SyncEnabledOn, ["SyncEnabled/SyncEnabledChanged"]);
             // 3 行目: MonitorStopped の SetMonitoring(false) で MonitoringChanged に再入する。harness の

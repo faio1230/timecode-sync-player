@@ -16,8 +16,10 @@ namespace TimecodeSyncPlayer.Tests;
 /// 段 0 の表 <c>LatchLifetimeTable</c> の <c>FileLoadWithoutBegin</c> で「意図 = 消える」の
 /// 9 行のうち、この組み立てで前提を作れるサービス側の 3 キー
 /// （<c>pendingSeek</c>・<c>positionUntrusted</c>・<c>fileLoadReleasePending</c>）を確かめる。
-/// 段 3b で #1（GPU 復旧）と #2（自動送り）は直したので緑。ギャップの #3・#4 は
-/// 利用者の判断待ちのため <see cref="FactAttribute.Skip"/> を付けたままにする。
+/// 段 3b で #1（GPU 復旧）と #2（自動送り）を、段 3g で #3・#4（ギャップの 2 経路）を直した。
+/// #3・#4 は設計 `v0.5.3-gap-load-entry.md` の判断で <c>positionUntrusted</c> を「残す」ため、
+/// この 2 件だけその 1 キーの期待を true にしている（段 3a の赤いテストの期待を設計に合わせた。
+/// 回帰テストではない）。
 /// </summary>
 [Collection("WpfWindow")]
 public sealed class V053LoadPathTests
@@ -55,7 +57,7 @@ public sealed class V053LoadPathTests
         return Task.CompletedTask;
     });
 
-    [Fact(Skip = "v0.5.3（利用者の判断待ち: ギャップの読み込みは別の口が要る）")]
+    [Fact]
     public Task GapFreezePreviousTrackLoad_ClearsLoadLatches() => OnUi(() =>
     {
         using var f = new Fixture();
@@ -66,13 +68,15 @@ public sealed class V053LoadPathTests
         f.PlaybackApi.Loads.Should().Contain(load =>
             load.Path == "C:/prev.mp4" && load.StartSeconds == 4.96 && load.Paused,
             "ギャップの直前トラック読み込みは一時停止の位置つきロード");
-        f.PendingSeek.Should().BeFalse("§6 の 2: 読み込みでシークの保留を捨てる（意図 = 消える）");
-        f.PositionUntrusted.Should().BeFalse("§6 の 2: 読み込みで位置の信頼を初期化する（意図 = 消える）");
-        f.FileLoadReleasePending.Should().BeFalse("§6 の 2: 読み込みで解除の回収待ちを下ろす（意図 = 消える）");
+        f.PendingSeek.Should().BeFalse("段 3g: ギャップの読み込みの口がシークの保留を捨てる");
+        f.PositionUntrusted.Should().BeTrue(
+            "段 3g の設計は positionUntrusted を「残す」（消すとギャップ明けの EvaluateDecision が" +
+            "着地前に位置を使い、NotifyLanding の前提が変わる）");
+        f.FileLoadReleasePending.Should().BeFalse("段 3g: ギャップの読み込みの口が解除の回収待ちを下ろす");
         return Task.CompletedTask;
     });
 
-    [Fact(Skip = "v0.5.3（利用者の判断待ち: ギャップの読み込みは別の口が要る）")]
+    [Fact]
     public Task GapFreezePathGuardReload_ClearsLoadLatches() => OnUi(() =>
     {
         using var f = new Fixture();
@@ -85,9 +89,11 @@ public sealed class V053LoadPathTests
         f.PlaybackApi.Loads.Should().Contain(load =>
             load.Path == "C:/clip.mp4" && load.StartSeconds == 9.9 && load.Paused,
             "Freeze の取り込みの読み直しは一時停止の位置つきロード");
-        f.PendingSeek.Should().BeFalse("§6 の 2: 読み込みでシークの保留を捨てる（意図 = 消える）");
-        f.PositionUntrusted.Should().BeFalse("§6 の 2: 読み込みで位置の信頼を初期化する（意図 = 消える）");
-        f.FileLoadReleasePending.Should().BeFalse("§6 の 2: 読み込みで解除の回収待ちを下ろす（意図 = 消える）");
+        f.PendingSeek.Should().BeFalse("段 3g: ギャップの読み込みの口がシークの保留を捨てる");
+        f.PositionUntrusted.Should().BeTrue(
+            "段 3g の設計は positionUntrusted を「残す」（消すとギャップ明けの EvaluateDecision が" +
+            "着地前に位置を使い、NotifyLanding の前提が変わる）");
+        f.FileLoadReleasePending.Should().BeFalse("段 3g: ギャップの読み込みの口が解除の回収待ちを下ろす");
         return Task.CompletedTask;
     });
 
