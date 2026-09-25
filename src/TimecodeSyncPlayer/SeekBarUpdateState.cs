@@ -1,60 +1,11 @@
 namespace TimecodeSyncPlayer;
 
-public sealed class SeekBarUpdateState : ISeekBarUpdateState
+/// <summary>
+/// v0.5.2 段 2a: シークバーの表示位置を保留するインスタンス状態（書くだけで読む側がいなかった）を消し、
+/// 使われている static のヘルパーだけを残した。
+/// </summary>
+public static class SeekBarUpdateState
 {
-    private readonly TimeSpan _timeout;
-    private readonly double _settleToleranceSeconds;
-    private DateTime _sentAt = DateTime.MinValue;
-    private double _targetSeconds;
-
-    public SeekBarUpdateState()
-        : this(TimeSpan.FromSeconds(5), settleToleranceSeconds: 0.5)
-    {
-    }
-
-    public SeekBarUpdateState(TimeSpan timeout, double settleToleranceSeconds = 0.5)
-    {
-        _timeout = timeout;
-        _settleToleranceSeconds = settleToleranceSeconds;
-    }
-
-    public bool HasPendingSeek { get; private set; }
-    public double TargetSeconds => _targetSeconds;
-
-    public void MarkSeekSent(double targetSeconds, DateTime sentAt)
-    {
-        _targetSeconds = Math.Max(0, targetSeconds);
-        _sentAt = sentAt;
-        HasPendingSeek = true;
-    }
-
-    public void Clear()
-    {
-        HasPendingSeek = false;
-        _sentAt = DateTime.MinValue;
-        _targetSeconds = 0;
-    }
-
-    public double GetDisplayPosition(double playerPositionSeconds, DateTime now)
-    {
-        if (!HasPendingSeek)
-            return playerPositionSeconds;
-
-        if (Math.Abs(playerPositionSeconds - _targetSeconds) <= _settleToleranceSeconds)
-        {
-            Clear();
-            return playerPositionSeconds;
-        }
-
-        if (now - _sentAt >= _timeout)
-        {
-            Clear();
-            return playerPositionSeconds;
-        }
-
-        return _targetSeconds;
-    }
-
     public static double ToSliderValue(double positionSeconds, double durationSeconds, double fallbackValue)
     {
         if (!IsUsableDuration(durationSeconds))

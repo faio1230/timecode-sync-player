@@ -21,7 +21,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private DispatcherTimer?  _timer;
     private readonly PlaybackControlState _playbackControl = new();
     private readonly SeekBarInteractionController _seekBarInteraction = new();
-    private readonly ISeekBarUpdateState _seekState;
     private readonly MainViewModel _vm;
     private double            _duration        = 0;
     private double            _fps             = 0;
@@ -212,7 +211,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         PlaylistDurationBackfillService playlistDurationBackfillService,
         PlaylistLoadCoordinator playlistLoadCoordinator,
         ProjectLoadApplicator projectLoadApplicator,
-        ISeekBarUpdateState seekState,
         PlaybackPerformanceStats playbackPerformanceStats,
         OutputBackendState outputBackendState,
         IServiceProvider services)
@@ -228,7 +226,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _playlistDurationBackfillService = playlistDurationBackfillService;
         _playlistLoadCoordinator = playlistLoadCoordinator;
         _projectLoadApplicator = projectLoadApplicator;
-        _seekState = seekState;
         _playbackPerformanceStats = playbackPerformanceStats;
         // GStreamer 内部型は公開せず、DI 経由で取得する（Gpu 出力時のみ使用）。
         _gstBackendState = services.GetRequiredService<GstBackendState>();
@@ -2642,7 +2639,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         _ltcSyncController.CancelPendingSync("seekbar-commit");
         _vm.Player.SeekBarValue = commit.SliderValue;
-        _seekState.MarkSeekSent(commit.TargetSeconds, DateTime.UtcNow);
         bool success = SeekTo(commit.TargetSeconds);
         _playbackApi.TryGetTimePos(out double timePos);
         Log.Information(
@@ -2751,7 +2747,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _decodeHealth.Reset();
         _vm.Sync.DecodeHealthWarning = string.Empty;
         _vm.Sync.CodecWarning = string.Empty;
-        _seekState.Clear();
         _endAdvanceTriggered = false;
     }
 
