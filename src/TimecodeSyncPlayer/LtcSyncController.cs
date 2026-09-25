@@ -233,6 +233,8 @@ internal sealed class LtcSyncController
                 _input.ClearHeldReapplied();
                 // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
                 ResetCorrection();
+                // v0.5.3 段 3h: 手動シークで Smooth 不可を戻す（§6 の 13、利用者決定 2026-09-25）。
+                _rate.ResetSmoothAvailability();
                 break;
             case SyncLifecycleEvent.PlaybackStopped:
             case SyncLifecycleEvent.PlayPauseToggled:
