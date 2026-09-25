@@ -79,12 +79,105 @@ internal static class LtcTestSignalGenerator
         => Generate(new[] { tc }, fps, sampleRate, options);
 
     /// <summary>連続するタイムコード列を1本の連続波形として生成する。</summary>
+    /// <remarks>
+    /// 全長ぶんを一度に確保するため、長時間の送出には使わない（4 時間ぶんで float 配列が
+    /// 5.5GB になる）。逐次生成は <see cref="Encoder"/> を使う。
+    /// </remarks>
     public static float[] Generate(IEnumerable<LtcTimecode> timecodes, double fps, int sampleRate, Options? options = null)
     {
         var frames = new List<bool[]>();
         foreach (var tc in timecodes)
             frames.Add(BuildFrameBits(tc));
         return EncodeFrames(frames, fps, sampleRate, options);
+    }
+
+    /// <summary>
+    /// フレームを 1 つずつ波形へ変換する逐次エンコーダ。
+    ///
+    /// <para>
+    /// 全長ぶんの配列を確保せずに、<see cref="Generate(IEnumerable{LtcTimecode}, double, int, Options?)"/>
+    /// と 1 サンプルも違わない波形を作る。遷移位置はフレーム内の相対ではなく通し
+    /// （<see cref="_globalBit"/>）で計算し、極性・ノイズ乱数・フレーム境界をまたぐ遷移を
+    /// インスタンスに持ち越すため、フレーム単位に切っても波形は変わらない。
+    /// </para>
+    /// </summary>
+    public sealed class Encoder
+    {
+        private readonly double _samplesPerBit;
+        private readonly Options _options;
+        private readonly Random? _rng;
+        // フレーム境界をまたいで効く遷移があるため（最後のビットの中央遷移は次フレームの
+        // 先頭サンプルで初めて n を超える）、消費位置ごと持ち越す。
+        private readonly List<double> _pending = new(176);
+        private int _cursor;
+        private long _globalBit;
+        private long _sampleIndex;
+        private float _level;
+
+        public Encoder(double fps, int sampleRate, Options? options = null)
+        {
+            if (!(fps > 0)) throw new ArgumentOutOfRangeException(nameof(fps));
+            if (sampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(sampleRate));
+            _options = options ?? new Options();
+            _samplesPerBit = sampleRate / (fps * 80.0);
+            _rng = _options.NoiseAmplitude > 0 ? new Random(_options.NoiseSeed) : null;
+            _level = _options.Amplitude; // 開始レベル（position 0 の境界遷移で反転する）
+        }
+
+        /// <summary>1 フレームが占めるサンプル数の上限（受け皿の確保に使う）。</summary>
+        public int MaxSamplesPerFrame => (int)Math.Ceiling(_samplesPerBit * 80.0) + 2;
+
+        /// <summary>これまでに書き出したサンプル数（通し）。</summary>
+        public long SampleCount => _sampleIndex;
+
+        /// <summary>1 フレームぶんの波形を書き、書いた長さを返す。</summary>
+        public int Encode(bool[] frameBits, Span<float> destination)
+        {
+            ArgumentNullException.ThrowIfNull(frameBits);
+            if (frameBits.Length != 80)
+                throw new ArgumentException("LTC フレームは 80 ビット。", nameof(frameBits));
+
+            long endSample = (long)Math.Round((_globalBit + 80) * _samplesPerBit);
+            int count = (int)(endSample - _sampleIndex);
+            if (destination.Length < count)
+                throw new ArgumentException($"受け皿が {count} サンプルに足りない。", nameof(destination));
+
+            if (_cursor > 0)
+            {
+                _pending.RemoveRange(0, _cursor);
+                _cursor = 0;
+            }
+
+            for (int b = 0; b < 80; b++)
+            {
+                double boundary = (_globalBit + b) * _samplesPerBit;
+                _pending.Add(boundary);                                  // 境界遷移（全ビット共通）
+                if (frameBits[b])
+                    _pending.Add(boundary + _samplesPerBit * 0.5);       // "1" の中央遷移
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                long n = _sampleIndex + i;
+                while (_cursor < _pending.Count && _pending[_cursor] <= n)
+                {
+                    _level = -_level;
+                    _cursor++;
+                }
+
+                float value = _level;
+                if (_options.Invert) value = -value;
+                value += _options.DcOffset;
+                if (_rng != null)
+                    value += (float)((_rng.NextDouble() * 2.0 - 1.0) * _options.NoiseAmplitude);
+
+                destination[i] = value;
+            }
+
+            _globalBit += 80;
+            _sampleIndex = endSample;
+            return count;
+        }
     }
 
     /// <summary>
@@ -105,50 +198,17 @@ internal static class LtcTestSignalGenerator
 
     private static float[] EncodeFrames(List<bool[]> frames, double fps, int sampleRate, Options? options)
     {
-        options ??= new Options();
-
         double samplesPerBit = sampleRate / (fps * 80.0);
-        int totalBits = frames.Count * 80;
+        long totalSamples = (long)Math.Round(frames.Count * 80L * samplesPerBit);
+        if (totalSamples > int.MaxValue / 2)
+            throw new ArgumentOutOfRangeException(nameof(frames),
+                $"波形が長すぎる（{totalSamples} サンプル）。長時間の送出は Encoder で逐次生成する。");
 
-        // 各ビットの境界（+ "1" のビット中央）に遷移位置（サンプル単位・実数）を並べる
-        var transitions = new List<double>(totalBits * 2);
-        int globalBit = 0;
-        foreach (var frame in frames)
-        {
-            for (int b = 0; b < 80; b++, globalBit++)
-            {
-                double boundary = globalBit * samplesPerBit;
-                transitions.Add(boundary);                  // 境界遷移（全ビット共通）
-                if (frame[b])
-                    transitions.Add(boundary + samplesPerBit * 0.5); // "1" の中央遷移
-            }
-        }
-
-        int totalSamples = (int)Math.Round(totalBits * samplesPerBit);
         var samples = new float[totalSamples];
-
-        float amp = options.Amplitude;
-        float level = amp; // 開始レベル（position 0 の境界遷移で反転する）
-        int idx = 0;
-
-        var rng = options.NoiseAmplitude > 0 ? new Random(options.NoiseSeed) : null;
-
-        for (int n = 0; n < totalSamples; n++)
-        {
-            while (idx < transitions.Count && transitions[idx] <= n)
-            {
-                level = -level;
-                idx++;
-            }
-
-            float value = level;
-            if (options.Invert) value = -value;
-            value += options.DcOffset;
-            if (rng != null)
-                value += (float)((rng.NextDouble() * 2.0 - 1.0) * options.NoiseAmplitude);
-
-            samples[n] = value;
-        }
+        var encoder = new Encoder(fps, sampleRate, options);
+        int offset = 0;
+        foreach (bool[] frame in frames)
+            offset += encoder.Encode(frame, samples.AsSpan(offset));
 
         return samples;
     }

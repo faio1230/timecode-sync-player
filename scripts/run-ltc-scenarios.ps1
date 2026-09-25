@@ -37,13 +37,40 @@ param(
     [string]$MediaDir = '',
     [string[]]$Media = @(),
     [double]$MediaInOffsetSeconds = 0,
+    # Gap between tracks on the timeline (default 5 s; 0 makes them adjacent).
+    [double]$GapSeconds = 5,
     [double]$SegmentSeconds = 0,
     [int]$FollowSeconds = 0,
     [string]$FollowTracks = '',
     [double]$FollowWindowSeconds = 0,
     [double]$FollowSettlingSeconds = 0,
     [double]$FollowStartGateSeconds = 0,
+    [switch]$EnableSpout,
+    [switch]$EnableExternalSpoutAudit,
+    [string]$SpoutReceiverExe = '',
+    [int]$SpoutPixelSampleMilliseconds = 33,
+    [double]$MaxFrameDeficitSeconds = 0.5,
+    [double]$MaxPositionStallSeconds = 0.5,
+    [double]$MaxSpoutReceiverGapMilliseconds = 500,
+    # UI Automation reads are synchronous and can perturb v0.4.7 at 50 ms.
+    [double]$L2ProbeIntervalMilliseconds = 250,
+    [double]$MaxLoadMilliseconds = 5000,
+    [double]$MaxPrivateGrowthMbPerHour = 0,
+    [double]$MaxHandleGrowthPerHour = 0,
+    [double]$HealthSampleSeconds = 10,
+    [double]$ProductionRehearsalHours = 4,
+    [double]$ProductionBreakHours = 2,
+    [double]$ProductionShowHours = 4,
+    [double]$ProductionPostIdleHours = 2,
+    # Fixed LTC rate used by the E2E signal generator and the app selector.
+    # 29.97 is excluded until the generator emits DF numbering to match the app.
+    [ValidateSet(24, 25, 30)]
+    [double]$LtcFps = 25,
     [switch]$KeepProject,
+    # Each scenario only runs its preflight checks and then skips (dry run; TCS_PREFLIGHT_ONLY=1).
+    [switch]$PreflightOnly,
+    # Keep output-trace even for a passed run (default: delete it when failed=0 and invalid=0).
+    [switch]$KeepTrace,
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -87,6 +114,30 @@ if ($MediaDir) {
 
 New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null
 $ReportDir = (Resolve-Path -LiteralPath $ReportDir).Path
+
+# Raw reports can contain media paths. If the report is inside any Git worktree,
+# require Git to ignore the directory before any evidence is written there.
+$reportFull = [IO.Path]::GetFullPath($ReportDir)
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $reportGitRootText = (& git -C $ReportDir rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+    $reportGitRootExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousPreference
+}
+if ($reportGitRootExit -eq 0 -and $reportGitRootText) {
+    $reportGitRoot = [IO.Path]::GetFullPath([string]$reportGitRootText).TrimEnd([char]'\')
+    if ([string]::Equals($reportFull.TrimEnd([char]'\'), $reportGitRoot,
+            [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'ReportDir must not be a Git worktree root'
+    }
+    $reportRelative = $reportFull.Substring($reportGitRoot.Length).TrimStart([char]'\')
+    & git -C $reportGitRoot check-ignore -q -- $reportRelative
+    if ($LASTEXITCODE -ne 0) {
+        throw 'ReportDir is inside a Git worktree but is not ignored; use an ignored or non-Git directory'
+    }
+}
 
 Write-Output "app=$AppExe"
 Write-Output "report=$ReportDir"
@@ -183,8 +234,33 @@ Remove-LinkedMediaArtifacts
 $problems = @()
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $problems += 'dotnet is not on PATH' }
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { $problems += 'ffmpeg is not on PATH' }
+if ($MaxFrameDeficitSeconds -le 0) { $problems += 'MaxFrameDeficitSeconds must be greater than zero' }
+if ($MaxPositionStallSeconds -le 0) { $problems += 'MaxPositionStallSeconds must be greater than zero' }
+if ($MaxSpoutReceiverGapMilliseconds -le 0) { $problems += 'MaxSpoutReceiverGapMilliseconds must be greater than zero' }
+if ($SpoutPixelSampleMilliseconds -lt 16 -or $SpoutPixelSampleMilliseconds -gt 60000) { $problems += 'SpoutPixelSampleMilliseconds must be between 16 and 60000' }
+if ($L2ProbeIntervalMilliseconds -lt 10 -or $L2ProbeIntervalMilliseconds -gt 1000) { $problems += 'L2ProbeIntervalMilliseconds must be between 10 and 1000' }
+if ($MaxLoadMilliseconds -le 0) { $problems += 'MaxLoadMilliseconds must be greater than zero' }
+if ($HealthSampleSeconds -le 0) { $problems += 'HealthSampleSeconds must be greater than zero' }
+if ($MaxPrivateGrowthMbPerHour -lt 0) { $problems += 'MaxPrivateGrowthMbPerHour must be zero or greater' }
+if ($MaxHandleGrowthPerHour -lt 0) { $problems += 'MaxHandleGrowthPerHour must be zero or greater' }
 if (-not (Test-Path -LiteralPath (Join-Path $appDir 'tcs_gstreamer.dll'))) {
     $problems += "tcs_gstreamer.dll is missing next to the exe (run build-shim): $appDir"
+}
+if ($EnableSpout -and -not (Test-Path -LiteralPath (Join-Path $appDir 'SpoutDX.dll'))) {
+    $problems += 'SpoutDX.dll is missing next to the exe while EnableSpout is set'
+}
+if ($EnableExternalSpoutAudit -and -not $EnableSpout) {
+    $problems += 'EnableExternalSpoutAudit requires EnableSpout'
+}
+if ($EnableExternalSpoutAudit) {
+    if (-not $SpoutReceiverExe) {
+        $SpoutReceiverExe = Join-Path $repoRoot 'scripts\SpoutContinuityProbe\bin\Debug\x64\SpoutContinuityProbe.exe'
+    }
+    if (-not (Test-Path -LiteralPath $SpoutReceiverExe -PathType Leaf)) {
+        $problems += 'Spout continuity probe is missing (run scripts\SpoutContinuityProbe\build.ps1 or pass SpoutReceiverExe)'
+    } else {
+        $SpoutReceiverExe = (Resolve-Path -LiteralPath $SpoutReceiverExe).Path
+    }
 }
 
 # D19: use Core Audio (MMDevice) names for the VB-CABLE check; the PnP endpoint
@@ -284,7 +360,34 @@ function Remove-ScenarioProjectArtifacts {
 
 $projectPath = ''
 $linkedMediaDir = ''
+$spoutFrameCountState = $null
 try {
+if ($EnableExternalSpoutAudit) {
+    # Spout frame numbers are controlled by the SDK's documented per-user option.
+    # Snapshot and restore it so the external audit does not leave machine state behind.
+    $spoutRegistryPath = 'HKCU:\Software\Leading Edge\Spout'
+    $keyExisted = Test-Path -LiteralPath $spoutRegistryPath
+    $valueExisted = $false
+    $previousValue = $null
+    if ($keyExisted) {
+        $registryValues = Get-ItemProperty -LiteralPath $spoutRegistryPath -ErrorAction SilentlyContinue
+        $frameCountProperty = $registryValues.PSObject.Properties['Framecount']
+        if ($frameCountProperty) {
+            $valueExisted = $true
+            $previousValue = [int]$frameCountProperty.Value
+        }
+    }
+    $spoutFrameCountState = [ordered]@{
+        keyExisted = $keyExisted
+        valueExisted = $valueExisted
+        previousValue = $previousValue
+        testValue = 1
+        restored = $false
+    }
+    New-Item -Path $spoutRegistryPath -Force | Out-Null
+    New-ItemProperty -LiteralPath $spoutRegistryPath -Name 'Framecount' -PropertyType DWord -Value 1 -Force | Out-Null
+    $spoutFrameCountState | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ReportDir 'spout-framecount-registry.json') -Encoding UTF8
+}
 if ($MediaDir) {
     if (-not (Test-Path -LiteralPath $MediaDir)) { throw "MediaDir not found: $MediaDir" }
     $MediaDir = (Resolve-Path -LiteralPath $MediaDir).Path
@@ -311,6 +414,7 @@ if ($MediaDir) {
     $makeArgs = @{ MediaDir = $linkedMediaDir; Out = $projectPath }
     if ($Media) { $makeArgs.Media = $Media }
     if ($MediaInOffsetSeconds -ne 0) { $makeArgs.MediaInOffsetSeconds = $MediaInOffsetSeconds }
+    if ($GapSeconds -ne 5) { $makeArgs.GapSeconds = $GapSeconds }
     if ($SegmentSeconds -gt 0) { $makeArgs.SegmentSeconds = $SegmentSeconds }
     Write-Output ('media_select=' + $(if ($Media) { $Media } else { '(first 3 by name)' }) +
         ' media_in_offset=' + $MediaInOffsetSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))
@@ -335,6 +439,9 @@ if ([string]::IsNullOrWhiteSpace($Filter)) {
 Write-Output "filter=$Filter"
 
 $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe
+$env:TCS_LTC_FPS = $LtcFps.ToString([Globalization.CultureInfo]::InvariantCulture)
+if ($PreflightOnly) { $env:TCS_PREFLIGHT_ONLY = '1'; Write-Output 'preflight_only=1' } else { Remove-Item Env:TCS_PREFLIGHT_ONLY -ErrorAction SilentlyContinue }
+Write-Output ('ltc_fps=' + $env:TCS_LTC_FPS)
 # D23-d: the scenario tests write their journals and frame images under
 # artifacts\ltc-scenarios unless this is set, which the evidence copy below does
 # not look at. Keep them inside the report directory.
@@ -360,6 +467,53 @@ if ($FollowSeconds -gt 0 -or -not [string]::IsNullOrWhiteSpace($FollowTracks) -o
         ' window_seconds=' + $env:TCS_L1_WINDOW_SECONDS + ' settling_seconds=' + $env:TCS_L1_SETTLING_SECONDS +
         ' start_gate_seconds=' + $env:TCS_L1_START_GATE_SECONDS)
 }
+
+# L-2: machine-observed continuity, load timing, and process health limits.
+$env:TCS_L2_ENABLE_SPOUT = if ($EnableSpout) { '1' } else { '0' }
+$env:TCS_L2_MAX_FRAME_DEFICIT_SECONDS = $MaxFrameDeficitSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L2_MAX_POSITION_STALL_SECONDS = $MaxPositionStallSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L2_MAX_SPOUT_RECEIVER_GAP_MS = $MaxSpoutReceiverGapMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L2_PROBE_INTERVAL_MS = $L2ProbeIntervalMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L2_MAX_LOAD_MILLISECONDS = $MaxLoadMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L2_HEALTH_SAMPLE_SECONDS = $HealthSampleSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L3_REHEARSAL_SECONDS = ($ProductionRehearsalHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L3_BREAK_SECONDS = ($ProductionBreakHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L3_SHOW_SECONDS = ($ProductionShowHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:TCS_L3_POST_IDLE_SECONDS = ($ProductionPostIdleHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
+if ($MaxPrivateGrowthMbPerHour -gt 0) {
+    $env:TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR = $MaxPrivateGrowthMbPerHour.ToString([Globalization.CultureInfo]::InvariantCulture)
+} else {
+    Remove-Item Env:TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR -ErrorAction SilentlyContinue
+}
+if ($MaxHandleGrowthPerHour -gt 0) {
+    $env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR = $MaxHandleGrowthPerHour.ToString([Globalization.CultureInfo]::InvariantCulture)
+} else {
+    Remove-Item Env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR -ErrorAction SilentlyContinue
+}
+if ($EnableExternalSpoutAudit) {
+    $spoutSenderName = 'TCS_Endurance_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
+    $env:TIMECODE_SYNC_PLAYER_SPOUT_NAME = $spoutSenderName
+    $env:TCS_L2_SPOUT_SENDER_NAME = $spoutSenderName
+    $env:TCS_L2_SPOUT_RECEIVER_EXE = $SpoutReceiverExe
+    $env:TCS_L2_REQUIRE_EXTERNAL_SPOUT = '1'
+    $env:TCS_L2_SPOUT_PIXEL_SAMPLE_MS = [string]$SpoutPixelSampleMilliseconds
+} else {
+    Remove-Item Env:TCS_L2_SPOUT_SENDER_NAME -ErrorAction SilentlyContinue
+    Remove-Item Env:TCS_L2_SPOUT_RECEIVER_EXE -ErrorAction SilentlyContinue
+    Remove-Item Env:TCS_L2_REQUIRE_EXTERNAL_SPOUT -ErrorAction SilentlyContinue
+    Remove-Item Env:TCS_L2_SPOUT_PIXEL_SAMPLE_MS -ErrorAction SilentlyContinue
+}
+Write-Output ('l2: spout=' + $env:TCS_L2_ENABLE_SPOUT +
+    ' external_spout_audit=' + [bool]$EnableExternalSpoutAudit +
+    ' max_frame_deficit_seconds=' + $env:TCS_L2_MAX_FRAME_DEFICIT_SECONDS +
+    ' max_position_stall_seconds=' + $env:TCS_L2_MAX_POSITION_STALL_SECONDS +
+    ' max_spout_receiver_gap_ms=' + $env:TCS_L2_MAX_SPOUT_RECEIVER_GAP_MS +
+    ' spout_pixel_sample_ms=' + $env:TCS_L2_SPOUT_PIXEL_SAMPLE_MS +
+    ' probe_interval_ms=' + $env:TCS_L2_PROBE_INTERVAL_MS +
+    ' max_load_milliseconds=' + $env:TCS_L2_MAX_LOAD_MILLISECONDS +
+    ' health_sample_seconds=' + $env:TCS_L2_HEALTH_SAMPLE_SECONDS +
+    ' max_private_growth_mb_per_hour=' + $env:TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR +
+    ' max_handle_growth_per_hour=' + $env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR)
 
 # ---- build and run ---------------------------------------------------------
 # D23-c: Windows PowerShell 5.1 turns every stderr line of a native command into
@@ -498,8 +652,30 @@ Write-Output ('SUMMARY passed=' + $passed + ' failed=' + $failed + ' skipped=' +
     ' err_ftl=' + $errFtl + ' leftover=' + $leftover.Count + ' report=' + $ReportDir)
 foreach ($name in $failedNames) { Write-Output ('FAILED ' + $name) }
 Write-Output ('app_logs=' + (($copiedLogs | Sort-Object) -join ','))
+# Result JSON (run-result.json) and the retention rules (delete a passed run's output-trace and leftover media links).
+# A failure here must not change the test result.
+try {
+    $reportArgs = @{ ReportDir = $ReportDir; Media = (@($Media) -join ','); Filter = $Filter;
+        MediaInOffsetSeconds = $MediaInOffsetSeconds.ToString([Globalization.CultureInfo]::InvariantCulture) }
+    if ($appExeGiven) { $reportArgs.AppExe = $AppExe }
+    if (-not $KeepTrace) { $reportArgs.Prune = $true }
+    & (Join-Path $PSScriptRoot 'ltc-run-report.ps1') @reportArgs
+} catch {
+    Write-Output ('RESULT-ERROR ' + $_.Exception.Message)
+}
 }
 finally {
+    if ($spoutFrameCountState) {
+        $spoutRegistryPath = 'HKCU:\Software\Leading Edge\Spout'
+        if ($spoutFrameCountState.valueExisted) {
+            New-ItemProperty -LiteralPath $spoutRegistryPath -Name 'Framecount' -PropertyType DWord `
+                -Value ([int]$spoutFrameCountState.previousValue) -Force | Out-Null
+        } else {
+            Remove-ItemProperty -LiteralPath $spoutRegistryPath -Name 'Framecount' -ErrorAction SilentlyContinue
+        }
+        $spoutFrameCountState.restored = $true
+        $spoutFrameCountState | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ReportDir 'spout-framecount-registry.json') -Encoding UTF8
+    }
     Remove-ScenarioProjectArtifacts
 }
 

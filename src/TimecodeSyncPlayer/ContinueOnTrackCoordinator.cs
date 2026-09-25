@@ -73,7 +73,7 @@ internal sealed class ContinueOnTrackCoordinator
             {
                 _effects.SetLoadedTrackId(track.Id);
 
-                _syncService.BeginFileLoad(loadPosition, _effects.GetTotalRenderedFrames(), loadIssuedQpc);
+                _syncService.BeginFileLoad(loadPosition, _effects.GetTotalRenderedFrames(), loadIssuedQpc, "track-switch");
                 _fileLoadStabilityLogState.Reset();
                 _effects.UpdateCurrentTrackLabel();
                 if (exitingGap)

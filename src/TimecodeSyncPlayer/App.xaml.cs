@@ -59,7 +59,6 @@ public partial class App : Application
         // State & utilities
         services.AddSingleton(_ => AppSettingsManager.Instance);
         services.AddSingleton(_ => new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)));
-        services.AddSingleton<ISeekBarUpdateState, SeekBarUpdateState>();
         services.AddSingleton<ISpoutOutput>(sp => sp.GetRequiredService<GstSpoutOutput>());
         services.AddSingleton<OutputBackendState>();
 

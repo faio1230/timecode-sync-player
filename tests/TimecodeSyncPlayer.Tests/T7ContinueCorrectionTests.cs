@@ -246,7 +246,7 @@ public class T7ContinueCorrectionTests
         harness.AdvancePlayback(1.1, renderedFrames: 2);
         harness.SupplyLtc(1.2);                                   // rate 1.10
 
-        harness.Controller.CorrectionReset();                     // 手動の再生・一時停止/差し替え相当
+        harness.Controller.PlayPauseToggled();                     // 手動の再生・一時停止/差し替え相当
         harness.AppliedRates[^1].Should().BeApproximately(1.0, 1e-9);
 
         harness.AdvancePlayback(1.3, renderedFrames: 1);
@@ -271,7 +271,7 @@ public class T7ContinueCorrectionTests
         harness.AppliedRates.Should().ContainSingle();
 
         harness.RateApplySucceeds = false;
-        harness.Controller.CorrectionReset();                     // 一時停止中相当で戻せない
+        harness.Controller.PlayPauseToggled();                     // 一時停止中相当で戻せない
         harness.AppliedRates.Should().ContainSingle("拒否された戻しは成功に数えない");
         harness.RateAttempts[^1].Should().BeApproximately(1.0, 1e-9);
 

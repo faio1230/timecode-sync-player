@@ -14,20 +14,11 @@ internal sealed class SingleModeSyncCoordinator
     private readonly TimecodeSyncService _syncService;
     private readonly SingleModeSyncEffects _effects;
 
-    // D33: 終端ホールドのラッチ。LTC が範囲外で再生位置が clipIn/clipOut に達したら立て、
-    // 許容分だけ内側へ戻ったら解除する。
-    private bool _clipBoundaryHeld;
-    // 範囲外の LTC で、端（clipIn / clipOut）へのシークを出したか。出した後は、キーフレームの都合で
-    // 端の外側に着地しても「端に着いた」とみなしてホールドする。出す前は、端の ±2 フレームに
-    // いるときだけホールドし、それ以外はまず端へシークする。
-    private double? _boundarySeekTarget;
-    // v0.5.1: その端へのシークを出したときの読み込み番号。別のファイルを読み込んだ後には持ち越さない
-    // （v0.5.0 では持ち越したため、クリップの入口より手前の LTC でホールド中にトラックを切り替えると、
-    // 新しいトラックの位置 0 を「入口に着いた」とみなし、シークせずに頭から流していた。検証機の S-4）。
-    private long _boundarySeekEpoch;
+    // v0.5.2 段 2e: 境界ホールドの状態（終端ホールドと端へのシークの記録）。
+    private readonly BoundaryHoldState _boundary = new();
 
     /// <summary>D35-b: 終端ホールド中か（保持値への明示着地を抑止する判定に使う）。</summary>
-    public bool IsBoundaryHeld => _clipBoundaryHeld;
+    public bool IsBoundaryHeld => _boundary.IsHeld;
 
     public SingleModeSyncCoordinator(
         TimecodeSyncService syncService,
@@ -123,17 +114,17 @@ internal sealed class SingleModeSyncCoordinator
     public bool ApplyClipBoundaryHoldOnly(double ltcSeconds)
     {
         if (_effects.IsNativeSeeking?.Invoke() == true)
-            return _clipBoundaryHeld;
+            return _boundary.IsHeld;
 
         SyncPositionRead read = _effects.ReadPosition();
         if (!read.Succeeded)
-            return _clipBoundaryHeld;
+            return _boundary.IsHeld;
         double playbackSeconds = read.PlaybackSeconds;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
         if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
             !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
-            return _clipBoundaryHeld;
+            return _boundary.IsHeld;
 
         return ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state);
     }
@@ -161,12 +152,12 @@ internal sealed class SingleModeSyncCoordinator
         bool aboveOut = ltcSeconds > clipOut;
         if (!belowIn && !aboveOut)
         {
-            _boundarySeekTarget = null;
+            _boundary.ClearSeek();
             // 解除の余白（端から 2 フレーム）は、いま止まっている側の端にだけ効かせる。
             // 以前は両端に効かせていたため、出口で止まったまま LTC が入口ちょうど（clipIn）に
             // 戻ると、どちらの条件にも当たらず出口に取り残された（検証機の S-3、クリップ [10,30] で
             // LTC を 10.000 に戻した回）。
-            if (_clipBoundaryHeld)
+            if (_boundary.IsHeld)
             {
                 bool heldAtOut = playbackSeconds >= (clipIn + clipOut) * 0.5;
                 bool leftHeldEdge = heldAtOut
@@ -175,7 +166,7 @@ internal sealed class SingleModeSyncCoordinator
                 if (leftHeldEdge)
                     ReleaseBoundaryHold("", ltcSeconds, playbackSeconds, clipIn, clipOut);
             }
-            return _clipBoundaryHeld;
+            return _boundary.IsHeld;
         }
 
         // 端に「着いた」: 端の ±2 フレーム、またはその端へのシークを出した後で端の外側。
@@ -189,14 +180,14 @@ internal sealed class SingleModeSyncCoordinator
         {
             // 端に居ない（トラック差し替え後のロード直後など）。古いラッチを解除して、
             // 通常の着地シークで新しい端へ向かわせる。
-            if (_clipBoundaryHeld)
+            if (_boundary.IsHeld)
                 ReleaseBoundaryHold(" (playback left the boundary)", ltcSeconds, playbackSeconds, clipIn, clipOut);
             return false;
         }
 
-        if (!_clipBoundaryHeld)
+        if (!_boundary.IsHeld)
         {
-            _clipBoundaryHeld = true;
+            _boundary.MarkHeld();
             _effects.SetEndHold?.Invoke(true);
             Log.Information(
                 "Single mode: clip boundary hold ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
@@ -210,8 +201,8 @@ internal sealed class SingleModeSyncCoordinator
     /// （ホールド中に残った端への pending が、新しい範囲内 LTC への着地シークを抑止するのを防ぐ）。
     /// </summary>
     private bool BoundarySeekSentTo(double edge, double tolerance) =>
-        _boundarySeekTarget is double target && Math.Abs(target - edge) <= tolerance &&
-        _boundarySeekEpoch == _syncService.FileLoadEpoch;
+        _boundary.Seek is { } seek && Math.Abs(seek.Target - edge) <= tolerance &&
+        seek.Epoch == _syncService.FileLoadEpoch;
 
     /// <summary>端へのシーク（範囲外 LTC の着地先）を出したことを覚える。</summary>
     private void NoteBoundarySeek(double targetSeconds, SyncPlaybackState state)
@@ -221,23 +212,35 @@ internal sealed class SingleModeSyncCoordinator
         double fps = state.VideoFps > 0 ? state.VideoFps
             : state.TimecodeFps > 0 ? state.TimecodeFps : 30.0;
         double tolerance = 2.0 / fps;
-        _boundarySeekTarget = Math.Abs(targetSeconds - clipIn) <= tolerance ? clipIn
+        double? edge = Math.Abs(targetSeconds - clipIn) <= tolerance ? clipIn
             : double.IsFinite(clipOut) && Math.Abs(targetSeconds - clipOut) <= tolerance ? clipOut
             : null;
-        _boundarySeekEpoch = _syncService.FileLoadEpoch;
+        _boundary.NoteSeek(edge, _syncService.FileLoadEpoch);
     }
 
     private void ReleaseBoundaryHold(string suffix, double ltcSeconds, double playbackSeconds,
         double clipIn, double clipOut)
     {
-        _clipBoundaryHeld = false;
-        _boundarySeekTarget = null;
+        _boundary.ClearHeld();
+        _boundary.ClearSeek();
         _effects.SetEndHold?.Invoke(false);
         _effects.OnBoundaryHoldReleased?.Invoke();
         Log.Information(
             "Single mode: clip boundary hold released{Suffix} ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
             suffix, ltcSeconds, playbackSeconds, clipIn, clipOut);
     }
+
+    /// <summary>
+    /// v0.5.2 段 0: ラッチが立っているかの読み取り専用の写し（特性テスト用。状態は変えない）。
+    /// boundarySeekTarget は「端へのシークの記録が、いまの読み込みに対して有効か」（読み込み番号が
+    /// 一致するときだけ BoundarySeekSentTo が参照する）。
+    /// </summary>
+    internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
+    {
+        ["clipBoundaryHeld"] = _boundary.IsHeld,
+        ["boundarySeekTarget"] = _boundary.Seek is { } seek &&
+            seek.Epoch == _syncService.FileLoadEpoch,
+    };
 }
 
 /// <summary>

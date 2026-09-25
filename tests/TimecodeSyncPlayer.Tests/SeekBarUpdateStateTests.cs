@@ -4,45 +4,6 @@ namespace TimecodeSyncPlayer.Tests;
 
 public class SeekBarUpdateStateTests
 {
-    [Fact]
-    public void DisplayPosition_KeepsPendingTarget_WhenPlayerStillReportsOldPositionDuringSeek()
-    {
-        var state = new SeekBarUpdateState();
-        var now = DateTime.UtcNow;
-        state.MarkSeekSent(targetSeconds: 7.0, sentAt: now);
-
-        double display = state.GetDisplayPosition(playerPositionSeconds: 0.2, now: now.AddSeconds(2));
-
-        display.Should().BeApproximately(7.0, 0.001);
-        state.HasPendingSeek.Should().BeTrue();
-    }
-
-    [Fact]
-    public void DisplayPosition_ClearsPendingSeek_WhenPlayerReportsTargetPosition()
-    {
-        var state = new SeekBarUpdateState();
-        var now = DateTime.UtcNow;
-        state.MarkSeekSent(targetSeconds: 7.0, sentAt: now);
-
-        double display = state.GetDisplayPosition(playerPositionSeconds: 7.2, now: now.AddMilliseconds(300));
-
-        display.Should().BeApproximately(7.2, 0.001);
-        state.HasPendingSeek.Should().BeFalse();
-    }
-
-    [Fact]
-    public void DisplayPosition_GivesUpPendingSeek_AfterTimeout()
-    {
-        var state = new SeekBarUpdateState(timeout: TimeSpan.FromSeconds(5));
-        var now = DateTime.UtcNow;
-        state.MarkSeekSent(targetSeconds: 7.0, sentAt: now);
-
-        double display = state.GetDisplayPosition(playerPositionSeconds: 0.2, now: now.AddSeconds(6));
-
-        display.Should().BeApproximately(0.2, 0.001);
-        state.HasPendingSeek.Should().BeFalse();
-    }
-
     [Theory]
     [InlineData(0)]
     [InlineData(double.NaN)]

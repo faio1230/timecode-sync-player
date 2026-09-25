@@ -2,6 +2,34 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.5.2 - 2026-09-26
+
+Internal cleanup of the sync state. One behaviour change, in Single mode's clip-edge hold.
+
+### Fixed
+
+- Single: when LTC returned inside the clip while playback was also paused for another reason (the
+  signal-loss stop mode), releasing the clip-edge hold resumed playback anyway (present in earlier
+  releases). The release now resumes only when nothing else is holding playback; otherwise playback
+  resumes when that other hold ends (for example when the signal returns). The log notes it
+  (`Single mode: boundary hold released; playback stays paused owners=...`).
+
+### Changed (no behaviour change)
+
+- The events that reset the sync's temporary state (file load, mode change, sync on/off, monitoring
+  start/stop, manual seek, stop and others) go through one type and are logged one line each
+  (`Sync lifecycle: <event> source=<entry>`).
+- The sync state is grouped by axis (LTC input, seek, rate correction, position owner), and the checks
+  that look across axes live in one set of pure functions.
+- Removed unused seek-bar state.
+
+### Known limitations
+
+- A high-rate UI Automation audit (reading the UI every 50 ms) can stall delivery for a few seconds. Normal
+  use does not do this. Same as 0.5.1.
+- In a gap freeze, when the seek to the final frame coincides with the end of the file, the previous picture
+  can rarely stay on screen (seen before on 4K field material).
+
 ## 0.5.1 - 2026-09-24
 
 Steadier sync when the LTC input is briefly garbled, and a fix for a Single-mode bug introduced in 0.5.0.

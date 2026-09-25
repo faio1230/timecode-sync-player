@@ -92,6 +92,19 @@ internal static class LtcScenarioFrameProbe
         return new Bitmap(capture.Bitmap);
     }
 
+    /// <summary>
+    /// PNG もジャーナルも残さずに測る。長時間の Continue 試験では切替のたびに
+    /// 「絵が出たか」を数十回ずつ見るため、1 枚ずつ保存すると数千枚になる。
+    /// </summary>
+    public static FrameSignature Measure(E2EAppRunner app)
+    {
+        var image = app.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("VideoImage"))
+            ?? throw new InvalidOperationException("VideoImage が見つかりません。");
+        using var capture = FlaUI.Core.Capturing.Capture.Element(image);
+        using var bitmap = new Bitmap(capture.Bitmap);
+        return MeasureCenter(bitmap);
+    }
+
     public static FrameSignature Capture(
         E2EAppRunner app, string reportDir, string imageName, MonkeyJournal journal)
     {

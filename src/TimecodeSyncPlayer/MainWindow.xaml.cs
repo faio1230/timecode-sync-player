@@ -21,7 +21,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private DispatcherTimer?  _timer;
     private readonly PlaybackControlState _playbackControl = new();
     private readonly SeekBarInteractionController _seekBarInteraction = new();
-    private readonly ISeekBarUpdateState _seekState;
     private readonly MainViewModel _vm;
     private double            _duration        = 0;
     private double            _fps             = 0;
@@ -212,7 +211,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         PlaylistDurationBackfillService playlistDurationBackfillService,
         PlaylistLoadCoordinator playlistLoadCoordinator,
         ProjectLoadApplicator projectLoadApplicator,
-        ISeekBarUpdateState seekState,
         PlaybackPerformanceStats playbackPerformanceStats,
         OutputBackendState outputBackendState,
         IServiceProvider services)
@@ -228,7 +226,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _playlistDurationBackfillService = playlistDurationBackfillService;
         _playlistLoadCoordinator = playlistLoadCoordinator;
         _projectLoadApplicator = projectLoadApplicator;
-        _seekState = seekState;
         _playbackPerformanceStats = playbackPerformanceStats;
         // GStreamer 内部型は公開せず、DI 経由で取得する（Gpu 出力時のみ使用）。
         _gstBackendState = services.GetRequiredService<GstBackendState>();
@@ -472,6 +469,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     {
                         SyncCorrectionMode = _vm.Sync.SyncCorrectionMode,
                     });
+                    _ltcSyncController.CorrectionModeChanged();
                     Log.Information("Sync correction mode changed mode={Mode}", _vm.Sync.SyncCorrectionMode);
                     break;
                 case nameof(SyncViewModel.SyncOffsetMs):
@@ -486,6 +484,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     {
                         LtcSignalLossMode = _vm.Sync.LtcSignalLossMode,
                     });
+                    _ltcSyncController.SignalLossModeChanged();
                     Log.Information("LTC signal loss mode changed mode={Mode}", _vm.Sync.LtcSignalLossMode);
                     break;
                 case nameof(SyncViewModel.IsLtcRunning):
@@ -1058,12 +1057,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
                 IsNativeSeeking: IsNativeSeeking,
                 // D33: 範囲外 LTC の終端ホールド。一時停止／解除を UI 状態と一緒に反映する。
-                SetEndHold: held =>
-                {
-                    if (!IsPlaybackAvailable) return;
-                    _playbackApi.SetPaused(held);
-                    ApplyPauseState(held);
-                },
+                SetEndHold: ApplyBoundaryHold,
                 // D35-b: ホールド解除時に保留シークと保持着地のラッチを解除する。
                 OnBoundaryHoldReleased: () => _ltcSyncController.NotifyClipBoundaryHoldReleased()));
 
@@ -1533,7 +1527,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private void StopPlayback()
     {
         // T7: 再生停止・プロジェクト/プレイリスト差し替えで補正状態を捨てる。
-        _ltcSyncController.CorrectionReset();
+        _ltcSyncController.PlaybackStopped();
         CreatePlaybackOperationsCoordinator().StopPlayback();
     }
 
@@ -1578,7 +1572,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (!IsPlayerReady) return;
         // T7: 操作者の再生・一時停止で補正状態を捨てる。
-        _ltcSyncController.CorrectionReset();
+        _ltcSyncController.PlayPauseToggled();
         _projectRestorePauseState.Clear();
         PlaybackPauseChange change = _playbackControl.TogglePlayPause();
         _playbackApi.SetPaused(change.IsPaused);
@@ -1598,10 +1592,36 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         Log.Information("Project restore pause released by on-track sync");
     }
 
+    private void ApplyBoundaryHold(bool held)
+    {
+        if (!IsPlaybackAvailable) return;
+        if (held)
+        {
+            _playbackApi.SetPaused(true);
+            ApplyPauseState(true);
+            return;
+        }
+
+        PauseOwners otherOwners = SyncRules.CollectOtherPauseOwners(
+            _ltcSyncController.IsSignalLossPauseOwned,
+            _gapFreezeHandler.IsPauseOwnedByGap,
+            _projectRestorePauseState.IsPending);
+        if (!SyncRules.ShouldResumeOnBoundaryHoldRelease(otherOwners))
+        {
+            Log.Information(
+                "Single mode: boundary hold released; playback stays paused owners={Owners}",
+                otherOwners);
+            return;
+        }
+
+        _playbackApi.SetPaused(false);
+        ApplyPauseState(false);
+    }
+
     void IPlaybackController.SeekRelative(double seconds)
     {
         if (!IsPlayerReady) return;
-        _ltcSyncController.CancelPendingSync();
+        _ltcSyncController.CancelPendingSync("relative");
         // 決定 5: 相対シークはクライアント計算（Seek(absolute) へ加算）。
         if (!_playbackApi.TryGetTimePos(out double current))
         {
@@ -1963,8 +1983,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (!IsPlaybackAvailable) return;
 
-        _ltcSyncController.CancelPendingSync();
-        _syncService.ClearSeekState();
+        _ltcSyncController.TimelineSeek();
         bool success = SeekTo(e.TargetSeconds);
         Log.Information("Timeline seek target={Target:F3} trackIndex={TrackIndex} success={Success}",
             e.TargetSeconds, e.TrackIndex, success);
@@ -1974,7 +1993,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void Seek_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        _ltcSyncController.CancelPendingSync();
+        _ltcSyncController.CancelPendingSync("seekbar-down");
         _seekBarInteraction.BeginSeek();
         TrySetSeekBarFromPointer(e, "MouseDown");
     }
@@ -2639,9 +2658,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         SeekBarCommit commit = _seekBarInteraction.CreateCommit(sliderValue, SeekBar.Minimum, SeekBar.Maximum, _duration);
         if (!commit.ShouldCommit) return;
 
-        _ltcSyncController.CancelPendingSync();
+        _ltcSyncController.CancelPendingSync("seekbar-commit");
         _vm.Player.SeekBarValue = commit.SliderValue;
-        _seekState.MarkSeekSent(commit.TargetSeconds, DateTime.UtcNow);
         bool success = SeekTo(commit.TargetSeconds);
         _playbackApi.TryGetTimePos(out double timePos);
         Log.Information(
@@ -2750,7 +2768,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _decodeHealth.Reset();
         _vm.Sync.DecodeHealthWarning = string.Empty;
         _vm.Sync.CodecWarning = string.Empty;
-        _seekState.Clear();
         _endAdvanceTriggered = false;
     }
 

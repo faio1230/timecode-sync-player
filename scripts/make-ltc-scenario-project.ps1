@@ -23,7 +23,8 @@
 # than MediaIn + SegmentSeconds is used up to its end. -MediaInOffsetSeconds skips an
 # intro (for example a black first frame that the reference-image checks cannot tell
 # apart from a black gap); a video not longer than the offset stops with an error. The timeline starts with
-# a 5 s offset and keeps a 5 s gap after every track.
+# a 5 s offset and keeps a GapSeconds gap after every track (default 5 s; 0 makes
+# the tracks adjacent).
 #
 # NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
 # repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page, so
@@ -37,7 +38,15 @@ param(
     [int]$Tracks = 3,
     [string[]]$Media = @(),
     [double]$SegmentSeconds = 20,
+    # Per-track used length, in track order ("700,170,170"). Empty = SegmentSeconds for every
+    # track. Needed when one track is long (a 10 minute follow) and the others are short: one
+    # shared length would push the short tracks' reference capture to their very end.
+    [string]$TrackSegmentSeconds = '',
     [double]$MediaInOffsetSeconds = 0,
+    # Gap between tracks on the timeline, in seconds (default 5). Zero makes the
+    # tracks adjacent, which is what a show without black between clips looks like:
+    # the switch then has to replace the previous picture instead of leaving black.
+    [double]$GapSeconds = 5,
     [string]$FfmpegDir = 'C:\Program Files\ffmpeg\bin'
 )
 $ErrorActionPreference = 'Stop'
@@ -114,7 +123,20 @@ if ([string]::IsNullOrWhiteSpace($Media)) {
 }
 
 $invariant = [System.Globalization.CultureInfo]::InvariantCulture
-$gap = 5.0
+$perTrackSegments = @()
+if (-not [string]::IsNullOrWhiteSpace($TrackSegmentSeconds)) {
+    foreach ($piece in ($TrackSegmentSeconds -split '[,\s]+' | Where-Object { $_ })) {
+        $value = 0.0
+        if (-not [double]::TryParse($piece, [Globalization.NumberStyles]::Float, $invariant, [ref]$value) -or $value -le 0) {
+            throw ('TrackSegmentSeconds must list positive numbers: ' + $piece)
+        }
+        $perTrackSegments += $value
+    }
+}
+if ($GapSeconds -lt 0 -or [double]::IsNaN($GapSeconds) -or [double]::IsInfinity($GapSeconds)) {
+    throw 'GapSeconds must be zero or positive'
+}
+$gap = $GapSeconds
 $offset = 5.0
 $trackList = @()
 $index = 0
@@ -131,7 +153,11 @@ foreach ($selected in $selection) {
             ' s long, not longer than MediaInOffsetSeconds ' + $MediaInOffsetSeconds.ToString('F3', $invariant) + ' s')
     }
     $mediaIn = $MediaInOffsetSeconds
-    $used = [Math]::Min($SegmentSeconds, $duration - $mediaIn)
+    $segmentForTrack = $SegmentSeconds
+    if ($perTrackSegments.Count -gt 0) {
+        $segmentForTrack = $perTrackSegments[[Math]::Min($index - 1, $perTrackSegments.Count - 1)]
+    }
+    $used = [Math]::Min($segmentForTrack, $duration - $mediaIn)
 
     $trackList += [ordered]@{
         id             = ('aaaaaaaa-0000-0000-0000-{0:d12}' -f $index)

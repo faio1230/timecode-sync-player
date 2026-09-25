@@ -76,6 +76,22 @@ internal sealed class LtcSignalLossPolicy
     /// <summary>D27: 直近の損失判定の理由（保持か無音か）。</summary>
     public LtcSignalLossReason Reason => _reason;
 
+    /// <summary>
+    /// v0.5.2 段 1: できごとの入口。監視の開始・停止で初期化する（呼ぶ条件は LtcSyncController 側が
+    /// 段 1 の前と同じに保つ）。
+    /// </summary>
+    public void OnLifecycle(SyncLifecycleEvent evt)
+    {
+        switch (evt)
+        {
+            case SyncLifecycleEvent.MonitoringStarted:
+            case SyncLifecycleEvent.MonitoringStopped:
+            case SyncLifecycleEvent.MonitorDeviceStopped:
+                Reset();
+                break;
+        }
+    }
+
     public void Reset()
     {
         _lastValidFrameAtMilliseconds = null;
@@ -112,10 +128,8 @@ internal sealed class LtcSignalLossPolicy
         if (_consecutiveResumeFrames < _resumeFrameCount)
             return LtcSignalLossAction.None;
 
-        bool canApplyPolicyOwnedResume =
-            context.SyncEnabled &&
-            context.IsMonitoring &&
-            !context.IsGapActive;
+        bool canApplyPolicyOwnedResume = SyncRules.CanResumeAfterSignalLoss(
+            context.SyncEnabled, context.IsMonitoring, context.IsGapActive);
         if (_pausedByPolicy && !canApplyPolicyOwnedResume)
             return LtcSignalLossAction.None;
 
@@ -125,6 +139,7 @@ internal sealed class LtcSignalLossPolicy
         _manualResumeSuppressesPause = false;
         bool shouldResume = _pausedByPolicy;
         _pausedByPolicy = false;
+        SyncLifecycle.Record(SyncLifecycleEvent.SignalRecovered, "valid-frames");
 
         return shouldResume
             ? LtcSignalLossAction.ResumeAndSync
@@ -172,10 +187,8 @@ internal sealed class LtcSignalLossPolicy
             (_reason != LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(receivedAtMilliseconds)))
             return LtcSignalLossAction.None;
 
-        bool canApplyPolicyOwnedResume =
-            context.SyncEnabled &&
-            context.IsMonitoring &&
-            !context.IsGapActive;
+        bool canApplyPolicyOwnedResume = SyncRules.CanResumeAfterSignalLoss(
+            context.SyncEnabled, context.IsMonitoring, context.IsGapActive);
         if (_pausedByPolicy && !canApplyPolicyOwnedResume)
             return LtcSignalLossAction.None;
 
@@ -187,6 +200,7 @@ internal sealed class LtcSignalLossPolicy
         _manualResumeSuppressesPause = false;
         bool shouldResume = _pausedByPolicy;
         _pausedByPolicy = false;
+        SyncLifecycle.Record(SyncLifecycleEvent.SignalRecovered, "held-jump");
 
         return shouldResume
             ? LtcSignalLossAction.ResumeAndSync
@@ -242,12 +256,9 @@ internal sealed class LtcSignalLossPolicy
 
     private LtcSignalLossAction EvaluatePause(LtcSignalLossContext context)
     {
-        if (context.Mode != LtcSignalLossMode.Stop ||
-            !context.SyncEnabled ||
-            context.IsGapActive ||
-            context.IsPlaybackPaused ||
-            _pausedByPolicy ||
-            _manualResumeSuppressesPause)
+        if (!SyncRules.CanPauseForSignalLoss(
+                context.Mode, context.SyncEnabled, context.IsGapActive,
+                context.IsPlaybackPaused, _pausedByPolicy, _manualResumeSuppressesPause))
         {
             return LtcSignalLossAction.None;
         }
@@ -271,4 +282,12 @@ internal sealed class LtcSignalLossPolicy
 
     private static long ElapsedMilliseconds(long earlier, long later) =>
         Math.Max(0, later - earlier);
+
+    /// <summary>v0.5.2 段 0: ラッチが立っているかの読み取り専用の写し（特性テスト用。状態は変えない）。</summary>
+    internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
+    {
+        ["lost"] = _isLost,
+        ["pausedByPolicy"] = _pausedByPolicy,
+        ["manualResumeSuppressesPause"] = _manualResumeSuppressesPause,
+    };
 }

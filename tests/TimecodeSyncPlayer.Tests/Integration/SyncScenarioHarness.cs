@@ -130,11 +130,25 @@ internal sealed class SyncScenarioHarness
                 SeekTo: Seek,
                 GetTotalRenderedFrames: () => _renderedFrames,
                 IsNativeSeeking: () => NativeSeeking,
-                // D33: 終端ホールドの pause/resume を記録する。
+                // D33: 終端ホールドの pause/resume を記録する。解除は MainWindow と同じ条件
+                // （v0.5.2 段 2g-2: ほかの持ち主が止めていれば再開しない）。
                 SetEndHold: held =>
                 {
                     Operations.Add(new(held ? "clip-end-hold" : "clip-end-release"));
-                    SetPaused(held);
+                    if (held)
+                    {
+                        SetPaused(true);
+                        return;
+                    }
+
+                    PauseOwners otherOwners = SyncRules.CollectOtherPauseOwners(
+                        Controller!.IsSignalLossPauseOwned,
+                        _gap.IsPauseOwnedByGap,
+                        _projectRestorePauseState.IsPending);
+                    if (SyncRules.ShouldResumeOnBoundaryHoldRelease(otherOwners))
+                        SetPaused(false);
+                    else
+                        Operations.Add(new("clip-end-stays-paused"));
                 },
                 // D35-b: 境界ホールド解除時に保留シークと保持着地のラッチを解除する。
                 // Controller はコンストラクタの後半で代入され、この経路はフレーム処理時
@@ -197,9 +211,13 @@ internal sealed class SyncScenarioHarness
             getUtcNow: timeProvider is null ? null : () => timeProvider.GetUtcNow().UtcDateTime,
             sampleClockEnabled: sampleClockEnabled,
             getQpc: getQpc);
+        Single = single;
     }
 
     public LtcSyncController Controller { get; }
+
+    /// <summary>v0.5.2 段 0: Single の同期コーディネーター（ラッチの写しを読むため）。</summary>
+    public SingleModeSyncCoordinator Single { get; }
     public string TimecodeText { get; private set; } = "--:--:--:--";
     public string RealTimeText { get; private set; } = "-.--- s";
 
