@@ -426,29 +426,51 @@ public sealed class TimecodeSyncService
     /// <summary>
     /// LoadFile 発行時に呼ぶ。loadIssuedQpc は LoadFile を発行した QPC（計測開始点）。
     /// </summary>
-    internal void BeginFileLoad(double startPositionSeconds, long renderedFrameCount, long loadIssuedQpc)
+    internal void BeginFileLoad(
+        double startPositionSeconds, long renderedFrameCount, long loadIssuedQpc, string source = "load")
     {
+        SyncLifecycle.Record(SyncLifecycleEvent.FileLoad, source);
         _latencyCompensator.MarkLoadSent(loadIssuedQpc);
         _fileLoadEpoch++;
         _isLoadingFile = true;
-        _fileLoadReleasePending = false;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _fileLoadStartedAt = now;
         _fileLoadStartPositionSeconds = Math.Max(0, startPositionSeconds);
         _fileLoadStartedRenderedFrames = Math.Max(0, renderedFrameCount);
         _lastSyncSeekAt = now;                // デバウンスを更新（2.3 fix）
-        _seekState.Clear();                    // 古い保留シーク状態をクリア（2.1 fix）
-        // D37-a: ロードで位置が飛ぶため、粗い判定のゲート履歴を切る。
-        _engine.ResetSeekGate();
-        // D37-b: 素材が変わるので着地時間の学習を捨てる。保留はクリア済みなので位置は使える。
-        _seekState.ResetLearning();
-        _publishedSeekCostSeconds = double.NaN;
-        _positionTrust.Reset();
-        // 0.4.5-A: 素材が変わるので、配信 PTS の基準と実測レートを捨てる。
-        _positionFeedback.Reset();
-        _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
+        OnLifecycle(SyncLifecycleEvent.FileLoad);
         // D37-b2: ロード（切替）も着地として扱い、直後の不足はシークで詰める。
         NotifyLanding();
+    }
+
+    /// <summary>
+    /// v0.5.2 段 1: できごとでこのクラス（と持っているシークの保留状態）のラッチを消す入口。
+    /// 段 0 の寿命の表の「現状」の列どおりに消す（段 1 の前に BeginFileLoad と ClearSeekState の
+    /// 呼び出し元にあった処理を、順番を変えずに移したもの）。
+    /// </summary>
+    internal void OnLifecycle(SyncLifecycleEvent evt)
+    {
+        switch (evt)
+        {
+            case SyncLifecycleEvent.FileLoad:
+                _fileLoadReleasePending = false;
+                _seekState.Clear();                    // 古い保留シーク状態をクリア（2.1 fix）
+                // D37-a: ロードで位置が飛ぶため、粗い判定のゲート履歴を切る。
+                _engine.ResetSeekGate();
+                // D37-b: 素材が変わるので着地時間の学習を捨てる。保留はクリア済みなので位置は使える。
+                _seekState.ResetLearning();
+                _publishedSeekCostSeconds = double.NaN;
+                _positionTrust.Reset();
+                // 0.4.5-A: 素材が変わるので、配信 PTS の基準と実測レートを捨てる。
+                _positionFeedback.Reset();
+                _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
+                break;
+            case SyncLifecycleEvent.SyncModeChanged:
+            case SyncLifecycleEvent.SyncDisabled:
+            case SyncLifecycleEvent.TimelineSeek:
+                ClearSeekState();
+                break;
+        }
     }
 
     /// <summary>

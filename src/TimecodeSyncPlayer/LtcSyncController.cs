@@ -169,34 +169,125 @@ internal sealed class LtcSyncController
 
     public void SyncEnabledChanged()
     {
-        ResetCorrection();
-        _smoothAvailable = true;
-        if (!_effects.GetContext().SyncEnabled)
-        {
-            _syncService.ClearSeekState();
-            _followStartPending = false;
-        }
-        else
-        {
-            // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
-            // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
-            _followStartPending = true;
-        }
+        SyncLifecycleEvent evt = _effects.GetContext().SyncEnabled
+            ? SyncLifecycleEvent.SyncEnabled
+            : SyncLifecycleEvent.SyncDisabled;
+        SyncLifecycle.Record(evt, nameof(SyncEnabledChanged));
+        OnLifecycle(evt);
+        _syncService.OnLifecycle(evt);
         ExitGapForManualControl();
         ReapplyLastAcceptedFrame();
     }
 
     public void SyncModeChanged()
     {
-        ResetCorrection();
-        _smoothAvailable = true;
-        _frames.ResetDiagnostics();
-        _pendingJumpSeconds = null;
-        _pendingJumpFrameEndTimestamp = 0;
-        _syncService.ClearSeekState();
+        SyncLifecycle.Record(SyncLifecycleEvent.SyncModeChanged, nameof(SyncModeChanged));
+        OnLifecycle(SyncLifecycleEvent.SyncModeChanged);
+        _syncService.OnLifecycle(SyncLifecycleEvent.SyncModeChanged);
         ExitGapForManualControl();
         _effects.UpdateCurrentTrackLabel();
         ReapplyLastAcceptedFrame();
+    }
+
+    /// <summary>v0.5.2 段 1: 補正モードの変更（今はどのラッチも消さない。設計書 §6 の 8 は v0.5.3）。</summary>
+    public void CorrectionModeChanged()
+    {
+        SyncLifecycle.Record(SyncLifecycleEvent.CorrectionModeChanged, nameof(CorrectionModeChanged));
+        OnLifecycle(SyncLifecycleEvent.CorrectionModeChanged);
+    }
+
+    /// <summary>v0.5.2 段 1: 信号断モードの変更（今はどのラッチも消さない。設計書 §6 の 9 は v0.5.3）。</summary>
+    public void SignalLossModeChanged()
+    {
+        SyncLifecycle.Record(SyncLifecycleEvent.SignalLossModeChanged, nameof(SignalLossModeChanged));
+        OnLifecycle(SyncLifecycleEvent.SignalLossModeChanged);
+    }
+
+    /// <summary>
+    /// v0.5.2 段 1: できごとでこのクラスのラッチを消す入口。段 0 の寿命の表の「現状」の列どおりに消す
+    /// （各分岐は段 1 の前に各入口メソッドにあった処理を、順番を変えずに移したもの）。
+    /// フレームの中で消えるもの（Normal フレーム、Continue のトラック切替、ギャップのフレーム、
+    /// 補正評価、追従開始の消費）はフレーム経路のまま。
+    /// </summary>
+    private void OnLifecycle(SyncLifecycleEvent evt)
+    {
+        switch (evt)
+        {
+            case SyncLifecycleEvent.SyncEnabled:
+                ResetCorrection();
+                _smoothAvailable = true;
+                // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
+                // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
+                _followStartPending = true;
+                break;
+            case SyncLifecycleEvent.SyncDisabled:
+                ResetCorrection();
+                _smoothAvailable = true;
+                _followStartPending = false;
+                break;
+            case SyncLifecycleEvent.SyncModeChanged:
+                ResetCorrection();
+                _smoothAvailable = true;
+                _frames.ResetDiagnostics();
+                DiscardPendingJump();
+                break;
+            case SyncLifecycleEvent.ManualSeek:
+            case SyncLifecycleEvent.TimelineSeek:
+                _pendingSyncSeconds = null;
+                DiscardPendingJump();
+                // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
+                ResetCorrection();
+                break;
+            case SyncLifecycleEvent.PlaybackStopped:
+            case SyncLifecycleEvent.PlayPauseToggled:
+                // T7: 操作者の再生・一時停止、停止・プロジェクト差し替えで補正状態を捨てる。
+                ResetCorrection();
+                break;
+            case SyncLifecycleEvent.FpsModeChanged:
+                DiscardPendingJump();
+                _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
+                break;
+            case SyncLifecycleEvent.MonitoringStarted:
+                ClearFrameHistory();
+                _monitoring.MarkStarted();
+                _signalLoss.OnLifecycle(evt);
+                // D37-c: 監視開始時に既に同期が有効なら、最初の有効フレームを追従開始として扱う。
+                if (_effects.GetContext().SyncEnabled)
+                    _followStartPending = true;
+                break;
+            case SyncLifecycleEvent.MonitoringStopped:
+                ClearFrameHistory();
+                if (!_monitoring.IsDetectionActive(isReportedRunning: false))
+                {
+                    _signalLoss.OnLifecycle(evt);
+                    _followStartPending = false;
+                }
+                break;
+            case SyncLifecycleEvent.MonitorDeviceStopped:
+                // 信号断のポリシーの初期化は、正常な停止のときだけ入口（MonitorStopped）が行う。
+                ClearFrameHistory();
+                _followStartPending = false;
+                break;
+        }
+    }
+
+    /// <summary>監視の開始・停止で、受けたフレームの記録と 1 回適用のラッチを捨てる。</summary>
+    private void ClearFrameHistory()
+    {
+        _lastAcceptedLtcSeconds = null;
+        _lastAppliedLtcSeconds = null;
+        _lastHeldEffectiveSeconds = null;
+        _heldLossLandingSeconds = null;
+        _pendingSyncSeconds = null;
+        DiscardPendingJump();
+        _jumpAppliedOnce = false;
+        _heldReapplyDone = false;
+    }
+
+    private void DiscardPendingJump()
+    {
+        _pendingJumpSeconds = null;
+        _pendingJumpFrameEndTimestamp = 0;
     }
 
     public void GapBehaviorChanged()
@@ -251,13 +342,19 @@ internal sealed class LtcSyncController
             ? 0.0
             : (_getQpc() - _lastAcceptedFrameEndTimestamp) * 1000.0 / Stopwatch.Frequency;
 
-    public void CancelPendingSync()
+    /// <summary>手動シーク（シークバー・相対シーク）。source はログに残す呼び出し元。</summary>
+    public void CancelPendingSync(string source = "manual")
     {
-        _pendingSyncSeconds = null;
-        _pendingJumpSeconds = null;
-        _pendingJumpFrameEndTimestamp = 0;
-        // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
-        ResetCorrection();
+        SyncLifecycle.Record(SyncLifecycleEvent.ManualSeek, source);
+        OnLifecycle(SyncLifecycleEvent.ManualSeek);
+    }
+
+    /// <summary>タイムラインのクリック。手動シークに加えて、同期側のシークの保留状態も捨てる。</summary>
+    public void TimelineSeek()
+    {
+        SyncLifecycle.Record(SyncLifecycleEvent.TimelineSeek, nameof(TimelineSeek));
+        OnLifecycle(SyncLifecycleEvent.TimelineSeek);
+        _syncService.OnLifecycle(SyncLifecycleEvent.TimelineSeek);
     }
 
     /// <summary>
@@ -276,8 +373,19 @@ internal sealed class LtcSyncController
         _correction.NotifyLanding(_getUtcNow());
     }
 
-    /// <summary>T7: 操作者の再生・一時停止、プロジェクト差し替えで補正状態を捨てる。</summary>
-    public void CorrectionReset() => ResetCorrection();
+    /// <summary>T7: 再生の停止（プロジェクト・プレイリストの差し替えを含む）で補正状態を捨てる。</summary>
+    public void PlaybackStopped()
+    {
+        SyncLifecycle.Record(SyncLifecycleEvent.PlaybackStopped, nameof(PlaybackStopped));
+        OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
+    }
+
+    /// <summary>T7: 操作者の再生・一時停止で補正状態を捨てる。</summary>
+    public void PlayPauseToggled()
+    {
+        SyncLifecycle.Record(SyncLifecycleEvent.PlayPauseToggled, nameof(PlayPauseToggled));
+        OnLifecycle(SyncLifecycleEvent.PlayPauseToggled);
+    }
 
     /// <summary>
     /// T7: 補正状態を捨て、プレイヤーに掛けた倍率が残っていれば 1.0 に戻す。
@@ -369,37 +477,22 @@ internal sealed class LtcSyncController
 
     public void FpsModeChanged()
     {
-        _pendingJumpSeconds = null;
-        _pendingJumpFrameEndTimestamp = 0;
-        _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
+        SyncLifecycle.Record(SyncLifecycleEvent.FpsModeChanged, nameof(FpsModeChanged));
+        OnLifecycle(SyncLifecycleEvent.FpsModeChanged);
     }
 
     public void MonitoringChanged()
     {
-        _lastAcceptedLtcSeconds = null;
-        _lastAppliedLtcSeconds = null;
-        _lastHeldEffectiveSeconds = null;
-        _heldLossLandingSeconds = null;
-        _pendingSyncSeconds = null;
-        _pendingJumpSeconds = null;
-        _pendingJumpFrameEndTimestamp = 0;
-        _jumpAppliedOnce = false;
-        _heldReapplyDone = false;
-        if (_effects.GetContext().IsMonitoring)
-        {
-            _monitoring.MarkStarted();
-            _signalLoss.Reset();
+        bool monitoring = _effects.GetContext().IsMonitoring;
+        SyncLifecycleEvent evt = monitoring
+            ? SyncLifecycleEvent.MonitoringStarted
+            : SyncLifecycleEvent.MonitoringStopped;
+        SyncLifecycle.Record(evt, nameof(MonitoringChanged));
+        OnLifecycle(evt);
+        if (monitoring)
             _formatText = "fps: 検出中...";
-            // D37-c: 監視開始時に既に同期が有効なら、最初の有効フレームを追従開始として扱う。
-            if (_effects.GetContext().SyncEnabled)
-                _followStartPending = true;
-        }
         else if (!_monitoring.IsDetectionActive(isReportedRunning: false))
-        {
-            _signalLoss.Reset();
             _formatText = "LTC 停止中";
-            _followStartPending = false;
-        }
         RefreshDisplay();
     }
 
@@ -411,19 +504,11 @@ internal sealed class LtcSyncController
 
     public void MonitorStopped(Exception? exception)
     {
-        _lastAcceptedLtcSeconds = null;
-        _lastAppliedLtcSeconds = null;
-        _lastHeldEffectiveSeconds = null;
-        _heldLossLandingSeconds = null;
-        _pendingSyncSeconds = null;
-        _pendingJumpSeconds = null;
-        _pendingJumpFrameEndTimestamp = 0;
-        _jumpAppliedOnce = false;
-        _heldReapplyDone = false;
-        _followStartPending = false;
+        SyncLifecycle.Record(SyncLifecycleEvent.MonitorDeviceStopped, exception == null ? "stopped" : "error");
+        OnLifecycle(SyncLifecycleEvent.MonitorDeviceStopped);
         if (_monitoring.MarkStopped(exception))
         {
-            _signalLoss.Reset();
+            _signalLoss.OnLifecycle(SyncLifecycleEvent.MonitorDeviceStopped);
             _effects.ApplyFrameText("--:--:--:--", "-.--- s");
         }
         _formatText = exception == null ? "LTC 停止中" : "LTC 停止エラー";

@@ -76,7 +76,7 @@ public sealed class GapFreezeHandler
     internal GapState CurrentState
     {
         get => _currentState;
-        set => _currentState = value;
+        set => SetState(value);
     }
 
     public DateTime StartedAt { get; set; } = DateTime.MinValue;
@@ -114,7 +114,7 @@ public sealed class GapFreezeHandler
     public void Reset()
     {
         CaptureAttemptId++;
-        _currentState = GapState.Inactive;
+        SetState(GapState.Inactive);
         _pauseOwnedByGap = false;
         _pauseOwnershipRecorded = false;
         StartedAt = DateTime.MinValue;
@@ -138,7 +138,7 @@ public sealed class GapFreezeHandler
     public void EnterFreezeCapture(Guid? trackId, double targetSeconds, string? filePath)
     {
         CaptureAttemptId++;
-        _currentState = GapState.EnteringFreeze;
+        SetState(GapState.EnteringFreeze);
         StartedAt = _timeProvider.GetUtcNow().UtcDateTime;
         PendingTrackId = trackId;
         PendingTargetSeconds = targetSeconds;
@@ -183,7 +183,7 @@ public sealed class GapFreezeHandler
 
     public void OnFreezeComplete(Guid? loadedTrackId)
     {
-        _currentState = GapState.FreezeComplete;
+        SetState(GapState.FreezeComplete);
         StartedAt = DateTime.MinValue;
         CachedTrackId = PendingTrackId ?? loadedTrackId;
         CachedTargetSeconds = PendingTargetSeconds;
@@ -200,7 +200,7 @@ public sealed class GapFreezeHandler
         // （届いたフレームで確定し直す。Cached には入れない = 最終画像として認定しない）。
         // 目標 0 も有効なので値ではなく「捕捉中だったか」で判定する。
         bool hadCapture = _currentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep;
-        _currentState = GapState.FreezeComplete;
+        SetState(GapState.FreezeComplete);
         StartedAt = DateTime.MinValue;
         // タイムアウト時の表示は、確定済みの最終画像として再利用しない。
         ClearCachedFrameInfo();
@@ -512,5 +512,17 @@ public sealed class GapFreezeHandler
             fps);
     }
 
-    private void SetState(GapState state) => _currentState = state;
+    /// <summary>
+    /// 状態の書き込みはすべてここを通す。v0.5.2 段 1: Inactive との出入りをできごととしてログに残す
+    /// （ログだけで、状態機械の振る舞いは変えない）。
+    /// </summary>
+    private void SetState(GapState state)
+    {
+        GapState previous = _currentState;
+        _currentState = state;
+        if (previous == GapState.Inactive && state != GapState.Inactive)
+            SyncLifecycle.Record(SyncLifecycleEvent.GapEnter, state.ToString());
+        else if (previous != GapState.Inactive && state == GapState.Inactive)
+            SyncLifecycle.Record(SyncLifecycleEvent.GapExit, previous.ToString());
+    }
 }

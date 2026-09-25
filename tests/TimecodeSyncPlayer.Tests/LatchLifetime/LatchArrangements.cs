@@ -122,7 +122,7 @@ internal static class LatchArrangements
             // Smooth の倍率が残ったまま、倍率を 1.0 に戻せない状態で補正状態を捨てる（:292-297）。
             ApplySmoothRate(s);
             h.RateApplySucceeds = false;
-            h.Controller.CorrectionReset();
+            h.Controller.PlaybackStopped();
             h.RateApplySucceeds = true;
         }
         else if (latch == RateNotUnity)

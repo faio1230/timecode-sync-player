@@ -76,6 +76,22 @@ internal sealed class LtcSignalLossPolicy
     /// <summary>D27: 直近の損失判定の理由（保持か無音か）。</summary>
     public LtcSignalLossReason Reason => _reason;
 
+    /// <summary>
+    /// v0.5.2 段 1: できごとの入口。監視の開始・停止で初期化する（呼ぶ条件は LtcSyncController 側が
+    /// 段 1 の前と同じに保つ）。
+    /// </summary>
+    public void OnLifecycle(SyncLifecycleEvent evt)
+    {
+        switch (evt)
+        {
+            case SyncLifecycleEvent.MonitoringStarted:
+            case SyncLifecycleEvent.MonitoringStopped:
+            case SyncLifecycleEvent.MonitorDeviceStopped:
+                Reset();
+                break;
+        }
+    }
+
     public void Reset()
     {
         _lastValidFrameAtMilliseconds = null;
@@ -125,6 +141,7 @@ internal sealed class LtcSignalLossPolicy
         _manualResumeSuppressesPause = false;
         bool shouldResume = _pausedByPolicy;
         _pausedByPolicy = false;
+        SyncLifecycle.Record(SyncLifecycleEvent.SignalRecovered, "valid-frames");
 
         return shouldResume
             ? LtcSignalLossAction.ResumeAndSync
@@ -187,6 +204,7 @@ internal sealed class LtcSignalLossPolicy
         _manualResumeSuppressesPause = false;
         bool shouldResume = _pausedByPolicy;
         _pausedByPolicy = false;
+        SyncLifecycle.Record(SyncLifecycleEvent.SignalRecovered, "held-jump");
 
         return shouldResume
             ? LtcSignalLossAction.ResumeAndSync

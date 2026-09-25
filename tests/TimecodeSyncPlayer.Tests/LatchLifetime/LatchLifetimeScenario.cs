@@ -213,8 +213,8 @@ internal sealed class LatchLifetimeScenario
                 h.EndSeekBarInteraction(h.PlaybackSeconds);
                 break;
             case LifecycleEvent.StopPlayback:
-                // MainWindow.StopPlayback（MainWindow.xaml.cs:1536）→ CorrectionReset。
-                h.Controller.CorrectionReset();
+                // MainWindow.StopPlayback（MainWindow.xaml.cs:1536）→ PlaybackStopped（段 0 では CorrectionReset）。
+                h.Controller.PlaybackStopped();
                 h.StopPlayback();
                 break;
             case LifecycleEvent.GapEnter:
@@ -241,14 +241,18 @@ internal sealed class LatchLifetimeScenario
                 h.Controller.FpsModeChanged();
                 break;
             case LifecycleEvent.CorrectionModeChanged:
-                // MainWindow.xaml.cs:470-476: 設定の保存とログだけ。同期側の入口は呼ばない。
+                // MainWindow.xaml.cs:470-476: 設定の保存とログだけ。段 1 から同期側の入口
+                // （CorrectionModeChanged）を呼ぶが、どのラッチも消さない。
                 h.CorrectionMode = h.CorrectionMode == SyncCorrectionMode.Smooth
                     ? SyncCorrectionMode.Jump : SyncCorrectionMode.Smooth;
+                h.Controller.CorrectionModeChanged();
                 break;
             case LifecycleEvent.SignalLossModeChanged:
-                // MainWindow.xaml.cs:484-490: 設定の保存とログだけ。同期側の入口は呼ばない。
+                // MainWindow.xaml.cs:484-490: 設定の保存とログだけ。段 1 から同期側の入口
+                // （SignalLossModeChanged）を呼ぶが、どのラッチも消さない。
                 h.SignalLossMode = h.SignalLossMode == LtcSignalLossMode.Stop
                     ? LtcSignalLossMode.RunThrough : LtcSignalLossMode.Stop;
+                h.Controller.SignalLossModeChanged();
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(evt));
