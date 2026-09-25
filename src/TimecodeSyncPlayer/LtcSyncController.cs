@@ -83,36 +83,10 @@ internal sealed class LtcSyncController
     private bool _rateRestorePending;
     // 0.4.8: 位置が不安定で速度補正を止めている間 true（開始と終了を 1 回ずつログに残す）。
     private bool _correctionPausedForPosition;
-    private double? _lastAcceptedLtcSeconds;
-    private double _lastAcceptedRawSeconds;
-    private long _lastAcceptedFrameEndTimestamp;
-    // D27-d: 保持（Duplicate）として届いた最後の値。停止時の着地目標は保持値そのものにし、
-    // 保持直前の受理値（1 フレーム手前になり得る）を使わない。Normal/Initial で解除する。
-    private double? _lastHeldEffectiveSeconds;
-    // D31-b: 保持損失中に着地シークを発行した保持値。この値から保持値が変わったら 1 回だけ
-    // 新しい保持値へ着地する（同じ保持値の連続では発行しない）。損失が明けたら解除する。
-    private double? _heldLossLandingSeconds;
-    // D20-b: 同期へ実際に適用した最後の値（保持値の変更判定に使う）。
-    private double? _lastAppliedLtcSeconds;
-    // D20-b (i): 同一の Jump 連続で何度も適用しないためのラッチ（Normal/Initial で解除）。
-    private bool _jumpAppliedOnce;
-    // D20-b: 保持値の変更で 1 回だけ適用したことを示すラッチ（Normal/Initial で解除）。
-    private bool _heldReapplyDone;
-    // D30: 未確認の Jump。写像がギャップ／別トラック、または Fixed モードでデコーダ推定 fps が
-    // 食い違う Jump を保持し、次の 1 フレームの連続（同値 Duplicate か +1 フレーム）で確認して
-    // から適用する。誤デコード 1 枚でギャップ進入・トラック切替・保持復帰を起こさない。
-    private double? _pendingJumpSeconds;
-    private long _pendingJumpReceivedAt;
-    private long _pendingJumpFrameEndTimestamp;
-    private double? _pendingSyncSeconds;
-    private double _pendingSyncRawSeconds;
-    private long _pendingSyncFrameEndTimestamp;
+    /// <summary>v0.5.2 段 2b: 入力（LTC）の軸の状態。</summary>
+    private readonly LtcInputState _input = new();
     private bool _sampleClockAgeWarned;
     private string _formatText = "LTC 停止中";
-    // D37-c: 追従開始（同期の有効化・監視開始）の最初の同期評価を、既存の着地窓
-    // （D37-b2 の NotifyLanding / RateCatchUpAllowed）と同じ扱いにする。追従開始の瞬間は
-    // 画面がまだ合っていないので、速度補正より速いシークで詰める。
-    private bool _followStartPending;
     // D37-c: 速度補正の残差にも、粗い判定と同じ前処理（ありえない変化の除外・中央値）を通す。
     // 窓は粗い判定と同じ既定（0.25 秒）から始める。Smooth の応答が遅れて V3 の収束が悪化する
     // 場合は窓を短くする（判断は実機測定で行う）。
@@ -218,23 +192,23 @@ internal sealed class LtcSyncController
                 _smoothAvailable = true;
                 // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
                 // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
-                _followStartPending = true;
+                _input.MarkFollowStart();
                 break;
             case SyncLifecycleEvent.SyncDisabled:
                 ResetCorrection();
                 _smoothAvailable = true;
-                _followStartPending = false;
+                _input.ClearFollowStart();
                 break;
             case SyncLifecycleEvent.SyncModeChanged:
                 ResetCorrection();
                 _smoothAvailable = true;
                 _frames.ResetDiagnostics();
-                DiscardPendingJump();
+                _input.DiscardPendingJump();
                 break;
             case SyncLifecycleEvent.ManualSeek:
             case SyncLifecycleEvent.TimelineSeek:
-                _pendingSyncSeconds = null;
-                DiscardPendingJump();
+                _input.DiscardPendingSync();
+                _input.DiscardPendingJump();
                 // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
                 ResetCorrection();
                 break;
@@ -244,59 +218,40 @@ internal sealed class LtcSyncController
                 ResetCorrection();
                 break;
             case SyncLifecycleEvent.FpsModeChanged:
-                DiscardPendingJump();
+                _input.DiscardPendingJump();
                 _frames.ResetForFpsMode(_effects.GetContext().FpsMode);
                 break;
             case SyncLifecycleEvent.MonitoringStarted:
-                ClearFrameHistory();
+                _input.ClearFrameHistory();
                 _monitoring.MarkStarted();
                 _signalLoss.OnLifecycle(evt);
                 // D37-c: 監視開始時に既に同期が有効なら、最初の有効フレームを追従開始として扱う。
                 if (_effects.GetContext().SyncEnabled)
-                    _followStartPending = true;
+                    _input.MarkFollowStart();
                 break;
             case SyncLifecycleEvent.MonitoringStopped:
-                ClearFrameHistory();
+                _input.ClearFrameHistory();
                 if (!_monitoring.IsDetectionActive(isReportedRunning: false))
                 {
                     _signalLoss.OnLifecycle(evt);
-                    _followStartPending = false;
+                    _input.ClearFollowStart();
                 }
                 break;
             case SyncLifecycleEvent.MonitorDeviceStopped:
                 // 信号断のポリシーの初期化は、正常な停止のときだけ入口（MonitorStopped）が行う。
-                ClearFrameHistory();
-                _followStartPending = false;
+                _input.ClearFrameHistory();
+                _input.ClearFollowStart();
                 break;
             case SyncLifecycleEvent.BoundaryHoldReleased:
                 // D35-b: ホールド中に残った端への保留シークと保持着地のラッチを解除する。
                 // D37-g: 追従開始のエピソードも終わらせる（先行量を引き継がせない）。
-                _heldLossLandingSeconds = null;
-                _heldReapplyDone = false;
-                _pendingSyncSeconds = null;
+                _input.ClearHeldLossLanding();
+                _input.ClearHeldReapplied();
+                _input.DiscardPendingSync();
                 _syncService.SeekState.Clear();
                 _syncService.EndFollowStartLanding("boundary hold released");
                 break;
         }
-    }
-
-    /// <summary>監視の開始・停止で、受けたフレームの記録と 1 回適用のラッチを捨てる。</summary>
-    private void ClearFrameHistory()
-    {
-        _lastAcceptedLtcSeconds = null;
-        _lastAppliedLtcSeconds = null;
-        _lastHeldEffectiveSeconds = null;
-        _heldLossLandingSeconds = null;
-        _pendingSyncSeconds = null;
-        DiscardPendingJump();
-        _jumpAppliedOnce = false;
-        _heldReapplyDone = false;
-    }
-
-    private void DiscardPendingJump()
-    {
-        _pendingJumpSeconds = null;
-        _pendingJumpFrameEndTimestamp = 0;
     }
 
     public void GapBehaviorChanged()
@@ -310,46 +265,46 @@ internal sealed class LtcSyncController
 
     private void ReapplyLastAcceptedFrame()
     {
-        _pendingSyncSeconds = null;
+        _input.DiscardPendingSync();
         LtcSyncContext state = _effects.GetContext();
-        if (_lastAcceptedLtcSeconds is null || !state.IsMonitoring ||
+        if (_input.Accepted is not { } accepted || !state.IsMonitoring ||
             !state.SyncEnabled || state.IsSeeking || _signalLoss.ShouldSuppressSync)
             return;
 
-        bool stale = IsStaleReapply();
-        if (_sampleClockEnabled && _lastAcceptedFrameEndTimestamp > 0)
+        bool stale = IsStaleReapply(accepted.FrameEndTimestamp);
+        if (_sampleClockEnabled && accepted.FrameEndTimestamp > 0)
             Log.Debug("LTC sample clock: reapply ageMs={AgeMs:F1} deferred={Deferred}",
-                ReapplyAgeMilliseconds(), stale);
+                ReapplyAgeMilliseconds(accepted.FrameEndTimestamp), stale);
 
         if (stale)
         {
             // U1: 最後のフレーム終端から 0.5 秒より古い再適用では同期要求（シーク目標）を
             // 出さず、次の有効フレームに任せる。ギャップ表示の切替は ApplySync の
             // ギャップ分岐が即時に行う（gapDisplayOnly）。
-            ApplySync(EffectiveSeconds(_lastAcceptedRawSeconds, _lastAcceptedFrameEndTimestamp, ReapplyAgeSource),
+            ApplySync(EffectiveSeconds(accepted.RawSeconds, accepted.FrameEndTimestamp, ReapplyAgeSource),
                 gapDisplayOnly: true);
             return;
         }
 
-        RequestSync(_lastAcceptedRawSeconds, _lastAcceptedFrameEndTimestamp, ReapplyAgeSource);
+        RequestSync(accepted.RawSeconds, accepted.FrameEndTimestamp, ReapplyAgeSource);
     }
 
     /// <summary>
     /// U1: 再適用時点で最後のフレーム終端が 0.5 秒より古い（停止前の値である）か。
     /// サンプル時計 off では age を使わないため常に false。
     /// </summary>
-    private bool IsStaleReapply()
+    private bool IsStaleReapply(long frameEndTimestamp)
     {
-        if (!_sampleClockEnabled || _lastAcceptedFrameEndTimestamp <= 0)
+        if (!_sampleClockEnabled || frameEndTimestamp <= 0)
             return false;
-        double ageSeconds = (_getQpc() - _lastAcceptedFrameEndTimestamp) / (double)Stopwatch.Frequency;
+        double ageSeconds = (_getQpc() - frameEndTimestamp) / (double)Stopwatch.Frequency;
         return ageSeconds is < 0 or > MaxSampleClockAgeSeconds;
     }
 
-    private double ReapplyAgeMilliseconds() =>
-        _lastAcceptedFrameEndTimestamp <= 0
+    private double ReapplyAgeMilliseconds(long frameEndTimestamp) =>
+        frameEndTimestamp <= 0
             ? 0.0
-            : (_getQpc() - _lastAcceptedFrameEndTimestamp) * 1000.0 / Stopwatch.Frequency;
+            : (_getQpc() - frameEndTimestamp) * 1000.0 / Stopwatch.Frequency;
 
     /// <summary>手動シーク（シークバー・相対シーク）。source はログに残す呼び出し元。</summary>
     public void CancelPendingSync(string source = "manual")
@@ -433,15 +388,11 @@ internal sealed class LtcSyncController
         SyncRequestResult result = ApplySync(effectiveSeconds);
         if (result == SyncRequestResult.Deferred)
         {
-            _pendingSyncSeconds = effectiveSeconds;
-            _pendingSyncRawSeconds = pendingRawSeconds;
-            _pendingSyncFrameEndTimestamp = pendingFrameEndTimestamp;
+            _input.HoldPendingSync(effectiveSeconds, pendingRawSeconds, pendingFrameEndTimestamp);
         }
         else
         {
-            _pendingSyncSeconds = null;
-            _pendingSyncRawSeconds = 0;
-            _pendingSyncFrameEndTimestamp = 0;
+            _input.DiscardPendingSync();
         }
 
         Log.Debug("sync.apply: elapsedMs={ElapsedMs:F1} result={Result} ltc={Ltc:F3}",
@@ -547,12 +498,12 @@ internal sealed class LtcSyncController
         long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
         // D30: 未確認 Jump の確認。直後の 1 フレームが同値の Duplicate か +1 フレームなら、
         // その値を確認済み Jump として適用する（保持損失からの復帰も確認後に行う）。
-        if (_pendingJumpSeconds is double pendingJump)
+        if (_input.PendingJumpSeconds is double pendingJump)
         {
-            _pendingJumpSeconds = null;
+            _input.ClearPendingJumpSeconds();
             bool withinWindow = JumpConfirmationPolicy.IsWithinConfirmationWindow(
-                _pendingJumpFrameEndTimestamp, frameEndTimestamp,
-                _pendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps);
+                _input.PendingJumpFrameEndTimestamp, frameEndTimestamp,
+                _input.PendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps);
             if (withinWindow &&
                 JumpConfirmationPolicy.IsConfirmedBy(
                     pendingJump, rawSeconds, LastTimecodeFps, processed.Diagnostic.Status))
@@ -567,8 +518,8 @@ internal sealed class LtcSyncController
                     "Timecode sync: dropping out-of-window pending Jump frame ltc={Ltc:F3} next={Next:F3} streamMs={StreamMs:F1} wallMs={WallMs}",
                     pendingJump, rawSeconds,
                     JumpConfirmationPolicy.SampleClockDifferenceMilliseconds(
-                        _pendingJumpFrameEndTimestamp, frameEndTimestamp) ?? -1.0,
-                    receivedAtMilliseconds - _pendingJumpReceivedAt);
+                        _input.PendingJumpFrameEndTimestamp, frameEndTimestamp) ?? -1.0,
+                    receivedAtMilliseconds - _input.PendingJumpReceivedAt);
             }
         }
 
@@ -590,7 +541,7 @@ internal sealed class LtcSyncController
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
-                _lastHeldEffectiveSeconds = heldEffectiveSeconds;
+                _input.MarkHeldEffective(heldEffectiveSeconds);
                 // D33: 保持（Duplicate）では通常の同期評価が走らない。範囲外 LTC の保持中でも
                 // 終端ホールド／解除を評価する（境界へのシークは通常フレーム側が行う）。
                 LtcSyncContext heldState = _effects.GetContext();
@@ -604,9 +555,7 @@ internal sealed class LtcSyncController
                 string? deferReason = UnconfirmedJumpReason(processed, sourceFrame, rawSeconds, frameEndTimestamp);
                 if (deferReason != null)
                 {
-                    _pendingJumpSeconds = rawSeconds;
-                    _pendingJumpReceivedAt = receivedAtMilliseconds;
-                    _pendingJumpFrameEndTimestamp = frameEndTimestamp;
+                    _input.HoldPendingJump(rawSeconds, receivedAtMilliseconds, frameEndTimestamp);
                     Log.Information(
                         "Timecode sync: holding unconfirmed Jump frame ltc={Ltc:F3} reason={Reason}",
                         rawSeconds, deferReason);
@@ -622,12 +571,12 @@ internal sealed class LtcSyncController
                 {
                     ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
                     if (!_signalLoss.IsLost)
-                        _jumpAppliedOnce = false;
+                        _input.ClearJumpApplied();
                 }
                 // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
-                if (!_jumpAppliedOnce)
+                if (!_input.JumpAppliedOnce)
                 {
-                    _jumpAppliedOnce = true;
+                    _input.MarkJumpApplied();
                     applyOnce = true;
                     applyReason = "first Jump";
                 }
@@ -644,11 +593,11 @@ internal sealed class LtcSyncController
             else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
                      (heldValueChangedDuringLoss || ShouldLandOnFirstHeldValueDuringPause()))
             {
-                _heldReapplyDone = true;
+                _input.MarkHeldReapplied();
                 if (_signalLoss.IsPauseOwned)
                 {
                     ReapplyHeldValueOnPause();
-                    _lastAppliedLtcSeconds = _lastHeldEffectiveSeconds;
+                    _input.MarkLastApplied(_input.LastHeldEffectiveSeconds);
                     _lastContinueFrame = null;
                     return;
                 }
@@ -660,7 +609,7 @@ internal sealed class LtcSyncController
             else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
                      IsHeldValueFarFromLastApplied(rawSeconds, frameEndTimestamp))
             {
-                _heldReapplyDone = true;
+                _input.MarkHeldReapplied();
                 applyOnce = true;
                 applyReason = "held value change";
             }
@@ -672,11 +621,8 @@ internal sealed class LtcSyncController
         }
         else
         {
-            _jumpAppliedOnce = false;
-            _heldReapplyDone = false;
             // D27-d: 値が進むフレームが来たら保持は明けたので、着地目標の保持値を捨てる。
-            _lastHeldEffectiveSeconds = null;
-            _heldLossLandingSeconds = null;
+            _input.OnNormalFrame();
             applyOnce = false;
             applyReason = "";
         }
@@ -688,10 +634,7 @@ internal sealed class LtcSyncController
         // 同期判断・シーク・クリップ切替・ギャップ出入りが同じ量だけずれる。
         // T2: サンプル時計が有効なら、ここでフレーム終端からの経過（age）を足す。
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, applyOnce ? "jump" : "frame");
-        _lastAcceptedLtcSeconds = effectiveSeconds;
-        _lastAcceptedRawSeconds = rawSeconds;
-        _lastAcceptedFrameEndTimestamp = frameEndTimestamp;
-        _lastAppliedLtcSeconds = effectiveSeconds;
+        _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
         if (applyOnce)
         {
             // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
@@ -719,31 +662,28 @@ internal sealed class LtcSyncController
         if (status == TimecodeFrameDiagnosticStatus.Duplicate)
         {
             _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
-            _lastHeldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
-                _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
+            _input.MarkHeldEffective(SyncOffsetPolicy.Apply(rawSeconds,
+                _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds));
         }
         else
         {
-            _lastHeldEffectiveSeconds = null;
+            _input.ClearHeldEffective();
         }
 
         if (_signalLoss.IsLost)
         {
             ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
             if (!_signalLoss.IsLost)
-                _jumpAppliedOnce = false;
+                _input.ClearJumpApplied();
         }
 
-        _jumpAppliedOnce = true;
-        _heldReapplyDone = false;
+        _input.MarkJumpApplied();
+        _input.ClearHeldReapplied();
         // D31-b: 確認済みの適用で損失が明けた（または新しい値へ動いた）ので、損失中の着地値は捨てる。
-        _heldLossLandingSeconds = null;
+        _input.ClearHeldLossLanding();
         _lastContinueFrame = null;
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
-        _lastAcceptedLtcSeconds = effectiveSeconds;
-        _lastAcceptedRawSeconds = rawSeconds;
-        _lastAcceptedFrameEndTimestamp = frameEndTimestamp;
-        _lastAppliedLtcSeconds = effectiveSeconds;
+        _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
         Log.Information("Timecode sync: applying the confirmed Jump frame once ltc={Ltc:F3}", rawSeconds);
         _syncService.EndFollowStartLanding("ltc jump");
         RequestSyncEffective(effectiveSeconds);
@@ -785,7 +725,7 @@ internal sealed class LtcSyncController
     /// </summary>
     private bool IsHeldValueFarFromLastApplied(double rawSeconds, long frameEndTimestamp)
     {
-        if (_heldReapplyDone || _lastAppliedLtcSeconds is not double applied)
+        if (_input.HeldReapplyDone || _input.LastAppliedLtcSeconds is not double applied)
             return false;
         if (!double.IsFinite(rawSeconds))
             return false;
@@ -805,7 +745,7 @@ internal sealed class LtcSyncController
     {
         if (!_signalLoss.IsLost)
             return false;
-        double? baseline = _heldLossLandingSeconds ?? _lastHeldEffectiveSeconds;
+        double? baseline = _input.HeldLossLandingSeconds ?? _input.LastHeldEffectiveSeconds;
         if (baseline is not double previous || !double.IsFinite(heldEffectiveSeconds))
             return false;
 
@@ -819,8 +759,8 @@ internal sealed class LtcSyncController
     /// 明示着地を行う（損失理由や値の到着順に依存しない）。
     /// </summary>
     private bool ShouldLandOnFirstHeldValueDuringPause() =>
-        _signalLoss.IsPauseOwned && _heldLossLandingSeconds is null &&
-        _lastHeldEffectiveSeconds is not null;
+        _signalLoss.IsPauseOwned && _input.HeldLossLandingSeconds is null &&
+        _input.LastHeldEffectiveSeconds is not null;
 
     /// <summary>
     /// D20-b (i): 保持 LTC（Duplicate）では通常の同期経路が走らないため、ロード解除だけを
@@ -833,7 +773,7 @@ internal sealed class LtcSyncController
     {
         if (!_syncService.IsLoadingFile && !_syncService.HasPendingFileLoadRelease)
             return;
-        if (_lastAcceptedLtcSeconds is not double accepted)
+        if (_input.Accepted is not { } accepted)
             return;
         if (_effects.GetPlaybackSeconds == null || _effects.GetTotalRenderedFrames == null)
             return;
@@ -851,9 +791,10 @@ internal sealed class LtcSyncController
             return;
 
         Log.Information(
-            "Timecode sync: reapplying the last accepted timecode once after file load ltc={Ltc:F3}", accepted);
-        _lastAppliedLtcSeconds = accepted;
-        RequestSyncEffective(accepted);
+            "Timecode sync: reapplying the last accepted timecode once after file load ltc={Ltc:F3}",
+            accepted.EffectiveSeconds);
+        _input.MarkLastApplied(accepted.EffectiveSeconds);
+        RequestSyncEffective(accepted.EffectiveSeconds);
     }
 
     /// <summary>
@@ -1038,7 +979,7 @@ internal sealed class LtcSyncController
     {
         ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
         RefreshDisplay();
-        _pendingSyncSeconds = null;
+        _input.DiscardPendingSync();
         if (!_signalLoss.ShouldSuppressSync)
             RequestSync(rawSeconds, frameEndTimestamp);
     }
@@ -1047,14 +988,14 @@ internal sealed class LtcSyncController
     {
         ApplySignalLossAction(_signalLoss.Evaluate(nowMilliseconds, SignalContext()));
         RefreshDisplay();
-        if (_pendingSyncSeconds is double pending)
+        if (_input.Pending is { } pending)
         {
             // T2: サンプル時計が有効なら、保留値は生値とフレーム終端を持ち、
             // 使う時点の age で実効値を取り直す（off は従来どおり実効値を再送する）。
-            if (_sampleClockEnabled && _pendingSyncFrameEndTimestamp > 0)
-                RequestSync(_pendingSyncRawSeconds, _pendingSyncFrameEndTimestamp, "tick");
+            if (_sampleClockEnabled && pending.FrameEndTimestamp > 0)
+                RequestSync(pending.RawSeconds, pending.FrameEndTimestamp, "tick");
             else
-                RequestSyncEffective(pending);
+                RequestSyncEffective(pending.EffectiveSeconds);
         }
     }
 
@@ -1091,7 +1032,7 @@ internal sealed class LtcSyncController
             // D35: 停止モードの保持は、損失理由（SignalLoss / TimecodeHeld）や保持値が損失宣言の
             // 前後どちらで分かったかに依らず、値が分かった時点で保持値へ明示的に 1 回着地する。
             // まだ値が無い（無音損失）ときは、その後の Duplicate が届いた時点で受信経路が着地する。
-            if (_lastHeldEffectiveSeconds is not null ||
+            if (_input.LastHeldEffectiveSeconds is not null ||
                 _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
                 ReapplyHeldValueOnPause();
         }
@@ -1134,7 +1075,7 @@ internal sealed class LtcSyncController
     /// </summary>
     private void ReapplyHeldValueOnPause()
     {
-        double? held = _lastHeldEffectiveSeconds ?? _lastAcceptedLtcSeconds;
+        double? held = _input.LastHeldEffectiveSeconds ?? _input.Accepted?.EffectiveSeconds;
         if (held is not double heldSeconds || _effects.SeekTo == null)
             return;
         LtcSyncContext state = _effects.GetContext();
@@ -1155,7 +1096,7 @@ internal sealed class LtcSyncController
             // 解除時の範囲内 LTC への着地を抑止するため発行しない。
             if (_single().IsBoundaryHeld)
             {
-                _heldLossLandingSeconds = heldSeconds;
+                _input.MarkHeldLossLanding(heldSeconds);
                 Log.Debug(
                     "LTC timecode held: landing skipped (clip boundary hold active) ltc={Ltc:F3}",
                     heldSeconds);
@@ -1170,7 +1111,7 @@ internal sealed class LtcSyncController
         }
 
         // D31-b: この損失で着地を試みた保持値を覚え、値が変わったときだけ再度着地する。
-        _heldLossLandingSeconds = heldSeconds;
+        _input.MarkHeldLossLanding(heldSeconds);
 
         // D35: 1 フレーム以内なら既に保持位置なので省略する（停止中の微小残差でシークしない）。
         if (_effects.GetPlaybackSeconds?.Invoke() is double playback &&
@@ -1221,9 +1162,9 @@ internal sealed class LtcSyncController
         // D37-c: 追従開始の最初の同期評価は、D37-b2 の着地窓と同じ扱いにする
         // （着地まで速度補正を優先せず、シークで詰める）。古い値の再適用（gapDisplayOnly）では
         // 消費せず、次の有効フレームに任せる。
-        if (!gapDisplayOnly && _followStartPending)
+        if (!gapDisplayOnly && _input.FollowStartPending)
         {
-            _followStartPending = false;
+            _input.ClearFollowStart();
             _syncService.NotifyLanding(LandingOrigin.FollowStart);
             Log.Information("Timecode sync: follow start landing window opened ltc={Ltc:F3}", seconds);
         }
@@ -1313,15 +1254,15 @@ internal sealed class LtcSyncController
     /// </summary>
     internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
     {
-        ["jumpAppliedOnce"] = _jumpAppliedOnce,
-        ["heldReapplyDone"] = _heldReapplyDone,
-        ["pendingJump"] = _pendingJumpSeconds is not null,
-        ["pendingSync"] = _pendingSyncSeconds is not null,
-        ["lastHeldEffective"] = _lastHeldEffectiveSeconds is not null,
-        ["heldLossLanding"] = _heldLossLandingSeconds is not null,
-        ["lastAppliedLtc"] = _lastAppliedLtcSeconds is not null,
-        ["lastAcceptedLtc"] = _lastAcceptedLtcSeconds is not null,
-        ["followStartPending"] = _followStartPending,
+        ["jumpAppliedOnce"] = _input.JumpAppliedOnce,
+        ["heldReapplyDone"] = _input.HeldReapplyDone,
+        ["pendingJump"] = _input.PendingJumpSeconds is not null,
+        ["pendingSync"] = _input.Pending is not null,
+        ["lastHeldEffective"] = _input.LastHeldEffectiveSeconds is not null,
+        ["heldLossLanding"] = _input.HeldLossLandingSeconds is not null,
+        ["lastAppliedLtc"] = _input.LastAppliedLtcSeconds is not null,
+        ["lastAcceptedLtc"] = _input.Accepted is not null,
+        ["followStartPending"] = _input.FollowStartPending,
         ["rateRestorePending"] = _rateRestorePending,
         ["smoothUnavailable"] = !_smoothAvailable,
         // 倍率が 1.0 でないまま残っているか（ResetCorrection と同じ判定幅）。
