@@ -111,6 +111,20 @@ internal sealed class LtcSyncController
             "LTC sample clock: {State}（{Variable}=off のときだけ無効）",
             _sampleClockEnabled ? "有効" : "無効", SampleClockEnvironmentVariable);
         _syncService.SeekIssued += OnSeekIssued;
+        _syncService.LifecycleRaised += OnSyncServiceLifecycle;
+    }
+
+    /// <summary>
+    /// v0.5.3 段 3e: サービスのできごとで、Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+    /// BeginFileLoad の FileLoad はサービスの OnLifecycle の中で起き、コントローラの
+    /// OnLifecycle には届かないため、購読して受け取る。
+    /// </summary>
+    private void OnSyncServiceLifecycle(SyncLifecycleEvent evt)
+    {
+        if (evt != SyncLifecycleEvent.FileLoad)
+            return;
+        _input.ClearJumpApplied();
+        _input.ClearHeldReapplied();
     }
 
     public double LastLtcSeconds { get; private set; }
@@ -143,6 +157,9 @@ internal sealed class LtcSyncController
         SyncLifecycle.Record(evt, nameof(SyncEnabledChanged));
         OnLifecycle(evt);
         _syncService.OnLifecycle(evt);
+        // v0.5.3 段 3c: 同期の無効化で Single の境界ホールドのラッチを消す（§6 の 1）。
+        if (evt == SyncLifecycleEvent.SyncDisabled)
+            _single().OnLifecycle(evt);
         ExitGapForManualControl();
         ReapplyLastAcceptedFrame();
     }
@@ -152,6 +169,8 @@ internal sealed class LtcSyncController
         SyncLifecycle.Record(SyncLifecycleEvent.SyncModeChanged, nameof(SyncModeChanged));
         OnLifecycle(SyncLifecycleEvent.SyncModeChanged);
         _syncService.OnLifecycle(SyncLifecycleEvent.SyncModeChanged);
+        // v0.5.3 段 3c: モード切替で Single の境界ホールドのラッチを消す（§6 の 1）。
+        _single().OnLifecycle(SyncLifecycleEvent.SyncModeChanged);
         ExitGapForManualControl();
         _effects.UpdateCurrentTrackLabel();
         ReapplyLastAcceptedFrame();
@@ -184,6 +203,9 @@ internal sealed class LtcSyncController
             case SyncLifecycleEvent.SyncEnabled:
                 ResetCorrection();
                 _rate.ResetSmoothAvailability();
+                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+                _input.ClearJumpApplied();
+                _input.ClearHeldReapplied();
                 // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
                 // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
                 _input.MarkFollowStart();
@@ -198,11 +220,17 @@ internal sealed class LtcSyncController
                 _rate.ResetSmoothAvailability();
                 _frames.ResetDiagnostics();
                 _input.DiscardPendingJump();
+                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+                _input.ClearJumpApplied();
+                _input.ClearHeldReapplied();
                 break;
             case SyncLifecycleEvent.ManualSeek:
             case SyncLifecycleEvent.TimelineSeek:
                 _input.DiscardPendingSync();
                 _input.DiscardPendingJump();
+                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+                _input.ClearJumpApplied();
+                _input.ClearHeldReapplied();
                 // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
                 ResetCorrection();
                 break;
@@ -339,6 +367,10 @@ internal sealed class LtcSyncController
     {
         SyncLifecycle.Record(SyncLifecycleEvent.PlaybackStopped, nameof(PlaybackStopped));
         OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
+        // v0.5.3 段 3d: 停止でロード中の印と解除の回収待ちを取り消す（§6 の 3）。
+        _syncService.OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
+        // v0.5.3 段 3c: 再生の停止で Single の境界ホールドのラッチを消す（§6 の 1）。
+        _single().OnLifecycle(SyncLifecycleEvent.PlaybackStopped);
     }
 
     /// <summary>T7: 操作者の再生・一時停止で補正状態を捨てる。</summary>

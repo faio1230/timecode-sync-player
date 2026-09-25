@@ -17,4 +17,12 @@ public interface ITimecodeSyncSeekState
     void ResetLearning()
     {
     }
+
+    /// <summary>
+    /// v0.5.3 段 3f: 直前の着地の記録（着地後の 0.5 秒の抑止に使う）だけを忘れる。読み込みで
+    /// 素材が変わるため、前のファイルの着地目標を新しいファイルへ持ち越さない。既定実装は何もしない。
+    /// </summary>
+    void ForgetLastSettled()
+    {
+    }
 }

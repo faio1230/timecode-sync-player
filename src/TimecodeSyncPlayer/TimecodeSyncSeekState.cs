@@ -58,6 +58,16 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         LastStatus = TimecodeSyncSeekPendingStatus.None;
     }
 
+    /// <summary>
+    /// v0.5.3 段 3f: 直前の着地の記録だけを忘れる（読み込みで素材が変わるとき。§6 の 10）。
+    /// <see cref="Clear"/> の意味は変えない（ほかの呼び出し元に影響させない）。
+    /// </summary>
+    public void ForgetLastSettled()
+    {
+        _lastSettledAt = DateTime.MinValue;
+        _lastSettledTargetSeconds = double.NaN;
+    }
+
     public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now,
         double requestedTargetSeconds = double.NaN)
     {

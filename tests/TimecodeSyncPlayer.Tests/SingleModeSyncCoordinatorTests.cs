@@ -584,4 +584,36 @@ public class SingleModeSyncCoordinatorTests
         holdCalls.Should().BeEmpty();
         seekCalls.Should().ContainSingle().Which.Should().Be(30.0);
     }
+
+    [Fact]
+    public void Apply_HeldAtClipOut_AfterLocatedFileLoad_ThenLtcBackInside_ReleasesAndResumes()
+    {
+        // v0.5.3 段 3c の手直し: 位置つきの読み込み（GPU 復旧の ReloadCurrentTrackAfterGpuRecovery 相当）の
+        // 後も、ホールドは読み込み番号で黙って無効にならず、次の評価で解除される（再開と片付け）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState(), clock);
+        double playback = 25.0;
+        var holdCalls = new List<bool>();
+        bool released = false;
+        var coordinator = new SingleModeSyncCoordinator(
+            service,
+            new SingleModeSyncEffects(
+                ReadPosition: () => new SyncPositionRead(true, playback),
+                BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
+                SeekTo: _ => true,
+                SetEndHold: held => holdCalls.Add(held),
+                OnBoundaryHoldReleased: () => released = true));
+
+        coordinator.Apply(ltcSeconds: 40.0);              // 範囲外 → 終端ホールド（一時停止）
+        holdCalls.Should().Equal(true);
+
+        service.BeginFileLoad(0.0, 0);                    // 位置つきの読み込み（読み込み番号が進む）
+        playback = 25.0;                                  // 位置つきの読み込みは一時停止を引き継ぐ
+
+        coordinator.Apply(ltcSeconds: 24.9);              // LTC がクリップの中へ戻る
+
+        holdCalls.Should().Equal(new[] { true, false },
+            "読み込みの後の最初の評価で解除して再開する（番号で無効にすると解除が起きず、止まったままになる）");
+        released.Should().BeTrue("解除の通知（保持着地・同期の保留の片付け）も出る");
+    }
 }

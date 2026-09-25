@@ -16,6 +16,7 @@
 #        -Filter 'FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_')
 #       -SegmentSeconds N raises the per-track used length above the 20 s default;
 #       L-1 needs >= 34 s used per track (60 s follow rounds down to used - 4).
+#       -TrackSegmentSeconds '25,25,25' sets the used length per track instead.
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg, .NET SDK, the
 # target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
@@ -40,6 +41,9 @@ param(
     # Gap between tracks on the timeline (default 5 s; 0 makes them adjacent).
     [double]$GapSeconds = 5,
     [double]$SegmentSeconds = 0,
+    # Per-track used length in track order ("700,170,170"), passed to make-ltc-scenario-project.ps1.
+    # Empty = SegmentSeconds (or the 20 s default) for every track.
+    [string]$TrackSegmentSeconds = '',
     [int]$FollowSeconds = 0,
     [string]$FollowTracks = '',
     [double]$FollowWindowSeconds = 0,
@@ -416,6 +420,7 @@ if ($MediaDir) {
     if ($MediaInOffsetSeconds -ne 0) { $makeArgs.MediaInOffsetSeconds = $MediaInOffsetSeconds }
     if ($GapSeconds -ne 5) { $makeArgs.GapSeconds = $GapSeconds }
     if ($SegmentSeconds -gt 0) { $makeArgs.SegmentSeconds = $SegmentSeconds }
+    if (-not [string]::IsNullOrWhiteSpace($TrackSegmentSeconds)) { $makeArgs.TrackSegmentSeconds = $TrackSegmentSeconds }
     Write-Output ('media_select=' + $(if ($Media) { $Media } else { '(first 3 by name)' }) +
         ' media_in_offset=' + $MediaInOffsetSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))
     & $makeProject @makeArgs *> (Join-Path $ReportDir 'make-ltc-scenario-project.log')

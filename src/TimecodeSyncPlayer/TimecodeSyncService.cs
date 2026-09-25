@@ -61,6 +61,12 @@ public sealed class TimecodeSyncService
     /// </summary>
     internal event Action? SeekIssued;
 
+    /// <summary>
+    /// v0.5.3 段 3e: このサービスで起きたできごとを外へ伝える（いまは <see cref="BeginFileLoad"/> の
+    /// FileLoad だけ）。LtcSyncController が購読し、Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+    /// </summary>
+    internal event Action<SyncLifecycleEvent>? LifecycleRaised;
+
     public TimecodeSyncService(
         ISyncDecisionEngine engine,
         ITimecodeSyncSeekState seekState,
@@ -294,6 +300,8 @@ public sealed class TimecodeSyncService
         _fileLoad.Begin(now, Math.Max(0, startPositionSeconds), Math.Max(0, renderedFrameCount));
         _lastSyncSeekAt = now;                // デバウンスを更新（2.3 fix）
         OnLifecycle(SyncLifecycleEvent.FileLoad);
+        // v0.5.3 段 3e: FileLoad はサービスの OnLifecycle の中で起きるため、外へも伝える（§6 の 5）。
+        LifecycleRaised?.Invoke(SyncLifecycleEvent.FileLoad);
         // D37-b2: ロード（切替）も着地として扱い、直後の不足はシークで詰める。
         NotifyLanding();
     }
@@ -310,6 +318,9 @@ public sealed class TimecodeSyncService
             case SyncLifecycleEvent.FileLoad:
                 _fileLoad.ClearReleasePending();
                 _seekState.Clear();                    // 古い保留シーク状態をクリア（2.1 fix）
+                // v0.5.3 段 3f: 直前の着地の記録も忘れる（前のファイルの着地目標で
+                // 0.5 秒抑止しない。§6 の 10）。
+                _seekState.ForgetLastSettled();
                 // D37-a: ロードで位置が飛ぶため、粗い判定のゲート履歴を切る。
                 _engine.ResetSeekGate();
                 // D37-b: 素材が変わるので着地時間の学習を捨てる。保留はクリア済みなので位置は使える。
@@ -321,11 +332,31 @@ public sealed class TimecodeSyncService
                 _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
                 break;
             case SyncLifecycleEvent.SyncModeChanged:
-            case SyncLifecycleEvent.SyncDisabled:
             case SyncLifecycleEvent.TimelineSeek:
                 ClearSeekState();
                 break;
+            case SyncLifecycleEvent.SyncDisabled:
+                ClearSeekState();
+                // v0.5.3 段 3d: 同期の無効化でロード中の印を取り消す（§6 の 3）。
+                CancelFileLoad(evt);
+                break;
+            case SyncLifecycleEvent.PlaybackStopped:
+                // v0.5.3 段 3d: 停止でロード中の印を取り消す（§6 の 3）。
+                CancelFileLoad(evt);
+                break;
         }
+    }
+
+    /// <summary>
+    /// v0.5.3 段 3d: ロード中と解除の回収待ちを取り消す（§6 の 3）。解除（<see cref="ReleaseFileLoad"/>）
+    /// ではないため、着地窓を開かずデバウンスも更新しない。ロード中だったときだけログを 1 行残す。
+    /// </summary>
+    private void CancelFileLoad(SyncLifecycleEvent evt)
+    {
+        bool wasLoading = _fileLoad.IsLoadingFile;
+        _fileLoad.Cancel();
+        if (wasLoading)
+            Log.Information("Timecode sync: file load cancelled by {Event}", evt);
     }
 
     /// <summary>
