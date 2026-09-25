@@ -776,9 +776,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 Log.Information("GPU 復旧: フレーム通知を新しいプレイヤーへつなぎ直した");
                 _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
                     _gstBackendState.Seeking.NotifyEnded);
-                PlaylistTrack? track = _playlist.Current;
-                if (track != null)
-                    LoadFile(track.FilePath, position);
+                ReloadCurrentTrackAfterGpuRecovery(position);
                 Log.Information("GPU 復旧: GStreamer player を再生成し位置 {Position:F3}s へ復帰", position);
             }
             catch (Exception ex)
@@ -786,6 +784,21 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 Log.Error(ex, "GPU 復旧: GStreamer の再接続に失敗");
             }
         });
+    }
+
+    /// <summary>
+    /// v0.5.3 段 3b（§6 の 2 の経路 #1）: GPU 復旧後に現在トラックを直前位置で読み直し、
+    /// 位置つきの読み込みを同期の入口にも通す（source = "gpu-recovery"）。
+    /// </summary>
+    private bool ReloadCurrentTrackAfterGpuRecovery(double position)
+    {
+        PlaylistTrack? track = _playlist.Current;
+        if (track == null || !LoadFile(track.FilePath, position))
+            return false;
+
+        _syncService.BeginFileLoad(position, _syncGateRenderedFrames.Read(),
+            loadIssuedQpc: 0, source: "gpu-recovery");
+        return true;
     }
 
     private bool InitializeWindowLoadedSession()
@@ -2135,6 +2148,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 bool success = LoadFile(nextTrack.FilePath, startPosition: startPos > 0 ? startPos : null);
                 if (success)
                 {
+                    // v0.5.3 段 3b: 位置つきだけ同期の入口にも通す（経路 #2）。位置なしは
+                    // PlaybackOperationsCoordinator.LoadFile が BeginSyncFileLoad(0) を通るので二重にしない。
+                    if (startPos > 0)
+                        _syncService.BeginFileLoad(startPos, _syncGateRenderedFrames.Read(),
+                            loadIssuedQpc: 0, source: "auto-advance");
                     SetLoadedTrack(nextTrack.Id);
                 }
                 return;

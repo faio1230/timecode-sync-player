@@ -2,6 +2,9 @@ using System.Reflection;
 using System.Windows.Threading;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Gst;
 using TimecodeSyncPlayer.Tests.Gst;
@@ -9,16 +12,17 @@ using TimecodeSyncPlayer.Tests.Gst;
 namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
-/// v0.5.3 段 3a: §6 の 2（<c>BeginFileLoad</c> を通らない読み込み）の赤いテスト。
+/// v0.5.3 段 3a/3b: §6 の 2（<c>BeginFileLoad</c> を通らない読み込み）の赤いテスト。
 /// 段 0 の表 <c>LatchLifetimeTable</c> の <c>FileLoadWithoutBegin</c> で「意図 = 消える」の
 /// 9 行のうち、この組み立てで前提を作れるサービス側の 3 キー
 /// （<c>pendingSeek</c>・<c>positionUntrusted</c>・<c>fileLoadReleasePending</c>）を確かめる。
-/// 段 3b で直すまで <see cref="FactAttribute.Skip"/> を付けたままコミットする。
+/// 段 3b で #1（GPU 復旧）と #2（自動送り）は直したので緑。ギャップの #3・#4 は
+/// 利用者の判断待ちのため <see cref="FactAttribute.Skip"/> を付けたままにする。
 /// </summary>
 [Collection("WpfWindow")]
 public sealed class V053LoadPathTests
 {
-    [Fact(Skip = "v0.5.3 段 3b で直す（§6 の 2）")]
+    [Fact]
     public Task GpuRecoveryPositionLoad_ClearsLoadLatches() => OnUi(() =>
     {
         using var f = new Fixture();
@@ -33,7 +37,7 @@ public sealed class V053LoadPathTests
         return Task.CompletedTask;
     });
 
-    [Fact(Skip = "v0.5.3 段 3b で直す（§6 の 2）")]
+    [Fact]
     public Task AutoAdvanceLocatedLoad_ClearsLoadLatches() => OnUi(() =>
     {
         using var f = new Fixture();
@@ -51,7 +55,7 @@ public sealed class V053LoadPathTests
         return Task.CompletedTask;
     });
 
-    [Fact(Skip = "v0.5.3 段 3b で直す（§6 の 2）")]
+    [Fact(Skip = "v0.5.3（利用者の判断待ち: ギャップの読み込みは別の口が要る）")]
     public Task GapFreezePreviousTrackLoad_ClearsLoadLatches() => OnUi(() =>
     {
         using var f = new Fixture();
@@ -68,7 +72,7 @@ public sealed class V053LoadPathTests
         return Task.CompletedTask;
     });
 
-    [Fact(Skip = "v0.5.3 段 3b で直す（§6 の 2）")]
+    [Fact(Skip = "v0.5.3（利用者の判断待ち: ギャップの読み込みは別の口が要る）")]
     public Task GapFreezePathGuardReload_ClearsLoadLatches() => OnUi(() =>
     {
         using var f = new Fixture();
@@ -84,6 +88,49 @@ public sealed class V053LoadPathTests
         f.PendingSeek.Should().BeFalse("§6 の 2: 読み込みでシークの保留を捨てる（意図 = 消える）");
         f.PositionUntrusted.Should().BeFalse("§6 の 2: 読み込みで位置の信頼を初期化する（意図 = 消える）");
         f.FileLoadReleasePending.Should().BeFalse("§6 の 2: 読み込みで解除の回収待ちを下ろす（意図 = 消える）");
+        return Task.CompletedTask;
+    });
+
+    [Fact]
+    public Task GpuRecoveryPositionLoad_RecordsFileLoadFromGpuRecovery() => OnUi(() =>
+    {
+        using var f = new Fixture();
+        using var capture = new LoggerCapture();
+
+        bool ok = f.LoadLikeGpuRecovery("C:/clip.mp4", 14.58);
+
+        ok.Should().BeTrue();
+        capture.FileLoads().Should().Equal("FileLoad/gpu-recovery");
+        return Task.CompletedTask;
+    });
+
+    [Fact]
+    public Task AutoAdvanceLocatedLoad_RecordsFileLoadFromAutoAdvance() => OnUi(() =>
+    {
+        using var f = new Fixture();
+        f.SeedContinueAutoAdvance();
+        using var capture = new LoggerCapture();
+
+        f.AdvancePlaylistAtEnd(5.0);
+
+        capture.FileLoads().Should().Equal("FileLoad/auto-advance");
+        return Task.CompletedTask;
+    });
+
+    [Fact]
+    public Task AutoAdvanceMediaInZero_DoesNotRecordFileLoadTwice() => OnUi(() =>
+    {
+        using var f = new Fixture();
+        f.SeedContinueAutoAdvance(nextMediaInSeconds: 0);
+        using var capture = new LoggerCapture();
+
+        f.AdvancePlaylistAtEnd(5.0);
+
+        f.PlaybackApi.Loads.Should().ContainSingle(load =>
+            load.Path == "C:/b.mp4" && load.StartSeconds == null,
+            "MediaIn = 0 の自動送りは位置なしロード");
+        capture.FileLoads().Should().Equal(new[] { "FileLoad/load" },
+            "位置なしは PlaybackOperationsCoordinator の入口だけを通る（二重にしない）");
         return Task.CompletedTask;
     });
 
@@ -141,15 +188,15 @@ public sealed class V053LoadPathTests
             PositionUntrusted.Should().BeTrue("前提: 位置が未信頼");
         }
 
-        /// <summary>Continue + 同期 OFF で、MediaIn > 0 の次トラックへ自動送りできる配置にする。</summary>
-        public void SeedContinueAutoAdvance()
+        /// <summary>Continue + 同期 OFF で、次トラックへ自動送りできる配置にする（MediaIn は指定可）。</summary>
+        public void SeedContinueAutoAdvance(double nextMediaInSeconds = 10)
         {
             Playlist.Tracks.Add(new PlaylistTrack(
                 Guid.NewGuid(), "C:/a.mp4", "a", TimeSpan.Zero, null, TimeSpan.Zero,
                 TimeSpan.FromSeconds(5), TimeSpan.Zero, 25, true));
             Playlist.Tracks.Add(new PlaylistTrack(
-                Guid.NewGuid(), "C:/b.mp4", "b", TimeSpan.FromSeconds(10), null, TimeSpan.Zero,
-                TimeSpan.FromSeconds(15), TimeSpan.Zero, 25, true));
+                Guid.NewGuid(), "C:/b.mp4", "b", TimeSpan.FromSeconds(nextMediaInSeconds), null, TimeSpan.Zero,
+                TimeSpan.FromSeconds(nextMediaInSeconds + 5), TimeSpan.Zero, 25, true));
             Playlist.Select(0).Should().BeTrue();
             Window.ViewModel.Sync.SyncModeIndex = 1;
             Window.ViewModel.Sync.SyncEnabled = false;
@@ -161,8 +208,15 @@ public sealed class V053LoadPathTests
             typeof(MainWindow).GetField("_endAdvanceTriggered", Private)!.SetValue(Window, false);
         }
 
-        public bool LoadLikeGpuRecovery(string path, double position) =>
-            (bool)Method("LoadFile").Invoke(Window, [path, (double?)position])!;
+        /// <summary>経路 #1 と同じ入口: 現在トラックを position で読み直す（GPU 復旧の再ロード）。</summary>
+        public bool LoadLikeGpuRecovery(string path, double position)
+        {
+            Playlist.Tracks.Add(new PlaylistTrack(
+                Guid.NewGuid(), path, "clip", TimeSpan.Zero, null, TimeSpan.Zero,
+                TimeSpan.FromSeconds(30), TimeSpan.Zero, 25, true));
+            Playlist.Select(0).Should().BeTrue();
+            return (bool)Method("ReloadCurrentTrackAfterGpuRecovery").Invoke(Window, [position])!;
+        }
 
         public void AdvancePlaylistAtEnd(double position) =>
             Method("TryAdvancePlaylistAtEnd").Invoke(Window, [position]);
@@ -188,6 +242,42 @@ public sealed class V053LoadPathTests
             Window.Close();
             _provider.Dispose();
         }
+    }
+
+    private sealed class ListSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = new();
+        public void Emit(LogEvent logEvent) { lock (Events) Events.Add(logEvent); }
+    }
+
+    private sealed class LoggerCapture : IDisposable
+    {
+        private readonly ILogger _previous;
+        private readonly ListSink _sink = new();
+
+        public LoggerCapture()
+        {
+            _previous = Log.Logger;
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(_sink).CreateLogger();
+        }
+
+        /// <summary>"Sync lifecycle: FileLoad" の行だけを "できごと/source" の列にする。</summary>
+        public List<string> FileLoads()
+        {
+            lock (_sink.Events)
+                return _sink.Events
+                    .Where(e => e.MessageTemplate.Text.StartsWith("Sync lifecycle:", StringComparison.Ordinal))
+                    .Where(e => Scalar(e, "Event") == "FileLoad")
+                    .Select(e => $"{Scalar(e, "Event")}/{Scalar(e, "Source")}")
+                    .ToList();
+        }
+
+        public void Dispose() => Log.Logger = _previous;
+
+        private static string Scalar(LogEvent e, string name) =>
+            e.Properties.TryGetValue(name, out LogEventPropertyValue? v) && v is ScalarValue s
+                ? s.Value?.ToString() ?? ""
+                : "";
     }
 
     private sealed class RenderApi : IRenderUpdateSource
