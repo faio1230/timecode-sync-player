@@ -327,7 +327,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 SeekTo: target => SeekTo(target),
                 SetCorrectionStatus: text => _vm.Sync.SyncCorrectionStatus = text,
                 GetSyncOffsetMilliseconds: () => _vm.Sync.SyncOffsetMs,
-                IsPlaybackPositionUnstable: () => _gstPlaybackApi.IsPositionUnstable),
+                IsPlaybackPositionUnstable: () => _gstPlaybackApi.IsPositionUnstable,
+                // v0.5.3 段 3i: 信号断の一時停止を解いたときの再開判定（§6 の 9）。
+                GetOtherPauseOwners: () => SyncRules.CollectPauseOwnersExceptSignalLoss(
+                    _singleModeSyncCoordinator?.IsBoundaryHeld ?? false,
+                    _gapFreezeHandler.IsPauseOwnedByGap,
+                    _projectRestorePauseState.IsPending)),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードと着地窓を渡す。
         _syncService.CorrectionModeSource = () => _vm.Sync.SyncCorrectionMode;

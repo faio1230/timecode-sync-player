@@ -92,6 +92,20 @@ internal sealed class LtcSignalLossPolicy
         }
     }
 
+    /// <summary>
+    /// v0.5.3 段 3i: 信号断モードの変更を受ける（§6 の 9）。新しいモードがランスルーで、
+    /// 信号断が止めているときだけ、ポリシー所有の一時停止を解く。損失の印（_isLost・理由）は
+    /// 残す（ランスルーでは損失中でも ShouldSuppressSync は立たない）。戻り値は解いたか。
+    /// </summary>
+    public bool OnSignalLossModeChanged(LtcSignalLossMode newMode)
+    {
+        if (newMode != LtcSignalLossMode.RunThrough || !_pausedByPolicy)
+            return false;
+        _pausedByPolicy = false;
+        _manualResumeSuppressesPause = false;
+        return true;
+    }
+
     public void Reset()
     {
         _lastValidFrameAtMilliseconds = null;

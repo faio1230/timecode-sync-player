@@ -808,8 +808,8 @@ public static class LatchLifetimeTable
             "LtcSyncController.cs:370-375 FpsModeChanged は未確認の Jump と fps の選択だけを捨てる"),
         new(LatchArrangements.PausedByPolicy, LifecycleEvent.CorrectionModeChanged, Keeps, Undecided,
             "MainWindow.xaml.cs:470-476 設定の保存とログだけで、同期側の入口を呼ばない"),
-        new(LatchArrangements.PausedByPolicy, LifecycleEvent.SignalLossModeChanged, Keeps, Clear,
-            "§6 の 9: MainWindow.xaml.cs:484-490 は保存とログだけ。ポリシーはモードを一時停止の判断（LtcSignalLossPolicy.cs:243-257）でしか見ず、止めたまま復帰を待つ"),
+        new(LatchArrangements.PausedByPolicy, LifecycleEvent.SignalLossModeChanged, Clears, Clear,
+            "利用者決定 2026-09-25（§7）: v0.5.3 で直す。v0.5.3 段 3i で下ろすようにした（LtcSignalLossPolicy.OnSignalLossModeChanged がランスルーへの変更で _pausedByPolicy を下ろす。LtcSignalLossPolicy.cs:100）"),
 
         // ── LtcSignalLossPolicy.manualResumeSuppressesPause ──
         new(LatchArrangements.ManualResumeSuppressesPause, LifecycleEvent.FileLoad, Keeps, Undecided,

@@ -44,7 +44,10 @@ internal sealed record LtcSyncEffects(
     Action<string>? SetCorrectionStatus = null,
     Func<double>? GetSyncOffsetMilliseconds = null,
     // 0.4.8: 直近に再生位置が後退した（復号が追いつかずパイプライン位置が 2 系列を行き来する）か。
-    Func<bool>? IsPlaybackPositionUnstable = null);
+    Func<bool>? IsPlaybackPositionUnstable = null,
+    // v0.5.3 段 3i: 信号断のポリシー以外の一時停止の持ち主（境界ホールド・ギャップ・
+    // プロジェクト復元）。ポリシーの一時停止を解いたときの再開判定に使う。
+    Func<PauseOwners>? GetOtherPauseOwners = null);
 
 /// <summary>
 /// UI-thread LTC session orchestration shared by the window and integration scenarios.
@@ -183,11 +186,26 @@ internal sealed class LtcSyncController
         OnLifecycle(SyncLifecycleEvent.CorrectionModeChanged);
     }
 
-    /// <summary>v0.5.2 段 1: 信号断モードの変更（今はどのラッチも消さない。設計書 §6 の 9 は v0.5.3）。</summary>
+    /// <summary>
+    /// v0.5.3 段 3i: 信号断モードの変更（§6 の 9）。ランスルーへ変えてポリシーの一時停止を
+    /// 解いたときだけ、ほかの持ち主がいなければ再生を再開する。
+    /// </summary>
     public void SignalLossModeChanged()
     {
         SyncLifecycle.Record(SyncLifecycleEvent.SignalLossModeChanged, nameof(SignalLossModeChanged));
         OnLifecycle(SyncLifecycleEvent.SignalLossModeChanged);
+        if (!_signalLoss.OnSignalLossModeChanged(_effects.GetContext().SignalLossMode))
+            return;
+        PauseOwners otherOwners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+        if (!SyncRules.ShouldResumeOnPolicyPauseRelease(otherOwners))
+        {
+            Log.Information(
+                "LTC signal loss mode changed: policy pause released, playback stays paused owners={Owners}",
+                otherOwners);
+            return;
+        }
+        _effects.SetSignalLossPaused(false);
+        Log.Information("LTC signal loss mode changed: policy pause released, playback resumed");
     }
 
     /// <summary>

@@ -193,4 +193,31 @@ public class SyncRulesTests
         SyncRules.CollectOtherPauseOwners(
             isSignalLossPauseOwned, isGapPauseOwned, isProjectRestorePaused)
             .Should().Be((PauseOwners)expected);
+
+    [Theory]
+    [InlineData((int)PauseOwners.None, true)]
+    [InlineData((int)PauseOwners.BoundaryHold, false)]
+    [InlineData((int)PauseOwners.Gap, false)]
+    [InlineData((int)PauseOwners.ProjectRestore, false)]
+    [InlineData((int)(PauseOwners.BoundaryHold | PauseOwners.Gap), false)]
+    [InlineData((int)(PauseOwners.SignalLoss | PauseOwners.BoundaryHold |
+        PauseOwners.Gap | PauseOwners.ProjectRestore), false)]
+    public void ShouldResumeOnPolicyPauseRelease_TruthTable(int otherOwners, bool expected) =>
+        SyncRules.ShouldResumeOnPolicyPauseRelease((PauseOwners)otherOwners).Should().Be(expected);
+
+    [Theory]
+    [InlineData(false, false, false, (int)PauseOwners.None)]
+    [InlineData(true, false, false, (int)PauseOwners.BoundaryHold)]
+    [InlineData(false, true, false, (int)PauseOwners.Gap)]
+    [InlineData(false, false, true, (int)PauseOwners.ProjectRestore)]
+    [InlineData(true, true, true,
+        (int)(PauseOwners.BoundaryHold | PauseOwners.Gap | PauseOwners.ProjectRestore))]
+    public void CollectPauseOwnersExceptSignalLoss_MapsEachFlag(
+        bool isBoundaryHoldPauseOwned,
+        bool isGapPauseOwned,
+        bool isProjectRestorePaused,
+        int expected) =>
+        SyncRules.CollectPauseOwnersExceptSignalLoss(
+            isBoundaryHoldPauseOwned, isGapPauseOwned, isProjectRestorePaused)
+            .Should().Be((PauseOwners)expected);
 }

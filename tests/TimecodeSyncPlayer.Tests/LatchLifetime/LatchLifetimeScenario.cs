@@ -248,8 +248,9 @@ internal sealed class LatchLifetimeScenario
                 h.Controller.CorrectionModeChanged();
                 break;
             case LifecycleEvent.SignalLossModeChanged:
-                // MainWindow.xaml.cs:484-490: 設定の保存とログだけ。段 1 から同期側の入口
-                // （SignalLossModeChanged）を呼ぶが、どのラッチも消さない。
+                // MainWindow.xaml.cs:484-490: 設定の保存とログ。段 1 から同期側の入口
+                // （SignalLossModeChanged）を呼び、段 3i でランスルーへの変更のとき信号断の
+                // 一時停止を解く（§6 の 9。ほかの持ち主が止めていれば再開しない）。
                 h.SignalLossMode = h.SignalLossMode == LtcSignalLossMode.Stop
                     ? LtcSignalLossMode.RunThrough : LtcSignalLossMode.Stop;
                 h.Controller.SignalLossModeChanged();
