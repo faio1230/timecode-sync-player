@@ -78,20 +78,12 @@ internal sealed class LtcSyncController
     private readonly bool _sampleClockEnabled;
     private readonly Func<long> _getQpc;
     private ContinueFrameContext? _lastContinueFrame;
-    private bool _smoothAvailable = true;
-    private double _lastAppliedRate = 1.0;
-    private bool _rateRestorePending;
-    // 0.4.8: 位置が不安定で速度補正を止めている間 true（開始と終了を 1 回ずつログに残す）。
-    private bool _correctionPausedForPosition;
+    /// <summary>v0.5.2 段 2d: 速度補正の軸の状態。</summary>
+    private readonly RateCorrectionState _rate = new();
     /// <summary>v0.5.2 段 2b: 入力（LTC）の軸の状態。</summary>
     private readonly LtcInputState _input = new();
     private bool _sampleClockAgeWarned;
     private string _formatText = "LTC 停止中";
-    // D37-c: 速度補正の残差にも、粗い判定と同じ前処理（ありえない変化の除外・中央値）を通す。
-    // 窓は粗い判定と同じ既定（0.25 秒）から始める。Smooth の応答が遅れて V3 の収束が悪化する
-    // 場合は窓を短くする（判断は実機測定で行う）。
-    private readonly SeekDecisionGate _correctionResidualGate = new();
-    private bool _correctionRejectedLogged;
 
     public LtcSyncController(
         PlaylistState playlist, GapFreezeHandler gap, TimecodeSyncService syncService,
@@ -125,7 +117,7 @@ internal sealed class LtcSyncController
     public double LastTimecodeFps => _frames.LastTimecodeFps;
 
     /// <summary>D37-c: 速度補正の入力から弾いた標本の累計（計測・テスト用）。</summary>
-    internal long CorrectionRejectedSamples => _correctionResidualGate.RejectedSamples;
+    internal long CorrectionRejectedSamples => _rate.RejectedSamples;
 
     /// <summary>
     /// 0.4.5-A フェーズ 1: 速度補正の着地窓（±0.20）が開いているか（shadow 記録用。状態は変えない）。
@@ -189,19 +181,19 @@ internal sealed class LtcSyncController
         {
             case SyncLifecycleEvent.SyncEnabled:
                 ResetCorrection();
-                _smoothAvailable = true;
+                _rate.ResetSmoothAvailability();
                 // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
                 // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
                 _input.MarkFollowStart();
                 break;
             case SyncLifecycleEvent.SyncDisabled:
                 ResetCorrection();
-                _smoothAvailable = true;
+                _rate.ResetSmoothAvailability();
                 _input.ClearFollowStart();
                 break;
             case SyncLifecycleEvent.SyncModeChanged:
                 ResetCorrection();
-                _smoothAvailable = true;
+                _rate.ResetSmoothAvailability();
                 _frames.ResetDiagnostics();
                 _input.DiscardPendingJump();
                 break;
@@ -330,8 +322,8 @@ internal sealed class LtcSyncController
     {
         // D37-c: シークで位置が飛ぶため、速度補正の残差の系列も切る（粗い判定の
         // ResetSeekGate と同じ考え方）。
-        _correctionResidualGate.Reset();
-        _correctionRejectedLogged = false;
+        _rate.ResetResidualGate();
+        _rate.ClearRejectedLogged();
         if (_effects.GetCorrectionMode?.Invoke() != SyncCorrectionMode.Smooth)
             return;
         _correction.NotifyLanding(_getUtcNow());
@@ -359,14 +351,14 @@ internal sealed class LtcSyncController
     {
         _correction.Reset();
         // D37-c: 補正の入力系列も一緒に切る（前の系列の中央値・変化量を混ぜない）。
-        _correctionResidualGate.Reset();
-        _correctionRejectedLogged = false;
-        if (_rateRestorePending || Math.Abs(_lastAppliedRate - 1.0) < 0.0005)
+        _rate.ResetResidualGate();
+        _rate.ClearRejectedLogged();
+        if (_rate.RateRestorePending || !_rate.RateNotUnity)
             return;
         if (_effects.ApplyRateInstant?.Invoke(1.0) == true)
-            _lastAppliedRate = 1.0;
+            _rate.MarkRestored();
         else
-            _rateRestorePending = true;
+            _rate.MarkRestorePending();
     }
 
     private void RequestSync(double rawSeconds, long frameEndTimestamp, string source = "frame")
@@ -816,13 +808,12 @@ internal sealed class LtcSyncController
         if (!_syncService.IsPlaybackPositionUsable)
             return;
 
-        if (_rateRestorePending)
+        if (_rate.RateRestorePending)
         {
             // T7: 一時停止中などで戻せなかった倍率を、評価の前に 1.0 へ戻す。
             if (!_effects.ApplyRateInstant(1.0))
                 return;
-            _lastAppliedRate = 1.0;
-            _rateRestorePending = false;
+            _rate.MarkRestored();
         }
 
         // 0.4.8: 再生位置が後退した直後は、位置を補正の入力として信用しない。復号が一時的に
@@ -831,19 +822,17 @@ internal sealed class LtcSyncController
         // 不安定な間は倍率を 1.0 に戻して待ち、補正の系列（ゲート・中央値）も切る。
         if (_effects.IsPlaybackPositionUnstable?.Invoke() == true)
         {
-            if (!_correctionPausedForPosition)
+            if (_rate.EnterPositionPause())
             {
-                _correctionPausedForPosition = true;
                 Log.Information(
                     "Smooth correction paused: playback position went backward (unstable); rate held at 1.0 rate={Rate:F5}",
-                    _lastAppliedRate);
+                    _rate.LastAppliedRate);
             }
             ResetCorrection();
             return;
         }
-        if (_correctionPausedForPosition)
+        if (_rate.ExitPositionPause())
         {
-            _correctionPausedForPosition = false;
             Log.Information("Smooth correction resumed: playback position is stable again");
         }
 
@@ -880,7 +869,7 @@ internal sealed class LtcSyncController
         double correctionToleranceSeconds =
             SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
         double correctionGranularitySeconds = LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04;
-        SeekDecisionGate.Result correctionGate = _correctionResidualGate.Observe(
+        SeekDecisionGate.Result correctionGate = _rate.ObserveResidual(
             residualSeconds, correctionToleranceSeconds,
             _getQpc() / (double)Stopwatch.Frequency, correctionGranularitySeconds);
         if (correctionGate.Rejected)
@@ -888,23 +877,23 @@ internal sealed class LtcSyncController
             LogCorrectionRejectedSample(correctionGate);
             return;
         }
-        _correctionRejectedLogged = false;
+        _rate.ClearRejectedLogged();
         residualSeconds = correctionGate.MedianSeconds;
 
         SyncCorrectionDecision decision = _correction.Evaluate(
-            residualSeconds, targetSeconds, _effects.GetCorrectionMode(), _smoothAvailable, _getUtcNow());
+            residualSeconds, targetSeconds, _effects.GetCorrectionMode(), _rate.SmoothAvailable, _getUtcNow());
 
         switch (decision.Action)
         {
             case SyncCorrectionActionType.SetRate:
                 if (!_effects.ApplyRateInstant(decision.Rate))
                 {
-                    _smoothAvailable = false;
+                    _rate.MarkSmoothUnavailable();
                     Log.Warning("Smooth 補正を使用できません（レート変更が拒否されました）。Jump への切替を検討してください");
                 }
-                else if (Math.Abs(decision.Rate - _lastAppliedRate) >= 0.0005)
+                else if (Math.Abs(decision.Rate - _rate.LastAppliedRate) >= 0.0005)
                 {
-                    _lastAppliedRate = decision.Rate;
+                    _rate.MarkRateApplied(decision.Rate);
                     Log.Information(
                         "Smooth correction rate={Rate:F5} residualMs={ResidualMs:F1} rawResidualMs={RawResidualMs:F1} rejectedTotal={RejectedTotal}",
                         decision.Rate, residualSeconds * 1000.0, rawResidualSeconds * 1000.0,
@@ -914,7 +903,7 @@ internal sealed class LtcSyncController
             case SyncCorrectionActionType.Seek:
                 // Smooth の倍率を Jump へ持ち込まない（shim 側では強制しない）。
                 _effects.ApplyRateInstant(1.0);
-                _lastAppliedRate = 1.0;
+                _rate.MarkRateApplied(1.0);
                 if (_effects.SeekTo(decision.TargetSeconds))
                 {
                     Log.Information(
@@ -927,7 +916,7 @@ internal sealed class LtcSyncController
         }
 
         string status =
-            !_smoothAvailable || _correction.SmoothUnavailable ? "Smooth 使用不可: Jump に切替"
+            !_rate.SmoothAvailable || _correction.SmoothUnavailable ? "Smooth 使用不可: Jump に切替"
             : _correction.SmoothDisabled ? "Smooth 補正なし（効かない）"
             : "";
         _effects.SetCorrectionStatus?.Invoke(status);
@@ -939,9 +928,9 @@ internal sealed class LtcSyncController
     /// </summary>
     private void LogCorrectionRejectedSample(SeekDecisionGate.Result gate)
     {
-        if (_correctionRejectedLogged)
+        if (_rate.RejectedLogged)
             return;
-        _correctionRejectedLogged = true;
+        _rate.MarkRejectedLogged();
         Log.Information(
             "Correction gate: rejected unstable sample residualMs={ResidualMs:F1} previousMs={PreviousMs:F1} changeMs={ChangeMs:F1} allowedMs={AllowedMs:F1} dtMs={DtMs:F1} rejectedTotal={RejectedTotal}",
             gate.DeltaSeconds * 1000.0, gate.PreviousDeltaSeconds * 1000.0, gate.ChangeSeconds * 1000.0,
@@ -1050,17 +1039,16 @@ internal sealed class LtcSyncController
     {
         if (_effects.ApplyRateInstant == null)
             return;
-        if (!_rateRestorePending && Math.Abs(_lastAppliedRate - 1.0) < 0.0005)
+        if (!_rate.RateRestorePending && !_rate.RateNotUnity)
             return;
         if (_effects.ApplyRateInstant(1.0))
         {
-            _lastAppliedRate = 1.0;
-            _rateRestorePending = false;
+            _rate.MarkRestored();
             Log.Information("LTC signal lost: playback rate restored to 1.0 before pausing");
         }
         else
         {
-            _rateRestorePending = true;
+            _rate.MarkRestorePending();
         }
     }
 
@@ -1196,7 +1184,7 @@ internal sealed class LtcSyncController
                 {
                     // T7: トラック切替（ロード成功）で補正状態を捨て、Smooth を再試行できるようにする。
                     ResetCorrection();
-                    _smoothAvailable = true;
+                    _rate.ResetSmoothAvailability();
                     // T9: 着地（ロード成立）から 1.0 秒の補正窓を開く。ResetCorrection の後に置くこと
                     // （Reset は前の窓を捨てる）。
                     _correction.NotifyLanding(_getUtcNow());
@@ -1263,11 +1251,11 @@ internal sealed class LtcSyncController
         ["lastAppliedLtc"] = _input.LastAppliedLtcSeconds is not null,
         ["lastAcceptedLtc"] = _input.Accepted is not null,
         ["followStartPending"] = _input.FollowStartPending,
-        ["rateRestorePending"] = _rateRestorePending,
-        ["smoothUnavailable"] = !_smoothAvailable,
+        ["rateRestorePending"] = _rate.RateRestorePending,
+        ["smoothUnavailable"] = !_rate.SmoothAvailable,
         // 倍率が 1.0 でないまま残っているか（ResetCorrection と同じ判定幅）。
-        ["rateNotUnity"] = Math.Abs(_lastAppliedRate - 1.0) >= 0.0005,
-        ["correctionPausedForPosition"] = _correctionPausedForPosition,
+        ["rateNotUnity"] = _rate.RateNotUnity,
+        ["correctionPausedForPosition"] = _rate.CorrectionPausedForPosition,
     };
 
     /// <summary>v0.5.2 段 0: 信号断のポリシーのラッチの写し（特性テスト用。状態は変えない）。</summary>
