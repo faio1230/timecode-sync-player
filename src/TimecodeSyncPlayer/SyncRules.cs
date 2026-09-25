@@ -52,4 +52,15 @@ internal static class SyncRules
         bool isMonitoring,
         bool isGapActive) =>
         syncEnabled && isMonitoring && !isGapActive;
+
+    internal static bool ShouldResumeOnBoundaryHoldRelease(PauseOwners otherOwners) =>
+        otherOwners == PauseOwners.None;
+
+    internal static PauseOwners CollectOtherPauseOwners(
+        bool isSignalLossPauseOwned,
+        bool isGapPauseOwned,
+        bool isProjectRestorePaused) =>
+        (isSignalLossPauseOwned ? PauseOwners.SignalLoss : PauseOwners.None) |
+        (isGapPauseOwned ? PauseOwners.Gap : PauseOwners.None) |
+        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None);
 }

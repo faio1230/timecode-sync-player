@@ -5,13 +5,11 @@ using TimecodeSyncPlayer.Tests.Integration;
 namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
-/// v0.5.2 段 2g-1: §6 の 12（境界ホールドの解除 <c>SetEndHold(false)</c> が、ほかの持ち主が
-/// 止めていても再生を再開する）を再現する赤いテスト。段 2g-2（一時停止の持ち主の集合）で
-/// 直すまで <see cref="FactAttribute.Skip"/> を付けたままコミットする。
-///
-/// 期待は「持ち主の集合が空のときだけ再開する」。今は <c>SingleModeSyncCoordinator.ReleaseBoundaryHold</c>
-/// が <c>SetEndHold(false)</c> を無条件に呼ぶため、信号断のポリシーや利用者が止めていても
-/// 再生が再開してしまう。
+/// v0.5.2 段 2g-1/2g-2: §6 の 12（境界ホールドの解除 <c>SetEndHold(false)</c> が、ほかの持ち主が
+/// 止めていても再生を再開する）を固定する。2g-2 で解除は
+/// <see cref="SyncRules.ShouldResumeOnBoundaryHoldRelease"/> を通り、信号断が止めている間は
+/// 再開しない（この 1 件は緑）。利用者が止めている件は、利用者を持ち主として記録する
+/// v0.5.3（§6 の 15）まで Skip のまま。
 /// </summary>
 public sealed class BoundaryHoldPauseOwnerTests
 {
@@ -38,7 +36,7 @@ public sealed class BoundaryHoldPauseOwnerTests
         }
     }
 
-    [Fact(Skip = "v0.5.2 段 2g-2 で直す（§6 の 12）")]
+    [Fact]
     public void BoundaryHoldRelease_WhileSignalLossPaused_DoesNotResumePlayback()
     {
         (SyncScenarioHarness h, ManualTimeProvider clock) = Arrange();
@@ -59,7 +57,28 @@ public sealed class BoundaryHoldPauseOwnerTests
             "信号断のポリシーが止めている間は、境界ホールドの解除で再生を再開しない（§6 の 12 の期待）");
     }
 
-    [Fact(Skip = "v0.5.2 段 2g-2 で直す（§6 の 12）")]
+    [Fact]
+    public void BoundaryHoldRelease_WhileSignalLossPaused_ResumesWhenSignalReturns()
+    {
+        (SyncScenarioHarness h, ManualTimeProvider clock) = Arrange();
+        h.SignalLossMode = LtcSignalLossMode.Stop;
+        h.AdvancePlayback(24.94);
+
+        h.SupplyLtc(24.9);
+        Tick(h, clock, 3);
+        h.SupplyHeldLtc(40.0);
+        h.SupplyHeldLtc(10.0);   // 解除。信号断が持っているので止まったまま
+        h.IsPaused.Should().BeTrue("前提: 直した後は止まったまま");
+
+        h.SupplyLtc(10.05);      // 有効フレーム 3 枚（resumeFrames=3）で信号断から復帰
+        h.SupplyLtc(10.10);
+        h.SupplyLtc(10.15);
+
+        h.IsPaused.Should().BeFalse("信号が戻ったら #2（信号断の復帰）の経路で再開する");
+        h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
+    }
+
+    [Fact(Skip = "v0.5.3（利用者を一時停止の持ち主として記録してから。§6 の 15）")]
     public void BoundaryHoldRelease_WhileUserPaused_DoesNotResumePlayback()
     {
         (SyncScenarioHarness h, _) = Arrange();

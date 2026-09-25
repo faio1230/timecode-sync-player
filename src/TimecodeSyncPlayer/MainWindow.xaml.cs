@@ -1057,12 +1057,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
                 IsNativeSeeking: IsNativeSeeking,
                 // D33: 範囲外 LTC の終端ホールド。一時停止／解除を UI 状態と一緒に反映する。
-                SetEndHold: held =>
-                {
-                    if (!IsPlaybackAvailable) return;
-                    _playbackApi.SetPaused(held);
-                    ApplyPauseState(held);
-                },
+                SetEndHold: ApplyBoundaryHold,
                 // D35-b: ホールド解除時に保留シークと保持着地のラッチを解除する。
                 OnBoundaryHoldReleased: () => _ltcSyncController.NotifyClipBoundaryHoldReleased()));
 
@@ -1595,6 +1590,32 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _playbackApi.SetPaused(false);
         ApplyPauseState(false);
         Log.Information("Project restore pause released by on-track sync");
+    }
+
+    private void ApplyBoundaryHold(bool held)
+    {
+        if (!IsPlaybackAvailable) return;
+        if (held)
+        {
+            _playbackApi.SetPaused(true);
+            ApplyPauseState(true);
+            return;
+        }
+
+        PauseOwners otherOwners = SyncRules.CollectOtherPauseOwners(
+            _ltcSyncController.IsSignalLossPauseOwned,
+            _gapFreezeHandler.IsPauseOwnedByGap,
+            _projectRestorePauseState.IsPending);
+        if (!SyncRules.ShouldResumeOnBoundaryHoldRelease(otherOwners))
+        {
+            Log.Information(
+                "Single mode: boundary hold released; playback stays paused owners={Owners}",
+                otherOwners);
+            return;
+        }
+
+        _playbackApi.SetPaused(false);
+        ApplyPauseState(false);
     }
 
     void IPlaybackController.SeekRelative(double seconds)

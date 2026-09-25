@@ -116,6 +116,8 @@ internal sealed class LtcSyncController
     public double LastLtcSeconds { get; private set; }
     public double LastTimecodeFps => _frames.LastTimecodeFps;
 
+    internal bool IsSignalLossPauseOwned => _signalLoss.IsPauseOwned;
+
     /// <summary>D37-c: 速度補正の入力から弾いた標本の累計（計測・テスト用）。</summary>
     internal long CorrectionRejectedSamples => _rate.RejectedSamples;
 

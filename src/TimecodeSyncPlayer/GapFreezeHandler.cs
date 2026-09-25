@@ -109,6 +109,8 @@ public sealed class GapFreezeHandler
     /// <summary>D21-b: 再シークをまだ試せるか。</summary>
     internal bool CanRetrySeek => _seekRetryCount < MaxSeekRetries;
 
+    internal bool IsPauseOwnedByGap => _pauseOwnedByGap;
+
     internal int SeekRetryCount => _seekRetryCount;
 
     public void Reset()
