@@ -61,6 +61,12 @@ public sealed class TimecodeSyncService
     /// </summary>
     internal event Action? SeekIssued;
 
+    /// <summary>
+    /// v0.5.3 段 3e: このサービスで起きたできごとを外へ伝える（いまは <see cref="BeginFileLoad"/> の
+    /// FileLoad だけ）。LtcSyncController が購読し、Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+    /// </summary>
+    internal event Action<SyncLifecycleEvent>? LifecycleRaised;
+
     public TimecodeSyncService(
         ISyncDecisionEngine engine,
         ITimecodeSyncSeekState seekState,
@@ -294,6 +300,8 @@ public sealed class TimecodeSyncService
         _fileLoad.Begin(now, Math.Max(0, startPositionSeconds), Math.Max(0, renderedFrameCount));
         _lastSyncSeekAt = now;                // デバウンスを更新（2.3 fix）
         OnLifecycle(SyncLifecycleEvent.FileLoad);
+        // v0.5.3 段 3e: FileLoad はサービスの OnLifecycle の中で起きるため、外へも伝える（§6 の 5）。
+        LifecycleRaised?.Invoke(SyncLifecycleEvent.FileLoad);
         // D37-b2: ロード（切替）も着地として扱い、直後の不足はシークで詰める。
         NotifyLanding();
     }

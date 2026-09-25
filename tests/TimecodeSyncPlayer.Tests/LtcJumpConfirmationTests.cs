@@ -249,6 +249,46 @@ public sealed class LtcJumpConfirmationTests
     }
 
     [Fact]
+    public void ManualSeek_AfterJumpAppliedOnce_LetsTheNextJumpApplyAgain()
+    {
+        // v0.5.3 段 3e: 1 回適用のラッチが手動シークで下り、次の Jump がまた 1 回適用される（§6 の 5）。
+        using var capture = new LoggerCapture(new ListSink());
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock)
+        {
+            SignalLossMode = LtcSignalLossMode.Stop,
+            GapBehavior = GapBehavior.Black,
+        };
+        h.AddTrack("A", 5, 20);
+        h.ReloadProject();
+        h.ManualPlay();
+        Raw(h, 7.0, 10_000);
+        Raw(h, 7.04, 10_040);
+
+        // 無音の損失（停止モード）。Jump の即時適用は損失中の経路で起きる。
+        for (int i = 0; i < 3; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            h.Tick100Milliseconds();
+        }
+        h.IsPaused.Should().BeTrue("前提: 信号断のポリシーが止めている");
+
+        // 1 枚目の Jump（同一トラック・損失中は即時適用）。ラッチが立つ。
+        Raw(h, 12.0, 10_080);
+        capture.Snapshot().Count(e => IsApplyOnceWithReason(e, "first Jump")).Should().Be(1);
+
+        // 手動シークで 1 回適用のラッチを下ろす。
+        h.BeginSeekBarInteraction();
+        h.EndSeekBarInteraction(h.PlaybackSeconds);
+
+        // 2 枚目の Jump がまた 1 回適用される（ラッチが残っていれば無視される）。
+        Raw(h, 16.0, 10_120);
+
+        capture.Snapshot().Count(e => IsApplyOnceWithReason(e, "first Jump")).Should().Be(2,
+            "手動シークの後は次の Jump がまた 1 回適用される");
+    }
+
+    [Fact]
     public void HeldLossJump_RecoversOnlyAfterConfirmation()
     {
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 17, 0, 0, 0, TimeSpan.Zero));
