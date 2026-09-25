@@ -241,8 +241,8 @@ internal sealed class LatchLifetimeScenario
                 h.Controller.FpsModeChanged();
                 break;
             case LifecycleEvent.CorrectionModeChanged:
-                // MainWindow.xaml.cs:470-476: 設定の保存とログだけ。段 1 から同期側の入口
-                // （CorrectionModeChanged）を呼ぶが、どのラッチも消さない。
+                // MainWindow.xaml.cs:470-476: 設定の保存とログ。段 1 から同期側の入口
+                // （CorrectionModeChanged）を呼び、段 3h で補正状態を捨て、倍率を 1.0 に戻す（§6 の 8）。
                 h.CorrectionMode = h.CorrectionMode == SyncCorrectionMode.Smooth
                     ? SyncCorrectionMode.Jump : SyncCorrectionMode.Smooth;
                 h.Controller.CorrectionModeChanged();

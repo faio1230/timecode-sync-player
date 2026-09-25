@@ -176,7 +176,7 @@ internal sealed class LtcSyncController
         ReapplyLastAcceptedFrame();
     }
 
-    /// <summary>v0.5.2 段 1: 補正モードの変更（今はどのラッチも消さない。設計書 §6 の 8 は v0.5.3）。</summary>
+    /// <summary>v0.5.3 段 3h: 補正モードの変更で倍率を 1.0 に戻す（§6 の 8）。</summary>
     public void CorrectionModeChanged()
     {
         SyncLifecycle.Record(SyncLifecycleEvent.CorrectionModeChanged, nameof(CorrectionModeChanged));
@@ -237,6 +237,11 @@ internal sealed class LtcSyncController
             case SyncLifecycleEvent.PlaybackStopped:
             case SyncLifecycleEvent.PlayPauseToggled:
                 // T7: 操作者の再生・一時停止、停止・プロジェクト差し替えで補正状態を捨てる。
+                ResetCorrection();
+                break;
+            case SyncLifecycleEvent.CorrectionModeChanged:
+                // v0.5.3 段 3h: 補正モードの変更で倍率を 1.0 に戻す（§6 の 8）。
+                // 戻せないときは ResetCorrection が復帰待ちにする（次の評価で戻す）。
                 ResetCorrection();
                 break;
             case SyncLifecycleEvent.FpsModeChanged:

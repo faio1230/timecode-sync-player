@@ -482,8 +482,8 @@ public static class LatchLifetimeTable
             "LtcSyncController.cs:859-878 補正評価は残差（0.2 秒）に応じて Smooth の倍率を掛け続ける"),
         new(LatchArrangements.RateNotUnity, LifecycleEvent.FpsModeChanged, Keeps, Undecided,
             "LtcSyncController.cs:370-375 FpsModeChanged は未確認の Jump と fps の選択だけを捨てる"),
-        new(LatchArrangements.RateNotUnity, LifecycleEvent.CorrectionModeChanged, Keeps, Clear,
-            "§6 の 8: MainWindow.xaml.cs:470-476 は保存とログだけで、Smooth の倍率はそのまま残る"),
+        new(LatchArrangements.RateNotUnity, LifecycleEvent.CorrectionModeChanged, Clears, Clear,
+            "v0.5.3 段 3h で下ろすようにした（LtcSyncController.OnLifecycle の CorrectionModeChanged で ResetCorrection を呼ぶ。LtcSyncController.cs:242）"),
         new(LatchArrangements.RateNotUnity, LifecycleEvent.SignalLossModeChanged, Keeps, Undecided,
             "MainWindow.xaml.cs:484-490 設定の保存とログだけで、同期側の入口を呼ばない"),
 
