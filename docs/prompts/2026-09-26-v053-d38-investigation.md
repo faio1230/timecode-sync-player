@@ -17,11 +17,16 @@
 
 ## やること
 
+0. **先に、着地の遅れを記録する判定を「記録のみ」で E2E に足す**（TSP-Fable の提案、2026-09-26）: E2E の `hold-landing` のジャーナルに
+   `landingLatencySeconds`（LTC の新しい値がアプリに届いた時刻からシークの発行まで。ジャーナルの経過か、アプリのログの `applying the first Jump frame` / `held value change` と `sync seek` の差）と
+   `latencyOverBudget`（ジャンプの距離が 4×tolerance を超え、かつ 1.0 秒を超えたら true）を残す。**失敗にはしない**（今の v0.5.3 を赤にしない）。
+   D38 の修正のコミットで失敗の条件に切り替える。この 0 は**テストのコードだけ**の変更なので、ここで一度この画面に報告して手番を終える（親がコミットしてから 1 以降へ進む）。
+   以降の二分探索は、この値で判定する
 1. **原因をコードで特定する**: Deferred がどこから返るか（`TimecodeSyncService.ShouldSuppressSeek` / `TimecodeSyncSeekState` / `ContinueOnTrackCoordinator` のどれか）、
    ランスルーで LTC が保持されているとき保留が Settled にならない理由、`TimecodeSyncSeekState` の置き換えの規則（距離が 4×tolerance を超えたら置き換える）が 12 秒の距離で効かない理由、
    時間切れの後のシークのゲート（`SyncDecisionEngine` の中央値・連続）で待つ理由
 2. **いつ入ったかを二分探索する**: 開発機で、E2E の C-1 だけ（`--filter "FullyQualifiedName~C1_Continue_RepeatedJumps"`、1 回約 1 分）を、`git log` の 2026-09-17 〜 09-20 の間のコミットで回し、
-   ジャーナル（`artifacts/ltc-scenarios/C-1-*/harness.jsonl` の `hold-landing` の `elapsedSeconds`）の 2 回目以降が 0.6 秒以下か 2 秒前後かで判定する。
+   ジャーナル（`artifacts/ltc-scenarios/C-1-*/harness.jsonl` の `hold-landing`）の `latencyOverBudget`（0 で足したもの）で判定する。
    古いコミットの確かめ方: 別の作業ツリーを `git worktree add --detach <path> <sha>` で作り（`native/` の DLL を写す）、そこでビルドしてアプリの exe を `TIMECODE_SYNC_PLAYER_EXE` などで指す（今の E2E のアプリの指し方をコードで確かめる）。
    **E2E は 1 本ずつ直列で回す**。終わった作業ツリーは `git worktree remove` で消す
 3. **直し方の案を 2〜3 個**: 例「ランスルーで保持中は、着地の直後に位置が合ったら保留を Settled にする」「距離が 4×tolerance を超える Jump は保留を無条件に置き換える」。
