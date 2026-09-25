@@ -104,4 +104,17 @@ public sealed class SyncLifecycleLogTests
 
         capture.Lifecycle().Should().Equal("FileLoad/track-switch");
     }
+
+    [Fact]
+    public void Single_boundary_hold_release_records_an_event()
+    {
+        // ホールドの立て方は段 0 の ClipBoundaryHeld と同じ（範囲外の LTC で端へシークしてホールド）。
+        LatchLifetimeScenario s = LatchArrangements.Arrange(LatchArrangements.ClipBoundaryHeld, SyncMode.Single);
+        s.Read(LatchArrangements.ClipBoundaryHeld).Should().BeTrue("配置で境界ホールドが立っていること");
+
+        using var capture = new LoggerCapture();
+        s.Frame(15.0);   // LTC が clipOut=20 の内側へ戻り、端でのホールドが解除される
+
+        capture.Lifecycle().Should().Equal("BoundaryHoldReleased/left-boundary");
+    }
 }

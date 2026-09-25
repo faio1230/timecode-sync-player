@@ -37,6 +37,8 @@ internal enum SyncLifecycleEvent
     GapExit,
     /// <summary>信号断からの復帰（有効フレーム N 枚、または保持の直後の Jump。ログだけ）。</summary>
     SignalRecovered,
+    /// <summary>Single の境界ホールドの解除（保持着地・保持値の 1 回適用・同期の保留を消す）。</summary>
+    BoundaryHoldReleased,
     FpsModeChanged,
     CorrectionModeChanged,
     SignalLossModeChanged,

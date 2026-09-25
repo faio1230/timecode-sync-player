@@ -268,6 +268,15 @@ internal sealed class LtcSyncController
                 ClearFrameHistory();
                 _followStartPending = false;
                 break;
+            case SyncLifecycleEvent.BoundaryHoldReleased:
+                // D35-b: ホールド中に残った端への保留シークと保持着地のラッチを解除する。
+                // D37-g: 追従開始のエピソードも終わらせる（先行量を引き継がせない）。
+                _heldLossLandingSeconds = null;
+                _heldReapplyDone = false;
+                _pendingSyncSeconds = null;
+                _syncService.SeekState.Clear();
+                _syncService.EndFollowStartLanding("boundary hold released");
+                break;
         }
     }
 
@@ -1193,14 +1202,12 @@ internal sealed class LtcSyncController
     /// D35-b: D33 の境界ホールド（Single）が解除されたときに呼ぶ。ホールド中に残った端への
     /// 保留シークと保持着地のラッチを必ず解除し、解除後の範囲内 LTC への着地を抑止しない。
     /// D37-g: 追従開始のエピソードもここで終わらせる（先行量を引き継がせない）。
+    /// v0.5.2 段 1 の追加: ほかの入口と同じくできごとを記録し、消す処理は OnLifecycle に置く。
     /// </summary>
     internal void NotifyClipBoundaryHoldReleased()
     {
-        _heldLossLandingSeconds = null;
-        _heldReapplyDone = false;
-        _pendingSyncSeconds = null;
-        _syncService.SeekState.Clear();
-        _syncService.EndFollowStartLanding("boundary hold released");
+        SyncLifecycle.Record(SyncLifecycleEvent.BoundaryHoldReleased, "left-boundary");
+        OnLifecycle(SyncLifecycleEvent.BoundaryHoldReleased);
         Log.Information("Single mode: boundary hold released; pending seek state and held landing latch cleared");
     }
 
