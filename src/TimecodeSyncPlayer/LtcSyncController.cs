@@ -600,6 +600,9 @@ internal sealed class LtcSyncController
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
                 _input.MarkHeldEffective(heldEffectiveSeconds);
+                // D38 (a): 保持の Duplicate でも、保留中のシークが着地していれば観測して
+                // 位置の信頼を戻す（シークは出さない）。
+                ObservePendingSeekLanding();
                 // D33: 保持（Duplicate）では通常の同期評価が走らない。範囲外 LTC の保持中でも
                 // 終端ホールド／解除を評価する（境界へのシークは通常フレーム側が行う）。
                 LtcSyncContext heldState = _effects.GetContext();
@@ -646,6 +649,11 @@ internal sealed class LtcSyncController
                 }
                 else
                 {
+                    // D38 門 3（記録のみ。振る舞いは変えない）: JumpAppliedOnce が残っているため
+                    // この Jump は適用しない（保持中は Normal フレームが来ず、ラッチが下りない）。
+                    Log.Information(
+                        "sync: Jump dropped (JumpAppliedOnce) ltc={Ltc:F3} reason={Reason}",
+                        rawSeconds, _signalLoss.IsLost ? "still-lost" : "not-lost");
                     TryReapplyAfterFileLoadRelease();
                     return;
                 }
@@ -1071,6 +1079,23 @@ internal sealed class LtcSyncController
         LtcDisplayState display = LtcDisplayStateFormatter.Format(
             _monitoring.IsDetectionActive(_effects.GetContext().IsMonitoring), _signalLoss.IsLost, _formatText);
         _effects.ApplyDisplay(display, LtcSignalLossPauseReasonFormatter.Format(_signalLoss.IsPauseOwned, _signalLoss.Reason));
+    }
+
+    /// <summary>
+    /// D38 (a): 同期を適用しないフレーム（保持の Duplicate）で、保留中のシークの着地を観測する。
+    /// 着地していれば位置の信頼が戻り、次の Jump が未信頼とタイムアウトを通らない。
+    /// </summary>
+    private void ObservePendingSeekLanding()
+    {
+        if (!_syncService.SeekState.HasPendingSeek)
+            return;
+        LtcSyncContext state = _effects.GetContext();
+        if (!state.SyncEnabled || !state.IsMonitoring)
+            return;
+        if (_effects.GetPlaybackSeconds?.Invoke() is not double playback || !double.IsFinite(playback))
+            return;
+        double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
+        _syncService.ObservePendingSeekLanding(playback, toleranceSeconds);
     }
 
     private void ApplySignalLossAction(LtcSignalLossAction action)

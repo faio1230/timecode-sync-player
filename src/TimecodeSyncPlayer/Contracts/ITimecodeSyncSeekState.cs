@@ -10,6 +10,13 @@ public interface ITimecodeSyncSeekState
     bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now,
         double requestedTargetSeconds = double.NaN);
 
+    /// <summary>
+    /// D38 (b): 未信頼のフレームで、要求が pending の目標からも現在位置からも離れているとき、
+    /// 到達不能な pending を捨てる。既定実装は捨てない（false）。
+    /// </summary>
+    bool DiscardIfUnreachable(
+        double requestedTargetSeconds, double toleranceSeconds, double playbackSeconds) => false;
+
     /// <summary>D37-b: 着地までの実測時間（移動平均）。未学習は null。既定実装は未学習。</summary>
     double? LearnedSeekDurationSeconds => null;
 

@@ -129,6 +129,29 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     }
 
     /// <summary>
+    /// D38 (b): 未信頼のフレームで、要求が pending の目標からも現在位置からも 4×tolerance を
+    /// 超えて離れているとき、到達不能な pending を捨てる（置き換えず、再確認とゲートを
+    /// 通してからシークさせる。現在位置の近くの要求は、pending の着地観測を残すため捨てない）。
+    /// 捨てたときは LastStatus = Superseded（TrackSeekStatusTransition が再確認へ入る）。
+    /// </summary>
+    public bool DiscardIfUnreachable(
+        double requestedTargetSeconds, double toleranceSeconds, double playbackSeconds)
+    {
+        if (!HasPendingSeek || !IsNewRequestFarFromPending(requestedTargetSeconds, toleranceSeconds))
+            return false;
+        // いま着地の窓に入っている pending は、捨てずに既存の着地判定（Settled）へ渡す。
+        if (HasReachedSeekTarget(playbackSeconds, toleranceSeconds))
+            return false;
+        // 現在位置の近くの要求は、pending の着地観測を残すため捨てない。
+        if (Math.Abs(requestedTargetSeconds - playbackSeconds) <=
+            Math.Max(0, toleranceSeconds) * PendingSupersedeToleranceMultiplier)
+            return false;
+        Clear();
+        LastStatus = TimecodeSyncSeekPendingStatus.Superseded;
+        return true;
+    }
+
+    /// <summary>
     /// D20-b: 新しい要求が pending の目標から離れているか。連続して進む LTC の経路では
     /// pending と要求はほぼ一致するため置き換えは起きない。
     /// </summary>
@@ -187,5 +210,7 @@ public enum TimecodeSyncSeekPendingStatus
     None,
     Pending,
     Settled,
-    TimedOut
+    TimedOut,
+    /// <summary>D38 (b): 未信頼の間に、離れた新しい要求で到達不能な pending を捨てた。</summary>
+    Superseded
 }

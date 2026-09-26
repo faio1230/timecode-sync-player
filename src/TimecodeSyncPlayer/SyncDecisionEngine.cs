@@ -74,12 +74,26 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         _rateCatchUpLimitSeconds = double.IsFinite(seconds) && seconds > 0 ? seconds : 0.0;
     }
 
-    /// <summary>D37-b: 位置を信用できないフレームの決定（粗い判定は評価しない）。</summary>
-    public SyncDecision WhilePositionUntrusted(SyncPlaybackState state)
+    /// <summary>
+    /// D37-b: 位置を信用できないフレームの決定（粗い判定は評価しない）。
+    /// D38 (b): 要求の目標（クランプ済み）を決定に載せ、未信頼でも pending の置き換え判定に使える
+    /// ようにする（シークは出さない）。
+    /// </summary>
+    public SyncDecision WhilePositionUntrusted(double ltcSeconds, SyncPlaybackState state)
     {
         SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
         double toleranceSeconds = ToleranceSeconds(fps.VideoFps, fps.TimecodeFps, _options.ToleranceFrames);
-        return SyncDecision.Untrusted(fps, toleranceSeconds);
+        double requestedTargetSeconds = double.NaN;
+        if (IsFinite(ltcSeconds) && IsFinite(state.PlaybackSeconds) &&
+            state.SyncEnabled && state.HasCurrentTrack && !state.IsSeeking &&
+            SeekBarUpdateState.IsUsableDuration(state.DurationSeconds))
+        {
+            (double clipIn, double clipOut) = ClipRange(
+                state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
+            double seekOut = SeekableOut(clipIn, clipOut, state.DurationSeconds, fps.VideoFps);
+            requestedTargetSeconds = Math.Clamp(ltcSeconds, clipIn, seekOut);
+        }
+        return SyncDecision.Untrusted(fps, toleranceSeconds, requestedTargetSeconds);
     }
 
     /// <summary>0.4.5-A フェーズ 1: shadow の評価位置だけを sync.evaluate に残す。</summary>
@@ -481,7 +495,10 @@ public sealed record SyncDecision(
     // 0.4.5-A フェーズ 2: 記録用のクエリ値基準の差。判断用の DeltaSeconds が評価位置基準に
     // なっても、trace の delta= はこちらを使う（既存フィールドの意味を変えない契約）。
     // フェーズ 1（評価位置なし）では DeltaSeconds と同値。
-    double QueryDeltaSeconds = 0.0)
+    double QueryDeltaSeconds = 0.0,
+    // D38 (b): 未信頼のフレームでも pending の置き換え判定に渡す要求の目標（クランプ済み）。
+    // NaN = 使わない（None など）。
+    double RequestedTargetSeconds = double.NaN)
 {
     public static SyncDecision None { get; } = new(
         SyncActionType.None,
@@ -510,8 +527,10 @@ public sealed record SyncDecision(
     /// <summary>
     /// D37-b: 位置を信用できないフレーム（シークの保留中・時間切れ後の再確認中）。
     /// 粗い判定も補正も評価せず、要求は Deferred のまま維持する。
+    /// D38 (b): requestedTargetSeconds に要求の目標（クランプ済み）を載せる。NaN なら置き換えに使わない。
     /// </summary>
-    public static SyncDecision Untrusted(SyncFpsResolution fps, double toleranceSeconds) => new(
+    public static SyncDecision Untrusted(
+        SyncFpsResolution fps, double toleranceSeconds, double requestedTargetSeconds = double.NaN) => new(
         SyncActionType.None,
         0.0,
         0.0,
@@ -522,7 +541,8 @@ public sealed record SyncDecision(
         fps.UsedDefaultTimecodeFps,
         GateDeferred: false,
         RateCatchUpPreferred: false,
-        PositionUntrusted: true);
+        PositionUntrusted: true,
+        RequestedTargetSeconds: requestedTargetSeconds);
 }
 
 public sealed record SyncFpsResolution(
