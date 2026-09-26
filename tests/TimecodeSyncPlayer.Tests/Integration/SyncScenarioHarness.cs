@@ -52,9 +52,18 @@ internal sealed class SyncScenarioHarness
         // v0.5.4 C1: ScenarioClock は UTC・単調ミリ秒・QPC を 1 つにまとめる。旧 ctor
         // （ManualTimeProvider + getQpc）はそのまま使える。
         _scenarioClock = scenarioClock;
+        // C3: LTC の台本。開始時刻は harness の単調ミリ秒に揃える（Controller は構築後なので遅延参照）。
+        // Controller はコンストラクタの後半で代入される（この経路はフレーム発行時＝代入後にしか
+        // 呼ばれないため null 免除で参照する）。
+        Ltc = new LtcScript(
+            (frame, at) => Controller!.ReceiveProcessedFrame(frame, at),
+            startMilliseconds: scenarioClock?.MonotonicMilliseconds ?? _monotonicMilliseconds);
         // C2: 仮想時計が進むと偽プレイヤーの位置・着地・ロード・尺の到着も進む。
         if (scenarioClock is not null)
             scenarioClock.Advanced += delta => _playback.AdvanceTime(delta);
+        // C3: 台本は時計の進みに合わせてフレームを発行する（偽プレイヤーの後、Tick の前）。
+        if (scenarioClock is not null)
+            scenarioClock.Advanced += delta => Ltc.AdvanceTime(delta);
         TimeProvider? effectiveTimeProvider = scenarioClock ?? timeProvider;
         Func<long>? effectiveGetQpc = scenarioClock is null ? getQpc : () => scenarioClock.Qpc;
         _gap = scenarioClock is null ? new GapFreezeHandler() : new GapFreezeHandler(scenarioClock);
@@ -242,6 +251,9 @@ internal sealed class SyncScenarioHarness
 
     public LtcSyncController Controller { get; }
 
+    /// <summary>C3: LTC 入力の台本（Normal／Duplicate／Jump／無音／Raw）。</summary>
+    public LtcScript Ltc { get; }
+
     /// <summary>v0.5.2 段 0: Single の同期コーディネーター（ラッチの写しを読むため）。</summary>
     public SingleModeSyncCoordinator Single { get; }
     public string TimecodeText { get; private set; } = "--:--:--:--";
@@ -382,9 +394,14 @@ internal sealed class SyncScenarioHarness
     public void Tick100Milliseconds()
     {
         if (_scenarioClock is null)
+        {
             _monotonicMilliseconds += 100;
+            Ltc.AdvanceTime(TimeSpan.FromMilliseconds(100));
+        }
         else
+        {
             _scenarioClock.AdvanceMilliseconds(100);
+        }
 
         Controller.Tick(MonotonicMilliseconds);
     }
