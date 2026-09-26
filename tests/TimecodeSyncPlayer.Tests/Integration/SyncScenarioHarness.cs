@@ -24,7 +24,7 @@ internal sealed class SyncScenarioHarness
     private readonly TimecodeSyncService _syncService;
     private readonly GapFreezeHandler _gap;
     private readonly ScenarioClock? _scenarioClock;
-    private readonly PlaybackControlState _playback = new();
+    private readonly ScenarioPlayback _playback = new(positionSeconds: 1, durationSeconds: 5, fps: 25);
     private readonly ProjectRestorePauseState _projectRestorePauseState = new();
     private readonly ContinueOnTrackCoordinator _continueCoordinator;
     private readonly GapEnterCoordinator _gapCoordinator;
@@ -40,9 +40,6 @@ internal sealed class SyncScenarioHarness
 
     private long _renderedFrames;
     private Guid? _loadedTrackId;
-    private double _playbackSeconds = 1;
-    private double _durationSeconds = 5;
-    private double _videoFps = 25;
 
     public SyncScenarioHarness(TimeProvider? timeProvider = null, bool enableCorrection = false,
         bool? sampleClockEnabled = null, Func<long>? getQpc = null, ScenarioClock? scenarioClock = null)
@@ -55,6 +52,9 @@ internal sealed class SyncScenarioHarness
         // v0.5.4 C1: ScenarioClock は UTC・単調ミリ秒・QPC を 1 つにまとめる。旧 ctor
         // （ManualTimeProvider + getQpc）はそのまま使える。
         _scenarioClock = scenarioClock;
+        // C2: 仮想時計が進むと偽プレイヤーの位置・着地・ロード・尺の到着も進む。
+        if (scenarioClock is not null)
+            scenarioClock.Advanced += delta => _playback.AdvanceTime(delta);
         TimeProvider? effectiveTimeProvider = scenarioClock ?? timeProvider;
         Func<long>? effectiveGetQpc = scenarioClock is null ? getQpc : () => scenarioClock.Qpc;
         _gap = scenarioClock is null ? new GapFreezeHandler() : new GapFreezeHandler(scenarioClock);
@@ -98,14 +98,14 @@ internal sealed class SyncScenarioHarness
                 SetLoadedTrackId: id => _loadedTrackId = id,
                 LoadFile: LoadFile,
                 GetTotalRenderedFrames: () => _renderedFrames,
-                ReadPosition: () => new SyncPositionRead(true, _playbackSeconds),
+                ReadPosition: () => new SyncPositionRead(true, _playback.PositionSeconds),
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled,
                     Playlist.Current != null,
                     IsSeeking,
                     playback,
-                    _durationSeconds,
-                    _videoFps,
+                    _playback.DurationSeconds,
+                    _playback.Fps,
                     TimecodeFps: 25),
                 IsNativeSeeking: () => NativeSeeking));
 
@@ -122,7 +122,7 @@ internal sealed class SyncScenarioHarness
                 ApplyPauseState: SetPaused,
                 ClearGapFreezeFrame: () => Operations.Add(new("clear-freeze")),
                 SeekTo: Seek,
-                GetPlayerDuration: () => (0, _durationSeconds),
+                GetPlayerDuration: () => (0, _playback.DurationSeconds),
                 IsPlayerReady: () => true,
                 LoadPausedAt: (path, target) =>
                 {
@@ -132,20 +132,20 @@ internal sealed class SyncScenarioHarness
                 ResetPlayerStateForNewTrack: () => { },
                 GetLoadedTrackId: () => _loadedTrackId,
                 SetLoadedTrackId: id => _loadedTrackId = id,
-                GetDuration: () => _durationSeconds,
-                SetDuration: duration => _durationSeconds = duration,
-                GetFps: () => _videoFps,
-                SetFps: fps => _videoFps = fps,
+                GetDuration: () => _playback.DurationSeconds,
+                SetDuration: duration => _playback.SetDuration(duration),
+                GetFps: () => _playback.Fps,
+                SetFps: fps => _playback.SetFps(fps),
                 GetGapBehavior: () => GapBehavior,
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel));
 
         var single = new SingleModeSyncCoordinator(
             _syncService,
             new SingleModeSyncEffects(
-                ReadPosition: () => new SyncPositionRead(true, _playbackSeconds),
+                ReadPosition: () => new SyncPositionRead(true, _playback.PositionSeconds),
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled, Playlist.Current != null, IsSeeking, playback,
-                    _durationSeconds, _videoFps, 25,
+                    _playback.DurationSeconds, _playback.Fps, 25,
                     MediaInSeconds: MediaInSeconds, MediaOutSeconds: MediaOutSeconds),
                 SeekTo: Seek,
                 GetTotalRenderedFrames: () => _renderedFrames,
@@ -182,7 +182,7 @@ internal sealed class SyncScenarioHarness
                 GetContext: () => new LtcSyncContext(
                     true, SyncEnabled, Mode, IsSeeking, IsMonitoring, IsPaused,
                     SignalLossMode, TimecodeFpsMode.Fixed25, GapBehavior,
-                    _loadedTrackId, _videoFps, _durationSeconds, 250, 3,
+                    _loadedTrackId, _playback.Fps, _playback.DurationSeconds, 250, 3,
                     MediaInSeconds, MediaOutSeconds),
                 ApplyFrameText: (timecode, realTime) =>
                 {
@@ -201,7 +201,7 @@ internal sealed class SyncScenarioHarness
                 ClearGapFreezeFrame: () => Operations.Add(new("clear-freeze")),
                 RefreshCurrentVideoFrame: () =>
                 {
-                    Seek(_playbackSeconds);
+                    Seek(_playback.PositionSeconds);
                 },
                 UpdateTimelinePosition: _ => { },
                 UpdateCurrentTrackLabel: RecordCurrentTrackLabel,
@@ -212,13 +212,13 @@ internal sealed class SyncScenarioHarness
                 },
                 GetSyncOffsetMilliseconds: () => SyncOffsetMilliseconds,
                 GetCorrectionMode: enableCorrection ? () => CorrectionMode : null,
-                GetPlaybackSeconds: enableCorrection ? () => _playbackSeconds : null,
+                GetPlaybackSeconds: enableCorrection ? () => _playback.PositionSeconds : null,
                 GetTotalRenderedFrames: () => _renderedFrames,
                 ApplyRateInstant: enableCorrection
                     ? rate =>
                     {
                         RateAttempts.Add(rate);
-                        if (!RateApplySucceeds) return false;
+                        if (!_playback.SetRateInstant(rate).Success) return false;
                         AppliedRates.Add(rate);
                         Operations.Add(new("rate", rate));
                         return true;
@@ -295,7 +295,11 @@ internal sealed class SyncScenarioHarness
 
     /// <summary>T7: 補正を有効にしたハーネスだけが使う補正モード。</summary>
     public SyncCorrectionMode CorrectionMode { get; set; } = SyncCorrectionMode.Smooth;
-    public bool RateApplySucceeds { get; set; } = true;
+    public bool RateApplySucceeds
+    {
+        get => _playback.RateApplySucceeds;
+        set => _playback.RateApplySucceeds = value;
+    }
     public List<double> AppliedRates { get; } = [];
 
     /// <summary>0.4.8: 再生位置が直近に後退した（位置を補正の入力として信用しない）状態を与える。</summary>
@@ -303,14 +307,25 @@ internal sealed class SyncScenarioHarness
     public List<double> RateAttempts { get; } = [];
     public string CorrectionStatus { get; private set; } = "";
 
-    public bool IsPaused => _playback.IsPaused;
+    public bool IsPaused => _playback.Paused;
     public bool IsGapActive => !_gap.IsInactive;
     public GapState GapState => _gap.CurrentState;
     public Guid? LoadedTrackId => _loadedTrackId;
-    public bool LoadSucceeds { get; set; } = true;
-    public bool SeekSucceeds { get; set; } = true;
+    public bool LoadSucceeds
+    {
+        get => _playback.LoadSucceeds;
+        set => _playback.LoadSucceeds = value;
+    }
+    public bool SeekSucceeds
+    {
+        get => _playback.SeekSucceeds;
+        set => _playback.SeekSucceeds = value;
+    }
     public bool NativeSeeking { get; set; }
-    public double PlaybackSeconds => _playbackSeconds;
+    public double PlaybackSeconds => _playback.PositionSeconds;
+
+    /// <summary>C2: 偽の再生 API（着地の遅れ・ロード・尺の到着・レートの設定に使う）。</summary>
+    public ScenarioPlayback Playback => _playback;
     /// <summary>
     /// 合成層が描く面。段 3 以降は CPU 描画の副作用ではなく Gap 状態から決まる
     /// （GPU 合成層が出力モードとして描く）。
@@ -418,7 +433,7 @@ internal sealed class SyncScenarioHarness
     public void BeginManualFileLoad() => _syncService.BeginFileLoad(0, _renderedFrames);
 
     /// <summary>テスト用: 尺（clamp の着地先）を差し替える。</summary>
-    public void SetDurationSeconds(double seconds) => _durationSeconds = seconds;
+    public void SetDurationSeconds(double seconds) => _playback.SetDuration(seconds);
 
     public void ReloadProject()
     {
@@ -458,7 +473,7 @@ internal sealed class SyncScenarioHarness
 
     public void AdvancePlayback(double seconds, long renderedFrames = 1)
     {
-        _playbackSeconds = seconds;
+        _playback.SetPosition(seconds);
         _renderedFrames += renderedFrames;
     }
 
@@ -490,15 +505,11 @@ internal sealed class SyncScenarioHarness
     private bool LoadFile(string path, double start)
     {
         Operations.Add(new("loadfile", start, path));
-        if (!LoadSucceeds) return false;
+        if (!_playback.Load(path, start, paused: false).Success) return false;
         SetPaused(false);
-        _playbackSeconds = start;
         var track = Playlist.Tracks.FirstOrDefault(t => t.FilePath == path);
         if (track != null)
-        {
-            _durationSeconds = track.MediaDuration.TotalSeconds;
-            _videoFps = track.FrameRate ?? 25;
-        }
+            _playback.SetMedia(track.MediaDuration.TotalSeconds, track.FrameRate ?? 25);
         return true;
     }
 
@@ -512,7 +523,7 @@ internal sealed class SyncScenarioHarness
         RecordPlaybackProperty("pause", "yes");
         SetPaused(true);
         _projectRestorePauseState.MarkPending();
-        _playbackSeconds = current.MediaIn.TotalSeconds;
+        _playback.Load(current.FilePath, current.MediaIn.TotalSeconds, paused: true);
     }
 
     private void ResumeProjectRestorePauseForSyncIfNeeded()
@@ -537,9 +548,7 @@ internal sealed class SyncScenarioHarness
     private bool Seek(double target)
     {
         Operations.Add(new("seek", target));
-        if (!SeekSucceeds) return false;
-        _playbackSeconds = target;
-        return true;
+        return _playback.Seek(target).Success;
     }
 
     private void SetPaused(bool paused)
