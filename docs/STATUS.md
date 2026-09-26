@@ -1,11 +1,12 @@
 # 現在地（2026-09-26）
 
-- **公開**: v0.5.3 (beta, Pre-release) 2026-09-26 20:38、main = タグ `v0.5.3` = `00cec9c`。zip `734E45D0…728C` / setup.exe `E2088C06…93B4`。Latest（安定版）は v0.5.4 から
+- **公開**: v0.5.3 (beta, Pre-release) 2026-09-26 20:38、main = タグ `v0.5.3` = `78ac486`（2026-09-26 23:50 の履歴の書き換えの後の SHA）。zip `734E45D0…728C` / setup.exe `E2088C06…93B4`。Latest（安定版）は v0.5.4 から
   （https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.3）
 - **作業中**: v0.5.4（ブランチ `v0.5.4`、作業ツリー `timecode-sync-player-v05`）。担当 w5:p3 の作業ブランチは v0.5.4 から切る（`agent-a-v054`、作業ツリー `timecode-sync-player-v053` を流用、OpenCode はそのフォルダで起動）
+- **履歴の書き換え（2026-09-26、利用者の指示）**: 公開文書に入っていたローカルのパス（利用者名）と検証機のホスト名を全履歴から除いた（filter-repo、5 ブランチと 9 タグを強制 push）。以前の記録にある SHA（`00cec9c` など）は書き換え前のもの。公開文書にはパスを書かず、作業ツリーは名前で書く（手元の pre-commit フックが検査する）
 - **ゴール**: [GOAL-v0.6.md](GOAL-v0.6.md)（v0.5.2 → v0.5.3 → v0.5.4（安定版）→ v0.6.0。版の位置づけは 0 節、止まる地点は 3 節）
 - **次の 3 手**:
-  1. **v0.5.3 を公開**（2026-09-26 20:38、Pre-release。https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.3）。main = タグ `v0.5.3` = `00cec9c`。
+  1. **v0.5.3 を公開**（2026-09-26 20:38、Pre-release。https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.3）。main = タグ `v0.5.3` = `78ac486`（2026-09-26 23:50 の履歴の書き換えの後の SHA）。
      zip `734E45D0…728C` / setup.exe `E2088C06…93B4`（GitHub の digest と一致）
   2. **v0.5.4 = 安定版（Latest）。既知のエラーを潰す＋シーク経路の門の統合**（ブランチ `v0.5.4`、作業ツリー `timecode-sync-player-v05`、GOAL 0 節）。段 0 を進行中:
      - 潰す一覧 K1〜K8（[release-0.5-plan.md](release-0.5-plan.md) の v0.5.4 節）: 直す K1・K2（D39）、K3（A1）、K5（§6 の 1 の読み込み・6・7・15）、K7（U-1）、K8（門の統合）。K4（C-1 の 4K 終端）は検証で確認して閉じる。既知の制限は K6（長 GOP、推奨の範囲外）だけ
