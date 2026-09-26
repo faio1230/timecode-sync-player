@@ -37,6 +37,8 @@ internal sealed class SingleModeSyncCoordinator
         // Do not let it settle the pending seek or complete file-load stability checks.
         if (_effects.IsNativeSeeking?.Invoke() == true)
         {
+            // v0.5.4 段 0: ネイティブシーク中の抑止（門 22）を数える。
+            Log.Debug("sync.gate native-seek-defer ltc={Ltc:F3}", ltcSeconds);
             if (traceEnabled)
             {
                 SyncPositionRead shadowRead = _effects.ReadPosition();
@@ -93,7 +95,11 @@ internal sealed class SingleModeSyncCoordinator
         }
 
         if (_syncService.IsDebounced())
+        {
+            // v0.5.4 段 0: シークのデバウンス（門 14）を数える。
+            Log.Debug("sync.gate seek-debounce ltc={Ltc:F3} playback={Playback:F3}", ltcSeconds, playbackSeconds);
             return SyncRequestResult.Deferred;
+        }
 
         bool success = _effects.SeekTo(decision.TargetSeconds);
         if (success)
