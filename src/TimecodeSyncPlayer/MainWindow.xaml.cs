@@ -1194,6 +1194,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void PlaylistList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
+        // D39 K2: 長さの更新は行を差し替えるため、選択中の行が外れる（SelectedIndex=-1）。
+        // 外れた項目が同じ Id の別インスタンスへ差し替えられたときだけ、同じ Id の行へ戻す。
+        if (PlaylistList.SelectedIndex < 0 &&
+            e.RemovedItems.Count == 1 &&
+            e.RemovedItems[0] is PlaylistTrack removed &&
+            PlaylistSelectionRestore.IndexAfterReplacement(_playlist, removed) is int restoreIndex)
+        {
+            PlaylistList.SelectedIndex = restoreIndex;
+            return;
+        }
+
         _vm.Playlist.SelectedIndex = PlaylistList.SelectedIndex;
         UpdateCurrentTrackLabel();
     }
