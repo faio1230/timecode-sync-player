@@ -22,7 +22,8 @@ internal enum ScenarioRenderSurface
 internal sealed class SyncScenarioHarness
 {
     private readonly TimecodeSyncService _syncService;
-    private readonly GapFreezeHandler _gap = new();
+    private readonly GapFreezeHandler _gap;
+    private readonly ScenarioClock? _scenarioClock;
     private readonly PlaybackControlState _playback = new();
     private readonly ProjectRestorePauseState _projectRestorePauseState = new();
     private readonly ContinueOnTrackCoordinator _continueCoordinator;
@@ -30,6 +31,13 @@ internal sealed class SyncScenarioHarness
     private readonly AudioControlCoordinator _audioControlCoordinator;
 
     private long _monotonicMilliseconds = 10_000;
+
+    /// <summary>
+    /// v0.5.4 C1: ScenarioClock があるときは同じ時計の単調ミリ秒を返す。旧 ctor では従来どおり
+    /// Tick100Milliseconds が進める内部値（10_000 起点）を使う。
+    /// </summary>
+    private long MonotonicMilliseconds => _scenarioClock?.MonotonicMilliseconds ?? _monotonicMilliseconds;
+
     private long _renderedFrames;
     private Guid? _loadedTrackId;
     private double _playbackSeconds = 1;
@@ -37,16 +45,28 @@ internal sealed class SyncScenarioHarness
     private double _videoFps = 25;
 
     public SyncScenarioHarness(TimeProvider? timeProvider = null, bool enableCorrection = false,
-        bool? sampleClockEnabled = null, Func<long>? getQpc = null)
+        bool? sampleClockEnabled = null, Func<long>? getQpc = null, ScenarioClock? scenarioClock = null)
     {
+        if (scenarioClock is not null && timeProvider is not null)
+            throw new ArgumentException("timeProvider と scenarioClock は同時に指定しない");
+        if (scenarioClock is not null && getQpc is not null)
+            throw new ArgumentException("getQpc と scenarioClock は同時に指定しない");
+
+        // v0.5.4 C1: ScenarioClock は UTC・単調ミリ秒・QPC を 1 つにまとめる。旧 ctor
+        // （ManualTimeProvider + getQpc）はそのまま使える。
+        _scenarioClock = scenarioClock;
+        TimeProvider? effectiveTimeProvider = scenarioClock ?? timeProvider;
+        Func<long>? effectiveGetQpc = scenarioClock is null ? getQpc : () => scenarioClock.Qpc;
+        _gap = scenarioClock is null ? new GapFreezeHandler() : new GapFreezeHandler(scenarioClock);
+
         // D37-a: ゲートの窓・変化量の判定に使う時計。ManualTimeProvider があれば同じ時計に
         // 揃えて、テスト内の時間（clock.Advance / Tick100Milliseconds）で決定的にする。
         _syncService = new(
-            timeProvider is null
+            effectiveTimeProvider is null
                 ? new SyncDecisionEngine()
                 : new SyncDecisionEngine(new SyncDecisionOptions(), null,
-                    () => timeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0),
-            new TimecodeSyncSeekState(), timeProvider);
+                    () => effectiveTimeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0),
+            new TimecodeSyncSeekState(), effectiveTimeProvider);
         _audioControlCoordinator = new AudioControlCoordinator(
             new AudioControlState(isMuted: false, volume: 100),
             new AudioControlEffects(
@@ -214,9 +234,9 @@ internal sealed class SyncScenarioHarness
                     _gap.IsPauseOwnedByGap,
                     _projectRestorePauseState.IsPending)),
             () => single, () => _continueCoordinator, () => _gapCoordinator,
-            getUtcNow: timeProvider is null ? null : () => timeProvider.GetUtcNow().UtcDateTime,
+            getUtcNow: effectiveTimeProvider is null ? null : () => effectiveTimeProvider.GetUtcNow().UtcDateTime,
             sampleClockEnabled: sampleClockEnabled,
-            getQpc: getQpc);
+            getQpc: effectiveGetQpc);
         Single = single;
     }
 
@@ -328,7 +348,7 @@ internal sealed class SyncScenarioHarness
         Controller.ReceiveProcessedFrame(new LtcFrameProcessingResult(
             "scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
             new TimecodeFrameDiagnosticResult(status, 0, 0),
-            ShouldApplySync: shouldApplySync, ShouldLogFps: false), _monotonicMilliseconds);
+            ShouldApplySync: shouldApplySync, ShouldLogFps: false), MonotonicMilliseconds);
 
     /// <summary>
     /// T2: サンプル時計の検証用。フレーム終端 QPC を持つフレームとして渡す（秒は 25fps の
@@ -341,13 +361,17 @@ internal sealed class SyncScenarioHarness
             frame / (25 * 3600), (frame / (25 * 60)) % 60, (frame / 25) % 60, frame % 25, false);
         Controller.ReceiveFrame(
             new LtcFrameReceivedEventArgs(timecode, 25, seconds, frameEndTimestamp, callbackTimestamp),
-            _monotonicMilliseconds);
+            MonotonicMilliseconds);
     }
 
     public void Tick100Milliseconds()
     {
-        _monotonicMilliseconds += 100;
-        Controller.Tick(_monotonicMilliseconds);
+        if (_scenarioClock is null)
+            _monotonicMilliseconds += 100;
+        else
+            _scenarioClock.AdvanceMilliseconds(100);
+
+        Controller.Tick(MonotonicMilliseconds);
     }
 
     public void Tick100Milliseconds(int count)
