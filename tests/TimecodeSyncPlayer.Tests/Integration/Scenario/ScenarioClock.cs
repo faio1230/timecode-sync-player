@@ -35,6 +35,9 @@ internal sealed class ScenarioClock : TimeProvider
 
     public override DateTimeOffset GetUtcNow() => _utcNow;
 
+    /// <summary>C2: 進んだ後に呼ばれる（偽プレイヤーなどの予約コールバック）。</summary>
+    public event Action<TimeSpan>? Advanced;
+
     /// <summary>3 つの時間を同じだけ進める。ミリ秒未満の端数は受け付けない。</summary>
     public void Advance(TimeSpan delta)
     {
@@ -45,6 +48,7 @@ internal sealed class ScenarioClock : TimeProvider
 
         _utcNow = _utcNow.Add(delta);
         MonotonicMilliseconds += delta.Ticks / TimeSpan.TicksPerMillisecond;
+        Advanced?.Invoke(delta);
     }
 
     public void AdvanceMilliseconds(long milliseconds) =>
