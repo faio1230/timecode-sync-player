@@ -242,7 +242,12 @@ public sealed class TimecodeSyncService
                 _lastSyncSeekAt = now;    // タイムアウト後もデバウンスを保護
             }
             else
+            {
+                // v0.5.4 段 0: ロード中の抑止（門 17）を数える。
+                Serilog.Log.Debug("sync.gate load-suppress elapsedMs={ElapsedMs:F1}",
+                    (now - _fileLoad.StartedAt).TotalMilliseconds);
                 return true;               // ロード中は全シーク抑止
+            }
         }
 
         bool suppress = _seekState.ShouldSuppressSeek(playbackSeconds, toleranceSeconds, now,
@@ -253,6 +258,13 @@ public sealed class TimecodeSyncService
             Serilog.Log.Information(
                 "Timecode sync pending {Status} playback={Playback:F3} tolerance={Tolerance:F4}",
                 _seekState.LastStatus, playbackSeconds, toleranceSeconds);
+        }
+        else if (suppress && _seekState.HasPendingSeek &&
+                 _seekState.LastStatus == TimecodeSyncSeekPendingStatus.Pending)
+        {
+            // v0.5.4 段 0: 保留によるシーク抑止（門 5）を数える（Single は既存の Debug に加えて全経路で残す）。
+            Serilog.Log.Debug("sync.gate pending-suppress playback={Playback:F3} target={Target:F3}",
+                playbackSeconds, _seekState.TargetSeconds);
         }
 
         // D37-b: 保留の決着を位置の信頼状態へ反映する（着地 = その場で再開、
@@ -420,6 +432,9 @@ public sealed class TimecodeSyncService
 
     private bool ReleaseFileLoad(DateTime now, string reason)
     {
+        double loadElapsedMs = _fileLoad.StartedAt == DateTime.MinValue
+            ? 0.0
+            : (now - _fileLoad.StartedAt).TotalMilliseconds;
         _fileLoad.Release(now);
         _lastSyncSeekAt = now;                // ロード後デバウンスを再スタート
         // D37-b2: ロード成立が実際の着地。D37-d: ここから新しい着地エピソードを開く
@@ -427,6 +442,9 @@ public sealed class TimecodeSyncService
         _landing.OpenAt(now, LandingOrigin.Other);
         if (reason != "progress")
             Serilog.Log.Information("Timecode sync: file load released ({Reason})", reason);
+        else
+            // v0.5.4 段 0: 進捗によるロード解除（門 18 の通常経路）は今までログが無かった。
+            Serilog.Log.Debug("sync.gate load-release elapsedMs={ElapsedMs:F1}", loadElapsedMs);
         return true;
     }
 

@@ -81,6 +81,9 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     /// </summary>
     public SyncDecision WhilePositionUntrusted(double ltcSeconds, SyncPlaybackState state)
     {
+        // v0.5.4 段 0: 未信頼の間の判定停止（門 12）を毎フレーム数える。
+        Log.Debug("sync.gate untrusted-defer ltc={Ltc:F3} playback={Playback:F3}",
+            ltcSeconds, state.PlaybackSeconds);
         SyncFpsResolution fps = ResolveFps(state.VideoFps, state.TimecodeFps);
         double toleranceSeconds = ToleranceSeconds(fps.VideoFps, fps.TimecodeFps, _options.ToleranceFrames);
         double requestedTargetSeconds = double.NaN;

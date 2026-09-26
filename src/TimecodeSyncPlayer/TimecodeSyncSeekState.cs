@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace TimecodeSyncPlayer;
 
 internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
@@ -77,6 +79,9 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
                 && now - _lastSettledAt < PostSettleSuppress
                 && IsWithinSettledTarget(playbackSeconds, toleranceSeconds))
             {
+                // v0.5.4 段 0: 着地後の抑止（門 9）を着地（門 6）と分けて数える。
+                Log.Debug("sync.gate post-settle-suppress elapsedMs={ElapsedMs:F1} target={Target:F3}",
+                    (now - _lastSettledAt).TotalMilliseconds, _lastSettledTargetSeconds);
                 LastStatus = TimecodeSyncSeekPendingStatus.Settled;
                 return true;
             }
@@ -99,6 +104,9 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
             // D37-b: 着地までの実測時間を学習する（目標に到達したと最初に観測した時刻まで）。
             if (_sentAt != DateTime.MinValue)
                 LearnSeekDuration((_settledAt == DateTime.MinValue ? now : _settledAt) - _sentAt);
+            // v0.5.4 段 0: 着地の確定（門 6）を数える（従来は pending "Settled" 行を門 9 と共有していた）。
+            Log.Debug("sync.gate seek-settled target={Target:F3} elapsedMs={ElapsedMs:F1}",
+                TargetSeconds, (now - _sentAt).TotalMilliseconds);
             _lastSettledAt = now;
             _lastSettledTargetSeconds = TargetSeconds;
             Clear();
@@ -110,6 +118,9 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         // pending の目標から離れていればその要求で置き換え、今回のシークを抑止しない。
         if (IsNewRequestFarFromPending(requestedTargetSeconds, toleranceSeconds))
         {
+            // v0.5.4 段 0: 到達不能 pending の置き換え（門 8 の re-pend）を数える。
+            Log.Debug("sync.gate pending-replace pendingTarget={PendingTarget:F3} requestedTarget={RequestedTarget:F3}",
+                TargetSeconds, requestedTargetSeconds);
             TargetSeconds = Math.Max(0, requestedTargetSeconds);
             _sentAt = now;
             _settledAt = DateTime.MinValue;
@@ -119,6 +130,9 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
 
         if (now - _sentAt >= _timeout)
         {
+            // v0.5.4 段 0: 保留のタイムアウト（門 7）の実測時間を残す。
+            Log.Debug("sync.gate pending-timeout elapsedMs={ElapsedMs:F1} target={Target:F3}",
+                (now - _sentAt).TotalMilliseconds, TargetSeconds);
             Clear();
             LastStatus = TimecodeSyncSeekPendingStatus.TimedOut;
             return false;

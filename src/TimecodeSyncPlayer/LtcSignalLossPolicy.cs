@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace TimecodeSyncPlayer;
 
 internal enum LtcSignalLossAction
@@ -257,6 +259,9 @@ internal sealed class LtcSignalLossPolicy
         _reason = WasHeldRecently(nowMilliseconds)
             ? LtcSignalLossReason.TimecodeHeld
             : LtcSignalLossReason.SignalLoss;
+        // v0.5.4 段 0: 損失の確定を数える（ランスルーでは Pause ログが出ないため）。
+        Log.Debug("sync.gate signal-loss-confirm elapsedMs={ElapsedMs:F1} reason={Reason}",
+            ElapsedMilliseconds(_lastValidFrameAtMilliseconds.Value, nowMilliseconds), _reason);
         return EvaluatePause(context);
     }
 

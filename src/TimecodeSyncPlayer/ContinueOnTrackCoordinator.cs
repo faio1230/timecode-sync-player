@@ -96,6 +96,8 @@ internal sealed class ContinueOnTrackCoordinator
             // For this clip, native time-pos is not stable until seeking has finished.
             if (_effects.IsNativeSeeking?.Invoke() == true)
             {
+                // v0.5.4 段 0: ネイティブシーク中の抑止（門 22）を数える。
+                Log.Debug("sync.gate native-seek-defer ltc={Ltc:F3}", ltcSeconds);
                 if (traceEnabled)
                 {
                     SyncPositionRead shadowRead = _effects.ReadPosition();
@@ -151,6 +153,10 @@ internal sealed class ContinueOnTrackCoordinator
                 if (seekPlan.SkipReason == ContinueSyncSeekSkipReason.NoSeekDecision &&
                     !_syncService.SeekState.HasPendingSeek)
                     return new ContinueFrameContext(SyncRequestResult.Complete, true, mediaPos, playbackSeconds);
+                // v0.5.4 段 0: Continue 側のシーク見送りの理由（門 5・14 の Suppressed / Debounced）を数える。
+                Log.Debug(
+                    "sync.gate seek-skip reason={Reason} ltc={Ltc:F3} playback={Playback:F3} target={Target:F3}",
+                    seekPlan.SkipReason, ltcSeconds, playbackSeconds, decision.TargetSeconds);
                 // 保留中・抑止・デバウンスのシークがあるフレームでは補正を評価しない。
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "pending-seek");
             }

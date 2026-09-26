@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace TimecodeSyncPlayer;
 
 /// <summary>
@@ -96,6 +98,9 @@ internal sealed class PlaybackPositionTrust
 
         if (_stableSamples >= _requiredSamples)
         {
+            // v0.5.4 段 0: 時間切れ後の再確認（門 11）が終わったことを数える（遅延は TimedOut 行との対）。
+            Log.Debug("sync.gate trust-reacquire samples={Samples} required={Required}",
+                _stableSamples, _requiredSamples);
             _trusted = true;
             _reacquiring = false;
         }
