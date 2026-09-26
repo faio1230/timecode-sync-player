@@ -1,9 +1,9 @@
 # 現在地（2026-09-26）
 
 - **公開**: v0.5.3 (beta, Pre-release) 2026-09-26 20:38、main = タグ `v0.5.3` = `00cec9c`。zip `734E45D0…728C` / setup.exe `E2088C06…93B4`。Latest（安定版）は v0.5.4 から
-  （https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.2）
+  （https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.3）
 - **作業中**: v0.5.4（ブランチ `v0.5.4`、作業ツリー `timecode-sync-player-v05`）。担当 w5:p3 の作業ブランチは v0.5.4 から切る（`agent-a-v054`、作業ツリー `timecode-sync-player-v053` を流用、OpenCode はそのフォルダで起動）
-- **ゴール**: [GOAL-v0.6.md](GOAL-v0.6.md)（v0.5.2 → v0.5.3 → v0.6.0。止まる地点は 3 節）
+- **ゴール**: [GOAL-v0.6.md](GOAL-v0.6.md)（v0.5.2 → v0.5.3 → v0.5.4（安定版）→ v0.6.0。版の位置づけは 0 節、止まる地点は 3 節）
 - **次の 3 手**:
   1. **v0.5.3 を公開**（2026-09-26 20:38、Pre-release。https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.3）。main = タグ `v0.5.3` = `00cec9c`。
      zip `734E45D0…728C` / setup.exe `E2088C06…93B4`（GitHub の digest と一致）
