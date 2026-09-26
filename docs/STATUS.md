@@ -1,14 +1,13 @@
 # 現在地（2026-09-26）
 
-- **公開**: v0.5.2 (beta) 2026-09-26 05:55、main = タグ `v0.5.2` = `b9dc877`。zip `0B27D871…15DE` / setup.exe `67B63300…9D98`
+- **公開**: v0.5.3 (beta, Pre-release) 2026-09-26 20:38、main = タグ `v0.5.3` = `00cec9c`。zip `734E45D0…728C` / setup.exe `E2088C06…93B4`。Latest（安定版）は v0.5.4 から
   （https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.2）
-- **作業中**: v0.5.3（ブランチ `v0.5.3`、作業ツリー `timecode-sync-player-v05`）。担当 w5:p3 の作業は `agent-a-v053-3a`（作業ツリー `timecode-sync-player-v053`、OpenCode はそのフォルダで起動）で進め、区切りごとに v0.5.3 へ取り込む
+- **作業中**: v0.5.4（ブランチ `v0.5.4`、作業ツリー `timecode-sync-player-v05`）。担当 w5:p3 の作業ブランチは v0.5.4 から切る（`agent-a-v054`、作業ツリー `timecode-sync-player-v053` を流用、OpenCode はそのフォルダで起動）
 - **ゴール**: [GOAL-v0.6.md](GOAL-v0.6.md)（v0.5.2 → v0.5.3 → v0.6.0。止まる地点は 3 節）
 - **次の 3 手**:
-  1. **v0.5.3 は合格、公開の許可待ち**（2026-09-26 14:45）。検証機の固定の一式 2 回で v0.5.2 から落ちた項目なし（標準 6 回の失敗は U-1 のみ、C-1 の着地 中央 0.102 秒）。
-     版を 0.5.3 に上げ（`4fa141b`）、main へ --no-ff（`00cec9c`）、タグ `v0.5.3`（ローカル、未 push）。成果物は main の artifacts/release（zip `734E45D0…728C` / setup.exe `E2088C06…93B4`、`0.5.3+00cec9c`、shim `5DAF3C8D…`）。
-     許可が出たら main とタグを push → gh release create → 公開後に v0.5.4 のブランチを main から切る
-  2. v0.5.4 = シーク経路の門の統合（利用者の決定 2026-09-26、着手は v0.5.3 の公開後。[release-0.5-plan.md](release-0.5-plan.md) の v0.5.4 節）。
+  1. **v0.5.3 を公開**（2026-09-26 20:38、Pre-release。https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.3）。main = タグ `v0.5.3` = `00cec9c`。
+     zip `734E45D0…728C` / setup.exe `E2088C06…93B4`（GitHub の digest と一致）
+  2. **v0.5.4 = 安定版（Latest）。既知のエラーを潰す＋シーク経路の門の統合**（ブランチ `v0.5.4`、作業ツリー `timecode-sync-player-v05`）。段 0 で「潰す一覧」を release-0.5-plan.md に表で出して承認してから着手（GOAL 0 節）。（[release-0.5-plan.md](release-0.5-plan.md) の v0.5.4 節）。
      段 0 の基準測定と同時に、p6 にシナリオ層（仮想時計＋偽の再生 API）の設計書を書かせる
   3. v0.6.0 = ProRes の GPU 復号（[release-0.6-plan.md](release-0.6-plan.md)。決定済み: NVIDIA だけ既定で有効、設定キー `proResGpu` と UI の 3 択）
   - 並行して追う既知の間欠: A1 型の最終フレームの取り込みの時間切れ（release-0.5-plan.md の「既知の間欠」）、U-1（高頻度の UI 監査で配信が数秒止まる、v0.5.1 から）
