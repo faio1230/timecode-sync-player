@@ -4,6 +4,13 @@ using TimecodeSyncPlayer.Contracts;
 namespace TimecodeSyncPlayer.Tests.Integration;
 
 internal sealed record ScenarioPlaybackOperation(string Name, double? Value = null, string? Text = null);
+
+/// <summary>
+/// v0.5.4 C4: 仮想時刻つきの観測イベント（設計: docs/design/v0.5.4-scenario-layer.md §2-4）。
+/// tick・LTC フレーム・シーク・一時停止・ロードを時刻で並べ、指標の計算に使う。
+/// </summary>
+internal sealed record ScenarioEvent(long AtMilliseconds, string Kind, string Detail, double? Value = null);
+
 internal sealed record ScenarioLtcDisplayState(
     string FormatText,
     string TimecodeForeground,
@@ -56,7 +63,11 @@ internal sealed class SyncScenarioHarness
         // Controller はコンストラクタの後半で代入される（この経路はフレーム発行時＝代入後にしか
         // 呼ばれないため null 免除で参照する）。
         Ltc = new LtcScript(
-            (frame, at) => Controller!.ReceiveProcessedFrame(frame, at),
+            (frame, at) =>
+            {
+                Controller!.ReceiveProcessedFrame(frame, at);
+                RecordEvent("ltc-frame", frame.ResolvedSeconds, frame.Diagnostic.Status.ToString(), at);
+            },
             startMilliseconds: scenarioClock?.MonotonicMilliseconds ?? _monotonicMilliseconds);
         // C2: 仮想時計が進むと偽プレイヤーの位置・着地・ロード・尺の到着も進む。
         if (scenarioClock is not null)
@@ -76,6 +87,8 @@ internal sealed class SyncScenarioHarness
                 : new SyncDecisionEngine(new SyncDecisionOptions(), null,
                     () => effectiveTimeProvider.GetUtcNow().ToUnixTimeMilliseconds() / 1000.0),
             new TimecodeSyncSeekState(), effectiveTimeProvider);
+        // C4: サービスが同期シークを発行した時点（全経路。着地シークも含む）。
+        _syncService.SeekIssued += () => RecordEvent("service-seek");
         _audioControlCoordinator = new AudioControlCoordinator(
             new AudioControlState(isMuted: false, volume: 100),
             new AudioControlEffects(
@@ -95,7 +108,12 @@ internal sealed class SyncScenarioHarness
                     GapExitAction action = _gap.DecideGapExit();
                     return action;
                 },
-                SeekTo: Seek,
+                // C4: Continue の同期シーク（段 0 の「同期シーク」に対応）。
+                SeekTo: target =>
+                {
+                    RecordEvent("sync-seek", target);
+                    return Seek(target);
+                },
                 ResumePlayback: () =>
                 {
                     RecordPlaybackProperty("pause", "no");
@@ -156,7 +174,12 @@ internal sealed class SyncScenarioHarness
                     SyncEnabled, Playlist.Current != null, IsSeeking, playback,
                     _playback.DurationSeconds, _playback.Fps, 25,
                     MediaInSeconds: MediaInSeconds, MediaOutSeconds: MediaOutSeconds),
-                SeekTo: Seek,
+                // C4: Single の同期シーク（段 0 の「同期シーク」に対応）。
+                SeekTo: target =>
+                {
+                    RecordEvent("sync-seek", target);
+                    return Seek(target);
+                },
                 GetTotalRenderedFrames: () => _renderedFrames,
                 IsNativeSeeking: () => NativeSeeking,
                 // D33: 終端ホールドの pause/resume を記録する。解除は MainWindow と同じ条件
@@ -233,7 +256,14 @@ internal sealed class SyncScenarioHarness
                         return true;
                     }
                     : null,
-                SeekTo: enableCorrection ? Seek : null,
+                // C4: controller からのシーク（保持着地・Jump 補正。段 0 の「着地シーク」を含む）。
+                SeekTo: enableCorrection
+                    ? target =>
+                    {
+                        RecordEvent("landing-seek", target);
+                        return Seek(target);
+                    }
+                    : null,
                 SetCorrectionStatus: enableCorrection ? text => CorrectionStatus = text : null,
                 IsPlaybackPositionUnstable: () => PlaybackPositionUnstable,
                 // v0.5.3 段 3i: 信号断の一時停止を解いたときの再開判定（§6 の 9）。
@@ -267,6 +297,9 @@ internal sealed class SyncScenarioHarness
 
     public PlaylistState Playlist { get; } = new();
     public List<ScenarioPlaybackOperation> Operations { get; } = [];
+
+    /// <summary>C4: 時刻つきの観測イベント。指標はここから計算する（記録のみ）。</summary>
+    public List<ScenarioEvent> Events { get; } = [];
     public List<ScenarioLtcDisplayState> DisplayStates { get; } = [];
     public List<string> CurrentTrackLabels { get; } = [];
     public List<(string Name, string Value)> PlaybackPropertyWrites { get; } = [];
@@ -371,11 +404,14 @@ internal sealed class SyncScenarioHarness
     public void SupplyHeldLtc(double seconds) =>
         SupplyLtc(seconds, TimecodeFrameDiagnosticStatus.Duplicate, shouldApplySync: false);
 
-    private void SupplyLtc(double seconds, TimecodeFrameDiagnosticStatus status, bool shouldApplySync) =>
+    private void SupplyLtc(double seconds, TimecodeFrameDiagnosticStatus status, bool shouldApplySync)
+    {
         Controller.ReceiveProcessedFrame(new LtcFrameProcessingResult(
             "scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
             new TimecodeFrameDiagnosticResult(status, 0, 0),
             ShouldApplySync: shouldApplySync, ShouldLogFps: false), MonotonicMilliseconds);
+        RecordEvent("ltc-frame", seconds, status.ToString());
+    }
 
     /// <summary>
     /// T2: サンプル時計の検証用。フレーム終端 QPC を持つフレームとして渡す（秒は 25fps の
@@ -389,22 +425,33 @@ internal sealed class SyncScenarioHarness
         Controller.ReceiveFrame(
             new LtcFrameReceivedEventArgs(timecode, 25, seconds, frameEndTimestamp, callbackTimestamp),
             MonotonicMilliseconds);
+        RecordEvent("ltc-frame", seconds, "Frame");
     }
 
-    public void Tick100Milliseconds()
+    /// <summary>
+    /// C4: 任意のミリ秒だけ仮想時間を進める（40ms の LTC グリッドに合わせたいとき用）。
+    /// 進めた後は Tick100Milliseconds と同じ順で controller の Tick を呼ぶ。
+    /// </summary>
+    public void AdvanceMilliseconds(int milliseconds)
     {
         if (_scenarioClock is null)
         {
-            _monotonicMilliseconds += 100;
-            Ltc.AdvanceTime(TimeSpan.FromMilliseconds(100));
+            _monotonicMilliseconds += milliseconds;
+            Ltc.AdvanceTime(TimeSpan.FromMilliseconds(milliseconds));
         }
         else
         {
-            _scenarioClock.AdvanceMilliseconds(100);
+            _scenarioClock.AdvanceMilliseconds(milliseconds);
+            // C4: tick は合成の拍でもある。ロード解除の成立（描画が進んだか）に必要。
+            // 旧経路は従来どおり AdvancePlayback でしか描画フレームを足さない。
+            _renderedFrames++;
         }
 
         Controller.Tick(MonotonicMilliseconds);
+        RecordEvent("tick", _playback.PositionSeconds, RenderSurface.ToString());
     }
+
+    public void Tick100Milliseconds() => AdvanceMilliseconds(100);
 
     public void Tick100Milliseconds(int count)
     {
@@ -522,6 +569,7 @@ internal sealed class SyncScenarioHarness
     private bool LoadFile(string path, double start)
     {
         Operations.Add(new("loadfile", start, path));
+        RecordEvent("load", start, path);
         if (!_playback.Load(path, start, paused: false).Success) return false;
         SetPaused(false);
         var track = Playlist.Tracks.FirstOrDefault(t => t.FilePath == path);
@@ -536,6 +584,7 @@ internal sealed class SyncScenarioHarness
             return;
 
         Operations.Add(new("loadfile-paused", current.MediaIn.TotalSeconds, current.FilePath));
+        RecordEvent("load", current.MediaIn.TotalSeconds, current.FilePath);
         _loadedTrackId = current.Id;
         RecordPlaybackProperty("pause", "yes");
         SetPaused(true);
@@ -565,6 +614,7 @@ internal sealed class SyncScenarioHarness
     private bool Seek(double target)
     {
         Operations.Add(new("seek", target));
+        RecordEvent("seek", target);
         return _playback.Seek(target).Success;
     }
 
@@ -572,10 +622,15 @@ internal sealed class SyncScenarioHarness
     {
         _playback.SetPaused(paused);
         Operations.Add(new("pause", Text: paused ? "yes" : "no"));
+        RecordEvent(paused ? "pause" : "resume");
     }
 
     private void RecordPlaybackProperty(string name, string value) =>
         PlaybackPropertyWrites.Add((name, value));
+
+    /// <summary>C4: 時刻つきの観測イベントを足す（省略時は現在の仮想時刻）。</summary>
+    private void RecordEvent(string kind, double? value = null, string detail = "", long? atMilliseconds = null) =>
+        Events.Add(new ScenarioEvent(atMilliseconds ?? MonotonicMilliseconds, kind, detail, value));
 
     private void RecordLtcDisplayState(LtcDisplayState display, string pauseReason)
     {
