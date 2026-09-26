@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | v0.5.2 | 同期の状態を見える形にする（段 0〜2、§6 の 11・12）。`docs/design/v0.5.2-sync-state.md` | 段 0 の特性テスト全緑、非E2E 全件、開発機の重い素材セット 3 本立て、固定の一式（標準 3 通り + L-1 6 本 + A 切替、RTX）**2 回**、`Sync lifecycle:` の列が段 1 直後の候補と一致、shim ログ `0x0@` 0 件 |
 | v0.5.3 | 段 3（寿命の食い違い: 2 → 1、3、5、10、8、9、13、14 を赤いテストから 1 件 1 コミット）、4 は再現テストの結果で | 同上。加えて直した件ごとに単体が赤→緑 |
-| v0.6.0 | ProRes の GPU 復号（`docs/release-0.6-plan.md`）。`prores-gpu` プロファイル、プラグイン v0.1.0 の同梱、LGPL 表記、SETUP の推奨更新、設定キー `proResGpu`（auto / on / off、既定 auto = NVIDIA のアダプタだけ有効）と UI の 3 択 | 同上。加えて **RTX で ProRes 4K60 が `prores-gpu` で再生**（shim ログの profile と adapter LUID で確認）。**NVIDIA 以外のアダプタ（検証機の内蔵 AMD）では既定（auto）で `prores-cpu` が選ばれること**を 1 本確認（ログの profile）。`on` の強制経路は動作確認のみで合否に含めない。既知の制限に「GPU 復号は NVIDIA で検証。他のベンダーは未検証のため自動では CPU 復号。設定で強制可」と書く |
+| v0.6.0 | ProRes の GPU 復号（`docs/release-0.6-plan.md`）。スクリプトの PowerShell 7 化（v0.5.3 までは 5.1 互換）。`prores-gpu` プロファイル、プラグイン v0.1.0 の同梱、LGPL 表記、SETUP の推奨更新、設定キー `proResGpu`（auto / on / off、既定 auto = NVIDIA のアダプタだけ有効）と UI の 3 択 | 同上。加えて **RTX で ProRes 4K60 が `prores-gpu` で再生**（shim ログの profile と adapter LUID で確認）。**NVIDIA 以外のアダプタ（検証機の内蔵 AMD）では既定（auto）で `prores-cpu` が選ばれること**を 1 本確認（ログの profile）。`on` の強制経路は動作確認のみで合否に含めない。既知の制限に「GPU 復号は NVIDIA で検証。他のベンダーは未検証のため自動では CPU 復号。設定で強制可」と書く。**スクリプトを PowerShell 7 に寄せる**（`#requires -Version 7`、5.1 向けの回避を外す、SETUP に 7 を要件として追記。release-0.6-plan.md の 2026-09-26 の決定）。固定の一式と重い素材セットは **pwsh で起動したランナー**で通す（開発機への 7 の導入は利用者、検証機も 7 でランナーを 1 回通してから） |
 
 ## 2. 版ごとのブランチの流れ（規則）
 

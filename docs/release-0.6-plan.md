@@ -57,3 +57,15 @@ v0.6.0（新しい復号経路 = 機能の追加）。v0.5.2（状態の整理�
 - **切り替え**: 設定キー `proResGpu` = `auto`（既定）/ `on` / `off` を `settings.json` に置き、アプリが shim にロード時のオプションとして渡す（`decodeMode` と同じ経路）。UI に「ProRes の GPU 復号: 自動 / 有効 / 無効」の 3 択を 1 つ（適用は再起動）。環境変数 `TCS_PRORES_GPU` は試験用として残し、設定より優先。`on` で未検証のアダプタを使うときはログに 1 行出す。
 - **確認**: メタデータ行のデコーダ名（`V:proresd3d11dec` など）で GPU 復号が効いたかを画面で確認できる。
 - UI の 3 択は UI 刷新計画（Codex）と重なるため、刷新側の「復号」区画に `decodeMode` と並べる。
+
+## 決定（2026-09-26、利用者。TSP-Fable 経由）: スクリプトを PowerShell 7 に寄せる
+
+- **v0.6.0 で TSP のスクリプトを PowerShell 7 に寄せる。** v0.5.3 までは 5.1 互換を維持する（検証機の再確認を増やさない）。
+- 内容: `scripts/`・`native/gst-shim/*.ps1`・`packaging` のスクリプトに `#requires -Version 7` を付け、5.1 向けの回避
+  （BOM の注意書き、`$ErrorActionPreference` と NativeCommandError の回避、`-File` 起動時の `$PSScriptRoot` 既定値の手当て、
+  `Get-Content -Encoding` の指定）を外して簡潔にする。文書の `powershell -File` は `pwsh -File` にする。
+  `docs/SETUP.md` に PowerShell 7 の導入（`winget install Microsoft.PowerShell`）を要件として書く。
+  検証機にも 7 を導入し、ランナーを 7 で 1 回通してから候補に使う。
+- 背景: 開発機は 5.1 のみ（7 は未導入）。gst-prores-d3d11 のビルドは 7 が要るので、v0.6.0 で両方の前提が揃う。
+  開発機への 7 の導入は利用者が行う。
+- 合格の条件への追加: v0.6.0 の固定の一式と重い素材セットを **pwsh で起動したランナー**で通す。
