@@ -168,6 +168,38 @@ public sealed class ScenarioGateGuardTests
         Report("G5/G12(far)", h, sink);
     }
 
+    // ---- 門 10 の備考（TSP-Fable のレビュー）: シーク中に rate.instant を出さない ----
+
+    [Fact]
+    public void G10_WhileSeekIsPending_NoRateInstantIsEmitted()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(mode: SyncMode.Single);
+        using var sink = new ScenarioLogSink(clock);
+        h.AddTrack("A", 0, 30);
+        h.ManualPlay();
+        h.AdvancePlayback(1.0);
+
+        h.Ltc.Normal(1.0, TimeSpan.FromMilliseconds(200));
+        RunFor(h, clock, 200);
+        int attemptsBefore = h.RateAttempts.Count;   // 追従中の補正はある。この数が増えないことを見る
+
+        // シーク中（保留 + 位置は未信頼）で、ネイティブシークの着地まで位置が凍結した状態。
+        h.SyncService.ReportSeekSent(10.0);
+        h.Playback.SeekLandingDelaySeconds = 1.0;
+        h.Playback.Seek(10.0);
+        h.Playback.IsSeeking().Should().BeTrue("前提: 着地まで位置が凍結している");
+        h.SyncService.SeekState.HasPendingSeek.Should().BeTrue("前提: 保留がある");
+        h.SyncService.IsPlaybackPositionUsable.Should().BeFalse("前提: 位置が未信頼");
+
+        h.Ltc.Normal(2.0, TimeSpan.FromMilliseconds(400));   // 凍結した位置とかけ離れた LTC
+        RunFor(h, clock, 400);
+
+        h.RateAttempts.Count.Should().Be(
+            attemptsBefore, "シーク中（A が pending を持つ間）は Smooth の補正を評価しない（rate.instant を出さない）");
+        h.AppliedRates.Count.Should().Be(attemptsBefore, "シーク中はレートを適用しない");
+        Report("G10(rate)", h, sink);
+    }
+
     // ---- 門 7・11: 着地しないシークは 2 秒で解除し、安定 3 サンプルで再開する ----
 
     [Fact]
