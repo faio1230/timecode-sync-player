@@ -29,6 +29,8 @@ internal sealed class PlaybackOperationsCoordinator
     {
         if (!_effects.IsPlayerReady()) return;
 
+        // v0.5.4 K5（§6 の 15）: 停止は利用者の一時停止の主張を下ろす（次の読み込みが決める）。
+        _playbackControl.ClearUserPauseOwned();
         _effects.Stop();
         _effects.SetPaused(true);
         ApplyPauseState(true);
@@ -66,6 +68,11 @@ internal sealed class PlaybackOperationsCoordinator
 
         if (!load.Success) return false;
 
+        // v0.5.4 K5（§6 の 15）: 位置なしロードは自動で再生する（利用者の一時停止の主張を下ろす）。
+        // 位置つきロードは keepPaused で利用者の状態を引き継ぐ。
+        if (!startPosition.HasValue)
+            _playbackControl.ClearUserPauseOwned();
+
         // 位置つきロードは EOF pause を引き継ぐことがある。ユーザー／ギャップが持つ pause を
         // 保ったまま、意図した状態を明示し直す。
         if (startPosition.HasValue)
@@ -98,6 +105,8 @@ internal sealed class PlaybackOperationsCoordinator
 
         if (!success) return false;
 
+        // v0.5.4 K5（§6 の 15）: 一時停止の読み込み（プロジェクト復元）は利用者の主張ではない。
+        _playbackControl.ClearUserPauseOwned();
         ApplyPauseState(true);
         _effects.ResetPlayerStateForNewTrack();
         _effects.ResetGapFreeze();
