@@ -2,6 +2,45 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.5.3 - 2026-09-26
+
+Fixes for sync state that outlived the action or setting that should have cleared it, and a slow landing after a held timecode.
+
+### Fixed
+
+- Run-through mode: after LTC was held (stopped), a jump inside the same track landed about 2 s late (present since 0.4.5).
+  While LTC was held the player never checked whether the pending seek had landed, so the pending seek stayed until its 2 s
+  timeout. The landing is now checked during the hold, and a pending seek that can no longer be reached is dropped when a
+  distant new request arrives. Landing now takes about 0.1 s instead of 1.5-2.0 s.
+- GPU recovery, automatic advance to the next track and gap loads left the sync state of the previous file in place.
+  These loads now go through the same sync entry point as other loads.
+- Single: the clip-edge hold could survive turning sync off or changing the sync mode.
+- The "loading" flag could survive stop or sync-off and trigger a late, unrelated "load finished" step.
+- The one-shot application after a jump could stay suppressed after a manual seek or after turning sync on.
+- For 0.5 s after a load, seeks were suppressed against the previous file's landing target.
+- Changing the correction mode from Smooth to Jump kept the previous playback rate. Smooth also stayed unavailable
+  after a manual seek, and stopping LTC monitoring did not reset the rate to 1.0.
+- Changing the signal-loss mode from stop to run-through left playback paused.
+- Going silent again right after a jump that recovered from signal loss landed on the old held value.
+
+### Changed
+
+- Stop mode: when LTC jumps and then stops, the picture now moves to the new position right after the jump and, when it
+  pauses, seeks back the short distance it ran past (about 0.25 s). Before, the old picture stayed on screen from the jump
+  until the pause (about 0.3-0.4 s).
+
+### Known limitations
+
+- Selecting a playlist row within about 1 s of adding files can lose the selection, so Up/Down do nothing. The row is
+  replaced when the file's duration arrives. Present in earlier releases; to be fixed in the next release.
+- A timeline offset edited right after adding files can come back as 0 when the saved project is reopened (2 of 10
+  automated runs). Believed to have the same cause. Present in earlier releases; to be fixed in the next release. Until
+  then, wait 1-2 s after adding files before editing offsets, and check offsets after reopening a project.
+- A high-rate UI Automation audit (reading the UI every 50 ms) can stall delivery for a few seconds. Normal use does not
+  do this. Same as 0.5.1.
+- In a gap freeze, when the seek to the final frame coincides with the end of the file, the previous picture can rarely
+  stay on screen (seen before on 4K field material; not seen in this release's development runs).
+
 ## 0.5.2 - 2026-09-26
 
 Internal cleanup of the sync state. One behaviour change, in Single mode's clip-edge hold.
