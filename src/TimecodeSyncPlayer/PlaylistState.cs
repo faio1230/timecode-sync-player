@@ -258,7 +258,11 @@ public sealed class PlaylistState : IPlaylistService
 
         Tracks[index] = updated;
         if (recalculate)
-            RecalculateTimelineFrom(index);
+        {
+            // D39 K1: 届いた行自身のオフセットは動かさない（利用者が編集していても守られる）。
+            // 後ろの行だけ、この行の実効終端から計算し直す。
+            RecalculateTimelineFrom(index + 1);
+        }
     }
 
     /// <summary>

@@ -10,6 +10,7 @@ namespace TimecodeSyncPlayer.Tests.Integration;
 internal sealed class ScenarioClock : TimeProvider
 {
     private DateTimeOffset _utcNow;
+    private readonly List<(long AtMilliseconds, Action Action)> _scheduled = [];
 
     public ScenarioClock(
         DateTimeOffset utcNow,
@@ -49,8 +50,42 @@ internal sealed class ScenarioClock : TimeProvider
         _utcNow = _utcNow.Add(delta);
         MonotonicMilliseconds += delta.Ticks / TimeSpan.TicksPerMillisecond;
         Advanced?.Invoke(delta);
+        RunScheduled();
     }
 
     public void AdvanceMilliseconds(long milliseconds) =>
         Advance(TimeSpan.FromMilliseconds(milliseconds));
+
+    /// <summary>
+    /// 仮想時刻での予約（C5: 長さの更新が後から届く順序の固定など）。同時刻の予約は足した順。
+    /// </summary>
+    public void Schedule(long atMilliseconds, Action action)
+    {
+        if (atMilliseconds < MonotonicMilliseconds)
+            throw new ArgumentOutOfRangeException(nameof(atMilliseconds), "過去には予約できない");
+        _scheduled.Add((atMilliseconds, action));
+    }
+
+    private void RunScheduled()
+    {
+        while (true)
+        {
+            int dueIndex = -1;
+            for (int i = 0; i < _scheduled.Count; i++)
+            {
+                if (_scheduled[i].AtMilliseconds <= MonotonicMilliseconds)
+                {
+                    dueIndex = i;
+                    break;
+                }
+            }
+
+            if (dueIndex < 0)
+                return;
+
+            (long _, Action action) = _scheduled[dueIndex];
+            _scheduled.RemoveAt(dueIndex);
+            action();
+        }
+    }
 }
