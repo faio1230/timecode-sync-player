@@ -332,7 +332,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GetOtherPauseOwners: () => SyncRules.CollectPauseOwnersExceptSignalLoss(
                     _singleModeSyncCoordinator?.IsBoundaryHeld ?? false,
                     _gapFreezeHandler.IsPauseOwnedByGap,
-                    _projectRestorePauseState.IsPending)),
+                    _projectRestorePauseState.IsPending,
+                    _playbackControl.UserPauseOwned)),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードと着地窓を渡す。
         _syncService.CorrectionModeSource = () => _vm.Sync.SyncCorrectionMode;
@@ -1636,7 +1637,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         PauseOwners otherOwners = SyncRules.CollectOtherPauseOwners(
             _ltcSyncController.IsSignalLossPauseOwned,
             _gapFreezeHandler.IsPauseOwnedByGap,
-            _projectRestorePauseState.IsPending);
+            _projectRestorePauseState.IsPending,
+            _playbackControl.UserPauseOwned);
         if (!SyncRules.ShouldResumeOnBoundaryHoldRelease(otherOwners))
         {
             Log.Information(

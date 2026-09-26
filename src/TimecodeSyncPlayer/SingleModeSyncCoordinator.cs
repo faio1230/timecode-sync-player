@@ -152,7 +152,31 @@ internal sealed class SingleModeSyncCoordinator
             case SyncLifecycleEvent.PlaybackStopped:
                 ClearBoundaryLatches(evt);
                 break;
+            case SyncLifecycleEvent.FileLoad:
+                // v0.5.4 K5（§6 の 1）: 読み込みで前のファイルの境界ホールドを持ち越さない。
+                // ラッチを消すだけにすると解除の副作用（再開・片付け）を落とすため、解除と同じ経路を通す。
+                ReleaseBoundaryHoldOnFileLoad();
+                break;
         }
+    }
+
+    /// <summary>
+    /// v0.5.4 K5（§6 の 1）: 読み込み（FileLoad）での境界ホールドの解除。解除の副作用
+    /// （SetEndHold(false) による再開の判定と、OnBoundaryHoldReleased の片付け）を落とさない。
+    /// </summary>
+    private void ReleaseBoundaryHoldOnFileLoad()
+    {
+        if (!_boundary.IsHeld)
+        {
+            _boundary.ClearSeek();
+            return;
+        }
+
+        _boundary.ClearHeld();
+        _boundary.ClearSeek();
+        _effects.SetEndHold?.Invoke(false);
+        _effects.OnBoundaryHoldReleased?.Invoke();
+        Log.Information("Single mode: clip boundary hold released (file load)");
     }
 
     private void ClearBoundaryLatches(SyncLifecycleEvent evt)

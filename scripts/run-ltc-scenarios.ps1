@@ -8,6 +8,8 @@
 #        -MediaInOffsetSeconds N starts every track N seconds into its video)
 #       (the project .tsp is generated under the report directory, never in the
 #        media folder, and is removed after the run unless -KeepProject is set)
+#   U-1 (LtcScenarioE2ETests.U1_...) requires a gap-free project: pass -GapSeconds 0
+#   (with a gapped project U-1 reports preflight-invalid instead of judging).
 #   powershell -File scripts\run-ltc-scenarios.ps1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
 #       (L-1 continuous-follow audit: seconds / tracks / window length / settling
 #        exclusion via -FollowSettlingSeconds / follow-start gate bound via

@@ -196,7 +196,8 @@ internal sealed class SyncScenarioHarness
                     PauseOwners otherOwners = SyncRules.CollectOtherPauseOwners(
                         Controller!.IsSignalLossPauseOwned,
                         _gap.IsPauseOwnedByGap,
-                        _projectRestorePauseState.IsPending);
+                        _projectRestorePauseState.IsPending,
+                        UserPauseOwned);
                     if (SyncRules.ShouldResumeOnBoundaryHoldRelease(otherOwners))
                         SetPaused(false);
                     else
@@ -271,7 +272,8 @@ internal sealed class SyncScenarioHarness
                 GetOtherPauseOwners: () => SyncRules.CollectPauseOwnersExceptSignalLoss(
                     single.IsBoundaryHeld,
                     _gap.IsPauseOwnedByGap,
-                    _projectRestorePauseState.IsPending)),
+                    _projectRestorePauseState.IsPending,
+                    UserPauseOwned)),
             () => single, () => _continueCoordinator, () => _gapCoordinator,
             getUtcNow: effectiveTimeProvider is null ? null : () => effectiveTimeProvider.GetUtcNow().UtcDateTime,
             sampleClockEnabled: sampleClockEnabled,
@@ -353,6 +355,9 @@ internal sealed class SyncScenarioHarness
     public string CorrectionStatus { get; private set; } = "";
 
     public bool IsPaused => _playback.Paused;
+
+    /// <summary>v0.5.4 K5（§6 の 15）: 利用者が再生ボタンで止めている（MainWindow と同じ扱い）。</summary>
+    public bool UserPauseOwned { get; private set; }
     public bool IsGapActive => !_gap.IsInactive;
     public GapState GapState => _gap.CurrentState;
     public Guid? LoadedTrackId => _loadedTrackId;
@@ -462,6 +467,7 @@ internal sealed class SyncScenarioHarness
     public void ManualPlay()
     {
         _projectRestorePauseState.Clear();
+        UserPauseOwned = false;
         RecordPlaybackProperty("pause", "no");
         SetPaused(false);
     }
@@ -469,6 +475,7 @@ internal sealed class SyncScenarioHarness
     public void ManualPause()
     {
         _projectRestorePauseState.Clear();
+        UserPauseOwned = true;
         RecordPlaybackProperty("pause", "yes");
         SetPaused(true);
     }
@@ -481,6 +488,7 @@ internal sealed class SyncScenarioHarness
     public void StopPlayback()
     {
         Operations.Add(new("stop-playback"));
+        UserPauseOwned = false;
         RecordPlaybackProperty("pause", "yes");
         SetPaused(true);
     }
@@ -571,6 +579,8 @@ internal sealed class SyncScenarioHarness
         Operations.Add(new("loadfile", start, path));
         RecordEvent("load", start, path);
         if (!_playback.Load(path, start, paused: false).Success) return false;
+        // v0.5.4 K5（§6 の 15）: 自動で再生する読み込みは利用者の一時停止の主張を下ろす。
+        UserPauseOwned = false;
         SetPaused(false);
         var track = Playlist.Tracks.FirstOrDefault(t => t.FilePath == path);
         if (track != null)
@@ -586,6 +596,8 @@ internal sealed class SyncScenarioHarness
         Operations.Add(new("loadfile-paused", current.MediaIn.TotalSeconds, current.FilePath));
         RecordEvent("load", current.MediaIn.TotalSeconds, current.FilePath);
         _loadedTrackId = current.Id;
+        // v0.5.4 K5（§6 の 15）: 一時停止の読み込み（プロジェクト復元）は利用者の主張ではない。
+        UserPauseOwned = false;
         RecordPlaybackProperty("pause", "yes");
         SetPaused(true);
         _projectRestorePauseState.MarkPending();

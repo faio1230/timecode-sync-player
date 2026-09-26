@@ -283,6 +283,17 @@ public sealed partial class LtcScenarioE2ETests
         {
             Run("U-1", continueMode: true, blackGap: true, scenario =>
             {
+                // v0.5.4 K7: 監査はギャップの 5 秒停止を「配信の停止」と数えるため、トラックの間に
+                // ギャップがあるプロジェクトでは判定しない（docs/design/v0.5.4-u1-cause.md）。
+                for (int i = 1; i < scenario.Tracks.Count; i++)
+                {
+                    TrackInfo previous = scenario.Tracks[i - 1];
+                    TrackInfo current = scenario.Tracks[i];
+                    if (current.Start > previous.End + 0.001)
+                        scenario.Invalid(
+                            $"トラック間にギャップがある（{previous.End:F3} -> {current.Start:F3}）。U-1 はギャップ無しのプロジェクトでだけ回す");
+                }
+
                 scenario.SetSync(true);
                 double start = scenario.A.Start + 1.0;
                 double end = scenario.Tracks[^1].End - 1.0;

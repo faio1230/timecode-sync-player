@@ -56,13 +56,16 @@ internal static class SyncRules
     internal static bool ShouldResumeOnBoundaryHoldRelease(PauseOwners otherOwners) =>
         otherOwners == PauseOwners.None;
 
+    /// <summary>v0.5.4 K5（§6 の 15）: 利用者（<see cref="PauseOwners.User"/>）も含める。</summary>
     internal static PauseOwners CollectOtherPauseOwners(
         bool isSignalLossPauseOwned,
         bool isGapPauseOwned,
-        bool isProjectRestorePaused) =>
+        bool isProjectRestorePaused,
+        bool isUserPaused) =>
         (isSignalLossPauseOwned ? PauseOwners.SignalLoss : PauseOwners.None) |
         (isGapPauseOwned ? PauseOwners.Gap : PauseOwners.None) |
-        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None);
+        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None) |
+        (isUserPaused ? PauseOwners.User : PauseOwners.None);
 
     /// <summary>
     /// v0.5.3 段 3i: 信号断のポリシーが自分の一時停止を解いた（ランスルーへ変更）とき、
@@ -73,13 +76,16 @@ internal static class SyncRules
 
     /// <summary>
     /// v0.5.3 段 3i: 信号断のポリシー以外の一時停止の持ち主（境界ホールド・ギャップ・
-    /// プロジェクト復元）を組み立てる。MainWindow とハーネスが同じ関数を使う。
+    /// プロジェクト復元・利用者。v0.5.4 K5 で利用者を足した）を組み立てる。
+    /// MainWindow とハーネスが同じ関数を使う。
     /// </summary>
     internal static PauseOwners CollectPauseOwnersExceptSignalLoss(
         bool isBoundaryHoldPauseOwned,
         bool isGapPauseOwned,
-        bool isProjectRestorePaused) =>
+        bool isProjectRestorePaused,
+        bool isUserPaused) =>
         (isBoundaryHoldPauseOwned ? PauseOwners.BoundaryHold : PauseOwners.None) |
         (isGapPauseOwned ? PauseOwners.Gap : PauseOwners.None) |
-        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None);
+        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None) |
+        (isUserPaused ? PauseOwners.User : PauseOwners.None);
 }

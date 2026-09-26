@@ -128,6 +128,10 @@ internal sealed class LtcSyncController
             return;
         _input.ClearJumpApplied();
         _input.ClearHeldReapplied();
+        // v0.5.4 K5（§6 の 6）: 読み込みで Smooth を再試行できるようにする。
+        _rate.ResetSmoothAvailability();
+        // v0.5.4 K5（§6 の 1）: 読み込みで Single の境界ホールドを解除する（解除の副作用つき）。
+        _single().OnLifecycle(SyncLifecycleEvent.FileLoad);
     }
 
     public double LastLtcSeconds { get; private set; }
@@ -230,6 +234,8 @@ internal sealed class LtcSyncController
                 break;
             case SyncLifecycleEvent.SyncDisabled:
                 ResetCorrection();
+                // v0.5.4 K5（§6 の 7）: 無効化の時点で戻せなくても、復帰待ちを残さない。
+                RetryRateRestoreIfPending();
                 _rate.ResetSmoothAvailability();
                 _input.ClearFollowStart();
                 break;
@@ -255,9 +261,14 @@ internal sealed class LtcSyncController
                 _rate.ResetSmoothAvailability();
                 break;
             case SyncLifecycleEvent.PlaybackStopped:
-            case SyncLifecycleEvent.PlayPauseToggled:
-                // T7: 操作者の再生・一時停止、停止・プロジェクト差し替えで補正状態を捨てる。
+                // T7: 停止・プロジェクト差し替えで補正状態を捨てる。
                 ResetCorrection();
+                break;
+            case SyncLifecycleEvent.PlayPauseToggled:
+                // T7: 操作者の再生・一時停止で補正状態を捨てる。
+                ResetCorrection();
+                // v0.5.4 K5（§6 の 7）: 一時停止中に戻せなかった保留を、操作のたびに戻しにいく。
+                RetryRateRestoreIfPending();
                 break;
             case SyncLifecycleEvent.CorrectionModeChanged:
                 // v0.5.3 段 3h: 補正モードの変更で倍率を 1.0 に戻す（§6 の 8）。
@@ -421,10 +432,28 @@ internal sealed class LtcSyncController
         _rate.ClearRejectedLogged();
         if (_rate.RateRestorePending || !_rate.RateNotUnity)
             return;
+        TryRestoreRateToUnity();
+    }
+
+    /// <summary>倍率を 1.0 へ戻す。戻せなかったら復帰待ちにする。</summary>
+    private void TryRestoreRateToUnity()
+    {
         if (_effects.ApplyRateInstant?.Invoke(1.0) == true)
             _rate.MarkRestored();
         else
             _rate.MarkRestorePending();
+    }
+
+    /// <summary>
+    /// v0.5.4 K5（§6 の 7）: 復帰待ちの保留を 1.0 へ戻すことを試す（戻せたら下ろす）。
+    /// 同期の無効化・一時停止のあとの操作で、速度が 1.0 に戻らない保留を残さない。
+    /// </summary>
+    private void RetryRateRestoreIfPending()
+    {
+        if (!_rate.RateRestorePending)
+            return;
+        if (_effects.ApplyRateInstant?.Invoke(1.0) == true)
+            _rate.MarkRestored();
     }
 
     private void RequestSync(double rawSeconds, long frameEndTimestamp, string source = "frame")
@@ -1103,14 +1132,13 @@ internal sealed class LtcSyncController
         if (action == LtcSignalLossAction.None || !_effects.GetContext().IsPlayerReady)
             return;
         bool pause = action == LtcSignalLossAction.Pause;
-        // D35: 停止モードの保持で止める直前に Smooth の残り倍率を 1.0 へ戻す
-        // （一時停止後はレート変更を受け付けない）。
-        if (pause)
-            RestoreRateBeforePolicyPause();
-        _effects.SetSignalLossPaused(pause);
-        LtcSyncContext state = _effects.GetContext();
         if (pause)
         {
+            // D35: 停止モードの保持で止める直前に Smooth の残り倍率を 1.0 へ戻す
+            // （一時停止後はレート変更を受け付けない）。
+            RestoreRateBeforePolicyPause();
+            _effects.SetSignalLossPaused(true);
+            LtcSyncContext state = _effects.GetContext();
             Log.Information(
                 "LTC signal lost: playback paused timeoutMs={TimeoutMs} reason={Reason}",
                 state.SignalLossTimeoutMilliseconds, _signalLoss.Reason);
@@ -1120,11 +1148,21 @@ internal sealed class LtcSyncController
             if (_input.LastHeldEffectiveSeconds is not null ||
                 _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
                 ReapplyHeldValueOnPause();
+            return;
         }
-        else
+
+        // v0.5.4 K5（§6 の 15）: 利用者を含むほかの持ち主が止めている間は、信号断の復帰でも再開しない
+        // （境界ホールドの解除・ギャップの解除と同じ判定）。
+        PauseOwners otherOwners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+        if (!SyncRules.ShouldResumeOnPolicyPauseRelease(otherOwners))
         {
-            Log.Information("LTC signal restored: playback resumed resumeFrames={ResumeFrames}", state.SignalResumeFrames);
+            Log.Information("LTC signal restored: playback stays paused owners={Owners}", otherOwners);
+            return;
         }
+
+        _effects.SetSignalLossPaused(false);
+        LtcSyncContext resumed = _effects.GetContext();
+        Log.Information("LTC signal restored: playback resumed resumeFrames={ResumeFrames}", resumed.SignalResumeFrames);
     }
 
     /// <summary>
@@ -1324,8 +1362,16 @@ internal sealed class LtcSyncController
             return;
         GapExitAction exit = _gap.DecideGapExit();
         _gap.ResetAll();
-        if (exit.ShouldResumePlayback && !_signalLoss.IsPauseOwned && state.IsPlayerReady)
+        // v0.5.4 K5（§6 の 15）: 信号断とほかの持ち主（利用者を含む）が止めていれば再開しない
+        // （境界ホールドの解除・信号断の復帰と同じ判定。ResetAll の後に読むとギャップ自身は入らない）。
+        PauseOwners otherOwners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+        if (_signalLoss.IsPauseOwned)
+            otherOwners |= PauseOwners.SignalLoss;
+        if (exit.ShouldResumePlayback && state.IsPlayerReady &&
+            SyncRules.ShouldResumeOnPolicyPauseRelease(otherOwners))
+        {
             _effects.ResumeGapPause();
+        }
         _effects.ClearGapFreezeFrame();
         _effects.RefreshCurrentVideoFrame();
         Log.Information("Gap state cleared for manual control syncEnabled={SyncEnabled} mode={Mode}",
