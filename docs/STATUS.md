@@ -10,8 +10,10 @@
   2. **v0.5.4 = 安定版（Latest）。既知のエラーを潰す＋シーク経路の門の統合**（ブランチ `v0.5.4`、作業ツリー `timecode-sync-player-v05`、GOAL 0 節）。段 0 を進行中:
      - 潰す一覧 K1〜K8（[release-0.5-plan.md](release-0.5-plan.md) の v0.5.4 節）: 直す K1・K2（D39）、K3（A1）、K5（§6 の 1 の読み込み・6・7・15）、K7（U-1）、K8（門の統合）。K4（C-1 の 4K 終端）は検証で確認して閉じる。既知の制限は K6（長 GOP、推奨の範囲外）だけ
        利用者の決定（2026-09-26）: §6 の 15 は利用者が止めている間は再開しない。U-1 は v0.5.4 で直す
-     - p3（`agent-a-v054`、作業ツリー v053）: 門の発火回数と遅延の基準（`sync.gate` の Debug 行を足して測る）。指示書 prompts/2026-09-26-v054-stage0-gate-baseline.md
-     - p6（`agent-b-v054`、作業ツリー v054b）: 決定的なシナリオ層。設計書 [v0.5.4-scenario-layer.md](design/v0.5.4-scenario-layer.md) は取り込み済み、C1（仮想時計）を実装中
+     - 済み: 段 0 の門の基準（`4cd3cd6`、[v0.5.4-gate-baseline.md](design/v0.5.4-gate-baseline.md)）、シナリオ層 C1〜C3（仮想時計・偽の再生 API・LTC の台本）、D39 の修正 K1・K2（`d81c8a0`、長さの更新だけから守る＝利用者の決定）
+     - 門の統合の設計書 [v0.5.4-gate-unification.md](design/v0.5.4-gate-unification.md)（24 門 → 15 門の案）。利用者の決定: §8 の即時停止を入れる、デバウンスは測定で決める
+     - 進行中: p6 がシナリオ層 C4（門の観測）、p3 が U-1 の原因の測定（K7、指示書 prompts/2026-09-26-v054-u1-measure.md）
+     - 残り: K3（A1）、K5（§6 の 1 の読み込み・6・7・15）、K7 の修正、門の統合の実装、K4・K6 の確認 → 候補
   3. v0.6.0 = ProRes の GPU 復号（[release-0.6-plan.md](release-0.6-plan.md)。決定済み: NVIDIA だけ既定で有効、設定キー `proResGpu` と UI の 3 択）
   - 並行して追う既知の間欠: A1 型の最終フレームの取り込みの時間切れ（release-0.5-plan.md の「既知の間欠」）、U-1（高頻度の UI 監査で配信が数秒止まる、v0.5.1 から）
 - **利用者の決定（2026-09-26）**: main の作業ツリーの未コミットの文書（README・ARCHITECTURE・ROADMAP・UI-UX-DESIGN・図・画像）は触らずそのまま。
