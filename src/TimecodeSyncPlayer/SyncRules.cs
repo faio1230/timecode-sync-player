@@ -63,4 +63,23 @@ internal static class SyncRules
         (isSignalLossPauseOwned ? PauseOwners.SignalLoss : PauseOwners.None) |
         (isGapPauseOwned ? PauseOwners.Gap : PauseOwners.None) |
         (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None);
+
+    /// <summary>
+    /// v0.5.3 段 3i: 信号断のポリシーが自分の一時停止を解いた（ランスルーへ変更）とき、
+    /// ほかの持ち主がいなければ再生を再開してよい（§6 の 9。境界ホールドの解除と同じ判定）。
+    /// </summary>
+    internal static bool ShouldResumeOnPolicyPauseRelease(PauseOwners otherOwners) =>
+        otherOwners == PauseOwners.None;
+
+    /// <summary>
+    /// v0.5.3 段 3i: 信号断のポリシー以外の一時停止の持ち主（境界ホールド・ギャップ・
+    /// プロジェクト復元）を組み立てる。MainWindow とハーネスが同じ関数を使う。
+    /// </summary>
+    internal static PauseOwners CollectPauseOwnersExceptSignalLoss(
+        bool isBoundaryHoldPauseOwned,
+        bool isGapPauseOwned,
+        bool isProjectRestorePaused) =>
+        (isBoundaryHoldPauseOwned ? PauseOwners.BoundaryHold : PauseOwners.None) |
+        (isGapPauseOwned ? PauseOwners.Gap : PauseOwners.None) |
+        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None);
 }

@@ -2179,6 +2179,9 @@ public sealed partial class LtcScenarioE2ETests
             }
 
             DateTime holdStart = DateTime.UtcNow;
+            // D38（記録のみ）: 着地の遅れをアプリログの差で測るための基準（ログの時刻はローカル）。
+            DateTime holdStartLocal = DateTime.Now;
+            double previousLtc = LtcSeconds();
             Signal.PlayHeld(ltcTarget, LtcFps, TimeSpan.FromSeconds(sendSeconds));
             bool runThrough = !SignalLossStop;
             double landingTolerance = PositionToleranceSeconds;
@@ -2205,6 +2208,16 @@ public sealed partial class LtcScenarioE2ETests
                 {
                     landed = true;
                     followUntil = DateTime.UtcNow.AddMilliseconds(500);
+                    // D38: 着地の遅れ = 新しい LTC の値の到着（Jump の診断行または適用ログ）から
+                    // 次のシーク発行ログ（sync seek success=true / LTC timecode held: landing seek issued）まで。
+                    double? landingLatencySeconds = LandingLatencySecondsSince(holdStartLocal);
+                    double jumpDistanceSeconds = Math.Abs(ltcTarget - previousLtc);
+                    // アプリの SyncDecisionEngine.ToleranceSeconds と同じ（映像と LTC の大きい方の 1 フレーム）。
+                    double syncToleranceSeconds = Math.Max(OneFrame, 1.0 / LtcFps);
+                    bool latencyOverBudget =
+                        double.IsFinite(jumpDistanceSeconds) &&
+                        jumpDistanceSeconds > 4 * syncToleranceSeconds &&
+                        landingLatencySeconds > 1.0;
                     Journal.Write("hold-landing", details: new
                     {
                         name,
@@ -2215,7 +2228,21 @@ public sealed partial class LtcScenarioE2ETests
                         rangeMin = Math.Round(lastRange.Min, 3),
                         rangeMax = Math.Round(lastRange.Max, 3),
                         expected = Math.Round(lastExpected, 3),
+                        jumpDistanceSeconds = double.IsFinite(jumpDistanceSeconds)
+                            ? Math.Round(jumpDistanceSeconds, 3)
+                            : (double?)null,
+                        syncToleranceSeconds = Math.Round(syncToleranceSeconds, 4),
+                        landingLatencySeconds = landingLatencySeconds.HasValue
+                            ? Math.Round(landingLatencySeconds.Value, 3)
+                            : (double?)null,
+                        latencyOverBudget,
                     });
+                    // D38 の修正: 記録のみだった判定を失敗の条件に切り替える（4×tolerance 超の
+                    // ジャンプは 1.0 秒以内に着地シークを発行する）。
+                    latencyOverBudget.Should().BeFalse(
+                        $"{name}: 4×tolerance を超えるジャンプは 1.0 秒以内に着地シークを発行する" +
+                        $"（jump={jumpDistanceSeconds:F3}s latency=" +
+                        (landingLatencySeconds.HasValue ? $"{landingLatencySeconds.Value:F3}s" : "none") + "）");
                 }
                 else if (landed)
                 {
@@ -2496,6 +2523,44 @@ public sealed partial class LtcScenarioE2ETests
                 issuedAt = null;
             }
             return durations;
+        }
+
+        /// <summary>
+        /// D38（記録のみ）: 新しい LTC の値がアプリに届いた時刻から、その後の最初のシーク発行ログ
+        /// （"sync seek ... success=true" / "LTC timecode held: landing seek issued"）までの秒数。
+        /// 到着は Jump の診断行（"LTC frame diagnostic status=\"Jump\""）または適用ログ
+        /// （"applying the ... frame once"）の早い方で見る（Jump が適用ログを出さずに別経路で
+        /// 着地する回も測れるように）。どちらかが無ければ null（判定には使わない）。
+        /// </summary>
+        public double? LandingLatencySecondsSince(DateTime sinceLocal)
+        {
+            DateTime? arrivedAt = null;
+            foreach (string line in RunLogLinesSince(sinceLocal))
+            {
+                Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
+                if (!timestamp.Success ||
+                    !DateTime.TryParse(timestamp.Groups[1].Value, CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out DateTime at))
+                    continue;
+
+                if (arrivedAt is null)
+                {
+                    if (line.Contains("LTC frame diagnostic status=\"Jump\"", StringComparison.Ordinal) ||
+                        line.Contains("applying the first Jump frame", StringComparison.Ordinal) ||
+                        line.Contains("applying the confirmed Jump frame", StringComparison.Ordinal) ||
+                        line.Contains("applying the held value change frame", StringComparison.Ordinal))
+                        arrivedAt = at;
+                    continue;
+                }
+
+                bool seekIssued =
+                    (line.Contains("sync seek", StringComparison.Ordinal) &&
+                     line.Contains("success=true", StringComparison.Ordinal)) ||
+                    line.Contains("LTC timecode held: landing seek issued", StringComparison.Ordinal);
+                if (seekIssued)
+                    return (at - arrivedAt.Value).TotalSeconds;
+            }
+            return null;
         }
 
         public int StressCycles(int defaultValue)

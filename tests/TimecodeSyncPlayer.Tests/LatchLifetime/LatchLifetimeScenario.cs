@@ -185,8 +185,8 @@ internal sealed class LatchLifetimeScenario
                 h.BeginManualFileLoad();
                 break;
             case LifecycleEvent.FileLoadWithoutBegin:
-                // 位置つきの読み込み（GPU 復旧 MainWindow.xaml.cs:782、自動送り :2116、ギャップの
-                // LoadPausedAt）はプレイヤーを読み込むだけで、同期側の入口を呼ばない。
+                // ギャップの 2 経路（LoadPausedAt / GapFreezePathGuard）の読み込み。読み込みの後に
+                // ロード中の印を立てない口（BeginGapFreezeLoad、source load-paused-at）を通る。
                 h.LoadCurrentFile();
                 break;
             case LifecycleEvent.SyncModeChanged:
@@ -241,15 +241,16 @@ internal sealed class LatchLifetimeScenario
                 h.Controller.FpsModeChanged();
                 break;
             case LifecycleEvent.CorrectionModeChanged:
-                // MainWindow.xaml.cs:470-476: 設定の保存とログだけ。段 1 から同期側の入口
-                // （CorrectionModeChanged）を呼ぶが、どのラッチも消さない。
+                // MainWindow.xaml.cs:470-476: 設定の保存とログ。段 1 から同期側の入口
+                // （CorrectionModeChanged）を呼び、段 3h で補正状態を捨て、倍率を 1.0 に戻す（§6 の 8）。
                 h.CorrectionMode = h.CorrectionMode == SyncCorrectionMode.Smooth
                     ? SyncCorrectionMode.Jump : SyncCorrectionMode.Smooth;
                 h.Controller.CorrectionModeChanged();
                 break;
             case LifecycleEvent.SignalLossModeChanged:
-                // MainWindow.xaml.cs:484-490: 設定の保存とログだけ。段 1 から同期側の入口
-                // （SignalLossModeChanged）を呼ぶが、どのラッチも消さない。
+                // MainWindow.xaml.cs:484-490: 設定の保存とログ。段 1 から同期側の入口
+                // （SignalLossModeChanged）を呼び、段 3i でランスルーへの変更のとき信号断の
+                // 一時停止を解く（§6 の 9。ほかの持ち主が止めていれば再開しない）。
                 h.SignalLossMode = h.SignalLossMode == LtcSignalLossMode.Stop
                     ? LtcSignalLossMode.RunThrough : LtcSignalLossMode.Stop;
                 h.Controller.SignalLossModeChanged();

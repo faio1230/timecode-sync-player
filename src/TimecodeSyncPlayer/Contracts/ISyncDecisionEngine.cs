@@ -23,8 +23,10 @@ public interface ISyncDecisionEngine
     /// <summary>
     /// D37-b: 位置を信用できないフレーム（シーク保留中・時間切れ後の再確認中）の決定。
     /// 呼び出し側は要求を Deferred のまま維持する（既定実装は None）。
+    /// D38 (b): ltcSeconds から要求の目標（クランプ済み）を作り、pending の置き換え判定に使える
+    /// ようにする。
     /// </summary>
-    SyncDecision WhilePositionUntrusted(SyncPlaybackState state) => SyncDecision.None;
+    SyncDecision WhilePositionUntrusted(double ltcSeconds, SyncPlaybackState state) => SyncDecision.None;
 
     /// <summary>
     /// 0.4.5-A フェーズ 1: 通常の同期評価が走らないフレーム（ネイティブシーク中・位置未信頼）でも、

@@ -206,7 +206,13 @@ internal sealed class SyncScenarioHarness
                     : null,
                 SeekTo: enableCorrection ? Seek : null,
                 SetCorrectionStatus: enableCorrection ? text => CorrectionStatus = text : null,
-                IsPlaybackPositionUnstable: () => PlaybackPositionUnstable),
+                IsPlaybackPositionUnstable: () => PlaybackPositionUnstable,
+                // v0.5.3 段 3i: 信号断の一時停止を解いたときの再開判定（§6 の 9）。
+                // MainWindow と同じ組み立て関数を使う。
+                GetOtherPauseOwners: () => SyncRules.CollectPauseOwnersExceptSignalLoss(
+                    single.IsBoundaryHeld,
+                    _gap.IsPauseOwnedByGap,
+                    _projectRestorePauseState.IsPending)),
             () => single, () => _continueCoordinator, () => _gapCoordinator,
             getUtcNow: timeProvider is null ? null : () => timeProvider.GetUtcNow().UtcDateTime,
             sampleClockEnabled: sampleClockEnabled,
@@ -378,8 +384,10 @@ internal sealed class SyncScenarioHarness
 
     public void LoadCurrentFile()
     {
-        if (Playlist.Current is { } current)
-            LoadFile(current.FilePath, current.MediaIn.TotalSeconds);
+        // v0.5.3 段 3g: ギャップの読み込み（LoadPausedAt / GapFreezePathGuard）を再現し、
+        // 読み込みの後にロード中の印を立てない口を通す。
+        if (Playlist.Current is { } current && LoadFile(current.FilePath, current.MediaIn.TotalSeconds))
+            _syncService.BeginGapFreezeLoad("load-paused-at");
     }
 
     /// <summary>D27-b: 手動ロード（次/前/プレイリスト）でアプリ側が立てるロードゲートを再現する。</summary>

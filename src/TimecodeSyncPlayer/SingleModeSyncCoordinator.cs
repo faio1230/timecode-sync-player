@@ -69,6 +69,8 @@ internal sealed class SingleModeSyncCoordinator
 
         SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state, positionSample);
         // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
+        // D38 (b): 未信頼の要求の目標は、EvaluateDecision が pending の破棄（門 8）に使う
+        // （ここで渡すと pending の置き換え（re-pend）が先に走り、着地の観測を失う）。
         double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
         bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
             requestedTarget);
@@ -127,6 +129,33 @@ internal sealed class SingleModeSyncCoordinator
             return _boundary.IsHeld;
 
         return ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state);
+    }
+
+    /// <summary>
+    /// v0.5.3 段 3c: できごとで境界ホールドのラッチを消す（§6 の 1）。消すのはラッチ
+    /// （ホールドと端へのシークの記録）だけで、一時停止は変えない（SetEndHold を呼ばない。
+    /// 止まっている映像は利用者の再生で動く）。解除のできごと（BoundaryHoldReleased）も
+    /// 出さない（それは LTC がクリップへ戻ったときの解除）。
+    /// </summary>
+    internal void OnLifecycle(SyncLifecycleEvent evt)
+    {
+        switch (evt)
+        {
+            case SyncLifecycleEvent.SyncModeChanged:
+            case SyncLifecycleEvent.SyncDisabled:
+            case SyncLifecycleEvent.PlaybackStopped:
+                ClearBoundaryLatches(evt);
+                break;
+        }
+    }
+
+    private void ClearBoundaryLatches(SyncLifecycleEvent evt)
+    {
+        bool hadLatch = _boundary.IsHeld || _boundary.Seek is not null;
+        _boundary.ClearHeld();
+        _boundary.ClearSeek();
+        if (hadLatch)
+            Log.Information("Single mode: clip boundary hold cleared by {Event}", evt);
     }
 
     /// <summary>

@@ -78,6 +78,27 @@ public sealed class BoundaryHoldPauseOwnerTests
         h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
     }
 
+    [Fact]
+    public void SyncDisabled_WhileBoundaryHeld_ClearsLatchAndKeepsPause()
+    {
+        (SyncScenarioHarness h, _) = Arrange();
+        h.AdvancePlayback(25.0);
+
+        h.SupplyLtc(40.0);   // 範囲外 → 終端ホールド（一時停止）
+        h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
+        h.IsPaused.Should().BeTrue("前提: 境界ホールドが止めている");
+        h.Single.LatchSnapshot()["clipBoundaryHeld"].Should().BeTrue("前提: ホールドのラッチ");
+
+        h.SetSyncEnabled(false);
+
+        h.Single.LatchSnapshot()["clipBoundaryHeld"].Should().BeFalse(
+            "v0.5.3 段 3c: 同期の無効化でホールドのラッチを消す（§6 の 1）");
+        h.IsPaused.Should().BeTrue(
+            "ラッチだけを消し、境界ホールドの一時停止は利用者の再生までそのまま（SetEndHold(false) を呼ばない）");
+        h.Operations.Should().NotContain(o => o.Name == "clip-end-release",
+            "解除のできごと（SetEndHold(false) / BoundaryHoldReleased）は出さない");
+    }
+
     [Fact(Skip = "v0.5.3（利用者を一時停止の持ち主として記録してから。§6 の 15）")]
     public void BoundaryHoldRelease_WhileUserPaused_DoesNotResumePlayback()
     {

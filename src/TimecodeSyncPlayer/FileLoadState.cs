@@ -64,6 +64,17 @@ internal sealed class FileLoadState
         _loading = null;
     }
 
+    /// <summary>
+    /// v0.5.3 段 3d: ロード中と解除の回収待ちを両方下ろす（§6 の 3）。解除ではない
+    /// （<see cref="Release"/> を通らない。解除時刻を残さず、着地窓・デバウンスにも触れない）。
+    /// </summary>
+    public void Cancel()
+    {
+        _isLoadingFile = false;
+        _loading = null;
+        _releasePending = false;
+    }
+
     /// <summary>解除を回収した（回収待ちを下ろす）。</summary>
     public void CollectRelease() => _releasePending = false;
 

@@ -1,12 +1,45 @@
 namespace TimecodeSyncPlayer.Tests;
 
 using FluentAssertions;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using System.IO;
 using System.Reflection;
 using TimecodeSyncPlayer.Tests.Helpers;
 
+[Collection("Serilog global logger")]
 public class TimecodeSyncServiceTests
 {
+    private sealed class ListSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = new();
+        public void Emit(LogEvent logEvent) { lock (Events) Events.Add(logEvent); }
+    }
+
+    private sealed class LoggerCapture : IDisposable
+    {
+        private readonly ILogger _previous;
+
+        public LoggerCapture(ListSink sink)
+        {
+            Sink = sink;
+            _previous = Log.Logger;
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+        }
+
+        public ListSink Sink { get; }
+
+        public List<LogEvent> Snapshot()
+        {
+            lock (Sink.Events) return Sink.Events.ToList();
+        }
+
+        public void Dispose() => Log.Logger = _previous;
+    }
+
+    private static LoggerCapture CaptureLogger() => new(new ListSink());
+
     private class MockSyncDecisionEngine : ISyncDecisionEngine
     {
         public SyncDecision DecisionToReturn { get; set; } = SyncDecision.None;
@@ -28,7 +61,7 @@ public class TimecodeSyncServiceTests
 
         public void UpdateSeekCostSeconds(double seconds) => SeekCosts.Add(seconds);
 
-        public SyncDecision WhilePositionUntrusted(SyncPlaybackState state)
+        public SyncDecision WhilePositionUntrusted(double ltcSeconds, SyncPlaybackState state)
         {
             UntrustedCallCount++;
             return UntrustedDecision;
@@ -996,5 +1029,162 @@ public class TimecodeSyncServiceTests
         engine.DecisionToReturn = SyncDecision.None;
         service.EvaluateDecision(10.0, state);
         s_lastLoggedSyncActionField.GetValue(service).Should().Be(SyncActionType.None);
+    }
+
+    [Fact]
+    public void SyncDisabled_DuringFileLoad_CancelsWithoutReleaseOrLandingWindow()
+    {
+        // v0.5.3 段 3d: 同期を切った後に何秒待っても、ロード解除（file load released）が起きず
+        // 着地窓も開かない（§6 の 3）。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+
+        // ロードで開いた着地窓を、到着（許容内）で閉じておく。
+        engine.DecisionToReturn = new SyncDecision(
+            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
+        service.EvaluateDecision(12.0, new SyncPlaybackState(true, true, false, 12.0, 100.0));
+        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("前提: 着地窓は閉じている");
+
+        using LoggerCapture capture = CaptureLogger();
+        service.OnLifecycle(SyncLifecycleEvent.SyncDisabled);
+
+        service.IsLoadingFile.Should().BeFalse("取り消しでロード中の印を下ろす");
+        service.HasPendingFileLoadRelease.Should().BeFalse("解除の回収待ちも下ろす（解除ではない）");
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+
+        service.TryMarkFileLoaded(playbackSeconds: 12.0, renderedFrameCount: 3)
+            .Should().BeTrue("取り消し後はロード中ではない（解除もしない）");
+        service.PollFileLoadRelease(playbackSeconds: 12.0, renderedFrameCount: 3)
+            .Should().BeFalse("解除の回収は起きない");
+        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("何秒待っても着地窓は開かない");
+
+        List<LogEvent> events = capture.Snapshot();
+        events.Should().NotContain(e => e.MessageTemplate.Text.Contains("file load released"),
+            "解除は起きない");
+        events.Should().Contain(e => e.MessageTemplate.Text.Contains("file load cancelled by"),
+            "取り消したときだけ 1 行残す");
+    }
+
+    [Fact]
+    public void BeginFileLoad_ForgetsLastSettled_SoTheNextSeekIsNotSuppressed()
+    {
+        // v0.5.3 段 3f: 着地の直後に読み込むと、新しいファイルでの最初のシークが、前のファイルの
+        // 着地目標による 0.5 秒の抑止を受けずに出る（§6 の 10）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        // 10.0 へシークして着地させる（直前の着地の記録が残る）。
+        service.ReportSeekSent(10.0);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地の冷却中");
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地を記録する");
+
+        // 着地の直後に読み込み、ロードの解除まで進める。
+        service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
+        clock.Advance(TimeSpan.FromMilliseconds(200));
+        service.TryMarkFileLoaded(playbackSeconds: 0.2, renderedFrameCount: 10).Should().BeTrue();
+
+        // 前のファイルの着地目標（10.0）のそばでも、最初のシークは抑止されない。
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeFalse(
+            "読み込みで直前の着地の記録を忘れるので、0.5 秒待たずにシークできる");
+    }
+
+    // ---- v0.5.3 段 3g: ギャップの読み込みの口（ロード中の印を立てない） ----
+
+    [Fact]
+    public void BeginGapFreezeLoad_ClearsPendingSeekAndReleasePending_AndAdvancesEpoch()
+    {
+        // v0.5.3 段 3g: 口がするのは記録・読み込み番号・解除の回収待ち・シークの保留・着地の記録の 5 つ。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
+        service.TryMarkFileLoaded(playbackSeconds: 0.2, renderedFrameCount: 10).Should().BeTrue();
+        service.ReportSeekSent(10.0);
+        service.HasPendingFileLoadRelease.Should().BeTrue("前提: 解除の回収待ち");
+        service.SeekState.HasPendingSeek.Should().BeTrue("前提: 保留シーク");
+        long epoch = service.FileLoadEpoch;
+
+        service.BeginGapFreezeLoad("load-paused-at");
+
+        service.FileLoadEpoch.Should().Be(epoch + 1, "読み込み番号を進める");
+        service.HasPendingFileLoadRelease.Should().BeFalse("解除の回収待ちを下ろす");
+        service.SeekState.HasPendingSeek.Should().BeFalse("シークの保留を捨てる");
+    }
+
+    [Fact]
+    public void BeginGapFreezeLoad_ForgetsLastSettled_SoTheNextSeekIsNotSuppressed()
+    {
+        // v0.5.3 段 3g: 着地の直後にギャップの読み込みが起きても、前のファイルの着地目標で
+        // 0.5 秒抑止しない（設計の「直前の着地の記録を忘れる」）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.ReportSeekSent(10.0);
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地の冷却中");
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地を記録する");
+
+        service.BeginGapFreezeLoad("path-guard");
+
+        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeFalse(
+            "直前の着地の記録を忘れるので、前の着地目標のそばでも抑止しない");
+    }
+
+    [Fact]
+    public void BeginGapFreezeLoad_DoesNotSetLoadingOrOpenLandingWindow()
+    {
+        // v0.5.3 段 3g: ロード中の印を立てず、着地窓を開かず、デバウンスも更新しない（設計 §1 の「しない」）。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+
+        service.BeginGapFreezeLoad("load-paused-at");
+
+        service.IsLoadingFile.Should().BeFalse("ロード中の印を立てない");
+        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("着地窓を開かない");
+        service.LatchSnapshot()["followStartLanding"].Should().BeFalse("追従開始の着地も開かない");
+        service.IsDebounced().Should().BeFalse("デバウンスを更新しない");
+
+        // 繰り返しても同じ（path-guard の 1 秒ごとの読み直し）。
+        service.BeginGapFreezeLoad("path-guard");
+        service.IsLoadingFile.Should().BeFalse();
+        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse();
+        service.SeekState.HasPendingSeek.Should().BeFalse();
+    }
+
+    [Fact]
+    public void BeginGapFreezeLoad_RecordsTheEvent_ButDoesNotRaiseLifecycleRaised()
+    {
+        // v0.5.3 段 3g（親の承認）: コントローラの 3 ラッチ（jumpAppliedOnce・heldReapplyDone・
+        // smoothUnavailable）はこの口では下ろさない（ギャップの読み込みは Jump の適用の途中で起きる）。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var service = new TimecodeSyncService(engine, seekState);
+        int raised = 0;
+        service.LifecycleRaised += _ => raised++;
+
+        using LoggerCapture capture = CaptureLogger();
+        service.BeginGapFreezeLoad("path-guard");
+
+        raised.Should().Be(0, "LifecycleRaised を上げない（コントローラのラッチを下ろさない）");
+        List<LogEvent> events = capture.Snapshot();
+        int lifecycleRows = events.Count(e =>
+            e.MessageTemplate.Text.StartsWith("Sync lifecycle:", StringComparison.Ordinal) &&
+            e.Properties.TryGetValue("Source", out LogEventPropertyValue? value) &&
+            value is ScalarValue scalar && scalar.Value?.ToString() == "path-guard");
+        lifecycleRows.Should().Be(1, "できごと GapFreezeLoad を source つきで 1 行残す");
     }
 }

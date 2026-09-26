@@ -61,6 +61,12 @@ public sealed class TimecodeSyncService
     /// </summary>
     internal event Action? SeekIssued;
 
+    /// <summary>
+    /// v0.5.3 段 3e: このサービスで起きたできごとを外へ伝える（いまは <see cref="BeginFileLoad"/> の
+    /// FileLoad だけ）。LtcSyncController が購読し、Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+    /// </summary>
+    internal event Action<SyncLifecycleEvent>? LifecycleRaised;
+
     public TimecodeSyncService(
         ISyncDecisionEngine engine,
         ITimecodeSyncSeekState seekState,
@@ -105,7 +111,12 @@ public sealed class TimecodeSyncService
             if (_positionTrust.IsReacquiring)
                 _positionTrust.Observe(state.PlaybackSeconds, NowSeconds());
             _engine.RecordShadow(ltcSeconds, state, "position-untrusted");
-            return _engine.WhilePositionUntrusted(state);
+            SyncDecision untrusted = _engine.WhilePositionUntrusted(ltcSeconds, state);
+            // D38 (b): 未信頼でも、離れた新しい要求なら到達不能な pending を捨てる
+            // （タイムアウトを待たず、再確認とゲートを通してからシークする）。
+            if (untrusted.RequestedTargetSeconds is double requestedTarget)
+                SupersedeUnreachablePending(requestedTarget, untrusted.ToleranceSeconds, state.PlaybackSeconds);
+            return untrusted;
         }
 
         // D37-d: 直前のシークの着地を観測できるフレームなら、不足が実際に減ったかを先に見る。
@@ -250,6 +261,18 @@ public sealed class TimecodeSyncService
         return suppress;
     }
 
+    /// <summary>
+    /// D38 (a): 同期を適用しないフレーム（保持の Duplicate など）でも、保留中のシークの着地判定を
+    /// 行う。判定は位置の信頼の回復（<see cref="TrackSeekStatusTransition"/>）にだけ効き、
+    /// シークは出さない（戻り値も使わない）。
+    /// </summary>
+    public void ObservePendingSeekLanding(double playbackSeconds, double toleranceSeconds)
+    {
+        if (!_seekState.HasPendingSeek)
+            return;
+        _ = ShouldSuppressSeek(playbackSeconds, toleranceSeconds);
+    }
+
     public bool IsDebounced()
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
@@ -294,8 +317,25 @@ public sealed class TimecodeSyncService
         _fileLoad.Begin(now, Math.Max(0, startPositionSeconds), Math.Max(0, renderedFrameCount));
         _lastSyncSeekAt = now;                // デバウンスを更新（2.3 fix）
         OnLifecycle(SyncLifecycleEvent.FileLoad);
+        // v0.5.3 段 3e: FileLoad はサービスの OnLifecycle の中で起きるため、外へも伝える（§6 の 5）。
+        LifecycleRaised?.Invoke(SyncLifecycleEvent.FileLoad);
         // D37-b2: ロード（切替）も着地として扱い、直後の不足はシークで詰める。
         NotifyLanding();
+    }
+
+    /// <summary>
+    /// v0.5.3 段 3g: ギャップの読み込み（Freeze の取り込みと読み直し）用の口（§6 の 2 の残り）。
+    /// <see cref="BeginFileLoad"/> と違い、ロード中の印を立てず、着地窓を開かず、デバウンスも更新せず、
+    /// 位置の信頼・ゲート・学習にも触らない（一時停止のまま解除が最大 5 秒遅れるのを避ける。
+    /// 設計 docs/design/v0.5.3-gap-load-entry.md とその親の承認）。
+    /// </summary>
+    internal void BeginGapFreezeLoad(string source)
+    {
+        SyncLifecycle.Record(SyncLifecycleEvent.GapFreezeLoad, source);
+        _fileLoadEpoch++;
+        _fileLoad.ClearReleasePending();
+        _seekState.Clear();
+        _seekState.ForgetLastSettled();
     }
 
     /// <summary>
@@ -310,6 +350,9 @@ public sealed class TimecodeSyncService
             case SyncLifecycleEvent.FileLoad:
                 _fileLoad.ClearReleasePending();
                 _seekState.Clear();                    // 古い保留シーク状態をクリア（2.1 fix）
+                // v0.5.3 段 3f: 直前の着地の記録も忘れる（前のファイルの着地目標で
+                // 0.5 秒抑止しない。§6 の 10）。
+                _seekState.ForgetLastSettled();
                 // D37-a: ロードで位置が飛ぶため、粗い判定のゲート履歴を切る。
                 _engine.ResetSeekGate();
                 // D37-b: 素材が変わるので着地時間の学習を捨てる。保留はクリア済みなので位置は使える。
@@ -321,11 +364,31 @@ public sealed class TimecodeSyncService
                 _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
                 break;
             case SyncLifecycleEvent.SyncModeChanged:
-            case SyncLifecycleEvent.SyncDisabled:
             case SyncLifecycleEvent.TimelineSeek:
                 ClearSeekState();
                 break;
+            case SyncLifecycleEvent.SyncDisabled:
+                ClearSeekState();
+                // v0.5.3 段 3d: 同期の無効化でロード中の印を取り消す（§6 の 3）。
+                CancelFileLoad(evt);
+                break;
+            case SyncLifecycleEvent.PlaybackStopped:
+                // v0.5.3 段 3d: 停止でロード中の印を取り消す（§6 の 3）。
+                CancelFileLoad(evt);
+                break;
         }
+    }
+
+    /// <summary>
+    /// v0.5.3 段 3d: ロード中と解除の回収待ちを取り消す（§6 の 3）。解除（<see cref="ReleaseFileLoad"/>）
+    /// ではないため、着地窓を開かずデバウンスも更新しない。ロード中だったときだけログを 1 行残す。
+    /// </summary>
+    private void CancelFileLoad(SyncLifecycleEvent evt)
+    {
+        bool wasLoading = _fileLoad.IsLoadingFile;
+        _fileLoad.Cancel();
+        if (wasLoading)
+            Log.Information("Timecode sync: file load cancelled by {Event}", evt);
     }
 
     /// <summary>
@@ -463,12 +526,27 @@ public sealed class TimecodeSyncService
         _lastSeekStatus = status;
         if (status == TimecodeSyncSeekPendingStatus.Settled)
             _positionTrust.MarkLanded();
-        else if (status == TimecodeSyncSeekPendingStatus.TimedOut)
+        else if (status is TimecodeSyncSeekPendingStatus.TimedOut or TimecodeSyncSeekPendingStatus.Superseded)
             _positionTrust.RequireReacquire();
         else if (previous == TimecodeSyncSeekPendingStatus.Pending &&
                  status == TimecodeSyncSeekPendingStatus.None)
             // D37-b: 保留が外から破棄された（境界ホールド解除など）。着地を要求せず位置を使い直す。
             _positionTrust.Reset();
+    }
+
+    /// <summary>
+    /// D38 (b): 未信頼のフレームで、到達不能な pending（要求が目標からも現在位置からも離れている）
+    /// を捨てる。捨てた後は位置の再確認（3 サンプル）とゲートを通ってからシークする。
+    /// </summary>
+    private void SupersedeUnreachablePending(
+        double requestedTargetSeconds, double toleranceSeconds, double playbackSeconds)
+    {
+        if (!_seekState.DiscardIfUnreachable(requestedTargetSeconds, toleranceSeconds, playbackSeconds))
+            return;
+        Serilog.Log.Information(
+            "Timecode sync pending \"Superseded\" playback={Playback:F3} tolerance={Tolerance:F4}",
+            playbackSeconds, toleranceSeconds);
+        TrackSeekStatusTransition();
     }
 
     private void LogDecisionIfNeeded(SyncDecision decision, double ltcSeconds, double playbackSeconds)
