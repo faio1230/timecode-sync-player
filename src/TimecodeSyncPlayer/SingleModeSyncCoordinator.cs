@@ -69,6 +69,8 @@ internal sealed class SingleModeSyncCoordinator
 
         SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state, positionSample);
         // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
+        // D38 (b): 未信頼の要求の目標は、EvaluateDecision が pending の破棄（門 8）に使う
+        // （ここで渡すと pending の置き換え（re-pend）が先に走り、着地の観測を失う）。
         double requestedTarget = decision.Action == SyncActionType.Seek ? decision.TargetSeconds : double.NaN;
         bool suppressSeek = _syncService.ShouldSuppressSeek(playbackSeconds, decision.ToleranceSeconds,
             requestedTarget);

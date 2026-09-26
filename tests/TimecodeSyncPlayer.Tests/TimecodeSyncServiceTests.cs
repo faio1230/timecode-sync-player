@@ -61,7 +61,7 @@ public class TimecodeSyncServiceTests
 
         public void UpdateSeekCostSeconds(double seconds) => SeekCosts.Add(seconds);
 
-        public SyncDecision WhilePositionUntrusted(SyncPlaybackState state)
+        public SyncDecision WhilePositionUntrusted(double ltcSeconds, SyncPlaybackState state)
         {
             UntrustedCallCount++;
             return UntrustedDecision;

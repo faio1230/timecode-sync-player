@@ -2208,13 +2208,16 @@ public sealed partial class LtcScenarioE2ETests
                 {
                     landed = true;
                     followUntil = DateTime.UtcNow.AddMilliseconds(500);
-                    // D38（記録のみ）: 着地の遅れ = 新しい LTC の値の到着（Jump の診断行または適用ログ）から
+                    // D38: 着地の遅れ = 新しい LTC の値の到着（Jump の診断行または適用ログ）から
                     // 次のシーク発行ログ（sync seek success=true / LTC timecode held: landing seek issued）まで。
-                    // 判定には使わない（v0.5.3 を赤にしない。D38 の修正のコミットで失敗の条件に切り替える）。
                     double? landingLatencySeconds = LandingLatencySecondsSince(holdStartLocal);
                     double jumpDistanceSeconds = Math.Abs(ltcTarget - previousLtc);
                     // アプリの SyncDecisionEngine.ToleranceSeconds と同じ（映像と LTC の大きい方の 1 フレーム）。
                     double syncToleranceSeconds = Math.Max(OneFrame, 1.0 / LtcFps);
+                    bool latencyOverBudget =
+                        double.IsFinite(jumpDistanceSeconds) &&
+                        jumpDistanceSeconds > 4 * syncToleranceSeconds &&
+                        landingLatencySeconds > 1.0;
                     Journal.Write("hold-landing", details: new
                     {
                         name,
@@ -2229,14 +2232,17 @@ public sealed partial class LtcScenarioE2ETests
                             ? Math.Round(jumpDistanceSeconds, 3)
                             : (double?)null,
                         syncToleranceSeconds = Math.Round(syncToleranceSeconds, 4),
-                        landingLatencySeconds = landingLatencySeconds is { } latency
-                            ? Math.Round(latency, 3)
+                        landingLatencySeconds = landingLatencySeconds.HasValue
+                            ? Math.Round(landingLatencySeconds.Value, 3)
                             : (double?)null,
-                        latencyOverBudget =
-                            double.IsFinite(jumpDistanceSeconds) &&
-                            jumpDistanceSeconds > 4 * syncToleranceSeconds &&
-                            landingLatencySeconds > 1.0,
+                        latencyOverBudget,
                     });
+                    // D38 の修正: 記録のみだった判定を失敗の条件に切り替える（4×tolerance 超の
+                    // ジャンプは 1.0 秒以内に着地シークを発行する）。
+                    latencyOverBudget.Should().BeFalse(
+                        $"{name}: 4×tolerance を超えるジャンプは 1.0 秒以内に着地シークを発行する" +
+                        $"（jump={jumpDistanceSeconds:F3}s latency=" +
+                        (landingLatencySeconds.HasValue ? $"{landingLatencySeconds.Value:F3}s" : "none") + "）");
                 }
                 else if (landed)
                 {

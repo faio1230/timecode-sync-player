@@ -111,7 +111,12 @@ public sealed class TimecodeSyncService
             if (_positionTrust.IsReacquiring)
                 _positionTrust.Observe(state.PlaybackSeconds, NowSeconds());
             _engine.RecordShadow(ltcSeconds, state, "position-untrusted");
-            return _engine.WhilePositionUntrusted(state);
+            SyncDecision untrusted = _engine.WhilePositionUntrusted(ltcSeconds, state);
+            // D38 (b): 未信頼でも、離れた新しい要求なら到達不能な pending を捨てる
+            // （タイムアウトを待たず、再確認とゲートを通してからシークする）。
+            if (untrusted.RequestedTargetSeconds is double requestedTarget)
+                SupersedeUnreachablePending(requestedTarget, untrusted.ToleranceSeconds, state.PlaybackSeconds);
+            return untrusted;
         }
 
         // D37-d: 直前のシークの着地を観測できるフレームなら、不足が実際に減ったかを先に見る。
@@ -254,6 +259,18 @@ public sealed class TimecodeSyncService
         // 時間切れ = 位置が安定するまで判定を止める）。
         TrackSeekStatusTransition();
         return suppress;
+    }
+
+    /// <summary>
+    /// D38 (a): 同期を適用しないフレーム（保持の Duplicate など）でも、保留中のシークの着地判定を
+    /// 行う。判定は位置の信頼の回復（<see cref="TrackSeekStatusTransition"/>）にだけ効き、
+    /// シークは出さない（戻り値も使わない）。
+    /// </summary>
+    public void ObservePendingSeekLanding(double playbackSeconds, double toleranceSeconds)
+    {
+        if (!_seekState.HasPendingSeek)
+            return;
+        _ = ShouldSuppressSeek(playbackSeconds, toleranceSeconds);
     }
 
     public bool IsDebounced()
@@ -509,12 +526,27 @@ public sealed class TimecodeSyncService
         _lastSeekStatus = status;
         if (status == TimecodeSyncSeekPendingStatus.Settled)
             _positionTrust.MarkLanded();
-        else if (status == TimecodeSyncSeekPendingStatus.TimedOut)
+        else if (status is TimecodeSyncSeekPendingStatus.TimedOut or TimecodeSyncSeekPendingStatus.Superseded)
             _positionTrust.RequireReacquire();
         else if (previous == TimecodeSyncSeekPendingStatus.Pending &&
                  status == TimecodeSyncSeekPendingStatus.None)
             // D37-b: 保留が外から破棄された（境界ホールド解除など）。着地を要求せず位置を使い直す。
             _positionTrust.Reset();
+    }
+
+    /// <summary>
+    /// D38 (b): 未信頼のフレームで、到達不能な pending（要求が目標からも現在位置からも離れている）
+    /// を捨てる。捨てた後は位置の再確認（3 サンプル）とゲートを通ってからシークする。
+    /// </summary>
+    private void SupersedeUnreachablePending(
+        double requestedTargetSeconds, double toleranceSeconds, double playbackSeconds)
+    {
+        if (!_seekState.DiscardIfUnreachable(requestedTargetSeconds, toleranceSeconds, playbackSeconds))
+            return;
+        Serilog.Log.Information(
+            "Timecode sync pending \"Superseded\" playback={Playback:F3} tolerance={Tolerance:F4}",
+            playbackSeconds, toleranceSeconds);
+        TrackSeekStatusTransition();
     }
 
     private void LogDecisionIfNeeded(SyncDecision decision, double ltcSeconds, double playbackSeconds)

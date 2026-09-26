@@ -718,7 +718,7 @@ public class SyncDecisionEngineTests
             VideoFps: 30.0,
             TimecodeFps: 30.0);
 
-        SyncDecision decision = engine.WhilePositionUntrusted(state);
+        SyncDecision decision = engine.WhilePositionUntrusted(5.0, state);
 
         decision.PositionUntrusted.Should().BeTrue();
         decision.Action.Should().Be(SyncActionType.None);
