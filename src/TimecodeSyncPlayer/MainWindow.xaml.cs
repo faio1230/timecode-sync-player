@@ -638,7 +638,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _vm.Output.TestCardEnabled,
             _projectCanvasState.Current,
             TimelineOutputState.PlacementFor(_playlist.Current),
-            ReadPlaybackTimePos() ?? 0));
+            ReadPlaybackTimePos() ?? 0,
+            _gapFreezeHandler.OutputFreezeTargetSeconds));
     }
 
     private static string ResolveOutputSenderName()

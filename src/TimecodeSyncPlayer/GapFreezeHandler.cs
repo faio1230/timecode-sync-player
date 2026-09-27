@@ -112,6 +112,17 @@ public sealed class GapFreezeHandler
     internal double? FrameSeenPositionSeconds =>
         double.IsFinite(_frameSeenPositionSeconds) ? _frameSeenPositionSeconds : null;
 
+    /// <summary>
+    /// K3 f4-14: 合成層が Freeze の保存で比べる目標。捕捉中は Pending、確定後は遅延確定の目標か
+    /// 確定済みの目標（OnSourceFrameReady と同じ選び方）。どれも無ければ null（合成層は照会位置で比べる）。
+    /// </summary>
+    internal double? OutputFreezeTargetSeconds => _currentState switch
+    {
+        GapState.EnteringFreeze or GapState.WaitingForFrameStep => PendingTargetSeconds,
+        GapState.FreezeComplete => LateConfirmTargetSeconds ?? (CachedTargetKnown ? CachedTargetSeconds : null),
+        _ => null,
+    };
+
     /// <summary>D21-b: 再シークをまだ試せるか。</summary>
     internal bool CanRetrySeek => _seekRetryCount < MaxSeekRetries;
 

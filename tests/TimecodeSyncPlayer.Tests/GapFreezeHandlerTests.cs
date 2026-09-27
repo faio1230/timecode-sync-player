@@ -1038,4 +1038,71 @@ public class GapFreezeHandlerTests
         action.Type.Should().Be(GapEnterActionType.UseCachedFrame);
         action.TrackId.Should().Be(nextTrackId);
     }
+
+    // K3 f4-14: 合成層が Freeze の保存で比べる目標（照会位置ではない）。
+    [Fact]
+    public void OutputFreezeTarget_WhileCapturing_IsThePendingTarget()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333, "clip.mp4");
+
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+        handler.CurrentState = GapState.WaitingForFrameStep;
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_AfterConfirm_IsTheConfirmedTarget()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333, "clip.mp4");
+
+        handler.OnFreezeComplete(null);
+
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_AfterTimeout_IsTheLateConfirmTarget()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333, "clip.mp4");
+
+        handler.ForceFreezeComplete();
+
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_ForcedWithoutCapture_IsNull()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.ForceFreezeComplete();
+
+        handler.OutputFreezeTargetSeconds.Should().BeNull("目標が無いときは合成層が照会位置で比べる");
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_CurrentFramePath_IsTheFinalFrameTarget()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.EnterFreezeCaptureWithCurrentFrame(Guid.NewGuid(), 9.96, "clip.mp4");
+
+        handler.OutputFreezeTargetSeconds.Should().Be(9.96);
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_OutsideFreeze_IsNull()
+    {
+        var handler = new GapFreezeHandler();
+
+        foreach (GapState state in new[] { GapState.Inactive, GapState.BlackFrameActive, GapState.ForceBlack })
+        {
+            handler.CurrentState = state;
+            handler.OutputFreezeTargetSeconds.Should().BeNull(state.ToString());
+        }
+    }
 }

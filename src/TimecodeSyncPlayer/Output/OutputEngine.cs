@@ -1015,7 +1015,7 @@ internal sealed class OutputEngine : IDisposable
                 gapMode,
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
-                stamp, originQpc, acquired, acquiredPositionSeconds, position);
+                stamp, originQpc, acquired, acquiredPositionSeconds, effective?.FreezeComparisonSeconds ?? position);
             if (forceGapBlackOnSwitch && acquired != null)
             {
                 anyFrameAcquired = true;
