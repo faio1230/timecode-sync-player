@@ -781,7 +781,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 _renderSession.AttachPlayer(_gstBackendState.Player);
                 Log.Information("GPU 復旧: フレーム通知を新しいプレイヤーへつなぎ直した");
                 _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
-                    _gstBackendState.Seeking.NotifyEnded);
+                    HandleGStreamerEnded);
                 ReloadCurrentTrackAfterGpuRecovery(position);
                 Log.Information("GPU 復旧: GStreamer player を再生成し位置 {Position:F3}s へ復帰", position);
             }
@@ -839,7 +839,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             // プレイヤー生成後にエンジンへソースを接続する。
             _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
-                _gstBackendState.Seeking.NotifyEnded);
+                HandleGStreamerEnded);
             RefreshDisplaySelection(_settingsManager.Current.FullscreenDisplayDeviceName);
         }
         return initialized;
@@ -2312,6 +2312,58 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         Log.Information(
             "Continue mode: late final-frame arrival after the capture timeout, retrying the freeze capture target={Target:F3}",
             handler.PendingTargetSeconds);
+    }
+
+    private int _gapFreezeEndedRetryPosted;
+
+    /// <summary>
+    /// D11 + K3: shim の EOS（Ended）を、シーク保留の解除とギャップ捕獲の再シークへ配る。
+    /// GPU worker（OutputEngine）から呼ばれる。
+    /// </summary>
+    private void HandleGStreamerEnded()
+    {
+        _gstBackendState.Seeking.NotifyEnded();
+        RequestGapFreezeSeekRetryForEnded();
+    }
+
+    /// <summary>
+    /// K3: 最終フレームのシーク中に EOS を観測した。捕獲中で目標フレームが未到着のときだけ、
+    /// 既存の再シーク（D21-b）で取り直す。GPU worker から呼ばれるため、UI スレッドへ 1 件だけ予約する。
+    /// </summary>
+    private void RequestGapFreezeSeekRetryForEnded()
+    {
+        GapFreezeHandler handler = _gapFreezeHandler;
+        if (handler.CurrentState is not (GapState.EnteringFreeze or GapState.WaitingForFrameStep) ||
+            handler.FrameSeenSinceCapture)
+            return;
+        if (Interlocked.CompareExchange(ref _gapFreezeEndedRetryPosted, 1, 0) != 0)
+            return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+        {
+            Interlocked.Exchange(ref _gapFreezeEndedRetryPosted, 0);
+            RetryGapFreezeSeekForEnded();
+        });
+    }
+
+    /// <summary>
+    /// K3: EOS と重なった最終フレームのシークを、既存の再シークで取り直す
+    /// （捕獲中・フレーム未到着の確認と上限は <see cref="GapFreezeHandler.TryBeginSeekRetryForEnded"/>）。
+    /// </summary>
+    private void RetryGapFreezeSeekForEnded()
+    {
+        if (_disposed)
+            return;
+        GapFreezeHandler handler = _gapFreezeHandler;
+        if (!handler.TryBeginSeekRetryForEnded())
+            return;
+
+        double target = handler.PendingTargetSeconds;
+        bool seekSuccess = SeekTo(target);
+        Log.Warning(
+            "Continue mode: gap freeze final-frame seek hit EOS, reissuing final-frame seek target={Target:F3} retry={Retry} seekOk={SeekOk}",
+            target, handler.SeekRetryCount, seekSuccess);
+        if (!seekSuccess)
+            handler.ForceFreezeComplete();
     }
 
     private int _gapFreezeStaleFrameRetryPosted;

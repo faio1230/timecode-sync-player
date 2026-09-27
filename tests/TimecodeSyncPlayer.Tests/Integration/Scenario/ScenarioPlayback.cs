@@ -56,6 +56,32 @@ internal sealed class ScenarioPlayback : IPlaybackApi
     /// <summary>D37-b の「位置が後退した」状態を作る（真の間は時間で戻る）。</summary>
     public bool PositionGoesBackward { get; set; }
 
+    // ---- v0.5.4 K3: EOS（A1 型の再現用）。ここだけ既定 false で、既存の意味は変えない ----
+
+    /// <summary>
+    /// パイプラインが EOS を観測した（以降、新しいフレームは来ない）。
+    /// shim と同じ契約で、次の Seek / Load が成立すると解除する
+    /// （`seek_prepare_locked` が `p->eos` を消す。native/gst-shim/src/tcs_gstreamer.cpp:2819-2823）。
+    /// </summary>
+    public bool Ended { get; private set; }
+
+    /// <summary>
+    /// EOS 中の位置クエリが返す値。既定は「尺 + 1 フレーム」（検証機の観測:
+    /// 尺 20.000 / 30fps で 20.033）。これは shim の `get_time_pos` が、現世代の配信フレームが
+    /// 無いとき pipeline の位置へ落ちる値（tcs_gstreamer.cpp:3765-3810）の模擬。
+    /// </summary>
+    public double? EndedPositionSeconds { get; set; }
+
+    /// <summary>EOS を観測したとして記録する。解除は次の Seek / Load。</summary>
+    public void MarkEnded()
+    {
+        Ended = true;
+        if (!EndedPositionSeconds.HasValue)
+            EndedPositionSeconds = _durationSeconds > 0
+                ? _durationSeconds + (_fpsKnown && _fps > 0 ? 1.0 / _fps : 0)
+                : _positionSeconds;
+    }
+
     // ---- 状態 ----
 
     public double PositionSeconds => _positionSeconds;
@@ -132,6 +158,7 @@ internal sealed class ScenarioPlayback : IPlaybackApi
         if (!LoadSucceeds)
             return PlaybackResult.Fail("scenario: load rejected");
 
+        Ended = false;    // shim: ロードは新しいパイプラインで EOS 状態を持たない
         _path = path;
         _hasMedia = true;
         _generation++;
@@ -159,6 +186,7 @@ internal sealed class ScenarioPlayback : IPlaybackApi
         if (!SeekSucceeds)
             return PlaybackResult.Fail("scenario: seek rejected");
 
+        Ended = false;    // shim: seek_prepare_locked が p->eos を消す
         double target = Math.Max(0.0, seconds);
         if (SeekLandingDelaySeconds <= 0)
         {
@@ -217,16 +245,19 @@ internal sealed class ScenarioPlayback : IPlaybackApi
 
     public bool TryGetTimePos(out double seconds)
     {
-        seconds = _positionSeconds;
+        seconds = ReportPosition();
         return _hasMedia;
     }
 
     public bool TryGetPositionSample(out PlaybackPositionSample sample)
     {
         sample = new PlaybackPositionSample(
-            _positionSeconds, PlaybackPositionBasis.Pipeline, _generation, 0, 0, _generation);
+            ReportPosition(), PlaybackPositionBasis.Pipeline, _generation, 0, 0, _generation);
         return _hasMedia;
     }
+
+    private double ReportPosition() =>
+        Ended && EndedPositionSeconds.HasValue ? EndedPositionSeconds.Value : _positionSeconds;
 
     public bool TryGetDuration(out double seconds)
     {

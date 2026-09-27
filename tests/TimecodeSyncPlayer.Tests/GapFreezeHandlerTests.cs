@@ -626,6 +626,54 @@ public class GapFreezeHandlerTests
         handler.CanRetrySeek.Should().BeTrue();
     }
 
+    [Fact]
+    public void TryBeginSeekRetryForEnded_WhileEnteringWithoutFrame_StartsOneRetry()
+    {
+        // K3: EOS と重なった最終フレームのシークを、既存の再シークで取り直す。
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+
+        handler.TryBeginSeekRetryForEnded().Should().BeTrue();
+        handler.SeekRetryCount.Should().Be(1);
+        handler.FrameSeenSinceCapture.Should().BeFalse("再びフレーム到着を待つ");
+    }
+
+    [Fact]
+    public void TryBeginSeekRetryForEnded_AfterFrameArrived_DoesNotRestartTheWait()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.NotifyFrameArrived();
+
+        handler.TryBeginSeekRetryForEnded().Should().BeFalse("確定待ちのフレームを EOS で捨てない");
+        handler.SeekRetryCount.Should().Be(0);
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryBeginSeekRetryForEnded_OutsideCapture_DoesNothing()
+    {
+        var handler = new GapFreezeHandler();
+        handler.TryBeginSeekRetryForEnded().Should().BeFalse("捕獲中でなければ再シークしない");
+
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.ForceFreezeComplete();
+        handler.TryBeginSeekRetryForEnded().Should().BeFalse("打ち切り後は遅延確定に任せる");
+        handler.SeekRetryCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void TryBeginSeekRetryForEnded_IsBounded()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+
+        handler.TryBeginSeekRetryForEnded().Should().BeTrue();
+        handler.TryBeginSeekRetryForEnded().Should().BeTrue();
+        handler.TryBeginSeekRetryForEnded().Should().BeFalse();
+        handler.SeekRetryCount.Should().Be(GapFreezeHandler.MaxSeekRetries);
+    }
+
     private static PlaylistTrack MakeTrack(Guid id, double durationSeconds, double? fps = 24.0, double? mediaOutSeconds = null)
     {
         return new PlaylistTrack(
