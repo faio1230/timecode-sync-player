@@ -112,10 +112,17 @@ public class SyncRulesTests
             isPlayerReady, isMonitoring, syncEnabled, isSeeking).Should().BeFalse();
 
     [Theory]
-    [InlineData(true, true)]
-    [InlineData(false, false)]
-    public void ShouldSkipHeldLanding_ReturnsBoundaryHoldState(bool isBoundaryHeld, bool expected) =>
-        SyncRules.ShouldSkipHeldLanding(isBoundaryHeld).Should().Be(expected);
+    [InlineData((int)PauseOwners.None, false)]
+    [InlineData((int)PauseOwners.BoundaryHold, true)]
+    [InlineData((int)PauseOwners.SignalLoss, false)]
+    [InlineData((int)PauseOwners.Gap, false)]
+    [InlineData((int)PauseOwners.ProjectRestore, false)]
+    [InlineData((int)PauseOwners.User, false)]
+    [InlineData((int)(PauseOwners.BoundaryHold | PauseOwners.Gap), true)]
+    [InlineData((int)(PauseOwners.SignalLoss | PauseOwners.BoundaryHold |
+        PauseOwners.Gap | PauseOwners.ProjectRestore | PauseOwners.User), true)]
+    public void ShouldSkipHeldLanding_TrueWhenBoundaryHoldIsAPauseOwner(int owners, bool expected) =>
+        SyncRules.ShouldSkipHeldLanding((PauseOwners)owners).Should().Be(expected);
 
     [Fact]
     public void CanPauseForSignalLoss_AllTermsSatisfied_ReturnsTrue() =>
