@@ -965,6 +965,80 @@ pump_budget_ms_env (void)
   return 4000;
 }
 
+/* --paused-load-start <file> [start]: S-load reproduction (2026-09-27, F-5).
+ * A paused load with a start position primes a frame at 0; the internal start
+ * seek then bumps the generation and clears that frame. The load path arms no
+ * pump, so on a no-audio file (no audio-prime wait that would keep the pipeline
+ * PLAYING) the target frame of the new generation is never delivered while
+ * paused, and the owner waits for it until its capture timeout.
+ * With the pump armed after the start seek, the frame arrives shortly after the
+ * load returns. */
+static int
+run_paused_load_start (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --paused-load-start <file> [start]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+  double start = argc > 3 ? atof (argv[3]) : 5.0;
+  unsigned budget_ms = pump_budget_ms_env ();
+  int acquire_iters = (int) (budget_ms / 2 + 500);
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimPausedLoadStart", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+
+  auto t0 = std::chrono::steady_clock::now ();
+  int rc = tcs_player_load (p, file, start, 1, err, sizeof (err));
+  double load_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t0).count ();
+  check (rc == TCS_OK, "paused load with start");
+  if (rc != TCS_OK) {
+    printf ("  err=%s\n", err);
+    tcs_player_destroy (p);
+    return 1;
+  }
+
+  uint64_t gen = tcs_player_get_generation (p);
+  TcsFrameInfo info = {};
+  int got = 0;
+  for (int i = 0; i < acquire_iters && !got; i++) {
+    got = tcs_player_acquire (p, gen, &info);
+    if (!got) std::this_thread::sleep_for (std::chrono::milliseconds (2));
+  }
+  double arrival_ms = std::chrono::duration<double, std::milli> (
+      std::chrono::steady_clock::now () - t0).count ();
+  double fps = 0;
+  tcs_player_get_fps (p, &fps);
+  double frame_s = fps > 0.0 ? 1.0 / fps : 0.04;
+  if (got) {
+    printf ("  PAUSED-LOAD start=%.3f load=%.1fms got=1 arrival=%.1fms pts=%.3f frame=%dx%d\n",
+        start, load_ms, arrival_ms, info.pts_ns / 1e9, info.width, info.height);
+  } else {
+    printf ("  PAUSED-LOAD start=%.3f load=%.1fms NO FRAME in %.1fms\n",
+        start, load_ms, arrival_ms);
+  }
+  check (got == 1, "paused load with start delivered the start frame");
+  check (got == 1 && fabs (info.pts_ns / 1e9 - start) <= frame_s * 2.0 + 0.001,
+      "paused load delivered a frame at the start position (+/-2 frames)");
+
+  if (got) {
+    double pos = -1.0;
+    int pos_rc = tcs_player_get_time_pos (p, &pos);
+    double diff = pos - info.pts_ns / 1e9;
+    printf ("  PAUSED-LOAD get_time_pos=%.3f frame_pts=%.3f delta_ms=%+.1f\n",
+        pos, info.pts_ns / 1e9, diff * 1000.0);
+    check (pos_rc == TCS_OK && fabs (diff) <= frame_s + 0.001,
+        "paused load get_time_pos matches the frame PTS (+/-1 frame)");
+  }
+
+  tcs_player_destroy (p);
+  return failures ? 1 : 0;
+}
+
 /* --paused-seek <file> [target]: D2 reproduction. Load playing, seek while
  * playing (control), pause, seek again and measure how long the new-position
  * frame takes; if it never arrives, resume and measure when it does. Then a
@@ -1756,6 +1830,11 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--paused-seek") == 0) {
     run_paused_seek (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--paused-load-start") == 0) {
+    run_paused_load_start (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }

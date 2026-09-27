@@ -593,6 +593,44 @@ public class GapFreezeHandlerTests
     }
 
     [Fact]
+    public void NotifyFrameArrived_WithPosition_StoresTheDeliveredFramePosition()
+    {
+        // C-4: 確定の門は照会値ではなく、ここで受け入れたフレームの PTS で窓を見る。
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333333334, "test.mp4");
+
+        handler.NotifyFrameArrived(19.983333333333334);
+
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+        handler.FrameSeenPositionSeconds.Should().BeApproximately(19.983333333333334, 1e-9);
+    }
+
+    [Fact]
+    public void NotifyFrameArrived_WithoutPosition_LeavesThePositionUnknown()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333333334, "test.mp4");
+
+        handler.NotifyFrameArrived();
+
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+        handler.FrameSeenPositionSeconds.Should().BeNull();
+    }
+
+    [Fact]
+    public void EnterFreezeCapture_ClearsTheStoredFramePosition()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.NotifyFrameArrived(42.5);
+
+        handler.EnterFreezeCapture(Guid.NewGuid(), 43.5, "test.mp4");
+
+        handler.FrameSeenPositionSeconds.Should().BeNull();
+        handler.FrameSeenSinceCapture.Should().BeFalse();
+    }
+
+    [Fact]
     public void TryBeginSeekRetry_IsBoundedAndRearmsFrameWait()
     {
         // D21-b (b): 目標位置でないフレームが届いたら再シークし、再びフレーム到着を待つ。

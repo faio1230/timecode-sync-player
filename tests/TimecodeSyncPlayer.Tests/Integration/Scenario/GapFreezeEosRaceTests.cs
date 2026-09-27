@@ -132,6 +132,35 @@ public class GapFreezeEosRaceTests
     }
 
     /// <summary>
+    /// C-4: シーク直後の位置の照会は、ポンプ中にパイプライン値（尺 + 2 フレーム = 20.033）へ
+    /// 落ちることがある（2026-09-27 19:15〜19:25 の重い素材の F-4 4 件。
+    /// docs/design/v0.5.4-k3-a1.md §9-1）。確定の門の位置は、照会の値ではなく D21-b で
+    /// 受け入れた配信フレームの PTS で見る（chase モデルの規則 2 と同じ源）。
+    /// 修正前は照会値 20.033 が窓（±2 フレーム = 33.3ms）を外れて、3 秒の時間切れで確定しない（赤）。
+    /// </summary>
+    [Fact]
+    public void DeliveredFrameAtTarget_WithTheQueryAtTheEosSide_ConfirmsTheFreeze()
+    {
+        const double fps = 60.0;
+        double target = DurationSeconds - 1.0 / fps;   // 19.9833（実測の目標）
+        var clock = NewClock();
+        var playback = new ScenarioPlayback(
+            positionSeconds: DurationSeconds - 2.0, durationSeconds: DurationSeconds, fps: fps);
+        playback.Load("C:/media/ltc_c.mp4", DurationSeconds - 2.0, paused: false);
+        var path = new GapFreezeCapturePath(clock, playback, fps);
+
+        path.EnterGapFreeze(target);
+        playback.MarkEnded();
+        playback.EndedPositionSeconds = DurationSeconds + 2.0 / fps;   // 20.0333（実測 20.033）
+        path.SourceFrameReady(target);   // 最終フレームは目標の PTS で届いた
+
+        path.Tick(allowRedraw: true).Should().BeTrue(
+            "照会値が EOS 側でも、配信したフレームの PTS で確定できること（C-4）");
+        path.Handler.CachedTargetKnown.Should().BeTrue();
+        path.Handler.CurrentState.Should().Be(GapState.FreezeComplete);
+    }
+
+    /// <summary>
     /// D32 の遅延確定（GapFreezeHandler.cs:221-241、MainWindow.xaml.cs:2263-2268）は、
     /// フレームが「遅れてでも届けば」打ち切り後に確定できる。今日も緑。
     /// 赤の再現との差は、EOS と重なった場合にフレームが 1 枚も届かないことだけ。
@@ -160,13 +189,15 @@ public class GapFreezeEosRaceTests
     {
         private readonly ScenarioClock _clock;
         private readonly ScenarioPlayback _playback;
+        private readonly double _fps;
         private readonly Guid _trackId = Guid.NewGuid();
         private bool _hasFrame;
 
-        public GapFreezeCapturePath(ScenarioClock clock, ScenarioPlayback playback)
+        public GapFreezeCapturePath(ScenarioClock clock, ScenarioPlayback playback, double fps = Fps)
         {
             _clock = clock;
             _playback = playback;
+            _fps = fps;
             Handler = new GapFreezeHandler(clock);
         }
 
@@ -203,9 +234,9 @@ public class GapFreezeEosRaceTests
         public void SourceFrameReady(double positionSeconds)
         {
             if (Handler.CurrentState == GapState.FreezeComplete &&
-                Handler.IsLateConfirmFrame(positionSeconds, Fps))
+                Handler.IsLateConfirmFrame(positionSeconds, _fps))
             {
-                Handler.ReopenCaptureForLateFrame();
+                Handler.ReopenCaptureForLateFrame(positionSeconds);
                 _hasFrame = true;
                 return;
             }
@@ -217,9 +248,9 @@ public class GapFreezeEosRaceTests
                 return;
             }
 
-            if (Math.Abs(positionSeconds - Handler.PendingTargetSeconds) <= 2.0 / Fps)
+            if (Math.Abs(positionSeconds - Handler.PendingTargetSeconds) <= 2.0 / _fps)
             {
-                Handler.NotifyFrameArrived();
+                Handler.NotifyFrameArrived(positionSeconds);
                 _hasFrame = true;
             }
         }
@@ -239,9 +270,10 @@ public class GapFreezeEosRaceTests
                 bool hasPosition = _playback.TryGetTimePos(out double position);
                 GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
                     Handler.CurrentState, _hasFrame, true, hasPosition, position,
-                    Handler.PendingTargetSeconds, Fps,
+                    Handler.PendingTargetSeconds, _fps,
                     allowRedraw: allowRedraw,
-                    frameSeenSinceCapture: Handler.FrameSeenSinceCapture);
+                    frameSeenSinceCapture: Handler.FrameSeenSinceCapture,
+                    deliveredFramePositionSeconds: Handler.FrameSeenPositionSeconds);
                 if (decision == GapFrameCaptureDecision.RenderAndCapture)
                 {
                     captured = GapFreezeCaptureOperation.Run(Handler, _trackId,
@@ -263,8 +295,9 @@ public class GapFreezeEosRaceTests
             bool hasPosition = _playback.TryGetTimePos(out double position);
             return GapFrameCaptureCoordinator.Decide(
                 Handler.CurrentState, true, true, hasPosition, position,
-                Handler.PendingTargetSeconds, Fps,
-                frameSeenSinceCapture: Handler.FrameSeenSinceCapture) ==
+                Handler.PendingTargetSeconds, _fps,
+                frameSeenSinceCapture: Handler.FrameSeenSinceCapture,
+                deliveredFramePositionSeconds: Handler.FrameSeenPositionSeconds) ==
                 GapFrameCaptureDecision.RenderAndCapture;
         }
     }

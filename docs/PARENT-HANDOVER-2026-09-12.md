@@ -1,5 +1,28 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-09-28 00:50 更新（交代、TSP-Opus → 後任）**: **v0.5.4 の途中。OpenCode の担当 2 人（w5:p3・w5:p6）が月間の上限で止まった**（2026-09-27 21:21 と 21:57、復帰は約 11 日後）。
+> 利用者の決定（TSP-Fable 経由）: **以後の実装は親が Agent ツールでサブエージェントを立てて行う**。規則は `GOAL-v0.6.md` 3 節「実装の担い手の切替」。
+> 後任が最初に読むもの: この更新 → `docs/STATUS.md` → `GOAL-v0.6.md` 3 節 → `docs/design/v0.5.4-gate-unification.md` §9・§10（段 B と chase モデル）→ `docs/design/v0.5.4-k3-a1.md` §11・§12。
+>
+> **作業ツリーの状態**:
+> - `timecode-sync-player-v05`（ブランチ `v0.5.4`）: 親の作業場所。K3 の修正（`agent-a-v054` の `563b962` まで）を取り込み済み（`99a3715`。shim の再ビルドと実機の標準シナリオ 1 周 22 合格・0 失敗・2 スキップ、push 済み）。
+>   `native/tcs_gstreamer.dll` は S-load 入りの Debug の shim（取り込み時に再ビルド）
+> - `timecode-sync-player-v053`（`agent-a-v054`、`563b962`）: K3 の担当のツリー。v0.5.4 に取り込み済みで未取り込みの差分なし
+> - `timecode-sync-player-v054b`（`agent-b-v054`）: `23c72d3`（B6、門 24 の格下げ）まで v0.5.4 に取り込み済み。
+>   その上に **`baa9469` wip: B6b（門 15・16・23 の除去）の途中**。ビルドは通るが非E2E が 57 件失敗する
+>   （寿命の表 37 行 seekLandingActive/followStartLanding/followStartPending、T7ContinueCorrectionTests 9、D37c 4、T9 2、ContinueOnTrack 2、TimecodeSyncServiceTests 2、DeferredLtcSyncTests 1）。新しい守りの試験 4 件は通る。push 済み
+> - `timecode-sync-player`（main）: 利用者の未コミットの文書あり。触らない
+>
+> **残作業（この順）**:
+> 1. B6b の完成（`baa9469` から。失敗 57 件は「門を消したので期待が変わる」のか「消してはいけない守りだった」のかを 1 件ずつ分類してから直す。メモリ regression-test-expectation-change-is-a-red-flag）
+> 2. K3 の残り 1 件: F-4 の 4 回目 f4-14 で、時間切れは出ずに絵が M3 の先頭（位置 20.017）のまま（k3-a1 §12、未調査）。K3 を閉じる条件は §11（F-4/F-5 の時間切れ 0/N、N≥295）
+> 3. B7（Jump の確認の一様化と規則 0 の漏れの一覧）、B8（定数の一覧）
+> 4. 段 B の候補 → 固定の一式 2 回＋重い素材 3 本 → 検証機 2 回 → K4・K6 の確認
+> 5. リリースノート（U-1 は試験側の条件だったことの訂正を含む）→ 3 節の条件を満たせば Latest で自動公開、事後報告
+> - 退路: 段 B が間に合わない・回帰するなら、段 A の候補（`2808fbf` 系、0.5.3+7bef3a7、検証機 1 回合格）に A1 の修正を載せたブランチ `v0.5.4-stageA` を切って出す（判断は TSP-Fable）
+>
+> **今回の教訓（メモリにある）**: merge をパイプに通さない（merge-failure-hidden-by-pipe）／実機の試験は担当を跨いで 1 本ずつ（hardware-tests-one-at-a-time-across-agents）／OpenCode の上限は herdr の状態に出ない（working のまま止まる）ので、担当の出力も読むこと
+
 前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
 
 > **2026-09-26 06:00 更新（TSP-Opus）**: **v0.5.2 を公開した。v0.5.3 はブランチ `v0.5.3`（`timecode-sync-player-v05`）で作業中。** 現在地は `docs/STATUS.md`、ゴールは `docs/GOAL-v0.6.md`。

@@ -70,7 +70,14 @@
 static void
 log_sink_write (const char* line)
 {
-  fputs (line, stderr);
+  SYSTEMTIME st;
+  GetLocalTime (&st);
+  char stamped[2112];
+  snprintf (stamped, sizeof (stamped), "%04d-%02d-%02d %02d:%02d:%02d.%03d %s",
+      (int) st.wYear, (int) st.wMonth, (int) st.wDay,
+      (int) st.wHour, (int) st.wMinute, (int) st.wSecond,
+      (int) st.wMilliseconds, line);
+  fputs (stamped, stderr);
   static std::mutex log_file_mutex;
   static FILE* log_file = nullptr;
   static bool log_file_tried = false;
@@ -83,7 +90,7 @@ log_sink_write (const char* line)
       log_file = fopen (path, "a");
   }
   if (log_file) {
-    fputs (line, log_file);
+    fputs (stamped, log_file);
     fflush (log_file);
   }
 }
@@ -3215,6 +3222,8 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     }
 
     t_anchor = qpc_now ();
+    bool start_seek_armed = false;
+    uint64_t start_seek_gen = 0;
     if (start_sec > 0.0) {
       SeekRequest req;
       {
@@ -3222,9 +3231,9 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
         p->eos = false;
         /* same seek semantics (and TS gate) as a manual seek; a load seek
          * always starts at normal rate like before */
-        seek_prepare_locked (p, start_sec, 1.0, &req);
+        start_seek_gen = seek_prepare_locked (p, start_sec, 1.0, &req);
       }
-      seek_send (p, req);
+      start_seek_armed = seek_send (p, req);
     }
     seek_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     t_anchor = qpc_now ();
@@ -3278,6 +3287,17 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
             p->muted ? 0.0 : p->volume_value / 100.0, nullptr);
     } else {
       p->load_priming = false;
+    }
+
+    if (paused && start_seek_armed) {
+      /* S-load: a paused load with a start position primes a frame before the
+       * internal start seek; the seek bumps the generation and clears it.
+       * Without a pump the post-seek target frame is never delivered (appsink
+       * sync=true with a stopped clock), so the owner waits for the new
+       * generation until its capture timeout (F-5, 2026-09-27). Arm the same
+       * pump as a paused seek; the bus thread delivers the frame and restores
+       * PAUSED. */
+      pump_arm (p, start_seek_gen);
     }
 
     gint64 q = 0;
