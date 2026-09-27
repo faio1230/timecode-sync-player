@@ -333,7 +333,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     _singleModeSyncCoordinator?.IsBoundaryHeld ?? false,
                     _gapFreezeHandler.IsPauseOwnedByGap,
                     _projectRestorePauseState.IsPending,
-                    _playbackControl.UserPauseOwned)),
+                    _playbackControl.UserPauseOwned),
+                // v0.5.4 段 B1: UI タイマー・保持の Duplicate からの着地の状態（新しい判定）の観測用。
+                ReadPosition: ReadSyncPosition),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
         // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードと着地窓を渡す。
         _syncService.CorrectionModeSource = () => _vm.Sync.SyncCorrectionMode;
@@ -607,6 +609,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         return _playbackApi.TryGetTimePos(out double playbackSeconds)
             ? new SyncPositionRead(true, playbackSeconds, null)
             : SyncPositionRead.Failed;
+    }
+
+    /// <summary>
+    /// v0.5.4 段 B1: 描画の tick で着地の状態（新しい判定）を観測する。位置の照会と観測だけを行い、
+    /// 判定は変えない（B1 では新しい状態は判定に使わない）。
+    /// </summary>
+    private void ObserveLandingState()
+    {
+        if (_ltcSyncController == null) return;
+        _syncService.ObserveLandingState(ReadSyncPosition(), _fps, _ltcSyncController.LastTimecodeFps);
     }
 
     // Gpu backend: ギャップ・カード・世代・位置を GPU worker の mailbox へ渡す（最新1件）。
@@ -2198,6 +2210,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         TryCompleteGapFreeze(renderGeneration, hasFrame);
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return Task.CompletedTask;
         SubmitOutputState();
+        // v0.5.4 段 B1: 描画の tick でも着地の状態（新しい判定）を観測する（LTC のフレームの経路と独立）。
+        ObserveLandingState();
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return Task.CompletedTask;
         UpdatePerFrameUI();
         return Task.CompletedTask;

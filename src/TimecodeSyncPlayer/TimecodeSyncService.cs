@@ -273,6 +273,26 @@ public sealed class TimecodeSyncService
         _ = ShouldSuppressSeek(playbackSeconds, toleranceSeconds);
     }
 
+    /// <summary>
+    /// v0.5.4 段 B1: 位置サンプルで着地の状態（新しい判定）を観測する。LTC のフレームの経路とは
+    /// 独立に、位置を照会するすべての場所（保持の Duplicate、UI タイマー、描画の tick）から呼ぶ。
+    /// B1 では判定には使わず、古い判定との食い違い・遅延を計測する。
+    /// </summary>
+    public void ObserveLandingState(in PlaybackPositionSample sample, double toleranceSeconds)
+        => _seekState.ObserveLandingSample(
+            sample, toleranceSeconds, _timeProvider.GetUtcNow().UtcDateTime);
+
+    /// <summary>
+    /// v0.5.4 段 B1: 同じ照会の結果（<see cref="SyncPositionRead"/>）から着地の状態を観測する。
+    /// 位置を照会したすべての場所が、判定の前にこれを呼ぶ。
+    /// </summary>
+    internal void ObserveLandingState(in SyncPositionRead read, double videoFps, double timecodeFps)
+    {
+        if (!read.Succeeded || read.Sample is not { } sample)
+            return;
+        ObserveLandingState(sample, SyncDecisionEngine.ToleranceSeconds(videoFps, timecodeFps));
+    }
+
     public bool IsDebounced()
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
@@ -334,6 +354,8 @@ public sealed class TimecodeSyncService
         _fileLoad.ClearReleasePending();
         _seekState.Clear();
         _seekState.ForgetLastSettled();
+        // v0.5.4 段 B1: 新しい着地の状態も初期化する（外部からの破棄）。
+        _seekState.ResetLandingState();
     }
 
     /// <summary>
@@ -358,6 +380,8 @@ public sealed class TimecodeSyncService
                 _publishedSeekCostSeconds = double.NaN;
                 // v0.5.4 U4: 素材が変わるので位置の信頼も初期化する（A が持つ）。
                 _seekState.ResetPositionTrust();
+                // v0.5.4 段 B1: 素材が変わるので、新しい着地の状態も初期化する。
+                _seekState.ResetLandingState();
                 // 0.4.5-A: 素材が変わるので、配信 PTS の基準と実測レートを捨てる。
                 _positionFeedback.Reset();
                 break;
@@ -441,6 +465,8 @@ public sealed class TimecodeSyncService
         _engine.ResetSeekGate();
         // D37-b: 保留を破棄したので位置は使える（着地の確認は要求しない。v0.5.4 U4: A の状態）。
         _seekState.ResetPositionTrust();
+        // v0.5.4 段 B1: 保留を外から破棄したので、新しい着地の状態も初期化する。
+        _seekState.ResetLandingState();
     }
 
     /// <summary>

@@ -47,7 +47,10 @@ internal sealed record LtcSyncEffects(
     Func<bool>? IsPlaybackPositionUnstable = null,
     // v0.5.3 段 3i: 信号断のポリシー以外の一時停止の持ち主（境界ホールド・ギャップ・
     // プロジェクト復元）。ポリシーの一時停止を解いたときの再開判定に使う。
-    Func<PauseOwners>? GetOtherPauseOwners = null);
+    Func<PauseOwners>? GetOtherPauseOwners = null,
+    // v0.5.4 段 B1: 着地の状態（新しい判定）の観測用。位置を照会するすべての場所から呼ぶ
+    // （UI タイマー・保持の Duplicate）。サンプルが取れない環境では null のままでよい。
+    Func<SyncPositionRead>? ReadPosition = null);
 
 /// <summary>
 /// UI-thread LTC session orchestration shared by the window and integration scenarios.
@@ -309,6 +312,8 @@ internal sealed class LtcSyncController
                 _syncService.SeekState.Clear();
                 // v0.5.4 U4: 保留を外から破棄したので位置は使える（着地の確認は要求しない。A の状態）。
                 _syncService.SeekState.ResetPositionTrust();
+                // v0.5.4 段 B1: 新しい着地の状態も初期化する（保留を外から破棄した）。
+                _syncService.SeekState.ResetLandingState();
                 _syncService.EndFollowStartLanding("boundary hold released");
                 break;
         }
@@ -1073,6 +1078,8 @@ internal sealed class LtcSyncController
 
     public void Tick(long nowMilliseconds)
     {
+        // v0.5.4 段 B1: UI タイマーでも着地の状態（新しい判定）を観測する（LTC のフレームの経路と独立）。
+        ObserveLandingStateFromEffects();
         ApplySignalLossAction(_signalLoss.Evaluate(nowMilliseconds, SignalContext()));
         RefreshDisplay();
         if (_input.Pending is { } pending)
@@ -1103,9 +1110,11 @@ internal sealed class LtcSyncController
     /// <summary>
     /// D38 (a): 同期を適用しないフレーム（保持の Duplicate）で、保留中のシークの着地を観測する。
     /// 着地していれば位置の信頼が戻り、次の Jump が未信頼とタイムアウトを通らない。
+    /// v0.5.4 段 B1: 着地の状態（新しい判定）も、保留の有無に依らずここで観測する（§9-7 の 1）。
     /// </summary>
     private void ObservePendingSeekLanding()
     {
+        ObserveLandingStateFromEffects();
         if (!_syncService.SeekState.HasPendingSeek)
             return;
         LtcSyncContext state = _effects.GetContext();
@@ -1115,6 +1124,19 @@ internal sealed class LtcSyncController
             return;
         double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
         _syncService.ObservePendingSeekLanding(playback, toleranceSeconds);
+    }
+
+    /// <summary>
+    /// v0.5.4 段 B1: 位置を照会して着地の状態（新しい判定）を観測する。LTC のフレームの経路とは
+    /// 独立に、UI タイマー（<see cref="Tick"/>）と保持の Duplicate から呼ぶ。B1 では判定に使わない。
+    /// </summary>
+    private void ObserveLandingStateFromEffects()
+    {
+        LtcSyncContext state = _effects.GetContext();
+        if (!state.SyncEnabled || !state.IsMonitoring)
+            return;
+        if (_effects.ReadPosition?.Invoke() is { Succeeded: true } read)
+            _syncService.ObserveLandingState(read, state.VideoFps, LastTimecodeFps);
     }
 
     private void ApplySignalLossAction(LtcSignalLossAction action)

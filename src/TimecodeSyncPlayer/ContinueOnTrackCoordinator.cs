@@ -133,6 +133,9 @@ internal sealed class ContinueOnTrackCoordinator
             _fileLoadStabilityLogState.Reset();
 
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
+            // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する
+            // （LTC のフレームの経路に依らない観測は UI タイマー・保持の Duplicate が担う。§9-7 の 1）。
+            _syncService.ObserveLandingState(read, state.VideoFps, state.TimecodeFps);
             SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state, positionSample);
             // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
             // D38 (b): 未信頼の要求の目標は、EvaluateDecision が pending の破棄（門 8）に使う

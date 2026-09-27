@@ -1,3 +1,5 @@
+using TimecodeSyncPlayer.Contracts;
+
 namespace TimecodeSyncPlayer;
 
 public interface ITimecodeSyncSeekState
@@ -55,6 +57,33 @@ public interface ITimecodeSyncSeekState
     /// 素材が変わるため、前のファイルの着地目標を新しいファイルへ持ち越さない。既定実装は何もしない。
     /// </summary>
     void ForgetLastSettled()
+    {
+    }
+
+    /// <summary>v0.5.4 段 B1: 着地の状態（新しい判定）。既定は追従中。</summary>
+    TimecodeSyncLandingPhase LandingPhase => TimecodeSyncLandingPhase.Following;
+
+    /// <summary>v0.5.4 段 B1: 新しい世代の最初のフレームが着地の窓の外だった回数。既定は 0。</summary>
+    int LandingFirstFrameOutsideWindowCount => 0;
+
+    /// <summary>v0.5.4 段 B1: 新しい判定と古い判定の結論が食い違った回数。既定は 0。</summary>
+    int LandingMismatchCount => 0;
+
+    /// <summary>v0.5.4 段 B1: 直近の新しい判定の着地の記録（計測・テスト用）。既定は null。</summary>
+    TimecodeSyncLandingRecord? LastLanding => null;
+
+    /// <summary>
+    /// v0.5.4 段 B1: 位置サンプルで着地の状態（新しい判定）を観測する。LTC のフレームの経路に
+    /// 依らず、位置を照会するすべての場所から呼ぶ。既定実装は何もしない。
+    /// </summary>
+    void ObserveLandingSample(in PlaybackPositionSample sample, double toleranceSeconds, DateTime now)
+    {
+    }
+
+    /// <summary>
+    /// v0.5.4 段 B1: 着地の状態を初期化する（読み込み・手動移動・保留の外部破棄）。既定実装は何もしない。
+    /// </summary>
+    void ResetLandingState()
     {
     }
 }

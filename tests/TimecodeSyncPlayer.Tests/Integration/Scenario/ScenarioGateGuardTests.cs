@@ -232,7 +232,45 @@ public sealed class ScenarioGateGuardTests
             "D38 (a) / 段 B §9-7-1: 保持の Duplicate だけでも着地を観測して確定する（現行は cooldown 200ms 込み）");
         h.SyncService.IsPlaybackPositionUsable.Should().BeTrue("着地で位置の信頼が戻る");
         Seeks(h).Should().BeEmpty("着地の観測はシークを出さない");
+
+        // 段 B1: 新しい判定（着地の状態）も、LTC のフレームの経路と独立に観測される（§9-7 の 1）。
+        h.SyncService.SeekState.LandingPhase.Should().Be(TimecodeSyncLandingPhase.Following);
+        h.SyncService.SeekState.LastLanding.Should().NotBeNull("配信の世代と位置で着地した");
+        h.SyncService.SeekState.LastLanding!.Value.DelaySeconds.Should().BeLessThan(0.2,
+            "新しい判定は配信の最初のフレームで着地する（古い判定の 200ms の cooldown を含まない）");
+        h.SyncService.SeekState.LandingFirstFrameOutsideWindowCount.Should().Be(0);
+        h.SyncService.SeekState.LandingMismatchCount.Should().Be(0);
+        sink.Count("new-landing").Should().Be(1, "新しい判定の着地がログに出る");
+        sink.Count("landing-delay-compare").Should().Be(1, "新旧の着地の遅れの差がログに出る");
         Report("G6(held landing)", h, sink);
+    }
+
+    [Fact]
+    public void G6_FirstNewGenerationFrameOutsideTheWindow_IsCounted()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(lossMode: LtcSignalLossMode.RunThrough);
+        using var sink = new ScenarioLogSink(clock);
+        h.AddTrack("A", 0, 30);
+        h.ManualPlay();
+        h.AdvancePlayback(1.0);
+
+        h.Ltc.Normal(1.0, TimeSpan.FromMilliseconds(200));
+        RunFor(h, clock, 200);
+
+        // 着地の遅れの後、目標から離れた位置のフレームが新しい世代として配信される型（§9-8 の (c)）。
+        h.SyncService.ReportSeekSent(10.0);
+        h.Playback.SeekOvershootSeconds = 3.0;
+        h.Playback.SeekLandingDelaySeconds = 0.05;
+        h.Playback.Seek(10.0);
+        h.Ltc.Duplicate(10.0, TimeSpan.FromMilliseconds(200));
+        RunFor(h, clock, 80);
+
+        sink.Count("landing-first-frame-outside-window").Should().Be(1,
+            "新しい世代の最初のフレームが着地の窓の外（shim の通知が要るかの材料）");
+        h.SyncService.SeekState.LandingFirstFrameOutsideWindowCount.Should().Be(1);
+        h.SyncService.SeekState.LandingPhase.Should().Be(TimecodeSyncLandingPhase.WaitingForLanding,
+            "窓の外のフレームでは着地にしない");
+        Report("G6(outside window)", h, sink);
     }
 
     // ---- 門 10 の備考（TSP-Fable のレビュー）: シーク中に rate.instant を出さない ----
