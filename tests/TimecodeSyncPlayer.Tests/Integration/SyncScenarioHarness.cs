@@ -125,7 +125,7 @@ internal sealed class SyncScenarioHarness
                 SetLoadedTrackId: id => _loadedTrackId = id,
                 LoadFile: LoadFile,
                 GetTotalRenderedFrames: () => _renderedFrames,
-                ReadPosition: () => new SyncPositionRead(true, _playback.PositionSeconds),
+                ReadPosition: ReadPositionSample,
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled,
                     Playlist.Current != null,
@@ -169,7 +169,7 @@ internal sealed class SyncScenarioHarness
         var single = new SingleModeSyncCoordinator(
             _syncService,
             new SingleModeSyncEffects(
-                ReadPosition: () => new SyncPositionRead(true, _playback.PositionSeconds),
+                ReadPosition: ReadPositionSample,
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled, Playlist.Current != null, IsSeeking, playback,
                     _playback.DurationSeconds, _playback.Fps, 25,
@@ -273,7 +273,9 @@ internal sealed class SyncScenarioHarness
                     single.IsBoundaryHeld,
                     _gap.IsPauseOwnedByGap,
                     _projectRestorePauseState.IsPending,
-                    UserPauseOwned)),
+                    UserPauseOwned),
+                // v0.5.4 段 B1: UI タイマー・保持の Duplicate からの着地の状態（新しい判定）の観測用。
+                ReadPosition: ReadPositionSample),
             () => single, () => _continueCoordinator, () => _gapCoordinator,
             getUtcNow: effectiveTimeProvider is null ? null : () => effectiveTimeProvider.GetUtcNow().UtcDateTime,
             sampleClockEnabled: sampleClockEnabled,
@@ -547,6 +549,19 @@ internal sealed class SyncScenarioHarness
     {
         _playback.SetPosition(seconds);
         _renderedFrames += renderedFrames;
+    }
+
+    /// <summary>
+    /// v0.5.4 段 B: 位置の照会（秒 + サンプル）。秒は従来どおり生の位置を返し（EOS の見せ方を
+    /// 変えない）、サンプルには配信世代・配信位置を載せる（着地の状態の観測用）。ロード前の
+    /// テストでも着地を観測できるよう、常にサンプルを作る（実機の `_ex` が返る形と同じ）。
+    /// </summary>
+    private SyncPositionRead ReadPositionSample()
+    {
+        var sample = new PlaybackPositionSample(
+            _playback.PositionSeconds, PlaybackPositionBasis.Pipeline, _playback.CurrentGeneration,
+            _playback.DeliveredSeconds, _playback.DeliveredGeneration, _playback.CurrentGeneration);
+        return new SyncPositionRead(true, _playback.PositionSeconds, sample);
     }
 
     public void CompleteFreezeCapture()

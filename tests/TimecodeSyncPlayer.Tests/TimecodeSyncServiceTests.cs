@@ -6,6 +6,7 @@ using Serilog.Core;
 using Serilog.Events;
 using System.IO;
 using System.Reflection;
+using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Tests.Helpers;
 
 [Collection("Serilog global logger")]
@@ -190,16 +191,18 @@ public class TimecodeSyncServiceTests
     public void EvaluateDecision_AfterSettledLanding_ResumesEngine()
     {
         var engine = new MockSyncDecisionEngine();
-        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var seekState = new TimecodeSyncSeekState();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.ReportSeekSent(10.0);
 
         service.EvaluateDecision(10.0, new SyncPlaybackState(true, true, false, 10.0, 100.0))
             .PositionUntrusted.Should().BeTrue();
-        service.ShouldSuppressSeek(10.05, toleranceSeconds: 0.2);
-        clock.Advance(TimeSpan.FromMilliseconds(300));
-        service.ShouldSuppressSeek(10.05, toleranceSeconds: 0.2);
+
+        // v0.5.4 段 B: 着地は配信の世代と位置の事象で取る（旧 門 6 の窓と cooldown は畳んだ）。
+        service.ObserveLandingState(
+            new PlaybackPositionSample(10.0, PlaybackPositionBasis.Pipeline, 5, 10.05, 5, 5),
+            toleranceSeconds: 0.2);
 
         SyncDecision result = service.EvaluateDecision(10.0,
             new SyncPlaybackState(true, true, false, 10.05, 100.0));
@@ -210,33 +213,24 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void EvaluateDecision_AfterTimeout_RequiresStableSamples()
+    public void EvaluateDecision_AfterTheSafetyTimeout_ResumesOnTheNextSample()
     {
         var engine = new MockSyncDecisionEngine();
-        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
+        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(3));
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.ReportSeekSent(10.0);
         clock.Advance(TimeSpan.FromSeconds(3));
 
-        // 位置が目標から離れている → 時間切れで解除 → 位置の再確認が必要。
-        service.ShouldSuppressSeek(5.0, toleranceSeconds: 0.2);
-        service.EvaluateDecision(5.0, new SyncPlaybackState(true, true, false, 5.0, 100.0))
-            .PositionUntrusted.Should().BeTrue();
+        // 位置が目標から離れている → 安全の時間切れ（観測で入る）。再確認の 3 サンプルは畳んだ。
+        service.ObserveLandingState(
+            new PlaybackPositionSample(5.0, PlaybackPositionBasis.Pipeline, 5, 5.0, 4, 5),
+            toleranceSeconds: 0.2);
+        seekState.LandingPhase.Should().Be(TimecodeSyncLandingPhase.FailedToLand);
+        service.IsPlaybackPositionUsable.Should().BeTrue("着地せずでも判定は再開する（永久に止めない）");
 
-        double position = 5.0;
-        for (int i = 1; i <= 3; i++)
-        {
-            clock.Advance(TimeSpan.FromMilliseconds(100));
-            position += 0.1;
-            service.EvaluateDecision(5.0, new SyncPlaybackState(true, true, false, position, 100.0))
-                .PositionUntrusted.Should().BeTrue($"位置の再確認中 {i} サンプル目");
-        }
-
-        clock.Advance(TimeSpan.FromMilliseconds(100));
-        position += 0.1;
         SyncDecision resumed = service.EvaluateDecision(5.0,
-            new SyncPlaybackState(true, true, false, position, 100.0));
+            new SyncPlaybackState(true, true, false, 5.0, 100.0));
 
         resumed.PositionUntrusted.Should().BeFalse();
         engine.DecideCallCount.Should().Be(1);
@@ -293,11 +287,11 @@ public class TimecodeSyncServiceTests
         // シーク中は位置を信用しない。
         service.EvaluateDecision(10.0, before).PositionUntrusted.Should().BeTrue();
 
-        // 1.866 秒で着地し、所要が学習値になる（セットルの 2 ティック）。
+        // 1.866 秒で着地し、所要が学習値になる（配信の世代と位置の事象）。
         clock.Advance(TimeSpan.FromSeconds(1.866));
-        service.ShouldSuppressSeek(10.0, 0.2).Should().BeTrue();
-        clock.Advance(TimeSpan.FromMilliseconds(300));
-        service.ShouldSuppressSeek(10.0, 0.2).Should().BeTrue();
+        service.ObserveLandingState(
+            new PlaybackPositionSample(10.0, PlaybackPositionBasis.Pipeline, 7, 10.0, 7, 7),
+            toleranceSeconds: 0.2);
         seekState.LearnedSeekDurationSeconds.Should().BeApproximately(1.866, 0.001);
 
         // 着地後: LTC は進み、残差 1.829 秒（< 学習値 1.866 秒）。窓が開いているため
@@ -1059,29 +1053,8 @@ public class TimecodeSyncServiceTests
 
         service.FileLoadEpoch.Should().Be(epoch + 1, "読み込み番号を進める");
         service.HasPendingFileLoadRelease.Should().BeFalse("解除の回収待ちを下ろす");
-        service.SeekState.HasPendingSeek.Should().BeFalse("シークの保留を捨てる");
-    }
-
-    [Fact]
-    public void BeginGapFreezeLoad_ForgetsLastSettled_SoTheNextSeekIsNotSuppressed()
-    {
-        // v0.5.3 段 3g: 着地の直後にギャップの読み込みが起きても、前のファイルの着地目標で
-        // 0.5 秒抑止しない（設計の「直前の着地の記録を忘れる」）。
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-
-        service.ReportSeekSent(10.0);
-        clock.Advance(TimeSpan.FromMilliseconds(500));
-        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地の冷却中");
-        clock.Advance(TimeSpan.FromMilliseconds(250));
-        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地を記録する");
-
-        service.BeginGapFreezeLoad("path-guard");
-
-        service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeFalse(
-            "直前の着地の記録を忘れるので、前の着地目標のそばでも抑止しない");
+        service.SeekState.HasPendingSeek.Should().BeTrue(
+            "段 B: ギャップの読み込みも開始位置つきの読み込みなので、その読み込みの世代の着地待ちに入る");
     }
 
     [Fact]
@@ -1100,11 +1073,11 @@ public class TimecodeSyncServiceTests
         service.LatchSnapshot()["followStartLanding"].Should().BeFalse("追従開始の着地も開かない");
         service.IsDebounced().Should().BeFalse("デバウンスを更新しない");
 
-        // 繰り返しても同じ（path-guard の 1 秒ごとの読み直し）。
+        // 繰り返しても同じ（path-guard の 1 秒ごとの読み直し）。着地待ちは維持する。
         service.BeginGapFreezeLoad("path-guard");
         service.IsLoadingFile.Should().BeFalse();
         service.LatchSnapshot()["seekLandingActive"].Should().BeFalse();
-        service.SeekState.HasPendingSeek.Should().BeFalse();
+        service.SeekState.HasPendingSeek.Should().BeTrue("読み込みの世代の着地待ちに入る");
     }
 
     [Fact]

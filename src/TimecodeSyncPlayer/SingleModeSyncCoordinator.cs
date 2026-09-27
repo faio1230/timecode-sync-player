@@ -58,6 +58,8 @@ internal sealed class SingleModeSyncCoordinator
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
         // 位置サンプルは秒と同じ照会の結果。shadow は trace 有効時だけ渡す。
         PlaybackPositionSample? positionSample = traceEnabled ? read.Sample : null;
+        // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する。
+        _syncService.ObserveLandingState(read, state.VideoFps, state.TimecodeFps);
 
         if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
             !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
@@ -105,6 +107,8 @@ internal sealed class SingleModeSyncCoordinator
         if (success)
         {
             _syncService.ReportSeekSent(decision.TargetSeconds);
+            // v0.5.4 段 B2 の計測: 着地から 500ms 以内の同期シーク（旧 門 9 が隠していた量）。
+            _syncService.NotePostLandingSeekIssued(decision.TargetSeconds);
             NoteBoundarySeek(decision.TargetSeconds, state);
         }
         Log.Information(
@@ -130,6 +134,8 @@ internal sealed class SingleModeSyncCoordinator
         double playbackSeconds = read.PlaybackSeconds;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
+        // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する。
+        _syncService.ObserveLandingState(read, state.VideoFps, state.TimecodeFps);
         if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
             !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
             return _boundary.IsHeld;

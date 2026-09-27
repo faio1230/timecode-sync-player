@@ -37,7 +37,6 @@ internal static class LatchArrangements
         new(LatchOwner.LtcSignalLossPolicy, "manualResumeSuppressesPause");
 
     public static readonly LatchId PendingSeek = new(LatchOwner.TimecodeSyncSeekState, "pendingSeek");
-    public static readonly LatchId LastSettledRecent = new(LatchOwner.TimecodeSyncSeekState, "lastSettledRecent");
 
     public static IReadOnlyList<LatchId> All { get; } =
     [
@@ -47,7 +46,7 @@ internal static class LatchArrangements
         LoadingFile, FileLoadReleasePending, SeekLandingActive, FollowStartLanding, PositionUntrusted,
         ClipBoundaryHeld, BoundarySeekTarget,
         Lost, PausedByPolicy, ManualResumeSuppressesPause,
-        PendingSeek, LastSettledRecent,
+        PendingSeek,
     ];
 
     /// <summary>
@@ -152,15 +151,13 @@ internal static class LatchArrangements
         {
             // 追従開始（監視の開始）から、離れた位置へ同期シークを出す。
             h.IsMonitoring = true;
+            if (latch == PendingSeek || latch == PositionUntrusted)
+            {
+                // v0.5.4 段 B: 着地は配信の事象で取るので、着地を遅らせて着地待ちのまま保つ
+                // （即時配信だと次のフレームの観測で解けてしまう）。
+                h.Playback.SeekLandingDelaySeconds = 10.0;
+            }
             SeekFromFarPosition(s);
-        }
-        else if (latch == LastSettledRecent)
-        {
-            h.IsMonitoring = true;
-            SeekFromFarPosition(s);
-            // 着地（目標の近くで 200ms の冷却を過ぎる。TimecodeSyncSeekState.cs:78-96）。
-            for (int i = 0; i < 8 && h.SeekState.HasPendingSeek; i++)
-                s.NextNormalFrame();
         }
         else if (latch == ClipBoundaryHeld || latch == BoundarySeekTarget)
         {

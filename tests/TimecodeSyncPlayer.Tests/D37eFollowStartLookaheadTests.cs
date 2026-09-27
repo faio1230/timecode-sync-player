@@ -107,16 +107,17 @@ public class D37eFollowStartLookaheadTests
             .Which.Value.Should().BeApproximately(4.8, 1e-9, "学習値 2.0 が見積もり 0.5 に勝つ");
     }
 
-    /// <summary>保留状態を直接動かして、シーク所要の学習値を作る（製品経路は通らない）。</summary>
+    /// <summary>着地の状態を直接動かして、シーク所要の学習値を作る（製品経路は通らない）。</summary>
     private static void LearnSeekDuration(SyncScenarioHarness harness, ManualTimeProvider clock, double seconds)
     {
         harness.SeekState.BeginSeek(1.0, clock.GetUtcNow().UtcDateTime);
         clock.Advance(TimeSpan.FromSeconds(seconds));
-        harness.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
-        clock.Advance(TimeSpan.FromMilliseconds(250));
-        harness.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
+        // v0.5.4 段 B: 着地は配信の世代と位置の事象で取る（旧 門 6 の窓と cooldown は畳んだ）。
+        harness.SeekState.ObserveLandingSample(
+            new TimecodeSyncPlayer.Contracts.PlaybackPositionSample(
+                1.0, TimecodeSyncPlayer.Contracts.PlaybackPositionBasis.Pipeline, 1, 1.0, 1, 1),
+            0.24, clock.GetUtcNow().UtcDateTime);
         harness.SeekState.LearnedSeekDurationSeconds.Should().BeApproximately(seconds, 1e-6);
-        // settle 後の PostSettleSuppress（500ms）を追い越す。
         clock.Advance(TimeSpan.FromMilliseconds(600));
     }
 
