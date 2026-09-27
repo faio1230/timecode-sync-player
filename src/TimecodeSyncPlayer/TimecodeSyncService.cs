@@ -85,12 +85,8 @@ public sealed class TimecodeSyncService
         _landing = new SeekLandingWindow(_timeProvider);
     }
 
-    /// <summary>
-    /// v0.5.4 U7: <paramref name="fromConfirmedJump"/> は、門 4 で確認済みの Jump に続く要求か。
-    /// true のときは粗い判定のゲート（門 13）を 1 回だけ通さずにシークさせる。
-    /// </summary>
     public SyncDecision EvaluateDecision(double ltcSeconds, SyncPlaybackState state,
-        PlaybackPositionSample? positionSample = null, bool fromConfirmedJump = false)
+        PlaybackPositionSample? positionSample = null)
     {
         PublishSeekCost();
 
@@ -140,10 +136,6 @@ public sealed class TimecodeSyncService
                 SeekTargetLookaheadSeconds = lookahead,
             }
             : state;
-        // v0.5.4 U7: 確認済みの Jump（門 4）に続く決定は、粗い判定のゲート（門 13）を通さずに
-        // シークさせる（13 は連続追従中の補正の判断にだけ残す）。
-        if (fromConfirmedJump)
-            _engine.BypassSeekGateOnce();
         SyncDecision decision = _engine.Decide(ltcSeconds, effectiveState);
         // D37-d: 到達（誤差が許容内）で着地エピソードを閉じる。上限は
         // _landing.IsActive が閉じる（シーク連鎖への逆戻り防止）。

@@ -11,10 +11,7 @@ internal sealed class LtcInputState
     internal readonly record struct AcceptedFrame(double EffectiveSeconds, double RawSeconds, long FrameEndTimestamp);
 
     /// <summary>同期要求の再送用の保留（評価が Deferred のときだけ持つ）。</summary>
-    /// <remarks>v0.5.4 U7: <paramref name="FromConfirmedJump"/> は門 4 で確認済みの Jump の要求か
-    /// （再送でもゲート 13 の迂回を持ち越す）。</remarks>
-    internal readonly record struct PendingSync(
-        double EffectiveSeconds, double RawSeconds, long FrameEndTimestamp, bool FromConfirmedJump = false);
+    internal readonly record struct PendingSync(double EffectiveSeconds, double RawSeconds, long FrameEndTimestamp);
 
     /// <summary>最後に受理したフレーム。null なら未受理。</summary>
     public AcceptedFrame? Accepted { get; private set; }
@@ -99,9 +96,8 @@ internal sealed class LtcInputState
     public void DiscardPendingSync() => Pending = null;
 
     /// <summary>同期要求の再送用の保留を立てる（評価が Deferred のとき）。</summary>
-    public void HoldPendingSync(double effectiveSeconds, double rawSeconds, long frameEndTimestamp,
-        bool fromConfirmedJump = false)
-        => Pending = new PendingSync(effectiveSeconds, rawSeconds, frameEndTimestamp, fromConfirmedJump);
+    public void HoldPendingSync(double effectiveSeconds, double rawSeconds, long frameEndTimestamp)
+        => Pending = new PendingSync(effectiveSeconds, rawSeconds, frameEndTimestamp);
 
     /// <summary>保持（Duplicate）として届いた最後の値を覚える。</summary>
     public void MarkHeldEffective(double seconds) => LastHeldEffectiveSeconds = seconds;

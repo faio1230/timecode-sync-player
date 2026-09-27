@@ -374,36 +374,6 @@ public sealed class ScenarioGateGuardTests
         HasDebounceMessage(sink).Should().BeFalse("この場面を止めているのは門 13（デバウンスではない）");
     }
 
-    // ---- 門 13（U7）: 確認済みの Jump は 13 を通らずに即シークする ----
-
-    [Fact]
-    public void G13_ConfirmedJump_SeeksWithoutWaitingForTheWindow()
-    {
-        (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
-        using var sink = new ScenarioLogSink(clock);
-        h.AddTrack("A", 0, 30);
-        h.ManualPlay();
-        h.AdvancePlayback(3.0);
-
-        // 追従を続けながら門 14（ロード解除のデバウンス 250ms）も明ける（無音にすると損失扱いになる）。
-        h.Ltc.Normal(3.0, TimeSpan.FromMilliseconds(500));
-        RunFor(h, clock, 500);
-        ScenarioMetrics.SeekCount(h).Should().Be(0, "前提: 追従中はシークなし（門 13 のゲートは温まっている）");
-
-        // 同じトラック内の Jump は次の 1 フレーム（+1 フレーム）で確認される（門 4）。
-        double confirmed = 10.0 + 1.0 / 25.0;
-        h.Ltc.Jump(10.0);
-        h.Ltc.Normal(confirmed, TimeSpan.FromMilliseconds(80));
-        h.AdvanceMilliseconds(10);   // Jump 1 枚目（未確認。シークはまだ）
-        ScenarioMetrics.SeekCount(h).Should().Be(0, "確認の前はシークしない（門 4）");
-
-        h.AdvanceMilliseconds(40);   // 確認フレーム。確認済みの Jump の要求が出る
-        Report("G13(confirmed jump)", h, sink);
-        ScenarioMetrics.SyncSeekCount(h).Should().Be(
-            1, "確認済みの Jump は門 13 の窓（250ms・3 サンプル）を待たずに 1 回シークする（U7）");
-        Seeks(h).Single().Value.Should().BeApproximately(confirmed, 1e-6);
-    }
-
     // ---- 門 17: ロード中はシークを出さない ----
 
     [Fact]

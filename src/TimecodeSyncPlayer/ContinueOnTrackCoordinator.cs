@@ -35,10 +35,8 @@ internal sealed class ContinueOnTrackCoordinator
     /// MediaPositionSeconds / PlaybackSeconds は粗い同期判定（EvaluateDecision）に渡した値
     /// そのもので、補正の残差は MediaPositionSeconds − PlaybackSeconds（= sync.evaluate の
     /// delta）になる。素材位置の計算はここ 1 か所だけに置く。
-    /// v0.5.4 U7: <paramref name="fromConfirmedJump"/> は門 4 で確認済みの Jump の要求か。
     /// </summary>
-    public ContinueFrameContext HandleFrame(TimelineQueryResult result, double ltcSeconds,
-        bool fromConfirmedJump = false)
+    public ContinueFrameContext HandleFrame(TimelineQueryResult result, double ltcSeconds)
     {
         ContinueOnTrackDecision onTrackDecision = ContinueOnTrackPlanner.Decide(result, _effects.GetLoadedTrackId());
         PlaylistTrack track = onTrackDecision.Track;
@@ -135,8 +133,7 @@ internal sealed class ContinueOnTrackCoordinator
             _fileLoadStabilityLogState.Reset();
 
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
-            SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state, positionSample,
-                fromConfirmedJump);
+            SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state, positionSample);
             // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
             // D38 (b): 未信頼の要求の目標は、EvaluateDecision が pending の破棄（門 8）に使う
             // （ここで渡すと pending の置き換え（re-pend）が先に走り、着地の観測を失う）。
