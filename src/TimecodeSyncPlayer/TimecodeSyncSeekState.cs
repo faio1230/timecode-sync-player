@@ -13,13 +13,13 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
 {
     /// <summary>
     /// v0.5.4 段 B2: 安全の時間切れ（1 つ）。既存の 2 秒（旧 門 7 の保留）と 3 秒（ギャップの
-    /// 取り込みの <see cref="GapFreezeHandler.TimeoutSec"/>）の 2 つをまとめた値。shim のポンプの
-    /// 予算 4 秒（`native/gst-shim/src/tcs_gstreamer.cpp:243`）より短いので、ポンプが期限内に
-    /// 配信する場合でもアプリが先に「着地せず」へ移り得る。着地せずの後は次のサンプルで追従中へ
-    /// 戻り、判定と次のシークを再開する（永久に止めない）。遅れて届いたフレームは次の判定で
-    /// 着地する（設計書 §9-9）。
+    /// 取り込みの <see cref="GapFreezeHandler.TimeoutSec"/>）の 2 つをまとめた値。v0.5.4 K3 (3)
+    /// からは <see cref="SeekTimeBudget.LandingTimeoutSeconds"/> の 1 つが源で、shim のポンプの
+    /// 予算（着地 − 0.5 秒）はこれより先に切れる（時間切れの逆転を戻さない）。着地せずの後は
+    /// 次のサンプルで追従中へ戻り、判定と次のシークを再開する（永久に止めない）。遅れて届いた
+    /// フレームは次の判定で着地する（設計書 §9-9）。
     /// </summary>
-    internal static readonly TimeSpan LandingSafetyTimeout = TimeSpan.FromSeconds(3);
+    internal static readonly TimeSpan LandingSafetyTimeout = SeekTimeBudget.LandingTimeout;
 
     /// <summary>
     /// v0.5.4 段 B2 の計測: 着地からこの時間以内の同期シーク・速度補正を「着地直後」として数える

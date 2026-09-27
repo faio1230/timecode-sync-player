@@ -18,7 +18,8 @@ internal static class GapFrameCaptureCoordinator
         double fps,
         bool isNativeSeeking = false,
         bool allowRedraw = false,
-        bool frameSeenSinceCapture = true)
+        bool frameSeenSinceCapture = true,
+        double? deliveredFramePositionSeconds = null)
     {
         if ((!hasFrame && !allowRedraw) || !isExpectedPath || isNativeSeeking)
             return GapFrameCaptureDecision.None;
@@ -32,9 +33,16 @@ internal static class GapFrameCaptureCoordinator
             if (!frameSeenSinceCapture)
                 return GapFrameCaptureDecision.None;
 
+            // C-4: 位置の窓は、照会の値ではなく D21-b で受け入れた配信フレームの PTS で見る。
+            // シーク直後の照会は、ポンプ中にパイプライン値（尺 + 2 フレーム）へ落ちることがある。
+            double windowPositionSeconds = deliveredFramePositionSeconds is double delivered &&
+                double.IsFinite(delivered)
+                ? delivered
+                : actualPositionSeconds;
+
             return ContinueModePlaybackPolicy.ShouldCaptureFreezeFrameAfterFrameStep(
                 hasTimePosition,
-                actualPositionSeconds,
+                windowPositionSeconds,
                 targetSeconds,
                 frameSeconds)
                 ? GapFrameCaptureDecision.RenderAndCapture

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -303,6 +304,29 @@ internal static class GstNativeLibraryResolver
         catch (Exception)
         {
             // ログ出力先の設定に失敗しても起動は止めない。
+        }
+    }
+
+    /// <summary>
+    /// v0.5.4 K3 (3): shim は DLL ロード時に TCS_PUMP_BUDGET_MS を 1 回だけ読む
+    /// （native/gst-shim/src/tcs_gstreamer.cpp:253-274）。明示が無ければ「着地の時間切れ − 0.5 秒」を
+    /// 渡し、ポンプがアプリの着地より先に切れるようにする（時間切れの逆転を戻さない）。利用者が
+    /// 既に設定していれば上書きしない。GStreamer（shim）の初期化前に呼ぶ。
+    /// </summary>
+    public static void ConfigurePumpBudget()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(
+                    Environment.GetEnvironmentVariable(SeekTimeBudget.PumpBudgetEnvironmentVariable)))
+            {
+                Environment.SetEnvironmentVariable(SeekTimeBudget.PumpBudgetEnvironmentVariable,
+                    SeekTimeBudget.PumpBudgetMilliseconds.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+        catch (Exception)
+        {
+            // 予算を渡せなくても起動は止めない（shim の既定で動く）。
         }
     }
 
