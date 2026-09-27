@@ -149,6 +149,15 @@ internal sealed class ComposeLayer : IDisposable
             {
                 SaveFreeze(tracked, sourceFrameClip);
             }
+            else
+            {
+                // K3 f4-14: 保存しなかった tick の証拠（挙動は変えない。同じ値の繰り返しは記録側がまとめる）。
+                GapCaptureHandoffLog.Record("layer.freeze", "Freeze not saved",
+                    "tracked=" + FormatSeconds(sourceFrame.HasValue && sourceFramePositionKnown ? sourceFramePosition : null) +
+                    " acquired=" + FormatSeconds(acquired != null ? acquirePositionSeconds : null) +
+                    " target=" + FormatSeconds(freezeTargetSeconds) +
+                    " tol=" + FormatSeconds(FreezeTargetToleranceSeconds));
+            }
         }
 
         LayerAction action = ComposeLayerPolicy.Decide(gap, acquired != null, HasHeld, frozen != null);
@@ -211,6 +220,11 @@ internal sealed class ComposeLayer : IDisposable
         var placement = fits.Compute(new ClipPlacement(null), canvas, heldCanvasWidth, heldCanvasHeight, out _, out _);
         shaders.PlaceView(heldCanvas!.View, heldCanvasWidth, heldCanvasHeight, target.Target!, canvas.Width, canvas.Height, placement);
     }
+
+    private static string FormatSeconds(double? seconds) =>
+        seconds is double value && double.IsFinite(value)
+            ? value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)
+            : "-";
 
     /// <summary>取得画像の位置が Freeze 目標（目標最終フレームの位置）に一致するか。</summary>
     private static bool MatchesFreezeTarget(double positionSeconds, double? freezeTargetSeconds) =>
