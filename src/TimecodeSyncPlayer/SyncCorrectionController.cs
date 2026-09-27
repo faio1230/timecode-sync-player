@@ -38,7 +38,8 @@ public sealed record SyncCorrectionDecision(
 /// T9: 着地直後の 1.0 秒だけ上限を ±0.20 に上げ、1 秒以内の収束を狙う。
 /// v0.5.4 B4b（chase モデルの規則 2）: 不感帯は 1 映像フレーム
 /// （<see cref="FrameDurationSeconds"/>。呼び出し側が fps から決めて渡す）。戻りバンドは 2ms のまま。
-/// Jump はしきい値（T8: 80ms）を超えたら補正シーク（連続 3 回で諦め、残差が 1 秒留まったら再開）。
+/// Jump はしきい値（T8: 80ms）を超えたら補正シーク（B6-24: 連鎖は計数と警告のログだけ。
+/// シークは止めない）。
 /// Smooth 失敗（shim 非対応・効かない）は状態として公開し、アプリが操作者に見せる。
 /// </summary>
 internal sealed class SyncCorrectionController
@@ -62,6 +63,10 @@ internal sealed class SyncCorrectionController
 
     public const double MaxRateDelta = 0.10;
     public const double TimeConstantSeconds = 1.0;
+
+    /// <summary>
+    /// B6-24: Jump 補正の連鎖で警告を出す回数。振る舞いの上限ではなくなった（シークは止めない）。
+    /// </summary>
     public const int MaxConsecutiveJumpSeeks = 3;
     public static readonly TimeSpan IneffectiveWindow = TimeSpan.FromSeconds(2);
     public const double IneffectiveImprovementSeconds = 0.010;
@@ -99,9 +104,9 @@ internal sealed class SyncCorrectionController
     public const double JumpSeekThresholdSeconds = 0.080;
 
     /// <summary>
-    /// T8: 残差がしきい値の内側にこれだけ留まったら連続シーク回数を 0 に戻す。
-    /// 一瞬内側に入っただけで戻すと、揺れがしきい値を跨ぐたびに上限 3 回が無効化され、
-    /// 250〜300ms ごとのシークが続く。揺れ 1 周期（40〜50ms）より十分長い 1.0 秒を初期値にする。
+    /// T8/B6-24: 残差がしきい値の内側にこれだけ留まったら連続シーク回数（警告用の計数）を
+    /// 0 に戻す。一瞬内側に入っただけで戻すと、揺れがしきい値を跨ぐたびに警告が再武装される。
+    /// 揺れ 1 周期（40〜50ms）より十分長い 1.0 秒を初期値にする。
     /// </summary>
     public static readonly TimeSpan JumpSettleTime = TimeSpan.FromSeconds(1.0);
 
@@ -192,26 +197,23 @@ internal sealed class SyncCorrectionController
             if (_jumpInsideSince == DateTime.MinValue)
                 _jumpInsideSince = now;
             else if (now - _jumpInsideSince >= JumpSettleTime)
+            {
                 _consecutiveJumpSeeks = 0;
+                _jumpLimitReachedLogged = false;
+            }
             return SyncCorrectionDecision.Idle("jump-idle");
         }
 
         _jumpInsideSince = DateTime.MinValue;
-
-        if (_consecutiveJumpSeeks >= MaxConsecutiveJumpSeeks)
-        {
-            if (!_jumpLimitReachedLogged)
-            {
-                // 測定用（T8）: 上限に達した遷移を数えられるように、1 エピソード 1 行だけ出す。
-                _jumpLimitReachedLogged = true;
-                Log.Information(
-                    "Jump correction limit reached consecutiveSeeks={Count}", _consecutiveJumpSeeks);
-            }
-            return SyncCorrectionDecision.Idle("jump-limit");
-        }
-
-        _jumpLimitReachedLogged = false;
+        // v0.5.4 B6-24（chase モデルの表 24）: 連鎖の歯止めは振る舞いの門をやめ、計数と警告の
+        // ログへ格下げした。上限に達してもシークは止めない。警告は 1 エピソード 1 回
+        // （1 秒以上しきい値の内側に留まって数え直すと、次の連鎖でまた出す）。
         _consecutiveJumpSeeks++;
+        if (_consecutiveJumpSeeks >= MaxConsecutiveJumpSeeks && !_jumpLimitReachedLogged)
+        {
+            _jumpLimitReachedLogged = true;
+            Log.Warning("Jump correction chain consecutiveSeeks={Count}", _consecutiveJumpSeeks);
+        }
         return SyncCorrectionDecision.Seek(targetSeconds, "jump");
     }
 

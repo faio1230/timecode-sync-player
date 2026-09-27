@@ -123,26 +123,19 @@ public class SyncCorrectionControllerTests
     }
 
     [Fact]
-    public void Jump_StopsAfterConsecutiveSeekLimit_AndResetsWhenResidualSettles()
+    public void Jump_AfterConsecutiveSeeks_KeepsSeeking()
     {
+        // B6-24: 旧は連続 3 回で止めていた（jump-limit）。いまはシークを止めず、計数と警告だけ。
         var controller = new SyncCorrectionController();
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i <= 5; i++)
             Evaluate(controller, 0.120, SyncCorrectionMode.Jump, secondsAfterStart: i * 0.1)
                 .Action.Should().Be(SyncCorrectionActionType.Seek);
 
-        Evaluate(controller, 0.120, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.120, SyncCorrectionMode.Jump, secondsAfterStart: 0.5)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-
-        // T8: 一瞬内側に入っただけでは戻らない。1 秒留まって初めて戻る。
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 0.6)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.7)
-            .Action.Should().Be(SyncCorrectionActionType.None);
+        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 0.6);
+        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.7);
         Evaluate(controller, 0.120, SyncCorrectionMode.Jump, secondsAfterStart: 1.8)
-            .Action.Should().Be(SyncCorrectionActionType.Seek);
+            .Action.Should().Be(SyncCorrectionActionType.Seek, "1 秒セトルで数え直してもシークは続く");
     }
 
     // ── T8: Jump のしきい値 80ms と、1 秒セトルで連続回数を戻す ─────────
@@ -173,8 +166,9 @@ public class SyncCorrectionControllerTests
     }
 
     [Fact]
-    public void Jump_BriefDipInsideThreshold_DoesNotResetConsecutiveSeeks()
+    public void Jump_BriefDipInsideThreshold_KeepsSeeking()
     {
+        // 一時的にしきい値の内側へ入っても、シークは止まらない（計数だけが連続のまま）。
         var controller = new SyncCorrectionController();
         Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.0)
             .Action.Should().Be(SyncCorrectionActionType.Seek);
@@ -184,66 +178,23 @@ public class SyncCorrectionControllerTests
             .Action.Should().Be(SyncCorrectionActionType.None);
 
         Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.3)
-            .Action.Should().Be(SyncCorrectionActionType.Seek, "一瞬の内側では回数が戻らない");
+            .Action.Should().Be(SyncCorrectionActionType.Seek, "一瞬の内側で止めない");
         Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.None, "3 回で上限");
+            .Action.Should().Be(SyncCorrectionActionType.Seek, "3 回を過ぎてもシークは続く（B6-24）");
     }
 
     [Fact]
-    public void Jump_StayingInsideThresholdForOneSecond_RestartsSeeking()
+    public void Jump_Reset_ClearsTheChainCount()
     {
         var controller = new SyncCorrectionController();
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i <= 3; i++)
             Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: i * 0.1)
                 .Action.Should().Be(SyncCorrectionActionType.Seek);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.3)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.45)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 1.55)
-            .Action.Should().Be(SyncCorrectionActionType.Seek);
-    }
-
-    [Fact]
-    public void Jump_InsideForLessThanOneSecond_DoesNotReset()
-    {
-        var controller = new SyncCorrectionController();
-        for (int i = 0; i < 3; i++)
-            Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: i * 0.1)
-                .Action.Should().Be(SyncCorrectionActionType.Seek);
-
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.3)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 1.4)
-            .Action.Should().Be(SyncCorrectionActionType.None, "0.9 秒では回数が戻らない");
-
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.5)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 2.5)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 2.6)
-            .Action.Should().Be(SyncCorrectionActionType.Seek);
-    }
-
-    [Fact]
-    public void Jump_Reset_AllowsSeekingImmediately()
-    {
-        var controller = new SyncCorrectionController();
-        for (int i = 0; i < 3; i++)
-            Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: i * 0.1)
-                .Action.Should().Be(SyncCorrectionActionType.Seek);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.3)
-            .Action.Should().Be(SyncCorrectionActionType.None);
 
         controller.Reset();
 
         Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.Seek);
+            .Action.Should().Be(SyncCorrectionActionType.Seek, "リセット後もシークは続く（B6-24）");
     }
 
     [Fact]
