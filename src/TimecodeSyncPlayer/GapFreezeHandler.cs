@@ -321,6 +321,17 @@ public sealed class GapFreezeHandler
         ContinueModePlaybackPolicy.CanReuseFrozenFrame(
             CachedTrackId, CachedTargetSeconds, trackId, target, frameSeconds);
 
+    /// <summary>
+    /// K3 f4-14: ギャップの Freeze のためにトラックを読み込み直す前に、前のギャップの目標（確定済み・遅延確定）を
+    /// 手放す。ロードから新しい捕捉の進入までの間、合成層は前の目標ではなく照会位置で Freeze の保存を比べる。
+    /// ロードが成功すれば進入が新しい目標を立て、失敗すれば ForceFreezeComplete が同じく目標なしにする。
+    /// </summary>
+    public void ForgetFreezeTargetsForReload()
+    {
+        ClearCachedFrameInfo();
+        ClearLateConfirmTarget();
+    }
+
     public void ClearCachedFrameInfo()
     {
         CachedTrackId = null;

@@ -210,6 +210,8 @@ internal sealed class GapEnterCoordinator
             // D32: 別の目標へ入り直すときは、前のフリーズ画像を破棄してからロードする。
             DiscardFrozenFrameIfTargetChanged(nextTrack.Id, target, fps);
 
+            // K3 f4-14: ロード中は前のギャップの目標で Freeze の保存を比べない。
+            _gapFreezeHandler.ForgetFreezeTargetsForReload();
             GapLoadCommandResult commandResult = _effects.LoadPausedAt(nextTrack.FilePath, target);
 
             if (!commandResult.Load.Success)
@@ -256,6 +258,8 @@ internal sealed class GapEnterCoordinator
             // D32: 別の目標へ入り直すときは、前のフリーズ画像を破棄してからロードする。
             DiscardFrozenFrameIfTargetChanged(previousTrack.Id, target, fps);
 
+            // K3 f4-14: ロード中は前のギャップの目標で Freeze の保存を比べない。
+            _gapFreezeHandler.ForgetFreezeTargetsForReload();
             GapLoadCommandResult commandResult = _effects.LoadPausedAt(previousTrack.FilePath, target);
 
             if (!commandResult.Load.Success)
