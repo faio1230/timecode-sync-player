@@ -25,7 +25,7 @@ namespace TimecodeSyncPlayer.Tests;
 public sealed class V053LoadPathTests
 {
     [Fact]
-    public Task GpuRecoveryPositionLoad_ClearsLoadLatches() => OnUi(() =>
+    public Task GpuRecoveryPositionLoad_EntersLoadLandingWait() => OnUi(() =>
     {
         using var f = new Fixture();
         f.ArrangeServiceLatches();
@@ -33,14 +33,15 @@ public sealed class V053LoadPathTests
         bool ok = f.LoadLikeGpuRecovery("C:/clip.mp4", 14.58);
 
         ok.Should().BeTrue();
-        f.PendingSeek.Should().BeFalse("§6 の 2: 読み込みでシークの保留を捨てる（意図 = 消える）");
-        f.PositionUntrusted.Should().BeFalse("§6 の 2: 読み込みで位置の信頼を初期化する（意図 = 消える）");
+        f.PendingSeek.Should().BeTrue(
+            "v0.5.4 段 B3: 開始位置つきの読み込みはその読み込みの世代の着地待ちに入る（18 の方向）");
+        f.PositionUntrusted.Should().BeTrue("読み込みの着地まで位置を使わない");
         f.FileLoadReleasePending.Should().BeFalse("§6 の 2: 読み込みで解除の回収待ちを下ろす（意図 = 消える）");
         return Task.CompletedTask;
     });
 
     [Fact]
-    public Task AutoAdvanceLocatedLoad_ClearsLoadLatches() => OnUi(() =>
+    public Task AutoAdvanceLocatedLoad_EntersLoadLandingWait() => OnUi(() =>
     {
         using var f = new Fixture();
         f.SeedContinueAutoAdvance();
@@ -51,8 +52,9 @@ public sealed class V053LoadPathTests
         f.PlaybackApi.Loads.Should().ContainSingle(load =>
             load.Path == "C:/b.mp4" && load.StartSeconds == 10.0,
             "MediaIn > 0 の自動送りは位置つきで読み込む");
-        f.PendingSeek.Should().BeFalse("§6 の 2: 読み込みでシークの保留を捨てる（意図 = 消える）");
-        f.PositionUntrusted.Should().BeFalse("§6 の 2: 読み込みで位置の信頼を初期化する（意図 = 消える）");
+        f.PendingSeek.Should().BeTrue(
+            "v0.5.4 段 B3: 開始位置つきの読み込みはその読み込みの世代の着地待ちに入る（18 の方向）");
+        f.PositionUntrusted.Should().BeTrue("読み込みの着地まで位置を使わない");
         f.FileLoadReleasePending.Should().BeFalse("§6 の 2: 読み込みで解除の回収待ちを下ろす（意図 = 消える）");
         return Task.CompletedTask;
     });
@@ -190,7 +192,11 @@ public sealed class V053LoadPathTests
         public void ArrangeServiceLatches()
         {
             Sync.BeginFileLoad(0, 0);
-            Sync.TryMarkFileLoaded(1.0, 2).Should().BeTrue("前提: 読み込みの解除（回収待ちを作る）");
+            // v0.5.4 段 B3: 読み込みの解除は着地の事象（配信の世代の最初のフレーム）で起きる。
+            Sync.ObserveLandingState(
+                new PlaybackPositionSample(1.0, PlaybackPositionBasis.Pipeline, 1, 1.0, 1, 1),
+                toleranceSeconds: 0.2);
+            Sync.TryMarkFileLoaded(1.0, 2).Should().BeTrue("前提: 着地の事象で読み込みを解除する（回収待ちを作る）");
             Sync.ReportSeekSent(5.0);
 
             FileLoadReleasePending.Should().BeTrue("前提: 解除の回収待ち");
