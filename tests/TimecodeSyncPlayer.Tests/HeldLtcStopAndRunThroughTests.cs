@@ -307,12 +307,10 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.AdvancePlayback(1.04, 5);
 
         h.BeginManualFileLoad();
-        h.NativeSeeking = true;
         Raw(h, 8, 0, 10_080);
         h.Operations.Clear();
 
         // ロードが進み、保留再送が解除を先に回収する（尺は未確定なので決定は None）。
-        h.NativeSeeking = false;
         h.AdvancePlayback(0.2, 3);
         h.SetDurationSeconds(0);
         Tick(h, clock, 3);

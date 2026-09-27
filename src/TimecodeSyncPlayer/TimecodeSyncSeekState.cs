@@ -292,8 +292,12 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
             _targetSeconds, _newLandingDelaySeconds * 1000.0, sample.DeliveredSeconds,
             sample.DeliveredGeneration, sample.CurrentGeneration);
         // v0.5.4 段 0 の G6 の計測名（意味は着地の確定。旧は 200ms の cooldown 込み）。
-        Log.Debug("sync.gate seek-settled target={Target:F3} elapsedMs={ElapsedMs:F1}",
-            _targetSeconds, _newLandingDelaySeconds * 1000.0);
+        // v0.5.4 段 B3: 読み込みの着地（目標なし）は 門 6 の計測に混ぜない（シークの着地だけを数える）。
+        if (hasTarget)
+        {
+            Log.Debug("sync.gate seek-settled target={Target:F3} elapsedMs={ElapsedMs:F1}",
+                _targetSeconds, _newLandingDelaySeconds * 1000.0);
+        }
     }
 
     /// <summary>
@@ -303,6 +307,9 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     public void NotePostLandingSeekIssued(double targetSeconds, DateTime now)
     {
         if (_lastLandingAt == DateTime.MinValue)
+            return;
+        // v0.5.4 段 B3: 読み込みの着地（目標なし）は「着地直後」に数えない（旧 門 9 と同じくシークの着地の後）。
+        if (_lastLanding is not { } landing || !double.IsFinite(landing.TargetSeconds))
             return;
         double elapsedMs = (now - _lastLandingAt).TotalMilliseconds;
         if (elapsedMs < 0 || elapsedMs > PostLandingMeasureWindow.TotalMilliseconds)
@@ -318,6 +325,9 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     public void NotePostLandingRateApplied(double rate, DateTime now)
     {
         if (_lastLandingAt == DateTime.MinValue)
+            return;
+        // v0.5.4 段 B3: 読み込みの着地（目標なし）は「着地直後」に数えない（旧 門 9 と同じくシークの着地の後）。
+        if (_lastLanding is not { } landing || !double.IsFinite(landing.TargetSeconds))
             return;
         double elapsedMs = (now - _lastLandingAt).TotalMilliseconds;
         if (elapsedMs < 0 || elapsedMs > PostLandingMeasureWindow.TotalMilliseconds)

@@ -239,7 +239,9 @@ public sealed class ScenarioGateGuardTests
         h.SyncService.SeekState.LastLanding!.Value.DelaySeconds.Should().BeLessThan(0.2,
             "着地は配信の最初のフレームで確定する（旧 門 6 の 200ms の cooldown を含まない）");
         h.SyncService.SeekState.LandingFirstFrameOutsideWindowCount.Should().Be(0);
-        sink.Count("new-landing").Should().Be(1, "着地がログに出る");
+        // v0.5.4 段 B3: 読み込みの着地（target=NaN）も new-landing を出すので、シークの着地だけを数える。
+        sink.GateEvents.Count(e => e.Name == "new-landing" && !e.Message.Contains("target=NaN"))
+            .Should().Be(1, "シークの着地がログに出る");
         Report("G6(held landing)", h, sink);
     }
 
@@ -366,7 +368,8 @@ public sealed class ScenarioGateGuardTests
         RunFor(h, clock, 300);
         h.SyncService.SeekState.LastLanding.Should().NotBeNull("前提: 着地した（配信の事象）");
         ScenarioMetrics.SeekCount(h).Should().Be(1, "着地の直後に同じ場所へ再シークしない（D7-a）");
-        sink.Count("post-landing-seek").Should().Be(0, "着地から 500ms 以内の同期シークは 0（D7-a の計測）");
+        sink.Count("post-landing-seek").Should().Be(0,
+            "着地から 500ms 以内の同期シークは 0（D7-a の計測。v0.5.4 段 B3 で読み込みの着地は数えない）");
 
         // 別の場所へ動けば要求は通る（抑止ではない）。速度補正の範囲（1 秒）を超える差にする。
         h.Ltc.Normal(12.0, TimeSpan.FromMilliseconds(800));
@@ -391,19 +394,21 @@ public sealed class ScenarioGateGuardTests
 
         h.Playback.SetPosition(0.0);
         h.ManualPause();
-        h.BeginManualFileLoad();   // 進捗条件を満たさないロード。解除するまでロード中の場面
+        // v0.5.4 段 B3: 読み込みの世代は進んでいるが、最初のフレームがまだ配信されていない場面。
+        h.BeginManualFileLoadWithoutLanding();
         h.Ltc.Normal(10.0, TimeSpan.FromMilliseconds(400));
         RunFor(h, clock, 400);
         ScenarioMetrics.SeekCount(h).Should().Be(
-            0, "ロード中はシークを出さない（門 17/18。この場面では先に TryMarkFileLoaded が止める）");
-        h.SyncService.IsLoadingFile.Should().BeTrue("前提: まだロード中");
+            0, "読み込みの着地（最初のフレームの配信）までシークを出さない（門 17/18）");
+        h.SyncService.IsLoadingFile.Should().BeTrue("前提: まだ着地していない");
 
         // ロードを成立させ、解除と同時に arm されるデバウンス（250ms）の場面へ移る。
+        h.Playback.DeliverLoadLanding();
         h.Ltc.Normal(10.0, TimeSpan.FromMilliseconds(800));
         h.Playback.SetPosition(1.0);
         h.AdvancePlayback(1.0, renderedFrames: 3);
         RunUntilSeeks(h, clock, 1);
-        sink.GateEvents.Should().Contain(e => e.Name == "load-release", "前提: 進捗でロードが解除された");
+        sink.GateEvents.Should().Contain(e => e.Name == "load-release", "前提: 着地でロードが解除された");
         long firstSeekAt = Seeks(h)[0].AtMilliseconds;
         long releasedAt = sink.GateEvents.Last(e => e.Name == "load-release" && e.AtMilliseconds <= firstSeekAt)
             .AtMilliseconds;
@@ -460,14 +465,20 @@ public sealed class ScenarioGateGuardTests
 
         h.Playback.SetPosition(0.0);
         h.ManualPause();
-        h.BeginManualFileLoad();   // 再生位置がロード開始と同値で、進捗が満たないためロード中が続く
+        // v0.5.4 段 B3: 読み込みの世代は進んでいるが、最初のフレームがまだ配信されていない場面。
+        h.BeginManualFileLoadWithoutLanding();
         h.Ltc.Normal(10.0, TimeSpan.FromMilliseconds(400));
         RunFor(h, clock, 400);
 
-        ScenarioMetrics.SeekCount(h).Should().Be(0, "ロード中は大きな要求でもシークを出さない（門 17/18）");
-        h.SyncService.IsLoadingFile.Should().BeTrue("前提: ロード中");
+        ScenarioMetrics.SeekCount(h).Should().Be(0, "読み込みの着地まで大きな要求でもシークを出さない（門 17/18）");
+        h.SyncService.IsLoadingFile.Should().BeTrue("前提: まだ着地していない");
         sink.Count("load-suppress").Should().Be(
-            0, "段 0 のとおり、この経路では呼び出し側の TryMarkFileLoaded が先に止める（門 17 の分岐は通らない）");
+            0, "段 0 のとおり、この経路では着地待ち（未信頼の決定）が止める（門 17 の分岐は通らない）");
+
+        // 着地すれば解除され、判定が再開して要求が通る。
+        h.Playback.DeliverLoadLanding();
+        RunUntilSeeks(h, clock, 1);
+        h.SyncService.IsLoadingFile.Should().BeFalse("着地でロードが解除された");
         Report("G17", h, sink);
     }
 }

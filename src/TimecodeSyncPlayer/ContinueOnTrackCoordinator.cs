@@ -92,24 +92,6 @@ internal sealed class ContinueOnTrackCoordinator
             // 0.4.5-A フェーズ 1: shadow は trace 有効時だけ読む（無効時は従来どおり位置を読まない）。
             bool traceEnabled = OutputTrace.Current.IsEnabled;
 
-            // Track switches and gap exits above may replace the pending operation.
-            // For this clip, native time-pos is not stable until seeking has finished.
-            if (_effects.IsNativeSeeking?.Invoke() == true)
-            {
-                // v0.5.4 段 0: ネイティブシーク中の抑止（門 22）を数える。
-                Log.Debug("sync.gate native-seek-defer ltc={Ltc:F3}", ltcSeconds);
-                if (traceEnabled)
-                {
-                    SyncPositionRead shadowRead = _effects.ReadPosition();
-                    if (shadowRead.Succeeded)
-                    {
-                        SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowRead.PlaybackSeconds);
-                        _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowRead.Sample, "native-seeking");
-                    }
-                }
-                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "native-seeking");
-            }
-
             SyncPositionRead read = _effects.ReadPosition();
             if (!read.Succeeded)
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "time-pos");
@@ -118,24 +100,23 @@ internal sealed class ContinueOnTrackCoordinator
             // 位置サンプルは秒と同じ照会の結果。shadow は trace 有効時だけ渡す。
             PlaybackPositionSample? positionSample = traceEnabled ? read.Sample : null;
 
-            if (!_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
-            {
-                if (_fileLoadStabilityLogState.ShouldLog(DateTime.UtcNow))
-                {
-                    Log.Debug(
-                        "Continue mode: waiting for file load stability playback={Playback:F3} mediaPos={MediaPos:F3} renderedFrames={RenderedFrames}",
-                        playbackSeconds, mediaPos, _effects.GetTotalRenderedFrames());
-                }
-
-                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "load-stability");
-            }
-
-            _fileLoadStabilityLogState.Reset();
-
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
             // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する
             // （LTC のフレームの経路に依らない観測は UI タイマー・保持の Duplicate が担う。§9-7 の 1）。
+            // v0.5.4 段 B3: ロードの成立（旧 門 18）も着地の事象で決まるので、観測の後に解除だけ試す。
+            // ロード中の抑止は着地待ち（EvaluateDecision の未信頼）が担う。
             _syncService.ObserveLandingState(read, state.VideoFps, state.TimecodeFps);
+            if (_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
+            {
+                _fileLoadStabilityLogState.Reset();
+            }
+            else if (_fileLoadStabilityLogState.ShouldLog(DateTime.UtcNow))
+            {
+                Log.Debug(
+                    "Continue mode: waiting for file load stability playback={Playback:F3} mediaPos={MediaPos:F3} renderedFrames={RenderedFrames}",
+                    playbackSeconds, mediaPos, _effects.GetTotalRenderedFrames());
+            }
+
             SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state, positionSample);
             // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
             // D38 (b): 未信頼の要求の目標は、EvaluateDecision が pending の破棄（門 8）に使う
@@ -233,5 +214,4 @@ internal sealed record ContinueOnTrackEffects(
     Func<long> GetTotalRenderedFrames,
     // v0.5.1: 再生位置（秒）と位置サンプルを同じ 1 回の照会で返す。
     Func<SyncPositionRead> ReadPosition,
-    Func<double, SyncPlaybackState> BuildPlaybackState,
-    Func<bool>? IsNativeSeeking = null);
+    Func<double, SyncPlaybackState> BuildPlaybackState);

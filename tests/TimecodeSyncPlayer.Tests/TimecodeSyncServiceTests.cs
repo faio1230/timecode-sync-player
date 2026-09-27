@@ -104,6 +104,13 @@ public class TimecodeSyncServiceTests
         {
             ClearCallCount++;
             HasPendingSeek = false;
+            LastStatus = TimecodeSyncSeekPendingStatus.None;
+        }
+
+        public void BeginLoadWait(DateTime now)
+        {
+            HasPendingSeek = true;
+            LastStatus = TimecodeSyncSeekPendingStatus.Pending;
         }
 
         public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now,
@@ -583,6 +590,9 @@ public class TimecodeSyncServiceTests
         var service = new TimecodeSyncService(engine, seekState, clock);
 
         service.BeginFileLoad(startPositionSeconds: 10.0, renderedFrameCount: 0);
+        // v0.5.4 段 B3: 読み込みの着地（配信の世代の最初のフレーム）まで判定しないので、着地を模してから評価する。
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+        seekState.HasPendingSeek = false;
         service.EvaluateDecision(10.0, new SyncPlaybackState(true, true, false, 10.0, 100.0));
 
         engine.LastState!.RateCatchUpAllowed.Should().BeFalse("トラック切替のロード直後も着地として扱う");
@@ -684,40 +694,28 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void TryMarkFileLoaded_ReturnsFalse_WhenPlaybackHasNotAdvanced()
+    public void TryMarkFileLoaded_WithoutLanding_ReturnsFalse()
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var service = new TimecodeSyncService(engine, seekState);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
 
-        bool result = service.TryMarkFileLoaded(playbackSeconds: 12.02, renderedFrameCount: 5);
+        // v0.5.4 段 B3: ロードの成立は配信の世代の最初のフレーム（着地の事象）で決まる。進捗では解除しない。
+        bool result = service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5);
 
         result.Should().BeFalse();
         service.IsLoadingFile.Should().BeTrue();
     }
 
     [Fact]
-    public void TryMarkFileLoaded_ReturnsFalse_WhenNewFramesHaveNotRendered()
+    public void TryMarkFileLoaded_AfterLanding_ReturnsTrue()
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var service = new TimecodeSyncService(engine, seekState);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
-
-        bool result = service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 4);
-
-        result.Should().BeFalse();
-        service.IsLoadingFile.Should().BeTrue();
-    }
-
-    [Fact]
-    public void TryMarkFileLoaded_ClearsLoadingFlag_WhenPlaybackAndFramesAreStable()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var service = new TimecodeSyncService(engine, seekState);
-        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;   // 着地の観測
 
         bool result = service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5);
 
@@ -729,12 +727,14 @@ public class TimecodeSyncServiceTests
     public void PollFileLoadRelease_ReturnsTrueOnlyOnTheReleaseTick()
     {
         // D20-b: 保持 LTC（Duplicate）でもロード解除だけを観測できる。
+        // v0.5.4 段 B3: 解除は着地の事象（配信の世代の最初のフレーム）で決まる。
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var service = new TimecodeSyncService(engine, seekState);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
 
         service.PollFileLoadRelease(playbackSeconds: 12.12, renderedFrameCount: 4).Should().BeFalse();
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;   // 着地の観測
         service.PollFileLoadRelease(playbackSeconds: 12.12, renderedFrameCount: 5).Should().BeTrue();
         service.PollFileLoadRelease(playbackSeconds: 12.2, renderedFrameCount: 6).Should().BeFalse();
         service.IsLoadingFile.Should().BeFalse();
@@ -749,6 +749,7 @@ public class TimecodeSyncServiceTests
         var seekState = new MockTimecodeSyncSeekState();
         var service = new TimecodeSyncService(engine, seekState);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;   // 着地の観測
 
         service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5).Should().BeTrue();
         service.IsLoadingFile.Should().BeFalse();
@@ -766,6 +767,7 @@ public class TimecodeSyncServiceTests
         var seekState = new MockTimecodeSyncSeekState();
         var service = new TimecodeSyncService(engine, seekState);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;   // 着地の観測
         service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5).Should().BeTrue();
 
         service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 5);
@@ -775,29 +777,25 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void TryMarkFileLoaded_GpuCompositing_OpensOnPublishedFrames_WithoutWaitingForCpuBitmaps()
+    public void TryMarkFileLoaded_OnLanding_ReleasesWithoutWaitingForRenderedFrames()
     {
-        // 出荷構成（GPU 合成）: 表示経路（OutputEngine）の公開数だけが進む。
-        long publishedFrames = 0;
-        var counter = new RenderedFrameCounter(gpuPublishedFrames: () => publishedFrames);
-
+        // v0.5.4 段 B3: ロードの成立は着地の事象（配信の世代の最初のフレーム）で決まる。
+        // 描画枚数・再生位置の進みは使わない（出荷構成の GPU 合成でも同じ）。
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 14, 12, 0, 0, TimeSpan.Zero));
         var service = new TimecodeSyncService(engine, seekState, clock);
-        service.BeginFileLoad(startPositionSeconds: 5.0, renderedFrameCount: counter.Read());
+        service.BeginFileLoad(startPositionSeconds: 5.0, renderedFrameCount: 0);
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;   // 着地の観測
 
-        publishedFrames += 2;                              // 表示経路へ 2 フレーム公開
-        clock.Advance(TimeSpan.FromMilliseconds(120));     // 5 秒のタイムアウトには達しない
-
-        bool result = service.TryMarkFileLoaded(playbackSeconds: 5.12, renderedFrameCount: counter.Read());
+        bool result = service.TryMarkFileLoaded(playbackSeconds: 5.0, renderedFrameCount: 0);
 
         result.Should().BeTrue();
         service.IsLoadingFile.Should().BeFalse();
     }
 
     [Fact]
-    public void TryMarkFileLoaded_UpdatesDebounceTimestamp_WhenStable()
+    public void TryMarkFileLoaded_UpdatesDebounceTimestamp_WhenLanded()
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
@@ -805,6 +803,7 @@ public class TimecodeSyncServiceTests
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
         clock.Advance(TimeSpan.FromSeconds(1));
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;   // 着地の観測
 
         service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5);
 
@@ -818,6 +817,7 @@ public class TimecodeSyncServiceTests
         var seekState = new MockTimecodeSyncSeekState { ShouldSuppress = false };
         var service = new TimecodeSyncService(engine, seekState);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;   // 着地の観測（解除）
         service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 5);
 
         bool result = service.ShouldSuppressSeek(5.0, 0.2);
@@ -874,26 +874,26 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void TryMarkFileLoaded_ForcesRelease_WhenProgressStallsPastTheGrace()
+    public void TryMarkFileLoaded_ForcesRelease_AtTheLandingSafetyTimeout()
     {
-        // D35: 停止（保持）などで描画フレーム・再生位置が進まなくても、ロード開始から
-        // 一定時間（5 秒。実素材のプロファイル試行 2.2〜2.5 秒を下回らない）で解除する。
+        // v0.5.4 段 B3: 着地の事象が来ない（位置サンプルが取れない）ときだけ、安全の時間切れ
+        // （3 秒。旧 門 7 の 2 秒と 門 18 の 5 秒をまとめた値）で解除する。
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 18, 0, 0, 0, TimeSpan.Zero));
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
 
-        clock.Advance(TimeSpan.FromSeconds(5));
+        clock.Advance(TimecodeSyncSeekState.LandingSafetyTimeout);
 
         service.TryMarkFileLoaded(playbackSeconds: 12.0, renderedFrameCount: 3)
-            .Should().BeTrue("進捗が無くても期限で解除する");
+            .Should().BeTrue("着地が来なくても安全の時間切れで解除する");
         service.IsLoadingFile.Should().BeFalse();
         service.HasPendingFileLoadRelease.Should().BeTrue();
     }
 
     [Fact]
-    public void TryMarkFileLoaded_BeforeTheGrace_StillWaitsForProgress()
+    public void TryMarkFileLoaded_BeforeTheSafetyTimeout_StillWaits()
     {
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
@@ -901,10 +901,10 @@ public class TimecodeSyncServiceTests
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
 
-        clock.Advance(TimeSpan.FromSeconds(5) - TimeSpan.FromTicks(1));
+        clock.Advance(TimecodeSyncSeekState.LandingSafetyTimeout - TimeSpan.FromTicks(1));
 
         service.TryMarkFileLoaded(playbackSeconds: 12.0, renderedFrameCount: 3)
-            .Should().BeFalse("期限前は従来どおり進捗を待つ");
+            .Should().BeFalse("時間切れの前は着地を待つ");
         service.IsLoadingFile.Should().BeTrue();
     }
 
@@ -978,7 +978,9 @@ public class TimecodeSyncServiceTests
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
 
-        // ロードで開いた着地窓を、到着（許容内）で閉じておく。
+        // ロードで開いた着地窓を、着地（配信の世代の最初のフレーム）と到着（許容内）で閉じておく。
+        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+        seekState.HasPendingSeek = false;
         engine.DecisionToReturn = new SyncDecision(
             SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
         service.EvaluateDecision(12.0, new SyncPlaybackState(true, true, false, 12.0, 100.0));
@@ -1022,9 +1024,11 @@ public class TimecodeSyncServiceTests
         clock.Advance(TimeSpan.FromMilliseconds(250));
         service.ShouldSuppressSeek(10.0, toleranceSeconds: 0.2).Should().BeTrue("前提: 着地を記録する");
 
-        // 着地の直後に読み込み、ロードの解除まで進める。
+        // 着地の直後に読み込み、ロードの解除（着地の事象）まで進める。
         service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
         clock.Advance(TimeSpan.FromMilliseconds(200));
+        service.ObserveLandingState(
+            new PlaybackPositionSample(0.2, PlaybackPositionBasis.Pipeline, 1, 0.2, 1, 1), 0.2);
         service.TryMarkFileLoaded(playbackSeconds: 0.2, renderedFrameCount: 10).Should().BeTrue();
 
         // 前のファイルの着地目標（10.0）のそばでも、最初のシークは抑止されない。
@@ -1043,6 +1047,8 @@ public class TimecodeSyncServiceTests
         var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
+        service.ObserveLandingState(
+            new PlaybackPositionSample(0.2, PlaybackPositionBasis.Pipeline, 1, 0.2, 1, 1), 0.2);
         service.TryMarkFileLoaded(playbackSeconds: 0.2, renderedFrameCount: 10).Should().BeTrue();
         service.ReportSeekSent(10.0);
         service.HasPendingFileLoadRelease.Should().BeTrue("前提: 解除の回収待ち");

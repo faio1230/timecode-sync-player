@@ -83,10 +83,11 @@ internal static class LatchArrangements
         }
         else if (latch == PendingSync)
         {
-            // ネイティブシーク中は同期要求が Deferred になり、再送用に保持する（:317-322）。
-            h.NativeSeeking = true;
-            s.NextNormalFrame();
-            h.NativeSeeking = false;
+            // シークの発行が失敗したフレームでは同期要求が Deferred になり、再送用に保持する（:317-322）。
+            // 失敗の間だけ Deferred になるので、次の有効フレームでは Complete に戻る（従来の寿命のまま）。
+            h.SeekSucceeds = false;
+            SeekFromFarPosition(s);
+            h.SeekSucceeds = true;
         }
         else if (latch == LastHeldEffective)
         {

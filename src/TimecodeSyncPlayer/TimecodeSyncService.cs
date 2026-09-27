@@ -42,13 +42,6 @@ public sealed class TimecodeSyncService
     private bool _lastLoggedDefaultTimecodeFps;
 
     private const double SeekDebounceMs = 250.0;
-    private const double FileLoadPlaybackProgressSeconds = 0.08;
-    private const long FileLoadRenderedFrameProgress = 2;
-    private static readonly TimeSpan FileLoadTimeout = TimeSpan.FromSeconds(5);
-    // D35: 描画フレーム・再生位置の進みを待ち続けない上限。ロード開始からこの時間が過ぎたら
-    // 進捗条件を満たさなくても解除する（停止中のロードで解除が数秒残るのを防ぐ）。実素材は
-    // プロファイル試行で 2.2〜2.5 秒かかるため 5 秒（既存の安全タイムアウトと同じ）。
-    private static readonly TimeSpan FileLoadReleaseForceAfter = TimeSpan.FromSeconds(5);
     // D35: 解除を回収できる鮮度。ロード直後の 1 回だけを対象にし、数秒前の値を保持開始時に
     // 再適用して同期を壊さない（古い解除は破棄する）。
     private static readonly TimeSpan FileLoadReleasePendingMaxAge = TimeSpan.FromSeconds(1.5);
@@ -270,10 +263,27 @@ public sealed class TimecodeSyncService
     /// <summary>
     /// v0.5.4 段 B: 位置サンプルで着地の状態（A）を観測する。LTC のフレームの経路とは独立に、
     /// 位置を照会するすべての場所（保持の Duplicate、UI タイマー、描画の tick）から呼ぶ。
+    /// v0.5.4 段 B3: 読み込み中なら、この着地の事象でロードを解除する（旧 門 18 の畳み先）。
     /// </summary>
     public void ObserveLandingState(in PlaybackPositionSample sample, double toleranceSeconds)
-        => _seekState.ObserveLandingSample(
-            sample, toleranceSeconds, _timeProvider.GetUtcNow().UtcDateTime);
+    {
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+        _seekState.ObserveLandingSample(sample, toleranceSeconds, now);
+        TryReleaseFileLoadAfterLanding(now);
+    }
+
+    /// <summary>
+    /// v0.5.4 段 B3: 読み込みの着地（または安全の時間切れ）を観測したらロードを解除する。
+    /// </summary>
+    private void TryReleaseFileLoadAfterLanding(DateTime now)
+    {
+        if (!_fileLoad.IsLoadingFile)
+            return;
+        if (_seekState.LastStatus == TimecodeSyncSeekPendingStatus.Settled)
+            ReleaseFileLoad(now, "landing");
+        else if (_seekState.LandingPhase == TimecodeSyncLandingPhase.FailedToLand)
+            ReleaseFileLoad(now, "timeout");
+    }
 
     /// <summary>
     /// v0.5.4 段 B: 同じ照会の結果（<see cref="SyncPositionRead"/>）から着地の状態を観測する。
@@ -303,6 +313,13 @@ public sealed class TimecodeSyncService
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         return (now - _lastSyncSeekAt).TotalMilliseconds < SeekDebounceMs;
     }
+
+    /// <summary>
+    /// v0.5.4 段 B3: 利用者の手動シーク（シークバー・相対・タイムライン）を着地待ちに入れる。
+    /// ネイティブのシーク中は着地待ちと同じ意味（§9-7-3）。着地の観測で判定と補正を再開する。
+    /// </summary>
+    public void NotifyManualSeek(double targetSeconds)
+        => _seekState.BeginSeek(targetSeconds, _timeProvider.GetUtcNow().UtcDateTime);
 
     public void ReportSeekSent(double targetSeconds)
     {
@@ -340,6 +357,9 @@ public sealed class TimecodeSyncService
         _fileLoad.Begin(now, Math.Max(0, startPositionSeconds), Math.Max(0, renderedFrameCount));
         _lastSyncSeekAt = now;                // デバウンスを更新（2.3 fix）
         OnLifecycle(SyncLifecycleEvent.FileLoad);
+        // v0.5.4 段 B3: 開始位置つきの読み込みも、その読み込みの世代の着地待ちに入る
+        // （ロードの成立（旧 門 18）はこの着地の事象で判定する）。
+        _seekState.BeginLoadWait(now);
         // v0.5.3 段 3e: FileLoad はサービスの OnLifecycle の中で起きるため、外へも伝える（§6 の 5）。
         LifecycleRaised?.Invoke(SyncLifecycleEvent.FileLoad);
         // D37-b2: ロード（切替）も着地として扱い、直後の不足はシークで詰める。
@@ -409,34 +429,33 @@ public sealed class TimecodeSyncService
         bool wasLoading = _fileLoad.IsLoadingFile;
         _fileLoad.Cancel();
         if (wasLoading)
+        {
+            // v0.5.4 段 B3: 取り消しは解除ではないので、読み込みの着地待ちも外す
+            // （待ちを残すと、SyncDisabled の後は着地の観測が来ずに張り付く）。
+            _seekState.Clear();
             Log.Information("Timecode sync: file load cancelled by {Event}", evt);
+        }
     }
 
     /// <summary>
-    /// HandleOnTrackSync で再生位置と描画フレームが進んだらロード状態を解除する。
+    /// v0.5.4 段 B3: ロードの成立（旧 門 18 の「再生位置と描画フレームの進み、または 5 秒」）を、
+    /// 読み込みの世代の最初のフレームの配信（着地の事象）に畳んだ。着地の観測
+    /// （<see cref="ObserveLandingState(in PlaybackPositionSample, double)"/>）が解除し、ここは
+    /// 位置サンプルが取れない環境（旧 DLL）の安全の時間切れだけを担う。引数の進捗値は使わない。
     /// </summary>
     public bool TryMarkFileLoaded(double playbackSeconds, long renderedFrameCount)
     {
         if (!_fileLoad.IsLoadingFile) return true;
-        if (!double.IsFinite(playbackSeconds) || playbackSeconds < 0)
-            return false;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
-        if (now - _fileLoad.StartedAt > FileLoadTimeout)
-            return ReleaseFileLoad(now, "timeout");
-
-        double playbackProgress = playbackSeconds - _fileLoad.StartPositionSeconds;
-        long renderedFrameProgress = renderedFrameCount - _fileLoad.StartedRenderedFrames;
-        if (playbackProgress < FileLoadPlaybackProgressSeconds ||
-            renderedFrameProgress < FileLoadRenderedFrameProgress)
+        if (_seekState.LastStatus == TimecodeSyncSeekPendingStatus.Settled)
+            return ReleaseFileLoad(now, "landing");
+        if (now - _fileLoad.StartedAt >= TimecodeSyncSeekState.LandingSafetyTimeout)
         {
-            // D35: 停止（保持）などで描画フレーム・再生位置が進まなくても、ロード開始から
-            // 一定時間で必ず解除する。解除後は従来どおり保持 LTC の 1 回再適用に回収される。
-            if (now - _fileLoad.StartedAt >= FileLoadReleaseForceAfter)
-                return ReleaseFileLoad(now, "forced");
-            return false;
+            _seekState.Clear();
+            return ReleaseFileLoad(now, "timeout");
         }
 
-        return ReleaseFileLoad(now, "progress");
+        return false;
     }
 
     private bool ReleaseFileLoad(DateTime now, string reason)
@@ -449,11 +468,11 @@ public sealed class TimecodeSyncService
         // D37-b2: ロード成立が実際の着地。D37-d: ここから新しい着地エピソードを開く
         // （ロード中に開始したエピソードとシーク回数を引き継がない）。
         _landing.OpenAt(now, LandingOrigin.Other);
-        if (reason != "progress")
-            Serilog.Log.Information("Timecode sync: file load released ({Reason})", reason);
-        else
-            // v0.5.4 段 0: 進捗によるロード解除（門 18 の通常経路）は今までログが無かった。
+        if (reason == "landing")
+            // v0.5.4 段 B3: 着地の事象によるロード解除（門 18 の通常経路）。
             Serilog.Log.Debug("sync.gate load-release elapsedMs={ElapsedMs:F1}", loadElapsedMs);
+        else
+            Serilog.Log.Information("Timecode sync: file load released ({Reason})", reason);
         return true;
     }
 
@@ -462,8 +481,13 @@ public sealed class TimecodeSyncService
         // D37-a: 保留の破棄・手動移動の後はゲートの系列を切る。
         _engine.ResetSeekGate();
         // v0.5.4 段 B: 保留を外から破棄したので、着地待ちと着地の記録も初期化する。
+        bool loading = _fileLoad.IsLoadingFile;
         _seekState.Clear();
         _seekState.ResetLandingState();
+        // v0.5.4 段 B3: 読み込みの着地待ちはロードの成立（旧 門 18）が握っているので、
+        // モード変更・手動移動で消さない（消すとロードの解除が安全の時間切れまで残る）。
+        if (loading)
+            _seekState.BeginLoadWait(_timeProvider.GetUtcNow().UtcDateTime);
     }
 
     /// <summary>

@@ -290,7 +290,6 @@ public class T7ContinueCorrectionTests
     private sealed class Recorder
     {
         public bool LoadFileResult = true;
-        public bool NativeSeeking;
         public Guid? LoadedTrackId;
         public long TotalRenderedFrames;
         public (int rc, double playbackSeconds) TimePos = (0, 0.45);
@@ -312,8 +311,7 @@ public class T7ContinueCorrectionTests
             LoadFile: (_, _) => LoadFileResult,
             GetTotalRenderedFrames: () => TotalRenderedFrames,
             ReadPosition: () => TimePos.rc == 0 ? new SyncPositionRead(true, TimePos.playbackSeconds) : SyncPositionRead.Failed,
-            BuildPlaybackState: BuildState,
-            IsNativeSeeking: () => NativeSeeking);
+            BuildPlaybackState: BuildState);
     }
 
     private static PlaylistTrack Track() => new(
@@ -370,15 +368,18 @@ public class T7ContinueCorrectionTests
     }
 
     [Fact]
-    public void FrameContext_NativeSeeking_Blocks()
+    public void FrameContext_WhileWaitingForLanding_Blocks()
     {
+        // v0.5.4 段 B3: ネイティブのシーク中は着地待ち（未信頼の決定）が止める。
         var track = Track();
-        var recorder = new Recorder { LoadedTrackId = track.Id, NativeSeeking = true };
+        var service = Service();
+        service.ReportSeekSent(0.5);
+        var recorder = new Recorder { LoadedTrackId = track.Id };
 
-        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 0.5), 12.5);
+        ContinueFrameContext frame = Coordinator(recorder, service).HandleFrame(OnTrack(track, 0.5), 12.5);
 
         frame.CorrectionAllowed.Should().BeFalse();
-        frame.CorrectionBlockedReason.Should().Be("native-seeking");
+        frame.CorrectionBlockedReason.Should().Be("position-untrusted");
     }
 
     [Fact]
@@ -394,8 +395,9 @@ public class T7ContinueCorrectionTests
     }
 
     [Fact]
-    public void FrameContext_LoadStabilityWait_Blocks()
+    public void FrameContext_LoadLandingWait_Blocks()
     {
+        // v0.5.4 段 B3: ロードの成立（旧 門 18）は着地の事象で決まり、待っている間は未信頼の決定が止める。
         var track = Track();
         var service = Service();
         service.BeginFileLoad(0.5, 100);
@@ -404,7 +406,7 @@ public class T7ContinueCorrectionTests
         ContinueFrameContext frame = Coordinator(recorder, service).HandleFrame(OnTrack(track, 100.0), 100.0);
 
         frame.CorrectionAllowed.Should().BeFalse();
-        frame.CorrectionBlockedReason.Should().Be("load-stability");
+        frame.CorrectionBlockedReason.Should().Be("position-untrusted");
     }
 
     [Fact]

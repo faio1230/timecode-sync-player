@@ -60,7 +60,6 @@ public class ContinueOnTrackCoordinatorTests
         public GapExitActionType GapExit = GapExitActionType.None;
         public bool SeekResult = true;
         public bool LoadFileResult = true;
-        public bool NativeSeeking;
         public Guid? LoadedTrackId;
         public long TotalRenderedFrames;
         public (int rc, double playbackSeconds) TimePos = (0, 1.0);
@@ -83,34 +82,31 @@ public class ContinueOnTrackCoordinatorTests
             LoadFile: (path, start) => { Calls.Add("LoadFile"); LoadFileArgs.Add((path, start)); return LoadFileResult; },
             GetTotalRenderedFrames: () => { Calls.Add("GetTotalRenderedFrames"); return TotalRenderedFrames; },
             ReadPosition: () => { Calls.Add("ReadPosition"); return ToRead(TimePos); },
-            BuildPlaybackState: ps => { Calls.Add("BuildPlaybackState"); return BuildState(ps); },
-            IsNativeSeeking: () => NativeSeeking);
+            BuildPlaybackState: ps => { Calls.Add("BuildPlaybackState"); return BuildState(ps); });
     }
 
     private static TimelineQueryResult OnTrack(PlaylistTrack track, double mediaPos) =>
         new(TimelineQueryStatus.OnTrack, track, mediaPos, null);
 
     [Fact]
-    public void SameTrack_NativeSeeking_DoesNotSettleSyntheticTarget_AndResumesLatestRequestAfterCompletion()
+    public void SameTrack_WhileWaitingForLanding_SyntheticTargetDoesNotSettle_AndFarRequestSeeksImmediately()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState(), clock);
         service.ReportSeekSent(10);
         var track = CreateTrack(Guid.NewGuid());
-        var rec = new Recorder { LoadedTrackId = track.Id, NativeSeeking = true, TimePos = (0, 10) };
+        var rec = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 10) };
         var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
 
+        // 照会値が目標と同じでも、配信の世代が追いつくまでは着地にしない（合成位置で確定しない）。
         coordinator.Handle(OnTrack(track, 10), 10).Should().Be(SyncRequestResult.Deferred);
         clock.Advance(TimeSpan.FromSeconds(3));
         coordinator.Handle(OnTrack(track, 10), 10).Should().Be(SyncRequestResult.Deferred);
-        coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Deferred);
-        rec.Calls.Should().NotContain(new[] { "ReadPosition", "GetTotalRenderedFrames", "BuildPlaybackState" });
         service.SeekState.HasPendingSeek.Should().BeTrue();
         service.SeekState.TargetSeconds.Should().Be(10);
         service.SeekState.LastStatus.Should().Be(TimecodeSyncSeekPendingStatus.Pending);
         rec.SeekTargets.Should().BeEmpty();
 
-        rec.NativeSeeking = false;
         rec.TimePos = (0, 11);
         // v0.5.4 段 B / 門 8 / §9-2: 遠い要求は着地待ちの目標を置き換え、その場でシークする
         // （捨てた後に古い位置で判定する隙間を作らない。再確認の 3 サンプルは畳んだ）。
@@ -120,35 +116,40 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void SameTrack_NativeSeeking_DoesNotMarkFileLoadedFromSyntheticProgress()
+    public void SameTrack_WhileLoading_DoesNotMarkFileLoadedFromSyntheticProgress()
     {
         var track = CreateTrack(Guid.NewGuid());
         var service = CreateService();
         service.BeginFileLoad(10, 0);
         var rec = new Recorder
         {
-            LoadedTrackId = track.Id, NativeSeeking = true,
+            LoadedTrackId = track.Id,
             TimePos = (0, 11), TotalRenderedFrames = 10
         };
         var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
 
         coordinator.Handle(OnTrack(track, 11), 11).Should().Be(SyncRequestResult.Deferred);
-        service.IsLoadingFile.Should().BeTrue();
+        service.IsLoadingFile.Should().BeTrue("合成の進捗ではロード成立にしない");
 
-        rec.NativeSeeking = false;
-        coordinator.Handle(OnTrack(track, 11), 11).Should().Be(SyncRequestResult.Complete);
+        // v0.5.4 段 B3: ロードの成立（旧 門 18）は読み込みの世代の最初のフレームの配信で決まる。
+        service.ObserveLandingState(
+            new TimecodeSyncPlayer.Contracts.PlaybackPositionSample(
+                11, TimecodeSyncPlayer.Contracts.PlaybackPositionBasis.Pipeline, 1, 11, 1, 1),
+            toleranceSeconds: 0.2);
         service.IsLoadingFile.Should().BeFalse();
+
+        coordinator.Handle(OnTrack(track, 11), 11).Should().Be(SyncRequestResult.Complete);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void SwitchTrack_NativeSeeking_AllowsNewClipToOverride(bool exitingGap)
+    public void SwitchTrack_AllowsNewClipToOverride(bool exitingGap)
     {
         var track = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
         var rec = new Recorder
         {
-            LoadedTrackId = Guid.NewGuid(), NativeSeeking = true,
+            LoadedTrackId = Guid.NewGuid(),
             GapExit = exitingGap ? GapExitActionType.ResumePlayback : GapExitActionType.None
         };
         var coordinator = new ContinueOnTrackCoordinator(CreateService(), CreateLogState(), rec.Build());
@@ -163,12 +164,12 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void GapExit_NativeSeeking_AllowsSameClipReentrySeek()
+    public void GapExit_AllowsSameClipReentrySeek()
     {
         var track = CreateTrack(Guid.NewGuid());
         var rec = new Recorder
         {
-            LoadedTrackId = track.Id, NativeSeeking = true,
+            LoadedTrackId = track.Id,
             GapExit = GapExitActionType.ResumePlayback
         };
         var coordinator = new ContinueOnTrackCoordinator(CreateService(), CreateLogState(), rec.Build());
@@ -362,12 +363,12 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void SameTrack_WhenFileLoadNotStable_DoesNotBuildStateNorSeek()
+    public void SameTrack_WhileFileLoadNotSettled_DoesNotUsePositionNorSeek()
     {
         var id = Guid.NewGuid();
         var track = CreateTrack(id);
         var service = CreateService();
-        // ロード中かつ進捗未達 → TryMarkFileLoaded が false
+        // v0.5.4 段 B3: ロードの着地待ち（配信の世代が追いつくまで位置を使わない）。
         service.BeginFileLoad(startPositionSeconds: 5.0, renderedFrameCount: 100);
         var rec = new Recorder
         {
@@ -377,9 +378,12 @@ public class ContinueOnTrackCoordinatorTests
         };
         var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
 
-        coordinator.Handle(OnTrack(track, mediaPos: 100.0), ltcSeconds: 100.0);
+        ContinueFrameContext frame = coordinator.HandleFrame(OnTrack(track, mediaPos: 100.0), ltcSeconds: 100.0);
 
-        rec.Calls.Should().NotContain(new[] { "BuildPlaybackState", "SeekTo" });
+        frame.Request.Should().Be(SyncRequestResult.Deferred);
+        frame.CorrectionBlockedReason.Should().Be("position-untrusted",
+            "ロードの着地待ちは未信頼の決定で判定とシークを止める（旧 門 18 の早期 return は畳んだ）");
+        rec.Calls.Should().NotContain("SeekTo");
     }
 
     [Fact]
