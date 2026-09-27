@@ -51,7 +51,7 @@ internal sealed record GapExitAction(
 
 public sealed class GapFreezeHandler
 {
-    public const double TimeoutSec = 3.0;
+    public const double TimeoutSec = SeekTimeBudget.LandingTimeoutSeconds;
     public const double EndAdvanceThresholdSec = 0.15;
     internal const double DefaultFallbackFps = 30.0;    // MainWindow・GapEnterCoordinator と共有
     // D21-b: 目標位置でないフレームが届いたときに、目標へ向けてシークをやり直す上限。
