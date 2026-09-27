@@ -1,0 +1,656 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" agent="Codex" version="24.7.17" type="device">
+  <diagram id="01-overview" name="01  全体構成 — 誰が何を担当するか">
+    <mxGraphModel dx="1600" dy="1180" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1180" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="01  全体構成 — 誰が何を担当するか" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=30;fontColor=#243349;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="22" width="1500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="制御は C#、動画の復号は GStreamer、合成と出力は D3D11。MainWindow が各部品を接続する。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=17;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="68" width="1520" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" value="青：制御・状態　　紫：映像データ　　水色の破線：通知" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=14;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="101" width="1020" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="version" value="v0.4.7 · a4cb181 · 2026-09-20" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=14;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1250" y="101" width="310" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="audio" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;LTC 音声入力&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;音声デバイスから受信&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;同期の基準になる時刻信号&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#ecfdf5;strokeColor=#148365;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="40" y="200" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="ltc" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;LTC の読み取り&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;PCM → タイムコード&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;サンプル位置から時刻を推定&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#148365;margin-top:8px&quot;&gt;LtcAudioMonitor / LtcDecoder&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#ecfdf5;strokeColor=#148365;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="365" y="200" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="sync" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;同期の制御&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;信号診断・モード分岐&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;シーク／速度補正の判断&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;LtcSyncController + SyncService&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="690" y="200" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;型付き再生 API&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Load / Seek / Pause / Rate&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;再生位置・fps などの取得&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;IPlaybackApi → GstPlaybackApi&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1015" y="200" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="gst" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;動画の復号&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;C ABI → GStreamer&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;独立した D3D11 デバイス&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#bf691e;margin-top:8px&quot;&gt;tcs_gstreamer.dll&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fff7ed;strokeColor=#bf691e;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="200" width="220" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="files" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;保存ファイル&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;settings.json：利用者設定&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;.tsp：素材・時間・配置&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#718096;margin-top:8px&quot;&gt;AppSettings / ProjectSerializer&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f1f5f9;strokeColor=#718096;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="40" y="490" width="250" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="state" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;アプリの状態&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;プレイリスト：トラックと時間配置&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;ViewModels：画面表示と操作&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;MainViewModel / PlaylistState&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="365" y="490" width="250" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="ui" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;画面と各機能の接続&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;操作・タイマー・通知の受け口&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Coordinator に処理を委譲&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;MainWindow.xaml.cs&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="690" y="490" width="250" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="media" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;動画ファイル&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;映像を復号して共有リングへ&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;素材音声は shim の音声経路へ&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#148365;margin-top:8px&quot;&gt;MP4 / MOV / MKV / …&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#ecfdf5;strokeColor=#148365;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1015" y="490" width="250" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="gpu" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;合成と出力の管理&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;素材＋配置＋Gap 状態&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;固定キャンバスへ合成&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;OutputEngine / ComposeLayer&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="490" width="220" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="advice" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;素材・再生状態の警告（v0.4.7）&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;GOP 解析／コーデック案内／デコード追従の監視&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;状態を表示する。警告そのものでは再生を止めない。&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#aa8120;margin-top:8px&quot;&gt;GopScanCache / CodecAdvice / DecodeHealthMonitor&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fffbea;strokeColor=#aa8120;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="40" y="795" width="575" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="preview" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;WPF プレビュー&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;縮小して GPU → CPU 読み戻し&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Dispatcher 経由で画面に反映&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#168399;margin-top:8px&quot;&gt;PreviewFrameReady&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eaf9fc;strokeColor=#168399;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="690" y="795" width="250" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="display" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;全画面出力&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;画面の更新時刻に合わせて&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;swapchain を Present&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#168399;margin-top:8px&quot;&gt;SwapchainTarget&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eaf9fc;strokeColor=#168399;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1015" y="795" width="250" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="spout" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;Spout2 出力&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;専用 worker と別デバイス&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;他アプリへテクスチャ送信&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#168399;margin-top:8px&quot;&gt;SpoutSender / SpoutDX.dll&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eaf9fc;strokeColor=#168399;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="795" width="220" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="outputFork" value="" style="ellipse;fillColor=#8554c2;strokeColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="1445" y="730" width="10" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="displayFork" value="" style="ellipse;fillColor=#8554c2;strokeColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="1135" y="730" width="10" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="audio" target="ltc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel0" value="PCM" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="310.0" y="238.0" width="35" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge1" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="ltc" target="sync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel1" value="時刻通知" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="619.5" y="238.0" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge2" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="sync" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel2" value="再生操作" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="944.5" y="238.0" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="api" target="gst">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel3" value="P/Invoke" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="1267.5" y="238.0" width="70" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge4" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="files" target="state">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel4" value="保存・復元" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="288.0" y="530.5" width="79" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge5" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="state" target="ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel5" value="参照・更新" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="613.0" y="530.5" width="79" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge6" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=0;entryX=0.5;entryY=1;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="ui" target="sync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel6" value="設定・操作" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="822.5" y="390" width="79" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge7" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=1;exitY=0.5;entryX=0.25;entryY=1;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="media" target="gst">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1295" y="557.5" />
+              <mxPoint x="1295" y="375" />
+              <mxPoint x="1395" y="375" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edgeLabel7" value="読込" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="1310.0" y="348" width="40" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge8" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="gst" target="gpu">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel8" value="共有リング＋フェンス" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="1365.0" y="423" width="144" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge9" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.8;exitY=1;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="ui" target="gpu">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="890" y="675" />
+              <mxPoint x="1315" y="675" />
+              <mxPoint x="1315" y="557.5" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edgeLabel9" value="TimelineOutputState（表示状態）" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="982.5" y="643" width="225" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge10" style="edgeStyle=none;rounded=0;html=0;endArrow=none;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="gpu" target="outputFork">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge11" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="outputFork" target="spout">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge12" style="edgeStyle=none;rounded=0;html=0;endArrow=none;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0;exitY=0.5;entryX=1;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="outputFork" target="displayFork">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel12" value="合成画像を配信" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="1237.5" y="699" width="105" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge13" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="displayFork" target="display">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge14" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0;exitY=0.5;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="displayFork" target="preview">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="815" y="735" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge15" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#168399;strokeWidth=2;exitX=0.2;exitY=0;entryX=0.2;entryY=1;exitPerimeter=0;entryPerimeter=0;dashed=1;dashPattern=7 5;" edge="1" parent="1" source="preview" target="ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel15" value="表示更新" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#168399;" vertex="1" parent="1">
+          <mxGeometry x="742.0" y="689" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge16" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#168399;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.8;exitPerimeter=0;entryPerimeter=0;dashed=1;dashPattern=7 5;" edge="1" parent="1" source="advice" target="ui">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="650" y="862.5" />
+              <mxPoint x="650" y="598" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edgeLabel16" value="警告表示" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#168399;" vertex="1" parent="1">
+          <mxGeometry x="617.0" y="733" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="note0" value="読む順番：LTC → 同期判断 → 再生 API → 復号 → 合成 → 出力。手動操作も同じ再生 API を通る。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=20;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="48" y="986" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="note1" value="丸印は画像配信の分岐点。同じ線を重ねず、共通の経路から各出力へ枝分かれさせている。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=17;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="48" y="1026" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="note2" value="getter・ログ・エラー通知などの補助的な接続は省略。更新通知の詳しい経路は 02 を参照。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=17;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="48" y="1060" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="footer" value="TimecodeSyncPlayer | 現行コードの構成図 | 主要な経路を要約" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=11;fontColor=#94a3b8;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1145" width="1400" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="02-threads" name="02  スレッドと映像の流れ">
+    <mxGraphModel dx="1600" dy="1240" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1240" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="02  スレッドと映像の流れ" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=30;fontColor=#243349;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="22" width="1500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="映像テクスチャと「フレームが更新された」という通知は別経路。D3D11 の各 context は所有スレッドで使う。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=17;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="68" width="1520" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" value="青：制御・状態　　紫：映像データ　　水色の破線：通知" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=14;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="101" width="1020" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="version" value="v0.4.7 · a4cb181 · 2026-09-20" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=14;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1250" y="101" width="310" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="band0" value="音声 callback" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="150" width="1520" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="band1" value="UI / Dispatcher" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="300" width="1520" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="band2" value="GStreamer 内部" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="450" width="1520" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="band3" value="GPU worker" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="600" width="1520" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="band4" value="Spout worker" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="750" width="1520" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="band5" value="RenderSession worker" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="900" width="1520" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="pcm" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;音声を復号&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;LtcAudioSampleProcessor&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#148365;margin-top:8px&quot;&gt;LtcDecoder&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#ecfdf5;strokeColor=#148365;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="305" y="165" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="event" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;時刻イベント&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;FrameEndTimestamp を付ける&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#148365;margin-top:8px&quot;&gt;FrameReceived&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#ecfdf5;strokeColor=#148365;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="665" y="165" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="timeline" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;表示状態を公開&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;最新 1 件の mailbox&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;TimelineOutputState&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="305" y="315" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="controller" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;C｜同期と画面の更新&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;LtcSyncController&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;MainWindow / 更新予約 C を受信&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="665" y="315" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;再生操作・状態取得&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;shim を同期的に呼ぶ&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;GstPlaybackApi&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="315" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="previewUi" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;B｜プレビューを反映&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Dispatcher 経由で表示&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#168399;margin-top:8px&quot;&gt;MainWindow&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eaf9fc;strokeColor=#168399;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1335" y="315" width="205" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ring" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;共有リング（3 枚）&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;NT 共有テクスチャ＋フェンス&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#bf691e;margin-top:8px&quot;&gt;seq / generation&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fff7ed;strokeColor=#bf691e;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="665" y="465" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="decoder" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;動画の復号&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;A → フレーム更新通知を送る&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#bf691e;margin-top:8px&quot;&gt;tcs_gstreamer.dll / 自前デバイス&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fff7ed;strokeColor=#bf691e;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="465" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="mailbox" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;表示状態を取り込む&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Gap・配置・世代・位置&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;OutputEngine.GPU&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="305" y="615" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="compose" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;ソース取得 → 合成&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;lease を保持して GPU 使用&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;GStreamerSource / ComposeLayer&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="665" y="615" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="pool" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;合成 pool（3 枚）&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;完了後に最新画像を公開&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;OutputPool&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="615" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="send" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;画像を開く → 送信&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;別デバイス／フェンス／mutex&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#168399;margin-top:8px&quot;&gt;SpoutSender → SpoutDX.dll&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eaf9fc;strokeColor=#168399;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="765" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="outputs" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;全画面／プレビュー&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Present ／縮小読戻し&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#168399;margin-top:8px&quot;&gt;B → UI プレビュー更新&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eaf9fc;strokeColor=#168399;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1335" y="615" width="205" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="drain" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;A｜更新通知を drain&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;ConsumeUpdate を直列実行&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#168399;margin-top:8px&quot;&gt;RenderThreadExecutor&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eaf9fc;strokeColor=#168399;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="915" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="uicallback" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;UI へ更新を予約&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;C → UI へ。古い世代は除外&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#168399;margin-top:8px&quot;&gt;RenderUpdateScheduler&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eaf9fc;strokeColor=#168399;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="665" y="915" width="265" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#168399;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;dashed=1;dashPattern=7 5;" edge="1" parent="1" source="pcm" target="event">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel0" value="時刻通知" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#168399;" vertex="1" parent="1">
+          <mxGeometry x="584.5" y="188.0" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge1" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#168399;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;dashed=1;dashPattern=7 5;" edge="1" parent="1" source="event" target="controller">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel1" value="BeginInvoke" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#168399;" vertex="1" parent="1">
+          <mxGeometry x="820.5" y="280" width="91" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge2" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="controller" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel2" value="制御" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="960.0" y="338.0" width="40" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="api" target="decoder">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel3" value="C ABI" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="1179.5" y="436" width="49" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge4" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0;exitY=0.5;entryX=1;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="decoder" target="ring">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel4" value="デコード画像" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="934.0" y="488.0" width="92" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge5" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="ring" target="compose">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel5" value="取得・完了確認" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="805.5" y="586" width="105" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge6" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="timeline" target="mailbox">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel6" value="最新の状態" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="425.5" y="508" width="79" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge7" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="mailbox" target="compose">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel7" value="合成条件" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="584.5" y="638.0" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge8" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="compose" target="pool">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel8" value="合成画像" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="947.0" y="638.0" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge9" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="pool" target="send">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel9" value="共有画像" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#8554c2;" vertex="1" parent="1">
+          <mxGeometry x="1178.0" y="736" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge10" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#8554c2;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="pool" target="outputs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge11" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#168399;strokeWidth=2;exitX=0;exitY=0.5;entryX=1;entryY=0.5;exitPerimeter=0;entryPerimeter=0;dashed=1;dashPattern=7 5;" edge="1" parent="1" source="drain" target="uicallback">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel11" value="更新通知のみ" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#168399;" vertex="1" parent="1">
+          <mxGeometry x="934.0" y="938.0" width="92" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="note0" value="同じ英字は離れた通知経路の接続先：A＝native の更新通知、B＝プレビュー、C＝UI 更新の予約。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=18;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="48" y="1056" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="note1" value="lease＝画像の貸出権。GPU の使用完了まで返さない。generation＝古い画像・通知を見分ける番号。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=17;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="48" y="1096" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="note2" value="GStreamer 内部には streaming / bus / pump 等があるため、図の 1 行が必ず 1 本の OS スレッドとは限らない。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=16;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="48" y="1131" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="footer" value="TimecodeSyncPlayer | 現行コードの構成図 | 主要な経路を要約" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=11;fontColor=#94a3b8;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1205" width="1400" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="03-sync" name="03  LTC 同期 — 時刻から再生操作まで">
+    <mxGraphModel dx="1600" dy="1590" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1590" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="03  LTC 同期 — 時刻から再生操作まで" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=30;fontColor=#243349;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="22" width="1500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="LtcSyncController が入口を統括。粗いシーク判断と継続再生中の補正は別の判断器を使う。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=17;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="68" width="1520" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" value="青：制御・状態　　紫：映像データ　　水色の破線：通知" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=14;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="101" width="1020" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="version" value="v0.4.7 · a4cb181 · 2026-09-20" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=14;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1250" y="101" width="310" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="frame" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;1. LTC フレームを受け取る&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;音声のフレーム終端時刻とタイムコード&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;UI の Dispatcher に渡す&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#148365;margin-top:8px&quot;&gt;LtcAudioMonitor → MainWindow&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#ecfdf5;strokeColor=#148365;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="60" y="185" width="430" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="diagnostics" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;2. fps 解決と信号の診断&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Normal / Jump / Reverse / Duplicate / Invalid&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Jump の確認・保持・信号断の方針を適用&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;LtcFrameProcessor / LtcSyncController&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="585" y="185" width="430" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="effective" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;3. 同期に使う時刻を作る&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;通常受信：LTC 秒＋受信後の経過＋offset&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;保持値の適用などでは経過時間を足さない&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;EffectiveSeconds / SyncOffsetPolicy&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="185" width="430" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="loss" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;信号が止まった場合&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;LtcSignalLossPolicy：RunThrough / Stop&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;タイマーも監視。復帰条件を満たすまで抑止&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#aa8120;margin-top:8px&quot;&gt;LtcSyncController.Tick&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fffbea;strokeColor=#aa8120;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="60" y="390" width="430" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="mode" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;4. モードとトラック範囲で分岐&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Sync ON・監視中・プレイヤー準備済みを確認&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Continue はタイムライン上の素材を検索&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;LtcSyncController.ApplySync&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="585" y="390" width="430" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="single" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;Single：現在の素材に追従&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;LTC から素材位置を決定&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;MediaIn / MediaOut で境界を制限・保持&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;SingleModeSyncCoordinator&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="60" y="595" width="430" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="continue" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;Continue：素材を選んで追従&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;TimelineOffset 等から素材内の秒へ変換&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;必要なら素材ロード／Gap 退出を実行&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;PlaylistState / ContinueOnTrackCoordinator&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="585" y="595" width="430" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="gap" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;Gap：素材のない区間&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Black または Freeze を決定&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;必要なフレームの取得・保持を調整&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;GapFreezeHandler / GapEnterCoordinator&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="595" width="430" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="target" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;素材内の目標位置と再生状態（Single / Continue 共通）&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;モードごとに目標を決めた後、シーク判断と継続再生中の補正を条件に応じて使い分ける。&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;LtcSyncController / 各 Coordinator&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="60" y="800" width="955" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="coarse" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;5a. シークするか・待つか&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;ロード安定・位置の信頼性・着地待ち&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;履歴ゲート、debounce、着地所要の学習&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;D → 保留した要求は次回へ&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;TimecodeSyncService / SyncDecisionEngine&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1010" width="430" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="fine" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;5b. 継続再生中のずれを補正&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;補正可能なフレームだけ Controller が実行&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Smooth：速度変更 ／ Jump：シーク&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;SyncCorrectionController&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="585" y="1010" width="430" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="visual" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;表示状態を GPU に渡す&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Black / Hold / GapFreeze・配置・世代&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;映像を止める判断と画像の保持を分担&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;TimelineOutputState → ComposeLayer&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="1010" width="430" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="execute" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;6. 再生 API で実行&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Load / Seek / SetPaused / SetRateInstant&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;結果・再生位置・到着状況を次回判断に使う&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#bf691e;margin-top:8px&quot;&gt;GstPlaybackApi → native shim&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fff7ed;strokeColor=#bf691e;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1300" width="430" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="waiting" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;D｜保留した要求は次回へ&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;新しい受信フレーム／Tick で再評価&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;ロード・シーク発行と実際の着地を区別&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#718096;margin-top:8px&quot;&gt;SyncRequestResult.Deferred&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f1f5f9;strokeColor=#718096;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="585" y="1300" width="430" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="advisory" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;警告と同期制御は別の責務&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;GOP / コーデック / デコード追従の警告&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;素材の交換や設定の判断材料として表示&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#aa8120;margin-top:8px&quot;&gt;GopScanCache / DecodeHealthMonitor&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fffbea;strokeColor=#aa8120;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="1300" width="430" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="frame" target="diagnostics">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel0" value="受信時刻" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="504.5" y="220.5" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge1" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="diagnostics" target="effective">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel1" value="受理した値" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="1023.0" y="220.5" width="79" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge2" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=1;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="effective" target="mode">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1325" y="452.5" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edgeLabel2" value="同期要求" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="1147.0" y="423" width="66" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#168399;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;dashed=1;dashPattern=7 5;" edge="1" parent="1" source="diagnostics" target="loss">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="800" y="355" />
+              <mxPoint x="275" y="355" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge4" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="loss" target="mode">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel4" value="抑止／復帰" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="498.0" y="425.5" width="79" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge5" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.2;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="mode" target="single">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="671" y="552" />
+              <mxPoint x="275" y="552" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edgeLabel5" value="Single" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="432.0" y="524" width="56" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge6" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="mode" target="continue">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel6" value="Continue / OnTrack" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="825.0" y="558" width="140" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge7" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.8;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="mode" target="gap">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="929" y="552" />
+              <mxPoint x="1325" y="552" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edgeLabel7" value="Continue / Gap" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="1119.0" y="524" width="112" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge8" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.225130890052356;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="single" target="target">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge9" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.774869109947644;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="continue" target="target">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge10" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.225130890052356;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="target" target="coarse">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel10" value="シーク判断" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="300.5" y="953" width="79" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge11" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.774869109947644;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="target" target="fine">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel11" value="補正可能な場合" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="827.5" y="953" width="105" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge12" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="gap" target="visual">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge13" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="coarse" target="execute">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edgeLabel13" value="シーク実行" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="300.5" y="1223" width="79" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="edge14" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.85;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="fine" target="execute">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="800" y="1225" />
+              <mxPoint x="425.5" y="1225" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edgeLabel14" value="速度／シーク" style="text;html=0;align=center;verticalAlign=middle;fillColor=#ffffff;strokeColor=none;fontSize=13;fontColor=#3264c5;" vertex="1" parent="1">
+          <mxGeometry x="594.0" y="1191" width="92" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="note0" value="5a・5b は UI スレッド上での条件分岐。D は保留要求の接続先。モード別の例外分岐は省略している。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=18;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1466" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="note1" value="位置フィードバックや GOP 由来のシーク先行量には環境変数による実験経路があり、既定経路と区別する。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=16;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1502" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="footer" value="TimecodeSyncPlayer | 現行コードの構成図 | 主要な経路を要約" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=11;fontColor=#94a3b8;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1555" width="1400" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="04-lifecycle" name="04  起動・GPU 復旧・終了">
+    <mxGraphModel dx="1600" dy="1290" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1290" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="04  起動・GPU 復旧・終了" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=30;fontColor=#243349;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="22" width="1500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="寿命の管理は MainWindow、GstBackendState、RenderSession、OutputEngine に分担されている。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=17;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="68" width="1520" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" value="青：制御・状態　　紫：映像データ　　水色の破線：通知" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=14;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="101" width="1020" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="version" value="v0.4.7 · a4cb181 · 2026-09-20" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=14;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1250" y="101" width="310" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="band0" value="起動  /  App → MainWindow" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="60" y="155" width="430" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="band1" value="復旧  /  OutputEngine → UI" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="585" y="155" width="430" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="band2" value="終了  /  ExitCoordinator" style="rounded=1;whiteSpace=wrap;html=0;align=left;verticalAlign=top;spacingLeft=15;spacingTop=12;fontSize=17;fontStyle=1;fillColor=#f8fafc;strokeColor=#e2e8f0;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="155" width="430" height="950" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;1. DI・設定・GPU 能力検査&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Singleton を登録、設定とログを準備&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;D3D11.4 非対応なら再生を無効にする&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;App.OnStartup / OutputBackendState&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="80" y="215" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;2. 画面と出力エンジンを生成&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;ViewModels / RenderSession を接続&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;GPU worker 開始 → デバイス情報を shim へ&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;MainWindow constructor / OutputEngine&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="80" y="390" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;3. WindowLoaded でセッション初期化&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;player 生成、音声設定、通知を登録&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;GStreamerSource を出力エンジンへ接続&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#bf691e;margin-top:8px&quot;&gt;WindowLoadedSessionInitializer&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fff7ed;strokeColor=#bf691e;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="80" y="565" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;4. タイマーと画面を開始&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;タイムライン・操作・プレビューを駆動&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;LTC の開始と Sync ON は操作で切替&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;WindowLoadedCoordinator&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="80" y="740" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;定常動作&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;UI：何をいつ再生するかを判断&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;GPU：届いた画像と表示状態で描画&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;各 worker と mailbox&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="80" y="915" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;1. GPU デバイス消失を検出&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;対象は GpuDeviceLostException&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;自動復旧はプロセス寿命で 1 回&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#aa8120;margin-top:8px&quot;&gt;GpuRecoveryState&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fffbea;strokeColor=#aa8120;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="605" y="215" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="r2" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;2. 出力を停止・資源を整理&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Spout worker 停止&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;lease 返却・合成資源の破棄&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;GpuRecoveryPlan steps 1–2&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="605" y="390" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="r3" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;3. GPU 出力資源を再構築&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;デバイス → 合成 → 全画面 → Spout&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;最後に GStreamer の共有リングを開き直す&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;GpuRecoveryPlan steps 3–7&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="605" y="565" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="r4" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;4. リング再接続できない場合&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;UI：DetachPlayer → RecreatePlayer&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;AttachPlayer → ソース接続 → 素材再読込&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;MainWindow.OnGStreamerRebindRequested&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="605" y="740" width="390" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="r5" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;復旧成功 / 手動再試行&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;成功：通常ループへ戻る&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;復旧失敗・再発：Failed → 再試行ボタン&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#aa8120;margin-top:8px&quot;&gt;GpuRecoveryState / RetryGpuRecovery&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fffbea;strokeColor=#aa8120;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="605" y="935" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;1. 終了確認&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;確認中も再生・LTC・出力は継続&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;キャンセルで通常動作へ戻る&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;ExitCoordinator / ExitTransitions&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="215" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;2. 新規受付と通知の処理を停止&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;新しい UI／LTC 処理を受け付けない&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;RenderSession.Stop で native 処理を待つ&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;MainWindowResourceDisposer&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="390" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;3. 出力を停止&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;GPU / Spout worker の終了を待つ&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;画像の使用完了と資源の返却を整理&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#8554c2;margin-top:8px&quot;&gt;OutputEngine.Stop&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#f5f0ff;strokeColor=#8554c2;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="565" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;4. 全画面とタイマーを閉じる&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;swapchain を切り離して子 HWND を閉じる&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;UI タイマーを停止&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#3264c5;margin-top:8px&quot;&gt;CloseFullscreenOutput&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#eff6ff;strokeColor=#3264c5;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="740" width="390" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="&lt;div style=&quot;font-size:18px;font-weight:bold;margin-bottom:10px&quot;&gt;5. 資源を順序付きで解放&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;render context → player → LTC / 出力&lt;/div&gt;&lt;div style=&quot;font-size:15px;line-height:23px&quot;&gt;Spout・タイムライン・RenderSession&lt;/div&gt;&lt;div style=&quot;font-size:11.5px;color:#bf691e;margin-top:8px&quot;&gt;MainWindowResourceDisposer&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingTop=14;spacingLeft=16;spacingRight=12;arcSize=12;fillColor=#fff7ed;strokeColor=#bf691e;strokeWidth=1.5;fontFamily=Yu Gothic;fontColor=#243349;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="915" width="390" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="s1" target="s2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge1" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="s2" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge2" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="s3" target="s4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="s4" target="s5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge4" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="r1" target="r2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge5" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="r2" target="r3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge6" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="r3" target="r4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge7" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="r4" target="r5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge8" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="e1" target="e2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge9" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="e2" target="e3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge10" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="e3" target="e4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge11" style="edgeStyle=none;rounded=0;html=0;endArrow=block;endFill=1;strokeColor=#3264c5;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitPerimeter=0;entryPerimeter=0;" edge="1" parent="1" source="e4" target="e5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="note0" value="起動条件：D3D11.4 が必須。software decode を選んでも、合成・出力には GPU が必要。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=18;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1126" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="note1" value="復旧の 4 は条件付き。終了図は通常経路の要約。失敗は集約し、安全に解放できない資源は保持する。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=17;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1160" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="note2" value="この図は現行の責務分担を示すもの。再設計案や、以前のレビュー時点の未修正状態を描いたものではない。" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=16;fontColor=#475569;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1194" width="1510" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="footer" value="TimecodeSyncPlayer | 現行コードの構成図 | 主要な経路を要約" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Yu Gothic;fontSize=11;fontColor=#94a3b8;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1255" width="1400" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

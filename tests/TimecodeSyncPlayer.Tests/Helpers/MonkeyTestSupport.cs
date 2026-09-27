@@ -226,7 +226,11 @@ internal sealed class MonkeyJournal : IDisposable
             FileShare.ReadWrite | FileShare.Delete);
         _writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
         _seed = seed;
+        JournalPath = fullPath;
     }
+
+    /// <summary>このジャーナルの絶対パス（run の後に <see cref="Append"/> で追記する用）。</summary>
+    public string JournalPath { get; }
 
     public long ElapsedMilliseconds => _stopwatch.ElapsedMilliseconds;
 
@@ -255,6 +259,28 @@ internal sealed class MonkeyJournal : IDisposable
     }
 
     public void Dispose() => _writer.Dispose();
+
+    /// <summary>
+    /// ジャーナルを閉じた後（アプリ終了後の判定など）に、同じ形式で 1 件だけ追記する。
+    /// タイムスタンプは追記時刻、elapsedMilliseconds は 0（run の外の判定のため）。
+    /// </summary>
+    public static void Append(string path, string eventName, object? details = null)
+    {
+        var entry = new
+        {
+            timestampUtc = DateTimeOffset.UtcNow,
+            elapsedMilliseconds = 0,
+            @event = eventName,
+            seed = 0,
+            actionIndex = (int?)null,
+            operation = (string?)null,
+            process = (object?)null,
+            details,
+        };
+        File.AppendAllText(Path.GetFullPath(path),
+            JsonSerializer.Serialize(entry, MonkeyJson.Options) + Environment.NewLine,
+            new UTF8Encoding(false));
+    }
 
     private static object? CaptureProcessState(Process? process)
     {

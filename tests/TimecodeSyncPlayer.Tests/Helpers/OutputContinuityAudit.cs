@@ -15,14 +15,34 @@ internal readonly record struct HeldSpan(long StartQpc, long EndQpc, double Seco
 
 internal readonly record struct DeliveryGap(long StartQpc, long EndQpc, double Seconds);
 
+/// <summary>
+/// トラック切替の除外区間。切替の発行（`load.issue`）から新しいトラックの最初のフレームの配信
+/// （次の `gst.delivery`）まで。<see cref="Capped"/> が真なら上限（既定 1.0 秒）で打ち切った
+/// ＝その先も同じ絵が続けば除外されない（U-1 の FAIL の材料）。
+/// </summary>
+internal readonly record struct SwitchExclusion(long StartQpc, long EndQpc, double Seconds, bool Capped);
+
 internal sealed record OutputContinuitySummary(
     int ComposeTicks,
     int Deliveries,
     IReadOnlyList<HeldSpan> HeldSpans,
-    IReadOnlyList<DeliveryGap> DeliveryGaps)
+    IReadOnlyList<DeliveryGap> DeliveryGaps,
+    IReadOnlyList<SwitchExclusion> SwitchExclusions)
 {
     public HeldSpan? LongestHeld => HeldSpans.Count == 0 ? null : HeldSpans.MaxBy(span => span.Seconds);
     public DeliveryGap? LongestDeliveryGap => DeliveryGaps.Count == 0 ? null : DeliveryGaps.MaxBy(gap => gap.Seconds);
+
+    /// <summary>
+    /// 切替の除外区間に収まらない Held（U-1 の FAIL の材料）。除外は「切替の発行から 1.0 秒以内に
+    /// 同じ絵が終わった」場合だけ。1.0 秒を超えて続いた保持は除外しない。
+    /// </summary>
+    public IReadOnlyList<HeldSpan> UnexplainedHeldSpans =>
+        HeldSpans.Where(span => !IsSwitchExcluded(span)).ToArray();
+
+    /// <summary>この Held が切替の除外区間に収まるか（切替の発行以降に終わり、上限の内側）。</summary>
+    public bool IsSwitchExcluded(HeldSpan span) =>
+        SwitchExclusions.Any(exclusion =>
+            span.EndQpc > exclusion.StartQpc && span.EndQpc <= exclusion.EndQpc);
 }
 
 /// <summary>
@@ -33,6 +53,9 @@ internal sealed record OutputContinuitySummary(
 /// 取得できたフレーム番号（imageId）が前回と同じか、Ready でなければ「前の絵を描いた（Held）」。
 /// Held が続いた区間ごとに、同じ時間帯に shim の配信（gst.delivery）が何件あったかを数えて、
 /// 止まっていたのが**再生側か合成側か**を分ける。
+/// トラック切替の直後は、切替の発行（load.issue）から新しいトラックの最初のフレームの到着までの
+/// 区間（上限 1.0 秒。`SwitchExclusion`）を除外する。上限を超えて同じ絵が続いた保持は除外しない
+/// （U-1 では FAIL）。
 /// </summary>
 internal static class OutputContinuityAudit
 {
@@ -47,7 +70,7 @@ internal static class OutputContinuityAudit
             using JsonDocument document = JsonDocument.Parse(line);
             JsonElement root = document.RootElement;
             string stage = root.GetProperty("stage").GetString() ?? "";
-            if (stage is not ("compose.acquire" or "gst.delivery")) continue;
+            if (stage is not ("compose.acquire" or "gst.delivery" or "load.issue")) continue;
             yield return new TraceEvent(
                 stage,
                 root.GetProperty("qpc").GetInt64(),
@@ -63,8 +86,10 @@ internal static class OutputContinuityAudit
     /// <param name="minHeldSeconds">この長さ以上続いた Held だけを区間として返す。</param>
     /// <param name="minDeliveryGapSeconds">この長さ以上空いた配信の間隔だけを返す。</param>
     /// <param name="fromQpc">これより前の事象は数えない（起動・プロジェクト読み込みの一時停止区間を除く）。</param>
+    /// <param name="switchExclusionCapSeconds">トラック切替の除外区間の上限（既定 1.0 秒）。</param>
     public static OutputContinuitySummary Summarize(IEnumerable<TraceEvent> events, long frequency,
-        double minHeldSeconds = 0.25, double minDeliveryGapSeconds = 0.1, long fromQpc = long.MinValue)
+        double minHeldSeconds = 0.25, double minDeliveryGapSeconds = 0.1, long fromQpc = long.MinValue,
+        double switchExclusionCapSeconds = 1.0)
     {
         var ordered = events.Where(e => e.Qpc >= fromQpc).OrderBy(e => e.Qpc).ToList();
         var deliveries = ordered.Where(e => e.Stage == "gst.delivery").Select(e => e.Qpc).ToList();
@@ -99,7 +124,9 @@ internal static class OutputContinuityAudit
             if (seconds >= minDeliveryGapSeconds)
                 gaps.Add(new DeliveryGap(deliveries[i - 1], deliveries[i], seconds));
         }
-        return new OutputContinuitySummary(composeTicks, deliveries.Count, heldSpans, gaps);
+        IReadOnlyList<SwitchExclusion> exclusions =
+            FindSwitchExclusions(ordered, frequency, switchExclusionCapSeconds);
+        return new OutputContinuitySummary(composeTicks, deliveries.Count, heldSpans, gaps, exclusions);
 
         void Close(long endQpc)
         {
@@ -117,6 +144,41 @@ internal static class OutputContinuityAudit
             heldStart = null;
             heldTicks = 0;
         }
+    }
+
+    /// <summary>
+    /// トラック切替の除外区間を求める。切替の発行（`load.issue`）から、その後に最初に届いたフレーム
+    /// （`gst.delivery`）まで。上限 <paramref name="maxSeconds"/>（既定 1.0 秒）で打ち切る。
+    /// 最初のフレームを採る合成 tick のずれ（<see cref="LateTakeAllowanceSeconds"/>）ぶんを終端に足す。
+    /// <paramref name="orderedEvents"/> は qpc の昇順であること。
+    /// </summary>
+    public static IReadOnlyList<SwitchExclusion> FindSwitchExclusions(IReadOnlyList<TraceEvent> orderedEvents,
+        long frequency, double maxSeconds = 1.0)
+    {
+        var deliveries = orderedEvents.Where(e => e.Stage == "gst.delivery").Select(e => e.Qpc).ToList();
+        long capTicks = (long)(Math.Max(0.0, maxSeconds) * frequency);
+        long allowanceTicks = (long)(LateTakeAllowanceSeconds * frequency);
+        var exclusions = new List<SwitchExclusion>();
+        foreach (TraceEvent loadIssue in orderedEvents.Where(e => e.Stage == "load.issue"))
+        {
+            long capEnd = loadIssue.Qpc + capTicks;
+            long? firstDelivery = null;
+            foreach (long qpc in deliveries)
+            {
+                if (qpc > loadIssue.Qpc)
+                {
+                    firstDelivery = qpc;
+                    break;
+                }
+            }
+
+            long end = firstDelivery is long delivery
+                ? Math.Min(delivery + allowanceTicks, capEnd)
+                : capEnd;
+            bool capped = end >= capEnd;
+            exclusions.Add(new SwitchExclusion(loadIssue.Qpc, end, (end - loadIssue.Qpc) / (double)frequency, capped));
+        }
+        return exclusions;
     }
 
     private static int CountBetween(List<long> sortedQpcs, long start, long end)

@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1290" viewBox="0 0 1600 1290" role="img" aria-label="04  起動・GPU 復旧・終了">
+<style>text{font-family:"Yu Gothic","Meiryo","Segoe UI",sans-serif} .node:hover rect{filter:brightness(.97)}</style>
+<defs>
+<marker id="arrow-control" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3264c5"/></marker>
+<marker id="arrow-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8554c2"/></marker>
+<marker id="arrow-event" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#168399"/></marker>
+<marker id="arrow-note" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#718096"/></marker>
+</defs>
+<rect width="1600" height="1290" fill="#ffffff"/>
+<text x="40" y="52" font-size="30" font-weight="700" fill="#243349" text-anchor="start">04  起動・GPU 復旧・終了</text>
+<text x="40" y="87" font-size="17" font-weight="400" fill="#243349" text-anchor="start">寿命の管理は MainWindow、GstBackendState、RenderSession、OutputEngine に分担されている。</text>
+<text x="1560" y="117" font-size="14" font-weight="400" fill="#64748b" text-anchor="end">v0.4.7 · a4cb181 · 2026-09-20</text>
+<path d="M40 118 h38" stroke="#3264c5" stroke-width="2.5" />
+<text x="88" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">青：制御・状態</text>
+<path d="M285 118 h38" stroke="#8554c2" stroke-width="2.5" />
+<text x="333" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">紫：映像データ</text>
+<path d="M530 118 h38" stroke="#168399" stroke-width="2.5" stroke-dasharray="7 5" />
+<text x="578" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">水色の破線：通知</text>
+<rect x="60" y="155" width="430" height="950" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="75" y="184" font-size="17" font-weight="700" fill="#243349" text-anchor="start">起動  /  App → MainWindow</text>
+<rect x="585" y="155" width="430" height="950" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="600" y="184" font-size="17" font-weight="700" fill="#243349" text-anchor="start">復旧  /  OutputEngine → UI</text>
+<rect x="1110" y="155" width="430" height="950" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="1125" y="184" font-size="17" font-weight="700" fill="#243349" text-anchor="start">終了  /  ExitCoordinator</text>
+<polyline points="275.0,335 275.0,390" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="275.0,510 275.0,565" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="275.0,685 275.0,740" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="275.0,860 275.0,915" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,335 800.0,390" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,510 800.0,565" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,685 800.0,740" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,875 800.0,935" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1325.0,335 1325.0,390" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1325.0,510 1325.0,565" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1325.0,685 1325.0,740" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1325.0,860 1325.0,915" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<g class="node"><title>App.OnStartup / OutputBackendState</title>
+<rect x="80" y="215" width="390" height="120" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="96" y="244" font-size="18" font-weight="700" fill="#243349" text-anchor="start">1. DI・設定・GPU 能力検査</text>
+<text x="96" y="271" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Singleton を登録、設定とログを準備</text>
+<text x="96" y="294" font-size="15" font-weight="400" fill="#243349" text-anchor="start">D3D11.4 非対応なら再生を無効にする</text>
+<text x="96" y="320" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">App.OnStartup / OutputBackendState</text>
+</g>
+<g class="node"><title>MainWindow constructor / OutputEngine</title>
+<rect x="80" y="390" width="390" height="120" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="96" y="419" font-size="18" font-weight="700" fill="#243349" text-anchor="start">2. 画面と出力エンジンを生成</text>
+<text x="96" y="446" font-size="15" font-weight="400" fill="#243349" text-anchor="start">ViewModels / RenderSession を接続</text>
+<text x="96" y="469" font-size="15" font-weight="400" fill="#243349" text-anchor="start">GPU worker 開始 → デバイス情報を shim へ</text>
+<text x="96" y="495" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">MainWindow constructor / OutputEngine</text>
+</g>
+<g class="node"><title>WindowLoadedSessionInitializer</title>
+<rect x="80" y="565" width="390" height="120" rx="12" fill="#fff7ed" stroke="#bf691e" stroke-width="1.5"/>
+<text x="96" y="594" font-size="18" font-weight="700" fill="#243349" text-anchor="start">3. WindowLoaded でセッション初期化</text>
+<text x="96" y="621" font-size="15" font-weight="400" fill="#243349" text-anchor="start">player 生成、音声設定、通知を登録</text>
+<text x="96" y="644" font-size="15" font-weight="400" fill="#243349" text-anchor="start">GStreamerSource を出力エンジンへ接続</text>
+<text x="96" y="670" font-size="11.5" font-weight="500" fill="#bf691e" text-anchor="start">WindowLoadedSessionInitializer</text>
+</g>
+<g class="node"><title>WindowLoadedCoordinator</title>
+<rect x="80" y="740" width="390" height="120" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="96" y="769" font-size="18" font-weight="700" fill="#243349" text-anchor="start">4. タイマーと画面を開始</text>
+<text x="96" y="796" font-size="15" font-weight="400" fill="#243349" text-anchor="start">タイムライン・操作・プレビューを駆動</text>
+<text x="96" y="819" font-size="15" font-weight="400" fill="#243349" text-anchor="start">LTC の開始と Sync ON は操作で切替</text>
+<text x="96" y="845" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">WindowLoadedCoordinator</text>
+</g>
+<g class="node"><title>各 worker と mailbox</title>
+<rect x="80" y="915" width="390" height="120" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="96" y="944" font-size="18" font-weight="700" fill="#243349" text-anchor="start">定常動作</text>
+<text x="96" y="971" font-size="15" font-weight="400" fill="#243349" text-anchor="start">UI：何をいつ再生するかを判断</text>
+<text x="96" y="994" font-size="15" font-weight="400" fill="#243349" text-anchor="start">GPU：届いた画像と表示状態で描画</text>
+<text x="96" y="1020" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">各 worker と mailbox</text>
+</g>
+<g class="node"><title>GpuRecoveryState</title>
+<rect x="605" y="215" width="390" height="120" rx="12" fill="#fffbea" stroke="#aa8120" stroke-width="1.5"/>
+<text x="621" y="244" font-size="18" font-weight="700" fill="#243349" text-anchor="start">1. GPU デバイス消失を検出</text>
+<text x="621" y="271" font-size="15" font-weight="400" fill="#243349" text-anchor="start">対象は GpuDeviceLostException</text>
+<text x="621" y="294" font-size="15" font-weight="400" fill="#243349" text-anchor="start">自動復旧はプロセス寿命で 1 回</text>
+<text x="621" y="320" font-size="11.5" font-weight="500" fill="#aa8120" text-anchor="start">GpuRecoveryState</text>
+</g>
+<g class="node"><title>GpuRecoveryPlan steps 1–2</title>
+<rect x="605" y="390" width="390" height="120" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="621" y="419" font-size="18" font-weight="700" fill="#243349" text-anchor="start">2. 出力を停止・資源を整理</text>
+<text x="621" y="446" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Spout worker 停止</text>
+<text x="621" y="469" font-size="15" font-weight="400" fill="#243349" text-anchor="start">lease 返却・合成資源の破棄</text>
+<text x="621" y="495" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">GpuRecoveryPlan steps 1–2</text>
+</g>
+<g class="node"><title>GpuRecoveryPlan steps 3–7</title>
+<rect x="605" y="565" width="390" height="120" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="621" y="594" font-size="18" font-weight="700" fill="#243349" text-anchor="start">3. GPU 出力資源を再構築</text>
+<text x="621" y="621" font-size="15" font-weight="400" fill="#243349" text-anchor="start">デバイス → 合成 → 全画面 → Spout</text>
+<text x="621" y="644" font-size="15" font-weight="400" fill="#243349" text-anchor="start">最後に GStreamer の共有リングを開き直す</text>
+<text x="621" y="670" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">GpuRecoveryPlan steps 3–7</text>
+</g>
+<g class="node"><title>MainWindow.OnGStreamerRebindRequested</title>
+<rect x="605" y="740" width="390" height="135" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="621" y="769" font-size="18" font-weight="700" fill="#243349" text-anchor="start">4. リング再接続できない場合</text>
+<text x="621" y="796" font-size="15" font-weight="400" fill="#243349" text-anchor="start">UI：DetachPlayer → RecreatePlayer</text>
+<text x="621" y="819" font-size="15" font-weight="400" fill="#243349" text-anchor="start">AttachPlayer → ソース接続 → 素材再読込</text>
+<text x="621" y="860" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">MainWindow.OnGStreamerRebindRequested</text>
+</g>
+<g class="node"><title>GpuRecoveryState / RetryGpuRecovery</title>
+<rect x="605" y="935" width="390" height="120" rx="12" fill="#fffbea" stroke="#aa8120" stroke-width="1.5"/>
+<text x="621" y="964" font-size="18" font-weight="700" fill="#243349" text-anchor="start">復旧成功 / 手動再試行</text>
+<text x="621" y="991" font-size="15" font-weight="400" fill="#243349" text-anchor="start">成功：通常ループへ戻る</text>
+<text x="621" y="1014" font-size="15" font-weight="400" fill="#243349" text-anchor="start">復旧失敗・再発：Failed → 再試行ボタン</text>
+<text x="621" y="1040" font-size="11.5" font-weight="500" fill="#aa8120" text-anchor="start">GpuRecoveryState / RetryGpuRecovery</text>
+</g>
+<g class="node"><title>ExitCoordinator / ExitTransitions</title>
+<rect x="1130" y="215" width="390" height="120" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="1146" y="244" font-size="18" font-weight="700" fill="#243349" text-anchor="start">1. 終了確認</text>
+<text x="1146" y="271" font-size="15" font-weight="400" fill="#243349" text-anchor="start">確認中も再生・LTC・出力は継続</text>
+<text x="1146" y="294" font-size="15" font-weight="400" fill="#243349" text-anchor="start">キャンセルで通常動作へ戻る</text>
+<text x="1146" y="320" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">ExitCoordinator / ExitTransitions</text>
+</g>
+<g class="node"><title>MainWindowResourceDisposer</title>
+<rect x="1130" y="390" width="390" height="120" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="1146" y="419" font-size="18" font-weight="700" fill="#243349" text-anchor="start">2. 新規受付と通知の処理を停止</text>
+<text x="1146" y="446" font-size="15" font-weight="400" fill="#243349" text-anchor="start">新しい UI／LTC 処理を受け付けない</text>
+<text x="1146" y="469" font-size="15" font-weight="400" fill="#243349" text-anchor="start">RenderSession.Stop で native 処理を待つ</text>
+<text x="1146" y="495" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">MainWindowResourceDisposer</text>
+</g>
+<g class="node"><title>OutputEngine.Stop</title>
+<rect x="1130" y="565" width="390" height="120" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="1146" y="594" font-size="18" font-weight="700" fill="#243349" text-anchor="start">3. 出力を停止</text>
+<text x="1146" y="621" font-size="15" font-weight="400" fill="#243349" text-anchor="start">GPU / Spout worker の終了を待つ</text>
+<text x="1146" y="644" font-size="15" font-weight="400" fill="#243349" text-anchor="start">画像の使用完了と資源の返却を整理</text>
+<text x="1146" y="670" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">OutputEngine.Stop</text>
+</g>
+<g class="node"><title>CloseFullscreenOutput</title>
+<rect x="1130" y="740" width="390" height="120" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="1146" y="769" font-size="18" font-weight="700" fill="#243349" text-anchor="start">4. 全画面とタイマーを閉じる</text>
+<text x="1146" y="796" font-size="15" font-weight="400" fill="#243349" text-anchor="start">swapchain を切り離して子 HWND を閉じる</text>
+<text x="1146" y="819" font-size="15" font-weight="400" fill="#243349" text-anchor="start">UI タイマーを停止</text>
+<text x="1146" y="845" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">CloseFullscreenOutput</text>
+</g>
+<g class="node"><title>MainWindowResourceDisposer</title>
+<rect x="1130" y="915" width="390" height="135" rx="12" fill="#fff7ed" stroke="#bf691e" stroke-width="1.5"/>
+<text x="1146" y="944" font-size="18" font-weight="700" fill="#243349" text-anchor="start">5. 資源を順序付きで解放</text>
+<text x="1146" y="971" font-size="15" font-weight="400" fill="#243349" text-anchor="start">render context → player → LTC / 出力</text>
+<text x="1146" y="994" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Spout・タイムライン・RenderSession</text>
+<text x="1146" y="1035" font-size="11.5" font-weight="500" fill="#bf691e" text-anchor="start">MainWindowResourceDisposer</text>
+</g>
+<text x="60" y="1150" font-size="18" font-weight="400" fill="#475569" text-anchor="start">起動条件：D3D11.4 が必須。software decode を選んでも、合成・出力には GPU が必要。</text>
+<text x="60" y="1184" font-size="17" font-weight="400" fill="#475569" text-anchor="start">復旧の 4 は条件付き。終了図は通常経路の要約。失敗は集約し、安全に解放できない資源は保持する。</text>
+<text x="60" y="1218" font-size="16" font-weight="400" fill="#475569" text-anchor="start">この図は現行の責務分担を示すもの。再設計案や、以前のレビュー時点の未修正状態を描いたものではない。</text>
+<text x="40" y="1274" font-size="11" font-weight="400" fill="#94a3b8" text-anchor="start">TimecodeSyncPlayer  |  現行コードの構成図  |  主要な経路を要約</text>
+</svg>
