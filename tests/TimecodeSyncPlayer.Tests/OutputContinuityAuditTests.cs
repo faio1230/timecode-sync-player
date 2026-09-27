@@ -89,4 +89,62 @@ public class OutputContinuityAuditTests
 
         OutputContinuityAudit.Summarize(events, Frequency).HeldSpans.Should().BeEmpty();
     }
+
+    // ---- トラック切替の除外（切替の発行 → 新しいトラックの最初のフレーム、上限 1.0 秒）----
+
+    private static TraceEvent LoadIssue(long ms) => new("load.issue", ms, 0, "start");
+
+    [Fact]
+    public void SwitchLoad_HeldWithinOneSecondAfterTheSwitch_IsExcluded()
+    {
+        // 切替を発行（50ms）してから最初のフレームが届く（433ms）まで、前の絵が 433ms 続く。
+        var events = new List<TraceEvent> { Acquire(0, 1), LoadIssue(50) };
+        for (long t = 16; t <= 432; t += 16)
+            events.Add(Acquire(t, 1));
+        events.Add(Delivery(433, 2));
+        events.Add(Acquire(449, 2));   // 届いたフレームを次の tick で採る
+
+        OutputContinuitySummary summary = OutputContinuityAudit.Summarize(events, Frequency);
+
+        summary.HeldSpans.Should().ContainSingle().Which.Seconds.Should().BeApproximately(0.433, 0.001);
+        summary.SwitchExclusions.Should().ContainSingle();
+        summary.SwitchExclusions[0].Seconds.Should().BeApproximately(0.417, 0.001,
+            "除外は発行から最初のフレームの配信 + 採る tick のずれまで");
+        summary.SwitchExclusions[0].Capped.Should().BeFalse("最初のフレームが 1.0 秒以内に届いた");
+        summary.UnexplainedHeldSpans.Should().BeEmpty("切替の直後 433ms の保持は外れる");
+    }
+
+    [Fact]
+    public void SwitchLoad_HeldBeyondOneSecond_IsNotExcluded()
+    {
+        // 切替を発行（50ms）してから 1.2 秒、前の絵が続く。上限を超えた分は除外しない。
+        var events = new List<TraceEvent> { Acquire(0, 1), LoadIssue(50) };
+        for (long t = 16; t <= 1216; t += 16)
+            events.Add(Acquire(t, 1));
+        events.Add(Delivery(1216, 2));
+        events.Add(Acquire(1232, 2));
+
+        OutputContinuitySummary summary = OutputContinuityAudit.Summarize(events, Frequency);
+
+        summary.HeldSpans.Should().ContainSingle().Which.Seconds.Should().BeApproximately(1.216, 0.001);
+        summary.SwitchExclusions.Should().ContainSingle();
+        summary.SwitchExclusions[0].Seconds.Should().BeApproximately(1.0, 0.001);
+        summary.SwitchExclusions[0].Capped.Should().BeTrue("上限（1.0 秒）で打ち切った");
+        summary.UnexplainedHeldSpans.Should().ContainSingle(
+            "1.0 秒を超えて同じ絵が続けば U-1 でも FAIL の材料に残る");
+    }
+
+    [Fact]
+    public void HeldWithoutASwitch_IsNotExcluded()
+    {
+        var events = new List<TraceEvent> { Acquire(0, 1) };
+        for (long t = 16; t <= 400; t += 16)
+            events.Add(Acquire(t, 1));
+        events.Add(Acquire(416, 2));
+
+        OutputContinuitySummary summary = OutputContinuityAudit.Summarize(events, Frequency);
+
+        summary.SwitchExclusions.Should().BeEmpty("load.issue が無ければ除外は無い");
+        summary.UnexplainedHeldSpans.Should().ContainSingle();
+    }
 }
