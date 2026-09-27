@@ -67,6 +67,9 @@ public sealed class GapFreezeHandler
     private volatile bool _frameSeenSinceCapture = true;
     // C-4: 「進入後に届いた」と判定したフレームの位置（PTS）。未到着・不明は NaN。
     private double _frameSeenPositionSeconds = double.NaN;
+    // K3 f4-14: 現在の絵をそのまま確定する進入（D21-b (a)）か。この経路はシークしないので、
+    // 合成層は今どおり照会位置で比べる（目標と比べると、低い fps で 1 フレーム手前の絵を保存しなくなる）。
+    private bool _captureUsesCurrentFrame;
     // D21-b: 目標位置でないフレーム（シーク前の実行中フレーム）が届いたときの再シーク回数。
     private int _seekRetryCount;
 
@@ -112,6 +115,18 @@ public sealed class GapFreezeHandler
     internal double? FrameSeenPositionSeconds =>
         double.IsFinite(_frameSeenPositionSeconds) ? _frameSeenPositionSeconds : null;
 
+    /// <summary>
+    /// K3 f4-14: 合成層が Freeze の保存で比べる目標。捕捉中は Pending、確定後は遅延確定の目標か
+    /// 確定済みの目標（OnSourceFrameReady と同じ選び方）。どれも無いとき、または現在の絵をそのまま
+    /// 確定する進入のときは null（合成層は照会位置で比べる）。
+    /// </summary>
+    internal double? OutputFreezeTargetSeconds => _captureUsesCurrentFrame ? null : _currentState switch
+    {
+        GapState.EnteringFreeze or GapState.WaitingForFrameStep => PendingTargetSeconds,
+        GapState.FreezeComplete => LateConfirmTargetSeconds ?? (CachedTargetKnown ? CachedTargetSeconds : null),
+        _ => null,
+    };
+
     /// <summary>D21-b: 再シークをまだ試せるか。</summary>
     internal bool CanRetrySeek => _seekRetryCount < MaxSeekRetries;
 
@@ -133,6 +148,7 @@ public sealed class GapFreezeHandler
         ClearLateConfirmTarget();
         _frameSeenSinceCapture = true;
         _frameSeenPositionSeconds = double.NaN;
+        _captureUsesCurrentFrame = false;
         _seekRetryCount = 0;
     }
 
@@ -155,6 +171,7 @@ public sealed class GapFreezeHandler
         ClearLateConfirmTarget();
         _frameSeenSinceCapture = false;
         _frameSeenPositionSeconds = double.NaN;
+        _captureUsesCurrentFrame = false;
         _seekRetryCount = 0;
     }
 
@@ -166,6 +183,7 @@ public sealed class GapFreezeHandler
     {
         EnterFreezeCapture(trackId, targetSeconds, filePath);
         _frameSeenSinceCapture = true;
+        _captureUsesCurrentFrame = true;
     }
 
     /// <summary>D21-b: 目標位置のソースフレームが届いた（OutputEngine のフレーム位置で確認）。</summary>
@@ -268,8 +286,7 @@ public sealed class GapFreezeHandler
     {
         if (LateConfirmTargetSeconds is not double target || !double.IsFinite(positionSeconds))
             return false;
-        double frameSeconds = fps > 0 ? 1.0 / fps : 1.0 / DefaultFallbackFps;
-        return Math.Abs(positionSeconds - target) <= frameSeconds * 2.0;
+        return GapFreezeFrameWindow.Contains(positionSeconds, target, GapFreezeFrameWindow.FrameSeconds(fps));
     }
 
     private void ClearLateConfirmTarget()
@@ -303,6 +320,17 @@ public sealed class GapFreezeHandler
     public bool CanReuseCachedFrame(Guid? trackId, double target, double frameSeconds) =>
         ContinueModePlaybackPolicy.CanReuseFrozenFrame(
             CachedTrackId, CachedTargetSeconds, trackId, target, frameSeconds);
+
+    /// <summary>
+    /// K3 f4-14: ギャップの Freeze のためにトラックを読み込み直す前に、前のギャップの目標（確定済み・遅延確定）を
+    /// 手放す。ロードから新しい捕捉の進入までの間、合成層は前の目標ではなく照会位置で Freeze の保存を比べる。
+    /// ロードが成功すれば進入が新しい目標を立て、失敗すれば ForceFreezeComplete が同じく目標なしにする。
+    /// </summary>
+    public void ForgetFreezeTargetsForReload()
+    {
+        ClearCachedFrameInfo();
+        ClearLateConfirmTarget();
+    }
 
     public void ClearCachedFrameInfo()
     {
@@ -450,6 +478,7 @@ public sealed class GapFreezeHandler
         PendingPath = null;
         _frameSeenSinceCapture = true;
         _frameSeenPositionSeconds = double.NaN;
+        _captureUsesCurrentFrame = false;
         _seekRetryCount = 0;
         ClearCachedFrameInfo();
         SetState(GapState.Inactive);

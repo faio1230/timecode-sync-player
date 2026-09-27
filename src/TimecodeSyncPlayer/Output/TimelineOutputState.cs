@@ -13,10 +13,19 @@ internal sealed record TimelineOutputState(
     bool TestCardEnabled,
     CanvasSettings Canvas,
     ClipPlacement Clip,
-    double PositionSeconds)
+    double PositionSeconds,
+    double? FreezeTargetSeconds = null,
+    double VideoFps = 0)
 {
     public static readonly TimelineOutputState Default = new(
         0, OutputGapMode.None, false, CanvasSettings.Default, new ClipPlacement(null), 0);
+
+    /// <summary>
+    /// K3 f4-14: 合成層が Freeze の保存で取得画像の位置と比べる値。Freeze の目標（UI の確定の門と
+    /// 同じ目標）があればそれ、無ければ照会位置。照会位置はシーク直後のポンプ中にパイプライン値
+    /// （尺 + 2 フレーム）へ固定されることがあり、目標フレームでも窓を外れていた。
+    /// </summary>
+    public double FreezeComparisonSeconds => FreezeTargetSeconds ?? PositionSeconds;
 
     /// <summary>現在クリップの配置。トラックの Fit（null はプロジェクト既定の継承）を写す。</summary>
     public static ClipPlacement PlacementFor(PlaylistTrack? track) => new(track?.Fit);

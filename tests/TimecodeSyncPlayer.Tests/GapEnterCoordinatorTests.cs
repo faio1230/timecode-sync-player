@@ -42,6 +42,7 @@ public class GapEnterCoordinatorTests
         public double Duration = 10.0;
         public double Fps = 25.0;
         public GapBehavior GapBehavior = GapBehavior.Freeze;
+        public Action? DuringLoad;
 
         public GapEnterEffects Build() => new(
             ResetEndAdvanceTriggered: () => { Calls.Add("ResetEndAdvanceTriggered"); EndAdvanceTriggered = false; },
@@ -51,7 +52,7 @@ public class GapEnterCoordinatorTests
             SeekTo: target => { Calls.Add("SeekTo"); SeekTargets.Add(target); return SeekResult; },
             GetPlayerDuration: () => { Calls.Add("GetPlayerDuration"); return PlayerDuration; },
             IsPlayerReady: () => { Calls.Add("IsPlayerReady"); return PlayerReady; },
-            LoadPausedAt: (path, target) => { Calls.Add("LoadPausedAt"); LoadArgs.Add((path, target)); return LoadResult; },
+            LoadPausedAt: (path, target) => { Calls.Add("LoadPausedAt"); LoadArgs.Add((path, target)); DuringLoad?.Invoke(); return LoadResult; },
             ResetPlayerStateForNewTrack: () => Calls.Add("ResetPlayerStateForNewTrack"),
             GetLoadedTrackId: () => LoadedTrackId,
             SetLoadedTrackId: id => { Calls.Add("SetLoadedTrackId"); SetLoadedTrackIds.Add(id); LoadedTrackId = id; },
@@ -504,5 +505,67 @@ public class GapEnterCoordinatorTests
         rec.Calls.Should().Contain("ClearGapFreezeFrame");
         handler.CurrentState.Should().Be(GapState.ForceBlack);
         rec.Calls.Last().Should().Be("UpdateCurrentTrackLabel");
+    }
+
+    // ---- K3 f4-14 疑問 3: ロード中は前のギャップの目標で Freeze の保存を比べない ----
+
+    [Fact]
+    public void LoadPreviousTrackFinalFrame_SameTargetAsConfirmed_ClearsOutputTargetDuringLoad()
+    {
+        var prev = CreateTrack(Guid.NewGuid(), path: "C:/p.mp4");
+        var (coord, handler, rec) = Build(r => { r.LoadedTrackId = Guid.NewGuid(); });
+        // 同じ目標で確定済み（D32 の破棄は起きない = Cached が残る）。
+        handler.EnterFreezeCapture(prev.Id, 49.9, prev.FilePath);
+        handler.OnFreezeComplete(prev.Id);
+        double? duringLoad = -1;
+        rec.DuringLoad = () => duringLoad = handler.OutputFreezeTargetSeconds;
+
+        coord.LoadPreviousTrackFinalFrameForGapFreeze(prev, target: 49.9, duration: 50, fps: 30);
+
+        duringLoad.Should().BeNull("ロード中は前のギャップの目標ではなく照会位置で比べる");
+        handler.OutputFreezeTargetSeconds.Should().Be(49.9, "進入の後は新しい捕捉の目標");
+    }
+
+    [Fact]
+    public void LoadNextTrackFirstFrame_AfterTimedOutCapture_ClearsLateConfirmTargetDuringLoad()
+    {
+        var previous = CreateTrack(Guid.NewGuid(), path: "C:/c.mp4");
+        var next = CreateTrack(Guid.NewGuid(), path: "C:/a.mp4");
+        var (coord, handler, rec) = Build(r => { r.LoadedTrackId = previous.Id; });
+        // 前のギャップは時間切れ（D32 の遅延確定の目標が残る）。
+        handler.EnterFreezeCapture(previous.Id, 24.983, previous.FilePath);
+        handler.ForceFreezeComplete();
+        double? duringLoad = -1;
+        bool lateDuringLoad = true;
+        rec.DuringLoad = () =>
+        {
+            duringLoad = handler.OutputFreezeTargetSeconds;
+            lateDuringLoad = handler.HasLateConfirmTarget;
+        };
+
+        coord.LoadNextTrackFirstFrameForGapFreeze(next, target: 5.0, duration: 25.0, fps: 60.0);
+
+        duringLoad.Should().BeNull("前のギャップの遅延確定の目標で比べない");
+        lateDuringLoad.Should().BeFalse("新しいトラックのフレームで前の目標の遅延確定を開き直さない");
+        handler.OutputFreezeTargetSeconds.Should().Be(5.0);
+    }
+
+    [Fact]
+    public void LoadNextTrackFirstFrame_LoadFails_LeavesNoOutputTarget()
+    {
+        var previous = CreateTrack(Guid.NewGuid(), path: "C:/c.mp4");
+        var next = CreateTrack(Guid.NewGuid(), path: "C:/a.mp4");
+        var (coord, handler, rec) = Build(r =>
+        {
+            r.LoadedTrackId = previous.Id;
+            r.LoadResult = new(PlaybackResult.Fail("load failed"), PlaybackResult.Ok);
+        });
+        handler.EnterFreezeCapture(previous.Id, 24.983, previous.FilePath);
+        handler.OnFreezeComplete(previous.Id);
+
+        coord.LoadNextTrackFirstFrameForGapFreeze(next, target: 24.983, duration: 25.0, fps: 60.0);
+
+        handler.CurrentState.Should().Be(GapState.FreezeComplete);
+        handler.OutputFreezeTargetSeconds.Should().BeNull("失敗したロードの後も前の目標で比べない");
     }
 }

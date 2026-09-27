@@ -248,7 +248,7 @@ public class GapFreezeEosRaceTests
                 return;
             }
 
-            if (Math.Abs(positionSeconds - Handler.PendingTargetSeconds) <= 2.0 / _fps)
+            if (GapFreezeFrameWindow.Contains(positionSeconds, Handler.PendingTargetSeconds, GapFreezeFrameWindow.FrameSeconds(_fps)))
             {
                 Handler.NotifyFrameArrived(positionSeconds);
                 _hasFrame = true;
