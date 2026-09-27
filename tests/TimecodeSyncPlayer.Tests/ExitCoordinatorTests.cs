@@ -182,4 +182,29 @@ public class ExitCoordinatorTests
             await Task.Delay(10);
         condition().Should().BeTrue("条件が時間内に満たされる");
     }
+
+    // v0.5.4: 終了の手順は MainWindow.Dispose を通らない。起動直後の生存記録（ui.heartbeat）は、
+    // 手順の入口（最初の段の前）で end reason=closing を出して閉じる。
+    [Fact]
+    public void NormalExit_NotifiesShutdownStartingBeforeTheFirstStage_ClosingTheHeartbeat()
+    {
+        var host = new FakeExitDialogHost();
+        var log = new List<string>();
+        var heartbeat = new UiHeartbeatRecorder(fields => log.Add("heartbeat " + fields));
+        heartbeat.Start(TimeSpan.Zero);
+        var disposer = new MainWindowResourceDisposer(
+            () => { }, () => { }, () => { }, () => { }, () => { }, () => { }, () => { },
+            stopAcceptingNewWork: () => log.Add("stage stopAcceptingNewWork"));
+        var coordinator = new ExitCoordinator(host, disposer,
+            action => { action(); return Task.CompletedTask; }, () => { }, () => { },
+            shutdownStarting: () => heartbeat.Stop(TimeSpan.FromMilliseconds(500), "closing"));
+
+        coordinator.OnClosingRequested();
+        log.Should().NotContain(l => l.StartsWith("heartbeat end"), "確認の段階ではまだ終了が決まっていない");
+        coordinator.NormalExitRequested();
+        heartbeat.Stop(TimeSpan.FromMilliseconds(900), "closing"); // Dispose からの 2 回目（出ない）
+
+        log.Should().ContainInOrder("heartbeat end reason=closing ticks=0 maxLateMs=0.0 elapsedMs=500.0", "stage stopAcceptingNewWork");
+        log.Count(l => l.StartsWith("heartbeat end")).Should().Be(1);
+    }
 }

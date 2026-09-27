@@ -14,6 +14,7 @@ internal sealed class ExitCoordinator
     private readonly Func<Action, Task> runOffUiThread;
     private readonly Action forceExit;
     private readonly Action shutdownCompleted;
+    private readonly Action? shutdownStarting;
     private bool stagesRunning;
 
     public ExitCoordinator(
@@ -21,8 +22,10 @@ internal sealed class ExitCoordinator
         MainWindowResourceDisposer cleanup,
         Func<Action, Task> runOffUiThread,
         Action forceExit,
-        Action shutdownCompleted)
+        Action shutdownCompleted,
+        Action? shutdownStarting = null)
     {
+        this.shutdownStarting = shutdownStarting;
         this.dialogs = dialogs;
         this.cleanup = cleanup;
         this.runOffUiThread = runOffUiThread;
@@ -63,6 +66,8 @@ internal sealed class ExitCoordinator
         dialogs.SwitchToProgress();
         if (stagesRunning) return;
         stagesRunning = true;
+        // 終了の手順が始まる（最初の段の前）。記録の区間を閉じるなど、終了の直前に 1 回だけ知らせる。
+        NotifyShutdownStarting();
         _ = RunStagesAsync();
     }
 
@@ -72,7 +77,20 @@ internal sealed class ExitCoordinator
         ExitTransition transition = ExitTransitions.Decide(Phase, ExitInput.Force, cleanup.HasMoreStages);
         if (!transition.Accepted) return;
         Phase = transition.NextPhase;
+        NotifyShutdownStarting();
         forceExit();
+    }
+
+    private void NotifyShutdownStarting()
+    {
+        try
+        {
+            shutdownStarting?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "終了の開始の通知に失敗");
+        }
     }
 
     private async Task RunStagesAsync()

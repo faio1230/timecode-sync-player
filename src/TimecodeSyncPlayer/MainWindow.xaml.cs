@@ -2719,7 +2719,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             GetResourceDisposer(),
             runOffUiThread: action => Task.Run(action),
             forceExit: ForceExitProcess,
-            shutdownCompleted: () => Dispatcher.BeginInvoke(new Action(Close)));
+            shutdownCompleted: () => Dispatcher.BeginInvoke(new Action(Close)),
+            // 終了の手順は Dispose を通らない。生存記録は手順の入口で閉じる（行の途切れ = 止まった、と読めるように）。
+            shutdownStarting: () => StopUiHeartbeat("closing"));
         _exitDialogHost.CancelRequested += _exitCoordinator.CancelRequested;
         _exitDialogHost.NormalExitRequested += _exitCoordinator.NormalExitRequested;
         _exitDialogHost.ForceExitRequested += _exitCoordinator.ForceRequested;
