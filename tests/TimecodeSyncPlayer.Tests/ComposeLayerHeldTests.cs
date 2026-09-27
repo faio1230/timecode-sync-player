@@ -199,6 +199,123 @@ public sealed class ComposeLayerHeldTests
         layer.HasFreeze.Should().BeFalse("世代をまたいでソースの面を Freeze に使わない");
     }
 
+    // K3 f4-14: ポンプ中の照会がパイプライン値（尺 + 2 フレーム = 20.0333…）に固定されると、
+    // 目標フレームの PTS（19.9833…）との差は倍精度で 0.0500000000000007 になり、0.05 の窓を外れる。
+    [SkippableFact]
+    public void GapFreeze_QueriedPositionStuckAtPipelineValue_IsOutsideTheTolerance()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var orange = new SolidSource(env, 64, 64, new Color4(1f, 0.65f, 0f, 1f));
+
+        // 60fps で 3 フレーム離れている。窓は ±2 フレーム（K3 f4-14 の Fable の指摘で秒の 0.05 から改めた）。
+        layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+            orange.Image, acquirePositionSeconds: 19.983333333, freezeTargetSeconds: 20.033333333, freezeFps: 60);
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: 20.033333333, freezeFps: 60);
+
+        layer.HasFreeze.Should().BeFalse("照会位置と比べると目標フレームでも保存されない（f4-14 の機序）");
+    }
+
+    [SkippableFact]
+    public void GapFreeze_SavesTargetFrame_WhenQueriedPositionIsStuckAtPipelineValue()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var blue = new SolidSource(env, 64, 64, new Color4(0f, 0f, 1f, 1f));
+        using var orange = new SolidSource(env, 64, 64, new Color4(1f, 0.65f, 0f, 1f));
+        TimelineOutputState state = TimelineOutputState.Default with
+        {
+            PositionSeconds = 20.033333333,
+            FreezeTargetSeconds = 19.983333333,
+        };
+
+        // シーク前の再生（青、PTS 15.883）を Held にした後、進入中（Hold）に目標フレーム（橙）が届く。
+        layer.Compose(target.Surface, OutputGapMode.None, new ClipPlacement(null), false, default, 0,
+            blue.Image, acquirePositionSeconds: 15.883333333, freezeTargetSeconds: 15.883333333);
+        layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+            orange.Image, acquirePositionSeconds: 19.983333333, freezeTargetSeconds: state.FreezeComparisonSeconds);
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: state.FreezeComparisonSeconds);
+
+        layer.HasFreeze.Should().BeTrue("照会位置ではなく Freeze の目標と比べて保存する");
+        Color4 pixel = env.ReadCenterPixel(target);
+        pixel.R.Should().BeGreaterThan(0.9f, "シーク前の Held（青）ではなく目標フレーム（橙）を表示する");
+        pixel.B.Should().BeLessThan(0.1f);
+    }
+
+    [SkippableFact]
+    public void GapFreeze_DoesNotFreezePreSeekFrame_WhenComparingAgainstTheFreezeTarget()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var blue = new SolidSource(env, 64, 64, new Color4(0f, 0f, 1f, 1f));
+        TimelineOutputState state = TimelineOutputState.Default with
+        {
+            PositionSeconds = 20.033333333,
+            FreezeTargetSeconds = 19.983333333,
+        };
+
+        // D26: シーク前のフレーム（PTS 15.9）は目標から遠いので、目標と比べても保存しない。
+        layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+            blue.Image, acquirePositionSeconds: 15.9, freezeTargetSeconds: state.FreezeComparisonSeconds);
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: state.FreezeComparisonSeconds);
+
+        layer.HasFreeze.Should().BeFalse("ジャンプ前の位置のフレームを Freeze として確定しない");
+    }
+
+    // K3 f4-14（Fable）: 保存の窓は「2 フレーム × フレーム時間」で、境界ちょうどの差は窓の中。
+    [SkippableFact]
+    public void GapFreeze_SavesFrameExactlyTwoFramesFromTheTarget()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using TargetSurface target = env!.CreateTarget(64, 64);
+        using var orange = new SolidSource(env, 64, 64, new Color4(1f, 0.65f, 0f, 1f));
+
+        // (PTS, 目標, fps): 60fps の ns 格子、25fps（以前の 0.05 では外）、fps 不明（30fps として扱う）。
+        foreach ((double pts, double freezeTarget, double fps) in new[]
+                 {
+                     (16.716666667, 16.683333333, 60.0),
+                     (19.88, 19.96, 25.0),
+                     (10.066666667, 10.0, 0.0),
+                 })
+        {
+            using var layer = env.CreateLayer(64, 64);
+            layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+                orange.Image, acquirePositionSeconds: pts, freezeTargetSeconds: freezeTarget, freezeFps: fps);
+            layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+                null, acquirePositionSeconds: null, freezeTargetSeconds: freezeTarget, freezeFps: fps);
+
+            layer.HasFreeze.Should().BeTrue($"2 フレームちょうど（pts={pts} target={freezeTarget} fps={fps}）は窓の中");
+        }
+    }
+
+    [SkippableFact]
+    public void GapFreeze_DoesNotSaveFrameThreeFramesFromTheTarget_WhenFpsIsUnknown()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var orange = new SolidSource(env, 64, 64, new Color4(1f, 0.65f, 0f, 1f));
+
+        // fps 不明は UI の門と同じ 30fps として扱う（3 フレーム = 0.1 秒は窓の外）。
+        layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+            orange.Image, acquirePositionSeconds: 10.1, freezeTargetSeconds: 10.0, freezeFps: 0);
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: 10.0, freezeFps: 0);
+
+        layer.HasFreeze.Should().BeFalse();
+    }
+
     private sealed class SolidSource : IDisposable
     {
         public Surface Surface { get; }

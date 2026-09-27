@@ -69,7 +69,7 @@ internal static class ContinueModePlaybackPolicy
             return false;
         }
 
-        return Math.Abs(actualPositionSeconds - targetSeconds) <= frameSeconds * 2.0;
+        return GapFreezeFrameWindow.Contains(actualPositionSeconds, targetSeconds, frameSeconds);
     }
 
     public static bool ShouldCopyRenderedFrameToFreezeBuffer(GapState gapState) =>
