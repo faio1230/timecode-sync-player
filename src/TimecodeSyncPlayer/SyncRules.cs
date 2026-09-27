@@ -33,7 +33,13 @@ internal static class SyncRules
         bool isSeeking) =>
         isPlayerReady && isMonitoring && syncEnabled && !isSeeking;
 
-    internal static bool ShouldSkipHeldLanding(bool isBoundaryHeld) => isBoundaryHeld;
+    /// <summary>
+    /// v0.5.4 U5: 境界ホールド中の保持着地のスキップ（門 20）を、一時停止の持ち主の集合（D）の
+    /// 判定に畳む。境界ホールドが持ち主の 1 つなら、端で受け持つ（端への明示着地は保留シークを
+    /// 作り、解除時の範囲内 LTC への着地を抑止するため発行しない）。
+    /// </summary>
+    internal static bool ShouldSkipHeldLanding(PauseOwners owners) =>
+        owners.HasFlag(PauseOwners.BoundaryHold);
 
     internal static bool CanPauseForSignalLoss(
         LtcSignalLossMode mode,

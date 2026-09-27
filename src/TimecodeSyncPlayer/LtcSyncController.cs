@@ -1197,11 +1197,13 @@ internal sealed class LtcSyncController
         {
             // D35-b: D33 の境界ホールド中は端で受け持つ。端への明示着地は保留シークを作り、
             // 解除時の範囲内 LTC への着地を抑止するため発行しない。
-            if (SyncRules.ShouldSkipHeldLanding(_single().IsBoundaryHeld))
+            // v0.5.4 U5: 判定は一時停止の持ち主の集合（D）に畳む（境界ホールドが持ち主なら飛ばす）。
+            PauseOwners owners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+            if (SyncRules.ShouldSkipHeldLanding(owners))
             {
                 _input.MarkHeldLossLanding(heldSeconds);
                 Log.Debug(
-                    "LTC timecode held: landing skipped (clip boundary hold active) ltc={Ltc:F3}",
+                    "LTC timecode held: landing skipped (boundary hold is a pause owner) ltc={Ltc:F3}",
                     heldSeconds);
                 return;
             }
