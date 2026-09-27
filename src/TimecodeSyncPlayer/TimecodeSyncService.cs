@@ -256,7 +256,7 @@ public sealed class TimecodeSyncService
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _seekState.ObserveLandingSample(sample, toleranceSeconds, now);
-        NoteRelocateLanding();
+        NoteRelocateLanding(toleranceSeconds);
         TryReleaseFileLoadAfterLanding(now);
     }
 
@@ -268,7 +268,7 @@ public sealed class TimecodeSyncService
     private TimecodeSyncLandingRecord? _residualPendingLanding;
 
     /// <summary>relocate（目標つきのシーク）の新しい着地を覚える（残差の記録と連続 relocate の判定用）。</summary>
-    private void NoteRelocateLanding()
+    private void NoteRelocateLanding(double toleranceSeconds)
     {
         if (_seekState.LastLanding is not { } landing || landing == _lastNotedLanding)
             return;
@@ -276,8 +276,26 @@ public sealed class TimecodeSyncService
         if (!double.IsFinite(landing.TargetSeconds))
             return;   // 読み込みの着地（目標なし）は relocate ではない
         _landedSinceLastRelocate = true;
+        if (IsMasterStoppedRelocate(_lastRelocateReason))
+        {
+            // v0.5.4 #7 の追加: マスター停止中の relocate（停止モードの保持の着地・ランスルーの保持の入口）の
+            // 残差は、停止した値（着地先 = 保持値）と着地した配信フレームの PTS で、着地の時点に測る
+            // （M(now) の外挿と比べると、再開した後の値との差になる。実機で ±12 秒と出た）。
+            // 判定は規則 4 の入口と同じ tol。
+            double errorSeconds = landing.DeliveredSeconds - landing.TargetSeconds;
+            _lastLandingOutsideThreshold = Math.Abs(errorSeconds) > Math.Max(0, toleranceSeconds);
+            Serilog.Log.Debug(
+                "sync.gate post-landing-residual errorMs={ErrorMs:F1} outside={Outside} reason={Reason:l} target={Target:F3} delayMs={DelayMs:F1} lookaheadMs={LookaheadMs:F1} thresholdMs={ThresholdMs:F1}",
+                errorSeconds * 1000.0, _lastLandingOutsideThreshold, _lastRelocateReason, landing.TargetSeconds,
+                landing.DelaySeconds * 1000.0, 0.0, Math.Max(0, toleranceSeconds) * 1000.0);
+            return;
+        }
         _residualPendingLanding = landing;
     }
+
+    /// <summary>停止した値へ合わせる relocate（先行量を付けず、M(now) ではなく保持値が目標）。</summary>
+    private static bool IsMasterStoppedRelocate(string reason) =>
+        reason is "held-landing" or "hold-entry";
 
     /// <summary>
     /// 着地の後の最初の判定で、残差（符号つき、再生位置 − M(now)。正は行き過ぎ）を 1 行残す。
