@@ -610,6 +610,7 @@ internal sealed class LtcSyncController
 
         bool applyOnce;
         string applyReason;
+        bool appliedJump = false;
         if (!processed.ShouldApplySync)
         {
             bool heldValueChangedDuringLoss = false;
@@ -669,6 +670,7 @@ internal sealed class LtcSyncController
                 // （適用の重複は B の確認窓（4）と A の保留が防ぐ）。
                 applyOnce = true;
                 applyReason = "first Jump";
+                appliedJump = true;
             }
             // D31-b: 保持損失中に保持値そのもの（タイムコード停止位置）が変わったら、停止モードは
             // 新しい保持値へ 1 回だけ着地する（D27 の着地を遷移時から変化時へ拡張）。ランスルーは
@@ -721,6 +723,10 @@ internal sealed class LtcSyncController
         _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
         if (applyOnce)
         {
+            // U8: 適用した Jump の直後に保持（Duplicate）が続く場合の即時停止のために、
+            // Jump の適用を信号断の方針へ記録する（停止モードの判定だけに使う）。
+            if (appliedJump)
+                _signalLoss.ObserveAppliedJump(receivedAtMilliseconds, SignalContext());
             // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
             // （ObserveValidFrame を呼ばない）。保持損失からの復帰は上の D27-b の経路。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
@@ -743,6 +749,9 @@ internal sealed class LtcSyncController
     private void ApplyConfirmedJump(
         TimecodeFrameDiagnosticStatus status, double rawSeconds, long frameEndTimestamp, long receivedAtMilliseconds)
     {
+        // U8: 確認済みの Jump の適用を先に記録する（確認フレームが保持なら、その保持が Jump 後の 1 枚目）。
+        _signalLoss.ObserveAppliedJump(receivedAtMilliseconds, SignalContext());
+
         if (status == TimecodeFrameDiagnosticStatus.Duplicate)
         {
             _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());

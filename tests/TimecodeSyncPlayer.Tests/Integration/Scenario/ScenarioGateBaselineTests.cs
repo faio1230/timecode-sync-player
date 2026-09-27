@@ -103,9 +103,12 @@ public class ScenarioGateBaselineTests
         Report("S-2", counts, sink);
         h.Operations.Count(o => o.Name == "signal-loss-pause")
             .Should().BeGreaterThan(0, "停止モードの保持で一時停止する");
-        counts.SyncSeeks.Should().BeInRange(6, 20, "段 0 の S-2 は同期シーク 13〜16 本（v0.5.3 は 12）");
+        counts.SyncSeeks.Should().BeInRange(6, 20,
+            "段 0 の S-2 は同期シーク 13〜16 本（v0.5.3 は 12）。U8 後も Jump の同期シークは残る（実測 19）");
+        counts.LandingSeeks.Should().BeLessThanOrEqualTo(1,
+            "U8: 即時停止で停止位置が目標の 1 フレーム以内に入り、戻しの着地シークは消える（門 19。実測 0）");
         (counts.SyncSeeks + counts.LandingSeeks).Should().BeGreaterThanOrEqualTo(19,
-            "保持ごとに目標へ寄る（層では確認フレームの同期シークが先に着地する）");
+            "保持ごとに目標へ寄る（U8 後は確認フレームの同期シークが先に着地する）");
         counts.Timeouts.Should().Be(0, "段 0 は全シナリオで時間切れ 0");
         sink.Count("signal-loss-confirm").Should().BeGreaterThanOrEqualTo(20,
             "20 回の保持それぞれで損失を確定している（sync.gate を仮想時刻つきで拾えている）");
