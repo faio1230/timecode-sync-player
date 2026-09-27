@@ -908,6 +908,16 @@ internal sealed class LtcSyncController
                 _syncService.IsWaitingForLanding))
             return;
 
+        // v0.5.4 B4（chase モデルの規則 4）: 信号断・保持の持ち主（D の集合）がいる間、または
+        // 直近のフレームが保持（Duplicate）の間は、速度補正を評価しない（rate は 1.0 のまま）。
+        // 停止モードは一時停止が、ランスルーはここが保持中の補正を止める。ランスルーの保持に
+        // 入るときは、直前に掛かっていた倍率を 1.0 に戻す。
+        if (IsCorrectionHeldOff())
+        {
+            RestoreRateForHold();
+            return;
+        }
+
         if (_rate.RateRestorePending)
         {
             // T7: 一時停止中などで戻せなかった倍率を、評価の前に 1.0 へ戻す。
@@ -1177,6 +1187,42 @@ internal sealed class LtcSyncController
         {
             _rate.MarkRestored();
             Log.Information("LTC signal lost: playback rate restored to 1.0 before pausing");
+        }
+        else
+        {
+            _rate.MarkRestorePending();
+        }
+    }
+
+    /// <summary>
+    /// v0.5.4 B4（chase モデルの規則 4）: 補正を保留すべき状態か。信号断・保持の持ち主
+    /// （D の集合。ギャップ・境界ホールド・プロジェクト復元・利用者の一時停止を含む）がいる間と、
+    /// 直近のフレームが保持（Duplicate。<see cref="LtcInputState.LastHeldEffectiveSeconds"/> が
+    /// Normal で消えるまで残る）の間。
+    /// </summary>
+    private bool IsCorrectionHeldOff()
+    {
+        if (_input.LastHeldEffectiveSeconds is not null)
+            return true;
+        PauseOwners owners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+        return _signalLoss.IsPauseOwned || owners != PauseOwners.None;
+    }
+
+    /// <summary>
+    /// v0.5.4 B4: 保持・信号断で補正を止めるときに、掛かったままの倍率を 1.0 に戻す
+    /// （ランスルーは保持中も 1.0 で進む）。戻せなければ復帰待ちにする（既存の仕組みと同じ）。
+    /// </summary>
+    private void RestoreRateForHold()
+    {
+        if (_effects.ApplyRateInstant == null)
+            return;
+        if (!_rate.RateRestorePending && !_rate.RateNotUnity)
+            return;
+        if (_effects.ApplyRateInstant(1.0))
+        {
+            _rate.MarkRestored();
+            Log.Information(
+                "Timecode held or signal lost: rate restored to 1.0 (correction is not evaluated while held)");
         }
         else
         {

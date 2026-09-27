@@ -333,4 +333,78 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.Operations.Where(o => o.Name == "seek")
             .Should().ContainSingle("解除の 1 回適用は 1 回だけ");
     }
+
+    // ---- v0.5.4 B4（chase モデルの規則 4）: 保持・信号断の持ち主がいる間は補正を評価しない ----
+
+    private static readonly long TicksPerMs = Stopwatch.Frequency / 1000;
+
+    /// <summary>
+    /// 保持の入口（確定 Jump → Duplicate の適用）を作り、その直前までに非 1.0 の rate を
+    /// 適用しておく。qpc を進めるのは速度補正の残差ゲート（変化量の検査）を通すため。
+    /// </summary>
+    private static (SyncScenarioHarness h, ManualTimeProvider clock) ArrangeCorrectionIntoHold(
+        LtcSignalLossMode mode, out int ratesBeforeHold)
+    {
+        long qpc = 10_000_000;
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: () => qpc)
+        {
+            SignalLossMode = mode,
+        };
+        h.AddTrack("first", 0);
+        h.ChangeMode(SyncMode.Single);
+        h.ManualPlay();
+
+        Raw(h, 1, 0, 10_000);                 // 定常（rate 1.0）
+        qpc += 200 * TicksPerMs;
+        Raw(h, 1, 1, 10_040);
+        h.AdvancePlayback(1.04, 1);
+        qpc += 200 * TicksPerMs;
+
+        h.AdvancePlayback(1.20, 1);           // 再生が LTC より 120ms 進む
+        Raw(h, 1, 2, 10_120);                 // 通常フレーム: rate 0.90 を適用
+        h.AppliedRates.Should().Contain(r => r < 0.999,
+            "前提: 保持の前は補正が動いている（rate 0.90）");
+
+        Raw(h, 2, 1, 10_160);                 // Jump 2.04（未確認で保留）
+        qpc += 200 * TicksPerMs;
+        h.AdvancePlayback(2.20, 1);
+        ratesBeforeHold = h.AppliedRates.Count;
+        Raw(h, 2, 1, 10_200);                 // Duplicate → 確定 Jump の適用（保持の入口）
+        return (h, clock);
+    }
+
+    [Fact]
+    public void StopMode_HoldEntry_DoesNotEvaluateRateCorrection_AndRestoresUnity()
+    {
+        (SyncScenarioHarness h, ManualTimeProvider clock) =
+            ArrangeCorrectionIntoHold(LtcSignalLossMode.Stop, out int before);
+
+        h.AppliedRates.Skip(before).Should().NotContain(r => Math.Abs(r - 1.0) > 1e-9,
+            "直近のフレームが保持（Duplicate）の間は補正を評価しない");
+        h.AppliedRates[^1].Should().Be(1.0, "保持に入るときは rate を 1.0 に戻す");
+
+        Tick(h, clock, 5);   // 最後の有効フレームから 250ms を過ぎ、保持の損失が確定する
+
+        h.IsPaused.Should().BeTrue();
+        h.AppliedRates.Skip(before).Should().NotContain(r => Math.Abs(r - 1.0) > 1e-9,
+            "停止モードの保持の間も補正を評価しない");
+    }
+
+    [Fact]
+    public void RunThroughMode_HoldEntry_DoesNotEvaluateRateCorrection_AndRestoresUnity()
+    {
+        (SyncScenarioHarness h, ManualTimeProvider clock) =
+            ArrangeCorrectionIntoHold(LtcSignalLossMode.RunThrough, out int before);
+
+        h.AppliedRates.Skip(before).Should().NotContain(r => Math.Abs(r - 1.0) > 1e-9,
+            "直近のフレームが保持（Duplicate）の間は補正を評価しない");
+        h.AppliedRates[^1].Should().Be(1.0, "ランスルーの保持に入るときは rate を 1.0 に戻す");
+
+        Tick(h, clock, 3);
+
+        h.IsPaused.Should().BeFalse("ランスルーは保持中も走る");
+        h.AppliedRates.Skip(before).Should().NotContain(r => Math.Abs(r - 1.0) > 1e-9,
+            "ランスルーの保持の間も補正を評価しない（rate は 1.0 のまま）");
+    }
 }
