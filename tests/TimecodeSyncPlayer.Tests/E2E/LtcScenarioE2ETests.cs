@@ -255,7 +255,10 @@ public sealed partial class LtcScenarioE2ETests
     /// <item>rate catch-up の開始回数（開始と終了の反復＝補正のチャタリング）</item>
     /// <item>出力トレースで「同じ絵が 250ms 以上続いた区間」のうち、**その間に shim から新しいフレームが
     ///   届いていたもの**（届いていたのに合成が採らない＝合成側の停滞）</item>
-    /// <item>shim の配信の空き（100ms 以上。トラック切替の直後は除く）</item>
+    /// <item>shim の配信の空き（100ms 以上）</item>
+    /// <item>トラック切替の直後（切替の発行 → 新しいトラックの最初のフレームの到着、上限 1.0 秒）は
+    ///   除外し、外した区間を `switch-excluded` としてジャーナルに残す。1.0 秒を超えて同じ絵が
+    ///   続けば従来どおり FAIL（TSP-Fable の判定、`docs/release-0.5-plan.md` の段 A の候補節）</item>
     /// </list>
     /// 読み取り間隔は TCS_U1_UIA_INTERVAL_MS（既定 50）、LTC の fps は TCS_E2E_LTC_FPS で変えられる。
     /// 出力トレースは TIMECODE_SYNC_PLAYER_OUTPUT_TRACE が無ければ報告フォルダーの下に自動で有効にする。
@@ -279,9 +282,10 @@ public sealed partial class LtcScenarioE2ETests
         }
 
         var result = new UiaLoadRunResult();
+        string journalPath = "";
         try
         {
-            Run("U-1", continueMode: true, blackGap: true, scenario =>
+            journalPath = Run("U-1", continueMode: true, blackGap: true, scenario =>
             {
                 // v0.5.4 K7: 監査はギャップの 5 秒停止を「配信の停止」と数えるため、トラックの間に
                 // ギャップがあるプロジェクトでは判定しない（docs/design/v0.5.4-u1-cause.md）。
@@ -376,18 +380,33 @@ public sealed partial class LtcScenarioE2ETests
         {
             OutputContinuitySummary output = OutputContinuityAudit.Summarize(
                 OutputContinuityAudit.ReadEvents(events), Stopwatch.Frequency, fromQpc: result.AuditFromQpc);
+            // トラック切替の直後（切替の発行 → 新しいトラックの最初のフレームの到着、上限 1.0 秒）を
+            // 判定から外し、外した区間と長さをジャーナルに残す（TSP-Fable の判定。release-0.5-plan.md
+            // の段 A の候補節）。上限を超えて同じ絵が続けば FAIL のまま。
+            foreach (SwitchExclusion exclusion in output.SwitchExclusions)
+            {
+                MonkeyJournal.Append(journalPath, "switch-excluded", new
+                {
+                    startSeconds = (exclusion.StartQpc - result.AuditFromQpc) / (double)Stopwatch.Frequency,
+                    seconds = exclusion.Seconds,
+                    capped = exclusion.Capped,
+                });
+            }
+
             // 届いていたのに採らなかった Held（合成側の停滞）と、配信そのものが止まった Held を分ける。
-            List<HeldSpan> heldWithDeliveries = output.HeldSpans.Where(s => s.DeliveriesDuring > 0).ToList();
+            List<HeldSpan> heldWithDeliveries = output.HeldSpans
+                .Where(span => span.DeliveriesDuring > 0 && !output.IsSwitchExcluded(span))
+                .ToList();
             traceNote = string.Create(CultureInfo.InvariantCulture,
                 $"compose {output.ComposeTicks} tick / 配信 {output.Deliveries} 件 / Held≥250ms {output.HeldSpans.Count} 件" +
                 $"（うち配信あり {heldWithDeliveries.Count}、最長 {(output.LongestHeld?.Seconds ?? 0) * 1000:F0}ms）" +
-                $" / 配信の空き≥100ms {output.DeliveryGaps.Count} 件（最長 {(output.LongestDeliveryGap?.Seconds ?? 0) * 1000:F0}ms）");
-            // トラック切替では読み込みの間は必ず配信が空く（既知の制限）。切替の回数ぶんは除いて数える。
-            int unexplainedHeld = Math.Max(0, output.HeldSpans.Count - result.Switches);
+                $" / 配信の空き≥100ms {output.DeliveryGaps.Count} 件（最長 {(output.LongestDeliveryGap?.Seconds ?? 0) * 1000:F0}ms）" +
+                $" / 切替の除外 {output.SwitchExclusions.Count} 件（上限超え {output.SwitchExclusions.Count(x => x.Capped)}）");
+            int unexplainedHeld = output.UnexplainedHeldSpans.Count;
             if (heldWithDeliveries.Count > 0)
                 failures.Add($"フレームが届いていたのに同じ絵を 250ms 以上出し続けた区間 {heldWithDeliveries.Count} 件");
             if (unexplainedHeld > 0)
-                failures.Add($"切替以外で同じ絵が 250ms 以上続いた区間 {unexplainedHeld} 件（切替 {result.Switches} 回を除く）");
+                failures.Add($"切替の 1.0 秒の外で同じ絵が 250ms 以上続いた区間 {unexplainedHeld} 件");
         }
 
         string summary = string.Create(CultureInfo.InvariantCulture,
@@ -1238,7 +1257,7 @@ public sealed partial class LtcScenarioE2ETests
 
     // ---- harness ----
 
-    private static void Run(string testId, bool continueMode, bool blackGap, Action<Scenario> body)
+    private static string Run(string testId, bool continueMode, bool blackGap, Action<Scenario> body)
     {
         using var scenario = Scenario.Start(testId, continueMode, blackGap);
         try
@@ -1251,6 +1270,7 @@ public sealed partial class LtcScenarioE2ETests
             scenario.Journal.Write("failure", details: new { error = error.ToString() });
             throw;
         }
+        return scenario.Journal.JournalPath;
     }
 
     private sealed record TrackInfo(
