@@ -52,6 +52,8 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     private int _landingFirstOutsideTotal;
     private TimecodeSyncLandingRecord? _lastLanding;
     private double _learnedSeekSeconds = double.NaN;
+    // v0.5.4 B6b-16/23: 着地を観測した直後の 1 サンプルだけ true（補正の入口が消費する）。
+    private bool _justLanded;
 
     public TimecodeSyncSeekState()
         : this(LandingSafetyTimeout)
@@ -115,6 +117,7 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         _landingFirstGenerationSeen = false;
         _replacementPending = false;
         _newLandingDelaySeconds = double.NaN;
+        _justLanded = false;
         LastStatus = TimecodeSyncSeekPendingStatus.None;
     }
 
@@ -124,6 +127,18 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         Clear();
         _lastLanding = null;
         _lastLandingAt = DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// v0.5.4 B6b-16/23: 着地の観測直後の 1 サンプルだけ true（消費する）。
+    /// 「relocate の直後の 1 サンプルは varispeed しない」の合図。
+    /// </summary>
+    public bool ConsumeJustLanded()
+    {
+        if (!_justLanded)
+            return false;
+        _justLanded = false;
+        return true;
     }
 
     /// <summary>
@@ -287,6 +302,8 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         _lastLanding = new TimecodeSyncLandingRecord(
             _targetSeconds, _landingSeekGeneration, _newLandingDelaySeconds,
             sample.DeliveredSeconds, sample.DeliveredGeneration, sample.CurrentGeneration);
+        // v0.5.4 B6b-16/23: この直後の 1 サンプルは varispeed しない（補正の入口が消費する）。
+        _justLanded = true;
         Log.Debug(
             "sync.gate new-landing target={Target:F3} delayMs={DelayMs:F1} delivered={Delivered:F3} deliveredGen={DeliveredGeneration} currentGen={CurrentGeneration}",
             _targetSeconds, _newLandingDelaySeconds * 1000.0, sample.DeliveredSeconds,

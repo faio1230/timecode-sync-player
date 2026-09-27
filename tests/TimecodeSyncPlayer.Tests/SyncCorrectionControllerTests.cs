@@ -349,114 +349,20 @@ public class SyncCorrectionControllerTests
             .Action.Should().Be(SyncCorrectionActionType.SetRate);
     }
 
-    // ── T9: 着地直後 1.0 秒の速度上限 ±0.20 ────────────────────────────
-
-    [Theory]
-    [InlineData(0.200, 1.20)]
-    [InlineData(-0.200, 0.80)]
-    public void Smooth_InsideLandingWindow_UsesTwentyPercentLimit(double residual, double expectedRate)
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-
-        SyncCorrectionDecision decision = Evaluate(controller, residual, secondsAfterStart: 0.5);
-
-        decision.Action.Should().Be(SyncCorrectionActionType.SetRate);
-        decision.Rate.Should().BeApproximately(expectedRate, 1e-9);
-    }
-
-    [Theory]
-    [InlineData(0.200, 1.10)]
-    [InlineData(-0.200, 0.90)]
-    public void Smooth_AfterLandingWindow_UsesTenPercentLimit(double residual, double expectedRate)
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-
-        SyncCorrectionDecision decision = Evaluate(controller, residual, secondsAfterStart: 1.5);
-
-        decision.Rate.Should().BeApproximately(expectedRate, 1e-9);
-    }
-
-    [Fact]
-    public void Smooth_InsideLandingWindow_KeepsProportionalLaw()
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-
-        Evaluate(controller, 0.050, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.05, 1e-9);
-    }
-
-    [Fact]
-    public void Smooth_LandingWindowEnd_RoundsAppliedRateIntoTenPercentRange()
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-        Evaluate(controller, 0.500, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.20, 1e-9);
-
-        SyncCorrectionDecision after = Evaluate(controller, 0.500, secondsAfterStart: 1.5);
-
-        after.Rate.Should().BeApproximately(1.10, 1e-9);
-    }
-
-    [Fact]
-    public void Smooth_NewLandingInsideWindow_RestartsOneSecondWindow()
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-        Evaluate(controller, 0.200, secondsAfterStart: 0.9).Rate.Should().BeApproximately(1.20, 1e-9);
-
-        controller.NotifyLanding(T0.AddSeconds(0.9));
-
-        Evaluate(controller, 0.200, secondsAfterStart: 1.5).Rate.Should().BeApproximately(1.20, 1e-9);
-        Evaluate(controller, 0.200, secondsAfterStart: 2.0).Rate.Should().BeApproximately(1.10, 1e-9);
-    }
-
-    [Fact]
-    public void Reset_ClearsLandingWindow()
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-        Evaluate(controller, 0.200, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.20, 1e-9);
-
-        controller.Reset();
-
-        Evaluate(controller, 0.200, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.10, 1e-9);
-    }
-
-    [Fact]
-    public void Jump_IgnoresLandingWindow()
-    {
-        var withLanding = new SyncCorrectionController();
-        withLanding.NotifyLanding(T0);
-        var withoutLanding = new SyncCorrectionController();
-
-        foreach (double residual in new[] { 0.010, 0.120, -0.120 })
-        {
-            SyncCorrectionDecision expected = withoutLanding.Evaluate(
-                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5), OneFrameAt25Fps);
-            SyncCorrectionDecision actual = withLanding.Evaluate(
-                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5), OneFrameAt25Fps);
-
-            actual.Should().Be(expected);
-        }
-    }
 
     // ── 0.4.5-A フェーズ 1: shadow プレビュー（状態を変えない） ─────────
 
     [Theory]
-    [InlineData(0.001, false, 1.0, "smooth-idle")]
-    [InlineData(0.004, false, 1.0, "smooth-deadband")]
-    [InlineData(0.050, false, 1.05, "smooth")]
-    [InlineData(0.050, true, 1.05, "smooth-landing")]
-    [InlineData(0.500, false, 1.10, "smooth")]
-    [InlineData(0.500, true, 1.20, "smooth-landing")]
-    [InlineData(double.NaN, false, 1.0, "invalid")]
-    public void PreviewSmoothRate_UsesTheSameBandsClampAndLandingWindow(
-        double residual, bool landing, double expectedRate, string expectedReason)
+    [InlineData(0.001, 1.0, "smooth-idle")]
+    [InlineData(0.004, 1.0, "smooth-deadband")]
+    [InlineData(0.050, 1.05, "smooth")]
+    [InlineData(0.500, 1.10, "smooth")]
+    [InlineData(double.NaN, 1.0, "invalid")]
+    public void PreviewSmoothRate_UsesTheSameBandsAndClamp(
+        double residual, double expectedRate, string expectedReason)
     {
         (double rate, string reason) = SyncCorrectionController.PreviewSmoothRate(
-            residual, landing, OneFrameAt25Fps);
+            residual, OneFrameAt25Fps);
 
         rate.Should().BeApproximately(expectedRate, 1e-9);
         reason.Should().Be(expectedReason);
@@ -468,7 +374,7 @@ public class SyncCorrectionControllerTests
         var controller = new SyncCorrectionController();
 
         _ = SyncCorrectionController.PreviewSmoothRate(
-            0.500, landingWindowActive: true, deadbandSeconds: OneFrameAt25Fps);
+            0.500, deadbandSeconds: OneFrameAt25Fps);
 
         // 呼んだ後も新しいコントローラと同じ（ヒステリシスの状態が変わっていない）。
         SyncCorrectionDecision decision = controller.Evaluate(
@@ -477,16 +383,6 @@ public class SyncCorrectionControllerTests
         decision.Reason.Should().Be("smooth-idle");
     }
 
-    [Fact]
-    public void IsLandingWindowActive_FollowsNotifyLanding()
-    {
-        var controller = new SyncCorrectionController();
-
-        controller.IsLandingWindowActive(T0).Should().BeFalse();
-        controller.NotifyLanding(T0);
-        controller.IsLandingWindowActive(T0.AddMilliseconds(500)).Should().BeTrue();
-        controller.IsLandingWindowActive(T0.AddSeconds(1.1)).Should().BeFalse();
-    }
 
     // ── B4b: 不感帯は 1 映像フレーム（fps から決める。定数は増やさない） ──
 

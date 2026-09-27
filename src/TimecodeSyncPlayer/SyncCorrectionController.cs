@@ -82,20 +82,6 @@ internal sealed class SyncCorrectionController
     public const double IneffectiveMinimumResidualSeconds = 0.030;
 
     /// <summary>
-    /// T9: 着地直後の速度上限。V3 の収束基準（1 秒以内に ±80ms）に対し、残差約 100ms を
-    /// ±0.10 で詰めると約 0.7 秒かかり基準を超えるため、着地直後だけ上限を倍にする。
-    /// 定常状態は <see cref="MaxRateDelta"/> のまま（音程への影響を普段は抑える）。
-    /// </summary>
-    public const double LandingMaxRateDelta = 0.20;
-
-    /// <summary>
-    /// T9: 上限を <see cref="LandingMaxRateDelta"/> に上げる長さ。着地（トラック切替のロード成立・
-    /// 粗い同期シークの発行）からこの間だけ。収束基準の 1 秒と同じ長さにして、窓の間に
-    /// 残差を詰め切れるようにする。
-    /// </summary>
-    public static readonly TimeSpan LandingWindow = TimeSpan.FromSeconds(1.0);
-
-    /// <summary>
     /// T8: Jump がシークするしきい値。LTC 25fps の 40ms フレームが音声コールバック
     /// （50ms ごと）で届くため、ずれていなくても残差に ±20〜40ms の揺れが乗る。
     /// 揺れの幅を越える最小の値として 80ms（LTC 2 フレーム分）にする。
@@ -117,8 +103,6 @@ internal sealed class SyncCorrectionController
     private DateTime _jumpInsideSince = DateTime.MinValue;
     private DateTime _windowStartedAt = DateTime.MinValue;
     private double _windowStartAbsResidual = double.NaN;
-    private DateTime _landingAt = DateTime.MinValue;
-    private bool _landingLimitActive;
 
     /// <summary>
     /// GStreamer 側で INSTANT_RATE_CHANGE が効かない場合（1.18 未満、またはパイプラインの
@@ -132,10 +116,10 @@ internal sealed class SyncCorrectionController
     /// <summary>
     /// 0.4.5-A フェーズ 1: 状態を変えずに「出したとしたら」の Smooth レートだけを計算する
     /// （shadow 記録用。<see cref="Evaluate"/> は呼ばないので _rateActive / _smoothDisabled に
-    /// 触れない）。式は Smooth と同じ（戻りバンド・渡された不感帯・着地窓の上限）。
+    /// 触れない）。式は Smooth と同じ（戻りバンド・渡された不感帯・上限 ±0.10）。
     /// </summary>
     public static (double Rate, string Reason) PreviewSmoothRate(
-        double residualSeconds, bool landingWindowActive, double deadbandSeconds)
+        double residualSeconds, double deadbandSeconds)
     {
         if (!double.IsFinite(residualSeconds))
             return (1.0, "invalid");
@@ -144,13 +128,8 @@ internal sealed class SyncCorrectionController
             return (1.0, "smooth-idle");
         if (abs <= deadbandSeconds)
             return (1.0, "smooth-deadband");
-        double maxDelta = landingWindowActive ? LandingMaxRateDelta : MaxRateDelta;
-        return (RateFor(residualSeconds, maxDelta), landingWindowActive ? "smooth-landing" : "smooth");
+        return (RateFor(residualSeconds, MaxRateDelta), "smooth");
     }
-
-    /// <summary>0.4.5-A: 着地直後の上限窓（±0.20）が開いているか。状態は変えない。</summary>
-    public bool IsLandingWindowActive(DateTime now) =>
-        _landingAt != DateTime.MinValue && now - _landingAt < LandingWindow;
 
     public SyncCorrectionDecision Evaluate(
         double residualSeconds,
@@ -168,13 +147,6 @@ internal sealed class SyncCorrectionController
             : EvaluateSmooth(residualSeconds, smoothAvailable, now, deadbandSeconds);
     }
 
-    /// <summary>
-    /// T9: 着地（トラック切替のロード成立、粗い同期シークの発行）を通知する。着地直後の
-    /// <see cref="LandingWindow"/> だけ Smooth の速度上限を <see cref="LandingMaxRateDelta"/> に
-    /// 上げる。窓の間に再通知されたら、そこから 1.0 秒に取り直す。Jump はこの窓を参照しない。
-    /// </summary>
-    public void NotifyLanding(DateTime now) => _landingAt = now;
-
     /// <summary>トラック切替・モード切替・手動操作で状態を捨てる（次のトラックで再試行できる）。</summary>
     public void Reset()
     {
@@ -183,8 +155,6 @@ internal sealed class SyncCorrectionController
         _consecutiveJumpSeeks = 0;
         _jumpLimitReachedLogged = false;
         _jumpInsideSince = DateTime.MinValue;
-        _landingAt = DateTime.MinValue;
-        _landingLimitActive = false;
         ClearWindow();
     }
 
@@ -273,19 +243,7 @@ internal sealed class SyncCorrectionController
             return SyncCorrectionDecision.RateChange(1.0, "smooth-ineffective");
         }
 
-        bool landingActive = _landingAt != DateTime.MinValue && now - _landingAt < LandingWindow;
-        if (landingActive != _landingLimitActive)
-        {
-            // 測定用（T9）: 上限が切り替わった回数を数えられるように、切り替わったときだけ出す。
-            _landingLimitActive = landingActive;
-            Log.Information(
-                "Smooth rate limit switched to {Limit:F2} landingWindow={LandingWindow}",
-                landingActive ? LandingMaxRateDelta : MaxRateDelta,
-                landingActive ? "active" : "ended");
-        }
-
-        double maxDelta = landingActive ? LandingMaxRateDelta : MaxRateDelta;
-        return SyncCorrectionDecision.RateChange(RateFor(residualSeconds, maxDelta), "smooth");
+        return SyncCorrectionDecision.RateChange(RateFor(residualSeconds, MaxRateDelta), "smooth");
     }
 
     private static double RateFor(double residualSeconds, double maxRateDelta)

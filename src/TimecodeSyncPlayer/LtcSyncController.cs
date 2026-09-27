@@ -145,11 +145,6 @@ internal sealed class LtcSyncController
     internal long CorrectionRejectedSamples => _rate.RejectedSamples;
 
     /// <summary>
-    /// 0.4.5-A フェーズ 1: 速度補正の着地窓（±0.20）が開いているか（shadow 記録用。状態は変えない）。
-    /// </summary>
-    public bool IsCorrectionLandingWindowActive() => _correction.IsLandingWindowActive(_getUtcNow());
-
-    /// <summary>
     /// 環境変数の解釈（T2 段 3: 既定 on）。明示的な off（大文字小文字不問）のときだけ無効。
     /// </summary>
     internal static bool IsSampleClockEnabled(string? value)
@@ -311,7 +306,6 @@ internal sealed class LtcSyncController
                 _input.DiscardPendingSync();
                 // v0.5.4 段 B: 保留を外から破棄したので、着地待ちと着地の記録を初期化する。
                 _syncService.SeekState.ResetLandingState();
-                _syncService.EndFollowStartLanding("boundary hold released");
                 break;
         }
     }
@@ -387,19 +381,14 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
-    /// T9: 粗い同期シークの発行で、着地直後の Smooth 速度上限（±0.20）の窓を開く。
-    /// Jump の補正シークも ReportSeekSent を通るため、Smooth のときだけ通知する
-    /// （窓を参照するのは Smooth だけだが、無駄な状態更新を避ける）。
+    /// <summary>
+    /// T9/B6b-16/23: 粗い同期シークの発行。速度補正の残差の系列を切る（粗い判定の ResetSeekGate と
+    /// 同じ考え方）。着地直後の上限窓（±0.20）は畳んだ（着地直後の 1 サンプルは varispeed しない）。
     /// </summary>
     private void OnSeekIssued()
     {
-        // D37-c: シークで位置が飛ぶため、速度補正の残差の系列も切る（粗い判定の
-        // ResetSeekGate と同じ考え方）。
         _rate.ResetResidualGate();
         _rate.ClearRejectedLogged();
-        if (_effects.GetCorrectionMode?.Invoke() != SyncCorrectionMode.Smooth)
-            return;
-        _correction.NotifyLanding(_getUtcNow());
     }
 
     /// <summary>T7: 再生の停止（プロジェクト・プレイリストの差し替えを含む）で補正状態を捨てる。</summary>
@@ -732,9 +721,6 @@ internal sealed class LtcSyncController
             // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
             // （ObserveValidFrame を呼ばない）。保持損失からの復帰は上の D27-b の経路。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
-            // 0.4.6: LTC が不連続に動いたので、追従開始の先行量の前提（LTC が進み続ける）が崩れた。
-            // このフレームで始まる追従開始は ApplySync で開くので、終わるのはそれより前のものだけ。
-            _syncService.EndFollowStartLanding("ltc jump");
             RequestSyncEffective(effectiveSeconds);
             ApplyCorrection(effectiveSeconds);
             return;
@@ -777,7 +763,6 @@ internal sealed class LtcSyncController
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
         _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
         Log.Information("Timecode sync: applying the confirmed Jump frame once ltc={Ltc:F3}", rawSeconds);
-        _syncService.EndFollowStartLanding("ltc jump");
         RequestSyncEffective(effectiveSeconds);
         ApplyCorrection(effectiveSeconds);
     }
@@ -975,6 +960,11 @@ internal sealed class LtcSyncController
             targetSeconds = SyncDecisionEngine.ClampToClip(
                 ltcSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         }
+
+        // v0.5.4 B6b-16/23（規則 3）: relocate・読み込みの着地を観測した直後の 1 サンプルは
+        // varispeed しない（消費する）。シークの可否は粗い判定（15 の閾値と 13 のゲート）が決める。
+        if (_syncService.ConsumeFirstSampleAfterLanding())
+            return;
 
         // D37-c: 粗い判定と同じ前処理を補正の残差にも通す。ありえない変化の標本は捨て、
         // 採用した残差は直近窓の中央値にする（Smooth の制御則・Jump のしきい値は変えない）。
@@ -1347,15 +1337,6 @@ internal sealed class LtcSyncController
                 state.IsPlayerReady, state.IsMonitoring, state.SyncEnabled,
                 state.IsSeeking, _signalLoss.ShouldSuppressSync))
             return SyncRequestResult.Complete;
-        // D37-c: 追従開始の最初の同期評価は、D37-b2 の着地窓と同じ扱いにする
-        // （着地まで速度補正を優先せず、シークで詰める）。古い値の再適用（gapDisplayOnly）では
-        // 消費せず、次の有効フレームに任せる。
-        if (!gapDisplayOnly && _input.FollowStartPending)
-        {
-            _input.ClearFollowStart();
-            _syncService.NotifyLanding(LandingOrigin.FollowStart);
-            Log.Information("Timecode sync: follow start landing window opened ltc={Ltc:F3}", seconds);
-        }
         if (state.Mode != SyncMode.Continue)
         {
             // U1: 古い再適用では Single の同期（シーク目標）も次の有効フレームに任せる。
@@ -1385,9 +1366,6 @@ internal sealed class LtcSyncController
                     // T7: トラック切替（ロード成功）で補正状態を捨て、Smooth を再試行できるようにする。
                     ResetCorrection();
                     _rate.ResetSmoothAvailability();
-                    // T9: 着地（ロード成立）から 1.0 秒の補正窓を開く。ResetCorrection の後に置くこと
-                    // （Reset は前の窓を捨てる）。
-                    _correction.NotifyLanding(_getUtcNow());
                 }
                 if (frame.ExitedGap)
                     ResetCorrection();
