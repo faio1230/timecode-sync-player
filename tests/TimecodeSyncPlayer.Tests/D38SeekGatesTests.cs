@@ -64,9 +64,19 @@ public sealed class D38SeekGatesTests
         // 未信頼のまま、pending の目標から 4×tolerance を超える要求（LTC 20.0 → 目標 20.0）。
         h.SupplyLtc(20.0);
 
-        h.SyncService.SeekState.HasPendingSeek.Should().BeFalse(
-            "未信頼でも 4×tolerance を超える新しい要求は、到達不能な pending を捨てる（D38 (b)）");
+        // v0.5.4 段 B / 門 8 / §9-2: 着地待ちの目標を置き換え、その場で置き換えのシークを出す
+        // （2 秒のタイムアウトを待たない）。位置は置き換えの着地まで使わない。
+        h.SyncService.SeekState.TargetSeconds.Should().BeApproximately(20.0, 1e-6,
+            "未信頼でも 4×tolerance を超える新しい要求は着地待ちの目標を置き換える（D38 (b)）");
+        h.SyncService.SeekState.HasPendingSeek.Should().BeTrue(
+            "着地待ちは維持する（位置を使わないまま、同じ手順で新しい着地待ちに入る）");
         h.SyncService.IsPlaybackPositionUsable.Should().BeFalse(
-            "捨てた後は位置の再確認（11）とゲート（13）を通ってからシークする");
+            "置き換えの着地まで位置を使わない（古い位置で判定・補正をしない）");
+
+        // デバウンス（250ms）を明けて、置き換えのシークがその場で出ることを確かめる。
+        clock.Advance(TimeSpan.FromMilliseconds(300));
+        h.Tick100Milliseconds();
+        h.Operations.Should().Contain(o => o.Name == "seek" && Math.Abs((o.Value ?? 0) - 20.0) < 1e-6,
+            "2 秒のタイムアウトを待たずに置き換えた目標へ着地する");
     }
 }

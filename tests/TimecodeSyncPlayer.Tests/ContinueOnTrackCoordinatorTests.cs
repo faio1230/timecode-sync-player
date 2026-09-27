@@ -112,17 +112,8 @@ public class ContinueOnTrackCoordinatorTests
 
         rec.NativeSeeking = false;
         rec.TimePos = (0, 11);
-        // D37-b: セトル窓内 → 時間切れ → 位置が安定するまで（3 サンプル）判定しない。
-        coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Deferred);
-        for (int i = 1; i <= 4; i++)
-        {
-            clock.Advance(TimeSpan.FromMilliseconds(100));
-            rec.TimePos = (0, 11 + i * 0.1);
-            coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Deferred, $"位置の再確認中 {i} サンプル目");
-        }
-        // 再確認が完了した次のフレームで、新しい要求（30）が発行される。
-        clock.Advance(TimeSpan.FromMilliseconds(100));
-        rec.TimePos = (0, 11.6);
+        // v0.5.4 段 B / 門 8 / §9-2: 遠い要求は着地待ちの目標を置き換え、その場でシークする
+        // （捨てた後に古い位置で判定する隙間を作らない。再確認の 3 サンプルは畳んだ）。
         coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Complete);
         rec.SeekTargets.Should().Equal(30);
         service.SeekState.TargetSeconds.Should().Be(30);
@@ -514,9 +505,11 @@ public class ContinueOnTrackCoordinatorTests
         // D37-e: 学習値 2.0 があっても、ギャップ出口のシークは先行しない（対象は追従開始だけ）。
         service.SeekState.BeginSeek(1.0, clock.GetUtcNow().UtcDateTime);
         clock.Advance(TimeSpan.FromSeconds(2.0));
-        service.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
-        clock.Advance(TimeSpan.FromMilliseconds(250));
-        service.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
+        // v0.5.4 段 B: 着地は配信の世代と位置の事象で取る（旧 門 6 の窓と cooldown は畳んだ）。
+        service.SeekState.ObserveLandingSample(
+            new TimecodeSyncPlayer.Contracts.PlaybackPositionSample(
+                1.0, TimecodeSyncPlayer.Contracts.PlaybackPositionBasis.Pipeline, 1, 1.0, 1, 1),
+            0.24, clock.GetUtcNow().UtcDateTime);
         service.SeekState.LearnedSeekDurationSeconds.Should().BeApproximately(2.0, 1e-6);
         clock.Advance(TimeSpan.FromMilliseconds(600));
 

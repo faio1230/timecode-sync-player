@@ -74,6 +74,9 @@ public sealed class HeldLandingAfterJumpReproTests
         h.Tick100Milliseconds(3);   // 無音の 2 度目の損失
 
         h.IsPaused.Should().BeTrue("2 度目の無音損失で停止する");
-        SeekTargets(h).Should().BeEmpty("Normal で保持値が明けているため、古い保持値へ着地しない");
+        // §6 の 4 の欠陥は「古い保持値（20.0）へ着地する」こと。現在の LTC（23.12）への粗いシークは
+        // 欠陥ではない（v0.5.4 段 B で着地の時機が変わり、D37-a のゲートが Normal 3 枚で開く場面）。
+        SeekTargets(h).Should().NotContain(target => Math.Abs(target - 20.0) < 0.1,
+            "Normal で保持値が明けているため、古い保持値へ着地しない");
     }
 }

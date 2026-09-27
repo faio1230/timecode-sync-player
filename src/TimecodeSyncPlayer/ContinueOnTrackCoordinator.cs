@@ -166,7 +166,11 @@ internal sealed class ContinueOnTrackCoordinator
 
             bool success = _effects.SeekTo(seekPlan.TargetSeconds);
             if (success)
+            {
                 _syncService.ReportSeekSent(seekPlan.TargetSeconds);
+                // v0.5.4 段 B2 の計測: 着地から 500ms 以内の同期シーク（旧 門 9 が隠していた量）。
+                _syncService.NotePostLandingSeekIssued(seekPlan.TargetSeconds);
+            }
             Log.Information(
                 "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success}",
                 ltcSeconds, playbackSeconds, seekPlan.TargetSeconds,

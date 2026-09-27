@@ -107,6 +107,8 @@ internal sealed class SingleModeSyncCoordinator
         if (success)
         {
             _syncService.ReportSeekSent(decision.TargetSeconds);
+            // v0.5.4 段 B2 の計測: 着地から 500ms 以内の同期シーク（旧 門 9 が隠していた量）。
+            _syncService.NotePostLandingSeekIssued(decision.TargetSeconds);
             NoteBoundarySeek(decision.TargetSeconds, state);
         }
         Log.Information(

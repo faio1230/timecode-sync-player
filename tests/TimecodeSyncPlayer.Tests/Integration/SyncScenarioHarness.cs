@@ -552,13 +552,17 @@ internal sealed class SyncScenarioHarness
     }
 
     /// <summary>
-    /// v0.5.4 段 B1: 位置の照会（秒 + サンプル）。秒は従来どおり生の位置を返し（EOS の見せ方を
-    /// 変えない）、サンプルには配信世代・配信位置を載せる（着地の状態の観測用）。
+    /// v0.5.4 段 B: 位置の照会（秒 + サンプル）。秒は従来どおり生の位置を返し（EOS の見せ方を
+    /// 変えない）、サンプルには配信世代・配信位置を載せる（着地の状態の観測用）。ロード前の
+    /// テストでも着地を観測できるよう、常にサンプルを作る（実機の `_ex` が返る形と同じ）。
     /// </summary>
-    private SyncPositionRead ReadPositionSample() =>
-        _playback.TryGetPositionSample(out PlaybackPositionSample sample)
-            ? new SyncPositionRead(true, _playback.PositionSeconds, sample)
-            : new SyncPositionRead(true, _playback.PositionSeconds);
+    private SyncPositionRead ReadPositionSample()
+    {
+        var sample = new PlaybackPositionSample(
+            _playback.PositionSeconds, PlaybackPositionBasis.Pipeline, _playback.CurrentGeneration,
+            _playback.DeliveredSeconds, _playback.DeliveredGeneration, _playback.CurrentGeneration);
+        return new SyncPositionRead(true, _playback.PositionSeconds, sample);
+    }
 
     public void CompleteFreezeCapture()
     {

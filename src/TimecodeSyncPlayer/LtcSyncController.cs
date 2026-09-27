@@ -309,10 +309,7 @@ internal sealed class LtcSyncController
                 _input.ClearHeldLossLanding();
                 _input.ClearHeldReapplied();
                 _input.DiscardPendingSync();
-                _syncService.SeekState.Clear();
-                // v0.5.4 U4: 保留を外から破棄したので位置は使える（着地の確認は要求しない。A の状態）。
-                _syncService.SeekState.ResetPositionTrust();
-                // v0.5.4 段 B1: 新しい着地の状態も初期化する（保留を外から破棄した）。
+                // v0.5.4 段 B: 保留を外から破棄したので、着地待ちと着地の記録を初期化する。
                 _syncService.SeekState.ResetLandingState();
                 _syncService.EndFollowStartLanding("boundary hold released");
                 break;
@@ -1001,6 +998,8 @@ internal sealed class LtcSyncController
                         "Smooth correction rate={Rate:F5} residualMs={ResidualMs:F1} rawResidualMs={RawResidualMs:F1} rejectedTotal={RejectedTotal}",
                         decision.Rate, residualSeconds * 1000.0, rawResidualSeconds * 1000.0,
                         correctionGate.RejectedTotal);
+                    // v0.5.4 段 B2 の計測: 着地から 500ms 以内の速度補正（旧 門 9 が隠していた量）。
+                    _syncService.NotePostLandingRateApplied(decision.Rate);
                 }
                 break;
             case SyncCorrectionActionType.Seek:
@@ -1108,23 +1107,10 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
-    /// D38 (a): 同期を適用しないフレーム（保持の Duplicate）で、保留中のシークの着地を観測する。
-    /// 着地していれば位置の信頼が戻り、次の Jump が未信頼とタイムアウトを通らない。
-    /// v0.5.4 段 B1: 着地の状態（新しい判定）も、保留の有無に依らずここで観測する（§9-7 の 1）。
+    /// D38 (a) / v0.5.4 段 B: 同期を適用しないフレーム（保持の Duplicate）でも、位置サンプルから
+    /// 着地の状態（A）を観測する。着地していれば次の Jump が着地待ちとタイムアウトを通らない。
     /// </summary>
-    private void ObservePendingSeekLanding()
-    {
-        ObserveLandingStateFromEffects();
-        if (!_syncService.SeekState.HasPendingSeek)
-            return;
-        LtcSyncContext state = _effects.GetContext();
-        if (!state.SyncEnabled || !state.IsMonitoring)
-            return;
-        if (_effects.GetPlaybackSeconds?.Invoke() is not double playback || !double.IsFinite(playback))
-            return;
-        double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
-        _syncService.ObservePendingSeekLanding(playback, toleranceSeconds);
-    }
+    private void ObservePendingSeekLanding() => ObserveLandingStateFromEffects();
 
     /// <summary>
     /// v0.5.4 段 B1: 位置を照会して着地の状態（新しい判定）を観測する。LTC のフレームの経路とは

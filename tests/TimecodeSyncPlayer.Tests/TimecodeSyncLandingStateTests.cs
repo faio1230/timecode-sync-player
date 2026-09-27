@@ -4,9 +4,9 @@ using TimecodeSyncPlayer.Contracts;
 namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
-/// v0.5.4 段 B1: 着地の状態（新しい判定）の単体。着地の定義は §9-8（配信世代 >= シーク世代 かつ
-/// 配信フレームの位置が target−tol〜target+2×tol）。観測は LTC のフレームの経路と独立に、
-/// 位置サンプルを渡すだけで状態が進むことを固定する（§9-7 の 1）。
+/// v0.5.4 段 B: 着地の観測の単体。着地の定義は §9-8（配信世代 >= シーク世代 かつ配信フレームの
+/// 位置が target−tol〜target+2×tol）。観測は LTC のフレームの経路と独立に、位置サンプルを
+/// 渡すだけで状態が進むことを固定する（§9-7 の 1）。
 /// </summary>
 public class TimecodeSyncLandingStateTests
 {
@@ -20,7 +20,7 @@ public class TimecodeSyncLandingStateTests
     [Fact]
     public void BeginSeek_EntersWaitingForLandingSynchronously()
     {
-        TimecodeSyncSeekState state = CreateState();
+        var state = new TimecodeSyncSeekState();
 
         state.BeginSeek(10.0, T0);
 
@@ -31,7 +31,7 @@ public class TimecodeSyncLandingStateTests
     [Fact]
     public void ObserveLandingSample_WithDeliveredGenerationAndPosition_LandsWithoutLtcFrames()
     {
-        TimecodeSyncSeekState state = CreateState();
+        var state = new TimecodeSyncSeekState();
         state.BeginSeek(10.0, T0);
 
         // LTC のフレームは 1 枚も通さない。位置サンプルだけ（保持の Duplicate・UI タイマーと同じ）。
@@ -44,13 +44,12 @@ public class TimecodeSyncLandingStateTests
         state.LastLanding!.Value.DelaySeconds.Should().BeApproximately(0.1, 1e-9);
         state.LastLanding!.Value.DeliveredSeconds.Should().BeApproximately(10.05, 1e-9);
         state.LandingFirstFrameOutsideWindowCount.Should().Be(0);
-        state.LandingMismatchCount.Should().Be(0);
     }
 
     [Fact]
     public void ObserveLandingSample_WithoutTheSeekGeneration_StaysWaiting()
     {
-        TimecodeSyncSeekState state = CreateState();
+        var state = new TimecodeSyncSeekState();
         state.BeginSeek(10.0, T0);
 
         // 現在世代は進んでいる（シーク発行）が、配信は前の世代のまま。
@@ -65,7 +64,7 @@ public class TimecodeSyncLandingStateTests
     [Fact]
     public void ObserveLandingSample_FirstNewGenerationFrameOutsideTheWindow_IsCountedOnce()
     {
-        TimecodeSyncSeekState state = CreateState();
+        var state = new TimecodeSyncSeekState();
         state.BeginSeek(10.0, T0);
 
         // (c) 型: 新しい世代の最初のフレームが目標から離れている（前の世代の遅延フレーム等）。
@@ -86,7 +85,7 @@ public class TimecodeSyncLandingStateTests
     [Fact]
     public void ObserveLandingSample_AfterTheSafetyTimeout_FailsAndResumesOnTheNextSample()
     {
-        TimecodeSyncSeekState state = new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3));
+        var state = new TimecodeSyncSeekState(TimeSpan.FromSeconds(3));
         state.BeginSeek(10.0, T0);
 
         state.ObserveLandingSample(Sample(1.0, 5, 4, 1.0), 0.1, T0.AddSeconds(3));
@@ -101,45 +100,13 @@ public class TimecodeSyncLandingStateTests
     }
 
     [Fact]
-    public void OldJudgmentSettlesWhileNewIsWaiting_CountsADisagreement()
-    {
-        TimecodeSyncSeekState state = CreateState();
-        state.BeginSeek(10.0, T0);
-
-        // 古い判定は照会位置 10.05 で着地（クールダウン 200ms の後）。新しい判定は配信前のまま。
-        state.ShouldSuppressSeek(10.05, toleranceSeconds: 0.1, T0.AddMilliseconds(100));
-        state.ShouldSuppressSeek(10.05, toleranceSeconds: 0.1, T0.AddMilliseconds(400));
-
-        state.HasPendingSeek.Should().BeFalse("前提: 古い判定は着地した");
-        state.LandingPhase.Should().Be(TimecodeSyncLandingPhase.WaitingForLanding);
-        state.LandingMismatchCount.Should().Be(1, "古い判定は着地・新しい判定は待ち、の食い違い");
-        state.OldLandingDelaySeconds.Should().BeApproximately(0.4, 1e-9);
-    }
-
-    [Fact]
-    public void NewLandsWhileOldIsWaiting_CountsADisagreement()
-    {
-        TimecodeSyncSeekState state = CreateState();
-        state.BeginSeek(10.0, T0);
-
-        // 照会した位置（13.0）は古い判定の窓の外・配信フレーム（10.0）は窓の中。
-        state.ObserveLandingSample(Sample(13.0, 5, 5, 10.0), 0.1, T0.AddMilliseconds(100));
-
-        state.LandingPhase.Should().Be(TimecodeSyncLandingPhase.Following);
-        state.LandingMismatchCount.Should().Be(1);
-    }
-
-    [Fact]
     public void ResetLandingState_ReturnsToFollowing()
     {
-        TimecodeSyncSeekState state = CreateState();
+        var state = new TimecodeSyncSeekState();
         state.BeginSeek(10.0, T0);
 
         state.ResetLandingState();
 
         state.LandingPhase.Should().Be(TimecodeSyncLandingPhase.Following);
     }
-
-    private static TimecodeSyncSeekState CreateState() =>
-        new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3));
 }
