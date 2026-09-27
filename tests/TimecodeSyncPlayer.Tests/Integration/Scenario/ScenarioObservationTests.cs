@@ -192,7 +192,7 @@ public class ScenarioObservationTests
             $"{(pause.PauseLatencySeconds is double latency ? $"{latency * 1000:F0}ms" : "none")}");
 
         pause.PauseLatencySeconds.Should().NotBeNull("保持の確定で一時停止する（停止モード）");
-        pause.PauseLatencySeconds!.Value.Should().BeInRange(0.1, 0.8,
-            "最後の有効フレームから 250ms の確定に Tick 間隔が乗る（段 0 の R-1/R-2 と同じ向き）");
+        pause.PauseLatencySeconds!.Value.Should().BeInRange(0.0, 0.2,
+            "U8: Jump の直後の保持は 250ms の確定を待たず、次の Tick（1〜2 フレーム）で停止する");
     }
 }
