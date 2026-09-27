@@ -4,13 +4,19 @@ namespace TimecodeSyncPlayer;
 
 internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
 {
+    /// <summary>
+    /// v0.5.4 U2: 直前の着地の記録（A の状態）。着地（門 6）が確定したときに 1 つだけ持ち、
+    /// 着地直後の同じところへの再シークの抑止（門 9）はこの記録から導く（別の窓を持たない）。
+    /// </summary>
+    private readonly record struct SettledLanding(DateTime At, double TargetSeconds);
+
     private readonly TimeSpan _timeout;
     private DateTime _sentAt = DateTime.MinValue;
     private DateTime _settledAt = DateTime.MinValue;
-    private DateTime _lastSettledAt = DateTime.MinValue;
-    private double _lastSettledTargetSeconds = double.NaN;
+    private SettledLanding? _lastSettled;
     private static readonly TimeSpan SettleCooldown = TimeSpan.FromMilliseconds(200);
-    private static readonly TimeSpan PostSettleSuppress = TimeSpan.FromMilliseconds(500);
+    /// <summary>v0.5.4 U2: A の着地の記録が新しいと言える間（門 9 の抑止の長さ）。</summary>
+    private static readonly TimeSpan SettledLandingSuppress = TimeSpan.FromMilliseconds(500);
     private const double ContinuousPlaybackSettleSlackMultiplier = 2.0;
     // D20-b: 到達不能な pending を置き換える距離（tolerance の倍数）。
     private const double PendingSupersedeToleranceMultiplier = 4.0;
@@ -64,24 +70,21 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     /// v0.5.3 段 3f: 直前の着地の記録だけを忘れる（読み込みで素材が変わるとき。§6 の 10）。
     /// <see cref="Clear"/> の意味は変えない（ほかの呼び出し元に影響させない）。
     /// </summary>
-    public void ForgetLastSettled()
-    {
-        _lastSettledAt = DateTime.MinValue;
-        _lastSettledTargetSeconds = double.NaN;
-    }
+    public void ForgetLastSettled() => _lastSettled = null;
 
     public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds, DateTime now,
         double requestedTargetSeconds = double.NaN)
     {
         if (!HasPendingSeek)
         {
-            if (_lastSettledAt != DateTime.MinValue
-                && now - _lastSettledAt < PostSettleSuppress
+            if (_lastSettled is { } settled
+                && now - settled.At < SettledLandingSuppress
                 && IsWithinSettledTarget(playbackSeconds, toleranceSeconds))
             {
                 // v0.5.4 段 0: 着地後の抑止（門 9）を着地（門 6）と分けて数える。
+                // v0.5.4 U2: A の着地の記録（_lastSettled）から導く。
                 Log.Debug("sync.gate post-settle-suppress elapsedMs={ElapsedMs:F1} target={Target:F3}",
-                    (now - _lastSettledAt).TotalMilliseconds, _lastSettledTargetSeconds);
+                    (now - settled.At).TotalMilliseconds, settled.TargetSeconds);
                 LastStatus = TimecodeSyncSeekPendingStatus.Settled;
                 return true;
             }
@@ -107,8 +110,7 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
             // v0.5.4 段 0: 着地の確定（門 6）を数える（従来は pending "Settled" 行を門 9 と共有していた）。
             Log.Debug("sync.gate seek-settled target={Target:F3} elapsedMs={ElapsedMs:F1}",
                 TargetSeconds, (now - _sentAt).TotalMilliseconds);
-            _lastSettledAt = now;
-            _lastSettledTargetSeconds = TargetSeconds;
+            _lastSettled = new SettledLanding(now, TargetSeconds);
             Clear();
             LastStatus = TimecodeSyncSeekPendingStatus.Settled;
             return true;               // セットルティックも抑止（1-tick 隙間を閉じる）
@@ -133,8 +135,7 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
             // v0.5.4 段 0: 保留のタイムアウト（門 7）の実測時間を残す。
             Log.Debug("sync.gate pending-timeout elapsedMs={ElapsedMs:F1} target={Target:F3}",
                 (now - _sentAt).TotalMilliseconds, TargetSeconds);
-            Clear();
-            LastStatus = TimecodeSyncSeekPendingStatus.TimedOut;
+            ClearPendingAs(TimecodeSyncSeekPendingStatus.TimedOut);
             return false;
         }
 
@@ -160,9 +161,19 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         if (Math.Abs(requestedTargetSeconds - playbackSeconds) <=
             Math.Max(0, toleranceSeconds) * PendingSupersedeToleranceMultiplier)
             return false;
-        Clear();
-        LastStatus = TimecodeSyncSeekPendingStatus.Superseded;
+        ClearPendingAs(TimecodeSyncSeekPendingStatus.Superseded);
         return true;
+    }
+
+    /// <summary>
+    /// v0.5.4 U3: A の「着地できなかった」枝。時間切れ（門 7）と置き換え（門 8）のどちらも
+    /// ここで保留を捨てて結果だけを残し、サービスの <c>TrackSeekStatusTransition</c> が
+    /// 位置の再確認（門 11。安定 3 サンプル）へ 1 か所でつなぐ。
+    /// </summary>
+    private void ClearPendingAs(TimecodeSyncSeekPendingStatus status)
+    {
+        Clear();
+        LastStatus = status;
     }
 
     /// <summary>
@@ -199,23 +210,22 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
 
     private bool IsWithinSettledTarget(double playbackSeconds, double toleranceSeconds)
     {
-        if (double.IsNaN(_lastSettledTargetSeconds))
+        if (_lastSettled is not { } settled)
             return false;
 
-        return Math.Abs(playbackSeconds - _lastSettledTargetSeconds) <= Math.Max(0, toleranceSeconds);
+        return Math.Abs(playbackSeconds - settled.TargetSeconds) <= Math.Max(0, toleranceSeconds);
     }
 
     /// <summary>
     /// v0.5.2 段 0: ラッチが立っているかの読み取り専用の写し（特性テスト用。状態は変えない）。
     /// lastSettledRecent は、直近の着地の記録が <paramref name="now"/> の時点でまだ着地後の抑止
-    /// （ShouldSuppressSeek の PostSettleSuppress）に効く状態か。
+    /// （ShouldSuppressSeek の着地の記録）に効く状態か。
     /// </summary>
     internal IReadOnlyDictionary<string, bool> LatchSnapshot(DateTime now) => new Dictionary<string, bool>
     {
         ["pendingSeek"] = HasPendingSeek,
-        ["lastSettledRecent"] = _lastSettledAt != DateTime.MinValue &&
-            now - _lastSettledAt < PostSettleSuppress &&
-            !double.IsNaN(_lastSettledTargetSeconds),
+        ["lastSettledRecent"] = _lastSettled is { } settled &&
+            now - settled.At < SettledLandingSuppress,
     };
 }
 

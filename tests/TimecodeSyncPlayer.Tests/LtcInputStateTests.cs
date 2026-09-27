@@ -132,27 +132,6 @@ public class LtcInputStateTests
     }
 
     [Fact]
-    public void MarkJumpApplied_SetsLatch()
-    {
-        var input = new LtcInputState();
-
-        input.MarkJumpApplied();
-
-        input.JumpAppliedOnce.Should().BeTrue();
-    }
-
-    [Fact]
-    public void ClearJumpApplied_LowersLatch()
-    {
-        var input = new LtcInputState();
-        input.MarkJumpApplied();
-
-        input.ClearJumpApplied();
-
-        input.JumpAppliedOnce.Should().BeFalse();
-    }
-
-    [Fact]
     public void MarkHeldReapplied_SetsLatch()
     {
         var input = new LtcInputState();
@@ -201,7 +180,6 @@ public class LtcInputStateTests
 
         input.OnNormalFrame();
 
-        input.JumpAppliedOnce.Should().BeFalse();
         input.HeldReapplyDone.Should().BeFalse();
         input.LastHeldEffectiveSeconds.Should().BeNull();
         input.HeldLossLandingSeconds.Should().BeNull();
@@ -223,7 +201,6 @@ public class LtcInputStateTests
         input.PendingJumpSeconds.Should().BeNull();
         input.PendingJumpFrameEndTimestamp.Should().Be(0);
         input.PendingJumpReceivedAt.Should().Be(100, "移す前の ClearFrameHistory は未確認 Jump の受信時刻を残す");
-        input.JumpAppliedOnce.Should().BeFalse();
         input.HeldReapplyDone.Should().BeFalse();
         input.FollowStartPending.Should().BeTrue("移す前の ClearFrameHistory は追従開始に触れない");
     }
@@ -237,7 +214,6 @@ public class LtcInputStateTests
         input.MarkLastApplied(6.0);
         input.MarkHeldEffective(7.0);
         input.MarkHeldLossLanding(8.0);
-        input.MarkJumpApplied();
         input.MarkHeldReapplied();
         input.MarkFollowStart();
         return input;

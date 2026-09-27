@@ -57,13 +57,6 @@ internal sealed class FileLoadState
         _releasedAt = now;
     }
 
-    /// <summary>安全タイムアウトでロード中をやめた（回収待ちにはしない）。</summary>
-    public void MarkTimedOut()
-    {
-        _isLoadingFile = false;
-        _loading = null;
-    }
-
     /// <summary>
     /// v0.5.3 段 3d: ロード中と解除の回収待ちを両方下ろす（§6 の 3）。解除ではない
     /// （<see cref="Release"/> を通らない。解除時刻を残さず、着地窓・デバウンスにも触れない）。

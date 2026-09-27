@@ -321,8 +321,9 @@ public class ContinueOnTrackCoordinatorTests
         rec.LoadFileArgs.Should().ContainSingle().Which.Should().Be(("C:/next.mp4", 12.5));
         rec.SetLoadedTrackIds.Should().ContainSingle().Which.Should().Be(newTrack.Id);
         rec.Calls.Should().ContainSingle(call => call == "UpdateCurrentTrackLabel");
-        // BeginFileLoad が呼ばれると以後のシークが抑止される
-        service.ShouldSuppressSeek(playbackSeconds: 12.5, toleranceSeconds: 0.2).Should().BeTrue();
+        // BeginFileLoad でロード中の印が立つ（v0.5.4 U1: シークの抑止は呼び出し側の
+        // TryMarkFileLoaded が担う。同じファイルの SameTrack_WhenFileLoadNotStable_… を参照）
+        service.IsLoadingFile.Should().BeTrue();
         // 同一トラック分岐へは進まない
         rec.Calls.Should().NotContain("ReadPosition");
     }

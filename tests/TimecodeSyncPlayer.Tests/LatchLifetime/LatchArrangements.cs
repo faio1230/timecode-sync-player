@@ -8,7 +8,6 @@ namespace TimecodeSyncPlayer.Tests.LatchLifetime;
 /// </summary>
 internal static class LatchArrangements
 {
-    public static readonly LatchId JumpAppliedOnce = new(LatchOwner.LtcSyncController, "jumpAppliedOnce");
     public static readonly LatchId HeldReapplyDone = new(LatchOwner.LtcSyncController, "heldReapplyDone");
     public static readonly LatchId PendingJump = new(LatchOwner.LtcSyncController, "pendingJump");
     public static readonly LatchId PendingSync = new(LatchOwner.LtcSyncController, "pendingSync");
@@ -42,7 +41,7 @@ internal static class LatchArrangements
 
     public static IReadOnlyList<LatchId> All { get; } =
     [
-        JumpAppliedOnce, HeldReapplyDone, PendingJump, PendingSync, LastHeldEffective, HeldLossLanding,
+        HeldReapplyDone, PendingJump, PendingSync, LastHeldEffective, HeldLossLanding,
         LastAppliedLtc, LastAcceptedLtc, FollowStartPending, RateRestorePending, SmoothUnavailable,
         CorrectionPausedForPosition, RateNotUnity,
         LoadingFile, FileLoadReleasePending, SeekLandingActive, FollowStartLanding, PositionUntrusted,
@@ -73,15 +72,7 @@ internal static class LatchArrangements
             : LatchLifetimeScenario.Single(lossMode);
         SyncScenarioHarness h = s.Harness;
 
-        if (latch == JumpAppliedOnce)
-        {
-            // 同じトラック内の Jump は次の 1 フレームで確かめてから適用する（LtcSyncController.cs:685）。
-            // 確認フレームで ApplyConfirmedJump が立てる（:643）。
-            double jump = s.LastLtc + 3.0;
-            s.Frame(jump, TimecodeFrameDiagnosticStatus.Jump);
-            s.Frame(jump + 0.04);
-        }
-        else if (latch == HeldReapplyDone)
+        if (latch == HeldReapplyDone)
         {
             // 最後の適用値から許容を超えて離れた保持値（LtcSyncController.cs:566-571）。
             s.Frame(s.LastLtc + 3.0, TimecodeFrameDiagnosticStatus.Duplicate);

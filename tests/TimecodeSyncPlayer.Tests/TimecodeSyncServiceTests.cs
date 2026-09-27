@@ -683,19 +683,6 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void ShouldSuppressSeek_ReturnsTrueWhileFileLoading()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState { ShouldSuppress = false };
-        var service = new TimecodeSyncService(engine, seekState);
-        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
-
-        bool result = service.ShouldSuppressSeek(0.0, 0.2);
-
-        result.Should().BeTrue();
-    }
-
-    [Fact]
     public void TryMarkFileLoaded_ReturnsFalse_WhenPlaybackHasNotAdvanced()
     {
         var engine = new MockSyncDecisionEngine();
@@ -824,21 +811,6 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void ShouldSuppressSeek_BeforeStableFileLoad_DoesNotDelegateToSeekState()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState { ShouldSuppress = false };
-        var service = new TimecodeSyncService(engine, seekState);
-        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
-        service.TryMarkFileLoaded(playbackSeconds: 12.12, renderedFrameCount: 4);
-
-        bool result = service.ShouldSuppressSeek(5.0, 0.2);
-
-        result.Should().BeTrue();
-        seekState.ShouldSuppressCalled.Should().BeFalse();
-    }
-
-    [Fact]
     public void ShouldSuppressSeek_AfterStableFileLoad_DelegatesToSeekState()
     {
         var engine = new MockSyncDecisionEngine();
@@ -851,43 +823,6 @@ public class TimecodeSyncServiceTests
 
         result.Should().BeFalse();
         seekState.ShouldSuppressCalled.Should().BeTrue();
-    }
-
-    [Theory]
-    [InlineData(49_999_999, true, true)]
-    [InlineData(50_000_000, true, true)]
-    [InlineData(50_000_001, false, false)]
-    public void ShouldSuppressSeek_UsesInjectedClockAtFiveSecondLoadTimeoutBoundary(
-        long elapsedTicks,
-        bool expectedSuppression,
-        bool expectedLoading)
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState { ShouldSuppress = false };
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
-
-        clock.Advance(TimeSpan.FromTicks(elapsedTicks));
-
-        service.ShouldSuppressSeek(0.0, 0.2).Should().Be(expectedSuppression);
-        service.IsLoadingFile.Should().Be(expectedLoading);
-    }
-
-    [Fact]
-    public void ShouldSuppressSeek_AfterTimeout_UpdatesDebounce()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState { ShouldSuppress = false };
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
-
-        clock.Advance(TimeSpan.FromSeconds(5) + TimeSpan.FromTicks(1));
-
-        service.ShouldSuppressSeek(0.0, 0.2);    // タイムアウトを発火させる
-
-        service.IsDebounced().Should().BeTrue();    // デバウンスが更新されていること
     }
 
     [Fact]
