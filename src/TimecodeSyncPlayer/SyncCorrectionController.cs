@@ -36,20 +36,27 @@ public sealed record SyncCorrectionDecision(
 /// T5: 粗いデッドゾーン（6 フレーム）の内側で残差 e = effectiveLtc - playback を見る補正。
 /// Smooth は比例制御 rate = 1 + clamp(e / T, -0.10, +0.10)（T=1.0s）でシークを発行しない。
 /// T9: 着地直後の 1.0 秒だけ上限を ±0.20 に上げ、1 秒以内の収束を狙う。
-/// T2 段 3: 残差の揺れが 2ms になったため、デッドバンド 5ms・戻りバンド 2ms に狭める。
+/// v0.5.4 B4b（chase モデルの規則 2）: 不感帯は 1 映像フレーム
+/// （<see cref="FrameDurationSeconds"/>。呼び出し側が fps から決めて渡す）。戻りバンドは 2ms のまま。
 /// Jump はしきい値（T8: 80ms）を超えたら補正シーク（連続 3 回で諦め、残差が 1 秒留まったら再開）。
 /// Smooth 失敗（shim 非対応・効かない）は状態として公開し、アプリが操作者に見せる。
 /// </summary>
 internal sealed class SyncCorrectionController
 {
     /// <summary>
-    /// T2 段 3: Smooth が動き出す残差。サンプル時計で揺れが 2ms になり、20ms では
-    /// +10ms 前後の残差がデッドバンドの縁に張り付いて詰められないため 5ms にする。
+    /// v0.5.4 B4b（chase モデルの規則 2）: Smooth が動き出す残差（不感帯）= 1 映像フレーム。
+    /// 映像 fps が不明なら LTC の 1 フレーム、どちらも不明なら 25fps の 1 フレーム（0.04 秒。
+    /// 既存の「1 フレーム」の既定と同じ）。配信したフレームの PTS はフレーム単位でしか動かない
+    /// ため、5ms 固定のままでは 1 フレーム未満の丸めの差を小さな段で追い続ける。
     /// </summary>
-    public const double DeadbandSeconds = 0.005;
+    public static double FrameDurationSeconds(double videoFps, double timecodeFps)
+    {
+        double fps = videoFps > 0 ? videoFps : timecodeFps;
+        return fps > 0 ? 1.0 / fps : 0.04;
+    }
 
     /// <summary>
-    /// T2 段 3: 補正中にレートを 1.0 へ戻す残差。デッドバンドと同じ理由で 2ms にする。
+    /// T2 段 3: 補正中にレートを 1.0 へ戻す残差。不感帯より十分小さく、2ms のままにする。
     /// </summary>
     public const double RateReturnBandSeconds = 0.002;
 
@@ -120,17 +127,17 @@ internal sealed class SyncCorrectionController
     /// <summary>
     /// 0.4.5-A フェーズ 1: 状態を変えずに「出したとしたら」の Smooth レートだけを計算する
     /// （shadow 記録用。<see cref="Evaluate"/> は呼ばないので _rateActive / _smoothDisabled に
-    /// 触れない）。式は Smooth と同じ（戻りバンド・デッドバンド・着地窓の上限）。
+    /// 触れない）。式は Smooth と同じ（戻りバンド・渡された不感帯・着地窓の上限）。
     /// </summary>
     public static (double Rate, string Reason) PreviewSmoothRate(
-        double residualSeconds, bool landingWindowActive)
+        double residualSeconds, bool landingWindowActive, double deadbandSeconds)
     {
         if (!double.IsFinite(residualSeconds))
             return (1.0, "invalid");
         double abs = Math.Abs(residualSeconds);
         if (abs <= RateReturnBandSeconds)
             return (1.0, "smooth-idle");
-        if (abs <= DeadbandSeconds)
+        if (abs <= deadbandSeconds)
             return (1.0, "smooth-deadband");
         double maxDelta = landingWindowActive ? LandingMaxRateDelta : MaxRateDelta;
         return (RateFor(residualSeconds, maxDelta), landingWindowActive ? "smooth-landing" : "smooth");
@@ -145,14 +152,15 @@ internal sealed class SyncCorrectionController
         double targetSeconds,
         SyncCorrectionMode mode,
         bool smoothAvailable,
-        DateTime now)
+        DateTime now,
+        double deadbandSeconds)
     {
         if (!double.IsFinite(residualSeconds))
             return SyncCorrectionDecision.Idle("invalid");
 
         return mode == SyncCorrectionMode.Jump
             ? EvaluateJump(residualSeconds, targetSeconds, now)
-            : EvaluateSmooth(residualSeconds, smoothAvailable, now);
+            : EvaluateSmooth(residualSeconds, smoothAvailable, now, deadbandSeconds);
     }
 
     /// <summary>
@@ -207,7 +215,8 @@ internal sealed class SyncCorrectionController
         return SyncCorrectionDecision.Seek(targetSeconds, "jump");
     }
 
-    private SyncCorrectionDecision EvaluateSmooth(double residualSeconds, bool available, DateTime now)
+    private SyncCorrectionDecision EvaluateSmooth(
+        double residualSeconds, bool available, DateTime now, double deadbandSeconds)
     {
         SmoothUnavailable = !available;
         if (!available)
@@ -233,8 +242,9 @@ internal sealed class SyncCorrectionController
                 : SyncCorrectionDecision.Idle("smooth-idle");
         }
 
-        // ヒステリシス: 未補正ならデッドバンド内では動かない。補正中は戻りバンドまで比例制御を続ける。
-        if (!_rateActive && abs <= DeadbandSeconds)
+        // ヒステリシス: 未補正ならデッドバンド（1 映像フレーム）内では動かない。補正中は
+        // 戻りバンドまで比例制御を続ける。
+        if (!_rateActive && abs <= deadbandSeconds)
             return SyncCorrectionDecision.Idle("smooth-idle");
 
         if (!_rateActive)

@@ -188,7 +188,8 @@ public sealed class TimecodeSyncService
         SyncCorrectionMode mode = CorrectionModeSource?.Invoke() ?? SyncCorrectionMode.Smooth;
         (double previewRate, string previewReason) = mode == SyncCorrectionMode.Smooth
             ? SyncCorrectionController.PreviewSmoothRate(
-                residualSeconds, CorrectionLandingActiveSource?.Invoke() ?? false)
+                residualSeconds, CorrectionLandingActiveSource?.Invoke() ?? false,
+                SyncCorrectionController.FrameDurationSeconds(state.VideoFps, state.TimecodeFps))
             : (0.0, "not-smooth");
         return state with
         {

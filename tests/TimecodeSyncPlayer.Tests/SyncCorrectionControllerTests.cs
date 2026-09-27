@@ -4,7 +4,8 @@ namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
 /// T5: 同期補正モード（Smooth = 比例制御のレート微調整 / Jump = フラッシュシーク）。
-/// Smooth: rate = 1 + clamp(e / T, -0.10, +0.10)、T=1.0s、デッドバンド 5ms、戻りバンド 2ms（T2 段 3）。
+/// Smooth: rate = 1 + clamp(e / T, -0.10, +0.10)、T=1.0s、不感帯は 1 映像フレーム
+/// （B4b。fps から呼び出し側が決める）、戻りバンド 2ms（T2 段 3）。
 /// T9: 着地直後の 1.0 秒だけ上限 ±0.20。
 /// T8: Jump はしきい値 80ms を超えたらシーク、連続 3 回で止まり、内側に 1 秒留まると戻る。
 /// Smooth はシークを発行しない。
@@ -13,14 +14,20 @@ public class SyncCorrectionControllerTests
 {
     private static readonly DateTime T0 = new(2026, 9, 15, 12, 0, 0, DateTimeKind.Utc);
 
+    /// <summary>B4b: 不感帯の既定（1 映像フレーム。25fps で 40ms）。</summary>
+    private const double OneFrameAt25Fps = 1.0 / 25.0;
+
     private static SyncCorrectionDecision Evaluate(
         SyncCorrectionController controller,
         double residualSeconds,
         SyncCorrectionMode mode = SyncCorrectionMode.Smooth,
         bool smoothAvailable = true,
         double targetSeconds = 10.0,
-        double secondsAfterStart = 0.0)
-        => controller.Evaluate(residualSeconds, targetSeconds, mode, smoothAvailable, T0.AddSeconds(secondsAfterStart));
+        double secondsAfterStart = 0.0,
+        double deadbandSeconds = OneFrameAt25Fps)
+        => controller.Evaluate(
+            residualSeconds, targetSeconds, mode, smoothAvailable, T0.AddSeconds(secondsAfterStart),
+            deadbandSeconds);
 
     [Theory]
     [InlineData(0.150, 1.10)]
@@ -32,7 +39,8 @@ public class SyncCorrectionControllerTests
     {
         var controller = new SyncCorrectionController();
 
-        SyncCorrectionDecision decision = Evaluate(controller, residual);
+        // B4b の不感帯（1 映像フレーム）と独立に比例則だけを見る（20ms のフレームとして渡す）。
+        SyncCorrectionDecision decision = Evaluate(controller, residual, deadbandSeconds: 0.020);
 
         decision.Action.Should().Be(SyncCorrectionActionType.SetRate);
         decision.Rate.Should().BeApproximately(expectedRate, 1e-9);
@@ -79,7 +87,7 @@ public class SyncCorrectionControllerTests
         var controller = new SyncCorrectionController();
         Evaluate(controller, 0.150).Rate.Should().BeApproximately(1.10, 1e-9);
 
-        // 2〜5ms は「補正中なら継続、未補正なら何もしない」。
+        // 戻りバンド（2ms）と不感帯（1 映像フレーム）の間は「補正中なら継続、未補正なら何もしない」。
         SyncCorrectionDecision active = Evaluate(controller, 0.004, secondsAfterStart: 0.1);
         var idle = new SyncCorrectionController();
         SyncCorrectionDecision fresh = Evaluate(idle, 0.004, secondsAfterStart: 0.1);
@@ -297,18 +305,21 @@ public class SyncCorrectionControllerTests
         decision.Rate.Should().BeApproximately(1.05, 1e-9);
     }
 
-    // ── T2 段 3: デッドバンド 5ms・戻り 2ms、「効かない」は 30ms 以上でだけ ──
+    // ── T2 段 3/B4b: 不感帯は 1 映像フレーム・戻り 2ms、「効かない」は 30ms 以上でだけ ──
 
     [Fact]
     public void Smooth_SmallResidual_KeepsCorrectingAndIsNotDisabledAfterTwoSeconds()
     {
         var controller = new SyncCorrectionController();
 
+        // 60fps の 1 フレーム（16.7ms）を不感帯にすると、25ms は不感帯の外で補正が始まる。
+        // 窓の開始の残差 25ms は 30ms 未満なので「効かない」と判定されない。
         for (int i = 0; i <= 20; i++)
         {
-            SyncCorrectionDecision decision = Evaluate(controller, 0.008, secondsAfterStart: i * 0.1);
+            SyncCorrectionDecision decision = Evaluate(
+                controller, 0.025, secondsAfterStart: i * 0.1, deadbandSeconds: 1.0 / 60.0);
             decision.Action.Should().Be(SyncCorrectionActionType.SetRate);
-            decision.Rate.Should().BeApproximately(1.008, 1e-9);
+            decision.Rate.Should().BeApproximately(1.025, 1e-9);
         }
 
         controller.SmoothDisabled.Should().BeFalse("窓の開始の残差が 30ms 未満では「効かない」と判定しない");
@@ -344,8 +355,8 @@ public class SyncCorrectionControllerTests
     {
         var controller = new SyncCorrectionController();
 
-        // 8ms で補正が始まる（窓の開始は 8ms）。
-        Evaluate(controller, 0.008, secondsAfterStart: 0.0);
+        // 45ms（不感帯 40ms の外）で補正が始まる（窓の開始は 45ms）。
+        Evaluate(controller, 0.045, secondsAfterStart: 0.0);
         // 200ms へ悪化。開始値から 10ms 以上なので窓を取り直し、ゲートが開く。
         Evaluate(controller, 0.200, secondsAfterStart: 0.1);
         Evaluate(controller, 0.200, secondsAfterStart: 1.1);
@@ -472,9 +483,9 @@ public class SyncCorrectionControllerTests
         foreach (double residual in new[] { 0.010, 0.120, -0.120 })
         {
             SyncCorrectionDecision expected = withoutLanding.Evaluate(
-                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5));
+                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5), OneFrameAt25Fps);
             SyncCorrectionDecision actual = withLanding.Evaluate(
-                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5));
+                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5), OneFrameAt25Fps);
 
             actual.Should().Be(expected);
         }
@@ -493,7 +504,8 @@ public class SyncCorrectionControllerTests
     public void PreviewSmoothRate_UsesTheSameBandsClampAndLandingWindow(
         double residual, bool landing, double expectedRate, string expectedReason)
     {
-        (double rate, string reason) = SyncCorrectionController.PreviewSmoothRate(residual, landing);
+        (double rate, string reason) = SyncCorrectionController.PreviewSmoothRate(
+            residual, landing, OneFrameAt25Fps);
 
         rate.Should().BeApproximately(expectedRate, 1e-9);
         reason.Should().Be(expectedReason);
@@ -504,11 +516,12 @@ public class SyncCorrectionControllerTests
     {
         var controller = new SyncCorrectionController();
 
-        _ = SyncCorrectionController.PreviewSmoothRate(0.500, landingWindowActive: true);
+        _ = SyncCorrectionController.PreviewSmoothRate(
+            0.500, landingWindowActive: true, deadbandSeconds: OneFrameAt25Fps);
 
         // 呼んだ後も新しいコントローラと同じ（ヒステリシスの状態が変わっていない）。
         SyncCorrectionDecision decision = controller.Evaluate(
-            0.001, 1.0, SyncCorrectionMode.Smooth, true, T0);
+            0.001, 1.0, SyncCorrectionMode.Smooth, true, T0, OneFrameAt25Fps);
         decision.Action.Should().Be(SyncCorrectionActionType.None);
         decision.Reason.Should().Be("smooth-idle");
     }
@@ -522,5 +535,29 @@ public class SyncCorrectionControllerTests
         controller.NotifyLanding(T0);
         controller.IsLandingWindowActive(T0.AddMilliseconds(500)).Should().BeTrue();
         controller.IsLandingWindowActive(T0.AddSeconds(1.1)).Should().BeFalse();
+    }
+
+    // ── B4b: 不感帯は 1 映像フレーム（fps から決める。定数は増やさない） ──
+
+    [Theory]
+    [InlineData(60.0, 25.0, 1.0 / 60.0)]   // 映像 fps を優先する
+    [InlineData(0.0, 25.0, 1.0 / 25.0)]    // 映像 fps が不明なら LTC の 1 フレーム
+    [InlineData(0.0, 0.0, 0.04)]           // どちらも不明なら 25fps の 1 フレーム
+    public void FrameDurationSeconds_UsesVideoFpsThenTimecodeFps(
+        double videoFps, double timecodeFps, double expectedSeconds)
+    {
+        SyncCorrectionController.FrameDurationSeconds(videoFps, timecodeFps)
+            .Should().BeApproximately(expectedSeconds, 1e-12);
+    }
+
+    [Fact]
+    public void Smooth_ResidualUpToTheCallersDeadband_DoesNothing()
+    {
+        var controller = new SyncCorrectionController();
+
+        Evaluate(controller, 0.040, deadbandSeconds: 0.040).Action
+            .Should().Be(SyncCorrectionActionType.None, "ちょうど 1 フレームは不感帯の中");
+        Evaluate(controller, 0.041, deadbandSeconds: 0.040).Action
+            .Should().Be(SyncCorrectionActionType.SetRate);
     }
 }

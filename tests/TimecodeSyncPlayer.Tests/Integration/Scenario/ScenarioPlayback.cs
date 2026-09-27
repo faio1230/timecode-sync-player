@@ -126,6 +126,12 @@ internal sealed class ScenarioPlayback : IPlaybackApi
         DeliverFrame();
     }
 
+    /// <summary>
+    /// v0.5.4 B4b のテスト用: 照会位置だけを差し替え、配信したフレーム（PTS・世代）は前のまま
+    /// 残す（実機の「照会した位置が先行し、配信したフレームは遅れている」状態）。
+    /// </summary>
+    public void SetPositionWithoutDelivery(double seconds) => _positionSeconds = seconds;
+
     /// <summary>v0.5.4 段 B3 のテスト用: 読み込みの世代を進め、最初のフレームはまだ配信しない。</summary>
     public void BeginLoadWithoutDelivery() => _generation++;
 

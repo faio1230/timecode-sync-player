@@ -946,21 +946,24 @@ internal sealed class LtcSyncController
             Log.Information("Smooth correction resumed: playback position is stable again");
         }
 
+        // v0.5.4 B4b（chase モデルの規則 2）: 補正の誤差 e は、照会した再生位置ではなく、
+        // 配信したフレームの PTS（着地の判定と同じ SyncPositionRead のサンプル）で測る。
         double residualSeconds;
         double targetSeconds;
         if (state.Mode == SyncMode.Continue)
         {
-            // T7: Continue は粗い同期判定と同じ素材位置と再生位置を使う。素材位置は
-            // コーディネーターが 1 か所で出した値なので、残差は sync.evaluate の delta と一致する。
+            // T7: Continue の素材位置はコーディネーターが 1 か所で出した値を使う（写像は変えない）。
+            // B4b: 再生位置の側だけを配信したフレームの PTS に置き換える。
             if (_lastContinueFrame is not { CorrectionAllowed: true } frame)
                 return;
-            residualSeconds = frame.MediaPositionSeconds - frame.PlaybackSeconds;
+            if (!TryReadDeliveredSeconds(out double delivered))
+                return;
+            residualSeconds = frame.MediaPositionSeconds - delivered;
             targetSeconds = frame.MediaPositionSeconds;
         }
         else
         {
-            if (_effects.GetPlaybackSeconds == null) return;
-            if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
+            if (!TryReadDeliveredSeconds(out double delivered))
                 return;
             // D33: 範囲外の LTC は補正しない（Jump の生値シーク・Smooth の暴走で MediaOut を
             // 越えない）。粗い判定の終端シークと Single の終端ホールドに任せる。範囲内は clamp は no-op。
@@ -968,7 +971,7 @@ internal sealed class LtcSyncController
                 state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
             if (ltcSeconds < clipIn || ltcSeconds > clipOut)
                 return;
-            residualSeconds = ltcSeconds - playback;
+            residualSeconds = ltcSeconds - delivered;
             targetSeconds = SyncDecisionEngine.ClampToClip(
                 ltcSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
         }
@@ -990,8 +993,10 @@ internal sealed class LtcSyncController
         _rate.ClearRejectedLogged();
         residualSeconds = correctionGate.MedianSeconds;
 
+        // v0.5.4 B4b: Smooth の不感帯は 1 映像フレーム（fps が不明なら LTC の 1 フレーム）。
         SyncCorrectionDecision decision = _correction.Evaluate(
-            residualSeconds, targetSeconds, _effects.GetCorrectionMode(), _rate.SmoothAvailable, _getUtcNow());
+            residualSeconds, targetSeconds, _effects.GetCorrectionMode(), _rate.SmoothAvailable, _getUtcNow(),
+            SyncCorrectionController.FrameDurationSeconds(state.VideoFps, LastTimecodeFps));
 
         switch (decision.Action)
         {
@@ -1032,6 +1037,23 @@ internal sealed class LtcSyncController
             : _correction.SmoothDisabled ? "Smooth 補正なし（効かない）"
             : "";
         _effects.SetCorrectionStatus?.Invoke(status);
+    }
+
+    /// <summary>
+    /// v0.5.4 B4b（chase モデルの規則 2）: 補正の誤差を測る「配信したフレームの PTS」を読む。
+    /// 着地の判定と同じ <see cref="LtcSyncEffects.ReadPosition"/> のサンプルを使う。配信の
+    /// サンプルが無い間（配信世代が 0。`_ex` が無い旧 DLL のフォールバックも 0）は false を返し、
+    /// 呼び出し側は補正を評価しない。
+    /// </summary>
+    private bool TryReadDeliveredSeconds(out double deliveredSeconds)
+    {
+        deliveredSeconds = 0.0;
+        if (_effects.ReadPosition?.Invoke() is not { Succeeded: true, Sample: { } sample })
+            return false;
+        if (sample.DeliveredGeneration == 0)
+            return false;
+        deliveredSeconds = sample.DeliveredSeconds;
+        return true;
     }
 
     /// <summary>
@@ -1301,11 +1323,8 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>D35: 着地の省略判定に使う 1 フレーム。映像 fps が無ければ LTC の 1 フレーム。</summary>
-    private double HeldLandingFrameSeconds(LtcSyncContext state)
-    {
-        double fps = state.VideoFps > 0 ? state.VideoFps : LastTimecodeFps;
-        return fps > 0 ? 1.0 / fps : 0.04;
-    }
+    private double HeldLandingFrameSeconds(LtcSyncContext state) =>
+        SyncCorrectionController.FrameDurationSeconds(state.VideoFps, LastTimecodeFps);
 
     /// <summary>
     /// D35-b: D33 の境界ホールド（Single）が解除されたときに呼ぶ。ホールド中に残った端への
