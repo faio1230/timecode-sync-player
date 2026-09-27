@@ -599,7 +599,6 @@ internal sealed class LtcSyncController
 
         bool applyOnce;
         string applyReason;
-        bool appliedJump = false;
         if (!processed.ShouldApplySync)
         {
             bool heldValueChangedDuringLoss = false;
@@ -631,40 +630,18 @@ internal sealed class LtcSyncController
                 if (heldState.Mode == SyncMode.Single && heldState.SyncEnabled && heldState.IsMonitoring)
                     _single().ApplyClipBoundaryHoldOnly(heldEffectiveSeconds);
             }
-            // D30: 写像がギャップ／別トラックの Jump と、Fixed モードでデコーダ推定 fps が
-            // 食い違う Jump は未確認にして次の 1 フレームの連続を待つ（誤値 1 枚で状態を動かさない）。
+            // v0.5.4 B7（Jump の確認の一様化、§10-0）: Jump はすべて未確認にして、次の 1 フレームの
+            // 値の連続性（同値の Duplicate か +1 フレーム）だけで確かめる（誤値 1 枚で状態を動かさない。D30）。
+            // 写像（ギャップ・別トラック・範囲外）や保持損失中かどうかで分けない。遅れは 1 フレームで一律。
+            // 保持損失中の Jump の復帰（D27-b/c）も、確認した後に ApplyConfirmedJump が行う。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump)
             {
-                string? deferReason = UnconfirmedJumpReason(processed, sourceFrame, rawSeconds, frameEndTimestamp);
-                if (deferReason != null)
-                {
-                    _input.HoldPendingJump(rawSeconds, receivedAtMilliseconds, frameEndTimestamp);
-                    Log.Information(
-                        "Timecode sync: holding unconfirmed Jump frame ltc={Ltc:F3} reason={Reason}",
-                        rawSeconds, deferReason);
-                    return;
-                }
-
-                // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
-                // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ着地させる。
-                // D27-c: 保持フレームの途切れで理由が信号断へ下がっていても、保持の直後の Jump は
-                // 復帰に数える（判定は ObserveJumpFrame 側。無音からの Jump は復帰しない）。
-                if (_signalLoss.IsLost)
-                {
-                    ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
-                    if (!_signalLoss.IsLost)
-                    {
-                        // v0.5.3 段 3k: 復帰したので、Jump 前の古い保持値と保持着地の記録を
-                        // 下ろす（§6 の 4。無音の再損失で古い保持値へ着地しない）。
-                        _input.ClearHeldLossLanding();
-                        _input.ClearHeldEffective();
-                    }
-                }
-                // v0.5.4 U1: 門 3（JumpAppliedOnce のラッチ）を消した。Jump はここで適用する
-                // （適用の重複は B の確認窓（4）と A の保留が防ぐ）。
-                applyOnce = true;
-                applyReason = "first Jump";
-                appliedJump = true;
+                string deferReason = UnconfirmedJumpReason(processed, sourceFrame);
+                _input.HoldPendingJump(rawSeconds, receivedAtMilliseconds, frameEndTimestamp);
+                Log.Information(
+                    "Timecode sync: holding unconfirmed Jump frame ltc={Ltc:F3} reason={Reason}",
+                    rawSeconds, deferReason);
+                return;
             }
             // D31-b: 保持損失中に保持値そのもの（タイムコード停止位置）が変わったら、停止モードは
             // 新しい保持値へ 1 回だけ着地する（D27 の着地を遷移時から変化時へ拡張）。ランスルーは
@@ -729,10 +706,6 @@ internal sealed class LtcSyncController
         _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
         if (applyOnce)
         {
-            // U8: 適用した Jump の直後に保持（Duplicate）が続く場合の即時停止のために、
-            // Jump の適用を信号断の方針へ記録する（停止モードの判定だけに使う）。
-            if (appliedJump)
-                _signalLoss.ObserveAppliedJump(receivedAtMilliseconds, SignalContext());
             // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
             // （ObserveValidFrame を呼ばない）。保持損失からの復帰は上の D27-b の経路。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
@@ -783,32 +756,18 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
-    /// D30: この Jump を即時適用できない理由（null なら即時）。ギャップ（先頭オフセットを含む）／
-    /// 現在と別トラックへの写像と、Fixed fps モードでのデコーダ推定 fps の食い違いを未確認とする。
-    /// Single はトラックの写像を持たないため、写像による保留はしない。
+    /// D30 / v0.5.4 B7: 未確認の Jump を保留する理由（ログ用。判定はどれも同じで、次の 1 フレームの値の連続性）。
+    /// Fixed fps モードでデコーダ推定 fps が食い違うときは "detected-fps"（層 1 の診断）、ほかは "value-continuity"。
+    /// LTC には誤り検出が無く、化けた 1 枚（検証機の 2 時間試験で 1 回）をそのまま採ると +2.3 秒シークして
+    /// 0.8 秒後に戻していた。本物の Jump は次のフレームが続くので、遅れは 1 フレーム（30fps で 33ms）。
     /// </summary>
-    private string? UnconfirmedJumpReason(
-        LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame,
-        double rawSeconds, long frameEndTimestamp)
+    private string UnconfirmedJumpReason(LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame)
     {
         LtcSyncContext state = _effects.GetContext();
         if (sourceFrame != null &&
             JumpConfirmationPolicy.IsDetectedFpsSuspect(state.FpsMode, sourceFrame.Fps, processed.ResolvedFps))
             return "detected-fps";
-        if (state.Mode == SyncMode.Continue)
-        {
-            double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
-            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(effectiveSeconds);
-            if (result.Status != TimelineQueryStatus.OnTrack || result.Track?.Id != state.LoadedTrackId)
-                return "track-or-gap";
-        }
-        // v0.5.1: 同じトラックの中の Jump も次の 1 フレームで確かめる。LTC には誤り検出が無く、
-        // 化けた 1 枚（検証機の 2 時間試験で 1 回）をそのまま採ると +2.3 秒シークして 0.8 秒後に
-        // 戻していた。本物の Jump は次のフレームが続くので、遅れは 1 フレーム（30fps で 33ms）。
-        // 保持損失中の Jump は D27-b/c のとおり 1 枚で復帰させる（止まった値からの再開を遅らせない）。
-        if (_signalLoss.IsLost)
-            return null;
-        return "in-track";
+        return "value-continuity";
     }
 
     /// <summary>

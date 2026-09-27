@@ -47,9 +47,10 @@ public sealed class HeldLandingAfterJumpReproTests
         SeekTargets(h).Should().Equal(new[] { 20.0 }, "前提: 保持値 20.0 へ着地した");
         h.Operations.Clear();
 
-        h.Ltc.Jump(23.0);          // 次の Tick で Jump が届き、D27-b の即時復帰
+        // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめる（保持損失中の復帰も確認の後）。
+        h.Ltc.Jump(23.0).Normal(23.04, OneFrame);   // 次の Tick で Jump と確認の 1 フレームが届き、D27-b の復帰
         h.Tick100Milliseconds();
-        h.IsPaused.Should().BeFalse("前提: Jump で即時復帰する");
+        h.IsPaused.Should().BeFalse("前提: Jump と確認の 1 フレームで復帰する");
         h.Operations.Clear();      // 復帰時のシーク（23.0）は見ない
         return h;
     }
@@ -76,7 +77,7 @@ public sealed class HeldLandingAfterJumpReproTests
     {
         SyncScenarioHarness h = ArrangeRecoveredFromHeldLoss();
 
-        h.Ltc.Normal(23.04, OneFrame).Normal(23.08, OneFrame).Normal(23.12, OneFrame);
+        h.Ltc.Normal(23.08, OneFrame).Normal(23.12, OneFrame).Normal(23.16, OneFrame);
         h.Tick100Milliseconds();    // Normal が届く
         h.Tick100Milliseconds(3);   // 無音の 2 度目の損失
 

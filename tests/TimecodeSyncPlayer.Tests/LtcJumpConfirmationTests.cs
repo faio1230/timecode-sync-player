@@ -46,6 +46,9 @@ public sealed class LtcJumpConfirmationTests
         public void Dispose() => Log.Logger = _previous;
     }
 
+    private static bool IsConfirmedJumpApply(LogEvent logEvent) =>
+        logEvent.MessageTemplate.Text.Contains("applying the confirmed Jump frame once");
+
     private static bool IsApplyOnceWithReason(LogEvent logEvent, string reason) =>
         logEvent.MessageTemplate.Text.Contains("applying the") &&
         logEvent.Properties.TryGetValue("Reason", out LogEventPropertyValue? value) &&
@@ -273,9 +276,10 @@ public sealed class LtcJumpConfirmationTests
         }
         h.IsPaused.Should().BeTrue("前提: 信号断のポリシーが止めている");
 
-        // 1 枚目の Jump（同一トラック・損失中は即時適用）。ラッチが立つ。
+        // 1 枚目の Jump。v0.5.4 B7: 損失中も次の 1 フレームで確かめてから適用する。
         Raw(h, 12.0, 10_080);
-        capture.Snapshot().Count(e => IsApplyOnceWithReason(e, "first Jump")).Should().Be(1);
+        Raw(h, 12.04, 10_100);
+        capture.Snapshot().Count(IsConfirmedJumpApply).Should().Be(1);
 
         // 手動シークで 1 回適用のラッチを下ろす。
         h.BeginSeekBarInteraction();
@@ -283,8 +287,9 @@ public sealed class LtcJumpConfirmationTests
 
         // 2 枚目の Jump がまた 1 回適用される（ラッチが残っていれば無視される）。
         Raw(h, 16.0, 10_120);
+        Raw(h, 16.04, 10_140);
 
-        capture.Snapshot().Count(e => IsApplyOnceWithReason(e, "first Jump")).Should().Be(2,
+        capture.Snapshot().Count(IsConfirmedJumpApply).Should().Be(2,
             "手動シークの後は次の Jump がまた 1 回適用される");
     }
 

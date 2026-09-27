@@ -31,7 +31,7 @@ public sealed class StopModeJumpImmediatePauseTests
     }
 
     /// <summary>
-    /// 前提: 保持の損失で停止 → 値が動いた Jump 1 枚で即時復帰（D27-b）、まで進める。
+    /// 前提: 保持の損失で停止 → 値が動いた Jump と確認の 1 フレームで復帰（D27-b。v0.5.4 B7 で確認の後）、まで進める。
     /// 復帰後は再生中で、進行の時計は Jump の到着時刻にリセットされている。
     /// </summary>
     private static SyncScenarioHarness ArrangeAfterJumpRecovery()
@@ -43,9 +43,10 @@ public sealed class StopModeJumpImmediatePauseTests
         h.IsPaused.Should().BeTrue("前提: 保持の損失で停止している");
         h.Operations.Clear();
 
-        h.Ltc.Jump(23.0);
+        // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめる（保持損失中の復帰も確認の後）。
+        h.Ltc.Jump(23.0).Normal(23.04, OneFrame);
         h.Tick100Milliseconds();
-        h.IsPaused.Should().BeFalse("前提: Jump で即時復帰する");
+        h.IsPaused.Should().BeFalse("前提: Jump と確認の 1 フレームで復帰する");
         h.Operations.Clear();
         return h;
     }
@@ -56,7 +57,7 @@ public sealed class StopModeJumpImmediatePauseTests
         SyncScenarioHarness h = ArrangeAfterJumpRecovery();
 
         // Jump の後に保持の Duplicate が 2 枚続く（40ms 間隔）。250ms の確認は待たない。
-        h.Ltc.Duplicate(23.0, TimeSpan.FromMilliseconds(80));
+        h.Ltc.Duplicate(23.04, TimeSpan.FromMilliseconds(80));
         h.Tick100Milliseconds();
 
         h.IsPaused.Should().BeTrue(
@@ -71,8 +72,8 @@ public sealed class StopModeJumpImmediatePauseTests
         // 発生器の合わせ直しなどで、Jump の直後に同値が 1 枚だけ挟まり、また進み直す。
         // 1 枚目と Normal を別の Tick に置き、1 枚の時点で判定される形にする。
         long at = h.Ltc.NextMilliseconds;
-        h.Ltc.Duplicate(23.0, OneFrame, atMilliseconds: at + 60);
-        h.Ltc.Normal(23.04, OneFrame, atMilliseconds: at + 160);
+        h.Ltc.Duplicate(23.04, OneFrame, atMilliseconds: at + 60);
+        h.Ltc.Normal(23.08, OneFrame, atMilliseconds: at + 160);
 
         h.Tick100Milliseconds();    // 保持 1 枚だけが届く
         h.IsPaused.Should().BeFalse(
