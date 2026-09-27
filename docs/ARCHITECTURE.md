@@ -3,6 +3,10 @@
 TimecodeSyncPlayer の内部構造について、データフロー・スレッドモデル・主要コンポーネント・
 GStreamer 連携やLTC同期の実装上の要点をまとめる。
 
+構成を図から把握する場合は、[4ページの構成図と読み方](diagrams/README.md)を参照。
+[draw.io 編集用ファイル](diagrams/architecture.drawio)と[ブラウザー用プレビュー](diagrams/index.html)を用意している
+（図の対象: v0.4.7 / `a4cb181` / 2026-09-20）。
+
 ---
 
 ## 1. データフロー

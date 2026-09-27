@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1590" viewBox="0 0 1600 1590" role="img" aria-label="03  LTC 同期 — 時刻から再生操作まで">
+<style>text{font-family:"Yu Gothic","Meiryo","Segoe UI",sans-serif} .node:hover rect{filter:brightness(.97)}</style>
+<defs>
+<marker id="arrow-control" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3264c5"/></marker>
+<marker id="arrow-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8554c2"/></marker>
+<marker id="arrow-event" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#168399"/></marker>
+<marker id="arrow-note" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#718096"/></marker>
+</defs>
+<rect width="1600" height="1590" fill="#ffffff"/>
+<text x="40" y="52" font-size="30" font-weight="700" fill="#243349" text-anchor="start">03  LTC 同期 — 時刻から再生操作まで</text>
+<text x="40" y="87" font-size="17" font-weight="400" fill="#243349" text-anchor="start">LtcSyncController が入口を統括。粗いシーク判断と継続再生中の補正は別の判断器を使う。</text>
+<text x="1560" y="117" font-size="14" font-weight="400" fill="#64748b" text-anchor="end">v0.4.7 · a4cb181 · 2026-09-20</text>
+<path d="M40 118 h38" stroke="#3264c5" stroke-width="2.5" />
+<text x="88" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">青：制御・状態</text>
+<path d="M285 118 h38" stroke="#8554c2" stroke-width="2.5" />
+<text x="333" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">紫：映像データ</text>
+<path d="M530 118 h38" stroke="#168399" stroke-width="2.5" stroke-dasharray="7 5" />
+<text x="578" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">水色の破線：通知</text>
+<polyline points="490,247.5 585,247.5" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1015,247.5 1110,247.5" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1325.0,310 1325,452.5 1015,452.5" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,310 800,355 275,355 275.0,390" fill="none" stroke="#168399" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-event)" stroke-dasharray="7 5" />
+<polyline points="490,452.5 585,452.5" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="671.0,515 671,552 275,552 275.0,595" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,515 800.0,595" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="929.0,515 929,552 1325,552 1325.0,595" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="275.0,720 275.0,800" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,720 800.0,800" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="275.0,910 275.0,1010" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,910 800.0,1010" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1325.0,720 1325.0,1010" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="275.0,1160 275.0,1300" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="800.0,1160 800,1225 425.5,1225 425.5,1300" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<g class="node"><title>LtcAudioMonitor → MainWindow</title>
+<rect x="60" y="185" width="430" height="125" rx="12" fill="#ecfdf5" stroke="#148365" stroke-width="1.5"/>
+<text x="76" y="214" font-size="18" font-weight="700" fill="#243349" text-anchor="start">1. LTC フレームを受け取る</text>
+<text x="76" y="241" font-size="15" font-weight="400" fill="#243349" text-anchor="start">音声のフレーム終端時刻とタイムコード</text>
+<text x="76" y="264" font-size="15" font-weight="400" fill="#243349" text-anchor="start">UI の Dispatcher に渡す</text>
+<text x="76" y="295" font-size="11.5" font-weight="500" fill="#148365" text-anchor="start">LtcAudioMonitor → MainWindow</text>
+</g>
+<g class="node"><title>LtcFrameProcessor / LtcSyncController</title>
+<rect x="585" y="185" width="430" height="125" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="601" y="214" font-size="18" font-weight="700" fill="#243349" text-anchor="start">2. fps 解決と信号の診断</text>
+<text x="601" y="241" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Normal / Jump / Reverse / Duplicate / Invalid</text>
+<text x="601" y="264" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Jump の確認・保持・信号断の方針を適用</text>
+<text x="601" y="295" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">LtcFrameProcessor / LtcSyncController</text>
+</g>
+<g class="node"><title>EffectiveSeconds / SyncOffsetPolicy</title>
+<rect x="1110" y="185" width="430" height="125" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="1126" y="214" font-size="18" font-weight="700" fill="#243349" text-anchor="start">3. 同期に使う時刻を作る</text>
+<text x="1126" y="241" font-size="15" font-weight="400" fill="#243349" text-anchor="start">通常受信：LTC 秒＋受信後の経過＋offset</text>
+<text x="1126" y="264" font-size="15" font-weight="400" fill="#243349" text-anchor="start">保持値の適用などでは経過時間を足さない</text>
+<text x="1126" y="295" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">EffectiveSeconds / SyncOffsetPolicy</text>
+</g>
+<g class="node"><title>LtcSyncController.Tick</title>
+<rect x="60" y="390" width="430" height="125" rx="12" fill="#fffbea" stroke="#aa8120" stroke-width="1.5"/>
+<text x="76" y="419" font-size="18" font-weight="700" fill="#243349" text-anchor="start">信号が止まった場合</text>
+<text x="76" y="446" font-size="15" font-weight="400" fill="#243349" text-anchor="start">LtcSignalLossPolicy：RunThrough / Stop</text>
+<text x="76" y="469" font-size="15" font-weight="400" fill="#243349" text-anchor="start">タイマーも監視。復帰条件を満たすまで抑止</text>
+<text x="76" y="500" font-size="11.5" font-weight="500" fill="#aa8120" text-anchor="start">LtcSyncController.Tick</text>
+</g>
+<g class="node"><title>LtcSyncController.ApplySync</title>
+<rect x="585" y="390" width="430" height="125" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="601" y="419" font-size="18" font-weight="700" fill="#243349" text-anchor="start">4. モードとトラック範囲で分岐</text>
+<text x="601" y="446" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Sync ON・監視中・プレイヤー準備済みを確認</text>
+<text x="601" y="469" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Continue はタイムライン上の素材を検索</text>
+<text x="601" y="500" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">LtcSyncController.ApplySync</text>
+</g>
+<g class="node"><title>SingleModeSyncCoordinator</title>
+<rect x="60" y="595" width="430" height="125" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="76" y="624" font-size="18" font-weight="700" fill="#243349" text-anchor="start">Single：現在の素材に追従</text>
+<text x="76" y="651" font-size="15" font-weight="400" fill="#243349" text-anchor="start">LTC から素材位置を決定</text>
+<text x="76" y="674" font-size="15" font-weight="400" fill="#243349" text-anchor="start">MediaIn / MediaOut で境界を制限・保持</text>
+<text x="76" y="705" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">SingleModeSyncCoordinator</text>
+</g>
+<g class="node"><title>PlaylistState / ContinueOnTrackCoordinator</title>
+<rect x="585" y="595" width="430" height="125" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="601" y="624" font-size="18" font-weight="700" fill="#243349" text-anchor="start">Continue：素材を選んで追従</text>
+<text x="601" y="651" font-size="15" font-weight="400" fill="#243349" text-anchor="start">TimelineOffset 等から素材内の秒へ変換</text>
+<text x="601" y="674" font-size="15" font-weight="400" fill="#243349" text-anchor="start">必要なら素材ロード／Gap 退出を実行</text>
+<text x="601" y="705" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">PlaylistState / ContinueOnTrackCoordinator</text>
+</g>
+<g class="node"><title>GapFreezeHandler / GapEnterCoordinator</title>
+<rect x="1110" y="595" width="430" height="125" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="1126" y="624" font-size="18" font-weight="700" fill="#243349" text-anchor="start">Gap：素材のない区間</text>
+<text x="1126" y="651" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Black または Freeze を決定</text>
+<text x="1126" y="674" font-size="15" font-weight="400" fill="#243349" text-anchor="start">必要なフレームの取得・保持を調整</text>
+<text x="1126" y="705" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">GapFreezeHandler / GapEnterCoordinator</text>
+</g>
+<g class="node"><title>LtcSyncController / 各 Coordinator</title>
+<rect x="60" y="800" width="955" height="110" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="76" y="829" font-size="18" font-weight="700" fill="#243349" text-anchor="start">素材内の目標位置と再生状態（Single / Continue 共通）</text>
+<text x="76" y="856" font-size="15" font-weight="400" fill="#243349" text-anchor="start">モードごとに目標を決めた後、シーク判断と継続再生中の補正を条件に応じて使い分ける。</text>
+<text x="76" y="895" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">LtcSyncController / 各 Coordinator</text>
+</g>
+<g class="node"><title>TimecodeSyncService / SyncDecisionEngine</title>
+<rect x="60" y="1010" width="430" height="150" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="76" y="1039" font-size="18" font-weight="700" fill="#243349" text-anchor="start">5a. シークするか・待つか</text>
+<text x="76" y="1066" font-size="15" font-weight="400" fill="#243349" text-anchor="start">ロード安定・位置の信頼性・着地待ち</text>
+<text x="76" y="1089" font-size="15" font-weight="400" fill="#243349" text-anchor="start">履歴ゲート、debounce、着地所要の学習</text>
+<text x="76" y="1112" font-size="15" font-weight="400" fill="#243349" text-anchor="start">D → 保留した要求は次回へ</text>
+<text x="76" y="1145" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">TimecodeSyncService / SyncDecisionEngine</text>
+</g>
+<g class="node"><title>SyncCorrectionController</title>
+<rect x="585" y="1010" width="430" height="150" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="601" y="1039" font-size="18" font-weight="700" fill="#243349" text-anchor="start">5b. 継続再生中のずれを補正</text>
+<text x="601" y="1066" font-size="15" font-weight="400" fill="#243349" text-anchor="start">補正可能なフレームだけ Controller が実行</text>
+<text x="601" y="1089" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Smooth：速度変更 ／ Jump：シーク</text>
+<text x="601" y="1145" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">SyncCorrectionController</text>
+</g>
+<g class="node"><title>TimelineOutputState → ComposeLayer</title>
+<rect x="1110" y="1010" width="430" height="150" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="1126" y="1039" font-size="18" font-weight="700" fill="#243349" text-anchor="start">表示状態を GPU に渡す</text>
+<text x="1126" y="1066" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Black / Hold / GapFreeze・配置・世代</text>
+<text x="1126" y="1089" font-size="15" font-weight="400" fill="#243349" text-anchor="start">映像を止める判断と画像の保持を分担</text>
+<text x="1126" y="1145" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">TimelineOutputState → ComposeLayer</text>
+</g>
+<g class="node"><title>GstPlaybackApi → native shim</title>
+<rect x="60" y="1300" width="430" height="135" rx="12" fill="#fff7ed" stroke="#bf691e" stroke-width="1.5"/>
+<text x="76" y="1329" font-size="18" font-weight="700" fill="#243349" text-anchor="start">6. 再生 API で実行</text>
+<text x="76" y="1356" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Load / Seek / SetPaused / SetRateInstant</text>
+<text x="76" y="1379" font-size="15" font-weight="400" fill="#243349" text-anchor="start">結果・再生位置・到着状況を次回判断に使う</text>
+<text x="76" y="1420" font-size="11.5" font-weight="500" fill="#bf691e" text-anchor="start">GstPlaybackApi → native shim</text>
+</g>
+<g class="node"><title>SyncRequestResult.Deferred</title>
+<rect x="585" y="1300" width="430" height="135" rx="12" fill="#f1f5f9" stroke="#718096" stroke-width="1.5"/>
+<text x="601" y="1329" font-size="18" font-weight="700" fill="#243349" text-anchor="start">D｜保留した要求は次回へ</text>
+<text x="601" y="1356" font-size="15" font-weight="400" fill="#243349" text-anchor="start">新しい受信フレーム／Tick で再評価</text>
+<text x="601" y="1379" font-size="15" font-weight="400" fill="#243349" text-anchor="start">ロード・シーク発行と実際の着地を区別</text>
+<text x="601" y="1420" font-size="11.5" font-weight="500" fill="#718096" text-anchor="start">SyncRequestResult.Deferred</text>
+</g>
+<g class="node"><title>GopScanCache / DecodeHealthMonitor</title>
+<rect x="1110" y="1300" width="430" height="135" rx="12" fill="#fffbea" stroke="#aa8120" stroke-width="1.5"/>
+<text x="1126" y="1329" font-size="18" font-weight="700" fill="#243349" text-anchor="start">警告と同期制御は別の責務</text>
+<text x="1126" y="1356" font-size="15" font-weight="400" fill="#243349" text-anchor="start">GOP / コーデック / デコード追従の警告</text>
+<text x="1126" y="1379" font-size="15" font-weight="400" fill="#243349" text-anchor="start">素材の交換や設定の判断材料として表示</text>
+<text x="1126" y="1420" font-size="11.5" font-weight="500" fill="#aa8120" text-anchor="start">GopScanCache / DecodeHealthMonitor</text>
+</g>
+<rect x="506.5" y="222.5" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="537.5" y="237.5" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">受信時刻</text>
+<rect x="1025.0" y="222.5" width="75" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1062.5" y="237.5" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">受理した値</text>
+<rect x="1149.0" y="425" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1180" y="440" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">同期要求</text>
+<rect x="500.0" y="427.5" width="75" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="537.5" y="442.5" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">抑止／復帰</text>
+<rect x="434.0" y="526" width="52" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="460" y="541" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">Single</text>
+<rect x="827.0" y="560" width="136" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="895" y="575" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">Continue / OnTrack</text>
+<rect x="1121.0" y="526" width="108" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1175" y="541" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">Continue / Gap</text>
+<rect x="302.5" y="955" width="75" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="340" y="970" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">シーク判断</text>
+<rect x="829.5" y="955" width="101" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="880" y="970" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">補正可能な場合</text>
+<rect x="302.5" y="1225" width="75" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="340" y="1240" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">シーク実行</text>
+<rect x="596.0" y="1193" width="88" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="640" y="1208" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">速度／シーク</text>
+<text x="60" y="1490" font-size="18" font-weight="400" fill="#475569" text-anchor="start">5a・5b は UI スレッド上での条件分岐。D は保留要求の接続先。モード別の例外分岐は省略している。</text>
+<text x="60" y="1526" font-size="16" font-weight="400" fill="#475569" text-anchor="start">位置フィードバックや GOP 由来のシーク先行量には環境変数による実験経路があり、既定経路と区別する。</text>
+<text x="40" y="1574" font-size="11" font-weight="400" fill="#94a3b8" text-anchor="start">TimecodeSyncPlayer  |  現行コードの構成図  |  主要な経路を要約</text>
+</svg>
