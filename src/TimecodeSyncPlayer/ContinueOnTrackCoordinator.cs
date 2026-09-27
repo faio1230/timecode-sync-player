@@ -48,10 +48,12 @@ internal sealed class ContinueOnTrackCoordinator
         // A different clip must be loaded before releasing the gap-owned pause.
         if (exitingGap && onTrackDecision.Action != ContinueOnTrackAction.SwitchTrack)
         {
-            if (!_effects.SeekTo(mediaPos))
+            // v0.5.4 B6b（規則 3）: ギャップの出口も relocate。目標は M(now) + c（マスターが動いている間）で、
+            // クリップの範囲に収める。発行したら着地の状態に通す（着地するまで次のシークを出さない）。
+            double exitTarget = RelocateTarget(track, mediaPos);
+            if (!_effects.SeekTo(exitTarget))
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "gap-exit-seek");
-            // D37-b2: ギャップ（黒・フリーズ）明けの着地。直後の不足は速度補正ではなくシークで詰める。
-            _syncService.NotifyLanding();
+            _syncService.ReportSeekSent(exitTarget, "gap-exit");
             CompleteGapExit(exitAction);
             // ギャップ出口のシークを発行したフレームでは補正を評価しない。
             return new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, 0.0, "gap-exit", ExitedGap: true);
@@ -63,7 +65,12 @@ internal sealed class ContinueOnTrackCoordinator
             SeekLatencyCompensator compensator = _syncService.LatencyCompensator;
             compensator.SelectTrack(track.Id);
             double compensationSeconds = compensator.CompensationForTrack(track.Id);
-            double loadPosition = mediaPos + compensationSeconds;
+            // v0.5.4 B6b（規則 3 の予測ロケート）: 先行量 c があればそれを使う（D7-a の補償より優先。
+            // 経路で分けない 1 つの c）。無ければ従来どおり D7-a の補償（既定 0）。
+            double lookaheadSeconds = _syncService.RelocateLookaheadSeconds;
+            double loadPosition = lookaheadSeconds > 0.0
+                ? RelocateTarget(track, mediaPos)
+                : mediaPos + compensationSeconds;
             Log.Information(
                 "Continue mode: switching to track {TrackName} at media position {Pos:F3}s compensation={CompensationMs:F1}ms",
                 track.Name, mediaPos, compensationSeconds * 1000.0);
@@ -160,6 +167,24 @@ internal sealed class ContinueOnTrackCoordinator
                 ? new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, playbackSeconds, "seek-issued")
                 : ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "seek-failed");
         }
+    }
+
+    /// <summary>
+    /// v0.5.4 B6b（規則 3 の予測ロケート）: relocate の目標 = 素材位置 + 先行量（マスターが動いている間の c）を
+    /// トラックの範囲に収める（D29 と同じ切り詰め。尺が分からなければ上は切らない）。先行量が 0 なら素材位置のまま。
+    /// </summary>
+    private double RelocateTarget(PlaylistTrack track, double mediaPos)
+    {
+        double lookaheadSeconds = _syncService.RelocateLookaheadSeconds;
+        if (lookaheadSeconds <= 0.0)
+            return mediaPos;
+        double target = mediaPos + lookaheadSeconds;
+        double durationSeconds = track.MediaDuration.TotalSeconds;
+        if (track.MediaOut is null && durationSeconds <= 0.0)
+            return target;
+        return SyncDecisionEngine.ClampToClip(
+            target, track.MediaIn.TotalSeconds, track.MediaOut?.TotalSeconds, durationSeconds,
+            track.FrameRate ?? 0.0);
     }
 
     private void CompleteGapExit(GapExitAction exitAction)

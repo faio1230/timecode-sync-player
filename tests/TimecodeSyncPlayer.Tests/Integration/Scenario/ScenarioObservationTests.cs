@@ -81,7 +81,10 @@ public class ScenarioObservationTests
             "すべて 4×tolerance を超える距離（D38 の再現条件）");
         landings.Should().OnlyContain(l => !l.LatencyOverBudget,
             "D38 の修正後、1.0 秒を超える着地の遅れは 0（段 0 の latencyOverBudget 0 / 0）");
-        ScenarioMetrics.SyncSeekCount(h).Should().Be(20, "段 0 の C-1 は同期シーク 20 本");
+        // v0.5.4 B6b（追補 3 で書き換え）: 旧は「同期シーク 20 本」。規則 4 の入口の合わせ（ランスルーの
+        // 保持の入口）が、読み込みの直後でデバウンス中の 1 本目を先に出すので、内訳は同期 19・保持の
+        // 着地 1 になる。守りたい量（20 ジャンプすべての着地と予算）は上の主張のまま、シークの総数で見る。
+        ScenarioMetrics.SeekCount(h).Should().Be(20, "C-1 は 1 ジャンプ 1 シーク（同期と保持の着地の合計）");
     }
 
     [Fact]

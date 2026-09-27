@@ -370,19 +370,37 @@ public class LtcSignalLossPolicyTests
     // ---- D27: 保持（値が進まない LTC） ----
 
     [Fact]
-    public void Evaluate_AfterHeldFrames_ReportsTimecodeHeldReason()
+    public void Evaluate_AfterAHeldFrame_ReportsTimecodeHeldReason()
     {
+        // v0.5.4 B6b（追補 3）: 保持 2 枚は U8 で 250ms を待たずに確定する（Jump の有無を問わない）ので、
+        // 250ms の確定と理由の判定は保持 1 枚で確かめる。
         var policy = CreatePolicy();
         LtcSignalLossContext context = Context();
 
         policy.ObserveValidFrame(Start, context);
-        policy.ObserveHeldFrame(At(100), context);
         policy.ObserveHeldFrame(At(200), context);
         policy.Evaluate(At(249), context).Should().Be(LtcSignalLossAction.None);
 
         policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
         policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
         policy.IsLost.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_TwoHeldFramesWithoutAJump_ConfirmsHeldLossBeforeTheTimeout()
+    {
+        // v0.5.4 B6b（規則 4 の入口を両モードで統一）: 保持（Duplicate）が 2 枚続いたら、Jump の後でなくても
+        // 250ms を待たずに停止モードの損失を確定する（旧は「適用した Jump の後の 2 枚」だけ）。
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(40), context);
+        policy.Evaluate(At(60), context).Should().Be(LtcSignalLossAction.None, "1 枚では確定しない");
+        policy.ObserveHeldFrame(At(80), context);
+
+        policy.Evaluate(At(100), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
     }
 
     [Fact]

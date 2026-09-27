@@ -15,7 +15,6 @@ internal static class LatchArrangements
     public static readonly LatchId HeldLossLanding = new(LatchOwner.LtcSyncController, "heldLossLanding");
     public static readonly LatchId LastAppliedLtc = new(LatchOwner.LtcSyncController, "lastAppliedLtc");
     public static readonly LatchId LastAcceptedLtc = new(LatchOwner.LtcSyncController, "lastAcceptedLtc");
-    public static readonly LatchId FollowStartPending = new(LatchOwner.LtcSyncController, "followStartPending");
     public static readonly LatchId RateRestorePending = new(LatchOwner.LtcSyncController, "rateRestorePending");
     public static readonly LatchId SmoothUnavailable = new(LatchOwner.LtcSyncController, "smoothUnavailable");
     public static readonly LatchId CorrectionPausedForPosition =
@@ -24,8 +23,6 @@ internal static class LatchArrangements
 
     public static readonly LatchId LoadingFile = new(LatchOwner.TimecodeSyncService, "loadingFile");
     public static readonly LatchId FileLoadReleasePending = new(LatchOwner.TimecodeSyncService, "fileLoadReleasePending");
-    public static readonly LatchId SeekLandingActive = new(LatchOwner.TimecodeSyncService, "seekLandingActive");
-    public static readonly LatchId FollowStartLanding = new(LatchOwner.TimecodeSyncService, "followStartLanding");
     public static readonly LatchId PositionUntrusted = new(LatchOwner.TimecodeSyncService, "positionUntrusted");
 
     public static readonly LatchId ClipBoundaryHeld = new(LatchOwner.SingleModeSyncCoordinator, "clipBoundaryHeld");
@@ -41,9 +38,9 @@ internal static class LatchArrangements
     public static IReadOnlyList<LatchId> All { get; } =
     [
         HeldReapplyDone, PendingJump, PendingSync, LastHeldEffective, HeldLossLanding,
-        LastAppliedLtc, LastAcceptedLtc, FollowStartPending, RateRestorePending, SmoothUnavailable,
+        LastAppliedLtc, LastAcceptedLtc, RateRestorePending, SmoothUnavailable,
         CorrectionPausedForPosition, RateNotUnity,
-        LoadingFile, FileLoadReleasePending, SeekLandingActive, FollowStartLanding, PositionUntrusted,
+        LoadingFile, FileLoadReleasePending, PositionUntrusted,
         ClipBoundaryHeld, BoundarySeekTarget,
         Lost, PausedByPolicy, ManualResumeSuppressesPause,
         PendingSeek,
@@ -103,11 +100,6 @@ internal static class LatchArrangements
         {
             // 基本配置の通常フレームで立つ（:597, :600）。
         }
-        else if (latch == FollowStartPending)
-        {
-            // 監視の開始（同期が有効）で立つ（:388-396）。
-            h.IsMonitoring = true;
-        }
         else if (latch == RateRestorePending)
         {
             // Smooth の倍率が残ったまま、倍率を 1.0 に戻せない状態で補正状態を捨てる（:292-297）。
@@ -147,17 +139,13 @@ internal static class LatchArrangements
             h.AdvancePlayback(h.PlaybackSeconds + 0.2, 3);
             s.Frame(s.LastLtc + 0.2);
         }
-        else if (latch == SeekLandingActive || latch == FollowStartLanding ||
-                 latch == PendingSeek || latch == PositionUntrusted)
+        else if (latch == PendingSeek || latch == PositionUntrusted)
         {
-            // 追従開始（監視の開始）から、離れた位置へ同期シークを出す。
+            // 監視の開始から、離れた位置へ同期シークを出す。
             h.IsMonitoring = true;
-            if (latch == PendingSeek || latch == PositionUntrusted)
-            {
-                // v0.5.4 段 B: 着地は配信の事象で取るので、着地を遅らせて着地待ちのまま保つ
-                // （即時配信だと次のフレームの観測で解けてしまう）。
-                h.Playback.SeekLandingDelaySeconds = 10.0;
-            }
+            // v0.5.4 段 B: 着地は配信の事象で取るので、着地を遅らせて着地待ちのまま保つ
+            // （即時配信だと次のフレームの観測で解けてしまう）。
+            h.Playback.SeekLandingDelaySeconds = 10.0;
             SeekFromFarPosition(s);
         }
         else if (latch == ClipBoundaryHeld || latch == BoundarySeekTarget)

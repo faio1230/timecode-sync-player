@@ -6,14 +6,6 @@ namespace TimecodeSyncPlayer;
 
 internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 {
-    /// <summary>
-    /// D37-d: 着地窓でシークを優先する下限（シーク所要見積りに対する比）。これは理論値では
-    /// なく調整値: 検証機の帯（残差 1,829ms / 学習値 1,866ms）でシーク側に倒れ、L-1 実測の
-    /// 小さい残差（数百 ms）で速度補正側に落ちるように選んだ。前進ガードと併用し、この
-    /// しきい値の境界帯（0.5〜1.0 倍）は着地後の観測で塞ぐ。
-    /// </summary>
-    internal const double LandingSeekPriorityFraction = 0.5;
-
     private readonly SyncDecisionOptions _options;
     private readonly SeekLatencyCompensator? _latencyCompensator;
     private readonly Func<double> _clockSeconds;
@@ -25,7 +17,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     // この 1 回だけ瞬間値で判定する（ResetSeekGate では戻さない。シーク後・ロード後まで
     // 例外を広げると、位置が飛んだ直後の 1 サンプルで連鎖が始まる）。
     private bool _gateWarmed;
-    // D37-b: シーク 1 回の実測所要（サービスが学習値を公開する。0 は未設定 = 速度補正優先なし）。
+    // D37-b / v0.5.4 B6b（門 15）: シーク 1 回の実測所要 c（サービスが学習値を公開する）。
+    // relocate の閾値は max(tol, r_max × c)（r_max は varispeed の上限）。0 は未学習（閾値は tol）。
     private double _rateCatchUpLimitSeconds;
     private bool _rateCatchUpActive;
     private double _rateCatchUpStartAbsSeconds;
@@ -94,7 +87,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             (double clipIn, double clipOut) = ClipRange(
                 state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
             double seekOut = SeekableOut(clipIn, clipOut, state.DurationSeconds, fps.VideoFps);
-            requestedTargetSeconds = Math.Clamp(ltcSeconds, clipIn, seekOut);
+            // v0.5.4 B6b（規則 3 の予測ロケート）: 置き換えのシークの目標も M(now) + c。
+            requestedTargetSeconds = Math.Clamp(ltcSeconds + state.SeekTargetLookaheadSeconds, clipIn, seekOut);
         }
         return SyncDecision.Untrusted(fps, toleranceSeconds, requestedTargetSeconds);
     }
@@ -169,34 +163,26 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         bool gateWasCold = !_gateWarmed;
         _gateWarmed = true;
 
-        if (Math.Abs(delta) <= toleranceSeconds)
+        // v0.5.4 B6b（規則 3）: relocate の閾値 = max(tol, r_max × c)。c はシークの所要（学習値）、
+        // r_max は varispeed の上限（c の間に varispeed で詰められる量より小さいずれは relocate しない）。
+        // これ以下は relocate せず varispeed に任せる。relocate の直後の 1 サンプルは varispeed
+        // しない（補正側が止める。ここは relocate の閾値だけを見る）。
+        double absDelta = Math.Abs(delta);
+        double seekThreshold = Math.Max(
+            toleranceSeconds, SyncCorrectionController.MaxRateDelta * _rateCatchUpLimitSeconds);
+        if (absDelta <= seekThreshold)
         {
-            EndRateCatchUp(escalated: false, Math.Abs(delta));
+            if (absDelta > toleranceSeconds)
+            {
+                BeginOrContinueRateCatchUp(absDelta);
+                if (traceEnabled)
+                    RecordEvaluate(ltcSeconds, state, toleranceSeconds, queryDelta, "rate-catch-up", GateDetail(gate));
+                return SyncDecision.NoneWith(fps, toleranceSeconds, rateCatchUp: true);
+            }
+            EndRateCatchUp(escalated: false, absDelta);
             if (traceEnabled)
                 RecordEvaluate(ltcSeconds, state, toleranceSeconds, queryDelta, "within-tolerance");
-            // D37-d: 到達。サービスは着地窓をここで閉じる。
             return SyncDecision.NoneWith(fps, toleranceSeconds, withinTolerance: true);
-        }
-
-        // D37-b: 実在の不足は、シーク 1 回の実測所要（未学習は 1.0 秒）以内ならシークを出さず
-        // 速度補正に任せる。絵を止めずに 93ms/秒（着地窓は 200ms/秒）で詰める。
-        // D37-b2: ギャップ明け・切替の着地直後は、速度補正に任せずシークで着地させる。
-        // D37-d: ただし着地窓中でも、不足がシーク所要の半分以下ならシークは誤差を増やすだけ
-        // （着地後残差 ≈ シーク所要。L-1 の 4K60 ロング GOP で実測: 0.34 秒 → シーク後 0.4〜1.8 秒）なので
-        // 速度補正に任せる。半分を超える帯（五分五分を含む）は着地優先でシークし、前進が
-        // 無ければサービス側の前進ガードが窓を閉じる。
-        double absDelta = Math.Abs(delta);
-        bool landingSeekPriority = !state.RateCatchUpAllowed &&
-            _rateCatchUpLimitSeconds > 0 &&
-            absDelta > _rateCatchUpLimitSeconds * LandingSeekPriorityFraction;
-        if (_rateCatchUpLimitSeconds > 0 &&
-            (state.RateCatchUpAllowed || !landingSeekPriority) &&
-            absDelta <= _rateCatchUpLimitSeconds)
-        {
-            BeginOrContinueRateCatchUp(absDelta);
-            if (traceEnabled)
-                RecordEvaluate(ltcSeconds, state, toleranceSeconds, queryDelta, "rate-catch-up", GateDetail(gate));
-            return SyncDecision.NoneWith(fps, toleranceSeconds, rateCatchUp: true);
         }
 
         if (!gate.ShouldSeek && !gateWasCold)
@@ -211,23 +197,16 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
 
         // 行き先だけを先行補償する。シーク可否（delta と tolerance）は補償前の値で判定する。
         // 補償後もトラックの範囲（D29）へ収める。
-        // D37-e: 追従開始のシークだけは「LTC + 学習済みシーク所要」を狙う（上限を付けない。
-        // 0.4.2 の先行補償が効かなかったのは 400ms 上限で頭打ちになったため）。既存の
-        // D7-a 先行補償（既定無効・上限 400ms）より優先する。未学習（0）は現行どおり。
-        double compensatedTarget;
-        if (state.SeekTargetLookaheadSeconds > 0.0)
-        {
-            compensatedTarget = Math.Clamp(
-                ltcSeconds + state.SeekTargetLookaheadSeconds, clipIn, seekOut);
-        }
-        else
-        {
-            compensatedTarget = _latencyCompensator is null
+        // v0.5.4 B6b（規則 3 の予測ロケート）: マスターが動いている間は目標 = M(now) + c
+        // （c はシークの所要の学習値。サービスが SeekTargetLookaheadSeconds に載せる。マスター停止中と
+        // 学習前は 0）。先行量があるときは D7-a の先行補償（既定無効）より優先する。
+        double compensatedTarget = state.SeekTargetLookaheadSeconds > 0.0
+            ? Math.Clamp(ltcSeconds + state.SeekTargetLookaheadSeconds, clipIn, seekOut)
+            : _latencyCompensator is null
                 ? target
                 : Math.Clamp(
                     _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds),
                     clipIn, seekOut);
-        }
         long decideQpc = traceEnabled || _latencyCompensator != null ? Stopwatch.GetTimestamp() : 0;
         _latencyCompensator?.MarkSeekDecision(decideQpc);
 
@@ -455,9 +434,6 @@ public sealed record SyncPlaybackState(
     // MediaOut はクリップ終端（未設定 = null で尺を使う）。
     double MediaInSeconds = 0.0,
     double? MediaOutSeconds = null,
-    // D37-b2: ギャップ明け・トラック切替の着地直後は false。速度補正優先をやめてシークで着地する
-    // （着地の瞬間は画面が黒／フリーズで、シークによる静止が見えないため）。
-    bool RateCatchUpAllowed = true,
     // 0.4.5-A フェーズ 1: 評価位置（shadow）。trace に eval* として併記するだけで、判断には使わない。
     double? EvalPositionSeconds = null,
     double? EvalDeltaSeconds = null,
@@ -467,8 +443,8 @@ public sealed record SyncPlaybackState(
     // 0.4.5-A フェーズ 1: 着地未確認中に「出したとしたら」の Smooth レート（適用はしない）。
     double? ShadowRate = null,
     string? ShadowRateReason = null,
-    // D37-e: 追従開始の着地窓だけで使うシーク目標の先行量（学習済みシーク所要）。
-    // 0 = 現行どおり（先行なし）。定常の補正シークとギャップ明け・切替では 0 にする。
+    // v0.5.4 B6b（規則 3 の予測ロケート）: relocate の目標に足す先行量 c（シークの所要の学習値）。
+    // マスターが動いている間だけ。マスター停止中・学習前は 0。サービスが載せる。
     double SeekTargetLookaheadSeconds = 0.0);
 
 public enum SyncActionType
@@ -493,7 +469,7 @@ public sealed record SyncDecision(
     bool RateCatchUpPreferred = false,
     // D37-b: シーク中・着地未確認のため、このフレームの位置を使った判定をしてはいけない。
     bool PositionUntrusted = false,
-    // D37-d: 誤差が許容内に入った（着地エピソードの到達）。サービスは着地窓を閉じる。
+    // D37-d: 誤差が許容内に入った（記録用。v0.5.4 B6b で着地窓を畳んだため判断には使わない）。
     bool WithinTolerance = false,
     // 0.4.5-A フェーズ 2: 記録用のクエリ値基準の差。判断用の DeltaSeconds が評価位置基準に
     // なっても、trace の delta= はこちらを使う（既存フィールドの意味を変えない契約）。

@@ -55,13 +55,6 @@ internal sealed class LtcInputState
     /// <summary>D20-b: 保持値の変更で 1 回だけ適用したことを示すラッチ（Normal/Initial で解除）。</summary>
     public bool HeldReapplyDone { get; private set; }
 
-    /// <summary>
-    /// D37-c: 追従開始（同期の有効化・監視開始）の最初の同期評価を、既存の着地窓
-    /// （D37-b2 の NotifyLanding / RateCatchUpAllowed）と同じ扱いにする。追従開始の瞬間は
-    /// 画面がまだ合っていないので、速度補正より速いシークで詰める。
-    /// </summary>
-    public bool FollowStartPending { get; private set; }
-
     /// <summary>監視の開始・停止で、受けたフレームの記録と 1 回適用のラッチを捨てる（移す前の ClearFrameHistory）。</summary>
     public void ClearFrameHistory()
     {
@@ -134,10 +127,4 @@ internal sealed class LtcInputState
 
     /// <summary>同期へ適用した最後の値だけを書く（保持値からの適用・ロード解除の再適用）。</summary>
     public void MarkLastApplied(double? seconds) => LastAppliedLtcSeconds = seconds;
-
-    /// <summary>追従開始の消費待ちを立てる（同期の有効化・監視開始）。</summary>
-    public void MarkFollowStart() => FollowStartPending = true;
-
-    /// <summary>追従開始の消費待ちを下ろす（同期の無効化・監視停止・ApplySync での消費）。</summary>
-    public void ClearFollowStart() => FollowStartPending = false;
 }

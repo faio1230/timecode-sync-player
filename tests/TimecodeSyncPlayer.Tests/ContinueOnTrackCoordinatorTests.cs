@@ -475,6 +475,17 @@ public class ContinueOnTrackCoordinatorTests
         return (engine, service, clock);
     }
 
+    /// <summary>
+    /// v0.5.4 B6b（追補 3）: ギャップの出口のシークも着地の状態に通すので、テストでは配信の世代と位置の
+    /// サンプルで着地を観測させる（Recorder の位置照会はサンプルを持たない）。
+    /// </summary>
+    private static void ObserveGapExitLanding(TimecodeSyncService service, double deliveredSeconds) =>
+        service.ObserveLandingState(
+            new TimecodeSyncPlayer.Contracts.PlaybackPositionSample(
+                deliveredSeconds, TimecodeSyncPlayer.Contracts.PlaybackPositionBasis.Pipeline, 2,
+                deliveredSeconds, 2, 2),
+            toleranceSeconds: 0.24);
+
     [Fact]
     public void GapExitLanding_SubsequentDeficit_SeeksInsteadOfRateCatchUp()
     {
@@ -489,6 +500,7 @@ public class ContinueOnTrackCoordinatorTests
         rec.GapExit = GapExitActionType.ResumePlayback;
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
         rec.SeekTargets.Should().Equal(10.0);
+        ObserveGapExitLanding(service, 10.0);
 
         // 出口直後の不足 0.7 秒（着地窓の中、0.5× シーク所要 1.0 秒を超える）→ シークで着地する。
         rec.GapExit = GapExitActionType.None;
@@ -503,10 +515,12 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void GapExitLanding_WithLearnedSeekCost_DoesNotLookAhead()
+    public void GapExitLanding_WithLearnedSeekCost_LooksAheadByTheSeekCost()
     {
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
-        // D37-e: 学習値 2.0 があっても、ギャップ出口のシークは先行しない（対象は追従開始だけ）。
+        // D37-e（v0.5.4 B6b 追補 3 で期待を変更）: 旧は「学習値 2.0 があっても、ギャップ出口のシークは
+        // 先行しない（対象は追従開始だけ）」。いまは規則 3 の予測ロケートで、マスターが動いている間の
+        // relocate は経路を問わず目標 = M(now) + c。ギャップの出口も 10.0 + 2.0 = 12.0 を狙う。
         service.SeekState.BeginSeek(1.0, clock.GetUtcNow().UtcDateTime);
         clock.Advance(TimeSpan.FromSeconds(2.0));
         // v0.5.4 段 B: 着地は配信の世代と位置の事象で取る（旧 門 6 の窓と cooldown は畳んだ）。
@@ -526,22 +540,23 @@ public class ContinueOnTrackCoordinatorTests
         // ギャップ出口: mediaPos 10.0 へ直接シークしてギャップを抜ける。
         rec.GapExit = GapExitActionType.ResumePlayback;
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
-        rec.SeekTargets.Should().Equal(10.0);
+        rec.SeekTargets.Should().Equal(new[] { 12.0 }, "ギャップの出口も目標 = 素材位置 + c");
+        ObserveGapExitLanding(service, 12.0);
 
-        // 出口直後の不足 1.2 秒（> 0.5 × 学習値 2.0、< 学習値）→ シーク。行き先は LTC のまま。
+        // 着地して c だけ進んだところ（LTC 12.0、再生 12.0）: ずれは無いので次の relocate は出ない。
         rec.GapExit = GapExitActionType.None;
-        rec.TimePos = (0, 9.0);
+        rec.TimePos = (0, 12.0);
         for (int i = 0; i < 4; i++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
-            coordinator.Handle(OnTrack(track, 10.2), 10.2);
+            coordinator.Handle(OnTrack(track, 12.0), 12.0);
         }
 
-        rec.SeekTargets.Should().Equal(10.0, 10.2);
+        rec.SeekTargets.Should().Equal(new[] { 12.0 }, "予測ロケートで着地したので 2 本目は出ない");
     }
 
     [Fact]
-    public void GapExitLanding_SmallDeficitBelowHalfSeekCost_UsesRateCatchUp()
+    public void GapExitLanding_SmallDeficitBeyondTolerance_RelocatesOnce()
     {
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
         var track = CreateTrack(Guid.NewGuid());
@@ -554,8 +569,11 @@ public class ContinueOnTrackCoordinatorTests
         rec.GapExit = GapExitActionType.ResumePlayback;
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
         rec.SeekTargets.Should().Equal(10.0);
+        ObserveGapExitLanding(service, 10.0);
 
-        // 出口直後の不足 0.3 秒（0.5× 1.0 秒以下）→ シークは誤差を増やすだけなので速度補正に任せる。
+        // D37-d（v0.5.4 B6b 追補 3 で書き換え）: 旧は「出口直後の不足 0.3 秒（0.5 × 既定 1.0 秒以下）は
+        // シークせず速度補正」。既定の 1.0 秒は削除し、学習前の閾値は tol（0.24）。0.3 秒は 1 回 relocate
+        // し、着地を待つ間は次を出さない（前進しないシークの連鎖にしない）。
         rec.GapExit = GapExitActionType.None;
         rec.TimePos = (0, 9.9);
         for (int i = 0; i < 4; i++)
@@ -564,12 +582,14 @@ public class ContinueOnTrackCoordinatorTests
             coordinator.Handle(OnTrack(track, 10.2), 10.2);
         }
 
-        rec.SeekTargets.Should().Equal(10.0);
+        rec.SeekTargets.Should().Equal(10.0, 10.2);
     }
 
     [Fact]
-    public void SteadyDeficit_WithinSeekCost_UsesRateCatchUp()
+    public void SteadyDeficit_BeyondTolerance_RelocatesOnce()
     {
+        // D37-b（v0.5.4 B6b 追補 3 で書き換え）: 旧は「未学習（既定 1.0 秒）以内の 0.5 秒は速度補正」。
+        // 既定の 1.0 秒は削除し、学習前の閾値は tol。0.5 秒は relocate し、着地を待つ間は次を出さない。
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
         var track = CreateTrack(Guid.NewGuid());
         var rec = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 10.0) };
@@ -577,7 +597,7 @@ public class ContinueOnTrackCoordinatorTests
 
         // 定常で 1 サンプル（許容内）を消費し、起動直後の例外を使い切る。
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
-        // 定常中の同じ大きさの不足 0.5 秒 → シークを出さず速度補正に任せる。
+        // 定常中の不足 0.5 秒（> tol 0.24）→ 1 回 relocate（学習前は先行量 0）。
         rec.TimePos = (0, 9.7);
         for (int i = 0; i < 4; i++)
         {
@@ -585,6 +605,6 @@ public class ContinueOnTrackCoordinatorTests
             coordinator.Handle(OnTrack(track, 10.2), 10.2);
         }
 
-        rec.SeekTargets.Should().BeEmpty();
+        rec.SeekTargets.Should().Equal(10.2);
     }
 }

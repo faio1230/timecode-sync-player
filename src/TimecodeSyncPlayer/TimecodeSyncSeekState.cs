@@ -52,6 +52,8 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     private int _landingFirstOutsideTotal;
     private TimecodeSyncLandingRecord? _lastLanding;
     private double _learnedSeekSeconds = double.NaN;
+    // v0.5.4 B6b-16/23: 着地を観測した直後の 1 サンプルだけ true（補正の入口が消費する）。
+    private bool _justLanded;
 
     public TimecodeSyncSeekState()
         : this(LandingSafetyTimeout)
@@ -115,6 +117,7 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         _landingFirstGenerationSeen = false;
         _replacementPending = false;
         _newLandingDelaySeconds = double.NaN;
+        _justLanded = false;
         LastStatus = TimecodeSyncSeekPendingStatus.None;
     }
 
@@ -124,6 +127,18 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         Clear();
         _lastLanding = null;
         _lastLandingAt = DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// v0.5.4 B6b-16/23: 着地の観測直後の 1 サンプルだけ true（消費する）。
+    /// 「relocate の直後の 1 サンプルは varispeed しない」の合図。
+    /// </summary>
+    public bool ConsumeJustLanded()
+    {
+        if (!_justLanded)
+            return false;
+        _justLanded = false;
+        return true;
     }
 
     /// <summary>
@@ -194,7 +209,11 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     {
         if (_landingPhase != TimecodeSyncLandingPhase.WaitingForLanding)
             return false;
-        if (!IsNewRequestFarFromPending(requestedTargetSeconds, toleranceSeconds))
+        // v0.5.4 B6b（規則 3）: 着地を待つ間にマスターは実時間より速くは進まない。発行からの経過ぶんだけ
+        // 前方の許容を広げ、動き続けるマスター（連続した LTC）を「離れた新要求」と取り違えない
+        // （所要が 4×tol を超える素材で、着地の前に置き換え続けない）。値が飛んだとき（Jump）は置き換える。
+        double elapsedSeconds = _sentAt != DateTime.MinValue ? Math.Max(0.0, (now - _sentAt).TotalSeconds) : 0.0;
+        if (!IsNewRequestFarFromPending(requestedTargetSeconds, toleranceSeconds, elapsedSeconds))
             return false;
         // 現在位置の近くの要求は、着地の観測を残すため置き換えない。
         if (Math.Abs(requestedTargetSeconds - playbackSeconds) <=
@@ -277,16 +296,19 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         // 着地。
         _landingPhase = TimecodeSyncLandingPhase.Following;
         LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-        // D37-b: 着地までの実測時間を学習する。
-        if (_sentAt != DateTime.MinValue)
-            LearnSeekDuration(now - _sentAt);
         _newLandingDelaySeconds = _sentAt == DateTime.MinValue
             ? 0.0
             : (now - _sentAt).TotalSeconds;
+        // D37-b / v0.5.4 B6b: シークの所要 c を学習する。源は B1 の着地の遅れ（new-landing の delayMs）と
+        // 同じ値（シークの発行 → その世代の配信フレームが着地の窓に入った観測）。着地ごとに移動平均。
+        if (_sentAt != DateTime.MinValue)
+            LearnSeekDuration(_newLandingDelaySeconds);
         _lastLandingAt = now;
         _lastLanding = new TimecodeSyncLandingRecord(
             _targetSeconds, _landingSeekGeneration, _newLandingDelaySeconds,
             sample.DeliveredSeconds, sample.DeliveredGeneration, sample.CurrentGeneration);
+        // v0.5.4 B6b-16/23: この直後の 1 サンプルは varispeed しない（補正の入口が消費する）。
+        _justLanded = true;
         Log.Debug(
             "sync.gate new-landing target={Target:F3} delayMs={DelayMs:F1} delivered={Delivered:F3} deliveredGen={DeliveredGeneration} currentGen={CurrentGeneration}",
             _targetSeconds, _newLandingDelaySeconds * 1000.0, sample.DeliveredSeconds,
@@ -339,13 +361,15 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     /// D20-b: 新しい要求が着地待ちの目標から離れているか。連続して進む LTC の経路では
     /// 要求と目標はほぼ一致するため捨てることは起きない。
     /// </summary>
-    private bool IsNewRequestFarFromPending(double requestedTargetSeconds, double toleranceSeconds)
+    private bool IsNewRequestFarFromPending(
+        double requestedTargetSeconds, double toleranceSeconds, double allowedAheadSeconds = 0.0)
     {
         if (!double.IsFinite(requestedTargetSeconds))
             return false;
 
-        double distance = Math.Abs(requestedTargetSeconds - _targetSeconds);
-        return distance > Math.Max(0, toleranceSeconds) * PendingSupersedeToleranceMultiplier;
+        double limit = Math.Max(0, toleranceSeconds) * PendingSupersedeToleranceMultiplier;
+        double drift = requestedTargetSeconds - _targetSeconds;
+        return drift > limit + allowedAheadSeconds || drift < -limit;
     }
 
     private bool IsWithinNewLandingWindow(double deliveredSeconds, double toleranceSeconds)
@@ -355,9 +379,8 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
             deliveredSeconds <= _targetSeconds + (boundedTolerance * ContinuousPlaybackSettleSlackMultiplier);
     }
 
-    private void LearnSeekDuration(TimeSpan elapsed)
+    private void LearnSeekDuration(double seconds)
     {
-        double seconds = elapsed.TotalSeconds;
         if (seconds < LearnedSeekMinSeconds || seconds > LearnedSeekMaxSeconds)
             return;
         _learnedSeekSeconds = double.IsFinite(_learnedSeekSeconds)

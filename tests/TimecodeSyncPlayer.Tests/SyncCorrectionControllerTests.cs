@@ -123,26 +123,19 @@ public class SyncCorrectionControllerTests
     }
 
     [Fact]
-    public void Jump_StopsAfterConsecutiveSeekLimit_AndResetsWhenResidualSettles()
+    public void Jump_AfterConsecutiveSeeks_KeepsSeeking()
     {
+        // B6-24: 旧は連続 3 回で止めていた（jump-limit）。いまはシークを止めず、計数と警告だけ。
         var controller = new SyncCorrectionController();
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i <= 5; i++)
             Evaluate(controller, 0.120, SyncCorrectionMode.Jump, secondsAfterStart: i * 0.1)
                 .Action.Should().Be(SyncCorrectionActionType.Seek);
 
-        Evaluate(controller, 0.120, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.120, SyncCorrectionMode.Jump, secondsAfterStart: 0.5)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-
-        // T8: 一瞬内側に入っただけでは戻らない。1 秒留まって初めて戻る。
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 0.6)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.7)
-            .Action.Should().Be(SyncCorrectionActionType.None);
+        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 0.6);
+        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.7);
         Evaluate(controller, 0.120, SyncCorrectionMode.Jump, secondsAfterStart: 1.8)
-            .Action.Should().Be(SyncCorrectionActionType.Seek);
+            .Action.Should().Be(SyncCorrectionActionType.Seek, "1 秒セトルで数え直してもシークは続く");
     }
 
     // ── T8: Jump のしきい値 80ms と、1 秒セトルで連続回数を戻す ─────────
@@ -173,8 +166,9 @@ public class SyncCorrectionControllerTests
     }
 
     [Fact]
-    public void Jump_BriefDipInsideThreshold_DoesNotResetConsecutiveSeeks()
+    public void Jump_BriefDipInsideThreshold_KeepsSeeking()
     {
+        // 一時的にしきい値の内側へ入っても、シークは止まらない（計数だけが連続のまま）。
         var controller = new SyncCorrectionController();
         Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.0)
             .Action.Should().Be(SyncCorrectionActionType.Seek);
@@ -184,66 +178,23 @@ public class SyncCorrectionControllerTests
             .Action.Should().Be(SyncCorrectionActionType.None);
 
         Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.3)
-            .Action.Should().Be(SyncCorrectionActionType.Seek, "一瞬の内側では回数が戻らない");
+            .Action.Should().Be(SyncCorrectionActionType.Seek, "一瞬の内側で止めない");
         Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.None, "3 回で上限");
+            .Action.Should().Be(SyncCorrectionActionType.Seek, "3 回を過ぎてもシークは続く（B6-24）");
     }
 
     [Fact]
-    public void Jump_StayingInsideThresholdForOneSecond_RestartsSeeking()
+    public void Jump_Reset_ClearsTheChainCount()
     {
         var controller = new SyncCorrectionController();
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i <= 3; i++)
             Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: i * 0.1)
                 .Action.Should().Be(SyncCorrectionActionType.Seek);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.3)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.45)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 1.55)
-            .Action.Should().Be(SyncCorrectionActionType.Seek);
-    }
-
-    [Fact]
-    public void Jump_InsideForLessThanOneSecond_DoesNotReset()
-    {
-        var controller = new SyncCorrectionController();
-        for (int i = 0; i < 3; i++)
-            Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: i * 0.1)
-                .Action.Should().Be(SyncCorrectionActionType.Seek);
-
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.3)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 1.4)
-            .Action.Should().Be(SyncCorrectionActionType.None, "0.9 秒では回数が戻らない");
-
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 1.5)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.010, SyncCorrectionMode.Jump, secondsAfterStart: 2.5)
-            .Action.Should().Be(SyncCorrectionActionType.None);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 2.6)
-            .Action.Should().Be(SyncCorrectionActionType.Seek);
-    }
-
-    [Fact]
-    public void Jump_Reset_AllowsSeekingImmediately()
-    {
-        var controller = new SyncCorrectionController();
-        for (int i = 0; i < 3; i++)
-            Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: i * 0.1)
-                .Action.Should().Be(SyncCorrectionActionType.Seek);
-        Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.3)
-            .Action.Should().Be(SyncCorrectionActionType.None);
 
         controller.Reset();
 
         Evaluate(controller, 0.100, SyncCorrectionMode.Jump, secondsAfterStart: 0.4)
-            .Action.Should().Be(SyncCorrectionActionType.Seek);
+            .Action.Should().Be(SyncCorrectionActionType.Seek, "リセット後もシークは続く（B6-24）");
     }
 
     [Fact]
@@ -398,114 +349,20 @@ public class SyncCorrectionControllerTests
             .Action.Should().Be(SyncCorrectionActionType.SetRate);
     }
 
-    // ── T9: 着地直後 1.0 秒の速度上限 ±0.20 ────────────────────────────
-
-    [Theory]
-    [InlineData(0.200, 1.20)]
-    [InlineData(-0.200, 0.80)]
-    public void Smooth_InsideLandingWindow_UsesTwentyPercentLimit(double residual, double expectedRate)
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-
-        SyncCorrectionDecision decision = Evaluate(controller, residual, secondsAfterStart: 0.5);
-
-        decision.Action.Should().Be(SyncCorrectionActionType.SetRate);
-        decision.Rate.Should().BeApproximately(expectedRate, 1e-9);
-    }
-
-    [Theory]
-    [InlineData(0.200, 1.10)]
-    [InlineData(-0.200, 0.90)]
-    public void Smooth_AfterLandingWindow_UsesTenPercentLimit(double residual, double expectedRate)
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-
-        SyncCorrectionDecision decision = Evaluate(controller, residual, secondsAfterStart: 1.5);
-
-        decision.Rate.Should().BeApproximately(expectedRate, 1e-9);
-    }
-
-    [Fact]
-    public void Smooth_InsideLandingWindow_KeepsProportionalLaw()
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-
-        Evaluate(controller, 0.050, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.05, 1e-9);
-    }
-
-    [Fact]
-    public void Smooth_LandingWindowEnd_RoundsAppliedRateIntoTenPercentRange()
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-        Evaluate(controller, 0.500, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.20, 1e-9);
-
-        SyncCorrectionDecision after = Evaluate(controller, 0.500, secondsAfterStart: 1.5);
-
-        after.Rate.Should().BeApproximately(1.10, 1e-9);
-    }
-
-    [Fact]
-    public void Smooth_NewLandingInsideWindow_RestartsOneSecondWindow()
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-        Evaluate(controller, 0.200, secondsAfterStart: 0.9).Rate.Should().BeApproximately(1.20, 1e-9);
-
-        controller.NotifyLanding(T0.AddSeconds(0.9));
-
-        Evaluate(controller, 0.200, secondsAfterStart: 1.5).Rate.Should().BeApproximately(1.20, 1e-9);
-        Evaluate(controller, 0.200, secondsAfterStart: 2.0).Rate.Should().BeApproximately(1.10, 1e-9);
-    }
-
-    [Fact]
-    public void Reset_ClearsLandingWindow()
-    {
-        var controller = new SyncCorrectionController();
-        controller.NotifyLanding(T0);
-        Evaluate(controller, 0.200, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.20, 1e-9);
-
-        controller.Reset();
-
-        Evaluate(controller, 0.200, secondsAfterStart: 0.5).Rate.Should().BeApproximately(1.10, 1e-9);
-    }
-
-    [Fact]
-    public void Jump_IgnoresLandingWindow()
-    {
-        var withLanding = new SyncCorrectionController();
-        withLanding.NotifyLanding(T0);
-        var withoutLanding = new SyncCorrectionController();
-
-        foreach (double residual in new[] { 0.010, 0.120, -0.120 })
-        {
-            SyncCorrectionDecision expected = withoutLanding.Evaluate(
-                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5), OneFrameAt25Fps);
-            SyncCorrectionDecision actual = withLanding.Evaluate(
-                residual, 10.0, SyncCorrectionMode.Jump, true, T0.AddSeconds(0.5), OneFrameAt25Fps);
-
-            actual.Should().Be(expected);
-        }
-    }
 
     // ── 0.4.5-A フェーズ 1: shadow プレビュー（状態を変えない） ─────────
 
     [Theory]
-    [InlineData(0.001, false, 1.0, "smooth-idle")]
-    [InlineData(0.004, false, 1.0, "smooth-deadband")]
-    [InlineData(0.050, false, 1.05, "smooth")]
-    [InlineData(0.050, true, 1.05, "smooth-landing")]
-    [InlineData(0.500, false, 1.10, "smooth")]
-    [InlineData(0.500, true, 1.20, "smooth-landing")]
-    [InlineData(double.NaN, false, 1.0, "invalid")]
-    public void PreviewSmoothRate_UsesTheSameBandsClampAndLandingWindow(
-        double residual, bool landing, double expectedRate, string expectedReason)
+    [InlineData(0.001, 1.0, "smooth-idle")]
+    [InlineData(0.004, 1.0, "smooth-deadband")]
+    [InlineData(0.050, 1.05, "smooth")]
+    [InlineData(0.500, 1.10, "smooth")]
+    [InlineData(double.NaN, 1.0, "invalid")]
+    public void PreviewSmoothRate_UsesTheSameBandsAndClamp(
+        double residual, double expectedRate, string expectedReason)
     {
         (double rate, string reason) = SyncCorrectionController.PreviewSmoothRate(
-            residual, landing, OneFrameAt25Fps);
+            residual, OneFrameAt25Fps);
 
         rate.Should().BeApproximately(expectedRate, 1e-9);
         reason.Should().Be(expectedReason);
@@ -517,7 +374,7 @@ public class SyncCorrectionControllerTests
         var controller = new SyncCorrectionController();
 
         _ = SyncCorrectionController.PreviewSmoothRate(
-            0.500, landingWindowActive: true, deadbandSeconds: OneFrameAt25Fps);
+            0.500, deadbandSeconds: OneFrameAt25Fps);
 
         // 呼んだ後も新しいコントローラと同じ（ヒステリシスの状態が変わっていない）。
         SyncCorrectionDecision decision = controller.Evaluate(
@@ -526,16 +383,6 @@ public class SyncCorrectionControllerTests
         decision.Reason.Should().Be("smooth-idle");
     }
 
-    [Fact]
-    public void IsLandingWindowActive_FollowsNotifyLanding()
-    {
-        var controller = new SyncCorrectionController();
-
-        controller.IsLandingWindowActive(T0).Should().BeFalse();
-        controller.NotifyLanding(T0);
-        controller.IsLandingWindowActive(T0.AddMilliseconds(500)).Should().BeTrue();
-        controller.IsLandingWindowActive(T0.AddSeconds(1.1)).Should().BeFalse();
-    }
 
     // ── B4b: 不感帯は 1 映像フレーム（fps から決める。定数は増やさない） ──
 

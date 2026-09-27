@@ -243,360 +243,6 @@ public class TimecodeSyncServiceTests
         engine.DecideCallCount.Should().Be(1);
     }
 
-    [Fact]
-    public void EvaluateDecision_AfterLanding_StaysOpenUntilArrival()
-    {
-        // D37-d: 着地窓は「1 秒」ではなく、誤差が許容内に入るまで開いたままにする
-        // （1 回の着地では収束しない素材で、着地ごとに速度補正へ落ちないため）。
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
-
-        service.NotifyLanding();
-        service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("ギャップ明け・切替の着地直後はシークで詰める");
-
-        clock.Advance(TimeSpan.FromMilliseconds(3900));
-        service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeFalse(
-            "誤差が許容内に入る前は、着地から 1 秒を過ぎてもシークで詰める");
-
-        engine.DecisionToReturn = new SyncDecision(
-            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
-        service.EvaluateDecision(10.0, state);
-
-        engine.DecisionToReturn = SyncDecision.None;
-        service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("誤差が許容内に入ったら窓を閉じる");
-    }
-
-    // ---- D37-d: 着地窓は誤差が許容内に入るまで開いたまま（上限付き） ----
-
-    [Fact]
-    public void EvaluateDecision_AfterFirstSeekLanding_KeepsWindowOpen_AndSecondSeekIsChosen()
-    {
-        // 検証機の実測値: 初期誤差 3.5 秒、1 回目のシーク所要 1.866 秒（学習値）、
-        // 着地後の残差 1.829 秒。残差 < 学習値なので、窓が閉じていれば速度補正になる。
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 6));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-
-        service.NotifyLanding();
-        var before = new SyncPlaybackState(true, true, false, 6.5, 100.0, 30.0, 30.0);
-
-        SyncDecision first = service.EvaluateDecision(10.0, before);
-        first.Action.Should().Be(SyncActionType.Seek, "初期誤差 3.5 秒は着地窓内のシーク");
-        service.ReportSeekSent(10.0);
-
-        // シーク中は位置を信用しない。
-        service.EvaluateDecision(10.0, before).PositionUntrusted.Should().BeTrue();
-
-        // 1.866 秒で着地し、所要が学習値になる（配信の世代と位置の事象）。
-        clock.Advance(TimeSpan.FromSeconds(1.866));
-        service.ObserveLandingState(
-            new PlaybackPositionSample(10.0, PlaybackPositionBasis.Pipeline, 7, 10.0, 7, 7),
-            toleranceSeconds: 0.2);
-        seekState.LearnedSeekDurationSeconds.Should().BeApproximately(1.866, 0.001);
-
-        // 着地後: LTC は進み、残差 1.829 秒（< 学習値 1.866 秒）。窓が開いているため
-        // 速度補正には落ちず、ゲートが埋まる（3 サンプル）と 2 回目のシークになる。
-        var landed = new SyncPlaybackState(true, true, false, 10.0, 100.0, 30.0, 30.0);
-        SyncDecision second = service.EvaluateDecision(11.829, landed);
-        second.GateDeferred.Should().BeTrue("シーク直後のゲートは 1 サンプル目を保留する");
-        service.EvaluateDecision(11.829, landed);
-        second = service.EvaluateDecision(11.829, landed);
-
-        second.Action.Should().Be(SyncActionType.Seek, "着地窓が開いているため 2 回目もシーク");
-        second.RateCatchUpPreferred.Should().BeFalse();
-    }
-
-    [Fact]
-    public void EvaluateDecision_LandingWindowClosesAtTheSeekCap()
-    {
-        // D37-d 上限 2: 連続シーク 3 回で閉じ、通常の判断（速度補正優先）に戻す。
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
-        static void Land(TimecodeSyncService s, MockTimecodeSyncSeekState st)
-        {
-            // v0.5.4 U4: 着地は A（着地の状態）の遷移。保留が外れて位置が使えるようになる。
-            st.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-            st.HasPendingSeek = false;
-            s.ShouldSuppressSeek(10.0, 0.2);
-        }
-
-        service.NotifyLanding();
-        service.ReportSeekSent(10.0);
-        Land(service, seekState);
-        service.ReportSeekSent(10.0);
-        Land(service, seekState);
-        service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("2 回目までは窓が開いている");
-
-        service.ReportSeekSent(10.0);
-        Land(service, seekState);
-        service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("3 回目のシークで窓を閉じる");
-    }
-
-    [Fact]
-    public void EvaluateDecision_LandingWindowClosesAtTheAgeCap()
-    {
-        // D37-d 上限 1: 窓が開いてから 5 秒で閉じる（シーク所要が縮まらない素材で連鎖しない）。
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
-
-        service.NotifyLanding();
-        clock.Advance(TimeSpan.FromSeconds(5) - TimeSpan.FromTicks(1));
-        service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("5 秒未満は開いている");
-
-        clock.Advance(TimeSpan.FromTicks(1));
-        service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("5 秒に達したら閉じる");
-    }
-
-    [Fact]
-    public void EvaluateDecision_WithinToleranceClosesLandingWindow()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
-
-        service.NotifyLanding();
-        engine.DecisionToReturn = new SyncDecision(
-            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
-        service.EvaluateDecision(10.0, state);
-
-        engine.DecisionToReturn = SyncDecision.None;
-        service.EvaluateDecision(10.0, state);
-        engine.LastState!.RateCatchUpAllowed.Should().BeTrue("到達で閉じた後は通常の判断に戻る");
-    }
-
-    [Fact]
-    public void EvaluateDecision_AfterASeekWithoutProgress_ClosesTheLandingWindow()
-    {
-        // D37-d 前進ガード: 境界帯（実機 0.579s 不足 → シーク後 0.600s、前進なし）。
-        // 1 回のシークで前進しなければ窓を閉じ、通常の判断（速度補正）に戻る。
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-
-        service.NotifyLanding();
-        engine.DecisionToReturn = new SyncDecision(
-            SyncActionType.Seek, 2.136, 0.579, 0.24, 60.0, 25.0, false, false);
-        service.EvaluateDecision(2.136, new SyncPlaybackState(true, true, false, 1.557, 100.0, 60.0, 25.0))
-            .Action.Should().Be(SyncActionType.Seek);
-        service.ReportSeekSent(2.136);
-
-        // 着地（位置はシーク目標に到達したが、LTC は進んで残差はむしろ増えた）。
-        // v0.5.4 U4: 着地は A の遷移（保留が外れて位置が使える）。
-        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-        seekState.HasPendingSeek = false;
-        service.ShouldSuppressSeek(2.136, 0.24);
-
-        engine.DecisionToReturn = SyncDecision.None;
-        service.EvaluateDecision(3.099, new SyncPlaybackState(true, true, false, 2.499, 100.0, 60.0, 25.0));
-
-        engine.LastState!.RateCatchUpAllowed.Should().BeTrue(
-            "前進なしで窓を閉じ、このフレームから通常の判断に戻す");
-    }
-
-    [Fact]
-    public void EvaluateDecision_AfterASeekWithProgress_KeepsTheLandingWindow()
-    {
-        // 検証機の帯: 初期誤差 3.5s → 1 回目の着地後 1.8s（前進あり）→ 窓は開いたまま。
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-
-        service.NotifyLanding();
-        engine.DecisionToReturn = new SyncDecision(
-            SyncActionType.Seek, 4.5, 3.5, 0.24, 60.0, 25.0, false, false);
-        service.EvaluateDecision(4.5, new SyncPlaybackState(true, true, false, 1.0, 100.0, 60.0, 25.0))
-            .Action.Should().Be(SyncActionType.Seek);
-        service.ReportSeekSent(4.5);
-
-        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-        seekState.HasPendingSeek = false;   // v0.5.4 U4: 着地は A の遷移（保留が外れて位置が使える）
-        service.ShouldSuppressSeek(4.5, 0.24);
-
-        engine.DecisionToReturn = SyncDecision.None;
-        service.EvaluateDecision(2.8, new SyncPlaybackState(true, true, false, 1.0, 100.0, 60.0, 25.0));
-
-        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("前進している間は窓を開いたままにする");
-    }
-
-    [Fact]
-    public void EvaluateDecision_AfterTheSeekCap_ReturnsToNormalRateCatchUp()
-    {
-        // D37-d 上限の歯止め: シークが縮まらない素材でも、連続 3 シークで窓を閉じ、
-        // 通常の判断（残差 <= 学習値は速度補正）に戻る。
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.0 };
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 6));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0, 30.0, 30.0);
-
-        void Land()
-        {
-            // v0.5.4 U4: 着地は A の遷移（保留が外れて位置が使える）。
-            seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-            seekState.HasPendingSeek = false;
-            service.ShouldSuppressSeek(10.6, 0.2);
-        }
-
-        service.NotifyLanding();
-        service.ReportSeekSent(10.6);
-        Land();
-        service.ReportSeekSent(10.6);
-        Land();
-        service.ReportSeekSent(10.6);
-        Land();
-
-        SyncDecision afterCap = service.EvaluateDecision(10.6, state); // 0.6 <= 学習値 1.0
-
-        afterCap.Action.Should().Be(SyncActionType.None);
-        afterCap.RateCatchUpPreferred.Should().BeTrue("上限で窓が閉じた後は通常の判断に戻る");
-    }
-
-    [Fact]
-    public void EvaluateDecision_AfterTheAgeCap_ReturnsToNormalRateCatchUp()
-    {
-        // D37-d 上限の歯止め（時間側）: 窓が開いて 5 秒たったら、残差が 0.5× を超えていても
-        // 通常の判断に戻す（シークの連鎖にしない）。
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.0 };
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 6));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0, 30.0, 30.0);
-
-        service.NotifyLanding();
-        clock.Advance(TimeSpan.FromSeconds(5));
-
-        SyncDecision afterCap = service.EvaluateDecision(10.6, state); // 0.6 <= 学習値 1.0
-
-        afterCap.Action.Should().Be(SyncActionType.None);
-        afterCap.RateCatchUpPreferred.Should().BeTrue("5 秒の上限で窓が閉じたら通常の判断に戻る");
-    }
-
-    [Fact]
-    public void NotifyLanding_ReopensTheWindowAfterArrival()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
-
-        service.NotifyLanding();
-        engine.DecisionToReturn = new SyncDecision(
-            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
-        service.EvaluateDecision(10.0, state);
-        engine.DecisionToReturn = SyncDecision.None;
-
-        service.NotifyLanding();
-        service.EvaluateDecision(10.0, state);
-
-        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("新しい着地で窓を開き直す");
-    }
-
-    // ---- D37-e: 追従開始のシークだけ LTC + 学習済みシーク所要を狙う ----
-
-    [Fact]
-    public void EvaluateDecision_FollowStartLanding_UsesLearnedSeekCostAsLookahead()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.87 };
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-
-        service.NotifyLanding(LandingOrigin.FollowStart);
-        service.EvaluateDecision(7.368, new SyncPlaybackState(true, true, false, 4.711, 100.0));
-
-        engine.LastState!.SeekTargetLookaheadSeconds.Should().BeApproximately(1.87, 1e-9,
-            "追従開始は学習済みシーク所要を先行量に使う");
-    }
-
-    [Fact]
-    public void EvaluateDecision_GapExitLanding_DoesNotUseLookahead()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.87 };
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-
-        service.NotifyLanding(LandingOrigin.Other);
-        service.EvaluateDecision(7.368, new SyncPlaybackState(true, true, false, 4.711, 100.0));
-
-        engine.LastState!.SeekTargetLookaheadSeconds.Should().Be(0.0,
-            "ギャップ明け・切替には広げない（所要が短く過剰打ちになる）");
-    }
-
-    [Fact]
-    public void EvaluateDecision_FollowStartWithoutLearnedSeekCost_HasNoLookahead()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState(); // 未学習
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-
-        service.NotifyLanding(LandingOrigin.FollowStart);
-        service.EvaluateDecision(7.368, new SyncPlaybackState(true, true, false, 4.711, 100.0));
-
-        engine.LastState!.SeekTargetLookaheadSeconds.Should().Be(0.0,
-            "未学習は測れていないので先行しない（最初のシークが所要の測定になる）");
-    }
-
-    [Fact]
-    public void EvaluateDecision_AfterArrival_StopsUsingLookahead()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState { LearnedSeekDurationSeconds = 1.87 };
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 19, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-        var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
-
-        service.NotifyLanding(LandingOrigin.FollowStart);
-        engine.DecisionToReturn = new SyncDecision(
-            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
-        service.EvaluateDecision(10.0, state);
-
-        engine.DecisionToReturn = SyncDecision.None;
-        service.EvaluateDecision(10.0, state);
-
-        engine.LastState!.SeekTargetLookaheadSeconds.Should().Be(0.0,
-            "窓が閉じたら先行量も戻す");
-    }
-
-    [Fact]
-    public void BeginFileLoad_StartsTheLandingWindow()
-    {
-        var engine = new MockSyncDecisionEngine();
-        var seekState = new MockTimecodeSyncSeekState();
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
-        var service = new TimecodeSyncService(engine, seekState, clock);
-
-        service.BeginFileLoad(startPositionSeconds: 10.0, renderedFrameCount: 0);
-        // v0.5.4 段 B3: 読み込みの着地（配信の世代の最初のフレーム）まで判定しないので、着地を模してから評価する。
-        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-        seekState.HasPendingSeek = false;
-        service.EvaluateDecision(10.0, new SyncPlaybackState(true, true, false, 10.0, 100.0));
-
-        engine.LastState!.RateCatchUpAllowed.Should().BeFalse("トラック切替のロード直後も着地として扱う");
-    }
 
     [Fact]
     public void EvaluateDecision_PublishesLearnedSeekCost()
@@ -968,23 +614,15 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void SyncDisabled_DuringFileLoad_CancelsWithoutReleaseOrLandingWindow()
+    public void SyncDisabled_DuringFileLoad_CancelsWithoutRelease()
     {
-        // v0.5.3 段 3d: 同期を切った後に何秒待っても、ロード解除（file load released）が起きず
-        // 着地窓も開かない（§6 の 3）。
+        // v0.5.3 段 3d: 同期を切った後に何秒待っても、ロード解除（file load released）が起きない
+        // （§6 の 3）。v0.5.4 B6b: 着地窓を畳んだので、窓が開かないことの確認は外した。
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
-
-        // ロードで開いた着地窓を、着地（配信の世代の最初のフレーム）と到着（許容内）で閉じておく。
-        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-        seekState.HasPendingSeek = false;
-        engine.DecisionToReturn = new SyncDecision(
-            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
-        service.EvaluateDecision(12.0, new SyncPlaybackState(true, true, false, 12.0, 100.0));
-        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("前提: 着地窓は閉じている");
 
         using LoggerCapture capture = CaptureLogger();
         service.OnLifecycle(SyncLifecycleEvent.SyncDisabled);
@@ -998,7 +636,6 @@ public class TimecodeSyncServiceTests
             .Should().BeTrue("取り消し後はロード中ではない（解除もしない）");
         service.PollFileLoadRelease(playbackSeconds: 12.0, renderedFrameCount: 3)
             .Should().BeFalse("解除の回収は起きない");
-        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("何秒待っても着地窓は開かない");
 
         List<LogEvent> events = capture.Snapshot();
         events.Should().NotContain(e => e.MessageTemplate.Text.Contains("file load released"),
@@ -1064,9 +701,10 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void BeginGapFreezeLoad_DoesNotSetLoadingOrOpenLandingWindow()
+    public void BeginGapFreezeLoad_DoesNotSetLoadingOrDebounce()
     {
-        // v0.5.3 段 3g: ロード中の印を立てず、着地窓を開かず、デバウンスも更新しない（設計 §1 の「しない」）。
+        // v0.5.3 段 3g: ロード中の印を立てず、デバウンスも更新しない（設計 §1 の「しない」）。
+        // v0.5.4 B6b: 着地窓を畳んだので、窓が開かないことの確認は外した。
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
         var engine = new MockSyncDecisionEngine();
         var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
@@ -1075,14 +713,11 @@ public class TimecodeSyncServiceTests
         service.BeginGapFreezeLoad("load-paused-at");
 
         service.IsLoadingFile.Should().BeFalse("ロード中の印を立てない");
-        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("着地窓を開かない");
-        service.LatchSnapshot()["followStartLanding"].Should().BeFalse("追従開始の着地も開かない");
         service.IsDebounced().Should().BeFalse("デバウンスを更新しない");
 
         // 繰り返しても同じ（path-guard の 1 秒ごとの読み直し）。着地待ちは維持する。
         service.BeginGapFreezeLoad("path-guard");
         service.IsLoadingFile.Should().BeFalse();
-        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse();
         service.SeekState.HasPendingSeek.Should().BeTrue("読み込みの世代の着地待ちに入る");
     }
 

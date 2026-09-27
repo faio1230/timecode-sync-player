@@ -87,4 +87,10 @@ public interface ITimecodeSyncSeekState
     void NotePostLandingRateApplied(double rate, DateTime now)
     {
     }
+
+    /// <summary>
+    /// v0.5.4 B6b-16/23: 着地の観測直後の 1 サンプルだけ true（消費する）。
+    /// 「relocate の直後の 1 サンプルは varispeed しない」の合図。既定実装は false。
+    /// </summary>
+    bool ConsumeJustLanded() => false;
 }
