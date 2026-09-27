@@ -37,7 +37,7 @@ public class PositionShadowTraceTests
         recorded.Detail.Should().Contain("playback=10.000000");
         recorded.Detail.Should().Contain("evalPosition=10.500000");
         recorded.Detail.Should().Contain("evalDelta=0.000000");
-        recorded.Detail.Should().Contain("evalBasis=pipeline");
+        recorded.Detail.Should().Contain("evalBasis=delivered");   // v0.5.4 #7: 着地済みは配信 PTS
         recorded.Detail.Should().Contain("deliveredGen=3");
         recorded.Detail.Should().Contain("currentGen=3");
         recorded.Detail.Should().Contain("shadowRate=1.00000");
@@ -104,7 +104,7 @@ public class PositionShadowTraceTests
         OutputTraceEvent recorded = trace.Snapshot().Single(e => e.Stage == "sync.evaluate");
         recorded.Detail.Should().Contain("playback=10.000000");
         recorded.Detail.Should().Contain("evalPosition=10.500000");
-        recorded.Detail.Should().Contain("evalBasis=pipeline");
+        recorded.Detail.Should().Contain("evalBasis=delivered");   // v0.5.4 #7: 着地済みは配信 PTS
     }
 
     [Fact]

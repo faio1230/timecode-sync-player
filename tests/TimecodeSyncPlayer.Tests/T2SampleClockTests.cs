@@ -21,6 +21,9 @@ public class T2SampleClockTests
         harness.AddTrack("track", 0);
         harness.ManualPlay();
         harness.ChangeMode(SyncMode.Single);
+        // v0.5.4 #7: relocate の判定は配信したフレームの PTS で測り、配信が無い間は判定しない。
+        // 偽の再生 API の初期位置（1.0）は未配信なので、その位置のフレームを配信しておく。
+        harness.AdvancePlayback(1.0);
         harness.Operations.Clear();
         return harness;
     }
@@ -89,6 +92,9 @@ public class T2SampleClockTests
         harness.AddTrack("track", 0);
         harness.ManualPlay();
         harness.ChangeMode(SyncMode.Single);
+        // v0.5.4 #7: relocate の判定は配信したフレームの PTS で測り、配信が無い間は判定しない。
+        // 偽の再生 API の初期位置（1.0）は未配信なので、その位置のフレームを配信しておく。
+        harness.AdvancePlayback(1.0);
         harness.Operations.Clear();
 
         // v0.5.4 段 B3: ネイティブのシーク中は着地待ち（合成位置では着地しない）で、同期要求が保留になる。

@@ -143,6 +143,9 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.AddTrack("first", 0);
         h.ChangeMode(SyncMode.Single);
         h.ManualPlay();
+        // v0.5.4 #7: relocate の判定は配信したフレームの PTS で測り、配信が無い間は判定しない。
+        // 偽の再生 API の初期位置（1.0）は未配信なので、その位置のフレームを配信しておく。
+        h.AdvancePlayback(1.0);
         Raw(h, 1, 0, 10_000);
         Raw(h, 1, 1, 10_040);
         h.AdvancePlayback(1.3, 5);

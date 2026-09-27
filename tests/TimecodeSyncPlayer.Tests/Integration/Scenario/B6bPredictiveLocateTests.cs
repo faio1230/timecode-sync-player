@@ -231,4 +231,42 @@ public class B6bPredictiveLocateTests
         rateBeforeJump.Should().NotBe(1.0, "前提: ジャンプの前は varispeed が掛かっている");
         rateWhileRelocatePending.Should().Be(1.0, "規則 3: relocate を発行した時点で rate を 1.0 に戻す");
     }
+
+    // ── #7 の追加: マスター停止中の relocate の残差は停止した値と比べる ─────────────
+
+    [Fact]
+    public void Metrics_HeldLandingResidual_IsMeasuredAgainstTheHeldValue()
+    {
+        // 実機のログで held-landing の残差が ±12 秒と出た（停止中なのに外挿した M(now) と比べていた）。
+        // 停止中の relocate（held-landing・hold-entry）の残差は停止した値（保持値）と比べる。
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
+        h.SignalLossMode = LtcSignalLossMode.Stop;
+        using var sink = new ScenarioLogSink(clock);
+        h.AddTrack("A", 0, 120);
+        h.ManualPlay();
+        h.AdvancePlayback(10.0);
+        h.Ltc.Normal(10.0, TimeSpan.FromSeconds(2));
+        h.Ltc.Duplicate(25.0, TimeSpan.FromSeconds(1));    // 25.0 へ飛んで保持（停止モードは保持値へ着地）
+        h.Ltc.Normal(40.0, TimeSpan.FromSeconds(2));       // 離れた値で再開
+        long end = h.Ltc.NextMilliseconds;
+        while (clock.MonotonicMilliseconds < end)
+            h.AdvanceMilliseconds(40);
+
+        List<ScenarioGateEvent> held = sink.GateEvents
+            .Where(e => e.Name == "post-landing-residual" && e.Message.Contains("reason=held-landing"))
+            .ToList();
+        held.Should().NotBeEmpty("前提: 保持値への着地の残差が記録される");
+        foreach (ScenarioGateEvent e in held)
+        {
+            double errorMs = double.Parse(
+                System.Text.RegularExpressions.Regex.Match(e.Message, @"errorMs=(-?[\d.]+)").Groups[1].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            Math.Abs(errorMs).Should().BeLessThan(100, "停止した値（保持値 25.0）と比べる: " + e.Message);
+        }
+        sink.GateEvents.Where(e => e.Name == "relocate" && e.Message.Contains("reason=held-landing"))
+            .Should().OnlyContain(e => e.Message.Contains("chained=False"));
+        sink.GateEvents.Where(e => e.Name == "relocate" && e.Message.Contains("previousReason=held-landing"))
+            .Should().OnlyContain(e => e.Message.Contains("afterOutsideLanding=False"),
+                "保持値へ正しく着地した後の relocate は、連続 relocate に数えない");
+    }
 }
