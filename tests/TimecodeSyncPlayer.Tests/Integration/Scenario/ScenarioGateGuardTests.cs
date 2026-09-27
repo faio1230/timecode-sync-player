@@ -286,10 +286,12 @@ public sealed class ScenarioGateGuardTests
 
         h.Ltc.Normal(1.0, TimeSpan.FromMilliseconds(200));
         RunFor(h, clock, 200);
-        int attemptsBefore = h.RateAttempts.Count;   // 追従中の補正はある。この数が増えないことを見る
-
         // シーク中（保留 + 位置は未信頼）で、ネイティブシークの着地まで位置が凍結した状態。
         h.SyncService.ReportSeekSent(10.0);
+        // v0.5.4 B6b（追補 5）: relocate の発行の時点で倍率を 1.0 に戻す（規則 3: varispeed を持ち越さない）。
+        // その 1 回は発行の時点のもので、この後の着地待ちの間に増えないことを見る。
+        h.AppliedRates[^1].Should().Be(1.0, "relocate の発行で 1.0 に戻す");
+        int attemptsBefore = h.RateAttempts.Count;   // 追従中の補正と発行時の戻し。この数が増えないことを見る
         h.Playback.SeekLandingDelaySeconds = 1.0;
         h.Playback.Seek(10.0);
         h.Playback.IsSeeking().Should().BeTrue("前提: 着地まで位置が凍結している");

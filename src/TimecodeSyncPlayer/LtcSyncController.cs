@@ -380,6 +380,13 @@ internal sealed class LtcSyncController
     {
         _rate.ResetResidualGate();
         _rate.ClearRejectedLogged();
+        // v0.5.4 B6b（規則 3、TSP-Fable の判定）: relocate は varispeed を持ち越さない。どの経路の relocate
+        // （同期・ギャップの出口・保持の着地・保持の入口・Jump の補正）でも、発行した時点で位置の不安定による
+        // 補正の停止を下ろし、倍率を 1.0 に戻す（戻せなければ既存どおり復帰待ちにする）。
+        if (_rate.ExitPositionPause())
+            Log.Information("Smooth correction resumed: relocate issued");
+        if (_rate.RateRestorePending || _rate.RateNotUnity)
+            TryRestoreRateToUnity();
     }
 
     /// <summary>T7: 再生の停止（プロジェクト・プレイリストの差し替えを含む）で補正状態を捨てる。</summary>
