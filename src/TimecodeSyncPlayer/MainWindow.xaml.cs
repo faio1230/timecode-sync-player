@@ -215,6 +215,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         OutputBackendState outputBackendState,
         IServiceProvider services)
     {
+        StartUiHeartbeat();
         _ltcMonitor = ltcMonitor;
         _playlist = playlist;
         _syncService = syncService;
@@ -2639,7 +2640,43 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_disposed) return;
         _disposed = true;
+        StopUiHeartbeat("closing");
         GetResourceDisposer().DisposeAll();
+    }
+
+    // ── 起動直後の UI スレッドの生存記録（v0.5.4、記録だけ） ──────────────
+    // 起動から 30 秒、100ms ごとに Debug で 1 行。区間の後はタイマーを捨てる。
+    // 優先度 Normal: Background の描画更新や OnTick に埋もれず、UI スレッドが回っているかを見る。
+    private readonly UiHeartbeatRecorder _uiHeartbeat =
+        new(fields => Log.Debug("ui.heartbeat {Fields}", fields));
+    private DispatcherTimer? _uiHeartbeatTimer;
+
+    private void StartUiHeartbeat()
+    {
+        _uiHeartbeat.Start(Stopwatch.GetElapsedTime(0));
+        _uiHeartbeatTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = UiHeartbeatRecorder.Interval };
+        _uiHeartbeatTimer.Tick += OnUiHeartbeatTick;
+        _uiHeartbeatTimer.Start();
+    }
+
+    private void OnUiHeartbeatTick(object? sender, EventArgs e)
+    {
+        if (!_uiHeartbeat.Tick(Stopwatch.GetElapsedTime(0)))
+            DiscardUiHeartbeatTimer();
+    }
+
+    private void StopUiHeartbeat(string reason)
+    {
+        _uiHeartbeat.Stop(Stopwatch.GetElapsedTime(0), reason);
+        DiscardUiHeartbeatTimer();
+    }
+
+    private void DiscardUiHeartbeatTimer()
+    {
+        if (_uiHeartbeatTimer == null) return;
+        _uiHeartbeatTimer.Stop();
+        _uiHeartbeatTimer.Tick -= OnUiHeartbeatTick;
+        _uiHeartbeatTimer = null;
     }
 
     private MainWindowResourceDisposer GetResourceDisposer() => _resourceDisposer ??= new MainWindowResourceDisposer(
