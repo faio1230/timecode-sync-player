@@ -139,4 +139,98 @@ public class MainWindowResourceDisposerTests
         calls.Should().NotContain("player");
         calls.Should().NotContain("outputDispose");
     }
+
+    // ---- v0.5.4 終了時の間欠の切り分け: 段と処理の開始・終了の Debug 行 ----
+
+    private static MainWindowResourceDisposer CreateLogged(List<string> log, Action? stopRender = null,
+        Action? disposePlayer = null, Action? stopOutput = null) => new(
+        () => { }, () => { }, disposePlayer ?? (() => { }), () => { }, () => { }, () => { }, () => { },
+        stopRender: stopRender ?? (() => { }),
+        closeFullscreen: () => { },
+        stopOutput: stopOutput ?? (() => { }),
+        disposeOutput: () => { },
+        stopAcceptingNewWork: () => { },
+        debugLog: log.Add);
+
+    /// <summary>begin と end が同じ名前で入れ子に対になっていることを確かめ、閉じた名前を順に返す。</summary>
+    private static List<string> AssertPaired(IEnumerable<string> log)
+    {
+        var open = new Stack<string>();
+        var closed = new List<string>();
+        foreach (string line in log)
+        {
+            string[] parts = line.Split(' ');
+            string kind = parts[0];
+            string key = parts[1];
+            if (kind is "stage.begin" or "action.begin")
+                open.Push(kind.Split('.')[0] + ":" + key);
+            else if (kind is "stage.end" or "action.end")
+            {
+                open.Should().NotBeEmpty($"end の前に begin がある（{line}）");
+                open.Pop().Should().Be(kind.Split('.')[0] + ":" + key, $"入れ子の対（{line}）");
+                closed.Add(kind.Split('.')[0] + ":" + key);
+            }
+        }
+        open.Should().BeEmpty("すべての begin に end がある");
+        return closed;
+    }
+
+    [Fact]
+    public void DebugLog_EveryStageAndActionHasPairedBeginAndEnd()
+    {
+        var log = new List<string>();
+        var disposer = CreateLogged(log);
+
+        disposer.DisposeAll();
+
+        List<string> closed = AssertPaired(log);
+        closed.Where(c => c.StartsWith("stage:")).Should().HaveCount(MainWindowResourceDisposerStageCount);
+        closed.Where(c => c.StartsWith("action:")).Select(c => c["action:name=".Length..]).Should().Equal(
+            "stopAcceptingNewWork", "stopRender", "stopOutput", "closeFullscreen", "disposeTimer",
+            "disposeRenderContext", "disposePlayer", "disposeLtc", "disposeOutput", "disposeSpout",
+            "disposeTimeline", "disposeBuffer");
+        log.Should().OnlyContain(l => !l.StartsWith("action.skip"));
+        log.Where(l => l.StartsWith("stage.end") || l.StartsWith("action.end"))
+            .Should().OnlyContain(l => l.Contains(" elapsedMs="));
+    }
+
+    private const int MainWindowResourceDisposerStageCount = 9;
+
+    [Fact]
+    public void DebugLog_FailedActionStillWritesItsEnd_AndTheStageEnd()
+    {
+        var log = new List<string>();
+        var disposer = CreateLogged(log, disposePlayer: () => throw new InvalidOperationException("player"));
+
+        Assert.Throws<AggregateException>(disposer.DisposeAll);
+
+        AssertPaired(log);
+        log.Should().Contain(l => l.StartsWith("action.end name=disposePlayer ok=False"));
+    }
+
+    [Fact]
+    public void DebugLog_SkippedPlayerDisposeIsWrittenWithTheReason()
+    {
+        var log = new List<string>();
+        // 出力の停止に失敗すると、shim のプレイヤーは破棄しない（0.4.8）。ふだん出る破棄の行が無い理由を残す。
+        var disposer = CreateLogged(log, stopOutput: () => throw new InvalidOperationException("output"));
+
+        Assert.Throws<AggregateException>(disposer.DisposeAll);
+
+        AssertPaired(log);
+        log.Should().Contain("action.skip name=disposePlayer contextFreed=True outputStopped=False");
+        log.Should().NotContain(l => l.StartsWith("action.begin name=disposePlayer"));
+    }
+
+    [Fact]
+    public void DebugLog_StageBeginCarriesTheStepNameAndThread()
+    {
+        var log = new List<string>();
+        var disposer = CreateLogged(log);
+
+        disposer.RunNextStage();
+
+        log[0].Should().StartWith("stage.begin index=0 step=" + MainWindowResourceDisposer.StopAcceptingStepName + " offUi=False thread=");
+        log.Last().Should().StartWith("stage.end index=0 step=" + MainWindowResourceDisposer.StopAcceptingStepName + " elapsedMs=");
+    }
 }

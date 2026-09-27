@@ -108,16 +108,31 @@ internal sealed class GstBackendState : IDisposable
 
     public void DisposePlayer()
     {
+        // v0.5.4（終了時の間欠の切り分け）: 待ちが起きうる段（_gate の取得、通知の解除、shim の destroy）の
+        // 開始・終了を Debug で出す。記録だけ。
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        Log.Debug("GstBackendState: プレイヤー破棄 開始（_gate 待ち）");
         lock (_gate)
         {
-            if (_playerDisposed || _player == IntPtr.Zero) return;
+            if (_playerDisposed || _player == IntPtr.Zero)
+            {
+                Log.Debug("GstBackendState: プレイヤー破棄 なし disposed={Disposed} hasPlayer={HasPlayer}",
+                    _playerDisposed, _player != IntPtr.Zero);
+                return;
+            }
+            Log.Debug("GstBackendState: プレイヤー破棄 _gate 取得 elapsedMs={ElapsedMs:F1}", ElapsedMs(started));
             DetachRenderCallbackLocked();
+            Log.Debug("GstBackendState: プレイヤー破棄 通知の解除 終了 elapsedMs={ElapsedMs:F1}", ElapsedMs(started));
             _native.PlayerDestroy(_player);
             _player = IntPtr.Zero;
             _playerDisposed = true;
             Log.Information("GstBackendState: プレイヤー破棄");
+            Log.Debug("GstBackendState: プレイヤー破棄 終了 elapsedMs={ElapsedMs:F1}", ElapsedMs(started));
         }
     }
+
+    private static double ElapsedMs(long started) =>
+        System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 
     /// <summary>
     /// 段階 5.2: 共有リングを開き直せなかった場合のみ使う。UI スレッドで player を破棄し、
