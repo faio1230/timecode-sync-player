@@ -67,6 +67,9 @@ public sealed class GapFreezeHandler
     private volatile bool _frameSeenSinceCapture = true;
     // C-4: 「進入後に届いた」と判定したフレームの位置（PTS）。未到着・不明は NaN。
     private double _frameSeenPositionSeconds = double.NaN;
+    // K3 f4-14: 現在の絵をそのまま確定する進入（D21-b (a)）か。この経路はシークしないので、
+    // 合成層は今どおり照会位置で比べる（目標と比べると、低い fps で 1 フレーム手前の絵を保存しなくなる）。
+    private bool _captureUsesCurrentFrame;
     // D21-b: 目標位置でないフレーム（シーク前の実行中フレーム）が届いたときの再シーク回数。
     private int _seekRetryCount;
 
@@ -114,9 +117,10 @@ public sealed class GapFreezeHandler
 
     /// <summary>
     /// K3 f4-14: 合成層が Freeze の保存で比べる目標。捕捉中は Pending、確定後は遅延確定の目標か
-    /// 確定済みの目標（OnSourceFrameReady と同じ選び方）。どれも無ければ null（合成層は照会位置で比べる）。
+    /// 確定済みの目標（OnSourceFrameReady と同じ選び方）。どれも無いとき、または現在の絵をそのまま
+    /// 確定する進入のときは null（合成層は照会位置で比べる）。
     /// </summary>
-    internal double? OutputFreezeTargetSeconds => _currentState switch
+    internal double? OutputFreezeTargetSeconds => _captureUsesCurrentFrame ? null : _currentState switch
     {
         GapState.EnteringFreeze or GapState.WaitingForFrameStep => PendingTargetSeconds,
         GapState.FreezeComplete => LateConfirmTargetSeconds ?? (CachedTargetKnown ? CachedTargetSeconds : null),
@@ -144,6 +148,7 @@ public sealed class GapFreezeHandler
         ClearLateConfirmTarget();
         _frameSeenSinceCapture = true;
         _frameSeenPositionSeconds = double.NaN;
+        _captureUsesCurrentFrame = false;
         _seekRetryCount = 0;
     }
 
@@ -166,6 +171,7 @@ public sealed class GapFreezeHandler
         ClearLateConfirmTarget();
         _frameSeenSinceCapture = false;
         _frameSeenPositionSeconds = double.NaN;
+        _captureUsesCurrentFrame = false;
         _seekRetryCount = 0;
     }
 
@@ -177,6 +183,7 @@ public sealed class GapFreezeHandler
     {
         EnterFreezeCapture(trackId, targetSeconds, filePath);
         _frameSeenSinceCapture = true;
+        _captureUsesCurrentFrame = true;
     }
 
     /// <summary>D21-b: 目標位置のソースフレームが届いた（OutputEngine のフレーム位置で確認）。</summary>
@@ -461,6 +468,7 @@ public sealed class GapFreezeHandler
         PendingPath = null;
         _frameSeenSinceCapture = true;
         _frameSeenPositionSeconds = double.NaN;
+        _captureUsesCurrentFrame = false;
         _seekRetryCount = 0;
         ClearCachedFrameInfo();
         SetState(GapState.Inactive);

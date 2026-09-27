@@ -1084,14 +1084,21 @@ public class GapFreezeHandlerTests
         handler.OutputFreezeTargetSeconds.Should().BeNull("目標が無いときは合成層が照会位置で比べる");
     }
 
+    // D21-b (a) の現在の絵をそのまま確定する進入はシークしない。合成層は今どおり照会位置で比べる
+    // （目標と比べると、25fps で表示中の絵が目標の 2 フレーム手前のとき 0.05 を超えて保存されなくなる）。
     [Fact]
-    public void OutputFreezeTarget_CurrentFramePath_IsTheFinalFrameTarget()
+    public void OutputFreezeTarget_CurrentFramePath_KeepsQueriedPositionThroughConfirm()
     {
         var handler = new GapFreezeHandler();
 
-        handler.EnterFreezeCaptureWithCurrentFrame(Guid.NewGuid(), 9.96, "clip.mp4");
+        handler.EnterFreezeCaptureWithCurrentFrame(Guid.NewGuid(), 19.96, "clip.mp4");
+        handler.OutputFreezeTargetSeconds.Should().BeNull("捕捉中");
+        handler.OnFreezeComplete(null);
+        handler.OutputFreezeTargetSeconds.Should().BeNull("確定後も同じ進入の間は照会位置");
 
-        handler.OutputFreezeTargetSeconds.Should().Be(9.96);
+        // 次にシークする進入では目標で比べる。
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333, "clip.mp4");
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
     }
 
     [Fact]
