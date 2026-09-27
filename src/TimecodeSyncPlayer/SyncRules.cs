@@ -7,10 +7,8 @@ internal static class SyncRules
         bool isMonitoring,
         bool isPlaybackPaused,
         bool isSeeking,
-        bool hasPendingSeek,
-        bool isPlaybackPositionUsable) =>
-        syncEnabled && isMonitoring && !isPlaybackPaused && !isSeeking &&
-        !hasPendingSeek && isPlaybackPositionUsable;
+        bool isWaitingForLanding) =>
+        syncEnabled && isMonitoring && !isPlaybackPaused && !isSeeking && !isWaitingForLanding;
 
     internal static bool CanApplySync(
         bool isPlayerReady,

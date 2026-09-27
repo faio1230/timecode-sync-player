@@ -323,7 +323,9 @@ public class TimecodeSyncServiceTests
         var state = new SyncPlaybackState(true, true, false, 10.0, 100.0);
         static void Land(TimecodeSyncService s, MockTimecodeSyncSeekState st)
         {
+            // v0.5.4 U4: 着地は A（着地の状態）の遷移。保留が外れて位置が使えるようになる。
             st.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+            st.HasPendingSeek = false;
             s.ShouldSuppressSeek(10.0, 0.2);
         }
 
@@ -398,7 +400,9 @@ public class TimecodeSyncServiceTests
         service.ReportSeekSent(2.136);
 
         // 着地（位置はシーク目標に到達したが、LTC は進んで残差はむしろ増えた）。
+        // v0.5.4 U4: 着地は A の遷移（保留が外れて位置が使える）。
         seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+        seekState.HasPendingSeek = false;
         service.ShouldSuppressSeek(2.136, 0.24);
 
         engine.DecisionToReturn = SyncDecision.None;
@@ -425,6 +429,7 @@ public class TimecodeSyncServiceTests
         service.ReportSeekSent(4.5);
 
         seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+        seekState.HasPendingSeek = false;   // v0.5.4 U4: 着地は A の遷移（保留が外れて位置が使える）
         service.ShouldSuppressSeek(4.5, 0.24);
 
         engine.DecisionToReturn = SyncDecision.None;
@@ -446,7 +451,9 @@ public class TimecodeSyncServiceTests
 
         void Land()
         {
+            // v0.5.4 U4: 着地は A の遷移（保留が外れて位置が使える）。
             seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
+            seekState.HasPendingSeek = false;
             service.ShouldSuppressSeek(10.6, 0.2);
         }
 
