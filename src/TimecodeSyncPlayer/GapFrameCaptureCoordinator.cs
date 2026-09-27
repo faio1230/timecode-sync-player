@@ -44,3 +44,56 @@ internal static class GapFrameCaptureCoordinator
         return GapFrameCaptureDecision.None;
     }
 }
+
+internal static class GapCaptureHandoffLog
+{
+    private static readonly object Gate = new();
+    private static readonly Dictionary<string, HandoffState> Sites = new();
+    private static volatile bool enabled;
+
+    public static bool Enabled
+    {
+        get => enabled;
+        set
+        {
+            lock (Gate)
+            {
+                if (value && !enabled)
+                    Sites.Clear();
+                enabled = value;
+            }
+        }
+    }
+
+    public static void Record(string site, string reason, string fields)
+    {
+        if (!enabled)
+            return;
+        string key = reason + "|" + fields;
+        long previousRepeats;
+        lock (Gate)
+        {
+            if (!Sites.TryGetValue(site, out HandoffState? state))
+            {
+                state = new HandoffState();
+                Sites.Add(site, state);
+            }
+            if (string.Equals(state.Key, key, StringComparison.Ordinal))
+            {
+                state.Repeats++;
+                return;
+            }
+            previousRepeats = state.Repeats;
+            state.Key = key;
+            state.Repeats = 0;
+        }
+        Serilog.Log.Debug("Gap capture handoff: {Site} {Reason} {Fields} previousRepeats={PreviousRepeats}",
+            site, reason, fields, previousRepeats);
+    }
+
+    private sealed class HandoffState
+    {
+        public string Key { get; set; } = string.Empty;
+        public long Repeats { get; set; }
+    }
+}

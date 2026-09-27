@@ -141,6 +141,7 @@ internal sealed class GStreamerSource : IVideoSource
     {
         if ((int)player.Generation == generation) return;
         player.SetGeneration((ulong)generation);
+        GapCaptureHandoffLog.Record("source", "app set the shim generation", "generation=" + generation);
         // 旧世代の画像は返さない。shim は latest を破棄し、リース中の画像は release まで保持される。
         if (active != null) generationRejected++;
     }
@@ -148,25 +149,49 @@ internal sealed class GStreamerSource : IVideoSource
     public SourceStatus TryAcquire(int generation, double positionSeconds, out ISourceImageLease? lease)
     {
         lease = null;
-        if ((int)player.Generation != generation) { notReady++; return SourceStatus.NotReady; }
+        if ((int)player.Generation != generation)
+        {
+            notReady++;
+            GapCaptureHandoffLog.Record("source", "requested generation differs from the shim generation",
+                HandoffFields(generation, null, 0, null));
+            return SourceStatus.NotReady;
+        }
         if (active != null)
         {
-            if ((int)active.Info.Generation != generation) { notReady++; return SourceStatus.NotReady; }
+            if ((int)active.Info.Generation != generation)
+            {
+                notReady++;
+                GapCaptureHandoffLog.Record("source", "an older-generation lease is still held",
+                    HandoffFields(generation, (int)active.Info.Generation, 0, active.Info));
+                return SourceStatus.NotReady;
+            }
             lease = active.Retain();
+            GapCaptureHandoffLog.Record("source", "reusing the held lease",
+                HandoffFields(generation, (int)active.Info.Generation, 0, active.Info));
             return SourceStatus.Ready;
         }
         int acquired = player.Acquire((ulong)generation, out GstLeaseFrameInfo info);
         if (acquired == TimecodeSyncPlayer.Gst.GstNative.TcsErrEnded)
         {
             // D11: EOF を観測したらシーク保留を解除する（EOF 後は新しい配信が来ない）。
+            GapCaptureHandoffLog.Record("source", "acquire returned Ended",
+                HandoffFields(generation, null, acquired, null));
             onEnded?.Invoke();
             return SourceStatus.Ended;
         }
-        if (acquired != 1) { notReady++; return SourceStatus.NotReady; }
+        if (acquired != 1)
+        {
+            notReady++;
+            GapCaptureHandoffLog.Record("source", "acquire returned no frame",
+                HandoffFields(generation, null, acquired, null));
+            return SourceStatus.NotReady;
+        }
         if (info.Generation != (ulong)generation || info.Width <= 0 || info.Height <= 0)
         {
             player.Release();
             notReady++;
+            GapCaptureHandoffLog.Record("source", "acquire info generation or size mismatch",
+                HandoffFields(generation, null, acquired, info));
             return SourceStatus.NotReady;
         }
         if (info.Slot < 0)
@@ -175,6 +200,8 @@ internal sealed class GStreamerSource : IVideoSource
             RecordRingOutsideFrame(info);
             player.Release();
             notReady++;
+            GapCaptureHandoffLog.Record("source", "ring-out frame rejected",
+                HandoffFields(generation, null, acquired, info));
             return SourceStatus.NotReady;
         }
         // D8: リースの epoch が現行リングと違えば（解像度変更で shim が作り直した）開き直す。
@@ -183,6 +210,8 @@ internal sealed class GStreamerSource : IVideoSource
         {
             player.Release();
             notReady++;
+            GapCaptureHandoffLog.Record("source", "ring resources unavailable for the frame epoch",
+                HandoffFields(generation, null, acquired, info));
             return SourceStatus.NotReady;
         }
         resources.AddLeaseReference();
@@ -190,7 +219,21 @@ internal sealed class GStreamerSource : IVideoSource
         ready++;
         peakLeases = Math.Max(peakLeases, active.References);
         lease = active.Retain();
+        GapCaptureHandoffLog.Record("source", "accepted frame from the shim",
+            HandoffFields(generation, null, acquired, info));
         return SourceStatus.Ready;
+    }
+
+    private static string HandoffFields(int requestedGeneration, int? activeGeneration, int code, GstLeaseFrameInfo? info)
+    {
+        string infoText = "-";
+        if (info is { } frame)
+        {
+            infoText = frame.Generation + "/" + frame.Sequence + "/" + frame.Slot + "/" +
+                (frame.PtsNs / 1e9).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return "requestedGen=" + requestedGeneration + " activeGen=" + (activeGeneration?.ToString() ?? "-") +
+            " code=" + code + " infoGenSeqSlotPts=" + infoText;
     }
 
     public SourceDiagnostics Diagnostics

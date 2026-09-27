@@ -70,7 +70,14 @@
 static void
 log_sink_write (const char* line)
 {
-  fputs (line, stderr);
+  SYSTEMTIME st;
+  GetLocalTime (&st);
+  char stamped[2112];
+  snprintf (stamped, sizeof (stamped), "%04d-%02d-%02d %02d:%02d:%02d.%03d %s",
+      (int) st.wYear, (int) st.wMonth, (int) st.wDay,
+      (int) st.wHour, (int) st.wMinute, (int) st.wSecond,
+      (int) st.wMilliseconds, line);
+  fputs (stamped, stderr);
   static std::mutex log_file_mutex;
   static FILE* log_file = nullptr;
   static bool log_file_tried = false;
@@ -83,7 +90,7 @@ log_sink_write (const char* line)
       log_file = fopen (path, "a");
   }
   if (log_file) {
-    fputs (line, log_file);
+    fputs (stamped, log_file);
     fflush (log_file);
   }
 }
