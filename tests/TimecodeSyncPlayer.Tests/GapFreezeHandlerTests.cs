@@ -1112,4 +1112,16 @@ public class GapFreezeHandlerTests
             handler.OutputFreezeTargetSeconds.Should().BeNull(state.ToString());
         }
     }
+
+    // K3 f4-14（Fable）: 遅延確定の窓も 2 フレームちょうどを弾かない。
+    [Fact]
+    public void IsLateConfirmFrame_AcceptsExactlyTwoFramesOnTheNanosecondGrid()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 16.683333333, "clip.mp4");
+        handler.ForceFreezeComplete();
+
+        handler.IsLateConfirmFrame(16.716666667, 60).Should().BeTrue();
+        handler.IsLateConfirmFrame(16.733333333, 60).Should().BeFalse("3 フレームは窓の外");
+    }
 }

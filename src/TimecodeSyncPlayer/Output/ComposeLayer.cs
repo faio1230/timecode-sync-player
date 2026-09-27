@@ -129,7 +129,8 @@ internal sealed class ComposeLayer : IDisposable
     /// Held にする（D26）。戻り値は渡された acquired を Held として保持したか（常に false）。
     /// </summary>
     public bool Compose(Surface target, OutputGapMode gap, ClipPlacement clip, bool testCardEnabled, ImageStamp cardStamp, long origin,
-        LayerImage? acquired, double? acquirePositionSeconds = null, double? freezeTargetSeconds = null)
+        LayerImage? acquired, double? acquirePositionSeconds = null, double? freezeTargetSeconds = null,
+        double freezeFps = 0)
     {
         // D26/D26-b: Freeze として保存するのは「目標位置（現在の再生位置＝目標最終位置）に一致した
         // ソース画像」だけ。確定 tick（GapFreeze）では同じリースが続いて新しい画像が渡らないため、
