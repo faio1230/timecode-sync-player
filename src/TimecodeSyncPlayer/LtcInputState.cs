@@ -52,9 +52,6 @@ internal sealed class LtcInputState
     /// </summary>
     public double? HeldLossLandingSeconds { get; private set; }
 
-    /// <summary>D20-b (i): 同一の Jump 連続で何度も適用しないためのラッチ（Normal/Initial で解除）。</summary>
-    public bool JumpAppliedOnce { get; private set; }
-
     /// <summary>D20-b: 保持値の変更で 1 回だけ適用したことを示すラッチ（Normal/Initial で解除）。</summary>
     public bool HeldReapplyDone { get; private set; }
 
@@ -74,7 +71,6 @@ internal sealed class LtcInputState
         HeldLossLandingSeconds = null;
         Pending = null;
         DiscardPendingJump();
-        JumpAppliedOnce = false;
         HeldReapplyDone = false;
     }
 
@@ -109,22 +105,15 @@ internal sealed class LtcInputState
     /// <summary>保持（Duplicate）の値を捨てる（値が進むフレームで保持が明けたとき）。</summary>
     public void ClearHeldEffective() => LastHeldEffectiveSeconds = null;
 
-    /// <summary>Jump を 1 回適用したラッチを立てる。</summary>
-    public void MarkJumpApplied() => JumpAppliedOnce = true;
-
-    /// <summary>Jump を 1 回適用したラッチを下ろす。</summary>
-    public void ClearJumpApplied() => JumpAppliedOnce = false;
-
     /// <summary>保持値の 1 回適用のラッチを立てる。</summary>
     public void MarkHeldReapplied() => HeldReapplyDone = true;
 
     /// <summary>保持値の 1 回適用のラッチを下ろす。</summary>
     public void ClearHeldReapplied() => HeldReapplyDone = false;
 
-    /// <summary>値が進むフレームで、1 回適用のラッチ 2 つと保持値 2 つを下ろす。</summary>
+    /// <summary>値が進むフレームで、保持値の 1 回適用のラッチと保持値 2 つを下ろす。</summary>
     public void OnNormalFrame()
     {
-        JumpAppliedOnce = false;
         HeldReapplyDone = false;
         LastHeldEffectiveSeconds = null;
         HeldLossLandingSeconds = null;

@@ -72,10 +72,10 @@ public sealed class ScenarioGateGuardTests
             _output.WriteLine($"  gate@{gate.AtMilliseconds - BaseMilliseconds}ms {gate.Name} {gate.Message}");
     }
 
-    // ---- 門 3: JumpAppliedOnce のラッチ（消す。保持の後の Jump が捨てられずに適用される） ----
+    // ---- 門 3: 保持の後（250ms 超）に届いた Jump が捨てられずに適用される（U1 で門を消した） ----
 
     [Fact]
-    public void G3_JumpAfterHeldLossTimeout_IsAppliedOnceAndTheStaleLatchedJumpIsNot()
+    public void G3_JumpAfterHeldLossTimeout_IsAppliedAndNotDropped()
     {
         (SyncScenarioHarness h, ScenarioClock clock) = Arrange(lossMode: LtcSignalLossMode.RunThrough);
         using var sink = new ScenarioLogSink(clock);
@@ -88,7 +88,7 @@ public sealed class ScenarioGateGuardTests
         h.Ltc.Jump(10.0);                                        // 保持の後（>250ms）に届いた Jump
         h.Ltc.Duplicate(10.0, TimeSpan.FromMilliseconds(400));   // 着地を観測できる保持
         h.Ltc.Silence(TimeSpan.FromMilliseconds(400));           // 保持フレームが途切れ、理由が信号断へ下がる
-        h.Ltc.Jump(12.0);                                        // ラッチが残ったままの古い値の Jump
+        h.Ltc.Jump(12.0);                                        // 保持の後に届いた次の Jump
 
         RunFor(h, clock, 800);
         sink.Count("signal-loss-confirm").Should().BeGreaterThanOrEqualTo(1, "前提: 保持の損失が確定した");
@@ -96,9 +96,41 @@ public sealed class ScenarioGateGuardTests
             .Which.Value.Should().BeApproximately(10.0, 1e-6);
 
         RunFor(h, clock, 1_200);
-        Seeks(h).Should().ContainSingle(
-            "JumpAppliedOnce が残っている間の Jump は適用しない（D20-b(i)。捨てる側の欠陥も戻さない）");
+        Seeks(h).Should().HaveCount(2,
+            "ラッチを消したので、シーク中・保持中でも次の Jump は捨てられずに適用される（門 3 の削除）");
+        Seeks(h)[1].Value.Should().BeApproximately(12.0, 1e-6);
         Report("G3", h, sink);
+    }
+
+    [Fact]
+    public void G3_MisdecodedJumpBurst_ProducesAtMostOneSeek()
+    {
+        double[] burstValues = [8.0, 9.5, 11.0, 12.5, 14.0];
+        for (int burstLength = 2; burstLength <= 5; burstLength++)
+        {
+            (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
+            using var sink = new ScenarioLogSink(clock);
+            h.AddTrack("A", 0, 30);
+            h.ManualPlay();
+            h.AdvancePlayback(3.0);
+
+            h.Ltc.Normal(3.0, TimeSpan.FromMilliseconds(200));
+            RunFor(h, clock, 200);
+            ScenarioMetrics.SeekCount(h).Should().Be(0, $"前提: 追従中はシークなし（Jump {burstLength} 枚）");
+
+            // 同じトラック内の値のばらついた誤デコード Jump が続けて届く（2〜5 枚）。
+            for (int i = 0; i < burstLength; i++)
+                h.Ltc.Jump(burstValues[i]);
+            double confirmed = burstValues[burstLength - 1] + 1.0 / 25.0;
+            h.Ltc.Normal(confirmed, TimeSpan.FromMilliseconds(40));   // 最後の Jump を確認する 1 フレーム
+            RunFor(h, clock, 400);
+
+            Seeks(h).Should().ContainSingle(
+                    $"同じトラック内の Jump は次の 1 フレームで確認するまで適用しない（門 4）。" +
+                    $"値のばらついた {burstLength} 枚でも着地は 1 本")
+                .Which.Value.Should().BeApproximately(confirmed, 1e-6);
+            Report($"G3(burst {burstLength})", h, sink);
+        }
     }
 
     // ---- 門 5・10・12: 着地を待つ間は位置を信頼せず、新しいシークを出さない ----
@@ -166,6 +198,38 @@ public sealed class ScenarioGateGuardTests
             .Which.AtMilliseconds.Should().BeGreaterThan(requestedAt);
         Seeks(h)[0].Value.Should().BeApproximately(25.0, 0.5);
         Report("G5/G12(far)", h, sink);
+    }
+
+    // ---- 門 10 の備考（TSP-Fable のレビュー）: シーク中に rate.instant を出さない ----
+
+    [Fact]
+    public void G10_WhileSeekIsPending_NoRateInstantIsEmitted()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(mode: SyncMode.Single);
+        using var sink = new ScenarioLogSink(clock);
+        h.AddTrack("A", 0, 30);
+        h.ManualPlay();
+        h.AdvancePlayback(1.0);
+
+        h.Ltc.Normal(1.0, TimeSpan.FromMilliseconds(200));
+        RunFor(h, clock, 200);
+        int attemptsBefore = h.RateAttempts.Count;   // 追従中の補正はある。この数が増えないことを見る
+
+        // シーク中（保留 + 位置は未信頼）で、ネイティブシークの着地まで位置が凍結した状態。
+        h.SyncService.ReportSeekSent(10.0);
+        h.Playback.SeekLandingDelaySeconds = 1.0;
+        h.Playback.Seek(10.0);
+        h.Playback.IsSeeking().Should().BeTrue("前提: 着地まで位置が凍結している");
+        h.SyncService.SeekState.HasPendingSeek.Should().BeTrue("前提: 保留がある");
+        h.SyncService.IsPlaybackPositionUsable.Should().BeFalse("前提: 位置が未信頼");
+
+        h.Ltc.Normal(2.0, TimeSpan.FromMilliseconds(400));   // 凍結した位置とかけ離れた LTC
+        RunFor(h, clock, 400);
+
+        h.RateAttempts.Count.Should().Be(
+            attemptsBefore, "シーク中（A が pending を持つ間）は Smooth の補正を評価しない（rate.instant を出さない）");
+        h.AppliedRates.Count.Should().Be(attemptsBefore, "シーク中はレートを適用しない");
+        Report("G10(rate)", h, sink);
     }
 
     // ---- 門 7・11: 着地しないシークは 2 秒で解除し、安定 3 サンプルで再開する ----

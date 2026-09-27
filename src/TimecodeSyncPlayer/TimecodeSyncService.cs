@@ -234,22 +234,8 @@ public sealed class TimecodeSyncService
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
 
-        if (_fileLoad.IsLoadingFile)
-        {
-            if (now - _fileLoad.StartedAt > FileLoadTimeout)
-            {
-                _fileLoad.MarkTimedOut(); // 安全タイムアウト
-                _lastSyncSeekAt = now;    // タイムアウト後もデバウンスを保護
-            }
-            else
-            {
-                // v0.5.4 段 0: ロード中の抑止（門 17）を数える。
-                Serilog.Log.Debug("sync.gate load-suppress elapsedMs={ElapsedMs:F1}",
-                    (now - _fileLoad.StartedAt).TotalMilliseconds);
-                return true;               // ロード中は全シーク抑止
-            }
-        }
-
+        // v0.5.4 U1: 門 17（ロード中の抑止）を消した。呼び出し側の TryMarkFileLoaded が
+        // 先に止めるためこの分岐には到達せず、5 秒の安全タイムアウトは 18 側（TryMarkFileLoaded）に残す。
         bool suppress = _seekState.ShouldSuppressSeek(playbackSeconds, toleranceSeconds, now,
             requestedTargetSeconds);
 
@@ -534,7 +520,11 @@ public sealed class TimecodeSyncService
         _publishedSeekCostSeconds = cost;
     }
 
-    /// <summary>D37-b: 保留の状態遷移を位置の信頼状態へ反映する。</summary>
+    /// <summary>
+    /// D37-b: 保留の状態遷移を位置の信頼状態へ反映する。
+    /// v0.5.4 U3: A の「着地できなかった」枝（時間切れ = 門 7・置き換え = 門 8）は、
+    /// ここ 1 か所で位置の再確認（門 11。安定 3 サンプル）へつなぐ。
+    /// </summary>
     private void TrackSeekStatusTransition()
     {
         TimecodeSyncSeekPendingStatus status = _seekState.LastStatus;

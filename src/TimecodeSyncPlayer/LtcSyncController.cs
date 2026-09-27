@@ -118,7 +118,7 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
-    /// v0.5.3 段 3e: サービスのできごとで、Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+    /// v0.5.3 段 3e: サービスのできごとで、保持値の 1 回適用のラッチを下ろす（§6 の 5）。
     /// BeginFileLoad の FileLoad はサービスの OnLifecycle の中で起き、コントローラの
     /// OnLifecycle には届かないため、購読して受け取る。
     /// </summary>
@@ -126,7 +126,6 @@ internal sealed class LtcSyncController
     {
         if (evt != SyncLifecycleEvent.FileLoad)
             return;
-        _input.ClearJumpApplied();
         _input.ClearHeldReapplied();
         // v0.5.4 K5（§6 の 6）: 読み込みで Smooth を再試行できるようにする。
         _rate.ResetSmoothAvailability();
@@ -225,8 +224,7 @@ internal sealed class LtcSyncController
             case SyncLifecycleEvent.SyncEnabled:
                 ResetCorrection();
                 _rate.ResetSmoothAvailability();
-                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
-                _input.ClearJumpApplied();
+                // v0.5.3 段 3e: 保持値の 1 回適用のラッチを下ろす（§6 の 5）。
                 _input.ClearHeldReapplied();
                 // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
                 // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
@@ -244,16 +242,14 @@ internal sealed class LtcSyncController
                 _rate.ResetSmoothAvailability();
                 _frames.ResetDiagnostics();
                 _input.DiscardPendingJump();
-                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
-                _input.ClearJumpApplied();
+                // v0.5.3 段 3e: 保持値の 1 回適用のラッチを下ろす（§6 の 5）。
                 _input.ClearHeldReapplied();
                 break;
             case SyncLifecycleEvent.ManualSeek:
             case SyncLifecycleEvent.TimelineSeek:
                 _input.DiscardPendingSync();
                 _input.DiscardPendingJump();
-                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
-                _input.ClearJumpApplied();
+                // v0.5.3 段 3e: 保持値の 1 回適用のラッチを下ろす（§6 の 5）。
                 _input.ClearHeldReapplied();
                 // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
                 ResetCorrection();
@@ -653,8 +649,7 @@ internal sealed class LtcSyncController
                 }
 
                 // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
-                // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ 1 回だけ着地させる
-                // （ラッチ済みの Jump でも数えるためラッチを解除してから適用する）。
+                // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ着地させる。
                 // D27-c: 保持フレームの途切れで理由が信号断へ下がっていても、保持の直後の Jump は
                 // 復帰に数える（判定は ObserveJumpFrame 側。無音からの Jump は復帰しない）。
                 if (_signalLoss.IsLost)
@@ -664,28 +659,14 @@ internal sealed class LtcSyncController
                     {
                         // v0.5.3 段 3k: 復帰したので、Jump 前の古い保持値と保持着地の記録を
                         // 下ろす（§6 の 4。無音の再損失で古い保持値へ着地しない）。
-                        _input.ClearJumpApplied();
                         _input.ClearHeldLossLanding();
                         _input.ClearHeldEffective();
                     }
                 }
-                // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
-                if (!_input.JumpAppliedOnce)
-                {
-                    _input.MarkJumpApplied();
-                    applyOnce = true;
-                    applyReason = "first Jump";
-                }
-                else
-                {
-                    // D38 門 3（記録のみ。振る舞いは変えない）: JumpAppliedOnce が残っているため
-                    // この Jump は適用しない（保持中は Normal フレームが来ず、ラッチが下りない）。
-                    Log.Information(
-                        "sync: Jump dropped (JumpAppliedOnce) ltc={Ltc:F3} reason={Reason}",
-                        rawSeconds, _signalLoss.IsLost ? "still-lost" : "not-lost");
-                    TryReapplyAfterFileLoadRelease();
-                    return;
-                }
+                // v0.5.4 U1: 門 3（JumpAppliedOnce のラッチ）を消した。Jump はここで適用する
+                // （適用の重複は B の確認窓（4）と A の保留が防ぐ）。
+                applyOnce = true;
+                applyReason = "first Jump";
             }
             // D31-b: 保持損失中に保持値そのもの（タイムコード停止位置）が変わったら、停止モードは
             // 新しい保持値へ 1 回だけ着地する（D27 の着地を遷移時から変化時へ拡張）。ランスルーは
@@ -774,11 +755,8 @@ internal sealed class LtcSyncController
         if (_signalLoss.IsLost)
         {
             ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
-            if (!_signalLoss.IsLost)
-                _input.ClearJumpApplied();
         }
 
-        _input.MarkJumpApplied();
         _input.ClearHeldReapplied();
         // D31-b: 確認済みの適用で損失が明けた（または新しい値へ動いた）ので、損失中の着地値は捨てる。
         _input.ClearHeldLossLanding();
@@ -1385,7 +1363,6 @@ internal sealed class LtcSyncController
     /// </summary>
     internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
     {
-        ["jumpAppliedOnce"] = _input.JumpAppliedOnce,
         ["heldReapplyDone"] = _input.HeldReapplyDone,
         ["pendingJump"] = _input.PendingJumpSeconds is not null,
         ["pendingSync"] = _input.Pending is not null,

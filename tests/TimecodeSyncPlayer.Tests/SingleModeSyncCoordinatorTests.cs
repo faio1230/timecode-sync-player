@@ -132,7 +132,7 @@ public class SingleModeSyncCoordinatorTests
     public void Apply_DoesNotSeekButLogs_WhenSuppressed()
     {
         var service = CreateService();
-        // ファイルロード中は全シーク抑止（ShouldSuppressSeek == true）
+        // ロード中は呼び出し側の TryMarkFileLoaded が先に止める（v0.5.4 U1 で門 17 を消した）
         service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
         var seekCalls = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(

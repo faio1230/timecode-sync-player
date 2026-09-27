@@ -38,18 +38,6 @@ public class FileLoadStateTests
     }
 
     [Fact]
-    public void MarkTimedOut_LeavesLoadingStageWithoutPending()
-    {
-        var state = new FileLoadState();
-        state.Begin(T0, 12.5, 7);
-
-        state.MarkTimedOut();
-
-        state.IsLoadingFile.Should().BeFalse();
-        state.HasPendingRelease.Should().BeFalse("安全タイムアウトは解除の回収待ちにしない");
-    }
-
-    [Fact]
     public void CollectRelease_LowersPendingAndKeepsReleasedAt()
     {
         var state = new FileLoadState();
