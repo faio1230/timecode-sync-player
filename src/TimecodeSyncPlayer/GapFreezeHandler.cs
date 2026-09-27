@@ -535,6 +535,7 @@ public sealed class GapFreezeHandler
     {
         GapState previous = _currentState;
         _currentState = state;
+        GapCaptureHandoffLog.Enabled = state != GapState.Inactive;
         if (previous == GapState.Inactive && state != GapState.Inactive)
             SyncLifecycle.Record(SyncLifecycleEvent.GapEnter, state.ToString());
         else if (previous != GapState.Inactive && state == GapState.Inactive)
