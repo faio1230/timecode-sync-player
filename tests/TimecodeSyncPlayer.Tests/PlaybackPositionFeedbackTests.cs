@@ -17,15 +17,29 @@ public class PlaybackPositionFeedbackTests
             deliveredSeconds, deliveredGeneration, currentGeneration);
 
     [Fact]
-    public void Landed_UsesQuerySecondsAndConfirmsLanding()
+    public void Landed_UsesDeliveredSecondsAndConfirmsLanding()
     {
+        // v0.5.4 #7（規則 2）: 着地済みは照会位置（パイプライン）ではなく配信したフレームの PTS。
         var feedback = new PlaybackPositionFeedback(() => 0, Stopwatch.Frequency);
 
         PlaybackPositionReading reading = feedback.Observe(Sample(10.0, 5, 9.98, 5, 5), 25.0);
 
+        reading.EvaluationSeconds.Should().Be(9.98);
+        reading.Basis.Should().Be(PlaybackPositionBasis.Delivered);
+        reading.LandingConfirmed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void NothingDelivered_UsesQuerySecondsAndItsBasis()
+    {
+        // 配信が 1 枚も無い（配信世代 0）ときは照会位置と基準をそのまま返す（判定側は評価しない）。
+        var feedback = new PlaybackPositionFeedback(() => 0, Stopwatch.Frequency);
+
+        PlaybackPositionReading reading = feedback.Observe(Sample(10.0, 5, 0.0, 0, 5), 25.0);
+
         reading.EvaluationSeconds.Should().Be(10.0);
         reading.Basis.Should().Be(PlaybackPositionBasis.Pipeline);
-        reading.LandingConfirmed.Should().BeTrue();
+        reading.LandingConfirmed.Should().BeFalse();
     }
 
     [Fact]

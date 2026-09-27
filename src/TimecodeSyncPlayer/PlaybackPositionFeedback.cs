@@ -5,7 +5,8 @@ namespace TimecodeSyncPlayer;
 
 /// <summary>
 /// 0.4.5-A: 着地未確認（配信世代 &lt; 現在世代）の間だけ「最後の配信 PTS + 経過時間 × 実測レート」で
-/// 位置を外挿する。着地済みは与えられた <see cref="PlaybackPositionSample.Seconds"/> をそのまま使う。
+/// 位置を外挿する。着地済みは配信 PTS（<see cref="PlaybackPositionSample.DeliveredSeconds"/>）を使う
+/// （v0.5.4 #7。配信が無いときだけ <see cref="PlaybackPositionSample.Seconds"/> と基準をそのまま返す）。
 /// 外挿の上限は素材のフレーム 2 枚ぶん（60fps で 33ms、25fps で 80ms）。実時間 0.5 秒のような
 /// 大きな上限は、シーク中に育つ誤差を外挿そのものが埋めてしまうため使わない。
 /// 純ロジック（QPC は注入可能）。フェーズ 1 では判断に使わず、trace へ併記するだけ。
@@ -62,7 +63,8 @@ internal sealed class PlaybackPositionFeedback
     public PlaybackPositionReading Observe(in PlaybackPositionSample sample, double videoFps)
     {
         long now = _qpc();
-        bool deliveredPresent = sample.DeliveredSeconds > 0 && sample.DeliveredGeneration > 0;
+        // v0.5.4 #7: 配信の有無は世代だけで決める（B4b の補正の誤差と同じ。PTS 0.0 の先頭フレームも配信済み）。
+        bool deliveredPresent = sample.DeliveredGeneration > 0;
         bool deliveredChanged = deliveredPresent &&
             (!_hasDelivered ||
              sample.DeliveredSeconds != _lastDeliveredSeconds ||
@@ -104,6 +106,13 @@ internal sealed class PlaybackPositionFeedback
             double elapsed = Math.Max(0.0, (now - _lastDeliveredQpc) / (double)_frequency);
             double cap = CapFrames / ResolveFps(videoFps);
             evaluationSeconds = _lastDeliveredSeconds + (Math.Min(elapsed, cap) * _rate);
+            basis = PlaybackPositionBasis.Delivered;
+        }
+        else if (deliveredPresent)
+        {
+            // v0.5.4 #7（規則 2）: 着地済みは配信したフレームの PTS そのもの（照会位置ではない。再生中の
+            // shim の照会位置はパイプライン位置で、配信 PTS より先行・後退しうる）。
+            evaluationSeconds = sample.DeliveredSeconds;
             basis = PlaybackPositionBasis.Delivered;
         }
         else

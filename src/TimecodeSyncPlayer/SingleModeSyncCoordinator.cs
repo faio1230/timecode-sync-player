@@ -1,6 +1,5 @@
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
-using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -30,16 +29,14 @@ internal sealed class SingleModeSyncCoordinator
 
     public SyncRequestResult Apply(double ltcSeconds)
     {
-        // 0.4.5-A フェーズ 1: shadow は trace 有効時だけ読む（無効時は従来どおり位置を読まない）。
-        bool traceEnabled = OutputTrace.Current.IsEnabled;
-
         SyncPositionRead read = _effects.ReadPosition();
         if (!read.Succeeded) return SyncRequestResult.Deferred;
         double playbackSeconds = read.PlaybackSeconds;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
-        // 位置サンプルは秒と同じ照会の結果。shadow は trace 有効時だけ渡す。
-        PlaybackPositionSample? positionSample = traceEnabled ? read.Sample : null;
+        // 位置サンプルは秒と同じ照会の結果（追加の照会は無い）。v0.5.4 #7: 出力トレースの有無と関係なく
+        // 常に渡し、relocate の粗い判定の誤差を配信 PTS（評価位置）で測る（試験の道具で判断を変えない）。
+        PlaybackPositionSample? positionSample = read.Sample;
         // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する。
         // v0.5.4 段 B3: ロードの成立（旧 門 18）も着地の事象で決まるので、観測の後に解除だけ試す。
         // ロード中の抑止は着地待ち（EvaluateDecision の未信頼）が担う。
