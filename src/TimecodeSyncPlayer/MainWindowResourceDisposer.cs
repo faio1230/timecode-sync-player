@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace TimecodeSyncPlayer;
 
 /// <summary>終了手順の 1 実行単位。RunsOffUiThread が true の手順は 50ms 以上ブロックし得る。</summary>
@@ -39,6 +41,8 @@ internal sealed class MainWindowResourceDisposer
     private readonly Action? _closeFullscreen;
     private readonly List<ResourceCleanupStage> _stages;
     private readonly List<Exception> _errors = new();
+    // v0.5.4（終了時の間欠の切り分け）: 段と各処理の開始・終了（経過 ms）を Debug で出す。記録だけ。
+    private readonly Action<string> _debugLog;
     private int _nextStage;
     private bool _attempted;
     private bool _stopped;
@@ -57,8 +61,10 @@ internal sealed class MainWindowResourceDisposer
         Action? closeFullscreen = null,
         Action? stopOutput = null,
         Action? disposeOutput = null,
-        Action? stopAcceptingNewWork = null)
+        Action? stopAcceptingNewWork = null,
+        Action<string>? debugLog = null)
     {
+        _debugLog = debugLog ?? DefaultDebugLog;
         _disposeTimer = disposeTimer;
         _disposeRenderContext = disposeRenderContext;
         _disposePlayer = disposePlayer;
@@ -76,30 +82,39 @@ internal sealed class MainWindowResourceDisposer
         // → OutputEngine.Dispose → Spout → バッファ。従来の順序をそのまま段階へ分割する。
         _stages =
         [
-            new(StopAcceptingStepName, RunsOffUiThread: false, () => TryCleanup(_stopAcceptingNewWork)),
-            new(StopPlaybackStepName, RunsOffUiThread: true, () => _stopped = TryCleanup(_stopRender)),
-            new(StopOutputStepName, RunsOffUiThread: true, () => _outputStopped = TryCleanup(_stopOutput)),
+            new(StopAcceptingStepName, RunsOffUiThread: false, () => TryCleanup("stopAcceptingNewWork", _stopAcceptingNewWork)),
+            new(StopPlaybackStepName, RunsOffUiThread: true, () => _stopped = TryCleanup("stopRender", _stopRender)),
+            new(StopOutputStepName, RunsOffUiThread: true, () => _outputStopped = TryCleanup("stopOutput", _stopOutput)),
             new(CloseFullscreenStepName, RunsOffUiThread: false, () =>
             {
-                TryCleanup(_closeFullscreen);
-                TryCleanup(_disposeTimer);
+                TryCleanup("closeFullscreen", _closeFullscreen);
+                TryCleanup("disposeTimer", _disposeTimer);
             }),
             new(ReleaseResourcesStepName, RunsOffUiThread: true, () =>
             {
-                _contextFreed = _stopped && TryCleanup(_disposeRenderContext);
+                _contextFreed = _stopped
+                    ? TryCleanup("disposeRenderContext", _disposeRenderContext)
+                    : Skip("disposeRenderContext", "stopped=False");
                 // 0.4.8: shim の破棄は、GPU worker が止まってリースを返し終えた（OutputEngine.Stop が
                 // 成功した）ときだけ。止まっていない worker がリングを参照したまま shim を消さない。
-                if (_contextFreed && (_outputStopped || _stopOutput == null)) TryCleanup(_disposePlayer);
+                if (_contextFreed && (_outputStopped || _stopOutput == null)) TryCleanup("disposePlayer", _disposePlayer);
+                else Skip("disposePlayer", "contextFreed=" + _contextFreed + " outputStopped=" + _outputStopped);
             }),
-            new(ReleaseResourcesStepName, RunsOffUiThread: false, () => TryCleanup(_disposeLtc)),
+            new(ReleaseResourcesStepName, RunsOffUiThread: false, () => TryCleanup("disposeLtc", _disposeLtc)),
             new(ReleaseResourcesStepName, RunsOffUiThread: true, () =>
             {
-                if (_outputStopped || _stopOutput == null) TryCleanup(_disposeOutput);
-                if (_stopped) TryCleanup(_disposeSpout);
+                if (_outputStopped || _stopOutput == null) TryCleanup("disposeOutput", _disposeOutput);
+                else Skip("disposeOutput", "outputStopped=False");
+                if (_stopped) TryCleanup("disposeSpout", _disposeSpout);
+                else Skip("disposeSpout", "stopped=False");
             }),
-            new(ReleaseResourcesStepName, RunsOffUiThread: false, () => TryCleanup(_disposeTimeline)),
+            new(ReleaseResourcesStepName, RunsOffUiThread: false, () => TryCleanup("disposeTimeline", _disposeTimeline)),
             // RenderSession.Dispose（コンテキスト解放とネイティブスレッド join）は UI スレッド専用。
-            new(ReleaseResourcesStepName, RunsOffUiThread: false, () => { if (_contextFreed) TryCleanup(_disposeBuffer); }),
+            new(ReleaseResourcesStepName, RunsOffUiThread: false, () =>
+            {
+                if (_contextFreed) TryCleanup("disposeBuffer", _disposeBuffer);
+                else Skip("disposeBuffer", "contextFreed=False");
+            }),
         ];
     }
 
@@ -114,7 +129,11 @@ internal sealed class MainWindowResourceDisposer
     {
         if (!HasMoreStages) return;
         _attempted = true;
-        ResourceCleanupStage stage = _stages[_nextStage];
+        int index = _nextStage;
+        ResourceCleanupStage stage = _stages[index];
+        long started = Stopwatch.GetTimestamp();
+        _debugLog("stage.begin index=" + index + " step=" + stage.StepName + " offUi=" + stage.RunsOffUiThread +
+            " thread=" + Environment.CurrentManagedThreadId);
         try
         {
             stage.Run();
@@ -126,6 +145,7 @@ internal sealed class MainWindowResourceDisposer
         finally
         {
             _nextStage++;
+            _debugLog("stage.end index=" + index + " step=" + stage.StepName + " elapsedMs=" + ElapsedMs(started));
         }
     }
 
@@ -139,11 +159,16 @@ internal sealed class MainWindowResourceDisposer
         if (_errors.Count != 0) throw new AggregateException("MainWindow resource cleanup failed", _errors);
     }
 
-    private bool TryCleanup(Action? cleanup)
+    private bool TryCleanup(string name, Action? cleanup)
     {
+        if (cleanup == null) return true;
+        long started = Stopwatch.GetTimestamp();
+        _debugLog("action.begin name=" + name);
+        bool ok = false;
         try
         {
-            cleanup?.Invoke();
+            cleanup();
+            ok = true;
             return true;
         }
         catch (Exception ex)
@@ -151,5 +176,21 @@ internal sealed class MainWindowResourceDisposer
             _errors.Add(ex);
             return false;
         }
+        finally
+        {
+            _debugLog("action.end name=" + name + " ok=" + ok + " elapsedMs=" + ElapsedMs(started));
+        }
     }
+
+    /// <summary>条件で実行しなかった処理を記録する（ふだん出る行が無いときに、飛ばしたのか止まったのかを分ける）。</summary>
+    private bool Skip(string name, string reason)
+    {
+        _debugLog("action.skip name=" + name + " " + reason);
+        return false;
+    }
+
+    private static void DefaultDebugLog(string fields) => Serilog.Log.Debug("shutdown {Fields}", fields);
+
+    private static string ElapsedMs(long started) =>
+        Stopwatch.GetElapsedTime(started).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
 }
