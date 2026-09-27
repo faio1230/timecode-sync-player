@@ -38,6 +38,7 @@ public class T7ContinueCorrectionTests
     public void ContinueClip2_Smooth_ResidualIsMediaPositionMinusPlayback()
     {
         SyncScenarioHarness harness = ArrangeClip2OnTrack(playbackSeconds: 0.450);
+        harness.SupplyLtc(12.5);                                  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.AppliedRates.Clear();
 
         harness.SupplyLtc(12.5);                                  // 素材位置 0.500
@@ -53,6 +54,7 @@ public class T7ContinueCorrectionTests
     {
         SyncScenarioHarness harness = ArrangeClip2OnTrack(playbackSeconds: 0.450);
         harness.CorrectionMode = SyncCorrectionMode.Jump;
+        harness.SupplyLtc(12.6);                                  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.Operations.Clear();
 
         harness.SupplyLtc(12.6);                                  // 素材 0.600、残差 +150ms（T8 のしきい値 80ms 超）
@@ -84,6 +86,7 @@ public class T7ContinueCorrectionTests
 
         harness.SupplyLtc(12.0);                                  // clip2 へ切替 → Reset
         harness.AdvancePlayback(0.45, renderedFrames: 2);
+        harness.SupplyLtc(12.5);                                  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.AppliedRates.Clear();
 
         harness.SupplyLtc(12.5);                                  // 素材 0.5、残差 +50ms
@@ -105,6 +108,12 @@ public class T7ContinueCorrectionTests
         harness.AddTrack("clip2", 12);
         harness.ManualPlay();
 
+        harness.SupplyLtc(12.0 - (offsetMs / 1000.0));            // effective 12.0 で切替
+        harness.AdvancePlayback(0.45, renderedFrames: 2);
+        // v0.5.4 B6b（規則 3）: 着地直後の 1 サンプルは補正しない。trace の外で同じ値を 1 回送って消費する。
+        harness.SupplyLtc(12.5 - (offsetMs / 1000.0));
+        harness.AppliedRates.Clear();
+
         double deltaSeconds;
         string dir = Path.Combine(Path.GetTempPath(), "tcs-t7-trace", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
@@ -114,9 +123,6 @@ public class T7ContinueCorrectionTests
             OutputTrace.Current = trace;
             try
             {
-                harness.SupplyLtc(12.0 - (offsetMs / 1000.0));    // effective 12.0 で切替
-                harness.AdvancePlayback(0.45, renderedFrames: 2);
-                harness.AppliedRates.Clear();
                 harness.SupplyLtc(12.5 - (offsetMs / 1000.0));    // effective 12.5、素材 0.500
             }
             finally
@@ -209,6 +215,7 @@ public class T7ContinueCorrectionTests
         harness.ManualPlay();
         harness.SupplyLtc(1.0);
         harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
 
@@ -227,6 +234,7 @@ public class T7ContinueCorrectionTests
         harness.ManualPlay();
         harness.SupplyLtc(1.0);
         harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
 
@@ -244,6 +252,7 @@ public class T7ContinueCorrectionTests
         harness.ManualPlay();
         harness.SupplyLtc(1.0);
         harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
 
         harness.Controller.PlayPauseToggled();                     // 手動の再生・一時停止/差し替え相当
@@ -267,6 +276,7 @@ public class T7ContinueCorrectionTests
         harness.ManualPlay();
         harness.SupplyLtc(1.0);
         harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates.Should().ContainSingle();
 
@@ -290,7 +300,6 @@ public class T7ContinueCorrectionTests
     private sealed class Recorder
     {
         public bool LoadFileResult = true;
-        public bool NativeSeeking;
         public Guid? LoadedTrackId;
         public long TotalRenderedFrames;
         public (int rc, double playbackSeconds) TimePos = (0, 0.45);
@@ -312,8 +321,7 @@ public class T7ContinueCorrectionTests
             LoadFile: (_, _) => LoadFileResult,
             GetTotalRenderedFrames: () => TotalRenderedFrames,
             ReadPosition: () => TimePos.rc == 0 ? new SyncPositionRead(true, TimePos.playbackSeconds) : SyncPositionRead.Failed,
-            BuildPlaybackState: BuildState,
-            IsNativeSeeking: () => NativeSeeking);
+            BuildPlaybackState: BuildState);
     }
 
     private static PlaylistTrack Track() => new(
@@ -370,15 +378,18 @@ public class T7ContinueCorrectionTests
     }
 
     [Fact]
-    public void FrameContext_NativeSeeking_Blocks()
+    public void FrameContext_WhileWaitingForLanding_Blocks()
     {
+        // v0.5.4 段 B3: ネイティブのシーク中は着地待ち（未信頼の決定）が止める。
         var track = Track();
-        var recorder = new Recorder { LoadedTrackId = track.Id, NativeSeeking = true };
+        var service = Service();
+        service.ReportSeekSent(0.5);
+        var recorder = new Recorder { LoadedTrackId = track.Id };
 
-        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 0.5), 12.5);
+        ContinueFrameContext frame = Coordinator(recorder, service).HandleFrame(OnTrack(track, 0.5), 12.5);
 
         frame.CorrectionAllowed.Should().BeFalse();
-        frame.CorrectionBlockedReason.Should().Be("native-seeking");
+        frame.CorrectionBlockedReason.Should().Be("position-untrusted");
     }
 
     [Fact]
@@ -394,8 +405,9 @@ public class T7ContinueCorrectionTests
     }
 
     [Fact]
-    public void FrameContext_LoadStabilityWait_Blocks()
+    public void FrameContext_LoadLandingWait_Blocks()
     {
+        // v0.5.4 段 B3: ロードの成立（旧 門 18）は着地の事象で決まり、待っている間は未信頼の決定が止める。
         var track = Track();
         var service = Service();
         service.BeginFileLoad(0.5, 100);
@@ -404,7 +416,7 @@ public class T7ContinueCorrectionTests
         ContinueFrameContext frame = Coordinator(recorder, service).HandleFrame(OnTrack(track, 100.0), 100.0);
 
         frame.CorrectionAllowed.Should().BeFalse();
-        frame.CorrectionBlockedReason.Should().Be("load-stability");
+        frame.CorrectionBlockedReason.Should().Be("position-untrusted");
     }
 
     [Fact]
@@ -421,13 +433,15 @@ public class T7ContinueCorrectionTests
     }
 
     [Fact]
-    public void FrameContext_DeficitWithinSeekCost_AllowsCorrection()
+    public void FrameContext_DeficitWithinTheThreshold_AllowsCorrection()
     {
-        // D37-b: 実測所要以内の不足はシークではなく速度補正に任せる（補正は評価してよい）。
+        // D37-b: relocate の閾値以内の不足はシークではなく速度補正に任せる（補正は評価してよい）。
+        // v0.5.4 B6b（追補 3）: 閾値は max(tol, r_max × c)。学習前は tol（0.24）なので 0.2 秒で確かめる
+        // （旧は既定のシーク所要 1.0 秒以内の 0.5 秒）。
         var track = Track();
         var recorder = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 0.0) };
 
-        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 0.5), 0.5);
+        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 0.2), 0.2);
 
         frame.CorrectionAllowed.Should().BeTrue();
         frame.Request.Should().Be(SyncRequestResult.Complete);

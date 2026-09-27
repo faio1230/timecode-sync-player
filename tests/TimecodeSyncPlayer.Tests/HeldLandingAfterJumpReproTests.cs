@@ -26,7 +26,10 @@ public sealed class HeldLandingAfterJumpReproTests
         h.ReloadProject();
         h.SetDurationSeconds(30);
         h.ManualPlay();
-        h.AdvancePlayback(20.18);   // D35 の失敗帯（許容内の行き過ぎ）でも明示着地する位置
+        // D35 の失敗帯（許容内の行き過ぎ）でも明示着地する位置。v0.5.4 B6b: 最初の Normal の時点で
+        // 再生は 0.10 秒進むので、その時点の行き過ぎが 0.18 秒（許容内）になるよう 20.08 から始める
+        // （旧の 20.18 は 0.28 秒で許容外になり、学習前の閾値が tol になった後は同期シークが 1 本増える）。
+        h.AdvancePlayback(20.08);
         return h;
     }
 
@@ -60,7 +63,11 @@ public sealed class HeldLandingAfterJumpReproTests
         h.Tick100Milliseconds(3);
 
         h.IsPaused.Should().BeTrue("2 度目の無音損失で停止する");
-        SeekTargets(h).Should().BeEmpty(
+        // v0.5.4 B6b（追補 3 で期待を変更）: 旧は「シーク 0 本」。U8 の 2 枚規則を Jump の後に限らなく
+        // したので、最初の保持の停止が 250ms を待たずに確定し、復帰の Jump（23.0）の同期要求はゲート（13）で
+        // 保留されて無音の最初の Tick に出る（目標は新しい値 23.0 + c）。§6 の 4 の欠陥は「古い保持値
+        // （20.0）へ着地する」ことなので、その主張に絞る（隣の Normal のテストと同じ形）。
+        SeekTargets(h).Should().NotContain(target => Math.Abs(target - 20.0) < 0.1,
             "Jump の復帰で保持値 2 つが下りていれば、無音の損失は古い保持値へ着地しない（§6 の 4 の意図）");
     }
 

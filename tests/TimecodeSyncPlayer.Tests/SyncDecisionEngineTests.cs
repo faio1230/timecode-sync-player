@@ -553,10 +553,11 @@ public class SyncDecisionEngineTests
     // ---- D37-b: 実在の不足はシークではなく速度補正に任せる ----
 
     [Fact]
-    public void Decide_DeficitWithinSeekCost_PrefersRateCatchUp()
+    public void Decide_DeficitWithinRateReachOverTheSeekCost_PrefersRateCatchUp()
     {
+        // v0.5.4 B6b（追補 3）: 閾値 = max(tol, r_max × c)。c = 5.0 で 0.5 秒まで varispeed。
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
-        engine.UpdateSeekCostSeconds(1.0);
+        engine.UpdateSeekCostSeconds(5.0);
         var state = new SyncPlaybackState(
             SyncEnabled: true,
             HasCurrentTrack: true,
@@ -566,7 +567,7 @@ public class SyncDecisionEngineTests
             VideoFps: 30.0,
             TimecodeFps: 30.0);
 
-        SyncDecision decision = engine.Decide(4.5, state); // delta 0.5 <= 実測所要 1.0
+        SyncDecision decision = engine.Decide(4.5, state); // delta 0.5 <= r_max 0.10 × 実測所要 5.0
 
         decision.Action.Should().Be(SyncActionType.None);
         decision.RateCatchUpPreferred.Should().BeTrue();
@@ -574,96 +575,6 @@ public class SyncDecisionEngineTests
         decision.TargetSeconds.Should().Be(0.0);
     }
 
-    [Fact]
-    public void Decide_DeficitWithinSeekCost_WhenRateCatchUpDisallowed_Seeks()
-    {
-        // D37-b2/D37-d: 着地直後は、残差がシーク所要の半分を超える帯ならシークで着地する。
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
-        engine.UpdateSeekCostSeconds(1.0);
-        var state = new SyncPlaybackState(
-            SyncEnabled: true,
-            HasCurrentTrack: true,
-            IsSeeking: false,
-            PlaybackSeconds: 4.0,
-            DurationSeconds: 20.0,
-            VideoFps: 30.0,
-            TimecodeFps: 30.0,
-            RateCatchUpAllowed: false);
-
-        SyncDecision decision = engine.Decide(4.6, state); // delta 0.6 > 0.5 × 実測所要 1.0
-
-        decision.Action.Should().Be(SyncActionType.Seek);
-        decision.RateCatchUpPreferred.Should().BeFalse();
-    }
-
-    [Fact]
-    public void Decide_DeficitBelowHalfSeekCost_WhenRateCatchUpDisallowed_PrefersRateCatchUp()
-    {
-        // D37-d: 着地窓中でも、残差がシーク所要の半分以下ならシークは誤差を増やすだけなので
-        // 速度補正に任せる（L-1 の 4K60 ロング GOP 実測: 初期誤差 0.34s でシーク後 0.4〜1.8s）。
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
-        engine.UpdateSeekCostSeconds(1.0);
-        var state = new SyncPlaybackState(
-            SyncEnabled: true,
-            HasCurrentTrack: true,
-            IsSeeking: false,
-            PlaybackSeconds: 4.0,
-            DurationSeconds: 20.0,
-            VideoFps: 30.0,
-            TimecodeFps: 30.0,
-            RateCatchUpAllowed: false);
-
-        SyncDecision decision = engine.Decide(4.4, state); // delta 0.4 <= 0.5 × 実測所要 1.0
-
-        decision.Action.Should().Be(SyncActionType.None);
-        decision.RateCatchUpPreferred.Should().BeTrue();
-    }
-
-    // ---- D37-e: 追従開始のシークは LTC + 学習済みシーク所要を狙う ----
-
-    [Fact]
-    public void Decide_WithSeekTargetLookahead_UsesLtcPlusLookahead()
-    {
-        // 検証機 M3: LTC 7.368 を狙って 1.83 秒後に着地すると LTC は 9.42。
-        // 最初から 7.368 + 1.87 を狙えば着地時の誤差は 0.2 秒程度になる。
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
-        var state = new SyncPlaybackState(
-            SyncEnabled: true,
-            HasCurrentTrack: true,
-            IsSeeking: false,
-            PlaybackSeconds: 4.711,
-            DurationSeconds: 20.0,
-            VideoFps: 30.0,
-            TimecodeFps: 30.0,
-            SeekTargetLookaheadSeconds: 1.87);
-
-        SyncDecision decision = engine.Decide(7.368, state); // delta 2.657 > tolerance
-
-        decision.Action.Should().Be(SyncActionType.Seek);
-        decision.TargetSeconds.Should().BeApproximately(9.238, 1e-9,
-            "着地までに LTC が進むぶんを先に狙う（上限なし）");
-    }
-
-    [Fact]
-    public void Decide_WithSeekTargetLookahead_ClampsToClipEnd()
-    {
-        var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
-        var state = new SyncPlaybackState(
-            SyncEnabled: true,
-            HasCurrentTrack: true,
-            IsSeeking: false,
-            PlaybackSeconds: 8.0,
-            DurationSeconds: 20.0,
-            VideoFps: 30.0,
-            TimecodeFps: 30.0,
-            MediaOutSeconds: 10.0,
-            SeekTargetLookaheadSeconds: 1.87);
-
-        SyncDecision decision = engine.Decide(9.5, state); // 9.5 + 1.87 = 11.37
-
-        decision.TargetSeconds.Should().BeApproximately(10.0, 1e-9,
-            "行き過ぎてもクリップ終端は越えない（D29 の範囲クランプ）");
-    }
 
     [Fact]
     public void Decide_DeficitBeyondSeekCost_Seeks()

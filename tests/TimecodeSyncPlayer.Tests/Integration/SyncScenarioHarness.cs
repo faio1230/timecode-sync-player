@@ -133,8 +133,7 @@ internal sealed class SyncScenarioHarness
                     playback,
                     _playback.DurationSeconds,
                     _playback.Fps,
-                    TimecodeFps: 25),
-                IsNativeSeeking: () => NativeSeeking));
+                    TimecodeFps: 25)));
 
         _gapCoordinator = new GapEnterCoordinator(
             _gap,
@@ -181,7 +180,6 @@ internal sealed class SyncScenarioHarness
                     return Seek(target);
                 },
                 GetTotalRenderedFrames: () => _renderedFrames,
-                IsNativeSeeking: () => NativeSeeking,
                 // D33: 終端ホールドの pause/resume を記録する。解除は MainWindow と同じ条件
                 // （v0.5.2 段 2g-2: ほかの持ち主が止めていれば再開しない）。
                 SetEndHold: held =>
@@ -373,7 +371,6 @@ internal sealed class SyncScenarioHarness
         get => _playback.SeekSucceeds;
         set => _playback.SeekSucceeds = value;
     }
-    public bool NativeSeeking { get; set; }
     public double PlaybackSeconds => _playback.PositionSeconds;
 
     /// <summary>C2: 偽の再生 API（着地の遅れ・ロード・尺の到着・レートの設定に使う）。</summary>
@@ -506,6 +503,19 @@ internal sealed class SyncScenarioHarness
     /// <summary>D27-b: 手動ロード（次/前/プレイリスト）でアプリ側が立てるロードゲートを再現する。</summary>
     public void BeginManualFileLoad() => _syncService.BeginFileLoad(0, _renderedFrames);
 
+    /// <summary>
+    /// v0.5.4 段 B3 のテスト用: 読み込みの世代を進め、最初のフレームをまだ配信しない手動ロード
+    /// （shim の `attempt_gen = ++generation` の直後。着地の観測まで判定を止める場面を作る）。
+    /// </summary>
+    public void BeginManualFileLoadWithoutLanding()
+    {
+        _playback.BeginLoadWithoutDelivery();
+        _syncService.BeginFileLoad(0, _renderedFrames);
+    }
+
+    /// <summary>v0.5.4 段 B3 のテスト用: 読み込みの世代の最初のフレームを配信する。</summary>
+    public void DeliverLoadLanding() => _playback.DeliverLoadLanding();
+
     /// <summary>テスト用: 尺（clamp の着地先）を差し替える。</summary>
     public void SetDurationSeconds(double seconds) => _playback.SetDuration(seconds);
 
@@ -543,7 +553,14 @@ internal sealed class SyncScenarioHarness
         Controller.CancelPendingSync();
         IsSeeking = false;
         Seek(target);
+        // v0.5.4 段 B3: MainWindow の手動シークの入口と同じく、着地待ちに入れる。
+        _syncService.NotifyManualSeek(target);
     }
+
+    /// <summary>
+    /// v0.5.4 段 B3 のテスト用: 着地待ちを外す（ネイティブのシーク完了の観測の代わり。位置は動かさない）。
+    /// </summary>
+    public void ClearLandingWait() => _syncService.SeekState.Clear();
 
     public void AdvancePlayback(double seconds, long renderedFrames = 1)
     {

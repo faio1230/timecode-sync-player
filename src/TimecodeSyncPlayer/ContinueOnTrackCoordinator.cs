@@ -48,10 +48,12 @@ internal sealed class ContinueOnTrackCoordinator
         // A different clip must be loaded before releasing the gap-owned pause.
         if (exitingGap && onTrackDecision.Action != ContinueOnTrackAction.SwitchTrack)
         {
-            if (!_effects.SeekTo(mediaPos))
+            // v0.5.4 B6b（規則 3）: ギャップの出口も relocate。目標は M(now) + c（マスターが動いている間）で、
+            // クリップの範囲に収める。発行したら着地の状態に通す（着地するまで次のシークを出さない）。
+            double exitTarget = RelocateTarget(track, mediaPos);
+            if (!_effects.SeekTo(exitTarget))
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "gap-exit-seek");
-            // D37-b2: ギャップ（黒・フリーズ）明けの着地。直後の不足は速度補正ではなくシークで詰める。
-            _syncService.NotifyLanding();
+            _syncService.ReportSeekSent(exitTarget, "gap-exit");
             CompleteGapExit(exitAction);
             // ギャップ出口のシークを発行したフレームでは補正を評価しない。
             return new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, 0.0, "gap-exit", ExitedGap: true);
@@ -63,7 +65,12 @@ internal sealed class ContinueOnTrackCoordinator
             SeekLatencyCompensator compensator = _syncService.LatencyCompensator;
             compensator.SelectTrack(track.Id);
             double compensationSeconds = compensator.CompensationForTrack(track.Id);
-            double loadPosition = mediaPos + compensationSeconds;
+            // v0.5.4 B6b（規則 3 の予測ロケート）: 先行量 c があればそれを使う（D7-a の補償より優先。
+            // 経路で分けない 1 つの c）。無ければ従来どおり D7-a の補償（既定 0）。
+            double lookaheadSeconds = _syncService.RelocateLookaheadSeconds;
+            double loadPosition = lookaheadSeconds > 0.0
+                ? RelocateTarget(track, mediaPos)
+                : mediaPos + compensationSeconds;
             Log.Information(
                 "Continue mode: switching to track {TrackName} at media position {Pos:F3}s compensation={CompensationMs:F1}ms",
                 track.Name, mediaPos, compensationSeconds * 1000.0);
@@ -92,24 +99,6 @@ internal sealed class ContinueOnTrackCoordinator
             // 0.4.5-A フェーズ 1: shadow は trace 有効時だけ読む（無効時は従来どおり位置を読まない）。
             bool traceEnabled = OutputTrace.Current.IsEnabled;
 
-            // Track switches and gap exits above may replace the pending operation.
-            // For this clip, native time-pos is not stable until seeking has finished.
-            if (_effects.IsNativeSeeking?.Invoke() == true)
-            {
-                // v0.5.4 段 0: ネイティブシーク中の抑止（門 22）を数える。
-                Log.Debug("sync.gate native-seek-defer ltc={Ltc:F3}", ltcSeconds);
-                if (traceEnabled)
-                {
-                    SyncPositionRead shadowRead = _effects.ReadPosition();
-                    if (shadowRead.Succeeded)
-                    {
-                        SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowRead.PlaybackSeconds);
-                        _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowRead.Sample, "native-seeking");
-                    }
-                }
-                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "native-seeking");
-            }
-
             SyncPositionRead read = _effects.ReadPosition();
             if (!read.Succeeded)
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "time-pos");
@@ -118,24 +107,23 @@ internal sealed class ContinueOnTrackCoordinator
             // 位置サンプルは秒と同じ照会の結果。shadow は trace 有効時だけ渡す。
             PlaybackPositionSample? positionSample = traceEnabled ? read.Sample : null;
 
-            if (!_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
-            {
-                if (_fileLoadStabilityLogState.ShouldLog(DateTime.UtcNow))
-                {
-                    Log.Debug(
-                        "Continue mode: waiting for file load stability playback={Playback:F3} mediaPos={MediaPos:F3} renderedFrames={RenderedFrames}",
-                        playbackSeconds, mediaPos, _effects.GetTotalRenderedFrames());
-                }
-
-                return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "load-stability");
-            }
-
-            _fileLoadStabilityLogState.Reset();
-
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
             // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する
             // （LTC のフレームの経路に依らない観測は UI タイマー・保持の Duplicate が担う。§9-7 の 1）。
+            // v0.5.4 段 B3: ロードの成立（旧 門 18）も着地の事象で決まるので、観測の後に解除だけ試す。
+            // ロード中の抑止は着地待ち（EvaluateDecision の未信頼）が担う。
             _syncService.ObserveLandingState(read, state.VideoFps, state.TimecodeFps);
+            if (_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
+            {
+                _fileLoadStabilityLogState.Reset();
+            }
+            else if (_fileLoadStabilityLogState.ShouldLog(DateTime.UtcNow))
+            {
+                Log.Debug(
+                    "Continue mode: waiting for file load stability playback={Playback:F3} mediaPos={MediaPos:F3} renderedFrames={RenderedFrames}",
+                    playbackSeconds, mediaPos, _effects.GetTotalRenderedFrames());
+            }
+
             SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state, positionSample);
             // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
             // D38 (b): 未信頼の要求の目標は、EvaluateDecision が pending の破棄（門 8）に使う
@@ -179,6 +167,24 @@ internal sealed class ContinueOnTrackCoordinator
                 ? new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, playbackSeconds, "seek-issued")
                 : ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "seek-failed");
         }
+    }
+
+    /// <summary>
+    /// v0.5.4 B6b（規則 3 の予測ロケート）: relocate の目標 = 素材位置 + 先行量（マスターが動いている間の c）を
+    /// トラックの範囲に収める（D29 と同じ切り詰め。尺が分からなければ上は切らない）。先行量が 0 なら素材位置のまま。
+    /// </summary>
+    private double RelocateTarget(PlaylistTrack track, double mediaPos)
+    {
+        double lookaheadSeconds = _syncService.RelocateLookaheadSeconds;
+        if (lookaheadSeconds <= 0.0)
+            return mediaPos;
+        double target = mediaPos + lookaheadSeconds;
+        double durationSeconds = track.MediaDuration.TotalSeconds;
+        if (track.MediaOut is null && durationSeconds <= 0.0)
+            return target;
+        return SyncDecisionEngine.ClampToClip(
+            target, track.MediaIn.TotalSeconds, track.MediaOut?.TotalSeconds, durationSeconds,
+            track.FrameRate ?? 0.0);
     }
 
     private void CompleteGapExit(GapExitAction exitAction)
@@ -233,5 +239,4 @@ internal sealed record ContinueOnTrackEffects(
     Func<long> GetTotalRenderedFrames,
     // v0.5.1: 再生位置（秒）と位置サンプルを同じ 1 回の照会で返す。
     Func<SyncPositionRead> ReadPosition,
-    Func<double, SyncPlaybackState> BuildPlaybackState,
-    Func<bool>? IsNativeSeeking = null);
+    Func<double, SyncPlaybackState> BuildPlaybackState);

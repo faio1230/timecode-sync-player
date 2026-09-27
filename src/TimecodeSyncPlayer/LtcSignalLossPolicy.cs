@@ -53,8 +53,8 @@ internal sealed class LtcSignalLossPolicy
     private readonly int _resumeFrameCount;
     private long? _lastValidFrameAtMilliseconds;
     private long? _lastHeldFrameAtMilliseconds;
-    private long? _lastAppliedJumpAtMilliseconds;
-    private int _heldFramesSinceAppliedJump;
+    // U8（v0.5.4 B6b で Jump の条件を外した）: 値が進むフレーム・Jump の適用の後に続いた保持（Duplicate）の数。
+    private int _consecutiveHeldFrames;
     private LtcSignalLossReason _reason;
     private bool _isLost;
     private bool _pausedByPolicy;
@@ -114,8 +114,7 @@ internal sealed class LtcSignalLossPolicy
     {
         _lastValidFrameAtMilliseconds = null;
         _lastHeldFrameAtMilliseconds = null;
-        _lastAppliedJumpAtMilliseconds = null;
-        _heldFramesSinceAppliedJump = 0;
+        _consecutiveHeldFrames = 0;
         _reason = LtcSignalLossReason.None;
         _isLost = false;
         _pausedByPolicy = false;
@@ -138,8 +137,7 @@ internal sealed class LtcSignalLossPolicy
         {
             _lastValidFrameAtMilliseconds = receivedAtMilliseconds;
             _lastHeldFrameAtMilliseconds = null;
-            _lastAppliedJumpAtMilliseconds = null;
-            _heldFramesSinceAppliedJump = 0;
+            _consecutiveHeldFrames = 0;
             _reason = LtcSignalLossReason.None;
             _consecutiveResumeFrames = 0;
             return LtcSignalLossAction.None;
@@ -159,8 +157,7 @@ internal sealed class LtcSignalLossPolicy
         _reason = LtcSignalLossReason.None;
         _consecutiveResumeFrames = 0;
         _manualResumeSuppressesPause = false;
-        _lastAppliedJumpAtMilliseconds = null;
-        _heldFramesSinceAppliedJump = 0;
+        _consecutiveHeldFrames = 0;
         bool shouldResume = _pausedByPolicy;
         _pausedByPolicy = false;
         SyncLifecycle.Record(SyncLifecycleEvent.SignalRecovered, "valid-frames");
@@ -186,19 +183,15 @@ internal sealed class LtcSignalLossPolicy
 
         ObservePlaybackState(context);
         _lastHeldFrameAtMilliseconds = receivedAtMilliseconds;
-        // U8: 適用した Jump の後に続く保持を数える（2 枚続いたら確認を待たずに確定する）。
-        if (_lastAppliedJumpAtMilliseconds is long jumpAt && receivedAtMilliseconds >= jumpAt)
-            _heldFramesSinceAppliedJump++;
-        else
-            _heldFramesSinceAppliedJump = 0;
+        // U8: 続いた保持を数える（2 枚続いたら確認を待たずに確定する。v0.5.4 B6b: Jump の有無は問わない）。
+        _consecutiveHeldFrames++;
     }
 
     /// <summary>
-    /// U8: 同期へ適用した Jump フレームの到着を記録する。直後に保持（Duplicate）が 2 枚続いたら、
-    /// 無音と保持の区別はその順序で既に付いているので、250ms の確認を待たずに損失を確定する
-    /// （停止モードのみ。待ちは「区別が付いていない場合」に限る）。1 枚だけなら数えない
-    /// （発生器の合わせ直しで Jump の直後に同値が 1 枚挟まる場合を即時停止にしない）。
-    /// 進むフレーム（<see cref="ObserveValidFrame"/>）か <see cref="Reset"/> で消える。
+    /// U8: 同期へ適用した Jump フレームの到着を記録する（値が変わったので、続いた保持の数を
+    /// 数え直す）。保持（Duplicate）が 2 枚続いたら、250ms の確認を待たずに損失を確定する
+    /// （停止モードのみ）。1 枚だけなら数えない（発生器の合わせ直しで同値が 1 枚挟まる場合を
+    /// 即時停止にしない）。v0.5.4 B6b: Jump の後に限らない（規則 4 の入口を両モードで統一）。
     /// </summary>
     public void ObserveAppliedJump(long receivedAtMilliseconds, LtcSignalLossContext context)
     {
@@ -208,8 +201,8 @@ internal sealed class LtcSignalLossPolicy
             return;
         }
 
-        _lastAppliedJumpAtMilliseconds = receivedAtMilliseconds;
-        _heldFramesSinceAppliedJump = 0;
+        // 値が変わったので、続いた保持の数を数え直す。
+        _consecutiveHeldFrames = 0;
     }
 
     /// <summary>
@@ -282,21 +275,21 @@ internal sealed class LtcSignalLossPolicy
             return EvaluatePause(context);
         }
 
-        // U8: Jump の直後に保持（Duplicate）が 2 枚続いたら、無音と保持の区別は付いているので、
+        // U8: 保持（Duplicate）が 2 枚続いたら、無音と保持の区別は付いているので、
         // 250ms の確認を待たずに損失を確定する（停止モードのみ。門 1 の待ちを「区別が付いて
         // いない場合」に限る形で、時間定数は増やさない。合わせ直しの 1 枚では止めない）。
+        // v0.5.4 B6b（規則 4 の入口を両モードで統一）: 「適用した Jump の後に」の条件を外した。
         if (context.Mode == LtcSignalLossMode.Stop &&
-            _lastAppliedJumpAtMilliseconds is long jumpAt &&
-            _heldFramesSinceAppliedJump >= 2 &&
+            _consecutiveHeldFrames >= 2 &&
             WasHeldRecently(nowMilliseconds))
         {
             _isLost = true;
             _consecutiveResumeFrames = 0;
             _reason = LtcSignalLossReason.TimecodeHeld;
-            _lastAppliedJumpAtMilliseconds = null;
-            _heldFramesSinceAppliedJump = 0;
+            _consecutiveHeldFrames = 0;
             Log.Debug("sync.gate signal-loss-confirm elapsedMs={ElapsedMs:F1} reason={Reason}",
-                ElapsedMilliseconds(_lastValidFrameAtMilliseconds ?? jumpAt, nowMilliseconds), _reason);
+                ElapsedMilliseconds(_lastValidFrameAtMilliseconds ?? _lastHeldFrameAtMilliseconds ?? nowMilliseconds,
+                    nowMilliseconds), _reason);
             return EvaluatePause(context);
         }
 

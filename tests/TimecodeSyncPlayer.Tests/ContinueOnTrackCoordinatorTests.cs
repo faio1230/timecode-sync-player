@@ -60,7 +60,6 @@ public class ContinueOnTrackCoordinatorTests
         public GapExitActionType GapExit = GapExitActionType.None;
         public bool SeekResult = true;
         public bool LoadFileResult = true;
-        public bool NativeSeeking;
         public Guid? LoadedTrackId;
         public long TotalRenderedFrames;
         public (int rc, double playbackSeconds) TimePos = (0, 1.0);
@@ -83,34 +82,31 @@ public class ContinueOnTrackCoordinatorTests
             LoadFile: (path, start) => { Calls.Add("LoadFile"); LoadFileArgs.Add((path, start)); return LoadFileResult; },
             GetTotalRenderedFrames: () => { Calls.Add("GetTotalRenderedFrames"); return TotalRenderedFrames; },
             ReadPosition: () => { Calls.Add("ReadPosition"); return ToRead(TimePos); },
-            BuildPlaybackState: ps => { Calls.Add("BuildPlaybackState"); return BuildState(ps); },
-            IsNativeSeeking: () => NativeSeeking);
+            BuildPlaybackState: ps => { Calls.Add("BuildPlaybackState"); return BuildState(ps); });
     }
 
     private static TimelineQueryResult OnTrack(PlaylistTrack track, double mediaPos) =>
         new(TimelineQueryStatus.OnTrack, track, mediaPos, null);
 
     [Fact]
-    public void SameTrack_NativeSeeking_DoesNotSettleSyntheticTarget_AndResumesLatestRequestAfterCompletion()
+    public void SameTrack_WhileWaitingForLanding_SyntheticTargetDoesNotSettle_AndFarRequestSeeksImmediately()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState(), clock);
         service.ReportSeekSent(10);
         var track = CreateTrack(Guid.NewGuid());
-        var rec = new Recorder { LoadedTrackId = track.Id, NativeSeeking = true, TimePos = (0, 10) };
+        var rec = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 10) };
         var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
 
+        // 照会値が目標と同じでも、配信の世代が追いつくまでは着地にしない（合成位置で確定しない）。
         coordinator.Handle(OnTrack(track, 10), 10).Should().Be(SyncRequestResult.Deferred);
         clock.Advance(TimeSpan.FromSeconds(3));
         coordinator.Handle(OnTrack(track, 10), 10).Should().Be(SyncRequestResult.Deferred);
-        coordinator.Handle(OnTrack(track, 30), 30).Should().Be(SyncRequestResult.Deferred);
-        rec.Calls.Should().NotContain(new[] { "ReadPosition", "GetTotalRenderedFrames", "BuildPlaybackState" });
         service.SeekState.HasPendingSeek.Should().BeTrue();
         service.SeekState.TargetSeconds.Should().Be(10);
         service.SeekState.LastStatus.Should().Be(TimecodeSyncSeekPendingStatus.Pending);
         rec.SeekTargets.Should().BeEmpty();
 
-        rec.NativeSeeking = false;
         rec.TimePos = (0, 11);
         // v0.5.4 段 B / 門 8 / §9-2: 遠い要求は着地待ちの目標を置き換え、その場でシークする
         // （捨てた後に古い位置で判定する隙間を作らない。再確認の 3 サンプルは畳んだ）。
@@ -120,35 +116,40 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void SameTrack_NativeSeeking_DoesNotMarkFileLoadedFromSyntheticProgress()
+    public void SameTrack_WhileLoading_DoesNotMarkFileLoadedFromSyntheticProgress()
     {
         var track = CreateTrack(Guid.NewGuid());
         var service = CreateService();
         service.BeginFileLoad(10, 0);
         var rec = new Recorder
         {
-            LoadedTrackId = track.Id, NativeSeeking = true,
+            LoadedTrackId = track.Id,
             TimePos = (0, 11), TotalRenderedFrames = 10
         };
         var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
 
         coordinator.Handle(OnTrack(track, 11), 11).Should().Be(SyncRequestResult.Deferred);
-        service.IsLoadingFile.Should().BeTrue();
+        service.IsLoadingFile.Should().BeTrue("合成の進捗ではロード成立にしない");
 
-        rec.NativeSeeking = false;
-        coordinator.Handle(OnTrack(track, 11), 11).Should().Be(SyncRequestResult.Complete);
+        // v0.5.4 段 B3: ロードの成立（旧 門 18）は読み込みの世代の最初のフレームの配信で決まる。
+        service.ObserveLandingState(
+            new TimecodeSyncPlayer.Contracts.PlaybackPositionSample(
+                11, TimecodeSyncPlayer.Contracts.PlaybackPositionBasis.Pipeline, 1, 11, 1, 1),
+            toleranceSeconds: 0.2);
         service.IsLoadingFile.Should().BeFalse();
+
+        coordinator.Handle(OnTrack(track, 11), 11).Should().Be(SyncRequestResult.Complete);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void SwitchTrack_NativeSeeking_AllowsNewClipToOverride(bool exitingGap)
+    public void SwitchTrack_AllowsNewClipToOverride(bool exitingGap)
     {
         var track = CreateTrack(Guid.NewGuid(), path: "C:/next.mp4");
         var rec = new Recorder
         {
-            LoadedTrackId = Guid.NewGuid(), NativeSeeking = true,
+            LoadedTrackId = Guid.NewGuid(),
             GapExit = exitingGap ? GapExitActionType.ResumePlayback : GapExitActionType.None
         };
         var coordinator = new ContinueOnTrackCoordinator(CreateService(), CreateLogState(), rec.Build());
@@ -163,12 +164,12 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void GapExit_NativeSeeking_AllowsSameClipReentrySeek()
+    public void GapExit_AllowsSameClipReentrySeek()
     {
         var track = CreateTrack(Guid.NewGuid());
         var rec = new Recorder
         {
-            LoadedTrackId = track.Id, NativeSeeking = true,
+            LoadedTrackId = track.Id,
             GapExit = GapExitActionType.ResumePlayback
         };
         var coordinator = new ContinueOnTrackCoordinator(CreateService(), CreateLogState(), rec.Build());
@@ -362,12 +363,12 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void SameTrack_WhenFileLoadNotStable_DoesNotBuildStateNorSeek()
+    public void SameTrack_WhileFileLoadNotSettled_DoesNotUsePositionNorSeek()
     {
         var id = Guid.NewGuid();
         var track = CreateTrack(id);
         var service = CreateService();
-        // ロード中かつ進捗未達 → TryMarkFileLoaded が false
+        // v0.5.4 段 B3: ロードの着地待ち（配信の世代が追いつくまで位置を使わない）。
         service.BeginFileLoad(startPositionSeconds: 5.0, renderedFrameCount: 100);
         var rec = new Recorder
         {
@@ -377,9 +378,12 @@ public class ContinueOnTrackCoordinatorTests
         };
         var coordinator = new ContinueOnTrackCoordinator(service, CreateLogState(), rec.Build());
 
-        coordinator.Handle(OnTrack(track, mediaPos: 100.0), ltcSeconds: 100.0);
+        ContinueFrameContext frame = coordinator.HandleFrame(OnTrack(track, mediaPos: 100.0), ltcSeconds: 100.0);
 
-        rec.Calls.Should().NotContain(new[] { "BuildPlaybackState", "SeekTo" });
+        frame.Request.Should().Be(SyncRequestResult.Deferred);
+        frame.CorrectionBlockedReason.Should().Be("position-untrusted",
+            "ロードの着地待ちは未信頼の決定で判定とシークを止める（旧 門 18 の早期 return は畳んだ）");
+        rec.Calls.Should().NotContain("SeekTo");
     }
 
     [Fact]
@@ -471,6 +475,17 @@ public class ContinueOnTrackCoordinatorTests
         return (engine, service, clock);
     }
 
+    /// <summary>
+    /// v0.5.4 B6b（追補 3）: ギャップの出口のシークも着地の状態に通すので、テストでは配信の世代と位置の
+    /// サンプルで着地を観測させる（Recorder の位置照会はサンプルを持たない）。
+    /// </summary>
+    private static void ObserveGapExitLanding(TimecodeSyncService service, double deliveredSeconds) =>
+        service.ObserveLandingState(
+            new TimecodeSyncPlayer.Contracts.PlaybackPositionSample(
+                deliveredSeconds, TimecodeSyncPlayer.Contracts.PlaybackPositionBasis.Pipeline, 2,
+                deliveredSeconds, 2, 2),
+            toleranceSeconds: 0.24);
+
     [Fact]
     public void GapExitLanding_SubsequentDeficit_SeeksInsteadOfRateCatchUp()
     {
@@ -485,6 +500,7 @@ public class ContinueOnTrackCoordinatorTests
         rec.GapExit = GapExitActionType.ResumePlayback;
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
         rec.SeekTargets.Should().Equal(10.0);
+        ObserveGapExitLanding(service, 10.0);
 
         // 出口直後の不足 0.7 秒（着地窓の中、0.5× シーク所要 1.0 秒を超える）→ シークで着地する。
         rec.GapExit = GapExitActionType.None;
@@ -499,10 +515,12 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void GapExitLanding_WithLearnedSeekCost_DoesNotLookAhead()
+    public void GapExitLanding_WithLearnedSeekCost_LooksAheadByTheSeekCost()
     {
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
-        // D37-e: 学習値 2.0 があっても、ギャップ出口のシークは先行しない（対象は追従開始だけ）。
+        // D37-e（v0.5.4 B6b 追補 3 で期待を変更）: 旧は「学習値 2.0 があっても、ギャップ出口のシークは
+        // 先行しない（対象は追従開始だけ）」。いまは規則 3 の予測ロケートで、マスターが動いている間の
+        // relocate は経路を問わず目標 = M(now) + c。ギャップの出口も 10.0 + 2.0 = 12.0 を狙う。
         service.SeekState.BeginSeek(1.0, clock.GetUtcNow().UtcDateTime);
         clock.Advance(TimeSpan.FromSeconds(2.0));
         // v0.5.4 段 B: 着地は配信の世代と位置の事象で取る（旧 門 6 の窓と cooldown は畳んだ）。
@@ -522,22 +540,23 @@ public class ContinueOnTrackCoordinatorTests
         // ギャップ出口: mediaPos 10.0 へ直接シークしてギャップを抜ける。
         rec.GapExit = GapExitActionType.ResumePlayback;
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
-        rec.SeekTargets.Should().Equal(10.0);
+        rec.SeekTargets.Should().Equal(new[] { 12.0 }, "ギャップの出口も目標 = 素材位置 + c");
+        ObserveGapExitLanding(service, 12.0);
 
-        // 出口直後の不足 1.2 秒（> 0.5 × 学習値 2.0、< 学習値）→ シーク。行き先は LTC のまま。
+        // 着地して c だけ進んだところ（LTC 12.0、再生 12.0）: ずれは無いので次の relocate は出ない。
         rec.GapExit = GapExitActionType.None;
-        rec.TimePos = (0, 9.0);
+        rec.TimePos = (0, 12.0);
         for (int i = 0; i < 4; i++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
-            coordinator.Handle(OnTrack(track, 10.2), 10.2);
+            coordinator.Handle(OnTrack(track, 12.0), 12.0);
         }
 
-        rec.SeekTargets.Should().Equal(10.0, 10.2);
+        rec.SeekTargets.Should().Equal(new[] { 12.0 }, "予測ロケートで着地したので 2 本目は出ない");
     }
 
     [Fact]
-    public void GapExitLanding_SmallDeficitBelowHalfSeekCost_UsesRateCatchUp()
+    public void GapExitLanding_SmallDeficitBeyondTolerance_RelocatesOnce()
     {
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
         var track = CreateTrack(Guid.NewGuid());
@@ -550,8 +569,11 @@ public class ContinueOnTrackCoordinatorTests
         rec.GapExit = GapExitActionType.ResumePlayback;
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
         rec.SeekTargets.Should().Equal(10.0);
+        ObserveGapExitLanding(service, 10.0);
 
-        // 出口直後の不足 0.3 秒（0.5× 1.0 秒以下）→ シークは誤差を増やすだけなので速度補正に任せる。
+        // D37-d（v0.5.4 B6b 追補 3 で書き換え）: 旧は「出口直後の不足 0.3 秒（0.5 × 既定 1.0 秒以下）は
+        // シークせず速度補正」。既定の 1.0 秒は削除し、学習前の閾値は tol（0.24）。0.3 秒は 1 回 relocate
+        // し、着地を待つ間は次を出さない（前進しないシークの連鎖にしない）。
         rec.GapExit = GapExitActionType.None;
         rec.TimePos = (0, 9.9);
         for (int i = 0; i < 4; i++)
@@ -560,12 +582,14 @@ public class ContinueOnTrackCoordinatorTests
             coordinator.Handle(OnTrack(track, 10.2), 10.2);
         }
 
-        rec.SeekTargets.Should().Equal(10.0);
+        rec.SeekTargets.Should().Equal(10.0, 10.2);
     }
 
     [Fact]
-    public void SteadyDeficit_WithinSeekCost_UsesRateCatchUp()
+    public void SteadyDeficit_BeyondTolerance_RelocatesOnce()
     {
+        // D37-b（v0.5.4 B6b 追補 3 で書き換え）: 旧は「未学習（既定 1.0 秒）以内の 0.5 秒は速度補正」。
+        // 既定の 1.0 秒は削除し、学習前の閾値は tol。0.5 秒は relocate し、着地を待つ間は次を出さない。
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
         var track = CreateTrack(Guid.NewGuid());
         var rec = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 10.0) };
@@ -573,7 +597,7 @@ public class ContinueOnTrackCoordinatorTests
 
         // 定常で 1 サンプル（許容内）を消費し、起動直後の例外を使い切る。
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
-        // 定常中の同じ大きさの不足 0.5 秒 → シークを出さず速度補正に任せる。
+        // 定常中の不足 0.5 秒（> tol 0.24）→ 1 回 relocate（学習前は先行量 0）。
         rec.TimePos = (0, 9.7);
         for (int i = 0; i < 4; i++)
         {
@@ -581,6 +605,6 @@ public class ContinueOnTrackCoordinatorTests
             coordinator.Handle(OnTrack(track, 10.2), 10.2);
         }
 
-        rec.SeekTargets.Should().BeEmpty();
+        rec.SeekTargets.Should().Equal(10.2);
     }
 }

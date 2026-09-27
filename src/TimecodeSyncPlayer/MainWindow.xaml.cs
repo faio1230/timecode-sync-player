@@ -337,9 +337,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 // v0.5.4 段 B1: UI タイマー・保持の Duplicate からの着地の状態（新しい判定）の観測用。
                 ReadPosition: ReadSyncPosition),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
-        // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードと着地窓を渡す。
+        // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードを渡す。
         _syncService.CorrectionModeSource = () => _vm.Sync.SyncCorrectionMode;
-        _syncService.CorrectionLandingActiveSource = _ltcSyncController.IsCorrectionLandingWindowActive;
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
             settingsManager.Current.Volume);
@@ -1088,7 +1087,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     MediaOutSeconds: _playlist.Current?.MediaOut?.TotalSeconds),
                 SeekTo: target => SeekTo(target),
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
-                IsNativeSeeking: IsNativeSeeking,
                 // D33: 範囲外 LTC の終端ホールド。一時停止／解除を UI 状態と一緒に反映する。
                 SetEndHold: ApplyBoundaryHold,
                 // D35-b: ホールド解除時に保留シークと保持着地のラッチを解除する。
@@ -1123,8 +1121,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     PlaybackSeconds: playbackSeconds,
                     DurationSeconds: _duration,
                     VideoFps: _fps,
-                    TimecodeFps: _ltcSyncController.LastTimecodeFps),
-                IsNativeSeeking: IsNativeSeeking));
+                    TimecodeFps: _ltcSyncController.LastTimecodeFps)));
 
     private GapEnterCoordinator CreateGapEnterCoordinator() =>
         _gapEnterCoordinator ??= new(_gapFreezeHandler, new GapEnterEffects(
@@ -1676,7 +1673,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             return;
         }
         if (_playbackApi.Seek(current + seconds).Success)
+        {
+            // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
+            _syncService.NotifyManualSeek(current + seconds);
             _playbackApi.SetPaused(_playbackControl.IsPaused);
+        }
     }
 
     void IPlaybackController.CycleSpeed()
@@ -2032,6 +2033,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         _ltcSyncController.TimelineSeek();
         bool success = SeekTo(e.TargetSeconds);
+        if (success)
+        {
+            // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
+            _syncService.NotifyManualSeek(e.TargetSeconds);
+        }
         Log.Information("Timeline seek target={Target:F3} trackIndex={TrackIndex} success={Success}",
             e.TargetSeconds, e.TrackIndex, success);
     }
@@ -2843,6 +2849,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _ltcSyncController.CancelPendingSync("seekbar-commit");
         _vm.Player.SeekBarValue = commit.SliderValue;
         bool success = SeekTo(commit.TargetSeconds);
+        if (success)
+        {
+            // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
+            _syncService.NotifyManualSeek(commit.TargetSeconds);
+        }
         _playbackApi.TryGetTimePos(out double timePos);
         Log.Information(
             "Seek command sent source={Source} value={SliderValue:F6} duration={Duration:F3} target={Target:F3} success={Success} immediateTimePos={TimePos:F3}",
