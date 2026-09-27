@@ -55,17 +55,8 @@ public class SingleModeSyncCoordinatorTests
 
         nativeSeeking = false;
         playback = 11; // A completed seek outside the old target window can now be evaluated.
-        // D37-b: セトル窓内 → 時間切れ → 位置が安定するまで（3 サンプル）判定しない。
-        coordinator.Apply(30).Should().Be(SyncRequestResult.Deferred);
-        for (int i = 1; i <= 4; i++)
-        {
-            clock.Advance(TimeSpan.FromMilliseconds(100));
-            playback += 0.1;
-            coordinator.Apply(30).Should().Be(SyncRequestResult.Deferred, $"位置の再確認中 {i} サンプル目");
-        }
-        // 再確認が完了した次のフレームで、新しい要求（30）が発行される。
-        clock.Advance(TimeSpan.FromMilliseconds(100));
-        playback += 0.1;
+        // v0.5.4 段 B / 門 8 / §9-2: 遠い要求は着地待ちの目標を置き換え、その場でシークする
+        // （捨てた後に古い位置で判定する隙間を作らない。再確認の 3 サンプルは畳んだ）。
         coordinator.Apply(30).Should().Be(SyncRequestResult.Complete);
         seekTargets.Should().Equal(30);
         service.SeekState.TargetSeconds.Should().Be(30);

@@ -188,17 +188,17 @@ public sealed class ScenarioGateGuardTests
         h.Ltc.Normal(25.0, TimeSpan.FromMilliseconds(400));   // pending からも現在位置からも 4×tol 超
 
         RunFor(h, clock, 80);
-        h.SyncService.SeekState.HasPendingSeek.Should().BeFalse(
-            "D38 (b): 遠い要求は到達不能な pending を捨てる（タイムアウトを待たない）");
+        // v0.5.4 段 B / 門 8 / §9-2: 前の着地待ちを捨てずに目標を置き換え、その場でシークを出す。
+        sink.Count("pending-replace").Should().BeGreaterThanOrEqualTo(1, "門 8: 遠い要求は目標を置き換える");
         sink.Count("pending-timeout").Should().Be(0, "2 秒のタイムアウトを待たない");
-        ScenarioMetrics.SeekCount(h).Should().Be(0, "捨てた後も再確認（門 11）とゲート（門 13）を通るまで出さない");
-        h.SyncService.IsPlaybackPositionUsable.Should().BeFalse("前提: 再確認中");
-
-        RunFor(h, clock, 800);
-        sink.Count("trust-reacquire").Should().Be(1, "門 11: 安定 3 サンプルで判定を再開する");
-        Seeks(h).Should().ContainSingle("再開後に 25 秒の要求へ 1 回だけ着地する")
+        Seeks(h).Should().ContainSingle("置き換えた目標へその場で 1 回着地する")
             .Which.AtMilliseconds.Should().BeGreaterThan(requestedAt);
         Seeks(h)[0].Value.Should().BeApproximately(25.0, 0.5);
+        h.SyncService.SeekState.LastLanding!.Value.TargetSeconds.Should().BeApproximately(25.0, 0.5,
+            "置き換えた目標へ着地した（配信の事象。ハーネスは即時配信）");
+
+        RunFor(h, clock, 300);
+        sink.Count("trust-reacquire").Should().Be(0, "門 11 の再確認は畳んだ（着地の事象で取る）");
         Report("G5/G12(far)", h, sink);
     }
 
@@ -232,7 +232,43 @@ public sealed class ScenarioGateGuardTests
             "D38 (a) / 段 B §9-7-1: 保持の Duplicate だけでも着地を観測して確定する（現行は cooldown 200ms 込み）");
         h.SyncService.IsPlaybackPositionUsable.Should().BeTrue("着地で位置の信頼が戻る");
         Seeks(h).Should().BeEmpty("着地の観測はシークを出さない");
+
+        // 段 B1: 新しい判定（着地の状態）も、LTC のフレームの経路と独立に観測される（§9-7 の 1）。
+        h.SyncService.SeekState.LandingPhase.Should().Be(TimecodeSyncLandingPhase.Following);
+        h.SyncService.SeekState.LastLanding.Should().NotBeNull("配信の世代と位置で着地した");
+        h.SyncService.SeekState.LastLanding!.Value.DelaySeconds.Should().BeLessThan(0.2,
+            "着地は配信の最初のフレームで確定する（旧 門 6 の 200ms の cooldown を含まない）");
+        h.SyncService.SeekState.LandingFirstFrameOutsideWindowCount.Should().Be(0);
+        sink.Count("new-landing").Should().Be(1, "着地がログに出る");
         Report("G6(held landing)", h, sink);
+    }
+
+    [Fact]
+    public void G6_FirstNewGenerationFrameOutsideTheWindow_IsCounted()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(lossMode: LtcSignalLossMode.RunThrough);
+        using var sink = new ScenarioLogSink(clock);
+        h.AddTrack("A", 0, 30);
+        h.ManualPlay();
+        h.AdvancePlayback(1.0);
+
+        h.Ltc.Normal(1.0, TimeSpan.FromMilliseconds(200));
+        RunFor(h, clock, 200);
+
+        // 着地の遅れの後、目標から離れた位置のフレームが新しい世代として配信される型（§9-8 の (c)）。
+        h.SyncService.ReportSeekSent(10.0);
+        h.Playback.SeekOvershootSeconds = 3.0;
+        h.Playback.SeekLandingDelaySeconds = 0.05;
+        h.Playback.Seek(10.0);
+        h.Ltc.Duplicate(10.0, TimeSpan.FromMilliseconds(200));
+        RunFor(h, clock, 80);
+
+        sink.Count("landing-first-frame-outside-window").Should().Be(1,
+            "新しい世代の最初のフレームが着地の窓の外（shim の通知が要るかの材料）");
+        h.SyncService.SeekState.LandingFirstFrameOutsideWindowCount.Should().Be(1);
+        h.SyncService.SeekState.LandingPhase.Should().Be(TimecodeSyncLandingPhase.WaitingForLanding,
+            "窓の外のフレームでは着地にしない");
+        Report("G6(outside window)", h, sink);
     }
 
     // ---- 門 10 の備考（TSP-Fable のレビュー）: シーク中に rate.instant を出さない ----
@@ -267,10 +303,10 @@ public sealed class ScenarioGateGuardTests
         Report("G10(rate)", h, sink);
     }
 
-    // ---- 門 7・11: 着地しないシークは 2 秒で解除し、安定 3 サンプルで再開する ----
+    // ---- 門 7（畳み後）: 着地しないシークは安全の時間切れ（3 秒）で解除し、次のサンプルで再開する ----
 
     [Fact]
-    public void G7_G11_UnreachablePending_TimesOutInTwoSecondsAndResumesAfterThreeStableSamples()
+    public void G7_G11_UnreachablePending_TimesOutInThreeSecondsAndResumesWithoutReacquire()
     {
         (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
         using var sink = new ScenarioLogSink(clock);
@@ -284,24 +320,26 @@ public sealed class ScenarioGateGuardTests
         // 目標 10.0 に着地しないシーク（位置は 1:1 で進み、目標の窓に入らない）。
         h.SyncService.ReportSeekSent(10.0);
         long sentAt = clock.MonotonicMilliseconds;
-        h.Ltc.Duplicate(9.8, TimeSpan.FromMilliseconds(2_200));   // pending の目標の近く（置き換えは起きない）
-        h.Ltc.Normal(9.8, TimeSpan.FromMilliseconds(1_600));      // 時間切れの後、再確認を進める有効フレーム
+        h.Ltc.Duplicate(9.8, TimeSpan.FromMilliseconds(2_200));   // 着地待ちの目標の近く（置き換えは起きない）
+        h.Ltc.Normal(9.8, TimeSpan.FromMilliseconds(1_600));      // 時間切れの後、判定を進める有効フレーム
 
-        RunUntil(h, clock, sentAt + 1_800);
-        h.SyncService.SeekState.HasPendingSeek.Should().BeTrue("前提: 2 秒前はまだ保留");
-        ScenarioMetrics.SeekCount(h).Should().Be(0, "未信頼と保留の間はシークを出さない");
+        RunUntil(h, clock, sentAt + 2_000);
+        h.SyncService.SeekState.HasPendingSeek.Should().BeTrue(
+            "前提: 3 秒前はまだ着地待ち（旧の 2 秒では解けない。D3 の張り付いた保留の型）");
+        ScenarioMetrics.SeekCount(h).Should().Be(0, "着地待ちの間はシークを出さない");
 
-        long deadline = sentAt + 3_000;
+        long deadline = sentAt + 4_000;
         while (h.SyncService.SeekState.HasPendingSeek && clock.MonotonicMilliseconds < deadline)
             h.AdvanceMilliseconds(40);
-        h.SyncService.SeekState.HasPendingSeek.Should().BeFalse("門 7: 2 秒で保留を解除する");
-        sink.Count("pending-timeout").Should().Be(1);
+        h.SyncService.SeekState.HasPendingSeek.Should().BeFalse(
+            "安全の時間切れ（3 秒）で着地待ちを解く（D3 の型が解けることの主張）");
+        sink.Count("landing-safety-timeout").Should().Be(1);
+        sink.Count("pending-timeout").Should().Be(1, "旧 G7 の計測名でも 1 回");
 
         RunFor(h, clock, 700);
-        sink.Count("trust-reacquire").Should().Be(1, "門 11: 時間切れの後は安定 3 サンプルで再開する");
-        sink.GateEvents.Single(e => e.Name == "trust-reacquire").Message.Should().Contain("samples=3");
+        sink.Count("trust-reacquire").Should().Be(0, "門 11 の再確認（安定 3 サンプル）は畳んだ");
         Seeks(h).Should().ContainSingle("再開後は要求へ 1 回だけ着地する");
-        Seeks(h)[0].AtMilliseconds.Should().BeGreaterThan(sentAt + 2_000, "タイムアウトの前には出さない");
+        Seeks(h)[0].AtMilliseconds.Should().BeGreaterThan(sentAt + 3_000, "時間切れの前には出さない");
         Seeks(h)[0].Value.Should().BeInRange(9.8, 11.0);
         Report("G7/G11", h, sink);
     }
@@ -309,8 +347,10 @@ public sealed class ScenarioGateGuardTests
     // ---- 門 9: 着地直後の同じところへの再シークは 500ms 抑止する ----
 
     [Fact]
-    public void G9_JustAfterLanding_AReSeekToTheSamePlaceIsSuppressedFor500ms()
+    public void G9_JustAfterLanding_AReSeekToTheSamePlaceIsNotIssued()
     {
+        // D7-a: 着地直後の同じ場所への再シーク。旧は門 9 の 500ms で隠していた。畳んだ後は
+        // 「着地した位置が目標の近くなら、着地の直後に同じ場所へ再シークしない」を主張する。
         (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
         using var sink = new ScenarioLogSink(clock);
         h.AddTrack("A", 0, 30);
@@ -322,23 +362,18 @@ public sealed class ScenarioGateGuardTests
 
         h.Ltc.Normal(10.0, TimeSpan.FromMilliseconds(800));
         RunUntilSeeks(h, clock, 1);
-        h.ManualPause();   // 着地の直後に止めて、位置を着地点（10.0 付近）に保つ
+        // 着地を観測してから、同じ場所（目標 10.0 の近く）の LTC を続ける。
+        RunFor(h, clock, 300);
+        h.SyncService.SeekState.LastLanding.Should().NotBeNull("前提: 着地した（配信の事象）");
+        ScenarioMetrics.SeekCount(h).Should().Be(1, "着地の直後に同じ場所へ再シークしない（D7-a）");
+        sink.Count("post-landing-seek").Should().Be(0, "着地から 500ms 以内の同期シークは 0（D7-a の計測）");
 
-        long settleDeadline = clock.MonotonicMilliseconds + 3_000;
-        while (sink.Count("seek-settled") == 0 && clock.MonotonicMilliseconds < settleDeadline)
-            h.AdvanceMilliseconds(40);
-        sink.Count("seek-settled").Should().Be(1, "前提: 着地した");
-        long settledAt = sink.GateEvents.First(e => e.Name == "seek-settled").AtMilliseconds;
-
-        h.Ltc.Normal(11.0, TimeSpan.FromMilliseconds(800));
-        RunUntil(h, clock, settledAt + 450);
+        // 別の場所へ動けば要求は通る（抑止ではない）。速度補正の範囲（1 秒）を超える差にする。
+        h.Ltc.Normal(12.0, TimeSpan.FromMilliseconds(800));
+        RunFor(h, clock, 800);
+        ScenarioMetrics.SeekCount(h).Should().Be(2, "別の場所への要求は通る");
+        Seeks(h)[1].Value.Should().BeGreaterThan(11.4);
         Report("G9", h, sink);
-        ScenarioMetrics.SeekCount(h).Should().Be(1, "着地から 500ms は近い目標への再シークを出さない（門 9）");
-        sink.Count("post-settle-suppress").Should().BeGreaterThan(0, "門 9 の抑止がログに出ている");
-
-        RunUntil(h, clock, settledAt + 900);
-        ScenarioMetrics.SeekCount(h).Should().Be(2, "500ms を過ぎたら要求は通る");
-        Seeks(h)[1].Value.Should().BeGreaterThan(10.4);
     }
 
     // ---- 門 14: シークのデバウンス（消す候補。13 だけで足りるかを測るための場面） ----

@@ -133,6 +133,9 @@ internal sealed class ContinueOnTrackCoordinator
             _fileLoadStabilityLogState.Reset();
 
             SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
+            // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する
+            // （LTC のフレームの経路に依らない観測は UI タイマー・保持の Duplicate が担う。§9-7 の 1）。
+            _syncService.ObserveLandingState(read, state.VideoFps, state.TimecodeFps);
             SyncDecision decision = _syncService.EvaluateDecision(mediaPos, state, positionSample);
             // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
             // D38 (b): 未信頼の要求の目標は、EvaluateDecision が pending の破棄（門 8）に使う
@@ -163,7 +166,11 @@ internal sealed class ContinueOnTrackCoordinator
 
             bool success = _effects.SeekTo(seekPlan.TargetSeconds);
             if (success)
+            {
                 _syncService.ReportSeekSent(seekPlan.TargetSeconds);
+                // v0.5.4 段 B2 の計測: 着地から 500ms 以内の同期シーク（旧 門 9 が隠していた量）。
+                _syncService.NotePostLandingSeekIssued(seekPlan.TargetSeconds);
+            }
             Log.Information(
                 "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success}",
                 ltcSeconds, playbackSeconds, seekPlan.TargetSeconds,

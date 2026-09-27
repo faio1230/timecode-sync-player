@@ -68,7 +68,9 @@ public sealed class V053LoadPathTests
         f.PlaybackApi.Loads.Should().Contain(load =>
             load.Path == "C:/prev.mp4" && load.StartSeconds == 4.96 && load.Paused,
             "ギャップの直前トラック読み込みは一時停止の位置つきロード");
-        f.PendingSeek.Should().BeFalse("段 3g: ギャップの読み込みの口がシークの保留を捨てる");
+        f.PendingSeek.Should().BeTrue(
+            "段 B: ギャップの読み込みも開始位置つきの読み込みなので、その読み込みの世代の着地待ちに入る" +
+            "（v0.5.4 段 B で positionUntrusted と pendingSeek が 1 つの状態になった）");
         f.PositionUntrusted.Should().BeTrue(
             "段 3g の設計は positionUntrusted を「残す」（消すとギャップ明けの EvaluateDecision が" +
             "着地前に位置を使い、NotifyLanding の前提が変わる）");
@@ -89,7 +91,9 @@ public sealed class V053LoadPathTests
         f.PlaybackApi.Loads.Should().Contain(load =>
             load.Path == "C:/clip.mp4" && load.StartSeconds == 9.9 && load.Paused,
             "Freeze の取り込みの読み直しは一時停止の位置つきロード");
-        f.PendingSeek.Should().BeFalse("段 3g: ギャップの読み込みの口がシークの保留を捨てる");
+        f.PendingSeek.Should().BeTrue(
+            "段 B: ギャップの読み込みも開始位置つきの読み込みなので、その読み込みの世代の着地待ちに入る" +
+            "（v0.5.4 段 B で positionUntrusted と pendingSeek が 1 つの状態になった）");
         f.PositionUntrusted.Should().BeTrue(
             "段 3g の設計は positionUntrusted を「残す」（消すとギャップ明けの EvaluateDecision が" +
             "着地前に位置を使い、NotifyLanding の前提が変わる）");

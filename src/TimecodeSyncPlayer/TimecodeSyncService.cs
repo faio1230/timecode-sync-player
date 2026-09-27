@@ -35,6 +35,8 @@ public sealed class TimecodeSyncService
     private DateTime _lastSyncSeekAt = DateTime.MinValue;
     // v0.5.2 段 2e: 読み込みの状態（ロード中／解除の回収待ち）。
     private readonly FileLoadState _fileLoad = new();
+    // v0.5.4 段 B2: 着地待ちの決着（Settled/TimedOut/Superseded）を 1 回だけ Information に残す。
+    private TimecodeSyncSeekPendingStatus _lastLoggedSeekStatus = TimecodeSyncSeekPendingStatus.None;
     private SyncActionType _lastLoggedSyncAction = SyncActionType.None;
     private bool _lastLoggedDefaultVideoFps;
     private bool _lastLoggedDefaultTimecodeFps;
@@ -100,20 +102,28 @@ public sealed class TimecodeSyncService
         }
 
         // D37-b: シーク中・着地未確認の間は位置を使った判定をしない。
-        // v0.5.4 U4: A（着地の状態）の 1 つの条件（着地を待っている間）で止める（門 10・12）。
+        // v0.5.4 段 B: A（着地の状態）の 1 つの条件（着地を待っている間）で止める（門 10・12）。
         // フェーズ 2: 評価位置があれば、その区間も配信 PTS 基準で評価を続ける
         // （シーク中はクエリ値が目標で凍結し誤差 0 に見えるが、評価位置は実際に育つ）。
         // 評価位置が無いとき（旧 DLL・世代不一致で `_ex` が失敗）は従来どおり抑制する。
         if (_seekState.IsWaitingForLanding && !(_positionFeedbackEnabled && hasEvalPosition))
         {
-            if (_seekState.IsReacquiring)
-                _seekState.ObservePlaybackPosition(state.PlaybackSeconds, NowSeconds());
             _engine.RecordShadow(ltcSeconds, state, "position-untrusted");
             SyncDecision untrusted = _engine.WhilePositionUntrusted(ltcSeconds, state);
-            // D38 (b): 未信頼でも、離れた新しい要求なら到達不能な pending を捨てる
-            // （タイムアウトを待たず、再確認とゲートを通してからシークする）。
-            if (untrusted.RequestedTargetSeconds is double requestedTarget)
-                SupersedeUnreachablePending(requestedTarget, untrusted.ToleranceSeconds, state.PlaybackSeconds);
+            // v0.5.4 段 B / 門 8・§9-2: 未信頼でも、離れた新しい要求なら着地待ちの目標を置き換え、
+            // その場ですぐシークを出す（位置は使わないまま、同じ手順で新しい着地待ちに入る）。
+            // 13 のゲートと 15 の速度補正は通さない（古い位置で判定・補正が走る隙間を作らない）。
+            if (_seekState.HasPendingReplacement)
+                return ReplacementSeekDecision(_seekState.TargetSeconds, state, untrusted);
+            if (untrusted.RequestedTargetSeconds is double requestedTarget &&
+                _seekState.ReplaceWaitTarget(requestedTarget, untrusted.ToleranceSeconds,
+                    state.PlaybackSeconds, _timeProvider.GetUtcNow().UtcDateTime))
+            {
+                Serilog.Log.Information(
+                    "Timecode sync pending \"Superseded\" playback={Playback:F3} tolerance={Tolerance:F4}",
+                    state.PlaybackSeconds, untrusted.ToleranceSeconds);
+                return ReplacementSeekDecision(requestedTarget, state, untrusted);
+            }
             return untrusted;
         }
 
@@ -233,45 +243,60 @@ public sealed class TimecodeSyncService
     /// <summary>D27-b: 回収待ちのロード解除があるか。</summary>
     public bool HasPendingFileLoadRelease => _fileLoad.HasPendingRelease;
 
+    /// <summary>
+    /// v0.5.4 段 B: 着地待ちの間は新しいシークを抑止し（門 5・10・12）、遠い新要求では着地待ちを
+    /// 捨てる（門 8）。決着（着地・時間切れ・捨てた）は 1 回だけ Information に残す。
+    /// </summary>
     public bool ShouldSuppressSeek(double playbackSeconds, double toleranceSeconds,
         double requestedTargetSeconds = double.NaN)
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
-
-        // v0.5.4 U1: 門 17（ロード中の抑止）を消した。呼び出し側の TryMarkFileLoaded が
-        // 先に止めるためこの分岐には到達せず、5 秒の安全タイムアウトは 18 側（TryMarkFileLoaded）に残す。
         bool suppress = _seekState.ShouldSuppressSeek(playbackSeconds, toleranceSeconds, now,
             requestedTargetSeconds);
 
-        if (_seekState.LastStatus is TimecodeSyncSeekPendingStatus.Settled or TimecodeSyncSeekPendingStatus.TimedOut)
+        TimecodeSyncSeekPendingStatus status = _seekState.LastStatus;
+        if (status != _lastLoggedSeekStatus &&
+            status is TimecodeSyncSeekPendingStatus.Settled or TimecodeSyncSeekPendingStatus.TimedOut or
+                TimecodeSyncSeekPendingStatus.Superseded)
         {
             Serilog.Log.Information(
                 "Timecode sync pending {Status} playback={Playback:F3} tolerance={Tolerance:F4}",
-                _seekState.LastStatus, playbackSeconds, toleranceSeconds);
+                status, playbackSeconds, toleranceSeconds);
         }
-        else if (suppress && _seekState.HasPendingSeek &&
-                 _seekState.LastStatus == TimecodeSyncSeekPendingStatus.Pending)
-        {
-            // v0.5.4 段 0: 保留によるシーク抑止（門 5）を数える（Single は既存の Debug に加えて全経路で残す）。
-            Serilog.Log.Debug("sync.gate pending-suppress playback={Playback:F3} target={Target:F3}",
-                playbackSeconds, _seekState.TargetSeconds);
-        }
-
-        // v0.5.4 U4: 保留の決着（着地・時間切れ）は A の状態遷移そのものが位置の信頼へ反映する
-        // （BeginSeek / MarkPositionLanded / RequirePositionReacquire）。ここでは何もしない。
+        _lastLoggedSeekStatus = status;
         return suppress;
     }
 
     /// <summary>
-    /// D38 (a): 同期を適用しないフレーム（保持の Duplicate など）でも、保留中のシークの着地判定を
-    /// 行う。判定は位置の信頼の回復（A の着地の遷移）にだけ効き、シークは出さない（戻り値も使わない）。
+    /// v0.5.4 段 B: 位置サンプルで着地の状態（A）を観測する。LTC のフレームの経路とは独立に、
+    /// 位置を照会するすべての場所（保持の Duplicate、UI タイマー、描画の tick）から呼ぶ。
     /// </summary>
-    public void ObservePendingSeekLanding(double playbackSeconds, double toleranceSeconds)
+    public void ObserveLandingState(in PlaybackPositionSample sample, double toleranceSeconds)
+        => _seekState.ObserveLandingSample(
+            sample, toleranceSeconds, _timeProvider.GetUtcNow().UtcDateTime);
+
+    /// <summary>
+    /// v0.5.4 段 B: 同じ照会の結果（<see cref="SyncPositionRead"/>）から着地の状態を観測する。
+    /// 位置を照会したすべての場所が、判定の前にこれを呼ぶ。
+    /// </summary>
+    internal void ObserveLandingState(in SyncPositionRead read, double videoFps, double timecodeFps)
     {
-        if (!_seekState.HasPendingSeek)
+        if (!read.Succeeded || read.Sample is not { } sample)
             return;
-        _ = ShouldSuppressSeek(playbackSeconds, toleranceSeconds);
+        ObserveLandingState(sample, SyncDecisionEngine.ToleranceSeconds(videoFps, timecodeFps));
     }
+
+    /// <summary>
+    /// v0.5.4 段 B2 の計測: 着地から 500ms 以内に出た同期シークを数える（門 9 の代替の物差し）。
+    /// </summary>
+    public void NotePostLandingSeekIssued(double targetSeconds)
+        => _seekState.NotePostLandingSeekIssued(targetSeconds, _timeProvider.GetUtcNow().UtcDateTime);
+
+    /// <summary>
+    /// v0.5.4 段 B2 の計測: 着地から 500ms 以内に出た速度補正（rate.instant）を数える。
+    /// </summary>
+    public void NotePostLandingRateApplied(double rate)
+        => _seekState.NotePostLandingRateApplied(rate, _timeProvider.GetUtcNow().UtcDateTime);
 
     public bool IsDebounced()
     {
@@ -332,8 +357,9 @@ public sealed class TimecodeSyncService
         SyncLifecycle.Record(SyncLifecycleEvent.GapFreezeLoad, source);
         _fileLoadEpoch++;
         _fileLoad.ClearReleasePending();
-        _seekState.Clear();
-        _seekState.ForgetLastSettled();
+        // v0.5.4 段 B: 開始位置つきの読み込みなので、その読み込みの世代の着地待ちに入る
+        // （位置は最初のフレームの配信まで使わない。18 を畳む方向。§9-7-3）。
+        _seekState.BeginLoadWait(_timeProvider.GetUtcNow().UtcDateTime);
     }
 
     /// <summary>
@@ -347,17 +373,14 @@ public sealed class TimecodeSyncService
         {
             case SyncLifecycleEvent.FileLoad:
                 _fileLoad.ClearReleasePending();
-                _seekState.Clear();                    // 古い保留シーク状態をクリア（2.1 fix）
-                // v0.5.3 段 3f: 直前の着地の記録も忘れる（前のファイルの着地目標で
-                // 0.5 秒抑止しない。§6 の 10）。
-                _seekState.ForgetLastSettled();
                 // D37-a: ロードで位置が飛ぶため、粗い判定のゲート履歴を切る。
                 _engine.ResetSeekGate();
                 // D37-b: 素材が変わるので着地時間の学習を捨てる。保留はクリア済みなので位置は使える。
                 _seekState.ResetLearning();
                 _publishedSeekCostSeconds = double.NaN;
-                // v0.5.4 U4: 素材が変わるので位置の信頼も初期化する（A が持つ）。
-                _seekState.ResetPositionTrust();
+                // v0.5.4 段 B: 素材が変わるので、着地待ちと着地の記録を初期化する（§6 の 10）。
+                _seekState.Clear();
+                _seekState.ResetLandingState();
                 // 0.4.5-A: 素材が変わるので、配信 PTS の基準と実測レートを捨てる。
                 _positionFeedback.Reset();
                 break;
@@ -436,11 +459,11 @@ public sealed class TimecodeSyncService
 
     public void ClearSeekState()
     {
-        _seekState.Clear();
         // D37-a: 保留の破棄・手動移動の後はゲートの系列を切る。
         _engine.ResetSeekGate();
-        // D37-b: 保留を破棄したので位置は使える（着地の確認は要求しない。v0.5.4 U4: A の状態）。
-        _seekState.ResetPositionTrust();
+        // v0.5.4 段 B: 保留を外から破棄したので、着地待ちと着地の記録も初期化する。
+        _seekState.Clear();
+        _seekState.ResetLandingState();
     }
 
     /// <summary>
@@ -520,19 +543,14 @@ public sealed class TimecodeSyncService
     }
 
     /// <summary>
-    /// D38 (b): 未信頼のフレームで、到達不能な pending（要求が目標からも現在位置からも離れている）
-    /// を捨てる。捨てた後は位置の再確認（3 サンプル）とゲートを通ってからシークする。
-    /// v0.5.4 U4: 再確認は A の遷移（<c>RequirePositionReacquire</c>）が入れる。
+    /// v0.5.4 段 B: 遠い新要求の置き換えのシーク（門 8）。13 のゲートと 15 の速度補正を通さず、
+    /// その場で出す決定を作る。
     /// </summary>
-    private void SupersedeUnreachablePending(
-        double requestedTargetSeconds, double toleranceSeconds, double playbackSeconds)
-    {
-        if (!_seekState.DiscardIfUnreachable(requestedTargetSeconds, toleranceSeconds, playbackSeconds))
-            return;
-        Serilog.Log.Information(
-            "Timecode sync pending \"Superseded\" playback={Playback:F3} tolerance={Tolerance:F4}",
-            playbackSeconds, toleranceSeconds);
-    }
+    private static SyncDecision ReplacementSeekDecision(
+        double targetSeconds, SyncPlaybackState state, SyncDecision untrusted) => new(
+        SyncActionType.Seek, targetSeconds, targetSeconds - state.PlaybackSeconds,
+        untrusted.ToleranceSeconds, untrusted.VideoFpsUsed, untrusted.TimecodeFpsUsed,
+        untrusted.UsedDefaultVideoFps, untrusted.UsedDefaultTimecodeFps);
 
     private void LogDecisionIfNeeded(SyncDecision decision, double ltcSeconds, double playbackSeconds)
     {
