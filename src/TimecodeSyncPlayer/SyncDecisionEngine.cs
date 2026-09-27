@@ -21,6 +21,9 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     private readonly SeekDecisionGate _seekGate = new();
     private bool _rejectedSampleLogged;
     private bool _gatedSeekLogged;
+    // v0.5.4 U7: 確認済みの Jump（門 4）に続く決定 1 回だけ、ゲートの窓を待たずにシークさせる印。
+    // 次の Decide で消費する（ResetSeekGate では系列を切るときに一緒に捨てる）。
+    private bool _seekGateBypassOnce;
     // 起動後の最初の 1 サンプルだけは履歴が無い。追従開始の大きなずれに即応するため、
     // この 1 回だけ瞬間値で判定する（ResetSeekGate では戻さない。シーク後・ロード後まで
     // 例外を広げると、位置が飛んだ直後の 1 サンプルで連鎖が始まる）。
@@ -65,8 +68,12 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         _seekGate.Reset();
         _rejectedSampleLogged = false;
         _gatedSeekLogged = false;
+        _seekGateBypassOnce = false;
         ClearRateCatchUp();
     }
+
+    /// <summary>v0.5.4 U7: 確認済みの Jump に続く決定 1 回だけ、ゲート（門 13）を通さずにシークさせる。</summary>
+    public void BypassSeekGateOnce() => _seekGateBypassOnce = true;
 
     /// <summary>D37-b: シーク 1 回の実測所要を公開する（0 以下は「速度補正優先なし」）。</summary>
     public void UpdateSeekCostSeconds(double seconds)
@@ -114,6 +121,10 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         double toleranceSeconds = ToleranceSeconds(fps.VideoFps, fps.TimecodeFps, _options.ToleranceFrames);
         // 計測専用（出力トレース有効時のみ）。既定経路では読み取り 1 回だけで、文字列は作らない。
         bool traceEnabled = OutputTrace.Current.IsEnabled;
+        // v0.5.4 U7: 確認済みの Jump（門 4）に続く決定 1 回だけ、ゲートの窓を待たずにシークさせる
+        // （13 は連続追従中の補正の判断にだけ残す）。この呼び出しで消費する。
+        bool bypassGate = _seekGateBypassOnce;
+        _seekGateBypassOnce = false;
 
         if (!state.SyncEnabled || !state.HasCurrentTrack || state.IsSeeking)
         {
@@ -158,7 +169,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         double ltcGranularitySeconds = 1.0 / fps.TimecodeFps;
         SeekDecisionGate.Result gate = _seekGate.Observe(
             delta, toleranceSeconds, _clockSeconds(), ltcGranularitySeconds);
-        if (gate.Rejected)
+        if (gate.Rejected && !bypassGate)
         {
             LogRejectedSample(gate);
             if (traceEnabled)
@@ -199,7 +210,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             return SyncDecision.NoneWith(fps, toleranceSeconds, rateCatchUp: true);
         }
 
-        if (!gate.ShouldSeek && !gateWasCold)
+        if (!gate.ShouldSeek && !gateWasCold && !bypassGate)
         {
             LogGatedSeek(gate, toleranceSeconds);
             if (traceEnabled)

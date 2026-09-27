@@ -454,11 +454,15 @@ internal sealed class LtcSyncController
             _rate.MarkRestored();
     }
 
-    private void RequestSync(double rawSeconds, long frameEndTimestamp, string source = "frame")
-        => ApplySyncRequest(EffectiveSeconds(rawSeconds, frameEndTimestamp, source), rawSeconds, frameEndTimestamp);
+    /// <summary>v0.5.4 U7: <paramref name="fromConfirmedJump"/> は門 4 で確認済みの Jump の要求か。</summary>
+    private void RequestSync(double rawSeconds, long frameEndTimestamp, string source = "frame",
+        bool fromConfirmedJump = false)
+        => ApplySyncRequest(EffectiveSeconds(rawSeconds, frameEndTimestamp, source), rawSeconds,
+            frameEndTimestamp, fromConfirmedJump);
 
-    private void RequestSyncEffective(double effectiveSeconds)
-        => ApplySyncRequest(effectiveSeconds, pendingRawSeconds: 0, pendingFrameEndTimestamp: 0);
+    private void RequestSyncEffective(double effectiveSeconds, bool fromConfirmedJump = false)
+        => ApplySyncRequest(effectiveSeconds, pendingRawSeconds: 0, pendingFrameEndTimestamp: 0,
+            fromConfirmedJump);
 
     /// <summary>
     /// 同期要求を 1 回評価し、Deferred なら再送用に「評価した値」を丸ごと保持する。
@@ -466,14 +470,17 @@ internal sealed class LtcSyncController
     /// age を取り直す（Jump・保持・再適用の要求を、古いフレームの生値で上書きしない）。
     /// D37-a: ゲートが Seek を保留している間も、この保留が正しい値で再送される。
     /// </summary>
-    private void ApplySyncRequest(double effectiveSeconds, double pendingRawSeconds, long pendingFrameEndTimestamp)
+    private void ApplySyncRequest(double effectiveSeconds, double pendingRawSeconds, long pendingFrameEndTimestamp,
+        bool fromConfirmedJump = false)
     {
         // U1 計測: コンボ変更・フレーム受信からギャップ状態再評価までの所要。
         long started = Stopwatch.GetTimestamp();
-        SyncRequestResult result = ApplySync(effectiveSeconds);
+        SyncRequestResult result = ApplySync(effectiveSeconds, fromConfirmedJump: fromConfirmedJump);
         if (result == SyncRequestResult.Deferred)
         {
-            _input.HoldPendingSync(effectiveSeconds, pendingRawSeconds, pendingFrameEndTimestamp);
+            // v0.5.4 U7: 確認済みの Jump の要求は、再送でもゲート 13 の迂回を持ち越す。
+            _input.HoldPendingSync(effectiveSeconds, pendingRawSeconds, pendingFrameEndTimestamp,
+                fromConfirmedJump);
         }
         else
         {
@@ -767,7 +774,8 @@ internal sealed class LtcSyncController
         _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
         Log.Information("Timecode sync: applying the confirmed Jump frame once ltc={Ltc:F3}", rawSeconds);
         _syncService.EndFollowStartLanding("ltc jump");
-        RequestSyncEffective(effectiveSeconds);
+        // v0.5.4 U7: 門 4 で確認済みの Jump の要求。続く決定 1 回は粗い判定のゲート（門 13）を通さない。
+        RequestSyncEffective(effectiveSeconds, fromConfirmedJump: true);
         ApplyCorrection(effectiveSeconds);
     }
 
@@ -1071,9 +1079,9 @@ internal sealed class LtcSyncController
             // T2: サンプル時計が有効なら、保留値は生値とフレーム終端を持ち、
             // 使う時点の age で実効値を取り直す（off は従来どおり実効値を再送する）。
             if (_sampleClockEnabled && pending.FrameEndTimestamp > 0)
-                RequestSync(pending.RawSeconds, pending.FrameEndTimestamp, "tick");
+                RequestSync(pending.RawSeconds, pending.FrameEndTimestamp, "tick", pending.FromConfirmedJump);
             else
-                RequestSyncEffective(pending.EffectiveSeconds);
+                RequestSyncEffective(pending.EffectiveSeconds, pending.FromConfirmedJump);
         }
     }
 
@@ -1257,7 +1265,8 @@ internal sealed class LtcSyncController
         Log.Information("Single mode: boundary hold released; pending seek state and held landing latch cleared");
     }
 
-    private SyncRequestResult ApplySync(double seconds, bool gapDisplayOnly = false)
+    private SyncRequestResult ApplySync(double seconds, bool gapDisplayOnly = false,
+        bool fromConfirmedJump = false)
     {
         _lastContinueFrame = null;
         LtcSyncContext state = _effects.GetContext();
@@ -1281,7 +1290,7 @@ internal sealed class LtcSyncController
                 return SyncRequestResult.Complete;
             if (state.SyncEnabled && !state.IsSeeking && _playlist.Current != null)
                 _effects.ResumeProjectRestorePause();
-            return _single().Apply(seconds);
+            return _single().Apply(seconds, fromConfirmedJump);
         }
         TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(seconds);
         string? trackName = result.Track?.Name;
@@ -1296,7 +1305,7 @@ internal sealed class LtcSyncController
                 if (gapDisplayOnly)
                     return SyncRequestResult.Complete;
                 _effects.ResumeProjectRestorePause();
-                ContinueFrameContext frame = _continue().HandleFrame(result, seconds);
+                ContinueFrameContext frame = _continue().HandleFrame(result, seconds, fromConfirmedJump);
                 _lastContinueFrame = frame;
                 if (frame.SwitchedTrack)
                 {

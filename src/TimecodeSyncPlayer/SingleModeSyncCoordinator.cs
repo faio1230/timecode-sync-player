@@ -28,7 +28,8 @@ internal sealed class SingleModeSyncCoordinator
         _effects = effects;
     }
 
-    public SyncRequestResult Apply(double ltcSeconds)
+    /// <summary>v0.5.4 U7: <paramref name="fromConfirmedJump"/> は門 4 で確認済みの Jump の要求か。</summary>
+    public SyncRequestResult Apply(double ltcSeconds, bool fromConfirmedJump = false)
     {
         // 0.4.5-A フェーズ 1: shadow は trace 有効時だけ読む（無効時は従来どおり位置を読まない）。
         bool traceEnabled = OutputTrace.Current.IsEnabled;
@@ -69,7 +70,8 @@ internal sealed class SingleModeSyncCoordinator
         if (ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state))
             return SyncRequestResult.Complete;
 
-        SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state, positionSample);
+        SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state, positionSample,
+            fromConfirmedJump);
         // None の decision は TargetSeconds=0 のため、シーク要求として渡さない（D20-b (ii)）。
         // D38 (b): 未信頼の要求の目標は、EvaluateDecision が pending の破棄（門 8）に使う
         // （ここで渡すと pending の置き換え（re-pend）が先に走り、着地の観測を失う）。

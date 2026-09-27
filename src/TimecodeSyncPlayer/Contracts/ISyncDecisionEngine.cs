@@ -21,6 +21,15 @@ public interface ISyncDecisionEngine
     }
 
     /// <summary>
+    /// v0.5.4 U7: 確認済みの Jump（門 4）に続く決定 1 回だけ、粗い判定のゲート（門 13）を
+    /// 通さずにシークさせる（13 は連続追従中の補正の判断にだけ残す）。次の <see cref="Decide"/> で
+    /// 消費される。既定実装は何もしない。
+    /// </summary>
+    void BypassSeekGateOnce()
+    {
+    }
+
+    /// <summary>
     /// D37-b: 位置を信用できないフレーム（シーク保留中・時間切れ後の再確認中）の決定。
     /// 呼び出し側は要求を Deferred のまま維持する（既定実装は None）。
     /// D38 (b): ltcSeconds から要求の目標（クランプ済み）を作り、pending の置き換え判定に使える
