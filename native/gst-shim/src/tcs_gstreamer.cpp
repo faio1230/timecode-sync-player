@@ -2696,12 +2696,24 @@ bus_loop (TcsPlayer* p)
 
 /* ---------------- pipeline lifecycle ---------------- */
 
+/* v0.5.4 (shutdown diag): when `diag` is set (destroy only), log each step
+ * that can wait (bus thread join, set_state(NULL), unref) with its elapsed
+ * time, so a slow exit shows where it stopped. Logging only; no lock is held
+ * across the LOG calls and the steps themselves are unchanged. */
 static void
-teardown_pipeline (TcsPlayer* p)
+teardown_pipeline (TcsPlayer* p, const char* diag = nullptr)
 {
+  uint64_t step_qpc = diag ? qpc_now () : 0;
   p->bus_running = false;
+  if (diag)
+    LOG ("%s: bus join begin joinable=%d", diag, p->bus_thread.joinable () ? 1 : 0);
   if (p->bus_thread.joinable ())
     p->bus_thread.join ();
+  if (diag) {
+    uint64_t now = qpc_now ();
+    LOG ("%s: bus join end elapsed_ms=%.1f", diag, qpc_diff_ms (step_qpc, now, p->qpc_freq));
+    step_qpc = now;
+  }
 
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
@@ -2735,10 +2747,27 @@ teardown_pipeline (TcsPlayer* p)
   }
   p->gop_reanchor.store (false, std::memory_order_release);
 
+  if (diag) {
+    uint64_t now = qpc_now ();
+    LOG ("%s: frames released elapsed_ms=%.1f", diag, qpc_diff_ms (step_qpc, now, p->qpc_freq));
+    step_qpc = now;
+  }
   if (p->pipeline) {
+    if (diag)
+      LOG ("%s: set_state(NULL) begin", diag);
     gst_element_set_state (p->pipeline, GST_STATE_NULL);
+    if (diag) {
+      uint64_t now = qpc_now ();
+      LOG ("%s: set_state(NULL) end elapsed_ms=%.1f", diag, qpc_diff_ms (step_qpc, now, p->qpc_freq));
+      step_qpc = now;
+    }
     gst_object_unref (p->pipeline);
     p->pipeline = nullptr;
+    if (diag)
+      LOG ("%s: pipeline unref end elapsed_ms=%.1f", diag,
+          qpc_diff_ms (step_qpc, qpc_now (), p->qpc_freq));
+  } else if (diag) {
+    LOG ("%s: no pipeline", diag);
   }
   p->demux = nullptr;
   p->ahead = nullptr;
@@ -3454,12 +3483,18 @@ tcs_player_destroy (TcsPlayer* player)
   if (!player)
     return;
   TcsPlayer* p = player;
+  /* v0.5.4 (shutdown diag): entry/exit and each step that can wait. */
+  const uint64_t destroy_qpc = qpc_now ();
+  const int64_t destroy_freq = p->qpc_freq;
+  LOG ("destroy: enter");
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->notify = nullptr;
     p->notify_user = nullptr;
   }
-  teardown_pipeline (p);
+  LOG ("destroy: notify cleared elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
+  teardown_pipeline (p, "destroy");
+  LOG ("destroy: pipeline torn down elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
   /* ring handles belong to the shim (CreateSharedHandle); close them before
    * the device goes away. The compositor's opened references stay alive. */
   if (p->ring_ready)
@@ -3469,10 +3504,13 @@ tcs_player_destroy (TcsPlayer* player)
   destroy_ring (p);
   if (p->hap_gpu) { tcs_hap_gpu_destroy (p->hap_gpu); p->hap_gpu = nullptr; }
   if (p->single_tex) p->single_tex->Release ();
+  LOG ("destroy: ring and hap released elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
   if (p->spout) {
+    LOG ("destroy: spout release begin");
     p->spout->ReleaseSender ();
     p->spout->CloseDirectX11 ();
     delete p->spout;
+    LOG ("destroy: spout release end elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
   }
   if (p->gst_dev) gst_object_unref (p->gst_dev);
   if (p->context4) p->context4->Release ();
@@ -3480,6 +3518,7 @@ tcs_player_destroy (TcsPlayer* player)
   if (p->context) p->context->Release ();
   if (p->device) p->device->Release ();
   delete p;
+  LOG ("destroy: exit elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
 }
 
 TCS_GST_API int
