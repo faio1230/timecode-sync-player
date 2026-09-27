@@ -94,6 +94,7 @@ Spout出力を使う場合は、x64版`SpoutDX.dll`も`native`フォルダーへ
 - [セットアップとビルド](docs/SETUP.md)
 - [ネイティブDLL](native/README.md)
 - [アーキテクチャ](docs/ARCHITECTURE.md)
+- [開発ロードマップ（v0.5.x〜v0.8.0）](docs/ROADMAP.md)
 - [設定リファレンス](docs/settings.md)
 - [手動検証チェックリスト](docs/verification-checklist.md)
 

@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1240" viewBox="0 0 1600 1240" role="img" aria-label="02  スレッドと映像の流れ">
+<style>text{font-family:"Yu Gothic","Meiryo","Segoe UI",sans-serif} .node:hover rect{filter:brightness(.97)}</style>
+<defs>
+<marker id="arrow-control" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3264c5"/></marker>
+<marker id="arrow-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8554c2"/></marker>
+<marker id="arrow-event" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#168399"/></marker>
+<marker id="arrow-note" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#718096"/></marker>
+</defs>
+<rect width="1600" height="1240" fill="#ffffff"/>
+<text x="40" y="52" font-size="30" font-weight="700" fill="#243349" text-anchor="start">02  スレッドと映像の流れ</text>
+<text x="40" y="87" font-size="17" font-weight="400" fill="#243349" text-anchor="start">映像テクスチャと「フレームが更新された」という通知は別経路。D3D11 の各 context は所有スレッドで使う。</text>
+<text x="1560" y="117" font-size="14" font-weight="400" fill="#64748b" text-anchor="end">v0.4.7 · a4cb181 · 2026-09-20</text>
+<path d="M40 118 h38" stroke="#3264c5" stroke-width="2.5" />
+<text x="88" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">青：制御・状態</text>
+<path d="M285 118 h38" stroke="#8554c2" stroke-width="2.5" />
+<text x="333" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">紫：映像データ</text>
+<path d="M530 118 h38" stroke="#168399" stroke-width="2.5" stroke-dasharray="7 5" />
+<text x="578" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">水色の破線：通知</text>
+<rect x="40" y="150" width="1520" height="132" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="55" y="179" font-size="17" font-weight="700" fill="#243349" text-anchor="start">音声 callback</text>
+<rect x="40" y="300" width="1520" height="132" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="55" y="329" font-size="17" font-weight="700" fill="#243349" text-anchor="start">UI / Dispatcher</text>
+<rect x="40" y="450" width="1520" height="132" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="55" y="479" font-size="17" font-weight="700" fill="#243349" text-anchor="start">GStreamer 内部</text>
+<rect x="40" y="600" width="1520" height="132" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="55" y="629" font-size="17" font-weight="700" fill="#243349" text-anchor="start">GPU worker</text>
+<rect x="40" y="750" width="1520" height="132" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="55" y="779" font-size="17" font-weight="700" fill="#243349" text-anchor="start">Spout worker</text>
+<rect x="40" y="900" width="1520" height="132" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="55" y="929" font-size="17" font-weight="700" fill="#243349" text-anchor="start">RenderSession worker</text>
+<polyline points="570,215.0 665,215.0" fill="none" stroke="#168399" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-event)" stroke-dasharray="7 5" />
+<polyline points="797.5,265 797.5,315" fill="none" stroke="#168399" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-event)" stroke-dasharray="7 5" />
+<polyline points="930,365.0 1030,365.0" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1162.5,415 1162.5,465" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1030,515.0 930,515.0" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="797.5,565 797.5,615" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="437.5,415 437.5,615" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="570,665.0 665,665.0" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="930,665.0 1030,665.0" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="1162.5,715 1162.5,765" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="1295,665.0 1335,665.0" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="1030,965.0 930,965.0" fill="none" stroke="#168399" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-event)" stroke-dasharray="7 5" />
+<g class="node"><title>LtcDecoder</title>
+<rect x="305" y="165" width="265" height="100" rx="12" fill="#ecfdf5" stroke="#148365" stroke-width="1.5"/>
+<text x="321" y="194" font-size="18" font-weight="700" fill="#243349" text-anchor="start">音声を復号</text>
+<text x="321" y="221" font-size="15" font-weight="400" fill="#243349" text-anchor="start">LtcAudioSampleProcessor</text>
+<text x="321" y="250" font-size="11.5" font-weight="500" fill="#148365" text-anchor="start">LtcDecoder</text>
+</g>
+<g class="node"><title>FrameReceived</title>
+<rect x="665" y="165" width="265" height="100" rx="12" fill="#ecfdf5" stroke="#148365" stroke-width="1.5"/>
+<text x="681" y="194" font-size="18" font-weight="700" fill="#243349" text-anchor="start">時刻イベント</text>
+<text x="681" y="221" font-size="15" font-weight="400" fill="#243349" text-anchor="start">FrameEndTimestamp を付ける</text>
+<text x="681" y="250" font-size="11.5" font-weight="500" fill="#148365" text-anchor="start">FrameReceived</text>
+</g>
+<g class="node"><title>TimelineOutputState</title>
+<rect x="305" y="315" width="265" height="100" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="321" y="344" font-size="18" font-weight="700" fill="#243349" text-anchor="start">表示状態を公開</text>
+<text x="321" y="371" font-size="15" font-weight="400" fill="#243349" text-anchor="start">最新 1 件の mailbox</text>
+<text x="321" y="400" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">TimelineOutputState</text>
+</g>
+<g class="node"><title>MainWindow / 更新予約 C を受信</title>
+<rect x="665" y="315" width="265" height="100" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="681" y="344" font-size="18" font-weight="700" fill="#243349" text-anchor="start">C｜同期と画面の更新</text>
+<text x="681" y="371" font-size="15" font-weight="400" fill="#243349" text-anchor="start">LtcSyncController</text>
+<text x="681" y="400" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">MainWindow / 更新予約 C を受信</text>
+</g>
+<g class="node"><title>GstPlaybackApi</title>
+<rect x="1030" y="315" width="265" height="100" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="1046" y="344" font-size="18" font-weight="700" fill="#243349" text-anchor="start">再生操作・状態取得</text>
+<text x="1046" y="371" font-size="15" font-weight="400" fill="#243349" text-anchor="start">shim を同期的に呼ぶ</text>
+<text x="1046" y="400" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">GstPlaybackApi</text>
+</g>
+<g class="node"><title>MainWindow</title>
+<rect x="1335" y="315" width="205" height="100" rx="12" fill="#eaf9fc" stroke="#168399" stroke-width="1.5"/>
+<text x="1351" y="344" font-size="18" font-weight="700" fill="#243349" text-anchor="start">B｜プレビューを反映</text>
+<text x="1351" y="371" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Dispatcher 経由で表示</text>
+<text x="1351" y="400" font-size="11.5" font-weight="500" fill="#168399" text-anchor="start">MainWindow</text>
+</g>
+<g class="node"><title>seq / generation</title>
+<rect x="665" y="465" width="265" height="100" rx="12" fill="#fff7ed" stroke="#bf691e" stroke-width="1.5"/>
+<text x="681" y="494" font-size="18" font-weight="700" fill="#243349" text-anchor="start">共有リング（3 枚）</text>
+<text x="681" y="521" font-size="15" font-weight="400" fill="#243349" text-anchor="start">NT 共有テクスチャ＋フェンス</text>
+<text x="681" y="550" font-size="11.5" font-weight="500" fill="#bf691e" text-anchor="start">seq / generation</text>
+</g>
+<g class="node"><title>tcs_gstreamer.dll / 自前デバイス</title>
+<rect x="1030" y="465" width="265" height="100" rx="12" fill="#fff7ed" stroke="#bf691e" stroke-width="1.5"/>
+<text x="1046" y="494" font-size="18" font-weight="700" fill="#243349" text-anchor="start">動画の復号</text>
+<text x="1046" y="521" font-size="15" font-weight="400" fill="#243349" text-anchor="start">A → フレーム更新通知を送る</text>
+<text x="1046" y="550" font-size="11.5" font-weight="500" fill="#bf691e" text-anchor="start">tcs_gstreamer.dll / 自前デバイス</text>
+</g>
+<g class="node"><title>OutputEngine.GPU</title>
+<rect x="305" y="615" width="265" height="100" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="321" y="644" font-size="18" font-weight="700" fill="#243349" text-anchor="start">表示状態を取り込む</text>
+<text x="321" y="671" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Gap・配置・世代・位置</text>
+<text x="321" y="700" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">OutputEngine.GPU</text>
+</g>
+<g class="node"><title>GStreamerSource / ComposeLayer</title>
+<rect x="665" y="615" width="265" height="100" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="681" y="644" font-size="18" font-weight="700" fill="#243349" text-anchor="start">ソース取得 → 合成</text>
+<text x="681" y="671" font-size="15" font-weight="400" fill="#243349" text-anchor="start">lease を保持して GPU 使用</text>
+<text x="681" y="700" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">GStreamerSource / ComposeLayer</text>
+</g>
+<g class="node"><title>OutputPool</title>
+<rect x="1030" y="615" width="265" height="100" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="1046" y="644" font-size="18" font-weight="700" fill="#243349" text-anchor="start">合成 pool（3 枚）</text>
+<text x="1046" y="671" font-size="15" font-weight="400" fill="#243349" text-anchor="start">完了後に最新画像を公開</text>
+<text x="1046" y="700" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">OutputPool</text>
+</g>
+<g class="node"><title>SpoutSender → SpoutDX.dll</title>
+<rect x="1030" y="765" width="265" height="100" rx="12" fill="#eaf9fc" stroke="#168399" stroke-width="1.5"/>
+<text x="1046" y="794" font-size="18" font-weight="700" fill="#243349" text-anchor="start">画像を開く → 送信</text>
+<text x="1046" y="821" font-size="15" font-weight="400" fill="#243349" text-anchor="start">別デバイス／フェンス／mutex</text>
+<text x="1046" y="850" font-size="11.5" font-weight="500" fill="#168399" text-anchor="start">SpoutSender → SpoutDX.dll</text>
+</g>
+<g class="node"><title>B → UI プレビュー更新</title>
+<rect x="1335" y="615" width="205" height="100" rx="12" fill="#eaf9fc" stroke="#168399" stroke-width="1.5"/>
+<text x="1351" y="644" font-size="18" font-weight="700" fill="#243349" text-anchor="start">全画面／プレビュー</text>
+<text x="1351" y="671" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Present ／縮小読戻し</text>
+<text x="1351" y="700" font-size="11.5" font-weight="500" fill="#168399" text-anchor="start">B → UI プレビュー更新</text>
+</g>
+<g class="node"><title>RenderThreadExecutor</title>
+<rect x="1030" y="915" width="265" height="100" rx="12" fill="#eaf9fc" stroke="#168399" stroke-width="1.5"/>
+<text x="1046" y="944" font-size="18" font-weight="700" fill="#243349" text-anchor="start">A｜更新通知を drain</text>
+<text x="1046" y="971" font-size="15" font-weight="400" fill="#243349" text-anchor="start">ConsumeUpdate を直列実行</text>
+<text x="1046" y="1000" font-size="11.5" font-weight="500" fill="#168399" text-anchor="start">RenderThreadExecutor</text>
+</g>
+<g class="node"><title>RenderUpdateScheduler</title>
+<rect x="665" y="915" width="265" height="100" rx="12" fill="#eaf9fc" stroke="#168399" stroke-width="1.5"/>
+<text x="681" y="944" font-size="18" font-weight="700" fill="#243349" text-anchor="start">UI へ更新を予約</text>
+<text x="681" y="971" font-size="15" font-weight="400" fill="#243349" text-anchor="start">C → UI へ。古い世代は除外</text>
+<text x="681" y="1000" font-size="11.5" font-weight="500" fill="#168399" text-anchor="start">RenderUpdateScheduler</text>
+</g>
+<rect x="586.5" y="190.0" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="617.5" y="205.0" font-size="13" font-weight="500" fill="#168399" text-anchor="middle">時刻通知</text>
+<rect x="822.5" y="282" width="87" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="866" y="297" font-size="13" font-weight="500" fill="#168399" text-anchor="middle">BeginInvoke</text>
+<rect x="962.0" y="340.0" width="36" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="980.0" y="355.0" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">制御</text>
+<rect x="1181.5" y="438" width="45" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1204" y="453" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">C ABI</text>
+<rect x="936.0" y="490.0" width="88" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="980.0" y="505.0" font-size="13" font-weight="500" fill="#8554c2" text-anchor="middle">デコード画像</text>
+<rect x="807.5" y="588" width="101" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="858" y="603" font-size="13" font-weight="500" fill="#8554c2" text-anchor="middle">取得・完了確認</text>
+<rect x="427.5" y="510" width="75" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="465" y="525" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">最新の状態</text>
+<rect x="586.5" y="640.0" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="617.5" y="655.0" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">合成条件</text>
+<rect x="949.0" y="640.0" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="980.0" y="655.0" font-size="13" font-weight="500" fill="#8554c2" text-anchor="middle">合成画像</text>
+<rect x="1180.0" y="738" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1211" y="753" font-size="13" font-weight="500" fill="#8554c2" text-anchor="middle">共有画像</text>
+<rect x="936.0" y="940.0" width="88" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="980.0" y="955.0" font-size="13" font-weight="500" fill="#168399" text-anchor="middle">更新通知のみ</text>
+<text x="48" y="1080" font-size="18" font-weight="400" fill="#475569" text-anchor="start">同じ英字は離れた通知経路の接続先：A＝native の更新通知、B＝プレビュー、C＝UI 更新の予約。</text>
+<text x="48" y="1120" font-size="17" font-weight="400" fill="#475569" text-anchor="start">lease＝画像の貸出権。GPU の使用完了まで返さない。generation＝古い画像・通知を見分ける番号。</text>
+<text x="48" y="1155" font-size="16" font-weight="400" fill="#475569" text-anchor="start">GStreamer 内部には streaming / bus / pump 等があるため、図の 1 行が必ず 1 本の OS スレッドとは限らない。</text>
+<text x="40" y="1224" font-size="11" font-weight="400" fill="#94a3b8" text-anchor="start">TimecodeSyncPlayer  |  現行コードの構成図  |  主要な経路を要約</text>
+</svg>
