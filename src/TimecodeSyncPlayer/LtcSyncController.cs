@@ -307,6 +307,8 @@ internal sealed class LtcSyncController
                 _input.ClearHeldReapplied();
                 _input.DiscardPendingSync();
                 _syncService.SeekState.Clear();
+                // v0.5.4 U4: 保留を外から破棄したので位置は使える（着地の確認は要求しない。A の状態）。
+                _syncService.SeekState.ResetPositionTrust();
                 _syncService.EndFollowStartLanding("boundary hold released");
                 break;
         }
@@ -889,9 +891,10 @@ internal sealed class LtcSyncController
 
         LtcSyncContext state = _effects.GetContext();
         // D37-b: シーク中・着地未確認の位置では補正を評価しない。
+        // v0.5.4 U4: A（着地の状態）の 1 つの条件（着地を待っている間）で止める（門 10）。
         if (!SyncRules.CanEvaluateCorrection(
                 state.SyncEnabled, state.IsMonitoring, state.IsPlaybackPaused, state.IsSeeking,
-                _syncService.SeekState.HasPendingSeek, _syncService.IsPlaybackPositionUsable))
+                _syncService.IsWaitingForLanding))
             return;
 
         if (_rate.RateRestorePending)

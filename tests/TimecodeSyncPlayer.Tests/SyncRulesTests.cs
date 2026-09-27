@@ -11,26 +11,23 @@ public class SyncRulesTests
             isMonitoring: true,
             isPlaybackPaused: false,
             isSeeking: false,
-            hasPendingSeek: false,
-            isPlaybackPositionUsable: true).Should().BeTrue();
+            isWaitingForLanding: false).Should().BeTrue();
 
     [Theory]
-    [InlineData(false, true, false, false, false, true)]  // syncEnabled
-    [InlineData(true, false, false, false, false, true)]  // isMonitoring
-    [InlineData(true, true, true, false, false, true)]    // isPlaybackPaused
-    [InlineData(true, true, false, true, false, true)]    // isSeeking
-    [InlineData(true, true, false, false, true, true)]    // hasPendingSeek
-    [InlineData(true, true, false, false, false, false)]  // isPlaybackPositionUsable
+    [InlineData(false, true, false, false, false)]  // syncEnabled
+    [InlineData(true, false, false, false, false)]  // isMonitoring
+    [InlineData(true, true, true, false, false)]    // isPlaybackPaused
+    [InlineData(true, true, false, true, false)]    // isSeeking
+    [InlineData(true, true, false, false, true)]    // isWaitingForLanding（v0.5.4 U4 で 1 つに）
     public void CanEvaluateCorrection_OneTermFails_ReturnsFalse(
         bool syncEnabled,
         bool isMonitoring,
         bool isPlaybackPaused,
         bool isSeeking,
-        bool hasPendingSeek,
-        bool isPlaybackPositionUsable) =>
+        bool isWaitingForLanding) =>
         SyncRules.CanEvaluateCorrection(
             syncEnabled, isMonitoring, isPlaybackPaused, isSeeking,
-            hasPendingSeek, isPlaybackPositionUsable).Should().BeFalse();
+            isWaitingForLanding).Should().BeFalse();
 
     [Fact]
     public void CanApplySync_AllTermsSatisfied_ReturnsTrue() =>

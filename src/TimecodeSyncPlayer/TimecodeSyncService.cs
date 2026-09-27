@@ -11,8 +11,6 @@ public sealed class TimecodeSyncService
     private readonly TimeProvider _timeProvider;
     private readonly SeekLatencyCompensator _latencyCompensator;
     private long _fileLoadEpoch;
-    // D37-b: シーク中・着地未確認の位置を判定に使わないための状態。
-    private readonly PlaybackPositionTrust _positionTrust = new();
     // 0.4.5-A フェーズ 1: 評価位置（基準・世代から求めた shadow）を trace に併記する。
     // 判断には使わない。
     private readonly PlaybackPositionFeedback _positionFeedback = new();
@@ -30,7 +28,6 @@ public sealed class TimecodeSyncService
             StringComparison.OrdinalIgnoreCase);
 
     internal const string PositionFeedbackEnvironmentVariable = "TCS_SYNC_POSITION_FEEDBACK";
-    private TimecodeSyncSeekPendingStatus _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
     private double _publishedSeekCostSeconds = double.NaN;
     // D37-b2/D37-d: ギャップ明け・トラック切替・追従開始の着地窓（SeekLandingWindow）。
     private readonly SeekLandingWindow _landing;
@@ -103,13 +100,14 @@ public sealed class TimecodeSyncService
         }
 
         // D37-b: シーク中・着地未確認の間は位置を使った判定をしない。
+        // v0.5.4 U4: A（着地の状態）の 1 つの条件（着地を待っている間）で止める（門 10・12）。
         // フェーズ 2: 評価位置があれば、その区間も配信 PTS 基準で評価を続ける
         // （シーク中はクエリ値が目標で凍結し誤差 0 に見えるが、評価位置は実際に育つ）。
         // 評価位置が無いとき（旧 DLL・世代不一致で `_ex` が失敗）は従来どおり抑制する。
-        if (!_positionTrust.IsTrusted && !(_positionFeedbackEnabled && hasEvalPosition))
+        if (_seekState.IsWaitingForLanding && !(_positionFeedbackEnabled && hasEvalPosition))
         {
-            if (_positionTrust.IsReacquiring)
-                _positionTrust.Observe(state.PlaybackSeconds, NowSeconds());
+            if (_seekState.IsReacquiring)
+                _seekState.ObservePlaybackPosition(state.PlaybackSeconds, NowSeconds());
             _engine.RecordShadow(ltcSeconds, state, "position-untrusted");
             SyncDecision untrusted = _engine.WhilePositionUntrusted(ltcSeconds, state);
             // D38 (b): 未信頼でも、離れた新しい要求なら到達不能な pending を捨てる
@@ -206,8 +204,14 @@ public sealed class TimecodeSyncService
         };
     }
 
-    /// <summary>D37-b: いま再生位置を粗い判定・補正に使えるか。</summary>
-    public bool IsPlaybackPositionUsable => _positionTrust.IsTrusted;
+    /// <summary>D37-b: いま再生位置を粗い判定・補正に使えるか（v0.5.4 U4: A の状態から導く。門 10）。</summary>
+    public bool IsPlaybackPositionUsable => _seekState.IsPositionUsable;
+
+    /// <summary>
+    /// v0.5.4 U4: A が着地を待っている間か（保留中または時間切れ後の再確認中）。門 5・10・12 の
+    /// 1 つの条件。補正の評価（門 10 の rate.instant の抑止）もこれで止める。
+    /// </summary>
+    public bool IsWaitingForLanding => _seekState.IsWaitingForLanding;
 
     /// <summary>
     /// D37-b2/D37-d: ギャップ明け・トラック切替・追従開始の着地を通知する。ここから
@@ -253,16 +257,14 @@ public sealed class TimecodeSyncService
                 playbackSeconds, _seekState.TargetSeconds);
         }
 
-        // D37-b: 保留の決着を位置の信頼状態へ反映する（着地 = その場で再開、
-        // 時間切れ = 位置が安定するまで判定を止める）。
-        TrackSeekStatusTransition();
+        // v0.5.4 U4: 保留の決着（着地・時間切れ）は A の状態遷移そのものが位置の信頼へ反映する
+        // （BeginSeek / MarkPositionLanded / RequirePositionReacquire）。ここでは何もしない。
         return suppress;
     }
 
     /// <summary>
     /// D38 (a): 同期を適用しないフレーム（保持の Duplicate など）でも、保留中のシークの着地判定を
-    /// 行う。判定は位置の信頼の回復（<see cref="TrackSeekStatusTransition"/>）にだけ効き、
-    /// シークは出さない（戻り値も使わない）。
+    /// 行う。判定は位置の信頼の回復（A の着地の遷移）にだけ効き、シークは出さない（戻り値も使わない）。
     /// </summary>
     public void ObservePendingSeekLanding(double playbackSeconds, double toleranceSeconds)
     {
@@ -282,12 +284,10 @@ public sealed class TimecodeSyncService
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _lastSyncSeekAt = now;
         _latencyCompensator.MarkSeekSent();
+        // v0.5.4 U4: BeginSeek が着地を待つ状態に入り、位置の信頼も落とす（門 10）。
         _seekState.BeginSeek(targetSeconds, now);
         // D37-a: シーク後は位置が飛ぶため、粗い判定のゲート履歴を切る。
         _engine.ResetSeekGate();
-        // D37-b: 着地が確認できるまで、位置を使った判定をしない。
-        _positionTrust.InvalidateForPendingSeek();
-        _lastSeekStatus = TimecodeSyncSeekPendingStatus.Pending;
         // D37-d: 着地エピソード中のシークを数える（上限で窓を閉じる）。前進ガードの着地
         // 観測は、このシークが窓の中で出たときだけ arm する（窓の外のシークは対象外）。
         _landing.OnSeekSent();
@@ -356,10 +356,10 @@ public sealed class TimecodeSyncService
                 // D37-b: 素材が変わるので着地時間の学習を捨てる。保留はクリア済みなので位置は使える。
                 _seekState.ResetLearning();
                 _publishedSeekCostSeconds = double.NaN;
-                _positionTrust.Reset();
+                // v0.5.4 U4: 素材が変わるので位置の信頼も初期化する（A が持つ）。
+                _seekState.ResetPositionTrust();
                 // 0.4.5-A: 素材が変わるので、配信 PTS の基準と実測レートを捨てる。
                 _positionFeedback.Reset();
-                _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
                 break;
             case SyncLifecycleEvent.SyncModeChanged:
             case SyncLifecycleEvent.TimelineSeek:
@@ -439,9 +439,8 @@ public sealed class TimecodeSyncService
         _seekState.Clear();
         // D37-a: 保留の破棄・手動移動の後はゲートの系列を切る。
         _engine.ResetSeekGate();
-        // D37-b: 保留を破棄したので位置は使える（着地の確認は要求しない）。
-        _positionTrust.Reset();
-        _lastSeekStatus = TimecodeSyncSeekPendingStatus.None;
+        // D37-b: 保留を破棄したので位置は使える（着地の確認は要求しない。v0.5.4 U4: A の状態）。
+        _seekState.ResetPositionTrust();
     }
 
     /// <summary>
@@ -521,30 +520,9 @@ public sealed class TimecodeSyncService
     }
 
     /// <summary>
-    /// D37-b: 保留の状態遷移を位置の信頼状態へ反映する。
-    /// v0.5.4 U3: A の「着地できなかった」枝（時間切れ = 門 7・置き換え = 門 8）は、
-    /// ここ 1 か所で位置の再確認（門 11。安定 3 サンプル）へつなぐ。
-    /// </summary>
-    private void TrackSeekStatusTransition()
-    {
-        TimecodeSyncSeekPendingStatus status = _seekState.LastStatus;
-        if (status == _lastSeekStatus)
-            return;
-        TimecodeSyncSeekPendingStatus previous = _lastSeekStatus;
-        _lastSeekStatus = status;
-        if (status == TimecodeSyncSeekPendingStatus.Settled)
-            _positionTrust.MarkLanded();
-        else if (status is TimecodeSyncSeekPendingStatus.TimedOut or TimecodeSyncSeekPendingStatus.Superseded)
-            _positionTrust.RequireReacquire();
-        else if (previous == TimecodeSyncSeekPendingStatus.Pending &&
-                 status == TimecodeSyncSeekPendingStatus.None)
-            // D37-b: 保留が外から破棄された（境界ホールド解除など）。着地を要求せず位置を使い直す。
-            _positionTrust.Reset();
-    }
-
-    /// <summary>
     /// D38 (b): 未信頼のフレームで、到達不能な pending（要求が目標からも現在位置からも離れている）
     /// を捨てる。捨てた後は位置の再確認（3 サンプル）とゲートを通ってからシークする。
+    /// v0.5.4 U4: 再確認は A の遷移（<c>RequirePositionReacquire</c>）が入れる。
     /// </summary>
     private void SupersedeUnreachablePending(
         double requestedTargetSeconds, double toleranceSeconds, double playbackSeconds)
@@ -554,7 +532,6 @@ public sealed class TimecodeSyncService
         Serilog.Log.Information(
             "Timecode sync pending \"Superseded\" playback={Playback:F3} tolerance={Tolerance:F4}",
             playbackSeconds, toleranceSeconds);
-        TrackSeekStatusTransition();
     }
 
     private void LogDecisionIfNeeded(SyncDecision decision, double ltcSeconds, double playbackSeconds)
@@ -591,8 +568,8 @@ public sealed class TimecodeSyncService
         ["seekLandingActive"] = _landing.IsOpen,
         // 開いている着地エピソードが追従開始のものか（先行量が効く状態）。
         ["followStartLanding"] = _landing.IsOpen && _landing.Origin == LandingOrigin.FollowStart,
-        // 位置を判定に使わない状態か（シークの着地待ち・取り直し待ち）。
-        ["positionUntrusted"] = !_positionTrust.IsTrusted,
+        // 位置を判定に使わない状態か（シークの着地待ち・取り直し待ち。v0.5.4 U4: A の状態）。
+        ["positionUntrusted"] = !_seekState.IsPositionUsable,
     };
 }
 
