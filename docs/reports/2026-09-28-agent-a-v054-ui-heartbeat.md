@@ -55,3 +55,15 @@
 1. L-2 の起動から `ConfigureLtc` までの時刻（30 秒に入るか）は、その回のログで確かめていない
 2. Release のログには出ない。検証機の試験が Release で走るなら、この記録は得られない
 3. UIA の検索は UI スレッドのメッセージ処理で答える。tick が遅れずに出ていて UIA だけが時間切れになった場合は、UI スレッドではなく UIA の側（試験のプロセス・UIA のキャッシュ）を疑う材料になるが、この記録だけでは UIA の要求の処理時間は分からない
+
+## 追補（2026-09-28、終わりの行が実機の終了で出なかった件）
+
+- 事実（親の実機の確認）: 終了したとき `end reason=closing` が出ず、生存記録は資源解放の途中（seq=245）まで出続けてプロセスの終わりで途切れた。
+  終了の手順（`ExitCoordinator` の段 → 資源解放）は `MainWindow.Dispose()` を通らないので、`StopUiHeartbeat("closing")` が呼ばれていなかった
+- 変更（`ExitCoordinator` と `MainWindow`）:
+  - `ExitCoordinator` のコンストラクタに `shutdownStarting`（省略可）を足した。通常終了は `NormalExitRequested` で段の実行を始める直前（最初の段の前）に 1 回、強制終了は `ForceRequested` で `forceExit` の前に 1 回呼ぶ。例外は `終了の開始の通知に失敗` の Error で記録し、手順は続ける
+  - `MainWindow` はここで `StopUiHeartbeat("closing")` を呼ぶ。`Dispose()` の呼び出しは残した（区間が閉じた後なので 2 回目は何も出ない）
+  - 入口を `OnClosingRequested` ではなく `NormalExitRequested` にした理由: `OnClosingRequested` は確認のダイアログを出すだけで、利用者が取り消すと再生に戻る（終了が決まっていない）。最初の段の前は終了が決まった時点で、ここから先は段の行（`shutdown stage.begin …`）が続く
+- テスト: `ExitCoordinatorTests.NormalExit_NotifiesShutdownStartingBeforeTheFirstStage_ClosingTheHeartbeat`。確認の段階では end が出ず、通常終了で end が最初の段（新規受付停止）より前に 1 回だけ出る。Dispose 相当の 2 回目の Stop では出ない
+- 非E2E: 2758 件合格、失敗 0、スキップ 0（v0.5.4 の `45005ed` を取り込んだ後）
+- 未確認: 実機の終了で `end reason=closing` が段の行の前に出ること
