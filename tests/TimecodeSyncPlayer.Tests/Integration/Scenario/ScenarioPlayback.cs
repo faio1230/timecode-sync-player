@@ -30,6 +30,8 @@ internal sealed class ScenarioPlayback : IPlaybackApi
     private bool _settleToTargetPending;
     private long _durationReadyAtMilliseconds = -1;
     private ulong _generation;
+    private double _deliveredSeconds;
+    private ulong _deliveredGeneration;
 
     public ScenarioPlayback(
         double positionSeconds = 0,
@@ -96,11 +98,32 @@ internal sealed class ScenarioPlayback : IPlaybackApi
     public int Height { get; set; }
     public string VideoCodec { get => _videoCodec; set => _videoCodec = value; }
 
+    // ---- v0.5.4 段 B の準備: 着地の事象（世代の最初のフレームの配信） ----
+
+    /// <summary>いまのプレイヤー世代（シーク・ロードで進む。shim の `p->generation` と同じ）。</summary>
+    public ulong CurrentGeneration => _generation;
+
+    /// <summary>最後に配信されたフレームの位置（無ければ 0）。shim の `latest_pts_ns` の模擬。</summary>
+    public double DeliveredSeconds => _deliveredSeconds;
+
+    /// <summary>
+    /// 最後に配信されたフレームの世代（無ければ 0）。着地待ちの間はシーク前の値のまま。
+    /// shim の `latest_gen`（tcs_gstreamer.cpp:1568）と同じ意味。
+    /// </summary>
+    public ulong DeliveredGeneration => _deliveredGeneration;
+
+    /// <summary>着地の事象（世代の最初のフレームの配信）の回数。連続シークでは最後の世代だけが 1 回。</summary>
+    public int LandingCount { get; private set; }
+
+    /// <summary>着地の事象の口。シーク・ロードの世代の最初のフレームを配信したときに、その世代を渡す。</summary>
+    public event Action<ulong>? Landed;
+
     /// <summary>テストが位置を直接与える（旧 harness の AdvancePlayback と同じ）。</summary>
     public void SetPosition(double seconds)
     {
         _positionSeconds = seconds;
         _generation++;
+        DeliverFrame();
     }
 
     public void SetDuration(double seconds)
@@ -149,6 +172,7 @@ internal sealed class ScenarioPlayback : IPlaybackApi
         double direction = PositionGoesBackward ? -1.0 : 1.0;
         _positionSeconds += delta.TotalSeconds * _rate * direction;
         _generation++;
+        DeliverFrame();
     }
 
     // ---- IPlaybackApi ----
@@ -168,6 +192,7 @@ internal sealed class ScenarioPlayback : IPlaybackApi
         {
             _positionSeconds = start;
             _isPaused = paused;
+            DeliverLanding();
         }
         else
         {
@@ -188,10 +213,11 @@ internal sealed class ScenarioPlayback : IPlaybackApi
 
         Ended = false;    // shim: seek_prepare_locked が p->eos を消す
         double target = Math.Max(0.0, seconds);
+        _generation++;    // shim: seek_prepare_locked は発行のたびに世代を進める
         if (SeekLandingDelaySeconds <= 0)
         {
             _positionSeconds = target;
-            _generation++;
+            DeliverLanding();
         }
         else
         {
@@ -252,7 +278,8 @@ internal sealed class ScenarioPlayback : IPlaybackApi
     public bool TryGetPositionSample(out PlaybackPositionSample sample)
     {
         sample = new PlaybackPositionSample(
-            ReportPosition(), PlaybackPositionBasis.Pipeline, _generation, 0, 0, _generation);
+            ReportPosition(), PlaybackPositionBasis.Pipeline, _generation,
+            _deliveredSeconds, _deliveredGeneration, _generation);
         return _hasMedia;
     }
 
@@ -296,7 +323,7 @@ internal sealed class ScenarioPlayback : IPlaybackApi
         _seekLandingAtMilliseconds = -1;
         _positionSeconds = _seekTargetSeconds + SeekOvershootSeconds;
         _settleToTargetPending = SeekOvershootSeconds != 0;
-        _generation++;
+        DeliverLanding();
         return true;
     }
 
@@ -308,8 +335,30 @@ internal sealed class ScenarioPlayback : IPlaybackApi
         _loadReadyAtMilliseconds = -1;
         _positionSeconds = _loadStartSeconds;
         _isPaused = _loadPaused;
-        _generation++;
+        DeliverLanding();
         return true;
+    }
+
+    /// <summary>
+    /// 再生中のフレームの配信（世代は進めない。shim の on_new_sample と同じで、
+    /// 配信のたびに `latest_gen = p->generation` になる）。着地の事象は出さない。
+    /// </summary>
+    private void DeliverFrame()
+    {
+        _deliveredSeconds = _positionSeconds;
+        _deliveredGeneration = _generation;
+    }
+
+    /// <summary>
+    /// シーク・ロードの世代の最初のフレームの配信（着地の事象）。shim は
+    /// `p->latest_gen = p->generation` と `latest_pts_ns` を更新して
+    /// `get_time_pos_ex` の `delivered_generation` に載せる（tcs_gstreamer.cpp:1568-1569、3816）。
+    /// </summary>
+    private void DeliverLanding()
+    {
+        DeliverFrame();
+        LandingCount++;
+        Landed?.Invoke(_generation);
     }
 
     private void ApplyDurationArrival()
