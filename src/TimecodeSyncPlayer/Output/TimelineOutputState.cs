@@ -14,7 +14,8 @@ internal sealed record TimelineOutputState(
     CanvasSettings Canvas,
     ClipPlacement Clip,
     double PositionSeconds,
-    double? FreezeTargetSeconds = null)
+    double? FreezeTargetSeconds = null,
+    double VideoFps = 0)
 {
     public static readonly TimelineOutputState Default = new(
         0, OutputGapMode.None, false, CanvasSettings.Default, new ClipPlacement(null), 0);

@@ -286,8 +286,7 @@ public sealed class GapFreezeHandler
     {
         if (LateConfirmTargetSeconds is not double target || !double.IsFinite(positionSeconds))
             return false;
-        double frameSeconds = fps > 0 ? 1.0 / fps : 1.0 / DefaultFallbackFps;
-        return Math.Abs(positionSeconds - target) <= frameSeconds * 2.0;
+        return GapFreezeFrameWindow.Contains(positionSeconds, target, GapFreezeFrameWindow.FrameSeconds(fps));
     }
 
     private void ClearLateConfirmTarget()

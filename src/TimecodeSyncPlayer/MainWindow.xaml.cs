@@ -639,7 +639,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _projectCanvasState.Current,
             TimelineOutputState.PlacementFor(_playlist.Current),
             ReadPlaybackTimePos() ?? 0,
-            _gapFreezeHandler.OutputFreezeTargetSeconds));
+            _gapFreezeHandler.OutputFreezeTargetSeconds,
+            _fps));
     }
 
     private static string ResolveOutputSenderName()
@@ -2284,7 +2285,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             reason = "target frame not arrived since capture";
         else if (!hasPosition)
             reason = "no position";
-        else if (Math.Abs(gatePosition - target) > 2.0 / fps)
+        else if (!GapFreezeFrameWindow.Contains(gatePosition, target, GapFreezeFrameWindow.FrameSeconds(fps)))
             reason = "position outside the window";
         else
             reason = "capture not confirmable";
@@ -2330,7 +2331,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 decision = "late confirm candidate";
             else if (handler.FrameSeenSinceCapture)
                 decision = "ignored (target frame already seen)";
-            else if (Math.Abs(positionSeconds - target) <= frameSeconds * 2.0)
+            else if (GapFreezeFrameWindow.Contains(positionSeconds, target, frameSeconds))
                 decision = "accepted as the target frame";
             else
                 decision = "outside window";
@@ -2359,7 +2360,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
 
         // 許容は 2 フレーム（フレーム先頭/終端の解釈差と実素材の端数を含む）。
-        if (Math.Abs(positionSeconds - handler.PendingTargetSeconds) <= 2.0 / fps)
+        if (GapFreezeFrameWindow.Contains(positionSeconds, handler.PendingTargetSeconds, GapFreezeFrameWindow.FrameSeconds(fps)))
         {
             handler.NotifyFrameArrived(positionSeconds);
             return;
