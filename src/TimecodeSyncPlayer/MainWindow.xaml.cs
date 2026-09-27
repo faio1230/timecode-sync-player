@@ -2232,6 +2232,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             bool hasPosition = _playbackApi.TryGetTimePos(out double actualPos);
             bool isExpectedPath = IsCurrentPathExpectedForGapFreeze();
             bool frameSeen = _gapFreezeHandler.FrameSeenSinceCapture;
+            double? deliveredFramePosition = frameSeen ? _gapFreezeHandler.FrameSeenPositionSeconds : null;
+            double gatePosition = deliveredFramePosition ?? actualPos;
             double target = _gapFreezeHandler.PendingTargetSeconds;
             double fps = _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps;
             GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
@@ -2243,8 +2245,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 target,
                 fps,
                 allowRedraw: allowRedraw,
-                frameSeenSinceCapture: frameSeen);
-            LogGapFreezeDecision(hasFrame, allowRedraw, isExpectedPath, hasPosition, actualPos, target, fps, frameSeen, decision);
+                frameSeenSinceCapture: frameSeen,
+                deliveredFramePositionSeconds: deliveredFramePosition);
+            LogGapFreezeDecision(hasFrame, allowRedraw, isExpectedPath, hasPosition, actualPos, gatePosition, target, fps, frameSeen, decision);
 
             if (decision == GapFrameCaptureDecision.RenderAndCapture)
             {
@@ -2267,7 +2270,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private void LogGapFreezeDecision(bool hasFrame, bool allowRedraw, bool isExpectedPath, bool hasPosition,
-        double actualPos, double target, double fps, bool frameSeen, GapFrameCaptureDecision decision)
+        double actualPos, double gatePosition, double target, double fps, bool frameSeen, GapFrameCaptureDecision decision)
     {
         string reason;
         if (decision == GapFrameCaptureDecision.RenderAndCapture)
@@ -2280,19 +2283,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             reason = "target frame not arrived since capture";
         else if (!hasPosition)
             reason = "no position";
-        else if (Math.Abs(actualPos - target) > 2.0 / fps)
+        else if (Math.Abs(gatePosition - target) > 2.0 / fps)
             reason = "position outside the window";
         else
             reason = "capture not confirmable";
         string actualText = hasPosition && double.IsFinite(actualPos)
             ? actualPos.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
             : "-";
-        string deltaText = hasPosition && double.IsFinite(actualPos)
-            ? ((actualPos - target) * 1000.0).ToString("F1", System.Globalization.CultureInfo.InvariantCulture)
+        string gateText = double.IsFinite(gatePosition)
+            ? gatePosition.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
+            : "-";
+        string deltaText = double.IsFinite(gatePosition)
+            ? ((gatePosition - target) * 1000.0).ToString("F1", System.Globalization.CultureInfo.InvariantCulture)
             : "-";
         GapCaptureHandoffLog.Record("ui.decide", reason,
             "hasFrame=" + hasFrame + " path=" + isExpectedPath + " hasPosition=" + hasPosition +
-            " actual=" + actualText +
+            " actual=" + actualText + " gate=" + gateText +
             " target=" + target.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) +
             " deltaMs=" + deltaText + " frameSeen=" + frameSeen + " allowRedraw=" + allowRedraw +
             " decision=" + decision);
@@ -2340,7 +2346,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (handler.CurrentState == GapState.FreezeComplete &&
             handler.IsLateConfirmFrame(positionSeconds, fps))
         {
-            RequestGapFreezeLateFrameConfirm();
+            RequestGapFreezeLateFrameConfirm(positionSeconds);
             return;
         }
 
@@ -2354,7 +2360,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // 許容は 2 フレーム（フレーム先頭/終端の解釈差と実素材の端数を含む）。
         if (Math.Abs(positionSeconds - handler.PendingTargetSeconds) <= 2.0 / fps)
         {
-            handler.NotifyFrameArrived();
+            handler.NotifyFrameArrived(positionSeconds);
             return;
         }
 
@@ -2367,25 +2373,25 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// D32: 遅延して届いた目標フレームで、タイムアウト済みのフリーズ捕捉を開き直す。
     /// GPU worker から呼ばれるため、状態の更新は UI スレッドで行う（1 件だけ予約する）。
     /// </summary>
-    private void RequestGapFreezeLateFrameConfirm()
+    private void RequestGapFreezeLateFrameConfirm(double positionSeconds)
     {
         if (Interlocked.CompareExchange(ref _gapFreezeLateFramePosted, 1, 0) != 0)
             return;
         Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
         {
             Interlocked.Exchange(ref _gapFreezeLateFramePosted, 0);
-            ConfirmLateGapFreezeFrame();
+            ConfirmLateGapFreezeFrame(positionSeconds);
         });
     }
 
-    private void ConfirmLateGapFreezeFrame()
+    private void ConfirmLateGapFreezeFrame(double positionSeconds)
     {
         if (_disposed)
             return;
         GapFreezeHandler handler = _gapFreezeHandler;
         if (handler.CurrentState != GapState.FreezeComplete || !handler.HasLateConfirmTarget)
             return;
-        handler.ReopenCaptureForLateFrame();
+        handler.ReopenCaptureForLateFrame(positionSeconds);
         Log.Information(
             "Continue mode: late final-frame arrival after the capture timeout, retrying the freeze capture target={Target:F3}",
             handler.PendingTargetSeconds);
@@ -2521,7 +2527,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         bool hasPosition = _playbackApi.TryGetTimePos(out double position);
         return GapFrameCaptureCoordinator.Decide(_gapFreezeHandler.CurrentState, true, true,
             hasPosition, position, _gapFreezeHandler.PendingTargetSeconds, _fps,
-            frameSeenSinceCapture: _gapFreezeHandler.FrameSeenSinceCapture) ==
+            frameSeenSinceCapture: _gapFreezeHandler.FrameSeenSinceCapture,
+            deliveredFramePositionSeconds: _gapFreezeHandler.FrameSeenPositionSeconds) ==
             GapFrameCaptureDecision.RenderAndCapture;
     }
 
