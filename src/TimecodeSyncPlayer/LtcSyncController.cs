@@ -593,6 +593,9 @@ internal sealed class LtcSyncController
         if (!processed.ShouldApplySync)
         {
             bool heldValueChangedDuringLoss = false;
+            // v0.5.4 B6b（規則 4）: マスター停止（保持）の入口。同じ値のフレームが続いた 2 枚目の
+            // Duplicate（直前も保持）で、この保持でまだ合わせていない（保持着地の記録が無い）とき。
+            bool holdEntry = false;
             // D27: 解読は続いているが値が進まない保持（Duplicate）を信号停止の判定へ伝える。
             // 無音（フレームが届かない）と同じ経路で損失になり、損失の理由だけが分かれる。
             // D27-d: 停止時の着地目標に使う「保持として届いた値」もここで記録する
@@ -606,6 +609,8 @@ internal sealed class LtcSyncController
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
+                holdEntry = _input.LastHeldEffectiveSeconds is not null &&
+                    _input.HeldLossLandingSeconds is null;
                 _input.MarkHeldEffective(heldEffectiveSeconds);
                 // D38 (a): 保持の Duplicate でも、保留中のシークが着地していれば観測して
                 // 位置の信頼を戻す（シークは出さない）。
@@ -668,6 +673,18 @@ internal sealed class LtcSyncController
                 }
                 applyOnce = true;
                 applyReason = "held value change";
+            }
+            // v0.5.4 B6b（規則 4）: ランスルーのマスター停止の入口で、停止した値へ 1 回だけ合わせる
+            // （規則 3 と同じ判定: |e| > tol なら relocate、以内なら何もしない）。以後は合わせた位置から
+            // 1.0 で走る（varispeed は B4 が止め、この保持では relocate しない）。
+            else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
+                     holdEntry && _effects.GetContext().SignalLossMode == LtcSignalLossMode.RunThrough)
+            {
+                AlignOnRunThroughHoldEntry();
+                _input.MarkHeldReapplied();
+                _input.MarkLastApplied(_input.LastHeldEffectiveSeconds);
+                _lastContinueFrame = null;
+                return;
             }
             // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超
             // ずれているときだけ 1 回適用する（定常の Duplicate ゲートは維持）。
@@ -952,7 +969,12 @@ internal sealed class LtcSyncController
         // v0.5.4 B6b-16/23（規則 3）: relocate・読み込みの着地を観測した直後の 1 サンプルは
         // varispeed しない（消費する）。シークの可否は粗い判定（15 の閾値と 13 のゲート）が決める。
         if (_syncService.ConsumeFirstSampleAfterLanding())
+        {
+            // 計数用（平常時の発火回数を数える。門ではない）。
+            Log.Debug("sync.gate first-sample-after-landing mode={Mode} residualMs={ResidualMs:F1}",
+                _effects.GetCorrectionMode(), residualSeconds * 1000.0);
             return;
+        }
 
         // D37-c: 粗い判定と同じ前処理を補正の残差にも通す。ありえない変化の標本は捨て、
         // 採用した残差は直近窓の中央値にする（Smooth の制御則・Jump のしきい値は変えない）。
@@ -1245,41 +1267,8 @@ internal sealed class LtcSyncController
         if (held is not double heldSeconds || _effects.SeekTo == null)
             return;
         LtcSyncContext state = _effects.GetContext();
-        if (!state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
+        if (!TryGetHeldLandingTarget(heldSeconds, state, out double target))
             return;
-
-        double target;
-        if (state.Mode == SyncMode.Continue)
-        {
-            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(heldSeconds);
-            if (result.Status != TimelineQueryStatus.OnTrack)
-                return;
-            target = result.MediaPositionSeconds;
-        }
-        else
-        {
-            // D35-b: D33 の境界ホールド中は端で受け持つ。端への明示着地は保留シークを作り、
-            // 解除時の範囲内 LTC への着地を抑止するため発行しない。
-            // v0.5.4 U5: 判定は一時停止の持ち主の集合（D）に畳む（境界ホールドが持ち主なら飛ばす）。
-            PauseOwners owners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
-            if (SyncRules.ShouldSkipHeldLanding(owners))
-            {
-                _input.MarkHeldLossLanding(heldSeconds);
-                Log.Debug(
-                    "LTC timecode held: landing skipped (boundary hold is a pause owner) ltc={Ltc:F3}",
-                    heldSeconds);
-                return;
-            }
-            // D29: 着地先はほかの経路と同じくクリップの [MediaIn, MediaOut ?? 尺] に収める。
-            // 以前は尺だけで収めていたため、LTC が入口より手前で止まると、クリップの外（入口の手前）の
-            // 絵へ着地した（検証機の S-2、クリップ [10,18] で LTC を 8.0 に止めた回）。
-            target = SyncDecisionEngine.ClampToClip(
-                heldSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds,
-                state.VideoFps);
-        }
-
-        // D31-b: この損失で着地を試みた保持値を覚え、値が変わったときだけ再度着地する。
-        _input.MarkHeldLossLanding(heldSeconds);
 
         // D35: 1 フレーム以内なら既に保持位置なので省略する（停止中の微小残差でシークしない）。
         if (_effects.GetPlaybackSeconds?.Invoke() is double playback &&
@@ -1298,6 +1287,87 @@ internal sealed class LtcSyncController
             Log.Information(
                 "LTC timecode held: landing seek issued target={Target:F3} ltc={Ltc:F3}", target, heldSeconds);
         }
+    }
+
+    /// <summary>
+    /// v0.5.4 B6b（規則 4）: ランスルーのマスター停止（保持）の入口で、停止した値へ 1 回だけ合わせる。
+    /// 判定は規則 3 と同じ（|e| &gt; tol なら relocate、以内なら何もしない）。停止モードの
+    /// <see cref="ReapplyHeldValueOnPause"/> と同じ着地先（写像・クリップの範囲・境界ホールド）を使い、
+    /// この保持で合わせた値を保持着地の記録に残す（同じ保持では繰り返さない）。
+    /// </summary>
+    private void AlignOnRunThroughHoldEntry()
+    {
+        if (_input.LastHeldEffectiveSeconds is not double heldSeconds || _effects.SeekTo == null)
+            return;
+        // 規則 3: 着地を待っている間は判定しない（出ているシークが relocate）。保持着地の記録を
+        // 残さないので、着地した後の次の保持フレームがこの入口の判定をする。
+        if (_syncService.IsWaitingForLanding)
+            return;
+        LtcSyncContext state = _effects.GetContext();
+        if (!TryGetHeldLandingTarget(heldSeconds, state, out double target))
+            return;
+        if (_effects.GetPlaybackSeconds?.Invoke() is not double playback || !double.IsFinite(playback))
+            return;
+        double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
+        if (Math.Abs(playback - target) <= toleranceSeconds)
+        {
+            Log.Debug(
+                "LTC timecode held (run-through): entry alignment not needed position={Position:F3} target={Target:F3}",
+                playback, target);
+            return;
+        }
+        if (_effects.SeekTo(target))
+        {
+            _syncService.ReportSeekSent(target);
+            Log.Information(
+                "LTC timecode held (run-through): entry alignment seek issued target={Target:F3} ltc={Ltc:F3} position={Position:F3}",
+                target, heldSeconds, playback);
+        }
+    }
+
+    /// <summary>
+    /// 保持値の着地先（Continue はタイムライン → 素材位置、Single はクリップの範囲）。境界ホールドが
+    /// 一時停止の持ち主なら端で受け持つので false。着地先が決まったら、この損失（保持）で着地を試みた
+    /// 保持値として記録する（D31-b）。
+    /// </summary>
+    private bool TryGetHeldLandingTarget(double heldSeconds, LtcSyncContext state, out double target)
+    {
+        target = 0.0;
+        if (!state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
+            return false;
+
+        if (state.Mode == SyncMode.Continue)
+        {
+            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(heldSeconds);
+            if (result.Status != TimelineQueryStatus.OnTrack)
+                return false;
+            target = result.MediaPositionSeconds;
+        }
+        else
+        {
+            // D35-b: D33 の境界ホールド中は端で受け持つ。端への明示着地は保留シークを作り、
+            // 解除時の範囲内 LTC への着地を抑止するため発行しない。
+            // v0.5.4 U5: 判定は一時停止の持ち主の集合（D）に畳む（境界ホールドが持ち主なら飛ばす）。
+            PauseOwners owners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+            if (SyncRules.ShouldSkipHeldLanding(owners))
+            {
+                _input.MarkHeldLossLanding(heldSeconds);
+                Log.Debug(
+                    "LTC timecode held: landing skipped (boundary hold is a pause owner) ltc={Ltc:F3}",
+                    heldSeconds);
+                return false;
+            }
+            // D29: 着地先はほかの経路と同じくクリップの [MediaIn, MediaOut ?? 尺] に収める。
+            // 以前は尺だけで収めていたため、LTC が入口より手前で止まると、クリップの外（入口の手前）の
+            // 絵へ着地した（検証機の S-2、クリップ [10,18] で LTC を 8.0 に止めた回）。
+            target = SyncDecisionEngine.ClampToClip(
+                heldSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds,
+                state.VideoFps);
+        }
+
+        // D31-b: この損失で着地を試みた保持値を覚え、値が変わったときだけ再度着地する。
+        _input.MarkHeldLossLanding(heldSeconds);
+        return true;
     }
 
     /// <summary>D35: 着地の省略判定に使う 1 フレーム。映像 fps が無ければ LTC の 1 フレーム。</summary>

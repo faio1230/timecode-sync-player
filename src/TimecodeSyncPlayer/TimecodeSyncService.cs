@@ -494,8 +494,9 @@ public sealed class TimecodeSyncService
 
     private void PublishSeekCost()
     {
-        const double DefaultSeekCostSeconds = 1.0;
-        // 学習値 > スキャンの見積もり > 既定値。
+        // 学習値 > スキャンの見積もり > なし（0）。
+        // v0.5.4 B6b（TSP-Fable の判定）: 既定値 1.0 秒を削除した。学習値もヒントも無いときは 0 を
+        // 渡し、relocate の閾値は tol のまま（max(tol, 学習値) の学習値が無い形）。
         // 既知の欠点（0.4.6 で直す）: 学習値は TimecodeSyncSeekState.LearnSeekDuration が
         // 「位置が目標に初めて到達した時刻」で時計を止めるため、その後の再開までの停止
         // （実測でギャップの 0.12 倍、M3 で 0.79 秒）が入っておらず、常に短く出る。
@@ -504,7 +505,7 @@ public sealed class TimecodeSyncService
         // そこではヒントが使われる（D37-f の狙いはそこ）ため。2 回目以降の過小評価は
         // 従来からの挙動で、ここで一緒に変えると効果の帰属が分からなくなる。
         double cost = _seekState.LearnedSeekDurationSeconds
-            ?? (_seekCostHintSeconds > 0 ? _seekCostHintSeconds : DefaultSeekCostSeconds);
+            ?? _seekCostHintSeconds;
         if (Math.Abs(cost - _publishedSeekCostSeconds) <= 1e-9)
             return;
         _engine.UpdateSeekCostSeconds(cost);

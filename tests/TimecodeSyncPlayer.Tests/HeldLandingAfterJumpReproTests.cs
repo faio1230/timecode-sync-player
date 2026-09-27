@@ -26,7 +26,10 @@ public sealed class HeldLandingAfterJumpReproTests
         h.ReloadProject();
         h.SetDurationSeconds(30);
         h.ManualPlay();
-        h.AdvancePlayback(20.18);   // D35 の失敗帯（許容内の行き過ぎ）でも明示着地する位置
+        // D35 の失敗帯（許容内の行き過ぎ）でも明示着地する位置。v0.5.4 B6b: 最初の Normal の時点で
+        // 再生は 0.10 秒進むので、その時点の行き過ぎが 0.18 秒（許容内）になるよう 20.08 から始める
+        // （旧の 20.18 は 0.28 秒で許容外になり、学習前の閾値が tol になった後は同期シークが 1 本増える）。
+        h.AdvancePlayback(20.08);
         return h;
     }
 
