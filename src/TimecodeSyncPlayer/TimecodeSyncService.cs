@@ -122,6 +122,20 @@ public sealed class TimecodeSyncService
         // v0.5.4 B6b-16/23: 着地窓（D37-b2/d/e/f）は畳んだ。relocate の直後の 1 サンプルは
         // varispeed しない（補正の入口で止める）。シークの可否は 15 の閾値（max(tol, 学習値)）
         // と 13 のゲートだけで決まる。
+        // v0.5.4 #7（規則 2、B4b と同じ）: 評価位置が配信 PTS でない（配信がまだ無い、基準がパイプラインか無し）
+        // 間は、relocate の粗い判定をしない（要求は保留のまま、次の評価で判定する）。位置のサンプルが無い
+        // 呼び出し（旧 DLL の経路・位置だけのテストの口）は従来どおり照会位置で判定する。
+        if (positionSample is not null && state.EvalBasis != "delivered")
+        {
+            Serilog.Log.Debug("sync.gate no-delivered-defer ltc={Ltc:F3} playback={Playback:F3} basis={Basis:l}",
+                ltcSeconds, state.PlaybackSeconds, state.EvalBasis ?? "none");
+            // 門 12（着地待ちの untrusted-defer）の計測に混ぜないため、エンジンの未信頼の口は使わない。
+            return new SyncDecision(
+                SyncActionType.None, 0.0, 0.0,
+                SyncDecisionEngine.ToleranceSeconds(state.VideoFps, state.TimecodeFps),
+                state.VideoFps, state.TimecodeFps, false, false,
+                PositionUntrusted: true);
+        }
         LogPostLandingResidual(ltcSeconds, state);
         SyncDecision decision = _engine.Decide(ltcSeconds, state);
         LogDecisionIfNeeded(decision, ltcSeconds, state.PlaybackSeconds);
