@@ -199,6 +199,78 @@ public sealed class ComposeLayerHeldTests
         layer.HasFreeze.Should().BeFalse("世代をまたいでソースの面を Freeze に使わない");
     }
 
+    // K3 f4-14: ポンプ中の照会がパイプライン値（尺 + 2 フレーム = 20.0333…）に固定されると、
+    // 目標フレームの PTS（19.9833…）との差は倍精度で 0.0500000000000007 になり、0.05 の窓を外れる。
+    [SkippableFact]
+    public void GapFreeze_QueriedPositionStuckAtPipelineValue_IsOutsideTheTolerance()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var orange = new SolidSource(env, 64, 64, new Color4(1f, 0.65f, 0f, 1f));
+
+        (20.033333333 - 19.983333333).Should().BeGreaterThan(0.05);
+        layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+            orange.Image, acquirePositionSeconds: 19.983333333, freezeTargetSeconds: 20.033333333);
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: 20.033333333);
+
+        layer.HasFreeze.Should().BeFalse("照会位置と比べると目標フレームでも保存されない（f4-14 の機序）");
+    }
+
+    [SkippableFact]
+    public void GapFreeze_SavesTargetFrame_WhenQueriedPositionIsStuckAtPipelineValue()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var blue = new SolidSource(env, 64, 64, new Color4(0f, 0f, 1f, 1f));
+        using var orange = new SolidSource(env, 64, 64, new Color4(1f, 0.65f, 0f, 1f));
+        TimelineOutputState state = TimelineOutputState.Default with
+        {
+            PositionSeconds = 20.033333333,
+            FreezeTargetSeconds = 19.983333333,
+        };
+
+        // シーク前の再生（青、PTS 15.883）を Held にした後、進入中（Hold）に目標フレーム（橙）が届く。
+        layer.Compose(target.Surface, OutputGapMode.None, new ClipPlacement(null), false, default, 0,
+            blue.Image, acquirePositionSeconds: 15.883333333, freezeTargetSeconds: 15.883333333);
+        layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+            orange.Image, acquirePositionSeconds: 19.983333333, freezeTargetSeconds: state.FreezeComparisonSeconds);
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: state.FreezeComparisonSeconds);
+
+        layer.HasFreeze.Should().BeTrue("照会位置ではなく Freeze の目標と比べて保存する");
+        Color4 pixel = env.ReadCenterPixel(target);
+        pixel.R.Should().BeGreaterThan(0.9f, "シーク前の Held（青）ではなく目標フレーム（橙）を表示する");
+        pixel.B.Should().BeLessThan(0.1f);
+    }
+
+    [SkippableFact]
+    public void GapFreeze_DoesNotFreezePreSeekFrame_WhenComparingAgainstTheFreezeTarget()
+    {
+        using GpuEnvironment? env = GpuEnvironment.TryCreate();
+        Skip.If(env is null, "D3D11 デバイスを作成できない環境");
+        using var layer = env!.CreateLayer(64, 64);
+        using TargetSurface target = env.CreateTarget(64, 64);
+        using var blue = new SolidSource(env, 64, 64, new Color4(0f, 0f, 1f, 1f));
+        TimelineOutputState state = TimelineOutputState.Default with
+        {
+            PositionSeconds = 20.033333333,
+            FreezeTargetSeconds = 19.983333333,
+        };
+
+        // D26: シーク前のフレーム（PTS 15.9）は目標から遠いので、目標と比べても保存しない。
+        layer.Compose(target.Surface, OutputGapMode.Hold, new ClipPlacement(null), false, default, 0,
+            blue.Image, acquirePositionSeconds: 15.9, freezeTargetSeconds: state.FreezeComparisonSeconds);
+        layer.Compose(target.Surface, OutputGapMode.GapFreeze, new ClipPlacement(null), false, default, 0,
+            null, acquirePositionSeconds: null, freezeTargetSeconds: state.FreezeComparisonSeconds);
+
+        layer.HasFreeze.Should().BeFalse("ジャンプ前の位置のフレームを Freeze として確定しない");
+    }
+
     private sealed class SolidSource : IDisposable
     {
         public Surface Surface { get; }

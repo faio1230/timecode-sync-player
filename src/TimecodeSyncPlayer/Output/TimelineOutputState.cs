@@ -13,10 +13,16 @@ internal sealed record TimelineOutputState(
     bool TestCardEnabled,
     CanvasSettings Canvas,
     ClipPlacement Clip,
-    double PositionSeconds)
+    double PositionSeconds,
+    double? FreezeTargetSeconds = null)
 {
     public static readonly TimelineOutputState Default = new(
         0, OutputGapMode.None, false, CanvasSettings.Default, new ClipPlacement(null), 0);
+
+    /// <summary>
+    /// K3 f4-14: 合成層が Freeze の保存で取得画像の位置と比べる値。
+    /// </summary>
+    public double FreezeComparisonSeconds => PositionSeconds;
 
     /// <summary>現在クリップの配置。トラックの Fit（null はプロジェクト既定の継承）を写す。</summary>
     public static ClipPlacement PlacementFor(PlaylistTrack? track) => new(track?.Fit);
