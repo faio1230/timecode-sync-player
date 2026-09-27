@@ -122,6 +122,7 @@ public sealed class TimecodeSyncService
         // v0.5.4 B6b-16/23: 着地窓（D37-b2/d/e/f）は畳んだ。relocate の直後の 1 サンプルは
         // varispeed しない（補正の入口で止める）。シークの可否は 15 の閾値（max(tol, 学習値)）
         // と 13 のゲートだけで決まる。
+        LogPostLandingResidual(ltcSeconds, state);
         SyncDecision decision = _engine.Decide(ltcSeconds, state);
         LogDecisionIfNeeded(decision, ltcSeconds, state.PlaybackSeconds);
         return decision;
@@ -241,7 +242,50 @@ public sealed class TimecodeSyncService
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         _seekState.ObserveLandingSample(sample, toleranceSeconds, now);
+        NoteRelocateLanding();
         TryReleaseFileLoadAfterLanding(now);
+    }
+
+    // v0.5.4 B6b（追補 4）の計測: 着地後の残差と連続 relocate を実機のログから数える（門ではない）。
+    private string _lastRelocateReason = "";
+    private bool _landedSinceLastRelocate;
+    private bool _lastLandingOutsideThreshold;
+    private TimecodeSyncLandingRecord? _lastNotedLanding;
+    private TimecodeSyncLandingRecord? _residualPendingLanding;
+
+    /// <summary>relocate（目標つきのシーク）の新しい着地を覚える（残差の記録と連続 relocate の判定用）。</summary>
+    private void NoteRelocateLanding()
+    {
+        if (_seekState.LastLanding is not { } landing || landing == _lastNotedLanding)
+            return;
+        _lastNotedLanding = landing;
+        if (!double.IsFinite(landing.TargetSeconds))
+            return;   // 読み込みの着地（目標なし）は relocate ではない
+        _landedSinceLastRelocate = true;
+        _residualPendingLanding = landing;
+    }
+
+    /// <summary>
+    /// 着地の後の最初の判定で、残差（符号つき、再生位置 − M(now)。正は行き過ぎ）を 1 行残す。
+    /// outside は残差が relocate の閾値 max(tol, r_max × c) の外か（次の relocate がこの残差を詰める）。
+    /// </summary>
+    private void LogPostLandingResidual(double ltcSeconds, SyncPlaybackState state)
+    {
+        if (_residualPendingLanding is not { } landing)
+            return;
+        _residualPendingLanding = null;
+        if (!double.IsFinite(ltcSeconds) || !double.IsFinite(state.PlaybackSeconds))
+            return;
+        double errorSeconds = state.PlaybackSeconds - ltcSeconds;
+        double seekCostSeconds = _seekState.LearnedSeekDurationSeconds ?? _seekCostHintSeconds;
+        double thresholdSeconds = Math.Max(
+            SyncDecisionEngine.ToleranceSeconds(state.VideoFps, state.TimecodeFps),
+            SyncCorrectionController.MaxRateDelta * seekCostSeconds);
+        _lastLandingOutsideThreshold = Math.Abs(errorSeconds) > thresholdSeconds;
+        Serilog.Log.Debug(
+            "sync.gate post-landing-residual errorMs={ErrorMs:F1} outside={Outside} reason={Reason:l} target={Target:F3} delayMs={DelayMs:F1} lookaheadMs={LookaheadMs:F1} thresholdMs={ThresholdMs:F1}",
+            errorSeconds * 1000.0, _lastLandingOutsideThreshold, _lastRelocateReason, landing.TargetSeconds,
+            landing.DelaySeconds * 1000.0, state.SeekTargetLookaheadSeconds * 1000.0, thresholdSeconds * 1000.0);
     }
 
     /// <summary>
@@ -293,9 +337,27 @@ public sealed class TimecodeSyncService
     public void NotifyManualSeek(double targetSeconds)
         => _seekState.BeginSeek(targetSeconds, _timeProvider.GetUtcNow().UtcDateTime);
 
-    public void ReportSeekSent(double targetSeconds)
+    public void ReportSeekSent(double targetSeconds) => ReportSeekSent(targetSeconds, "sync");
+
+    /// <summary>
+    /// シーク（relocate）の発行を知らせる。<paramref name="reason"/> は計測用の発生元
+    /// （sync・gap-exit・held-landing・hold-entry・jump-correction）。
+    /// v0.5.4 B6b（追補 4）: 前の relocate が着地し、その残差が閾値の外だった（post-landing-residual の
+    /// outside=True）後に、同じ発生元で出た relocate を chained=True で残す（連続 relocate の計数。門ではない）。
+    /// 発生元を問わない数は afterOutsideLanding で数える。
+    /// </summary>
+    public void ReportSeekSent(double targetSeconds, string reason)
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+        bool afterOutsideLanding = _landedSinceLastRelocate && _lastLandingOutsideThreshold;
+        bool chained = afterOutsideLanding && string.Equals(reason, _lastRelocateReason, StringComparison.Ordinal);
+        Serilog.Log.Debug(
+            "sync.gate relocate reason={Reason:l} target={Target:F3} chained={Chained} afterOutsideLanding={AfterOutsideLanding} previousReason={PreviousReason:l} lookaheadMs={LookaheadMs:F1}",
+            reason, targetSeconds, chained, afterOutsideLanding, _lastRelocateReason, RelocateLookaheadSeconds * 1000.0);
+        _lastRelocateReason = reason;
+        _landedSinceLastRelocate = false;
+        _lastLandingOutsideThreshold = false;
+        _residualPendingLanding = null;
         _lastSyncSeekAt = now;
         _latencyCompensator.MarkSeekSent();
         // v0.5.4 U4: BeginSeek が着地を待つ状態に入り、位置の信頼も落とす（門 10）。
@@ -516,13 +578,9 @@ public sealed class TimecodeSyncService
         // 学習値 > スキャンの見積もり > なし（0）。
         // v0.5.4 B6b（TSP-Fable の判定）: 既定値 1.0 秒を削除した。学習値もヒントも無いときは 0 を
         // 渡し、relocate の閾値は tol のまま（max(tol, 学習値) の学習値が無い形）。
-        // 既知の欠点（0.4.6 で直す）: 学習値は TimecodeSyncSeekState.LearnSeekDuration が
-        // 「位置が目標に初めて到達した時刻」で時計を止めるため、その後の再開までの停止
-        // （実測でギャップの 0.12 倍、M3 で 0.79 秒）が入っておらず、常に短く出る。
-        // スキャンの見積もりは停止込みで較正してある（SeekCostPerGapSecond = 0.42）。
-        // それでも学習値を優先するのは、1 回目のシークにはまだ学習値が無く、
-        // そこではヒントが使われる（D37-f の狙いはそこ）ため。2 回目以降の過小評価は
-        // 従来からの挙動で、ここで一緒に変えると効果の帰属が分からなくなる。
+        // v0.5.4 B6b（追補 4）: 学習値 c の源は B1 の着地の遅れ（シークの発行 → その世代の配信フレームが
+        // 着地の窓に入った観測。TimecodeSyncSeekState の new-landing の delayMs と同じ値）で、着地ごとに
+        // 移動平均で学習する。旧の「位置が目標に初めて到達した時刻」ではない（段 B2 で着地の状態に置き換わった）。
         double cost = _seekState.LearnedSeekDurationSeconds
             ?? _seekCostHintSeconds;
         if (Math.Abs(cost - _publishedSeekCostSeconds) <= 1e-9)

@@ -296,12 +296,13 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
         // 着地。
         _landingPhase = TimecodeSyncLandingPhase.Following;
         LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-        // D37-b: 着地までの実測時間を学習する。
-        if (_sentAt != DateTime.MinValue)
-            LearnSeekDuration(now - _sentAt);
         _newLandingDelaySeconds = _sentAt == DateTime.MinValue
             ? 0.0
             : (now - _sentAt).TotalSeconds;
+        // D37-b / v0.5.4 B6b: シークの所要 c を学習する。源は B1 の着地の遅れ（new-landing の delayMs）と
+        // 同じ値（シークの発行 → その世代の配信フレームが着地の窓に入った観測）。着地ごとに移動平均。
+        if (_sentAt != DateTime.MinValue)
+            LearnSeekDuration(_newLandingDelaySeconds);
         _lastLandingAt = now;
         _lastLanding = new TimecodeSyncLandingRecord(
             _targetSeconds, _landingSeekGeneration, _newLandingDelaySeconds,
@@ -378,9 +379,8 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
             deliveredSeconds <= _targetSeconds + (boundedTolerance * ContinuousPlaybackSettleSlackMultiplier);
     }
 
-    private void LearnSeekDuration(TimeSpan elapsed)
+    private void LearnSeekDuration(double seconds)
     {
-        double seconds = elapsed.TotalSeconds;
         if (seconds < LearnedSeekMinSeconds || seconds > LearnedSeekMaxSeconds)
             return;
         _learnedSeekSeconds = double.IsFinite(_learnedSeekSeconds)

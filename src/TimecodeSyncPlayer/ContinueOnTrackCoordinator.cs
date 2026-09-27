@@ -53,7 +53,7 @@ internal sealed class ContinueOnTrackCoordinator
             double exitTarget = RelocateTarget(track, mediaPos);
             if (!_effects.SeekTo(exitTarget))
                 return ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "gap-exit-seek");
-            _syncService.ReportSeekSent(exitTarget);
+            _syncService.ReportSeekSent(exitTarget, "gap-exit");
             CompleteGapExit(exitAction);
             // ギャップ出口のシークを発行したフレームでは補正を評価しない。
             return new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, 0.0, "gap-exit", ExitedGap: true);

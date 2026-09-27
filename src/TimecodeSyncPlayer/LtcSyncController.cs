@@ -1030,7 +1030,7 @@ internal sealed class LtcSyncController
                         "Jump correction seek target={Target:F3} residualMs={ResidualMs:F1} rawResidualMs={RawResidualMs:F1} rejectedTotal={RejectedTotal}",
                         decision.TargetSeconds, residualSeconds * 1000.0, rawResidualSeconds * 1000.0,
                         correctionGate.RejectedTotal);
-                    _syncService.ReportSeekSent(decision.TargetSeconds);
+                    _syncService.ReportSeekSent(decision.TargetSeconds, "jump-correction");
                 }
                 break;
         }
@@ -1286,7 +1286,7 @@ internal sealed class LtcSyncController
 
         if (_effects.SeekTo(target))
         {
-            _syncService.ReportSeekSent(target);
+            _syncService.ReportSeekSent(target, "held-landing");
             Log.Information(
                 "LTC timecode held: landing seek issued target={Target:F3} ltc={Ltc:F3}", target, heldSeconds);
         }
@@ -1321,7 +1321,7 @@ internal sealed class LtcSyncController
         }
         if (_effects.SeekTo(target))
         {
-            _syncService.ReportSeekSent(target);
+            _syncService.ReportSeekSent(target, "hold-entry");
             Log.Information(
                 "LTC timecode held (run-through): entry alignment seek issued target={Target:F3} ltc={Ltc:F3} position={Position:F3}",
                 target, heldSeconds, playback);

@@ -166,4 +166,37 @@ public class B6bPredictiveLocateTests
         h.SupplyLtc(19.04);                                  // 値が進む
         h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(learned, 1e-9);
     }
+
+    // ── 追補 4: 着地後の残差と連続 relocate を実機のログから数えられる ─────────────
+
+    [Fact]
+    public void Metrics_LogThePostLandingResidualAndChainedRelocates()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
+        using var sink = new ScenarioLogSink(clock);
+        h.AddTrack("A", 0, 120);
+        h.ManualPlay();
+        h.AdvancePlayback(10.0);
+        h.Ltc.Normal(10.0, TimeSpan.FromSeconds(5));
+        long start = clock.MonotonicMilliseconds;
+        h.Ltc.Normal(18.0, TimeSpan.FromSeconds(8));       // 3 秒前へ飛ぶ
+        long end = h.Ltc.NextMilliseconds;
+        while (clock.MonotonicMilliseconds < end)
+        {
+            h.AdvanceMilliseconds(40);
+            if (clock.MonotonicMilliseconds - start > 3_000)
+                h.Playback.SeekLandingDelaySeconds = 0.5;
+        }
+
+        List<ScenarioGateEvent> relocates = sink.GateEvents.Where(e => e.Name == "relocate").ToList();
+        relocates.Should().HaveCount(2, "学習前の 1 本と、先行量つきの 2 本目");
+        relocates[0].Message.Should().Contain("reason=sync").And.Contain("chained=False");
+        relocates[1].Message.Should().Contain("reason=sync").And.Contain("chained=True",
+            "着地の後に同じ発生元で出た 2 本目は連続 relocate として数える");
+
+        List<ScenarioGateEvent> residuals = sink.GateEvents.Where(e => e.Name == "post-landing-residual").ToList();
+        residuals.Should().HaveCount(2, "relocate の着地ごとに 1 行");
+        residuals[0].Message.Should().Contain("errorMs=-5", "1 本目は c（0.5 秒）ぶん遅れて着地する（符号は再生位置 − M）");
+        residuals[1].Message.Should().MatchRegex(@"errorMs=-?\d{1,2}\.\d ", "2 本目（目標 = M + c）の着地の残差は 100ms 未満");
+    }
 }
