@@ -44,7 +44,7 @@
 | `destroy: exit elapsed_ms=` | 出口（`delete p` の後） |
 
 - teardown の中の elapsed は直前の段からの差、destroy の行は destroy の入口からの経過
-- `teardown_pipeline (TcsPlayer* p, const char* diag = nullptr)`: 既存の呼び出し（ロード・停止など 8 か所）は引数なしのままなので行は増えない
+- `teardown_pipeline (TcsPlayer* p, const char* diag = nullptr)`: 既存の呼び出し（ロード・停止など 7 か所）は引数なしのままなので行は増えない
 - ロックの規則 I13: `LOG` を `frame_lock` の中に置いていない。状態変更（`set_state(NULL)`）の位置は変えていない（もとから `frame_lock` の外）。
   `python scripts/check-shim-lock-rule.py` の結果: `OK: no state change under frame_lock`、`result: PASS`（許可済みの 3 か所 `state_mutex` の下の set_state は以前と同じ）
 - ビルドしていないので、コンパイルが通るかは確かめていない（使った関数 `qpc_now`・`qpc_diff_ms` と `p->qpc_freq` は同じファイルの既存のもの。既定引数は定義で 1 回だけ、前方宣言は無い）
