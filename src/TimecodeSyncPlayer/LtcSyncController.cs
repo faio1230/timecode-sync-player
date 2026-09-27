@@ -213,7 +213,7 @@ internal sealed class LtcSyncController
     /// v0.5.2 段 1: できごとでこのクラスのラッチを消す入口。段 0 の寿命の表の「現状」の列どおりに消す
     /// （各分岐は段 1 の前に各入口メソッドにあった処理を、順番を変えずに移したもの）。
     /// フレームの中で消えるもの（Normal フレーム、Continue のトラック切替、ギャップのフレーム、
-    /// 補正評価、追従開始の消費）はフレーム経路のまま。
+    /// 補正評価）はフレーム経路のまま。
     /// </summary>
     private void OnLifecycle(SyncLifecycleEvent evt)
     {
@@ -224,16 +224,12 @@ internal sealed class LtcSyncController
                 _rate.ResetSmoothAvailability();
                 // v0.5.3 段 3e: 保持値の 1 回適用のラッチを下ろす（§6 の 5）。
                 _input.ClearHeldReapplied();
-                // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
-                // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
-                _input.MarkFollowStart();
                 break;
             case SyncLifecycleEvent.SyncDisabled:
                 ResetCorrection();
                 // v0.5.4 K5（§6 の 7）: 無効化の時点で戻せなくても、復帰待ちを残さない。
                 RetryRateRestoreIfPending();
                 _rate.ResetSmoothAvailability();
-                _input.ClearFollowStart();
                 break;
             case SyncLifecycleEvent.SyncModeChanged:
                 ResetCorrection();
@@ -277,30 +273,22 @@ internal sealed class LtcSyncController
                 _input.ClearFrameHistory();
                 _monitoring.MarkStarted();
                 _signalLoss.OnLifecycle(evt);
-                // D37-c: 監視開始時に既に同期が有効なら、最初の有効フレームを追従開始として扱う。
-                if (_effects.GetContext().SyncEnabled)
-                    _input.MarkFollowStart();
                 break;
             case SyncLifecycleEvent.MonitoringStopped:
                 // v0.5.3 段 3h: 監視の停止で倍率を 1.0 に戻す（§6 の 14、利用者決定 2026-09-25）。
                 ResetCorrection();
                 _input.ClearFrameHistory();
                 if (!_monitoring.IsDetectionActive(isReportedRunning: false))
-                {
                     _signalLoss.OnLifecycle(evt);
-                    _input.ClearFollowStart();
-                }
                 break;
             case SyncLifecycleEvent.MonitorDeviceStopped:
                 // 信号断のポリシーの初期化は、正常な停止のときだけ入口（MonitorStopped）が行う。
                 // v0.5.3 段 3h: 監視の停止で倍率を 1.0 に戻す（§6 の 14、利用者決定 2026-09-25）。
                 ResetCorrection();
                 _input.ClearFrameHistory();
-                _input.ClearFollowStart();
                 break;
             case SyncLifecycleEvent.BoundaryHoldReleased:
                 // D35-b: ホールド中に残った端への保留シークと保持着地のラッチを解除する。
-                // D37-g: 追従開始のエピソードも終わらせる（先行量を引き継がせない）。
                 _input.ClearHeldLossLanding();
                 _input.ClearHeldReapplied();
                 _input.DiscardPendingSync();
@@ -1319,7 +1307,6 @@ internal sealed class LtcSyncController
     /// <summary>
     /// D35-b: D33 の境界ホールド（Single）が解除されたときに呼ぶ。ホールド中に残った端への
     /// 保留シークと保持着地のラッチを必ず解除し、解除後の範囲内 LTC への着地を抑止しない。
-    /// D37-g: 追従開始のエピソードもここで終わらせる（先行量を引き継がせない）。
     /// v0.5.2 段 1 の追加: ほかの入口と同じくできごとを記録し、消す処理は OnLifecycle に置く。
     /// </summary>
     internal void NotifyClipBoundaryHoldReleased()
@@ -1435,7 +1422,6 @@ internal sealed class LtcSyncController
         ["heldLossLanding"] = _input.HeldLossLandingSeconds is not null,
         ["lastAppliedLtc"] = _input.LastAppliedLtcSeconds is not null,
         ["lastAcceptedLtc"] = _input.Accepted is not null,
-        ["followStartPending"] = _input.FollowStartPending,
         ["rateRestorePending"] = _rate.RateRestorePending,
         ["smoothUnavailable"] = !_rate.SmoothAvailable,
         // 倍率が 1.0 でないまま残っているか（ResetCorrection と同じ判定幅）。

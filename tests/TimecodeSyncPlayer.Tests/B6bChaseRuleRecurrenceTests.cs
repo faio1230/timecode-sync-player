@@ -101,4 +101,40 @@ public class B6bChaseRuleRecurrenceTests
         decision.Action.Should().Be(SyncActionType.None);
         decision.RateCatchUpPreferred.Should().BeTrue();
     }
+
+    // ── 16/23: relocate の直後の 1 サンプルは varispeed しない（着地窓・±0.20 の窓の代わり） ──
+
+    [Fact]
+    public void Rule3_JustLanded_IsConsumedByExactlyOneSample()
+    {
+        var seekState = new TimecodeSyncSeekState();
+        DateTime now = new(2026, 9, 28, 0, 0, 0, DateTimeKind.Utc);
+        seekState.BeginSeek(5.0, now);
+        seekState.ConsumeJustLanded().Should().BeFalse("着地する前は立たない");
+
+        seekState.ObserveLandingSample(
+            new PlaybackPositionSample(5.0, PlaybackPositionBasis.Pipeline, 1, 5.0, 1, 1),
+            0.24, now.AddMilliseconds(200));
+
+        seekState.ConsumeJustLanded().Should().BeTrue("着地を観測した直後の 1 サンプル");
+        seekState.ConsumeJustLanded().Should().BeFalse("2 サンプル目からは補正を評価する");
+    }
+
+    [Fact]
+    public void Rule3_AfterALoadLanding_TheFirstSampleDoesNotVarispeed_AndTheNextDoes()
+    {
+        var harness = new TimecodeSyncPlayer.Tests.Integration.SyncScenarioHarness(enableCorrection: true);
+        harness.AddTrack("clip1", 0);
+        harness.ManualPlay();
+        harness.SupplyLtc(1.0);                                   // clip1 へ切替（読み込み）
+        harness.AdvancePlayback(1.1, renderedFrames: 2);
+
+        harness.SupplyLtc(1.2);                                   // 着地を観測したサンプル（残差 +100ms）
+
+        harness.AppliedRates.Should().BeEmpty("relocate・読み込みの着地の直後の 1 サンプルは varispeed しない");
+
+        harness.SupplyLtc(1.2);                                   // 次のサンプル
+
+        harness.AppliedRates.Should().ContainSingle().Which.Should().BeApproximately(1.10, 1e-9);
+    }
 }

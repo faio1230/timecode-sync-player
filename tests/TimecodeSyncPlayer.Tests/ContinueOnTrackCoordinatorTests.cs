@@ -464,6 +464,8 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     // ---- D37-b2: 着地直後は速度補正に任せずシークで詰める ----
+    // v0.5.4 B6b: 着地窓は畳んだ。着地直後も定常と同じく relocate の閾値
+    // max(tol, 学習したシークの所要) で決まる（超えたらシーク、以内は速度補正）。
 
     private static (SyncDecisionEngine Engine, TimecodeSyncService Service, ManualTimeProvider Clock)
         CreateServiceWithSimulatedEngineClock()
@@ -476,7 +478,7 @@ public class ContinueOnTrackCoordinatorTests
     }
 
     [Fact]
-    public void GapExitLanding_SubsequentDeficit_SeeksInsteadOfRateCatchUp()
+    public void GapExitLanding_DeficitBeyondTheThreshold_Seeks()
     {
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
         var track = CreateTrack(Guid.NewGuid());
@@ -490,9 +492,9 @@ public class ContinueOnTrackCoordinatorTests
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
         rec.SeekTargets.Should().Equal(10.0);
 
-        // 出口直後の不足 0.7 秒（着地窓の中、0.5× シーク所要 1.0 秒を超える）→ シークで着地する。
+        // 出口直後の不足 1.5 秒（閾値 = 既定のシーク所要 1.0 秒を超える）→ シークで着地する。
         rec.GapExit = GapExitActionType.None;
-        rec.TimePos = (0, 9.5);
+        rec.TimePos = (0, 8.7);
         for (int i = 0; i < 4; i++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
@@ -506,7 +508,7 @@ public class ContinueOnTrackCoordinatorTests
     public void GapExitLanding_WithLearnedSeekCost_DoesNotLookAhead()
     {
         (_, TimecodeSyncService service, ManualTimeProvider clock) = CreateServiceWithSimulatedEngineClock();
-        // D37-e: 学習値 2.0 があっても、ギャップ出口のシークは先行しない（対象は追従開始だけ）。
+        // D37-e: 学習値 2.0 があっても、ギャップ出口のシークは先行しない（v0.5.4 B6b: 先行量そのものを畳んだ）。
         service.SeekState.BeginSeek(1.0, clock.GetUtcNow().UtcDateTime);
         clock.Advance(TimeSpan.FromSeconds(2.0));
         // v0.5.4 段 B: 着地は配信の世代と位置の事象で取る（旧 門 6 の窓と cooldown は畳んだ）。
@@ -528,9 +530,9 @@ public class ContinueOnTrackCoordinatorTests
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
         rec.SeekTargets.Should().Equal(10.0);
 
-        // 出口直後の不足 1.2 秒（> 0.5 × 学習値 2.0、< 学習値）→ シーク。行き先は LTC のまま。
+        // 出口直後の不足 2.5 秒（> 閾値 = 学習値 2.0）→ シーク。行き先は LTC のまま。
         rec.GapExit = GapExitActionType.None;
-        rec.TimePos = (0, 9.0);
+        rec.TimePos = (0, 7.7);
         for (int i = 0; i < 4; i++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(100));
@@ -555,7 +557,7 @@ public class ContinueOnTrackCoordinatorTests
         coordinator.Handle(OnTrack(track, 10.0), 10.0);
         rec.SeekTargets.Should().Equal(10.0);
 
-        // 出口直後の不足 0.3 秒（0.5× 1.0 秒以下）→ シークは誤差を増やすだけなので速度補正に任せる。
+        // 出口直後の不足 0.3 秒（閾値 1.0 秒以下）→ シークは誤差を増やすだけなので速度補正に任せる。
         rec.GapExit = GapExitActionType.None;
         rec.TimePos = (0, 9.9);
         for (int i = 0; i < 4; i++)

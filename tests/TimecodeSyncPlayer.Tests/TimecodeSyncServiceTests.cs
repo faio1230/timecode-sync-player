@@ -614,23 +614,15 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void SyncDisabled_DuringFileLoad_CancelsWithoutReleaseOrLandingWindow()
+    public void SyncDisabled_DuringFileLoad_CancelsWithoutRelease()
     {
-        // v0.5.3 段 3d: 同期を切った後に何秒待っても、ロード解除（file load released）が起きず
-        // 着地窓も開かない（§6 の 3）。
+        // v0.5.3 段 3d: 同期を切った後に何秒待っても、ロード解除（file load released）が起きない
+        // （§6 の 3）。v0.5.4 B6b: 着地窓を畳んだので、窓が開かないことの確認は外した。
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
         var service = new TimecodeSyncService(engine, seekState, clock);
         service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
-
-        // ロードで開いた着地窓を、着地（配信の世代の最初のフレーム）と到着（許容内）で閉じておく。
-        seekState.LastStatus = TimecodeSyncSeekPendingStatus.Settled;
-        seekState.HasPendingSeek = false;
-        engine.DecisionToReturn = new SyncDecision(
-            SyncActionType.None, 0.0, 0.0, 0.2, 30.0, 30.0, false, false, WithinTolerance: true);
-        service.EvaluateDecision(12.0, new SyncPlaybackState(true, true, false, 12.0, 100.0));
-        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("前提: 着地窓は閉じている");
 
         using LoggerCapture capture = CaptureLogger();
         service.OnLifecycle(SyncLifecycleEvent.SyncDisabled);
@@ -644,7 +636,6 @@ public class TimecodeSyncServiceTests
             .Should().BeTrue("取り消し後はロード中ではない（解除もしない）");
         service.PollFileLoadRelease(playbackSeconds: 12.0, renderedFrameCount: 3)
             .Should().BeFalse("解除の回収は起きない");
-        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("何秒待っても着地窓は開かない");
 
         List<LogEvent> events = capture.Snapshot();
         events.Should().NotContain(e => e.MessageTemplate.Text.Contains("file load released"),
@@ -710,9 +701,10 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void BeginGapFreezeLoad_DoesNotSetLoadingOrOpenLandingWindow()
+    public void BeginGapFreezeLoad_DoesNotSetLoadingOrDebounce()
     {
-        // v0.5.3 段 3g: ロード中の印を立てず、着地窓を開かず、デバウンスも更新しない（設計 §1 の「しない」）。
+        // v0.5.3 段 3g: ロード中の印を立てず、デバウンスも更新しない（設計 §1 の「しない」）。
+        // v0.5.4 B6b: 着地窓を畳んだので、窓が開かないことの確認は外した。
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
         var engine = new MockSyncDecisionEngine();
         var seekState = new TimecodeSyncSeekState(TimeSpan.FromSeconds(2));
@@ -721,14 +713,11 @@ public class TimecodeSyncServiceTests
         service.BeginGapFreezeLoad("load-paused-at");
 
         service.IsLoadingFile.Should().BeFalse("ロード中の印を立てない");
-        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse("着地窓を開かない");
-        service.LatchSnapshot()["followStartLanding"].Should().BeFalse("追従開始の着地も開かない");
         service.IsDebounced().Should().BeFalse("デバウンスを更新しない");
 
         // 繰り返しても同じ（path-guard の 1 秒ごとの読み直し）。着地待ちは維持する。
         service.BeginGapFreezeLoad("path-guard");
         service.IsLoadingFile.Should().BeFalse();
-        service.LatchSnapshot()["seekLandingActive"].Should().BeFalse();
         service.SeekState.HasPendingSeek.Should().BeTrue("読み込みの世代の着地待ちに入る");
     }
 

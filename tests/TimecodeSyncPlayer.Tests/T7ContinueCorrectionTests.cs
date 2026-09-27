@@ -38,6 +38,7 @@ public class T7ContinueCorrectionTests
     public void ContinueClip2_Smooth_ResidualIsMediaPositionMinusPlayback()
     {
         SyncScenarioHarness harness = ArrangeClip2OnTrack(playbackSeconds: 0.450);
+        harness.SupplyLtc(12.5);                                  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.AppliedRates.Clear();
 
         harness.SupplyLtc(12.5);                                  // 素材位置 0.500
@@ -53,6 +54,7 @@ public class T7ContinueCorrectionTests
     {
         SyncScenarioHarness harness = ArrangeClip2OnTrack(playbackSeconds: 0.450);
         harness.CorrectionMode = SyncCorrectionMode.Jump;
+        harness.SupplyLtc(12.6);                                  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.Operations.Clear();
 
         harness.SupplyLtc(12.6);                                  // 素材 0.600、残差 +150ms（T8 のしきい値 80ms 超）
@@ -84,6 +86,7 @@ public class T7ContinueCorrectionTests
 
         harness.SupplyLtc(12.0);                                  // clip2 へ切替 → Reset
         harness.AdvancePlayback(0.45, renderedFrames: 2);
+        harness.SupplyLtc(12.5);                                  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.AppliedRates.Clear();
 
         harness.SupplyLtc(12.5);                                  // 素材 0.5、残差 +50ms
@@ -105,6 +108,12 @@ public class T7ContinueCorrectionTests
         harness.AddTrack("clip2", 12);
         harness.ManualPlay();
 
+        harness.SupplyLtc(12.0 - (offsetMs / 1000.0));            // effective 12.0 で切替
+        harness.AdvancePlayback(0.45, renderedFrames: 2);
+        // v0.5.4 B6b（規則 3）: 着地直後の 1 サンプルは補正しない。trace の外で同じ値を 1 回送って消費する。
+        harness.SupplyLtc(12.5 - (offsetMs / 1000.0));
+        harness.AppliedRates.Clear();
+
         double deltaSeconds;
         string dir = Path.Combine(Path.GetTempPath(), "tcs-t7-trace", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
@@ -114,9 +123,6 @@ public class T7ContinueCorrectionTests
             OutputTrace.Current = trace;
             try
             {
-                harness.SupplyLtc(12.0 - (offsetMs / 1000.0));    // effective 12.0 で切替
-                harness.AdvancePlayback(0.45, renderedFrames: 2);
-                harness.AppliedRates.Clear();
                 harness.SupplyLtc(12.5 - (offsetMs / 1000.0));    // effective 12.5、素材 0.500
             }
             finally
@@ -209,6 +215,7 @@ public class T7ContinueCorrectionTests
         harness.ManualPlay();
         harness.SupplyLtc(1.0);
         harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
 
@@ -227,6 +234,7 @@ public class T7ContinueCorrectionTests
         harness.ManualPlay();
         harness.SupplyLtc(1.0);
         harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
 
@@ -244,6 +252,7 @@ public class T7ContinueCorrectionTests
         harness.ManualPlay();
         harness.SupplyLtc(1.0);
         harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
 
         harness.Controller.PlayPauseToggled();                     // 手動の再生・一時停止/差し替え相当
@@ -267,6 +276,7 @@ public class T7ContinueCorrectionTests
         harness.ManualPlay();
         harness.SupplyLtc(1.0);
         harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates.Should().ContainSingle();
 

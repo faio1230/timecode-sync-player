@@ -17,7 +17,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     // この 1 回だけ瞬間値で判定する（ResetSeekGate では戻さない。シーク後・ロード後まで
     // 例外を広げると、位置が飛んだ直後の 1 サンプルで連鎖が始まる）。
     private bool _gateWarmed;
-    // D37-b: シーク 1 回の実測所要（サービスが学習値を公開する。0 は未設定 = 速度補正優先なし）。
+    // D37-b / v0.5.4 B6b（門 15）: シーク 1 回の実測所要（サービスが学習値を公開する）。
+    // relocate の閾値は max(tol, この値)。0 は未設定（閾値は tol のまま）。
     private double _rateCatchUpLimitSeconds;
     private bool _rateCatchUpActive;
     private double _rateCatchUpStartAbsSeconds;
@@ -192,10 +193,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         EndRateCatchUp(escalated: true, absDelta);
 
         // 行き先だけを先行補償する。シーク可否（delta と tolerance）は補償前の値で判定する。
-        // 補償後もトラックの範囲（D29）へ収める。
-        // D37-e: 追従開始のシークだけは「LTC + 学習済みシーク所要」を狙う（上限を付けない。
-        // 0.4.2 の先行補償が効かなかったのは 400ms 上限で頭打ちになったため）。既存の
-        // D7-a 先行補償（既定無効・上限 400ms）より優先する。未学習（0）は現行どおり。
+        // 補償後もトラックの範囲（D29）へ収める。v0.5.4 B6b: 追従開始の先行量（D37-e）は畳んだ。
         double compensatedTarget = _latencyCompensator is null
             ? target
             : Math.Clamp(
@@ -460,7 +458,7 @@ public sealed record SyncDecision(
     bool RateCatchUpPreferred = false,
     // D37-b: シーク中・着地未確認のため、このフレームの位置を使った判定をしてはいけない。
     bool PositionUntrusted = false,
-    // D37-d: 誤差が許容内に入った（着地エピソードの到達）。サービスは着地窓を閉じる。
+    // D37-d: 誤差が許容内に入った（記録用。v0.5.4 B6b で着地窓を畳んだため判断には使わない）。
     bool WithinTolerance = false,
     // 0.4.5-A フェーズ 2: 記録用のクエリ値基準の差。判断用の DeltaSeconds が評価位置基準に
     // なっても、trace の delta= はこちらを使う（既存フィールドの意味を変えない契約）。

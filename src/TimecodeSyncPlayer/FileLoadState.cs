@@ -3,7 +3,7 @@ namespace TimecodeSyncPlayer;
 /// <summary>
 /// v0.5.2 段 2e: 読み込みの状態（位置の持ち主の軸のうち、ロード中と解除の回収待ち）。
 /// 段階は「なし／ロード中（開始時刻・開始位置・開始時の描画枚数）／解除の回収待ち（解除時刻）」。
-/// ロード解除の副作用（着地窓・デバウンス）とログは <see cref="TimecodeSyncService"/> に残し、
+/// ロード解除の副作用（デバウンス）とログは <see cref="TimecodeSyncService"/> に残し、
 /// ここは値と遷移だけを持つ。
 ///
 /// <see cref="IsLoadingFile"/> は今まで volatile bool として読まれていた。リポジトリ内の
@@ -59,7 +59,7 @@ internal sealed class FileLoadState
 
     /// <summary>
     /// v0.5.3 段 3d: ロード中と解除の回収待ちを両方下ろす（§6 の 3）。解除ではない
-    /// （<see cref="Release"/> を通らない。解除時刻を残さず、着地窓・デバウンスにも触れない）。
+    /// （<see cref="Release"/> を通らない。解除時刻を残さず、デバウンスにも触れない）。
     /// </summary>
     public void Cancel()
     {

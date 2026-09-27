@@ -178,11 +178,6 @@ public sealed class TimecodeSyncService
     /// </summary>
     public bool IsWaitingForLanding => _seekState.IsWaitingForLanding;
 
-    /// <summary>
-    /// D37-b2/D37-d: ギャップ明け・トラック切替・追従開始の着地を通知する。ここから
-    /// 誤差が許容内に入る（または上限に達する）まで、速度補正優先を止める。
-    /// D37-e: 追従開始だけ origin=FollowStart を渡し、シーク目標の先行量を有効にする。
-    /// </summary>
     public bool IsLoadingFile => _fileLoad.IsLoadingFile;
 
     /// <summary>
@@ -321,7 +316,7 @@ public sealed class TimecodeSyncService
 
     /// <summary>
     /// v0.5.3 段 3g: ギャップの読み込み（Freeze の取り込みと読み直し）用の口（§6 の 2 の残り）。
-    /// <see cref="BeginFileLoad"/> と違い、ロード中の印を立てず、着地窓を開かず、デバウンスも更新せず、
+    /// <see cref="BeginFileLoad"/> と違い、ロード中の印を立てず、デバウンスも更新せず、
     /// 位置の信頼・ゲート・学習にも触らない（一時停止のまま解除が最大 5 秒遅れるのを避ける。
     /// 設計 docs/design/v0.5.3-gap-load-entry.md とその親の承認）。
     /// </summary>
@@ -375,7 +370,7 @@ public sealed class TimecodeSyncService
 
     /// <summary>
     /// v0.5.3 段 3d: ロード中と解除の回収待ちを取り消す（§6 の 3）。解除（<see cref="ReleaseFileLoad"/>）
-    /// ではないため、着地窓を開かずデバウンスも更新しない。ロード中だったときだけログを 1 行残す。
+    /// ではないため、デバウンスを更新しない。ロード中だったときだけログを 1 行残す。
     /// </summary>
     private void CancelFileLoad(SyncLifecycleEvent evt)
     {
@@ -550,8 +545,6 @@ public sealed class TimecodeSyncService
 
     /// <summary>
     /// v0.5.2 段 0: ラッチが立っているかの読み取り専用の写し（特性テスト用。状態は変えない）。
-    /// seekLandingActive は着地エピソードが開いているか（上限による閉鎖は次の評価で起きるため、
-    /// ここでは判定しない）。
     /// </summary>
     internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
     {
