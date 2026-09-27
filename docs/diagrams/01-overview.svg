@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1180" viewBox="0 0 1600 1180" role="img" aria-label="01  全体構成 — 誰が何を担当するか">
+<style>text{font-family:"Yu Gothic","Meiryo","Segoe UI",sans-serif} .node:hover rect{filter:brightness(.97)}</style>
+<defs>
+<marker id="arrow-control" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3264c5"/></marker>
+<marker id="arrow-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8554c2"/></marker>
+<marker id="arrow-event" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#168399"/></marker>
+<marker id="arrow-note" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#718096"/></marker>
+</defs>
+<rect width="1600" height="1180" fill="#ffffff"/>
+<text x="40" y="52" font-size="30" font-weight="700" fill="#243349" text-anchor="start">01  全体構成 — 誰が何を担当するか</text>
+<text x="40" y="87" font-size="17" font-weight="400" fill="#243349" text-anchor="start">制御は C#、動画の復号は GStreamer、合成と出力は D3D11。MainWindow が各部品を接続する。</text>
+<text x="1560" y="117" font-size="14" font-weight="400" fill="#64748b" text-anchor="end">v0.4.7 · a4cb181 · 2026-09-20</text>
+<path d="M40 118 h38" stroke="#3264c5" stroke-width="2.5" />
+<text x="88" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">青：制御・状態</text>
+<path d="M285 118 h38" stroke="#8554c2" stroke-width="2.5" />
+<text x="333" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">紫：映像データ</text>
+<path d="M530 118 h38" stroke="#168399" stroke-width="2.5" stroke-dasharray="7 5" />
+<text x="578" y="124" font-size="14" font-weight="400" fill="#243349" text-anchor="start">水色の破線：通知</text>
+<polyline points="290,265.0 365,265.0" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="615,265.0 690,265.0" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="940,265.0 1015,265.0" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1265,265.0 1340,265.0" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="290,557.5 365,557.5" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="615,557.5 690,557.5" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="815.0,490 815.0,330" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1265,557.5 1295,557.5 1295,375 1395,375 1395.0,330" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="1450.0,330 1450.0,490" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="890.0,625 890,675 1315,675 1315,557.5 1340,557.5" fill="none" stroke="#3264c5" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-control)" />
+<polyline points="1450.0,625 1450.0,730" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" />
+<polyline points="1450.0,740 1450.0,795" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="1445,735.0 1145,735.0" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" />
+<polyline points="1140.0,740 1140.0,795" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="1135,735.0 815,735 815.0,795" fill="none" stroke="#8554c2" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-data)" />
+<polyline points="740.0,795 740.0,625" fill="none" stroke="#168399" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-event)" stroke-dasharray="7 5" />
+<polyline points="615,862.5 650,862.5 650,598 690,598.0" fill="none" stroke="#168399" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#arrow-event)" stroke-dasharray="7 5" />
+<g class="node"><title></title>
+<rect x="40" y="200" width="250" height="130" rx="12" fill="#ecfdf5" stroke="#148365" stroke-width="1.5"/>
+<text x="56" y="229" font-size="18" font-weight="700" fill="#243349" text-anchor="start">LTC 音声入力</text>
+<text x="56" y="256" font-size="15" font-weight="400" fill="#243349" text-anchor="start">音声デバイスから受信</text>
+<text x="56" y="279" font-size="15" font-weight="400" fill="#243349" text-anchor="start">同期の基準になる時刻信号</text>
+</g>
+<g class="node"><title>LtcAudioMonitor / LtcDecoder</title>
+<rect x="365" y="200" width="250" height="130" rx="12" fill="#ecfdf5" stroke="#148365" stroke-width="1.5"/>
+<text x="381" y="229" font-size="18" font-weight="700" fill="#243349" text-anchor="start">LTC の読み取り</text>
+<text x="381" y="256" font-size="15" font-weight="400" fill="#243349" text-anchor="start">PCM → タイムコード</text>
+<text x="381" y="279" font-size="15" font-weight="400" fill="#243349" text-anchor="start">サンプル位置から時刻を推定</text>
+<text x="381" y="315" font-size="11.5" font-weight="500" fill="#148365" text-anchor="start">LtcAudioMonitor / LtcDecoder</text>
+</g>
+<g class="node"><title>LtcSyncController + SyncService</title>
+<rect x="690" y="200" width="250" height="130" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="706" y="229" font-size="18" font-weight="700" fill="#243349" text-anchor="start">同期の制御</text>
+<text x="706" y="256" font-size="15" font-weight="400" fill="#243349" text-anchor="start">信号診断・モード分岐</text>
+<text x="706" y="279" font-size="15" font-weight="400" fill="#243349" text-anchor="start">シーク／速度補正の判断</text>
+<text x="706" y="315" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">LtcSyncController + SyncService</text>
+</g>
+<g class="node"><title>IPlaybackApi → GstPlaybackApi</title>
+<rect x="1015" y="200" width="250" height="130" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="1031" y="229" font-size="18" font-weight="700" fill="#243349" text-anchor="start">型付き再生 API</text>
+<text x="1031" y="256" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Load / Seek / Pause / Rate</text>
+<text x="1031" y="279" font-size="15" font-weight="400" fill="#243349" text-anchor="start">再生位置・fps などの取得</text>
+<text x="1031" y="315" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">IPlaybackApi → GstPlaybackApi</text>
+</g>
+<g class="node"><title>tcs_gstreamer.dll</title>
+<rect x="1340" y="200" width="220" height="130" rx="12" fill="#fff7ed" stroke="#bf691e" stroke-width="1.5"/>
+<text x="1356" y="229" font-size="18" font-weight="700" fill="#243349" text-anchor="start">動画の復号</text>
+<text x="1356" y="256" font-size="15" font-weight="400" fill="#243349" text-anchor="start">C ABI → GStreamer</text>
+<text x="1356" y="279" font-size="15" font-weight="400" fill="#243349" text-anchor="start">独立した D3D11 デバイス</text>
+<text x="1356" y="315" font-size="11.5" font-weight="500" fill="#bf691e" text-anchor="start">tcs_gstreamer.dll</text>
+</g>
+<g class="node"><title>AppSettings / ProjectSerializer</title>
+<rect x="40" y="490" width="250" height="135" rx="12" fill="#f1f5f9" stroke="#718096" stroke-width="1.5"/>
+<text x="56" y="519" font-size="18" font-weight="700" fill="#243349" text-anchor="start">保存ファイル</text>
+<text x="56" y="546" font-size="15" font-weight="400" fill="#243349" text-anchor="start">settings.json：利用者設定</text>
+<text x="56" y="569" font-size="15" font-weight="400" fill="#243349" text-anchor="start">.tsp：素材・時間・配置</text>
+<text x="56" y="610" font-size="11.5" font-weight="500" fill="#718096" text-anchor="start">AppSettings / ProjectSerializer</text>
+</g>
+<g class="node"><title>MainViewModel / PlaylistState</title>
+<rect x="365" y="490" width="250" height="135" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="381" y="519" font-size="18" font-weight="700" fill="#243349" text-anchor="start">アプリの状態</text>
+<text x="381" y="546" font-size="15" font-weight="400" fill="#243349" text-anchor="start">プレイリスト：トラックと時間配置</text>
+<text x="381" y="569" font-size="15" font-weight="400" fill="#243349" text-anchor="start">ViewModels：画面表示と操作</text>
+<text x="381" y="610" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">MainViewModel / PlaylistState</text>
+</g>
+<g class="node"><title>MainWindow.xaml.cs</title>
+<rect x="690" y="490" width="250" height="135" rx="12" fill="#eff6ff" stroke="#3264c5" stroke-width="1.5"/>
+<text x="706" y="519" font-size="18" font-weight="700" fill="#243349" text-anchor="start">画面と各機能の接続</text>
+<text x="706" y="546" font-size="15" font-weight="400" fill="#243349" text-anchor="start">操作・タイマー・通知の受け口</text>
+<text x="706" y="569" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Coordinator に処理を委譲</text>
+<text x="706" y="610" font-size="11.5" font-weight="500" fill="#3264c5" text-anchor="start">MainWindow.xaml.cs</text>
+</g>
+<g class="node"><title>MP4 / MOV / MKV / …</title>
+<rect x="1015" y="490" width="250" height="135" rx="12" fill="#ecfdf5" stroke="#148365" stroke-width="1.5"/>
+<text x="1031" y="519" font-size="18" font-weight="700" fill="#243349" text-anchor="start">動画ファイル</text>
+<text x="1031" y="546" font-size="15" font-weight="400" fill="#243349" text-anchor="start">映像を復号して共有リングへ</text>
+<text x="1031" y="569" font-size="15" font-weight="400" fill="#243349" text-anchor="start">素材音声は shim の音声経路へ</text>
+<text x="1031" y="610" font-size="11.5" font-weight="500" fill="#148365" text-anchor="start">MP4 / MOV / MKV / …</text>
+</g>
+<g class="node"><title>OutputEngine / ComposeLayer</title>
+<rect x="1340" y="490" width="220" height="135" rx="12" fill="#f5f0ff" stroke="#8554c2" stroke-width="1.5"/>
+<text x="1356" y="519" font-size="18" font-weight="700" fill="#243349" text-anchor="start">合成と出力の管理</text>
+<text x="1356" y="546" font-size="15" font-weight="400" fill="#243349" text-anchor="start">素材＋配置＋Gap 状態</text>
+<text x="1356" y="569" font-size="15" font-weight="400" fill="#243349" text-anchor="start">固定キャンバスへ合成</text>
+<text x="1356" y="610" font-size="11.5" font-weight="500" fill="#8554c2" text-anchor="start">OutputEngine / ComposeLayer</text>
+</g>
+<g class="node"><title>GopScanCache / CodecAdvice / DecodeHealthMonitor</title>
+<rect x="40" y="795" width="575" height="135" rx="12" fill="#fffbea" stroke="#aa8120" stroke-width="1.5"/>
+<text x="56" y="824" font-size="18" font-weight="700" fill="#243349" text-anchor="start">素材・再生状態の警告（v0.4.7）</text>
+<text x="56" y="851" font-size="15" font-weight="400" fill="#243349" text-anchor="start">GOP 解析／コーデック案内／デコード追従の監視</text>
+<text x="56" y="874" font-size="15" font-weight="400" fill="#243349" text-anchor="start">状態を表示する。警告そのものでは再生を止めない。</text>
+<text x="56" y="915" font-size="11.5" font-weight="500" fill="#aa8120" text-anchor="start">GopScanCache / CodecAdvice / DecodeHealthMonitor</text>
+</g>
+<g class="node"><title>PreviewFrameReady</title>
+<rect x="690" y="795" width="250" height="135" rx="12" fill="#eaf9fc" stroke="#168399" stroke-width="1.5"/>
+<text x="706" y="824" font-size="18" font-weight="700" fill="#243349" text-anchor="start">WPF プレビュー</text>
+<text x="706" y="851" font-size="15" font-weight="400" fill="#243349" text-anchor="start">縮小して GPU → CPU 読み戻し</text>
+<text x="706" y="874" font-size="15" font-weight="400" fill="#243349" text-anchor="start">Dispatcher 経由で画面に反映</text>
+<text x="706" y="915" font-size="11.5" font-weight="500" fill="#168399" text-anchor="start">PreviewFrameReady</text>
+</g>
+<g class="node"><title>SwapchainTarget</title>
+<rect x="1015" y="795" width="250" height="135" rx="12" fill="#eaf9fc" stroke="#168399" stroke-width="1.5"/>
+<text x="1031" y="824" font-size="18" font-weight="700" fill="#243349" text-anchor="start">全画面出力</text>
+<text x="1031" y="851" font-size="15" font-weight="400" fill="#243349" text-anchor="start">画面の更新時刻に合わせて</text>
+<text x="1031" y="874" font-size="15" font-weight="400" fill="#243349" text-anchor="start">swapchain を Present</text>
+<text x="1031" y="915" font-size="11.5" font-weight="500" fill="#168399" text-anchor="start">SwapchainTarget</text>
+</g>
+<g class="node"><title>SpoutSender / SpoutDX.dll</title>
+<rect x="1340" y="795" width="220" height="135" rx="12" fill="#eaf9fc" stroke="#168399" stroke-width="1.5"/>
+<text x="1356" y="824" font-size="18" font-weight="700" fill="#243349" text-anchor="start">Spout2 出力</text>
+<text x="1356" y="851" font-size="15" font-weight="400" fill="#243349" text-anchor="start">専用 worker と別デバイス</text>
+<text x="1356" y="874" font-size="15" font-weight="400" fill="#243349" text-anchor="start">他アプリへテクスチャ送信</text>
+<text x="1356" y="915" font-size="11.5" font-weight="500" fill="#168399" text-anchor="start">SpoutSender / SpoutDX.dll</text>
+</g>
+<circle cx="1450.0" cy="735.0" r="5" fill="#8554c2"/>
+<circle cx="1140.0" cy="735.0" r="5" fill="#8554c2"/>
+<rect x="312.0" y="240.0" width="31" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="327.5" y="255.0" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">PCM</text>
+<rect x="621.5" y="240.0" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="652.5" y="255.0" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">時刻通知</text>
+<rect x="946.5" y="240.0" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="977.5" y="255.0" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">再生操作</text>
+<rect x="1269.5" y="240.0" width="66" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1302.5" y="255.0" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">P/Invoke</text>
+<rect x="290.0" y="532.5" width="75" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="327.5" y="547.5" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">保存・復元</text>
+<rect x="615.0" y="532.5" width="75" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="652.5" y="547.5" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">参照・更新</text>
+<rect x="824.5" y="392" width="75" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="862" y="407" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">設定・操作</text>
+<rect x="1312.0" y="350" width="36" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1330" y="365" font-size="13" font-weight="500" fill="#8554c2" text-anchor="middle">読込</text>
+<rect x="1367.0" y="425" width="140" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1437" y="440" font-size="13" font-weight="500" fill="#8554c2" text-anchor="middle">共有リング＋フェンス</text>
+<rect x="984.5" y="645" width="221" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1095" y="660" font-size="13" font-weight="500" fill="#3264c5" text-anchor="middle">TimelineOutputState（表示状態）</text>
+<rect x="1239.5" y="701" width="101" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="1290" y="716" font-size="13" font-weight="500" fill="#8554c2" text-anchor="middle">合成画像を配信</text>
+<rect x="744.0" y="691" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="775" y="706" font-size="13" font-weight="500" fill="#168399" text-anchor="middle">表示更新</text>
+<rect x="619.0" y="735" width="62" height="21" rx="4" fill="white" fill-opacity=".95"/>
+<text x="650" y="750" font-size="13" font-weight="500" fill="#168399" text-anchor="middle">警告表示</text>
+<text x="48" y="1010" font-size="20" font-weight="400" fill="#475569" text-anchor="start">読む順番：LTC → 同期判断 → 再生 API → 復号 → 合成 → 出力。手動操作も同じ再生 API を通る。</text>
+<text x="48" y="1050" font-size="17" font-weight="400" fill="#475569" text-anchor="start">丸印は画像配信の分岐点。同じ線を重ねず、共通の経路から各出力へ枝分かれさせている。</text>
+<text x="48" y="1084" font-size="17" font-weight="400" fill="#475569" text-anchor="start">getter・ログ・エラー通知などの補助的な接続は省略。更新通知の詳しい経路は 02 を参照。</text>
+<text x="40" y="1164" font-size="11" font-weight="400" fill="#94a3b8" text-anchor="start">TimecodeSyncPlayer  |  現行コードの構成図  |  主要な経路を要約</text>
+</svg>
