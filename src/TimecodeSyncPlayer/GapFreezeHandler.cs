@@ -177,6 +177,19 @@ public sealed class GapFreezeHandler
         return true;
     }
 
+    /// <summary>
+    /// K3: 最終フレームのシーク中に EOS（shim の Ended）を観測した。まだ目標フレームが届いて
+    /// いない捕捉中なら、既存の再シーク（D21-b）を 1 回始めてよいかを返す。呼び出し側は true の
+    /// とき目標へ再シークする（上限は <see cref="TryBeginSeekRetry"/> と同じ MaxSeekRetries）。
+    /// </summary>
+    internal bool TryBeginSeekRetryForEnded()
+    {
+        if (_currentState is not (GapState.EnteringFreeze or GapState.WaitingForFrameStep) ||
+            _frameSeenSinceCapture)
+            return false;
+        return TryBeginSeekRetry();
+    }
+
     public void EnterFreezeCaptureWithReload(Guid? trackId, double targetSeconds, string? filePath)
     {
         EnterFreezeCapture(trackId, targetSeconds, filePath);

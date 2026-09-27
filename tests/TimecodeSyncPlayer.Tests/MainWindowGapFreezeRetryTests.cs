@@ -81,6 +81,38 @@ public sealed class MainWindowGapFreezeRetryTests
     });
 
     [Fact]
+    public Task EndedWhileEnteringFreeze_ReissuesTheFinalFrameSeekOnce() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        fixture.PlaybackApi.Seeks.Clear();
+
+        // K3: EOS が最終フレームのシークを追い越しても、既存の再シークで取り直す。
+        fixture.GStreamerEnded();
+        fixture.GStreamerEnded();   // 連打: UI への予約は 1 件だけ
+        await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+
+        fixture.PlaybackApi.Seeks.Should().ContainSingle().Which.Should().Be(9.9,
+            "EOS と重なった最終フレームのシークをやり直す");
+        fixture.Handler.SeekRetryCount.Should().Be(1);
+        fixture.Handler.CurrentState.Should().Be(GapState.EnteringFreeze);
+    });
+
+    [Fact]
+    public Task EndedAfterTheFrameArrived_DoesNotReissueTheSeek() => OnUi(async () =>
+    {
+        using var fixture = new Fixture();
+        fixture.SourceFrameReady(9.9);
+        await fixture.ProcessFinalCallback();
+        fixture.Handler.FrameSeenSinceCapture.Should().BeTrue("目標フレームは届いている");
+
+        fixture.GStreamerEnded();
+        await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+
+        fixture.PlaybackApi.Seeks.Should().BeEmpty("確定待ちのフレームを EOS で捨てない");
+        fixture.Handler.SeekRetryCount.Should().Be(0);
+    });
+
+    [Fact]
     public Task LocatedLoad_RefreshesPositionDisplayWithoutFrameCallback() => OnUi(() =>
     {
         using var fixture = new Fixture();
@@ -135,6 +167,7 @@ public sealed class MainWindowGapFreezeRetryTests
             .Invoke(Window, [Session.CaptureGeneration(), true])!;
         public void SourceFrameReady(double positionSeconds) => Method("OnSourceFrameReady")
             .Invoke(Window, [0L, Session.CaptureGeneration(), 0L, positionSeconds]);
+        public void GStreamerEnded() => Method("HandleGStreamerEnded").Invoke(Window, []);
         public void Tick() => Method("OnTick").Invoke(Window, [null, EventArgs.Empty]);
         private static MethodInfo Method(string name) => typeof(MainWindow)
             .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
