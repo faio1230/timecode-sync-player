@@ -1264,11 +1264,12 @@ internal sealed class OutputEngine : IDisposable
                     pendingFenceSinceQpc, nowPending, Stopwatch.Frequency);
                 if (action == GstFencePendingAction.Timeout)
                 {
-                    long elapsedMs = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
+                    // トレースの Value はマイクロ秒（他の compose.* と同じ）。ログの elapsedMs はミリ秒。
+                    long elapsedMicroseconds = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
                     settings.Trace.Record(new("compose.fencePending", "GPU", nowPending, 0,
-                        pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "timeout", Value: elapsedMs));
+                        pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "timeout", Value: elapsedMicroseconds));
                     GapCaptureHandoffLog.Record("engine.fence", "ring fence still incomplete; stopping new work",
-                        "seq=" + pendingFenceSequence + " elapsedMs=" + elapsedMs.ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
+                        "seq=" + pendingFenceSequence + " elapsedMs=" + (elapsedMicroseconds / 1000.0).ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
                     // D28 と同じ扱い: 新規処理を止め、資源は完了かデバイス消失まで保持する。
                     Fault($"compose.source: ring fence pending >{GstFencePendingPolicy.LimitSeconds:0}s for seq {pendingFenceSequence}; new work stopped, retaining resources until completion/device loss.");
                     return new(SourceStatus.Ready, pendingFenceLease, null, pendingStamp, HoldLease: true);
@@ -1280,12 +1281,15 @@ internal sealed class OutputEngine : IDisposable
                         "seq=" + pendingFenceSequence);
                     return new(SourceStatus.Ready, pendingFenceLease, null, pendingStamp, HoldLease: true);
                 }
-                long waitedMs = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
+                // トレースの Value はマイクロ秒。ログの waitedMs と保持の計数はミリ秒（以前はマイクロ秒の値を
+                // waitedMs として出していた）。
+                long waitedMicroseconds = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
+                double waitedMs = waitedMicroseconds / 1000.0;
                 settings.Trace.Record(new("compose.fencePending", "GPU", nowPending, 0,
-                    pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "complete", Value: waitedMs));
+                    pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "complete", Value: waitedMicroseconds));
                 GapCaptureHandoffLog.Record("engine.fence", "ring fence complete; drawing the held lease",
                     "seq=" + pendingFenceSequence + " waitedMs=" + waitedMs.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
-                holdCounter.RecordFenceWait(waitedMs / 1000.0);
+                holdCounter.RecordFenceWait(waitedMs);
                 ISourceImageLease completed = pendingFenceLease;
                 pendingFenceLease = null;
                 pendingFenceSequence = 0;
