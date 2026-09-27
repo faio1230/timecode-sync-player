@@ -103,12 +103,12 @@ public class ScenarioGateBaselineTests
         Report("S-2", counts, sink);
         h.Operations.Count(o => o.Name == "signal-loss-pause")
             .Should().BeGreaterThan(0, "停止モードの保持で一時停止する");
-        counts.SyncSeeks.Should().BeInRange(6, 20,
-            "段 0 の S-2 は同期シーク 13〜16 本（v0.5.3 は 12）。U8 後も Jump の同期シークは残る（実測 19）");
-        counts.LandingSeeks.Should().BeLessThanOrEqualTo(1,
-            "U8: 即時停止で停止位置が目標の 1 フレーム以内に入り、戻しの着地シークは消える（門 19。実測 0）");
-        (counts.SyncSeeks + counts.LandingSeeks).Should().BeGreaterThanOrEqualTo(19,
-            "保持ごとに目標へ寄る（U8 後は確認フレームの同期シークが先に着地する）");
+        // v0.5.4 B7（書き換え、内訳だけ）: 旧は「同期シーク 6〜20・着地シーク 1 以下」。Jump を確認の 1 フレーム
+        // （同値の保持）で適用するようになり、確認と同時に保持に入るので、同期の要求はゲートで保留されたまま
+        // U8 の即時停止が先に来て、停止の着地（保持値へのシーク）が 1 回で寄せる（実測: 同期 0・着地 19）。
+        // 守りたい量（保持ごとに 1 回寄る、時間切れ 0）は総数で見る。
+        (counts.SyncSeeks + counts.LandingSeeks).Should().BeInRange(19, 20,
+            "保持ごとに 1 回だけ目標へ寄る（同期のシークか停止の着地のどちらか）");
         counts.Timeouts.Should().Be(0, "段 0 は全シナリオで時間切れ 0");
         sink.Count("signal-loss-confirm").Should().BeGreaterThanOrEqualTo(20,
             "20 回の保持それぞれで損失を確定している（sync.gate を仮想時刻つきで拾えている）");

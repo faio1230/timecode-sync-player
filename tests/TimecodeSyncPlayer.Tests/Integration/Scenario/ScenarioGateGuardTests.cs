@@ -90,7 +90,9 @@ public sealed class ScenarioGateGuardTests
         h.Ltc.Jump(10.0);                                        // 保持の後（>250ms）に届いた Jump
         h.Ltc.Duplicate(10.0, TimeSpan.FromMilliseconds(400));   // 着地を観測できる保持
         h.Ltc.Silence(TimeSpan.FromMilliseconds(400));           // 保持フレームが途切れ、理由が信号断へ下がる
-        h.Ltc.Jump(12.0);                                        // 保持の後に届いた次の Jump
+        // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめる。LTC が進み続ける（+1 フレーム）形にする
+        // （1 枚だけで途切れる Jump は壊れたフレームと区別できないので適用しない。D30）。
+        h.Ltc.Jump(12.0).Normal(12.04, TimeSpan.FromMilliseconds(40));   // 保持の後に届いた次の Jump
 
         RunFor(h, clock, 800);
         sink.Count("signal-loss-confirm").Should().BeGreaterThanOrEqualTo(1, "前提: 保持の損失が確定した");
@@ -100,7 +102,7 @@ public sealed class ScenarioGateGuardTests
         RunFor(h, clock, 1_200);
         Seeks(h).Should().HaveCount(2,
             "ラッチを消したので、シーク中・保持中でも次の Jump は捨てられずに適用される（門 3 の削除）");
-        Seeks(h)[1].Value.Should().BeApproximately(12.0, 1e-6);
+        Seeks(h)[1].Value.Should().BeApproximately(12.04, 1e-6, "確認したフレーム（12.04）の値で適用する（v0.5.4 B7）");
         Report("G3", h, sink);
     }
 

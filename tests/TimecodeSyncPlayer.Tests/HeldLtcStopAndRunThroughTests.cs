@@ -247,8 +247,10 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.Operations.Clear();
 
         Raw(h, 3, 0, 10_300);
+        // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめる（保持損失中の復帰も確認の後）。
+        Raw(h, 3, 0, 10_340);   // 確認の 1 フレーム（同値の保持）
 
-        h.IsPaused.Should().BeFalse("保持損失中の Jump 1 枚で復帰する");
+        h.IsPaused.Should().BeFalse("保持損失中の Jump と確認の 1 フレームで復帰する");
         h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
 
         for (int i = 1; i <= 8; i++)
@@ -277,11 +279,13 @@ public sealed class HeldLtcStopAndRunThroughTests
         // 保持フレームは届き続けている。
         Raw(h, 2, 1, 10_700);
 
-        // Jump 1 枚で復帰（restored と同時に新しい値へ適用）。
+        // Jump と確認の 1 フレームで復帰（restored と同時に新しい値へ適用）。
         Raw(h, 3, 0, 10_800);
+        // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめる（保持損失中の復帰も確認の後）。
+        Raw(h, 3, 0, 10_840);   // 確認の 1 フレーム（同値の保持）
 
         h.IsPaused.Should().BeFalse(
-            $"保持損失の直後の Jump 1 枚で復帰する ops=[{string.Join(",", h.Operations.Select(o => o.Name))}] reason={h.DisplayStates[^1].PauseReason}");
+            $"保持損失の直後の Jump と確認の 1 フレームで復帰する ops=[{string.Join(",", h.Operations.Select(o => o.Name))}] reason={h.DisplayStates[^1].PauseReason}");
         h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
 
         // その後の Duplicate が続けば新しい値で再損失する。
