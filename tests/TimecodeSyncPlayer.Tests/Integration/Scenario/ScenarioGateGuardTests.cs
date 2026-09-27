@@ -4,9 +4,11 @@ using Xunit.Abstractions;
 namespace TimecodeSyncPlayer.Tests.Integration;
 
 /// <summary>
-/// v0.5.4 門の統合の前準備: §2 の表で「畳む」「消す」になる門（3・5・7・9・10・11・12・14・17）が
+/// v0.5.4 門の統合の前準備: §2 の表で「畳む」「消す」になる門（3・5・7・9・10・11・12・14・17）と、
+/// 段 B で着地の事象に置き換える門 6（保持だけでも着地を観測する。§9-7-1）が
 /// 守っている欠陥が、いまのコードで起きないことを決定的なシナリオ層で固定する
-/// （docs/design/v0.5.4-gate-unification.md §2・§7）。統合のコミットでこのファイルのテストが
+/// （docs/design/v0.5.4-gate-unification.md §2・§7・§9-7）。
+/// 統合のコミットでこのファイルのテストが
 /// 緑のままであることが、門を畳んでも欠陥が戻らない証拠になる。
 /// 門 20 は既存の LtcSingleClipEndHoldTests.BoundaryHold_DoesNotIssueExplicitLandingToTheEdge が押さえる。
 /// </summary>
@@ -198,6 +200,39 @@ public sealed class ScenarioGateGuardTests
             .Which.AtMilliseconds.Should().BeGreaterThan(requestedAt);
         Seeks(h)[0].Value.Should().BeApproximately(25.0, 0.5);
         Report("G5/G12(far)", h, sink);
+    }
+
+    // ---- 門 6 + 段 B §9-7-1: 着地の観測は LTC のフレームの経路に依存しない ----
+
+    [Fact]
+    public void G6_LandingWhileLtcIsHeld_IsObservedWithoutNormalFrames()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(lossMode: LtcSignalLossMode.RunThrough);
+        using var sink = new ScenarioLogSink(clock);
+        h.AddTrack("A", 0, 30);
+        h.ManualPlay();
+        h.AdvancePlayback(1.0);
+
+        h.Ltc.Normal(1.0, TimeSpan.FromMilliseconds(200));
+        RunFor(h, clock, 200);
+
+        // 着地しないシークを発行し、偽の再生 API の世代の最初のフレームを目標へ配信させる。
+        h.SyncService.ReportSeekSent(10.0);
+        h.Playback.SeekLandingDelaySeconds = 0.05;
+        h.Playback.Seek(10.0);
+
+        // LTC は保持（Duplicate）だけ。Normal（有効フレーム）の経路を使わずに着地を観測できるか。
+        // 着地の観測は 1 フレームで届くが、今の門 6 は SettleCooldown（200ms）を置くので、
+        // 確定（seek-settled）は観測の 200ms 後になる。段 B ではここが着地の事象 1 つになる。
+        h.Ltc.Duplicate(10.0, TimeSpan.FromMilliseconds(600));
+        RunFor(h, clock, 400);
+
+        sink.Count("seek-settled").Should().Be(1, "着地は観測される");
+        h.SyncService.SeekState.HasPendingSeek.Should().BeFalse(
+            "D38 (a) / 段 B §9-7-1: 保持の Duplicate だけでも着地を観測して確定する（現行は cooldown 200ms 込み）");
+        h.SyncService.IsPlaybackPositionUsable.Should().BeTrue("着地で位置の信頼が戻る");
+        Seeks(h).Should().BeEmpty("着地の観測はシークを出さない");
+        Report("G6(held landing)", h, sink);
     }
 
     // ---- 門 10 の備考（TSP-Fable のレビュー）: シーク中に rate.instant を出さない ----
