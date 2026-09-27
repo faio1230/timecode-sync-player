@@ -209,7 +209,11 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     {
         if (_landingPhase != TimecodeSyncLandingPhase.WaitingForLanding)
             return false;
-        if (!IsNewRequestFarFromPending(requestedTargetSeconds, toleranceSeconds))
+        // v0.5.4 B6b（規則 3）: 着地を待つ間にマスターは実時間より速くは進まない。発行からの経過ぶんだけ
+        // 前方の許容を広げ、動き続けるマスター（連続した LTC）を「離れた新要求」と取り違えない
+        // （所要が 4×tol を超える素材で、着地の前に置き換え続けない）。値が飛んだとき（Jump）は置き換える。
+        double elapsedSeconds = _sentAt != DateTime.MinValue ? Math.Max(0.0, (now - _sentAt).TotalSeconds) : 0.0;
+        if (!IsNewRequestFarFromPending(requestedTargetSeconds, toleranceSeconds, elapsedSeconds))
             return false;
         // 現在位置の近くの要求は、着地の観測を残すため置き換えない。
         if (Math.Abs(requestedTargetSeconds - playbackSeconds) <=
@@ -356,13 +360,15 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
     /// D20-b: 新しい要求が着地待ちの目標から離れているか。連続して進む LTC の経路では
     /// 要求と目標はほぼ一致するため捨てることは起きない。
     /// </summary>
-    private bool IsNewRequestFarFromPending(double requestedTargetSeconds, double toleranceSeconds)
+    private bool IsNewRequestFarFromPending(
+        double requestedTargetSeconds, double toleranceSeconds, double allowedAheadSeconds = 0.0)
     {
         if (!double.IsFinite(requestedTargetSeconds))
             return false;
 
-        double distance = Math.Abs(requestedTargetSeconds - _targetSeconds);
-        return distance > Math.Max(0, toleranceSeconds) * PendingSupersedeToleranceMultiplier;
+        double limit = Math.Max(0, toleranceSeconds) * PendingSupersedeToleranceMultiplier;
+        double drift = requestedTargetSeconds - _targetSeconds;
+        return drift > limit + allowedAheadSeconds || drift < -limit;
     }
 
     private bool IsWithinNewLandingWindow(double deliveredSeconds, double toleranceSeconds)

@@ -81,6 +81,8 @@ public sealed class TimecodeSyncService
         PlaybackPositionSample? positionSample = null)
     {
         PublishSeekCost();
+        // v0.5.4 B6b（規則 3 の予測ロケート）: relocate の目標の先行量（マスターが動いている間だけ c）。
+        state = state with { SeekTargetLookaheadSeconds = RelocateLookaheadSeconds };
 
         // 0.4.5-A フェーズ 1: 評価位置は trace に併記するだけ（判断は現行のまま）。
         // 0.4.5-A フェーズ 2（TCS_SYNC_POSITION_FEEDBACK=on）: 評価位置を判断にも使う。
@@ -179,6 +181,23 @@ public sealed class TimecodeSyncService
     public bool IsWaitingForLanding => _seekState.IsWaitingForLanding;
 
     public bool IsLoadingFile => _fileLoad.IsLoadingFile;
+
+    /// <summary>
+    /// v0.5.4 B6b（規則 1・4）: マスターが止まっているか（保持の Duplicate・信号断）。
+    /// コントローラが配線する（未配線は動いている扱い）。
+    /// </summary>
+    public Func<bool>? MasterStoppedSource { get; set; }
+
+    private bool IsMasterMoving => !(MasterStoppedSource?.Invoke() ?? false);
+
+    /// <summary>
+    /// v0.5.4 B6b（規則 3 の予測ロケート）: relocate の目標に足す先行量。マスターが動いている間は
+    /// c（シークの所要の学習値。学習前は 0。スキャンのヒントが有効ならそれ）、止まっている間は 0
+    /// （停止した値へ合わせる。D37-g の守り）。経路（追従開始・再生中・ギャップの出口・トラック切替）
+    /// では分けない。
+    /// </summary>
+    public double RelocateLookaheadSeconds =>
+        IsMasterMoving ? _seekState.LearnedSeekDurationSeconds ?? _seekCostHintSeconds : 0.0;
 
     /// <summary>
     /// v0.5.4 B6b-16/23: relocate（シーク）・読み込みの着地を観測した直後の 1 サンプルだけ

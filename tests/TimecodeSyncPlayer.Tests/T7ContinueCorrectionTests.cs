@@ -433,13 +433,15 @@ public class T7ContinueCorrectionTests
     }
 
     [Fact]
-    public void FrameContext_DeficitWithinSeekCost_AllowsCorrection()
+    public void FrameContext_DeficitWithinTheThreshold_AllowsCorrection()
     {
-        // D37-b: 実測所要以内の不足はシークではなく速度補正に任せる（補正は評価してよい）。
+        // D37-b: relocate の閾値以内の不足はシークではなく速度補正に任せる（補正は評価してよい）。
+        // v0.5.4 B6b（追補 3）: 閾値は max(tol, r_max × c)。学習前は tol（0.24）なので 0.2 秒で確かめる
+        // （旧は既定のシーク所要 1.0 秒以内の 0.5 秒）。
         var track = Track();
         var recorder = new Recorder { LoadedTrackId = track.Id, TimePos = (0, 0.0) };
 
-        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 0.5), 0.5);
+        ContinueFrameContext frame = Coordinator(recorder).HandleFrame(OnTrack(track, 0.2), 0.2);
 
         frame.CorrectionAllowed.Should().BeTrue();
         frame.Request.Should().Be(SyncRequestResult.Complete);

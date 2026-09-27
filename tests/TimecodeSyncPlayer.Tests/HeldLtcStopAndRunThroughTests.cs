@@ -226,10 +226,11 @@ public sealed class HeldLtcStopAndRunThroughTests
         Tick(h, clock, 8);
 
         h.IsPaused.Should().BeFalse();
-        // D37-b: 不足が 1 秒未満なのでシークせず速度補正に任せる（ハーネスはレートで位置を動かさない）。
-        h.Operations.Should().NotContain(o => o.Name == "seek");
-        h.AppliedRates.Should().NotBeEmpty();
-        h.AppliedRates[^1].Should().BeApproximately(0.9, 1e-9, "行き過ぎを緩めて LTC 側へ寄せる");
+        // v0.5.4 B6b（追補 3 で書き換え）: 旧は「不足が 1 秒未満（既定のシーク所要）なのでシークせず
+        // 速度補正 0.9」。既定の 1.0 秒は削除し、学習前の閾値は tol。ランスルーで走った行き過ぎ
+        // （0.3〜0.4 秒）は、値が進み出したら規則 4 の復帰（2〜3 に戻る）で 1 回 relocate する。
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle()
+            .Which.Value!.Value.Should().BeApproximately(2.16, 0.05, "進み出した LTC へ 1 回 relocate する");
     }
 
     [Fact]

@@ -17,8 +17,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     // この 1 回だけ瞬間値で判定する（ResetSeekGate では戻さない。シーク後・ロード後まで
     // 例外を広げると、位置が飛んだ直後の 1 サンプルで連鎖が始まる）。
     private bool _gateWarmed;
-    // D37-b / v0.5.4 B6b（門 15）: シーク 1 回の実測所要（サービスが学習値を公開する）。
-    // relocate の閾値は max(tol, この値)。0 は未設定（閾値は tol のまま）。
+    // D37-b / v0.5.4 B6b（門 15）: シーク 1 回の実測所要 c（サービスが学習値を公開する）。
+    // relocate の閾値は max(tol, r_max × c)（r_max は varispeed の上限）。0 は未学習（閾値は tol）。
     private double _rateCatchUpLimitSeconds;
     private bool _rateCatchUpActive;
     private double _rateCatchUpStartAbsSeconds;
@@ -87,7 +87,8 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             (double clipIn, double clipOut) = ClipRange(
                 state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
             double seekOut = SeekableOut(clipIn, clipOut, state.DurationSeconds, fps.VideoFps);
-            requestedTargetSeconds = Math.Clamp(ltcSeconds, clipIn, seekOut);
+            // v0.5.4 B6b（規則 3 の予測ロケート）: 置き換えのシークの目標も M(now) + c。
+            requestedTargetSeconds = Math.Clamp(ltcSeconds + state.SeekTargetLookaheadSeconds, clipIn, seekOut);
         }
         return SyncDecision.Untrusted(fps, toleranceSeconds, requestedTargetSeconds);
     }
@@ -162,11 +163,13 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         bool gateWasCold = !_gateWarmed;
         _gateWarmed = true;
 
-        // v0.5.4 B6b（規則 3）: relocate の閾値 = max(tol, 学習したシークの所要)。これ以下は
-        // relocate せず varispeed に任せる。B6b-16/23: relocate の直後の 1 サンプルは varispeed
+        // v0.5.4 B6b（規則 3）: relocate の閾値 = max(tol, r_max × c)。c はシークの所要（学習値）、
+        // r_max は varispeed の上限（c の間に varispeed で詰められる量より小さいずれは relocate しない）。
+        // これ以下は relocate せず varispeed に任せる。relocate の直後の 1 サンプルは varispeed
         // しない（補正側が止める。ここは relocate の閾値だけを見る）。
         double absDelta = Math.Abs(delta);
-        double seekThreshold = Math.Max(toleranceSeconds, _rateCatchUpLimitSeconds);
+        double seekThreshold = Math.Max(
+            toleranceSeconds, SyncCorrectionController.MaxRateDelta * _rateCatchUpLimitSeconds);
         if (absDelta <= seekThreshold)
         {
             if (absDelta > toleranceSeconds)
@@ -193,12 +196,17 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
         EndRateCatchUp(escalated: true, absDelta);
 
         // 行き先だけを先行補償する。シーク可否（delta と tolerance）は補償前の値で判定する。
-        // 補償後もトラックの範囲（D29）へ収める。v0.5.4 B6b: 追従開始の先行量（D37-e）は畳んだ。
-        double compensatedTarget = _latencyCompensator is null
-            ? target
-            : Math.Clamp(
-                _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds),
-                clipIn, seekOut);
+        // 補償後もトラックの範囲（D29）へ収める。
+        // v0.5.4 B6b（規則 3 の予測ロケート）: マスターが動いている間は目標 = M(now) + c
+        // （c はシークの所要の学習値。サービスが SeekTargetLookaheadSeconds に載せる。マスター停止中と
+        // 学習前は 0）。先行量があるときは D7-a の先行補償（既定無効）より優先する。
+        double compensatedTarget = state.SeekTargetLookaheadSeconds > 0.0
+            ? Math.Clamp(ltcSeconds + state.SeekTargetLookaheadSeconds, clipIn, seekOut)
+            : _latencyCompensator is null
+                ? target
+                : Math.Clamp(
+                    _latencyCompensator.CompensateTarget(ltcSeconds, state.DurationSeconds),
+                    clipIn, seekOut);
         long decideQpc = traceEnabled || _latencyCompensator != null ? Stopwatch.GetTimestamp() : 0;
         _latencyCompensator?.MarkSeekDecision(decideQpc);
 
@@ -210,7 +218,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
             OutputTrace.Current.Record(new("seek.decide", "SYNC", decideQpc,
                 Value: (long)Math.Round(compensatedTarget * 1_000_000.0),
                 Detail: FormattableString.Invariant(
-                    $"delta={queryDelta:F6} evalDelta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6} compensation={_latencyCompensator?.CompensationSeconds ?? 0.0:F6} lookahead=0.000000")));
+                    $"delta={queryDelta:F6} evalDelta={delta:F6} ltc={ltcSeconds:F6} playback={state.PlaybackSeconds:F6} tolerance={toleranceSeconds:F6} compensation={_latencyCompensator?.CompensationSeconds ?? 0.0:F6} lookahead={state.SeekTargetLookaheadSeconds:F6}")));
         }
 
         return new SyncDecision(
@@ -434,7 +442,10 @@ public sealed record SyncPlaybackState(
     ulong EvalCurrentGeneration = 0,
     // 0.4.5-A フェーズ 1: 着地未確認中に「出したとしたら」の Smooth レート（適用はしない）。
     double? ShadowRate = null,
-    string? ShadowRateReason = null);
+    string? ShadowRateReason = null,
+    // v0.5.4 B6b（規則 3 の予測ロケート）: relocate の目標に足す先行量 c（シークの所要の学習値）。
+    // マスターが動いている間だけ。マスター停止中・学習前は 0。サービスが載せる。
+    double SeekTargetLookaheadSeconds = 0.0);
 
 public enum SyncActionType
 {

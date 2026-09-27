@@ -553,10 +553,11 @@ public class SyncDecisionEngineTests
     // ---- D37-b: 実在の不足はシークではなく速度補正に任せる ----
 
     [Fact]
-    public void Decide_DeficitWithinSeekCost_PrefersRateCatchUp()
+    public void Decide_DeficitWithinRateReachOverTheSeekCost_PrefersRateCatchUp()
     {
+        // v0.5.4 B6b（追補 3）: 閾値 = max(tol, r_max × c)。c = 5.0 で 0.5 秒まで varispeed。
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
-        engine.UpdateSeekCostSeconds(1.0);
+        engine.UpdateSeekCostSeconds(5.0);
         var state = new SyncPlaybackState(
             SyncEnabled: true,
             HasCurrentTrack: true,
@@ -566,7 +567,7 @@ public class SyncDecisionEngineTests
             VideoFps: 30.0,
             TimecodeFps: 30.0);
 
-        SyncDecision decision = engine.Decide(4.5, state); // delta 0.5 <= 実測所要 1.0
+        SyncDecision decision = engine.Decide(4.5, state); // delta 0.5 <= r_max 0.10 × 実測所要 5.0
 
         decision.Action.Should().Be(SyncActionType.None);
         decision.RateCatchUpPreferred.Should().BeTrue();

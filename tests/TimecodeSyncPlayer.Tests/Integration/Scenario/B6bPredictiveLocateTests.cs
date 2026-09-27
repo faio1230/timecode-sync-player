@@ -60,4 +60,110 @@ public class B6bPredictiveLocateTests
         Seeks(h).Should().NotBeEmpty("前提: ギャップの出口でシークする");
         seeksWhileFirstPending.Should().Be(1, "ギャップの出口のシークが着地するまで、次のシークは出さない");
     }
+
+    // ── 1・2: 予測ロケート（目標 = M(now) + c）で relocate が鎖にならない ─────────────
+
+    /// <summary>
+    /// 追補 2 の鎖の場面: 同期して 5 秒走った後、LTC が 3 秒前へ飛ぶ。飛んだ後のシークの所要を c にする。
+    /// 旧（先行量なし・閾値 max(tol, c)）は c = 0.3 で 84 本の鎖、c = 2.0 は置き換え（門 8）が続いて着地しなかった。
+    /// </summary>
+    [Theory]
+    [InlineData(0.3)]
+    [InlineData(0.5)]
+    [InlineData(1.0)]
+    [InlineData(2.0)]
+    public void JumpDuringPlayback_RelocatesAtMostTwice_AndStaysWithinTolerance(double c)
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
+        h.AddTrack("A", 0, 120);
+        h.ManualPlay();
+        h.AdvancePlayback(10.0);
+        h.Ltc.Normal(10.0, TimeSpan.FromSeconds(5));
+        long start = clock.MonotonicMilliseconds;
+        h.Ltc.Normal(18.0, TimeSpan.FromSeconds(25));      // 3 秒前へ飛ぶ
+        long end = h.Ltc.NextMilliseconds;
+        bool delaySet = false;
+        double maxAbsErrorInLastTenSeconds = 0.0;
+        while (clock.MonotonicMilliseconds < end)
+        {
+            h.AdvanceMilliseconds(40);
+            long t = clock.MonotonicMilliseconds - start;
+            if (!delaySet && t > 3_000)
+            {
+                h.Operations.Clear();
+                h.Playback.SeekLandingDelaySeconds = c;
+                delaySet = true;
+            }
+            if (t >= 20_000 && !h.Playback.HasPendingSeek)
+            {
+                double ltc = 10.0 + t / 1000.0 + 3.0;
+                maxAbsErrorInLastTenSeconds = Math.Max(
+                    maxAbsErrorInLastTenSeconds, Math.Abs(h.Playback.PositionSeconds - ltc));
+            }
+        }
+
+        Seeks(h).Count.Should().BeInRange(1, 2,
+            "予測ロケート: 学習前の 1 本目は c だけ遅れて着地し、2 本目（目標 = M(now) + c）で追い付く");
+        maxAbsErrorInLastTenSeconds.Should().BeLessThanOrEqualTo(0.24,
+            "以後は tol 以内（varispeed）で、relocate を繰り返さない");
+    }
+
+    // ── 2: マスター停止中の合わせは停止した値へ（先行量を付けない。D37-g の守り） ──────
+
+    [Theory]
+    [InlineData(LtcSignalLossMode.Stop)]
+    [InlineData(LtcSignalLossMode.RunThrough)]
+    public void JumpIntoAHold_WithALearnedSeekCost_LandsOnTheHeldValueWithoutLookahead(LtcSignalLossMode mode)
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
+        h.SignalLossMode = mode;
+        h.AddTrack("A", 0, 120);
+        h.ManualPlay();
+        h.AdvancePlayback(10.0);
+        h.Ltc.Normal(10.0, TimeSpan.FromSeconds(3));
+        h.Ltc.Normal(16.0, TimeSpan.FromSeconds(3));       // 3 秒前へ飛ぶ（c = 0.5 を学習させる）
+        h.Ltc.Duplicate(25.0, TimeSpan.FromSeconds(1));    // 25.0 へ飛んで保持（マスター停止）
+        long start = clock.MonotonicMilliseconds;
+        long end = h.Ltc.NextMilliseconds + 400;
+        while (clock.MonotonicMilliseconds < end)
+        {
+            h.AdvanceMilliseconds(40);
+            if (clock.MonotonicMilliseconds - start > 2_000)
+                h.Playback.SeekLandingDelaySeconds = 0.5;
+        }
+
+        h.SeekState.LearnedSeekDurationSeconds.Should().NotBeNull("前提: シークの所要を学習した");
+        Seeks(h).Should().Contain(target => Math.Abs(target - 25.0) < 0.05, "停止した値へ合わせる");
+        Seeks(h).Should().NotContain(target => target > 25.05,
+            "マスター停止中の relocate に先行量を付けない（停止した値の先へ行き過ぎない。D37-g）");
+    }
+
+    [Fact]
+    public void Lookahead_IsTheLearnedSeekCostWhileTheMasterMoves_AndZeroWhileItIsHeld()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
+        h.AddTrack("A", 0, 120);
+        h.ManualPlay();
+        h.AdvancePlayback(10.0);
+        h.Ltc.Normal(10.0, TimeSpan.FromSeconds(3));
+        h.Ltc.Normal(16.0, TimeSpan.FromSeconds(3));       // 3 秒前へ飛ぶ（c = 0.5 を学習させる）
+        long start = clock.MonotonicMilliseconds;
+        long end = h.Ltc.NextMilliseconds;
+        while (clock.MonotonicMilliseconds < end)
+        {
+            h.AdvanceMilliseconds(40);
+            if (clock.MonotonicMilliseconds - start > 2_000)
+                h.Playback.SeekLandingDelaySeconds = 0.5;
+        }
+        double learned = h.SeekState.LearnedSeekDurationSeconds!.Value;
+
+        h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(learned, 1e-9,
+            "マスターが動いている間は先行量 = c");
+
+        h.SupplyHeldLtc(19.0);                               // 保持（Duplicate）
+        h.SyncService.RelocateLookaheadSeconds.Should().Be(0.0, "マスター停止中は先行量を付けない（D37-g）");
+
+        h.SupplyLtc(19.04);                                  // 値が進む
+        h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(learned, 1e-9);
+    }
 }

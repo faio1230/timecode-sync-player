@@ -117,6 +117,9 @@ internal sealed class LtcSyncController
             "LTC sample clock: {State}（{Variable}=off のときだけ無効）",
             _sampleClockEnabled ? "有効" : "無効", SampleClockEnvironmentVariable);
         _syncService.SeekIssued += OnSeekIssued;
+        // v0.5.4 B6b（規則 1・3）: マスターが止まっている（保持の Duplicate・信号断）間は、relocate の
+        // 目標に先行量を付けない（停止した値へ合わせる。D37-g の守り）。
+        _syncService.MasterStoppedSource = () => _input.LastHeldEffectiveSeconds is not null || _signalLoss.IsLost;
         _syncService.LifecycleRaised += OnSyncServiceLifecycle;
     }
 

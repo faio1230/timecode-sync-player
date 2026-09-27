@@ -28,18 +28,18 @@ public class B6bChaseRuleRecurrenceTests
     [Fact]
     public void D37b_DeficitWithinLearnedSeekCost_UsesRateCatchUp_AndBeyondSeeks()
     {
-        // 閾値 = max(tol, 学習したシークの所要)。学習値 1.0 に対し、0.8 は varispeed、
-        // 1.5 は relocate。どちらの規則でも同じ（旧: RateCatchUpAllowed 既定 true の経路）。
+        // v0.5.4 B6b（追補 3）: 閾値 = max(tol, r_max × c)。c = 1.0・r_max = 0.10・tol = 2 フレーム（30fps で
+        // 約 0.067）に対し、0.09 は varispeed、0.15 は relocate（予測ロケートで 1 回で詰める）。
         var within = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
         within.UpdateSeekCostSeconds(1.0);
-        SyncDecision rate = within.Decide(4.8, State(4.0));   // delta 0.8 <= 1.0
+        SyncDecision rate = within.Decide(4.09, State(4.0));  // delta 0.09 <= 0.10
 
         rate.Action.Should().Be(SyncActionType.None);
         rate.RateCatchUpPreferred.Should().BeTrue();
 
         var beyond = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
         beyond.UpdateSeekCostSeconds(1.0);
-        SyncDecision seek = beyond.Decide(5.5, State(4.0));   // delta 1.5 > 1.0
+        SyncDecision seek = beyond.Decide(4.15, State(4.0));  // delta 0.15 > 0.10
 
         seek.Action.Should().Be(SyncActionType.Seek);
     }
@@ -89,17 +89,19 @@ public class B6bChaseRuleRecurrenceTests
     // ── D37-e: 先行量なしの着地で残差が残り続ける ─────────────────────
 
     [Fact]
-    public void D37e_ResidualAtTheLearnedSeekCost_UsesRateCatchUp_NotAnotherSeek()
+    public void D37e_ResidualAtTheLearnedSeekCost_RelocatesToLtcPlusTheSeekCost()
     {
-        // 先行量（LTC + 学習値）を消しても、着地後の残差（≒学習したシークの所要）は閾値以内なので
-        // varispeed で詰まる。ここが relocate になると、先行量なしの着地がシーク連鎖になる。
+        // v0.5.4 B6b（追補 3、規則 3 の予測ロケート）: 先行量なしの着地後の残差（≒ c）は閾値
+        // max(tol, r_max × c) を超えるので relocate する。目標は M(now) + c なので、着地したときに
+        // M に追い付き、残差 c を作り直さない（鎖にならないことはシナリオ層の
+        // B6bPredictiveLocateTests で固定する）。
         var engine = new SyncDecisionEngine(new SyncDecisionOptions(ToleranceFrames: 2));
         engine.UpdateSeekCostSeconds(1.0);
 
-        SyncDecision decision = engine.Decide(4.95, State(4.0));   // delta 0.95 <= 1.0
+        SyncDecision decision = engine.Decide(4.95, State(4.0) with { SeekTargetLookaheadSeconds = 1.0 });
 
-        decision.Action.Should().Be(SyncActionType.None);
-        decision.RateCatchUpPreferred.Should().BeTrue();
+        decision.Action.Should().Be(SyncActionType.Seek);
+        decision.TargetSeconds.Should().BeApproximately(5.95, 1e-9, "目標 = M(now) + c");
     }
 
     // ── 16/23: relocate の直後の 1 サンプルは varispeed しない（着地窓・±0.20 の窓の代わり） ──
