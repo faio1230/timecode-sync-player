@@ -199,4 +199,36 @@ public class B6bPredictiveLocateTests
         residuals[0].Message.Should().Contain("errorMs=-5", "1 本目は c（0.5 秒）ぶん遅れて着地する（符号は再生位置 − M）");
         residuals[1].Message.Should().MatchRegex(@"errorMs=-?\d{1,2}\.\d ", "2 本目（目標 = M + c）の着地の残差は 100ms 未満");
     }
+
+    // ── 追補 5: relocate は varispeed を持ち越さない（発行した時点で rate を 1.0 に戻す） ──────
+
+    [Fact]
+    public void Relocate_RestoresTheRateToUnityWhenIssued()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
+        h.AddTrack("A", 0, 120);
+        h.ManualPlay();
+        h.AdvancePlayback(9.9);                             // 0.1 秒遅れて追従（varispeed が掛かる）
+        h.Ltc.Normal(10.0, TimeSpan.FromSeconds(1));
+        h.Ltc.Normal(14.0, TimeSpan.FromSeconds(2));       // 3 秒前へ飛ぶ（relocate）
+        long start = clock.MonotonicMilliseconds;
+        long end = h.Ltc.NextMilliseconds;
+        double rateBeforeJump = double.NaN;
+        double? rateWhileRelocatePending = null;
+        while (clock.MonotonicMilliseconds < end)
+        {
+            h.AdvanceMilliseconds(40);
+            long t = clock.MonotonicMilliseconds - start;
+            if (t <= 900)
+            {
+                rateBeforeJump = h.Playback.Rate;
+                h.Playback.SeekLandingDelaySeconds = 0.5;
+            }
+            if (h.Playback.HasPendingSeek && rateWhileRelocatePending is null)
+                rateWhileRelocatePending = h.Playback.Rate;
+        }
+
+        rateBeforeJump.Should().NotBe(1.0, "前提: ジャンプの前は varispeed が掛かっている");
+        rateWhileRelocatePending.Should().Be(1.0, "規則 3: relocate を発行した時点で rate を 1.0 に戻す");
+    }
 }

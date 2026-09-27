@@ -139,4 +139,28 @@ public class B6bChaseRuleRecurrenceTests
 
         harness.AppliedRates.Should().ContainSingle().Which.Should().BeApproximately(1.10, 1e-9);
     }
+
+    // ── 追補 5: c の源は B1 の着地の遅れ（照会位置ではなく配信フレーム） ─────────────
+
+    [Fact]
+    public void LearnedSeekCost_IsTheDeliveredLandingDelay_NotTheQueriedPositionArrival()
+    {
+        // 照会位置はシークの 0.1 秒後に目標へ届くが、目標の世代の配信フレームは 0.6 秒後に届く場面。
+        // 学習値（先行量と閾値の c）は配信の遅れ（0.6 秒 = new-landing の delayMs）になる。
+        var seekState = new TimecodeSyncSeekState();
+        DateTime t0 = new(2026, 9, 28, 0, 0, 0, DateTimeKind.Utc);
+        seekState.BeginSeek(5.0, t0);
+        seekState.ObserveLandingSample(
+            new PlaybackPositionSample(5.0, PlaybackPositionBasis.Pipeline, 2, 1.0, 1, 2),
+            0.24, t0.AddMilliseconds(100));   // 照会位置は目標、配信はシーク前の世代のまま
+        seekState.LearnedSeekDurationSeconds.Should().BeNull("照会位置が目標に届いただけでは学習しない");
+
+        seekState.ObserveLandingSample(
+            new PlaybackPositionSample(5.0, PlaybackPositionBasis.Pipeline, 2, 5.0, 2, 2),
+            0.24, t0.AddMilliseconds(600));   // 目標の世代の配信フレーム
+
+        seekState.LearnedSeekDurationSeconds.Should().BeApproximately(0.6, 1e-9);
+        seekState.LastLanding!.Value.DelaySeconds.Should().BeApproximately(0.6, 1e-9,
+            "学習値と B1 の着地の遅れは同じ値");
+    }
 }
