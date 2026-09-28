@@ -137,6 +137,21 @@ internal sealed class LtcSyncController
         _rate.ResetSmoothAvailability();
         // v0.5.4 K5（§6 の 1）: 読み込みで Single の境界ホールドを解除する（解除の副作用つき）。
         _single().OnLifecycle(SyncLifecycleEvent.FileLoad);
+        PauseOnFileLoadDuringLoss();
+    }
+
+    /// <summary>
+    /// v0.5.4（規則 4 の読み込みの入口）: 停止モードで損失のまま読み込んだら、読み込みが始めた再生を
+    /// 規則 4 の入口と同じく一時停止する（持ち主 = 信号断）。新しいトラックでも保持値へ 1 回着地するよう
+    /// 保持着地の記録を下ろし、着地は読み込みが着地した後の保持のフレーム（D35 の経路、尺と fps が
+    /// 分かってから）に任せる。復帰は新しい値のフレームで今どおり（規則 2〜3）。
+    /// </summary>
+    private void PauseOnFileLoadDuringLoss()
+    {
+        if (_signalLoss.OnFileLoad(SignalContext()) != LtcSignalLossAction.Pause)
+            return;
+        _input.ClearHeldLossLanding();
+        ApplySignalLossAction(LtcSignalLossAction.Pause, landOnHeldValue: false);
     }
 
     public double LastLtcSeconds { get; private set; }
@@ -808,10 +823,12 @@ internal sealed class LtcSyncController
     /// D35: 無音損失（SignalLoss）で一時停止した後に、保持値（Duplicate）が初めて届いたか。
     /// この損失でまだ着地しておらず、今回のフレームで保持値が分かったときに停止モードの
     /// 明示着地を行う（損失理由や値の到着順に依存しない）。
+    /// v0.5.4（規則 4 の読み込みの入口）: 損失のままの読み込みの後もこの経路で着地する。規則 3 と同じく、
+    /// 着地を待っている間（読み込み・シークの着地の前）は判定しない。
     /// </summary>
     private bool ShouldLandOnFirstHeldValueDuringPause() =>
         _signalLoss.IsPauseOwned && _input.HeldLossLandingSeconds is null &&
-        _input.LastHeldEffectiveSeconds is not null;
+        _input.LastHeldEffectiveSeconds is not null && !_syncService.IsWaitingForLanding;
 
     /// <summary>
     /// D20-b (i): 保持 LTC（Duplicate）では通常の同期経路が走らないため、ロード解除だけを
@@ -1126,7 +1143,7 @@ internal sealed class LtcSyncController
             _syncService.ObserveLandingState(read, state.VideoFps, LastTimecodeFps);
     }
 
-    private void ApplySignalLossAction(LtcSignalLossAction action)
+    private void ApplySignalLossAction(LtcSignalLossAction action, bool landOnHeldValue = true)
     {
         if (action == LtcSignalLossAction.None || !_effects.GetContext().IsPlayerReady)
             return;
@@ -1144,8 +1161,10 @@ internal sealed class LtcSyncController
             // D35: 停止モードの保持は、損失理由（SignalLoss / TimecodeHeld）や保持値が損失宣言の
             // 前後どちらで分かったかに依らず、値が分かった時点で保持値へ明示的に 1 回着地する。
             // まだ値が無い（無音損失）ときは、その後の Duplicate が届いた時点で受信経路が着地する。
-            if (_input.LastHeldEffectiveSeconds is not null ||
-                _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
+            // 読み込みの入口（landOnHeldValue = false）は、読み込みの着地の後に受信経路が着地する。
+            if (landOnHeldValue &&
+                (_input.LastHeldEffectiveSeconds is not null ||
+                 _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld))
                 ReapplyHeldValueOnPause();
             return;
         }
