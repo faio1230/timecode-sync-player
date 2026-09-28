@@ -252,7 +252,18 @@ internal sealed class OutputTrace
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "出力トレースの保存に失敗しました: {Directory}", Directory);
+            // v0.5.4: 記録の経路で製品を落とさない。資源が尽きた条件（OutOfMemoryException）では警告の書き出しも
+            // 失敗して外へ出ていた（GPU worker の終了処理から未処理で落ちた）。溜めたイベントを捨ててメモリを返し、
+            // 警告を 1 行だけ試みる。それも失敗したら諦める。
+            try
+            {
+                events.Clear();
+                Log.Warning(ex, "出力トレースの保存に失敗しました: {Directory}", Directory);
+            }
+            catch
+            {
+                // 警告も出せないときは何もしない（呼び出し側の終了処理を続ける）。
+            }
         }
     }
 
