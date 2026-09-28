@@ -169,6 +169,8 @@ D33×D35 で S-3 が回帰し、v0.5.0 の S-4（端へのシーク記録の持�
 
 - **（試験側）ffmpeg を使う単体の 2 本がときどき落ちる（2026-09-28）**: `TestVideoFactoryTests.GetOrCreateVariant_CreatesStableDistinctPath` と `MediaDurationReaderTests.ReadDurationAsync_RealVideoFile_ReturnsCorrectDuration`。非E2E の全件でときどき 1 件落ち、単独と回し直しでは通る（b6b の作業中に数回、親の取り込みで 1 回）。並列実行の ffmpeg の競合を疑う。製品の挙動ではない。回数を記録し、v0.5.4 の後に直列化を検討する（TSP-Fable の判定）
 
+- **インストール直後の初回起動で、GStreamer の最初の要素を作るところで数秒止まる（2026-09-28、検証機で 1 回）**: 候補 1 の本番構成の回で、インストールしてから初めての起動が shim の pump-budget の後（ふだん約 70ms で続く「audio: autoaudiosink」→「device created」）で 4 秒超止まり、その間ウィンドウが UI オートメーションに応答せず C-1 が時間切れになった。次の起動からは正常。プラグインの台帳の作り直しか、新しく置かれた DLL のウイルス検査を疑う。段 B とは無関係。回帰かは未確定（前の版でインストール直後の初回を試していない）。判定（TSP-Fable）: v0.5.4 では製品を触らない。v0.5.3 のインストール直後の初回起動を検証機で 1 回確かめる。試験側は、インストール直後に一度起動して閉じる準備を足す。将来の項目「起動直後に UI スレッドが止まる（重い初期化を UI スレッドから外す）」（release-0.6-plan）の優先を上げる
+
 ## v0.5.2 の公開（2026-09-26 05:55）
 
 - タグ `v0.5.2` = main `b9dc877`、ProductVersion `0.5.2+b9dc877…`。shim は v0.5.1 と同じ Release ビルド（`5DAF3C8D…`）
