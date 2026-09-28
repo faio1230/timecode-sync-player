@@ -119,7 +119,10 @@ internal sealed class LtcSyncController
         _syncService.SeekIssued += OnSeekIssued;
         // v0.5.4 B6b（規則 1・3）: マスターが止まっている（保持の Duplicate・信号断）間は、relocate の
         // 目標に先行量を付けない（停止した値へ合わせる。D37-g の守り）。
-        _syncService.MasterStoppedSource = () => _input.LastHeldEffectiveSeconds is not null || _signalLoss.IsLost;
+        // v0.5.4（マスター停止の判定の共通化）: 保持は数える保持の連続 1 枚以上（fps の疑わしい Duplicate は
+        // 数えない）。保持値の記録（D27-d、化けた 1 枚でも立つ）では判定しない。
+        _syncService.MasterStoppedSource = () =>
+            SyncRules.IsMasterStopped(_input.HeldRunLength, minimumHeldFrames: 1) || _signalLoss.IsLost;
         _syncService.LifecycleRaised += OnSyncServiceLifecycle;
     }
 
@@ -639,7 +642,8 @@ internal sealed class LtcSyncController
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
-                holdEntry = _input.LastHeldEffectiveSeconds is not null && heldRun >= 2 &&
+                holdEntry = _input.LastHeldEffectiveSeconds is not null &&
+                    SyncRules.IsMasterStopped(heldRun, minimumHeldFrames: 2) &&
                     _input.HeldLossLandingSeconds is null;
                 _input.MarkHeldEffective(heldEffectiveSeconds);
                 // D38 (a): 保持の Duplicate でも、保留中のシークが着地していれば観測して

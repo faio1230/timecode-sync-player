@@ -41,6 +41,15 @@ internal static class SyncRules
     internal static bool ShouldSkipHeldLanding(PauseOwners owners) =>
         owners.HasFlag(PauseOwners.BoundaryHold);
 
+    /// <summary>
+    /// v0.5.4（規則 4 のマスター停止の判定、設計書 §10-1）: マスターが保持で止まっているか。数える保持の連続
+    /// （<see cref="LtcInputState.HeldRunLength"/>: 連続した同値の Duplicate で、fps の疑わしいものは数えない）が
+    /// minimumHeldFrames 枚以上。relocate の先行量を 0 にするのは 1 枚（信号断の損失も止まっている扱いで、
+    /// それは呼び出し側が足す）、規則 4 の入口（RunThrough の合わせ・停止モードの U8）は 2 枚。
+    /// </summary>
+    internal static bool IsMasterStopped(int heldRunLength, int minimumHeldFrames) =>
+        heldRunLength >= minimumHeldFrames;
+
     internal static bool CanPauseForSignalLoss(
         LtcSignalLossMode mode,
         bool syncEnabled,

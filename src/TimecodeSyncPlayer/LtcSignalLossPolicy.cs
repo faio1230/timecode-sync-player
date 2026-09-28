@@ -299,7 +299,7 @@ internal sealed class LtcSignalLossPolicy
         // いない場合」に限る形で、時間定数は増やさない。合わせ直しの 1 枚では止めない）。
         // v0.5.4 B6b（規則 4 の入口を両モードで統一）: 「適用した Jump の後に」の条件を外した。
         if (context.Mode == LtcSignalLossMode.Stop &&
-            _consecutiveHeldFrames >= 2 &&
+            SyncRules.IsMasterStopped(_consecutiveHeldFrames, minimumHeldFrames: 2) &&
             WasHeldRecently(nowMilliseconds))
         {
             _isLost = true;
