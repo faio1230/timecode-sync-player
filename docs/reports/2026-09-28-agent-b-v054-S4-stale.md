@@ -170,3 +170,70 @@
 1. 素材の終わりちょうどへのシークの後、UI の尺（`TryGetDuration`）が入らない理由。shim の尺の問い合わせが EOF の間に成り立たないのかは、ログからは確かめられない。
 2. 手動シークの後に規則 4 の合わせを出すか（手動を優先して出さないか、境界ホールドの解除で出し直すか）は、規則に書かれていない。
 3. B6b の回の std-2 は stale 0 だった。入口の合わせが UI タイマーの尺の更新の後になった回と読めるが、その回のログは見ていない。
+
+## 追補（修正、2026-09-28）
+
+親の依頼（TSP-Fable の承認つき）で (a) と (c) を直した。(b)（境界ホールドの解除が入口の合わせを出し直す件）は直していない（親が負債 L1 に追記済み）。
+始める前に `git merge --no-ff v0.5.4` をした（`9aeca8d`）。
+
+### コミット
+
+| コミット | 内容 |
+| --- | --- |
+| `cfcbf0f` | test: S-4 の型の再発テスト 2 本（赤）。ハーネスの同期の文脈の尺を、アプリと同じく「取れたときだけ」にした |
+| `bcd9808` | fix: (a) |
+| `232280c` | test: 手動シークの記録の再発テスト 1 本（赤） |
+| `bb96e46` | fix: (c) |
+| （本追補のコミット） | docs: 設計書 §10-1 の規則 4 に 1 行、本追補 |
+
+### (a) 保持値への合わせは尺と fps が分かるまで判定しない（B6b の回帰）
+
+- `LtcSyncController.TryGetHeldLandingTarget`（ランスルーの入口の合わせ・停止モードの保持の着地の両方が使う）で、次の間は false を返す（「合わせ済み」の記録 `HeldLossLandingSeconds` も付けない）。
+  - 尺が使えない間: `SeekBarUpdateState.IsUsableDuration`。エンジンの `bad-duration` と同じ条件。
+  - Single で映像 fps が分からない間: `SyncDecisionEngine.IsUsableFps`（`private` から `internal` にした）。
+- 保留の間は Debug の行（`landing deferred until the duration is known` / `…video fps is known`）を出す。
+- 分かった後の最初の保持のフレームで、次の既存の条件が真のままなので、1 回だけ合わせる。
+  - ランスルー: 入口の判定（直前も保持・記録なし）
+  - 停止モード: `ShouldLandOnFirstHeldValueDuringPause`（方針の一時停止中・記録なし・保持値あり）
+- 新しい定数・仕組みは無い。
+- **エンジンとの違い**: エンジンは fps が分からないとき既定の 30fps で端を決める。こちらは「fps が分からない間は判定しない」にした。
+  fps が 0 だと `SeekableOut` が MediaOut をそのまま返し、素材の終わりちょうどになるため。
+  Continue は写像の素材位置を使い fps を使わないので、尺の条件だけ。
+- **ハーネスの変更**: 同期の文脈（`LtcSyncContext`・Single／Continue の `SyncPlaybackState`）に渡す尺を、偽の再生 API の `TryGetDuration`（尺の到着の前は 0）にした。
+  アプリの `MainWindow` は読み込みで尺を 0 に戻し、UI タイマーが取れたときに入れるのと同じ。
+  尺の到着の遅れ（`DurationArrivalDelaySeconds`）を使っていたのは偽の再生 API 自身のテストだけで、既存のテストの結果は変わらなかった。
+- **赤から緑**: `Integration/Scenario/S4HeldLandingBeforeDurationTests.cs` の 2 本。
+  - ランスルー: 保持の中で次のトラックを読み込み、尺は 0.3 秒後に分かる。
+    旧は読み込みの直後に 20.000 へシーク（S-4 と同じ）。新は尺が分かるまでシーク 0 本、分かった後に最後のコマの頭（19.960、25fps）へ 1 本。
+  - 停止モード: 読み込みの直後に保持へ入り、U8 で停止する。尺は 0.5 秒後。旧は停止の着地が 20.000 へ。新は同じく待ってから 19.960 へ 1 本。
+
+### (c) 手動シークの記録を reason=manual に（計測のみ）
+
+- `TimecodeSyncService.NotifyManualSeek`（利用者の手動シークの入口）で、relocate の行を `reason=manual` で残す。
+  - 発生元を覚えるので、その着地の `post-landing-residual` の `reason` も `manual` になる。
+  - 旧は前の relocate の理由（`hold-entry` など）のままだった。
+  - `ReportSeekSent` と同じ記録の処理を `NoteRelocateIssued` にまとめた。
+- 手動シークの後の同期の relocate の行は `previousReason=manual` になる。前の着地が閾値の外でも、発生元が違うので `chained` にはならない。
+  `afterOutsideLanding` には入りうる。
+- **赤から緑**: `B6bPredictiveLocateTests.Metrics_ManualSeekLanding_IsRecordedWithTheManualReason`。
+
+### テストの件数
+
+- 非E2E（`--filter "Category!=E2E"`）: **2767 合格・失敗 0（2767）**（最後の実行）。ビルドは警告 0・エラー 0。E2E・実機は回していない。
+- 既存のテストの期待は変えていない（区分の対象なし）。
+- 途中の全件の実行で、次の 2 本が 3 回、失敗した。
+  - `TestVideoFactoryTests.GetOrCreateVariant_CreatesStableDistinctPath`
+  - `MediaDurationReaderTests.ReadDurationAsync_RealVideoFile_ReturnsCorrectDuration`（尺 2.5 秒と読んだ回がある）
+
+  いずれも ffmpeg でテスト動画を作るテスト。単独で回すと 4 本とも合格し、最後の全件の実行でも合格した。今回の変更（同期の経路とハーネスの尺）との関係は調べていない。
+
+### 設計書
+
+`docs/design/v0.5.4-gate-unification.md` §10-1 の規則 4 に 1 行を足した。
+「写像（尺・fps）が分かるまで判定しない。読み込みの直後で尺か映像 fps が分からない間は、停止した値への合わせの目標を決めず、記録もしない。分かった後の最初の保持のフレームで 1 回だけ合わせる」
+
+### 未解決の疑問
+
+1. 素材の終わりちょうどへのシークの後に UI の尺が入らない理由（shim の尺の問い合わせ）は、調べていない。今回の修正で、その位置へのシークが出なくなる。
+2. 停止モードで、保持の損失のまま（方針の一時停止をせずに）次のトラックを読み込んだとき、読み込みの後は再生が 0 から走り続けた（ハーネス）。
+   `IsLost` のまま `EvaluatePause` が再び来ないため。今回の修正とは別の経路で、変えていない。
