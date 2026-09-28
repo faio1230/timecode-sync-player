@@ -77,3 +77,39 @@ E2E にするなら 1（次へ）が最短。確かめる点: 読み込みの後
    実機でこの型の遅れを測ったものは無い。
 3. 表の 5（置き換え）は `StopPlayback` を挟むので、読み込みの時点の再生の状態と損失の状態を実機で確かめて
    いない。
+
+## 追補（E2E）
+
+親の依頼（2026-09-28）で、実機で確かめる E2E を 1 本足した。書いただけで、実機では回していない。
+
+- 追加: `tests/TimecodeSyncPlayer.Tests/E2E/LtcScenarioE2ETests.cs` の `R5_StopMode_NextTrackDuringHeldLoss_StaysPausedAndLandsOnHeldValue`（R-5）。
+  R-1〜R-4 の後ろに置いた。`run-ltc-scenarios.ps1` の既定のフィルタ（`FullyQualifiedName~LtcScenarioE2ETests` を含む）で回る
+  （`--list-tests` で R-4 の次に出ることを確かめた）。
+- ビルド: テストのプロジェクトのビルド 1 回、警告 0・エラー 0。非E2E の全件と E2E は回していない。
+
+### 流れと判定
+
+Single（`continueMode: false`）で回す。表の 1（「次へ」ボタン）の形。
+
+1. A を読み込んで再生、同期オン、停止モード。LTC を `A.MediaIn + 3` から 4 秒進め、位置が `A.SingleTarget(LTC)` の ±0.3 秒に入るのを待つ。
+2. `A.MediaIn + 7` で保持（`PlayHeld` を 40 秒。復帰の `Play` が止める）。一時停止を待ち（R-2 と同じ上限）、
+   `hold-pause` をジャーナルに書く（`ltc-run-report.ps1` の hold-pause の集計にも入る）。A の位置が保持値の 1 フレーム以内になるのを待つ。
+3. `BtnNextTrack` を直接押す（`LoadTrack` は準備待ちで再生・一時停止を揺らすので使わない）。ログの
+   `Playlist track loaded index=<B>` を 10 秒待ち、2 秒以内に一時停止であることを待つ。
+4. B の位置が `B.SingleTarget(保持値)` に入るのを 10 秒待つ（幅は B の範囲の中なら 1 フレーム、範囲外なら境界ホールドの ±2 フレーム）。
+   1.5 秒後に次を判定する: 一時停止のまま、`LtcSignalLossPauseReason` が空でない、位置が 1 フレームを超えて動かない、
+   B の範囲の中なら「次へ」以降の `LTC timecode held: landing seek issued` がちょうど 1 回。B の絵（参照一致）を 3 秒待つ。
+   観測値は `load-during-hold` に書く（着地までの秒数、同期のシークの本数を含む）。
+5. LTC を進め直す（保持値が B の範囲の中で 8 秒の余裕があれば保持値から、無ければ `B.MediaIn + 3` から）。
+   4 秒以内に再開し、8 秒以内に `B.SingleTarget(LTC)` の ±0.3 秒に入るのを待つ。`resume-follow` に書く。
+
+新しい待ち時間の定数は足していない（上の秒数はどれも R-1・R-2・S-4 の待ちの値）。
+
+### 気にしている点
+
+1. 既定のプロジェクト（色素材の A/B/C、どれもクリップ [0, 20]）では保持値 7.0 は B の範囲の中で、着地のシークは 1 回の判定になる。
+   実素材（M1〜M7）で保持値が B の範囲の外になると、端は境界ホールド（D33）が受け持ち、着地のシークが出ないことがある。
+   このため範囲外では着地の本数を判定せず、ジャーナルに残すだけにした。
+2. 着地までの時間は、実機では尺の取得（UI タイマー）と読み込みの着地を待つ（報告本体の未解決 1）。10 秒の待ちで足りない場合は、
+   `load-during-hold` の `secondsToLanding` と、アプリのログの `landing deferred` の行を見る。
+3. `ltc-run-report.ps1` の先頭のコメントは「R-1〜R-4 の hold-pause」のままにした（集計は test ID を問わないので R-5 も入る）。

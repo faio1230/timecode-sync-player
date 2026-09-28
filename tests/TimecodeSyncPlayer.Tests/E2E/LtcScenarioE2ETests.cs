@@ -1004,6 +1004,132 @@ public sealed partial class LtcScenarioE2ETests
         });
     });
 
+    /// <summary>
+    /// R-5（v0.5.4、規則 4 の読み込みの入口）: 停止モードで LTC の保持により一時停止したまま、UI の「次へ」で
+    /// 次のトラックを読み込む。読み込みの後も信号断の一時停止のまま（位置が進まない）で、保持値の位置
+    /// （新しいトラックのクリップの範囲外なら端）に着地し、LTC を進め直すと再開して追従する。
+    /// 修正前は読み込みが始めた再生が止まらず、新しいトラックが頭から走り続けていた。
+    /// Single で回す（手動の読み込みでトラックを選ぶ形。Continue は LTC の写像でトラックが決まる）。
+    /// </summary>
+    [SkippableFact(Timeout = 240_000)]
+    public void R5_StopMode_NextTrackDuringHeldLoss_StaysPausedAndLandsOnHeldValue() => Run("R-5", continueMode: false, blackGap: true, scenario =>
+    {
+        const double timeoutSeconds = 0.25; // AppSettings.DefaultLtcSignalLossTimeoutMs
+        // Single は LTC＝素材の時刻。A の中の点で保持する（S-2 と同じく MediaIn から選ぶ）。
+        double target = scenario.A.MediaIn.TotalSeconds + 7;
+        double start = target - 4;
+        string? r5Range = ScenarioPreflight.CheckRange("R-5 の追従と保持", start, target - start + 1.0,
+            scenario.A.MediaIn.TotalSeconds, scenario.A.MediaOut.TotalSeconds);
+        if (r5Range is not null)
+            scenario.Invalid(r5Range);
+
+        double expectedA = scenario.A.SingleTarget(target);
+        double expectedB = scenario.B.SingleTarget(target);
+        // 保持値が B のクリップの範囲外なら、着地先は端（境界ホールドが受け持つ）。判定の幅も境界ホールドに合わせる。
+        bool heldInsideB = target > scenario.B.MediaIn.TotalSeconds && target < scenario.B.MediaOut.TotalSeconds;
+        // 復帰に送る LTC は、B の範囲の中なら保持値から、外なら B の頭 +3 秒から進める（端で止まったままを避ける）。
+        double resumeFrom = heldInsideB && target + 8 < scenario.B.MediaOut.TotalSeconds
+            ? target
+            : scenario.B.MediaIn.TotalSeconds + 3;
+
+        scenario.LoadTrack(scenario.A.Index);
+        scenario.EnsurePlaying();
+        scenario.SetSync(true);
+        scenario.SetSignalLossMode(stop: true);
+
+        // 1) LTC を進めて A に追従する。
+        scenario.Play(start, 4.0);
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.A.SingleTarget(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            8, "LTC 追従に入る");
+        scenario.WaitUntil(() => scenario.LtcSeconds() >= target - 0.2, 8, "LTC が保持値の手前まで進む");
+
+        // 2) 保持（Duplicate を流し続ける）で一時停止する。保持は読み込みと観測の間ずっと続ける
+        // （復帰の Play が止める）。
+        scenario.PlayHeld(target, 40.0);
+        DateTime holdObservedAt = DateTime.Now;
+        DateTime ltcDeadline = holdObservedAt.AddSeconds(6);
+        while (scenario.LtcSeconds() < target - 0.001 && DateTime.Now < ltcDeadline)
+        {
+            Thread.Sleep(50);
+            holdObservedAt = DateTime.Now;
+        }
+        scenario.WaitUntil(() => scenario.IsPaused(), timeoutSeconds + scenario.OneFrame + 0.5,
+            "保持の検出で一時停止");
+        DateTime pausedAt = DateTime.Now;
+        scenario.Journal.Write("hold-pause", details: new
+        {
+            target,
+            expected = expectedA,
+            pauseLatencySeconds = (pausedAt - holdObservedAt).TotalSeconds,
+            position = scenario.Position(),
+            ltc = scenario.LtcSeconds(),
+        });
+        scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedA) <= scenario.OneFrame,
+            timeoutSeconds + scenario.OneFrame + 1.0, "A の停止位置が保持値");
+        scenario.Journal.Write("hold-landed", details: new
+        {
+            target,
+            expected = expectedA,
+            position = scenario.Position(),
+            pauseReason = scenario.App.Text("LtcSignalLossPauseReason"),
+        });
+
+        // 3) 保持のまま UI の「次へ」で B を読み込む（LoadTrack は準備待ちで再生・一時停止を揺らすので使わない）。
+        DateTime nextIssuedAt = DateTime.Now;
+        scenario.App.Button("BtnNextTrack").Invoke();
+        scenario.WaitUntil(() => scenario.LoadedTrackIndex() == scenario.B.Index, 10,
+            $"トラック {scenario.A.Index} → {scenario.B.Index} のロード");
+        scenario.WaitUntil(() => scenario.IsPaused(), 2, "読み込みの後も一時停止のまま");
+
+        // 4) 保持値の位置（範囲外なら端）に着地する。着地は尺と fps が分かった後の保持のフレームで出る。
+        double fpsB = scenario.B.FrameRate > 0 ? scenario.B.FrameRate : 30.0;
+        double landingTolerance = heldInsideB ? 1.0 / fpsB : SingleModeClamp.BoundaryHoldTolerance(fpsB);
+        scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedB) <= landingTolerance, 10,
+            $"B の位置が保持値の着地先 {expectedB:F3} 付近");
+        double landedPosition = scenario.Position();
+        DateTime landedAt = DateTime.Now;
+        Thread.Sleep(1500);
+        double heldPosition = scenario.Position();
+        bool stillPaused = scenario.IsPaused();
+        string pauseReason = scenario.App.Text("LtcSignalLossPauseReason");
+        int landingSeeks = scenario.CountLogMatchesSince(LandingSeekLogPattern, nextIssuedAt);
+        int syncSeeks = scenario.CountLogMatchesSince(SyncSeekLogPattern, nextIssuedAt);
+        scenario.Journal.Write("load-during-hold", details: new
+        {
+            target,
+            expected = expectedB,
+            heldInsideB,
+            landedPosition,
+            heldPosition,
+            secondsToLanding = (landedAt - nextIssuedAt).TotalSeconds,
+            stillPaused,
+            pauseReason,
+            landingSeeks,
+            syncSeeks,
+        });
+        stillPaused.Should().BeTrue("保持の損失のままの読み込みでも、停止モードでは一時停止のまま");
+        pauseReason.Should().NotBeEmpty("一時停止の持ち主は信号断（停止の理由が出ている）");
+        Math.Abs(heldPosition - landedPosition).Should().BeLessThanOrEqualTo(1.0 / fpsB,
+            "保持の間は B の位置が進まない");
+        if (heldInsideB)
+            landingSeeks.Should().Be(1, "新しいトラックでも保持値へ 1 回だけ着地する");
+        scenario.WaitTrackPicture("r5-b-hold", scenario.B, 3, "保持中は B の絵（A・黒でない）");
+
+        // 5) LTC を進め直すと再開して B に追従する。
+        scenario.Play(resumeFrom, 8.0);
+        scenario.WaitUntil(() => !scenario.IsPaused(), 4, "送出再開で再生が復帰");
+        scenario.WaitUntil(
+            () => Math.Abs(scenario.Position() - scenario.B.SingleTarget(scenario.LtcSeconds())) <= PositionToleranceSeconds,
+            8, "復帰後は LTC に追従");
+        scenario.Journal.Write("resume-follow", details: new
+        {
+            resumeFrom,
+            ltc = scenario.LtcSeconds(),
+            position = scenario.Position(),
+        });
+    });
+
     // ---- C: Continue のジャンプ ----
 
     [SkippableFact(Timeout = 360_000)]
