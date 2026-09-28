@@ -148,7 +148,10 @@ internal sealed class E2EAppRunner : IDisposable
             if (mainWindowHandle == IntPtr.Zero)
                 throw new TimeoutException("TimecodeSyncPlayer のメインウィンドウが5秒以内に表示されませんでした。");
 
-            var window = automation.FromHandle(mainWindowHandle).AsWindow();
+            // インストール直後の初回起動は、プラグインの読み込みで UI スレッドが数秒ふさがり、
+            // FromHandle が UIA の時間切れ（0x800705B4）で落ちることがある（2026-09-28 検証機）。30 秒まで取り直す。
+            var window = Retry.WhileException(() => automation.FromHandle(mainWindowHandle).AsWindow(),
+                timeout: TimeSpan.FromSeconds(30), interval: TimeSpan.FromMilliseconds(500), throwOnTimeout: true).Result;
             E2EAssert.WaitUntil(
                 () => window.FindFirstDescendant(cf => cf.ByAutomationId("BtnPlay")) != null,
                 TimeSpan.FromSeconds(5));
