@@ -269,4 +269,37 @@ public class B6bPredictiveLocateTests
             .Should().OnlyContain(e => e.Message.Contains("afterOutsideLanding=False"),
                 "保持値へ正しく着地した後の relocate は、連続 relocate に数えない");
     }
+
+    // ── S-4 の調査の記録の直し: 手動シーク（門 22）の着地の行は reason=manual ─────────────
+
+    [Fact]
+    public void Metrics_ManualSeekLanding_IsRecordedWithTheManualReason()
+    {
+        // 旧: 手動シークの着地の post-landing-residual の reason が、前の relocate の理由（hold-entry など）のままだった。
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
+        using var sink = new ScenarioLogSink(clock);
+        h.AddTrack("A", 0, 120);
+        h.ManualPlay();
+        h.AdvancePlayback(10.0);
+        h.Ltc.Normal(10.0, TimeSpan.FromSeconds(1));
+        h.Ltc.Normal(14.0, TimeSpan.FromSeconds(2));       // 3 秒前へ飛ぶ（同期の relocate、reason=sync）
+        long end = h.Ltc.NextMilliseconds;
+        while (clock.MonotonicMilliseconds < end)
+            h.AdvanceMilliseconds(40);
+
+        h.BeginSeekBarInteraction();
+        h.EndSeekBarInteraction(3.0);                       // 利用者の手動シーク
+        h.Ltc.Normal(16.0, TimeSpan.FromSeconds(1));
+        end = h.Ltc.NextMilliseconds;
+        while (clock.MonotonicMilliseconds < end)
+            h.AdvanceMilliseconds(40);
+
+        sink.GateEvents.Should().Contain(e => e.Name == "relocate" && e.Message.Contains("reason=manual"),
+            "手動シークも relocate の行を reason=manual で残す（記録だけ）");
+        ScenarioGateEvent? afterManual = sink.GateEvents
+            .SkipWhile(e => !(e.Name == "relocate" && e.Message.Contains("reason=manual")))
+            .FirstOrDefault(e => e.Name == "post-landing-residual");
+        afterManual.Should().NotBeNull("前提: 手動シークの着地の後に残差の行が出る");
+        afterManual!.Message.Should().Contain("reason=manual", "手動シークの着地の残差は reason=manual");
+    }
 }
