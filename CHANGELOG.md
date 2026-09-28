@@ -23,6 +23,9 @@ Migration from 0.5.3: none (settings and project format are unchanged).
   now stays paused and aligns once to the stopped LTC position.
 - Right after a load with LTC held, a seek to the exact end of the media could leave the duration display at 0. The
   alignment to the held position now waits until the duration and frame rate are known.
+- A garbled LTC frame during a signal disturbance could be counted as "the same value repeated" (LTC stopped), so
+  the picture briefly stalled. Only correctly read repeated values now count as a stop (introduced during this
+  release's development and fixed before release).
 - With the output trace (diagnostic recording) enabled, running out of memory or disk while saving the trace could
   crash the app. A failed save now drops the trace and logs one warning. Normal use (no trace) is not affected.
 
@@ -44,11 +47,14 @@ Migration from 0.5.3: none (settings and project format are unchanged).
 
 - Media with keyframe intervals longer than the recommended 1-2 s can stop and jump while following. Outside the
   recommended range; re-export with the recommended settings.
+- With the LTC frame rate set to automatic, following can lag briefly when the signal is disturbed. A fixed frame
+  rate avoids this.
 
 ### Known intermittent issues (rates from the development machine)
 
 - Releasing resources at exit can take about 15 s (1 of 1,652 exits); the app then exits normally.
 - Right after start, the UI does not respond for about 1 s during initialisation.
+- The first start right after installation can be unresponsive for a few seconds (seen once on the test machine).
 
 ### Corrected
 
