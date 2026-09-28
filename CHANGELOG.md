@@ -2,6 +2,59 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.5.4 - (date to be set at release)
+
+Stable (Latest) release of the 0.5 line. Fixes the known errors and rebuilds how LTC following decides when to seek.
+Jump landings are faster, the stop position is exact, and playback speed no longer wavers while LTC is held.
+Migration from 0.5.3: none (settings and project format are unchanged).
+
+### Fixed
+
+- Reopening a saved project could bring back as 0 an offset edited right after adding files, and selecting a playlist
+  row within about 1 s of adding files could lose the selection. The row was replaced when the file's duration arrived;
+  duration updates no longer replace the row (0.5.3 known limitations).
+- Gap Freeze: the picture could rarely stay on the previous frame instead of the final frame. Right after the seek to the
+  final frame, the position query could briefly return the post-seek value, and the saved-picture check compared against
+  it. The check now compares against the target, and the "within 2 frames" comparisons were unified. Timeouts while
+  capturing the final frame were fixed as well (0.5.3 known limitation).
+- Single: Smooth could stay unavailable after a load, a pending rate reset to 1.0 could remain, and releasing the
+  clip-edge hold could resume playback while the user had paused.
+- Stop mode: loading another track (for example with Next) while LTC was stopped let the new track play on from 0. It
+  now stays paused and aligns once to the stopped LTC position.
+- Right after a load with LTC held, a seek to the exact end of the media could leave the duration display at 0. The
+  alignment to the held position now waits until the duration and frame rate are known.
+- With the output trace (diagnostic recording) enabled, running out of memory or disk while saving the trace could
+  crash the app. A failed save now drops the trace and logs one warning. Normal use (no trace) is not affected.
+
+### Changed
+
+- LTC following was reorganised around the four rules of a DAW-style LTC chase; the conditions that decide seeking went
+  from 24 to 12.
+  - While LTC runs, a catch-up seek aims ahead by the learned seek time, so once learned it catches up in one seek.
+  - Small offsets are closed by speed; a seek is used only when it is faster than speed correction, including before
+    the seek time has been learned.
+  - When LTC stops (the same value repeats), playback aligns once to the stopped position and then changes neither
+    speed nor position until LTC moves again.
+  - A jump in the LTC value is followed after the next frame confirms it (one frame, about 40 ms); a single broken
+    frame never loads another track.
+- Following decisions now use the position of the frame sent to the screen instead of the queried playback position,
+  which ran 2-3 frames ahead. Speed correction already used the sent frame since 0.5.3, so normal following looks the same.
+
+### Known limitations
+
+- Media with keyframe intervals longer than the recommended 1-2 s can stop and jump while following. Outside the
+  recommended range; re-export with the recommended settings.
+
+### Known intermittent issues (rates from the development machine)
+
+- Releasing resources at exit can take about 15 s (1 of 1,652 exits); the app then exits normally.
+- Right after start, the UI does not respond for about 1 s during initialisation.
+
+### Corrected
+
+- The 0.5.1-0.5.3 known limitation "a high-rate UI Automation audit can stall delivery for a few seconds" was not a
+  product problem: the test counted the 5 s gap between tracks in its project as a stall.
+
 ## 0.5.3 - 2026-09-26
 
 Fixes for sync state that outlived the action or setting that should have cleared it, and a slow landing after a held timecode.
