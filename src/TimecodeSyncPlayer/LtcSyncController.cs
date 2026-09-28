@@ -1298,12 +1298,22 @@ internal sealed class LtcSyncController
     /// 保持値の着地先（Continue はタイムライン → 素材位置、Single はクリップの範囲）。境界ホールドが
     /// 一時停止の持ち主なら端で受け持つので false。着地先が決まったら、この損失（保持）で着地を試みた
     /// 保持値として記録する（D31-b）。
+    /// v0.5.4（S-4 の回帰の修正）: 写像（尺・fps）が分かるまでは判定せず false（記録もしない）。
+    /// 分かった後の最初の保持のフレームで、呼び出し側（規則 4 の入口・停止の着地）が 1 回だけ合わせる。
     /// </summary>
     private bool TryGetHeldLandingTarget(double heldSeconds, LtcSyncContext state, out double target)
     {
         target = 0.0;
         if (!state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
             return false;
+        // 読み込みの直後は尺が 0（アプリは UI タイマーが取れたときに入れる）。この間にクリップの端へ収めると、
+        // 端が素材の終わりちょうど（MediaOut）になり、そこへシークして EOF に入る（S-4）。同期の判定（エンジン）の
+        // bad-duration と同じく、尺が使えない間は判定しない。
+        if (!SeekBarUpdateState.IsUsableDuration(state.DurationSeconds))
+        {
+            Log.Debug("LTC timecode held: landing deferred until the duration is known ltc={Ltc:F3}", heldSeconds);
+            return false;
+        }
 
         if (state.Mode == SyncMode.Continue)
         {
@@ -1324,6 +1334,12 @@ internal sealed class LtcSyncController
                 Log.Debug(
                     "LTC timecode held: landing skipped (boundary hold is a pause owner) ltc={Ltc:F3}",
                     heldSeconds);
+                return false;
+            }
+            // 端（最後のコマの頭）は映像 fps から決まる。fps が分からない間も判定しない（端が素材の終わりちょうどになる）。
+            if (!SyncDecisionEngine.IsUsableFps(state.VideoFps))
+            {
+                Log.Debug("LTC timecode held: landing deferred until the video fps is known ltc={Ltc:F3}", heldSeconds);
                 return false;
             }
             // D29: 着地先はほかの経路と同じくクリップの [MediaIn, MediaOut ?? 尺] に収める。

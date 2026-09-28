@@ -356,7 +356,7 @@ internal sealed class SyncDecisionEngine : ISyncDecisionEngine
     private static bool IsFinite(double value) =>
         !double.IsNaN(value) && !double.IsInfinity(value);
 
-    private static bool IsUsableFps(double fps) =>
+    internal static bool IsUsableFps(double fps) =>
         IsFinite(fps) && fps > 0;
 
     /// <summary>
