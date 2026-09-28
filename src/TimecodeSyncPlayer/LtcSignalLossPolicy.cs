@@ -110,6 +110,23 @@ internal sealed class LtcSignalLossPolicy
         return true;
     }
 
+    /// <summary>
+    /// v0.5.4（規則 4 の読み込みの入口）: 停止モードで損失のまま読み込んだとき。読み込みが始めた再生は
+    /// 利用者の再開ではないので、その前の持ち主の印を下ろしてから規則 4 の入口と同じ判定で一時停止する
+    /// （損失のままだと <see cref="EvaluatePause"/> がもう一度来ないため）。利用者が損失中に再開していた
+    /// （抑止の印）ときと、読み込みが一時停止のままのときは何もしない。
+    /// </summary>
+    public LtcSignalLossAction OnFileLoad(LtcSignalLossContext context)
+    {
+        if (!context.IsMonitoring || !_isLost || context.Mode != LtcSignalLossMode.Stop ||
+            context.IsPlaybackPaused)
+            return LtcSignalLossAction.None;
+
+        _pausedByPolicy = false;
+        _lastIsPlaybackPaused = context.IsPlaybackPaused;
+        return EvaluatePause(context);
+    }
+
     public void Reset()
     {
         _lastValidFrameAtMilliseconds = null;
