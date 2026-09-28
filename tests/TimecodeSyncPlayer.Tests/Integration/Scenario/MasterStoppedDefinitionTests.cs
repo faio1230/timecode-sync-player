@@ -65,13 +65,16 @@ public class MasterStoppedDefinitionTests
 
         // 化けた値（Jump の保留）と、同じ値の 24fps の Duplicate 1 枚。保持値の記録（D27-d）は立つが、
         // 数える保持ではないのでマスターは動いている扱い。値が最後の適用から tol を超えて離れているので
-        // 1 回適用され（D20-b）、relocate の目標は M + c になる。
+        // 1 回適用され（D20-b）、ゲートで保留された要求を UI タイマーが送り直した評価で relocate する。
+        // その目標は M + c になる（次のフレームはまだ来ない。保持値の記録は立ったまま）。
         Frame(h, clock, 8.5);
         h.AdvanceMilliseconds(FrameMs);
         Frame(h, clock, 8.5, detectedFps: 24.0);
 
         h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(SeekCost, 1e-9,
             "fps の疑わしい Duplicate 1 枚はマスター停止ではない（先行量を 0 にしない）");
+        for (int i = 0; i < 4; i++)
+            h.AdvanceMilliseconds(FrameMs);
         Seeks(h).Should().ContainSingle("前提: 離れた値への relocate が 1 本出る")
             .Which.Should().BeApproximately(8.5 + SeekCost, 1e-6, "目標は M + c");
     }
