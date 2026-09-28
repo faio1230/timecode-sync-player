@@ -585,6 +585,11 @@ internal sealed class LtcSyncController
             LogFrameDiagnostics(sourceFrame, processed, mode);
         double rawSeconds = processed.ResolvedSeconds;
         long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
+        // v0.5.4（規則 4 の入口の数え方）: 入口に数える保持の連続を、すべてのフレームで数える。Jump の保留・
+        // 別の値・fps の疑わしい Duplicate が挟まったら数え直す（RunThrough の入口と停止モードの U8 で共有）。
+        int heldRun = _input.ObserveHeldRun(
+            IsCountedHeldFrame(processed, sourceFrame, mode) ? rawSeconds : null,
+            (LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04) * 0.5);
         // D30: 未確認 Jump の確認。直後の 1 フレームが同値の Duplicate か +1 フレームなら、
         // その値を確認済み Jump として適用する（保持損失からの復帰も確認後に行う）。
         if (_input.PendingJumpSeconds is double pendingJump)
@@ -597,7 +602,7 @@ internal sealed class LtcSyncController
                 JumpConfirmationPolicy.IsConfirmedBy(
                     pendingJump, rawSeconds, LastTimecodeFps, processed.Diagnostic.Status))
             {
-                ApplyConfirmedJump(processed.Diagnostic.Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
+                ApplyConfirmedJump(processed.Diagnostic.Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds, heldRun);
                 return;
             }
             if (!withinWindow)
@@ -619,6 +624,7 @@ internal sealed class LtcSyncController
             bool heldValueChangedDuringLoss = false;
             // v0.5.4 B6b（規則 4）: マスター停止（保持）の入口。同じ値のフレームが続いた 2 枚目の
             // Duplicate（直前も保持）で、この保持でまだ合わせていない（保持着地の記録が無い）とき。
+            // v0.5.4（入口の数え方）: 2 枚は連続した同値で、fps の疑わしいものは数えない（heldRun）。
             bool holdEntry = false;
             // D27: 解読は続いているが値が進まない保持（Duplicate）を信号停止の判定へ伝える。
             // 無音（フレームが届かない）と同じ経路で損失になり、損失の理由だけが分かれる。
@@ -626,14 +632,14 @@ internal sealed class LtcSyncController
             // （保持直前の受理値は 1 フレーム手前になり得る）。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate)
             {
-                _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
+                _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
                 // D27-d: 着地目標は保持として届いた値そのもの。保持値は凍結されて進まないため、
                 // サンプル時計の age は足さず T3 オフセットだけ適用する。
                 double heldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
-                holdEntry = _input.LastHeldEffectiveSeconds is not null &&
+                holdEntry = _input.LastHeldEffectiveSeconds is not null && heldRun >= 2 &&
                     _input.HeldLossLandingSeconds is null;
                 _input.MarkHeldEffective(heldEffectiveSeconds);
                 // D38 (a): 保持の Duplicate でも、保留中のシークが着地していれば観測して
@@ -738,14 +744,15 @@ internal sealed class LtcSyncController
     /// Jump として復帰させ、着地は確認フレームの値で行う。
     /// </summary>
     private void ApplyConfirmedJump(
-        TimecodeFrameDiagnosticStatus status, double rawSeconds, long frameEndTimestamp, long receivedAtMilliseconds)
+        TimecodeFrameDiagnosticStatus status, double rawSeconds, long frameEndTimestamp, long receivedAtMilliseconds,
+        int heldRun)
     {
         // U8: 確認済みの Jump の適用を先に記録する（確認フレームが保持なら、その保持が Jump 後の 1 枚目）。
         _signalLoss.ObserveAppliedJump(receivedAtMilliseconds, SignalContext());
 
         if (status == TimecodeFrameDiagnosticStatus.Duplicate)
         {
-            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
+            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
             _input.MarkHeldEffective(SyncOffsetPolicy.Apply(rawSeconds,
                 _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds));
         }
@@ -769,6 +776,17 @@ internal sealed class LtcSyncController
         RequestSyncEffective(effectiveSeconds);
         ApplyCorrection(effectiveSeconds);
     }
+
+    /// <summary>
+    /// v0.5.4（規則 4 の入口の数え方）: 入口の保持の 2 枚に数えるフレームか。Duplicate で、Fixed fps モードで
+    /// デコーダ推定 fps が解決 fps と食い違わない（音が化けた最中の 1 枚を保持の証拠にしない）。
+    /// D27-d の保持値の記録はこの判定に依らない。
+    /// </summary>
+    private static bool IsCountedHeldFrame(
+        LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame, TimecodeFpsMode mode) =>
+        processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
+        !(sourceFrame != null &&
+          JumpConfirmationPolicy.IsDetectedFpsSuspect(mode, sourceFrame.Fps, processed.ResolvedFps));
 
     /// <summary>
     /// D30 / v0.5.4 B7: 未確認の Jump を保留する理由（ログ用。判定はどれも同じで、次の 1 フレームの値の連続性）。

@@ -189,8 +189,10 @@ internal sealed class LtcSignalLossPolicy
     /// 進行の時計（_lastValidFrameAtMilliseconds）は進めないので、保持が
     /// <see cref="_timeout"/> 続けば Evaluate が信号断と同じ損失として扱う。
     /// 損失の理由を「保持」に分けるためだけの観測で、判定の閾値は変えない。
+    /// v0.5.4（規則 4 の入口の数え方）: heldRunLength は呼び出し側が数えた入口の連続（連続した同値の
+    /// Duplicate の枚数。fps の疑わしいものは 0）。渡されたらそれを U8 の数に使う（RunThrough の入口と同じ数え方）。
     /// </summary>
-    public void ObserveHeldFrame(long receivedAtMilliseconds, LtcSignalLossContext context)
+    public void ObserveHeldFrame(long receivedAtMilliseconds, LtcSignalLossContext context, int? heldRunLength = null)
     {
         if (!context.IsMonitoring)
         {
@@ -201,7 +203,7 @@ internal sealed class LtcSignalLossPolicy
         ObservePlaybackState(context);
         _lastHeldFrameAtMilliseconds = receivedAtMilliseconds;
         // U8: 続いた保持を数える（2 枚続いたら確認を待たずに確定する。v0.5.4 B6b: Jump の有無は問わない）。
-        _consecutiveHeldFrames++;
+        _consecutiveHeldFrames = heldRunLength ?? _consecutiveHeldFrames + 1;
     }
 
     /// <summary>
