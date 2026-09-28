@@ -267,6 +267,22 @@ public sealed class TimecodeSyncService
     private TimecodeSyncLandingRecord? _lastNotedLanding;
     private TimecodeSyncLandingRecord? _residualPendingLanding;
 
+    /// <summary>
+    /// 計測（記録だけ）: relocate の発行を 1 行残し、発生元を覚える（着地の後の残差の行と連続 relocate の判定用）。
+    /// </summary>
+    private void NoteRelocateIssued(double targetSeconds, string reason)
+    {
+        bool afterOutsideLanding = _landedSinceLastRelocate && _lastLandingOutsideThreshold;
+        bool chained = afterOutsideLanding && string.Equals(reason, _lastRelocateReason, StringComparison.Ordinal);
+        Serilog.Log.Debug(
+            "sync.gate relocate reason={Reason:l} target={Target:F3} chained={Chained} afterOutsideLanding={AfterOutsideLanding} previousReason={PreviousReason:l} lookaheadMs={LookaheadMs:F1}",
+            reason, targetSeconds, chained, afterOutsideLanding, _lastRelocateReason, RelocateLookaheadSeconds * 1000.0);
+        _lastRelocateReason = reason;
+        _landedSinceLastRelocate = false;
+        _lastLandingOutsideThreshold = false;
+        _residualPendingLanding = null;
+    }
+
     /// <summary>relocate（目標つきのシーク）の新しい着地を覚える（残差の記録と連続 relocate の判定用）。</summary>
     private void NoteRelocateLanding(double toleranceSeconds)
     {
@@ -367,7 +383,11 @@ public sealed class TimecodeSyncService
     /// ネイティブのシーク中は着地待ちと同じ意味（§9-7-3）。着地の観測で判定と補正を再開する。
     /// </summary>
     public void NotifyManualSeek(double targetSeconds)
-        => _seekState.BeginSeek(targetSeconds, _timeProvider.GetUtcNow().UtcDateTime);
+    {
+        // 計測（記録だけ）: 手動シーク（門 22）も relocate の行を reason=manual で残し、その着地の残差の行も manual にする。
+        NoteRelocateIssued(targetSeconds, "manual");
+        _seekState.BeginSeek(targetSeconds, _timeProvider.GetUtcNow().UtcDateTime);
+    }
 
     public void ReportSeekSent(double targetSeconds) => ReportSeekSent(targetSeconds, "sync");
 
@@ -381,15 +401,7 @@ public sealed class TimecodeSyncService
     public void ReportSeekSent(double targetSeconds, string reason)
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
-        bool afterOutsideLanding = _landedSinceLastRelocate && _lastLandingOutsideThreshold;
-        bool chained = afterOutsideLanding && string.Equals(reason, _lastRelocateReason, StringComparison.Ordinal);
-        Serilog.Log.Debug(
-            "sync.gate relocate reason={Reason:l} target={Target:F3} chained={Chained} afterOutsideLanding={AfterOutsideLanding} previousReason={PreviousReason:l} lookaheadMs={LookaheadMs:F1}",
-            reason, targetSeconds, chained, afterOutsideLanding, _lastRelocateReason, RelocateLookaheadSeconds * 1000.0);
-        _lastRelocateReason = reason;
-        _landedSinceLastRelocate = false;
-        _lastLandingOutsideThreshold = false;
-        _residualPendingLanding = null;
+        NoteRelocateIssued(targetSeconds, reason);
         _lastSyncSeekAt = now;
         _latencyCompensator.MarkSeekSent();
         // v0.5.4 U4: BeginSeek が着地を待つ状態に入り、位置の信頼も落とす（門 10）。
