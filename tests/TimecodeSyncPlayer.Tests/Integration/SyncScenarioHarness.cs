@@ -131,7 +131,7 @@ internal sealed class SyncScenarioHarness
                     Playlist.Current != null,
                     IsSeeking,
                     playback,
-                    _playback.DurationSeconds,
+                    ContextDurationSeconds,
                     _playback.Fps,
                     TimecodeFps: 25)));
 
@@ -171,7 +171,7 @@ internal sealed class SyncScenarioHarness
                 ReadPosition: ReadPositionSample,
                 BuildPlaybackState: playback => new SyncPlaybackState(
                     SyncEnabled, Playlist.Current != null, IsSeeking, playback,
-                    _playback.DurationSeconds, _playback.Fps, 25,
+                    ContextDurationSeconds, _playback.Fps, 25,
                     MediaInSeconds: MediaInSeconds, MediaOutSeconds: MediaOutSeconds),
                 // C4: Single の同期シーク（段 0 の「同期シーク」に対応）。
                 SeekTo: target =>
@@ -213,7 +213,7 @@ internal sealed class SyncScenarioHarness
                 GetContext: () => new LtcSyncContext(
                     true, SyncEnabled, Mode, IsSeeking, IsMonitoring, IsPaused,
                     SignalLossMode, TimecodeFpsMode.Fixed25, GapBehavior,
-                    _loadedTrackId, _playback.Fps, _playback.DurationSeconds, 250, 3,
+                    _loadedTrackId, _playback.Fps, ContextDurationSeconds, 250, 3,
                     MediaInSeconds, MediaOutSeconds),
                 ApplyFrameText: (timecode, realTime) =>
                 {
@@ -515,6 +515,14 @@ internal sealed class SyncScenarioHarness
 
     /// <summary>v0.5.4 段 B3 のテスト用: 読み込みの世代の最初のフレームを配信する。</summary>
     public void DeliverLoadLanding() => _playback.DeliverLoadLanding();
+
+    /// <summary>
+    /// アプリの同期の文脈に渡す尺。MainWindow は読み込みで尺を 0 に戻し、UI タイマーが
+    /// <c>TryGetDuration</c> で取れたときに入れる。偽の再生 API の尺の到着
+    /// （<see cref="ScenarioPlayback.DurationArrivalDelaySeconds"/>）の前は 0 を渡す（S-4 の型の再現用）。
+    /// </summary>
+    private double ContextDurationSeconds =>
+        _playback.TryGetDuration(out double seconds) ? seconds : 0.0;
 
     /// <summary>テスト用: 尺（clamp の着地先）を差し替える。</summary>
     public void SetDurationSeconds(double seconds) => _playback.SetDuration(seconds);
