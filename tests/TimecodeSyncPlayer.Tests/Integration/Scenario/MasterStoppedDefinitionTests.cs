@@ -63,10 +63,9 @@ public class MasterStoppedDefinitionTests
         Follow(h, clock);
         h.Operations.Clear();
 
-        // 化けた値（Jump の保留）と、同じ値の 24fps の Duplicate 1 枚。保持値の記録（D27-d）は立つが、
-        // 数える保持ではないのでマスターは動いている扱い。値が最後の適用から tol を超えて離れているので
-        // 1 回適用され（D20-b）、ゲートで保留された要求を UI タイマーが送り直した評価で relocate する。
-        // その目標は M + c になる（次のフレームはまだ来ない。保持値の記録は立ったまま）。
+        // 化けた値（Jump の保留）と、同じ値の 24fps の Duplicate 1 枚（保留した Jump の確認になる）。保持値の記録
+        // （D27-d）は立つが、数える保持ではないのでマスターは動いている扱い。確認した Jump の適用はゲートで保留され、
+        // UI タイマーが送り直した評価で relocate する。その目標は M + c になる（次のフレームはまだ来ない）。
         Frame(h, clock, 8.5);
         h.AdvanceMilliseconds(FrameMs);
         Frame(h, clock, 8.5, detectedFps: 24.0);
