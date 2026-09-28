@@ -55,9 +55,38 @@ internal sealed class LtcInputState
     /// <summary>D20-b: 保持値の変更で 1 回だけ適用したことを示すラッチ（Normal/Initial で解除）。</summary>
     public bool HeldReapplyDone { get; private set; }
 
+    /// <summary>
+    /// v0.5.4（規則 4 の入口の数え方）: 入口に数える保持の連続（直前のフレームから続けて届いた同値の
+    /// Duplicate の枚数）。別の値・Jump の保留・fps の疑わしいフレームが挟まったら数え直す。
+    /// </summary>
+    public int HeldRunLength { get; private set; }
+
+    private double? _heldRunSeconds;
+
+    /// <summary>
+    /// 受けたフレームごとに呼ぶ。countedSeconds は入口に数える Duplicate の値（数えないフレームは null）。
+    /// 直前のフレームも数えた Duplicate で、値の差が sameValueSeconds 以内なら連続を 1 伸ばす。
+    /// </summary>
+    public int ObserveHeldRun(double? countedSeconds, double sameValueSeconds)
+    {
+        if (countedSeconds is not double seconds)
+        {
+            HeldRunLength = 0;
+            _heldRunSeconds = null;
+            return 0;
+        }
+
+        HeldRunLength = _heldRunSeconds is double previous && Math.Abs(seconds - previous) <= sameValueSeconds
+            ? HeldRunLength + 1
+            : 1;
+        _heldRunSeconds = seconds;
+        return HeldRunLength;
+    }
+
     /// <summary>監視の開始・停止で、受けたフレームの記録と 1 回適用のラッチを捨てる（移す前の ClearFrameHistory）。</summary>
     public void ClearFrameHistory()
     {
+        ObserveHeldRun(null, 0.0);
         Accepted = null;
         LastAppliedLtcSeconds = null;
         LastHeldEffectiveSeconds = null;

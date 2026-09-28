@@ -212,7 +212,7 @@ internal sealed class SyncScenarioHarness
             new LtcSyncEffects(
                 GetContext: () => new LtcSyncContext(
                     true, SyncEnabled, Mode, IsSeeking, IsMonitoring, IsPaused,
-                    SignalLossMode, TimecodeFpsMode.Fixed25, GapBehavior,
+                    SignalLossMode, FpsMode, GapBehavior,
                     _loadedTrackId, _playback.Fps, ContextDurationSeconds, 250, 3,
                     MediaInSeconds, MediaOutSeconds),
                 ApplyFrameText: (timecode, realTime) =>
@@ -332,6 +332,9 @@ internal sealed class SyncScenarioHarness
         }
     }
     public LtcSignalLossMode SignalLossMode { get; set; } = LtcSignalLossMode.Stop;
+
+    /// <summary>v0.5.4（規則 4 の入口の数え方）: 同期の文脈の fps モード。既定は従来どおり Fixed25。</summary>
+    public TimecodeFpsMode FpsMode { get; set; } = TimecodeFpsMode.Fixed25;
 
     /// <summary>T3: 全体に効く同期オフセット（ms）。プラスで映像が先行する。</summary>
     public double SyncOffsetMilliseconds { get; set; }
