@@ -47,8 +47,11 @@ Migration from 0.5.3: none (settings and project format are unchanged).
 
 - Media with keyframe intervals longer than the recommended 1-2 s can stop and jump while following. Outside the
   recommended range; re-export with the recommended settings.
-- With the LTC frame rate set to automatic, following can lag briefly when the signal is disturbed. A fixed frame
-  rate avoids this.
+
+### Known issues (to be fixed in a later release)
+
+- With the LTC frame rate set to automatic, following can lag briefly when the signal is disturbed. Setting a fixed
+  frame rate avoids this. Planned for 0.5.5 or later.
 
 ### Known intermittent issues (rates from the development machine)
 
