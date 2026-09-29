@@ -48,10 +48,11 @@ Migration from 0.5.3: none (settings and project format are unchanged).
 - Media with keyframe intervals longer than the recommended 1-2 s can stop and jump while following. Outside the
   recommended range; re-export with the recommended settings.
 
-### Known issues (to be fixed in a later release)
+### Recommended operation
 
-- With the LTC frame rate set to automatic, following can lag briefly when the signal is disturbed. Setting a fixed
-  frame rate avoids this. Planned for 0.5.5 or later.
+- For shows, set the LTC frame rate to a fixed value that matches the LTC generator (25 / 29.97 / 30 and so on).
+  "Auto" is an aid for finding out the frame rate of the connected LTC; left on Auto, following can lag briefly
+  when the signal is disturbed (see SETUP, "LTC fps mode").
 
 ### Known intermittent issues (rates from the development machine)
 
