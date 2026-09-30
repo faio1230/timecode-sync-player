@@ -44,7 +44,7 @@ param(
     # is the app SeekBar value: 0..1 (the SeekBar is normalized by duration, not
     # seconds). Out-of-range values fail before the app starts.
     # Semicolon separated, NOT an array: array parameters do not survive
-    # "powershell -File" invocation (same trap as Run-V1Matrix's -Only).
+    # "pwsh -File" invocation (same trap as Run-V1Matrix's -Only).
     [string]$PlaylistPaths = '',
     [string]$NextTrackAtSeconds = '',
     [string]$PrevTrackAtSeconds = '',
@@ -55,11 +55,9 @@ param(
     # V10: a project without Canvas opens CanvasSelectDialog before the main window is usable.
     [ValidateSet('', 'Ok', 'Cancel')][string]$CanvasDialog = '',
     [switch]$AudioProbe,
-    [string]$AudioProbeExe = ''
+    [string]$AudioProbeExe = (Join-Path $PSScriptRoot '..\AudioLoopbackProbe\bin\Debug\net8.0-windows\AudioLoopbackProbe.exe')
 )
 $ErrorActionPreference = 'Stop'
-# $PSScriptRoot is not reliable inside the param() block under Windows PowerShell 5.1 (-File), so resolve here.
-if (-not $AudioProbeExe) { $AudioProbeExe = Join-Path $PSScriptRoot '..\AudioLoopbackProbe\bin\Debug\net8.0-windows\AudioLoopbackProbe.exe' }
 
 # Repo-relative defaults: any worktree runs its own build and writes its own TestResults.
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
