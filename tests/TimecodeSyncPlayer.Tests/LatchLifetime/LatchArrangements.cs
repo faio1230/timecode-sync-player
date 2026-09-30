@@ -70,8 +70,11 @@ internal static class LatchArrangements
 
         if (latch == HeldReapplyDone)
         {
-            // 最後の適用値から許容を超えて離れた保持値（LtcSyncController.cs:566-571）。
-            s.Frame(s.LastLtc + 3.0, TimecodeFrameDiagnosticStatus.Duplicate);
+            // v0.6.1 段 A: 保持（同値の Duplicate が 40ms ごとに 2 枚）でラッチを立てる（規則 4 の入口の 1 回の合わせ、
+            // RunThrough）。以前の台本は「値の変わった Duplicate」（最後の適用値から 3 秒離れた値を Duplicate として送る）で、
+            // 実機の診断では値が変われば Duplicate にならない。
+            s.Frame(s.LastLtc, TimecodeFrameDiagnosticStatus.Duplicate);
+            s.Frame(s.LastLtc, TimecodeFrameDiagnosticStatus.Duplicate);
         }
         else if (latch == PendingJump)
         {
@@ -135,9 +138,8 @@ internal static class LatchArrangements
         {
             // 読み込みの後、再生と描画が進んだフレームで解除する（TimecodeSyncService.cs:481-485）。
             h.BeginManualFileLoad();
-            s.Clock.Advance(TimeSpan.FromMilliseconds(200));
-            h.AdvancePlayback(h.PlaybackSeconds + 0.2, 3);
-            s.Frame(s.LastLtc + 0.2);
+            // v0.6.1 段 A: LTC は 40ms ごとに +1 フレーム進む（以前は 200ms ぶんの +0.2 秒を 1 枚で送っていた）。
+            s.FollowFrames(5);
         }
         else if (latch == PendingSeek || latch == PositionUntrusted)
         {
