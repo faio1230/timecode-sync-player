@@ -30,9 +30,9 @@ The stable (Latest) release stays 0.5.5. Includes the 0.5.5 fix.
 
 - Right after the LTC signal is disturbed, position re-alignment seeks can follow one another and stall heavy video
   (4K or 60p, H.264 or ProRes) for up to about 0.6 s. Same as 0.5.4; fixed in 0.6.1.
-- Selecting a playlist row right after adding files (for the few seconds the files are still being read) can move the
-  selection back to the first row, so "Up"/"Down" act on that row. Selecting again works. Same symptom as the 0.5.4
-  fix, left on another path.
+- Selecting a playlist row right after adding files (until their lengths have been read; a few seconds or more,
+  growing with the number of files) can move the selection back to the playing row (the first row when added to an
+  empty list) when the reading finishes. "Up", "Down" and "Delete" then act on the playing row. Selecting again works. Present in 0.5.4 and earlier. (Corrected 2026-10-01.)
 - Once on the 0.5.5 test machine, the picture went black for about 1.5 s after a large LTC jump and the backward
   re-alignment. Not seen in the 0.6.0 tests; cause still being isolated. Followed up in 0.6.x.
 
