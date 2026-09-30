@@ -170,7 +170,7 @@ public class HoldEntryCountTests
     }
 
     [Fact]
-    public void StopMode_GarbledSequence_DoesNotConfirmTheLossEarlyByU8()
+    public void StopMode_GarbledSequence_SameValueAcrossAGarbledFrame_ConfirmsTheLossByU8()
     {
         ScenarioClock clock = NewClock();
         SyncScenarioHarness h = Arrange(clock, TimecodeFpsMode.Fixed30, LtcSignalLossMode.Stop);
@@ -189,8 +189,12 @@ public class HoldEntryCountTests
         Frame(h, clock, 8.2);                 // 古い値と同じ Duplicate
         h.AdvanceMilliseconds(5);             // Tick（最後の進むフレームから約 250ms 未満）
 
-        h.Operations.Should().NotContain(o => o.Name == "signal-loss-pause",
-            "連続していない 2 枚で U8 の即時の損失確定をしない（250ms の確認は今どおり）");
-        h.IsPaused.Should().BeFalse();
+        // v0.6.1（3-4 の (a)、承認済みの期待の変更）: 以前は「化けた値を挟んだ同値の 2 枚は連続していない」として U8 の即時の
+        // 損失確定をしなかった。受理されない値（化けた値の Jump の保留）はマスターの状態を変えないので、8.2 の同値は数える保持の
+        // 連続のまま続き、止まった送出の証拠として U8 は即時に確定する（規則 4 どおり）。
+        // 化けた値の後の 8.2 で 2 枚目の数える保持になり、確認の窓を待つ間（250ms より前）に U8 が確定して一時停止している。
+        h.Controller.SignalLossLatchSnapshot()["lost"].Should().BeTrue(
+            "化けた値を挟んだ同値の 2 枚は止まった送出の証拠で、U8 は即時に確定する");
+        h.IsPaused.Should().BeTrue();
     }
 }

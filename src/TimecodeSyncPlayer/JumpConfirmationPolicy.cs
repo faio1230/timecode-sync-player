@@ -8,7 +8,7 @@ namespace TimecodeSyncPlayer;
 /// 解決 fps と食い違う Jump は「未確認」とし、次の 1 フレームで値の連続（同値の Duplicate
 /// または +1 フレーム）を確認できたときだけ適用する。同一トラック内の Jump は即時。
 /// D31: 確認窓の時計はサンプル時計（FrameEndTimestamp の差 = ストリーム順）を優先し、
-/// 値が無いフレーム（テスト経路の ReceiveProcessedFrame など）だけ壁時計で判定する。
+/// 値が無いフレーム（フレーム終端の QPC を持たない受信）だけ壁時計で判定する。
 /// </summary>
 internal static class JumpConfirmationPolicy
 {

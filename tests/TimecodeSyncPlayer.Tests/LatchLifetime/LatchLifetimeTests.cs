@@ -11,16 +11,9 @@ namespace TimecodeSyncPlayer.Tests.LatchLifetime;
 /// </summary>
 public sealed class LatchLifetimeTests
 {
-    /// <summary>
-    /// v0.6.1 段 A: 実時間の LTC の口では、化けた値（Jump の保留）の次に元の流れへ戻った値が、直前の Jump の値との差で
-    /// 新しい Jump の保留になる（D1 の型）。段 B（帯で受理）で直すまで、この行は別の Skip のテストに切り出す。
-    /// </summary>
-    private static bool IsDeferredToStageB(LatchLifetimeRow row) =>
-        row.Latch == LatchArrangements.PendingJump && row.Event == LifecycleEvent.NormalFrame;
-
     public static IEnumerable<object[]> TestedRows() =>
         LatchLifetimeTable.Rows
-            .Where(row => row.Current != CurrentBehavior.NotApplicable && !IsDeferredToStageB(row))
+            .Where(row => row.Current != CurrentBehavior.NotApplicable)
             .Select(row => new object[] { row.Latch.ToString(), row.Event });
 
     public static IEnumerable<object[]> NotApplicableRows() =>
@@ -43,10 +36,6 @@ public sealed class LatchLifetimeTests
         s.Read(row.Latch).Should().Be(row.Current == CurrentBehavior.Keeps,
             "表の現状は {0}（根拠: {1}）", row.Current, row.Evidence);
     }
-
-    [Fact(Skip = "v0.6.1 段 B（帯で受理）で直す。段 A までは層 2 を通らない入力で緑だった")]
-    public void Latch_PendingJump_AfterNormalFrame_MatchesCurrentBehavior() =>
-        Latch_AfterEvent_MatchesCurrentBehavior(LatchArrangements.PendingJump.ToString(), LifecycleEvent.NormalFrame);
 
     /// <summary>
     /// NotApplicable の行は「ラッチを立てたままそのできごとを起こせない」ことを確かめる

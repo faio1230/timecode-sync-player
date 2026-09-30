@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using TimecodeSyncPlayer.Contracts;
 
@@ -438,7 +439,11 @@ internal sealed class SyncScenarioHarness
         int frame = (int)Math.Round(seconds * ltcFps);
         var timecode = new LtcTimecode(
             frame / (nominal * 3600), (frame / (nominal * 60)) % 60, (frame / nominal) % 60, frame % nominal, false);
-        long frameEnd = _frameEndQpc?.Invoke() ?? 0;
+        // 台本の予定時刻で届くフレームは、フレーム終端もその時刻の QPC にする（実機と同じく、まとめて処理される
+        // フレームの終端は処理の時刻より前にある）。時計を進め終えた時刻の QPC にすると、フレームの間隔が消える。
+        long frameEnd = receivedAtMilliseconds is long at && _scenarioClock is not null
+            ? _scenarioClock.QpcBase + at * Stopwatch.Frequency / 1000
+            : _frameEndQpc?.Invoke() ?? 0;
         Controller.ReceiveFrame(
             new LtcFrameReceivedEventArgs(timecode, detectedFps ?? ltcFps, seconds, frameEnd, frameEnd), receivedAt);
         // 層 1 の診断の状態（LtcFrameProcessor と同じく、fps が決まる前は Initial）。

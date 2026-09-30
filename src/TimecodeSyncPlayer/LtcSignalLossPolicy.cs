@@ -53,6 +53,16 @@ internal sealed class LtcSignalLossPolicy
     private readonly int _resumeFrameCount;
     private long? _lastValidFrameAtMilliseconds;
     private long? _lastHeldFrameAtMilliseconds;
+
+    /// <summary>
+    /// v0.6.1 (D): 受理しない LTC のフレーム（Reverse・Jump の保留とその確認の 1 枚）が届いた時刻（「LTC は来ている」）。
+    /// 損失の理由（無音か停止か）にだけ使い、保持の直後の判定（<see cref="WasHeldRecently"/>、D27-c の即時の復帰と U8）には
+    /// 使わない。
+    /// </summary>
+    private long? _lastArrivalAtMilliseconds;
+
+    /// <summary>v0.6.1 (D): 損失の理由「停止」が、保持の到着ではなく未受理の到着だけから付いたか。</summary>
+    private bool _heldReasonFromArrivalOnly;
     // U8（v0.5.4 B6b で Jump の条件を外した）: 値が進むフレーム・Jump の適用の後に続いた保持（Duplicate）の数。
     private int _consecutiveHeldFrames;
     private LtcSignalLossReason _reason;
@@ -131,6 +141,8 @@ internal sealed class LtcSignalLossPolicy
     {
         _lastValidFrameAtMilliseconds = null;
         _lastHeldFrameAtMilliseconds = null;
+        _lastArrivalAtMilliseconds = null;
+        _heldReasonFromArrivalOnly = false;
         _consecutiveHeldFrames = 0;
         _reason = LtcSignalLossReason.None;
         _isLost = false;
@@ -202,8 +214,31 @@ internal sealed class LtcSignalLossPolicy
 
         ObservePlaybackState(context);
         _lastHeldFrameAtMilliseconds = receivedAtMilliseconds;
+        // v0.6.1 β (C): 損失のまま保持値が変わることがあるので、損失中に保持のフレームが届いたら理由を「停止」に戻す
+        // （無音の後に保持が届いた、または理由が信号断へ下がった後も保持が続いている）。
+        if (_isLost && _reason == LtcSignalLossReason.SignalLoss)
+        {
+            _reason = LtcSignalLossReason.TimecodeHeld;
+            _heldReasonFromArrivalOnly = false;
+        }
         // U8: 続いた保持を数える（2 枚続いたら確認を待たずに確定する。v0.5.4 B6b: Jump の有無は問わない）。
         _consecutiveHeldFrames = heldRunLength ?? _consecutiveHeldFrames + 1;
+    }
+
+    /// <summary>
+    /// v0.6.1 (D): 受理しないフレーム（Reverse・Jump の保留とその確認の 1 枚）の到着。「LTC は来ている」の時刻だけを
+    /// 進める（損失の理由が「信号なし」ではなく「停止」になる）。保持の到着（D27-c・U8）には数えない。
+    /// </summary>
+    public void ObserveFrameArrival(long receivedAtMilliseconds, LtcSignalLossContext context)
+    {
+        if (!context.IsMonitoring)
+        {
+            Reset();
+            return;
+        }
+
+        ObservePlaybackState(context);
+        _lastArrivalAtMilliseconds = receivedAtMilliseconds;
     }
 
     /// <summary>
@@ -243,8 +278,10 @@ internal sealed class LtcSignalLossPolicy
 
         ObservePlaybackState(context);
 
+        // v0.6.1 (D): 理由の「停止」が未受理の到着だけから付いたときは、保持の直後の復帰に数えない。
         if (!_isLost ||
-            (_reason != LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(receivedAtMilliseconds)))
+            ((_reason != LtcSignalLossReason.TimecodeHeld || _heldReasonFromArrivalOnly) &&
+             !WasHeldRecently(receivedAtMilliseconds)))
             return LtcSignalLossAction.None;
 
         bool canApplyPolicyOwnedResume = SyncRules.CanResumeAfterSignalLoss(
@@ -288,7 +325,8 @@ internal sealed class LtcSignalLossPolicy
 
             // D27: 保持フレームが途切れたら理由を信号断へ下げる（無音になった後の Jump を
             // 保持からの復帰として数えないため）。
-            if (_reason == LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(nowMilliseconds))
+            if (_reason == LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(nowMilliseconds) &&
+                !WasArrivingRecently(nowMilliseconds))
                 _reason = LtcSignalLossReason.SignalLoss;
 
             return EvaluatePause(context);
@@ -318,7 +356,11 @@ internal sealed class LtcSignalLossPolicy
 
         _isLost = true;
         _consecutiveResumeFrames = 0;
-        _reason = WasHeldRecently(nowMilliseconds)
+        // v0.6.1 (D): 保持のフレームか、受理しないフレームでも LTC が届いていれば「停止」（値が読めない・進まない）。
+        // 何も届いていなければ「信号なし」。
+        bool heldRecently = WasHeldRecently(nowMilliseconds);
+        _heldReasonFromArrivalOnly = !heldRecently && WasArrivingRecently(nowMilliseconds);
+        _reason = heldRecently || _heldReasonFromArrivalOnly
             ? LtcSignalLossReason.TimecodeHeld
             : LtcSignalLossReason.SignalLoss;
         // v0.5.4 段 0: 損失の確定を数える（ランスルーでは Pause ログが出ないため）。
@@ -334,6 +376,11 @@ internal sealed class LtcSignalLossPolicy
     private bool WasHeldRecently(long nowMilliseconds) =>
         _lastHeldFrameAtMilliseconds is long heldAt &&
         ElapsedMilliseconds(heldAt, nowMilliseconds) <= _timeout.TotalMilliseconds;
+
+    /// <summary>v0.6.1 (D): 直近（timeout 以内）に受理しない LTC のフレームが届いたか。</summary>
+    private bool WasArrivingRecently(long nowMilliseconds) =>
+        _lastArrivalAtMilliseconds is long arrivedAt &&
+        ElapsedMilliseconds(arrivedAt, nowMilliseconds) <= _timeout.TotalMilliseconds;
 
     private LtcSignalLossAction EvaluatePause(LtcSignalLossContext context)
     {

@@ -440,7 +440,8 @@ public sealed class ScenarioGateGuardTests
 
         h.Ltc.Normal(1.0, TimeSpan.FromMilliseconds(200));
         RunFor(h, clock, 600);   // 初回の自動ロード（SwitchTrack）と解除直後のデバウンスを明ける
-        h.Ltc.Normal(1.5, TimeSpan.FromMilliseconds(200), atMilliseconds: clock.MonotonicMilliseconds);
+        // v0.6.1 段 B: 値は 25fps の格子に乗せる（1.5 は 37.5 フレームで、丸めで同値・2 フレーム飛びが混ざる）。
+        h.Ltc.Normal(1.52, TimeSpan.FromMilliseconds(200), atMilliseconds: clock.MonotonicMilliseconds);
         RunFor(h, clock, 200);   // 小さな値でゲートを温める
         h.Ltc.Silence(TimeSpan.FromMilliseconds(300));   // 窓を空にし、デバウンスの要らない場面にする
         RunFor(h, clock, 300);
@@ -449,7 +450,10 @@ public sealed class ScenarioGateGuardTests
         h.AdvanceMilliseconds(10);   // 1 フレーム目（+ Tick の再評価で 2 観測）
         ScenarioMetrics.SeekCount(h).Should().Be(0, "窓が埋まる前（1 フレーム目）ではシークしない（門 13）");
         h.AdvanceMilliseconds(40);   // 2 フレーム目（+ Tick で 3 観測目）
-        h.AdvanceMilliseconds(200);
+        // v0.6.1 段 B: 40ms ごとに進める（1 回で 200ms 進めると、その間のフレームがまとめて届き、フレーム終端からの
+        // 経過（サンプル時計の age）が付いて目標が先へずれる）。
+        for (int i = 0; i < 5; i++)
+            h.AdvanceMilliseconds(40);
         Report("G13", h, sink);
         ScenarioMetrics.SyncSeekCount(h).Should().Be(1, "窓（250ms・3 サンプル）が埋まってから 1 回だけシークする");
         Seeks(h).Single().Value.Should().BeInRange(10.0, 10.2);

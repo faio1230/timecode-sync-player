@@ -63,8 +63,8 @@ public class B7JumpConfirmationUniformTests
     }
 
     [Theory]
-    [InlineData(SyncMode.Continue, 35.0, Skip = "v0.6.1 段 B（帯で受理）で直す。段 A までは層 2 を通らない入力で緑だった")]
-    [InlineData(SyncMode.Single, 15.0, Skip = "v0.6.1 段 B（帯で受理）で直す。段 A までは層 2 を通らない入力で緑だった")]
+    [InlineData(SyncMode.Continue, 35.0)]
+    [InlineData(SyncMode.Single, 15.0)]
     public void OneMisdecodedFrameDuringAHeldLoss_DoesNotRecoverOrLoad(SyncMode mode, double brokenSeconds)
     {
         // 保持損失中（停止モードで一時停止）の壊れた 1 枚でも、復帰も読み込みもしない（保持損失中も一様に確認する）。

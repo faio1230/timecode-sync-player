@@ -231,15 +231,20 @@ public sealed class HeldLtcStopAndRunThroughTests
         // v0.5.4 B6b（追補 3 で書き換え）: 旧は「不足が 1 秒未満（既定のシーク所要）なのでシークせず
         // 速度補正 0.9」。既定の 1.0 秒は削除し、学習前の閾値は tol。ランスルーで走った行き過ぎ
         // （0.3〜0.4 秒）は、値が進み出したら規則 4 の復帰（2〜3 に戻る）で 1 回 relocate する。
+        // v0.6.1（3-5 節の (iii)、承認済みの期待の変更）: 以前は進み出した 2.08 を Normal として受理し、先行量つきで 2.16 へ
+        // relocate した。保持 2.04 から 300ms 後の +1 フレームは這う前進で、M は 2.08 で止まり、映像との差が許容を超えるので
+        // 保持の目標を 2.08 にして 1 回合わせる。続く 2.12・2.16 は等速の流れ（(ii)）で、その後は varispeed で追う。
         h.Operations.Where(o => o.Name == "seek").Should().ContainSingle()
-            .Which.Value!.Value.Should().BeApproximately(2.16, 0.05, "進み出した LTC へ 1 回 relocate する");
+            .Which.Value!.Value.Should().BeApproximately(2.08, 0.01, "這う前進の値へ 1 回合わせる");
     }
 
     [Fact]
-    public void StopMode_HeldThenJumpToNewHold_RecoversImmediatelyAndPausesAtNewValue()
+    public void StopMode_HeldThenJumpToNewHold_StaysPausedAndLandsOnTheNewValue()
     {
-        // S-2: 保持 8.0 で一時停止 → 次の保持値 20.0 への Jump が 1 枚でも届けば復帰し、
-        // そのまま保持が続けば新しい値で改めて一時停止する。
+        // S-2: 保持で一時停止 → 次の保持値への Jump と確認（同値の保持）が届く。
+        // v0.6.1（β の (C)、承認済みの期待の変更）: 以前は確定した Jump で信号断を一度明けて再生を走らせ、保持が続くと
+        // 止め直していた。確認のフレームが同値の Duplicate（止まったまま位置が変わった）なら、保持のまま新しい値へ 1 回
+        // 着地し、再生は走らせない（D31-b の「止めたまま 1 回着地」と同じ経路）。
         (SyncScenarioHarness h, ManualTimeProvider clock) = ArrangeHeldAt204(LtcSignalLossMode.Stop);
         Tick(h, clock, 3);
         h.IsPaused.Should().BeTrue();
@@ -249,8 +254,10 @@ public sealed class HeldLtcStopAndRunThroughTests
         // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめる（保持損失中の復帰も確認の後）。
         Raw(h, 3, 0, 10_340);   // 確認の 1 フレーム（同値の保持）
 
-        h.IsPaused.Should().BeFalse("保持損失中の Jump と確認の 1 フレームで復帰する");
-        h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
+        h.IsPaused.Should().BeTrue("止まったまま位置が変わったので再生は走らせない");
+        h.Operations.Should().NotContain(o => o.Name == "signal-loss-resume");
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle("新しい保持値へ 1 回着地する")
+            .Which.Value!.Value.Should().BeApproximately(3.0, 0.02);
 
         for (int i = 1; i <= 8; i++)
         {
@@ -258,16 +265,17 @@ public sealed class HeldLtcStopAndRunThroughTests
             Tick(h, clock, 1);
         }
 
-        h.IsPaused.Should().BeTrue("新しい値の保持が続けば損失で一時停止する");
+        h.IsPaused.Should().BeTrue("新しい値の保持が続く間は止まったまま");
         h.PlaybackSeconds.Should().BeApproximately(3.0, 0.05);
         h.DisplayStates[^1].PauseReason.Should().Be("タイムコード停止で停止中");
     }
 
     [Fact]
-    public void StopMode_HeldThenJumpToNewHold_RecoversImmediately_EvenAfterReasonDowngraded()
+    public void StopMode_HeldThenJumpToNewHold_StaysPausedAndLandsOnTheNewValue_EvenAfterReasonDowngraded()
     {
-        // D27-c: フレーム処理の遅延で理由が信号断へ下がっていても、直近に保持フレームが
-        // 届いていれば Jump 1 枚で復帰し、そのまま保持が続けば新しい値で再損失する。
+        // D27-c: フレーム処理の遅延で理由が信号断へ下がっていても、直近に保持フレームが届いている。
+        // v0.6.1（β の (C)、承認済みの期待の変更）: 以前は Jump と確認の 1 フレームで復帰し、保持が続くと再損失した。
+        // 確認のフレームが同値の Duplicate なら、保持のまま新しい値へ 1 回着地し、再生は走らせない。
         (SyncScenarioHarness h, ManualTimeProvider clock) = ArrangeHeldAt204(LtcSignalLossMode.Stop);
         Tick(h, clock, 3);
         h.IsPaused.Should().BeTrue();
@@ -278,16 +286,18 @@ public sealed class HeldLtcStopAndRunThroughTests
         // 保持フレームは届き続けている。
         Raw(h, 2, 1, 10_700);
 
-        // Jump と確認の 1 フレームで復帰（restored と同時に新しい値へ適用）。
+        // Jump と確認の 1 フレーム（同値の保持）。
         Raw(h, 3, 0, 10_800);
         // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめる（保持損失中の復帰も確認の後）。
         Raw(h, 3, 0, 10_840);   // 確認の 1 フレーム（同値の保持）
 
-        h.IsPaused.Should().BeFalse(
-            $"保持損失の直後の Jump と確認の 1 フレームで復帰する ops=[{string.Join(",", h.Operations.Select(o => o.Name))}] reason={h.DisplayStates[^1].PauseReason}");
-        h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
+        h.IsPaused.Should().BeTrue(
+            $"止まったまま位置が変わったので再生は走らせない ops=[{string.Join(",", h.Operations.Select(o => o.Name))}] reason={h.DisplayStates[^1].PauseReason}");
+        h.Operations.Should().NotContain(o => o.Name == "signal-loss-resume");
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle("新しい保持値へ 1 回着地する")
+            .Which.Value!.Value.Should().BeApproximately(3.0, 0.02);
 
-        // その後の Duplicate が続けば新しい値で再損失する。
+        // その後の Duplicate が続く間も止まったまま。
         for (int i = 1; i <= 12; i++)
         {
             Raw(h, 3, 0, 10_800 + i * 100);
@@ -327,15 +337,18 @@ public sealed class HeldLtcStopAndRunThroughTests
         // 尺が確定して保持フレームが届いたら、解除の 1 回適用が clamp 位置へ着地する
         // （解除でデバウンスが再スタートし、D37-a のゲートも窓が埋まるまで保留を維持するため、
         //  Tick の再送で 3 サンプルそろってから着地する）。
+        // v0.6.1: 保持は 40ms ごとに届く。10_400 の 1 枚目は確認の窓の外なので保留の置き換え、10_440 の同値で確定する
+        // （窓の外の同値は確認を経るまで適用しない、3-5 の (iv-b)）。
         h.SetDurationSeconds(5);
         Raw(h, 8, 0, 10_400);
+        Raw(h, 8, 0, 10_440);
         Tick(h, clock, 3);
 
         h.Operations.Where(o => o.Name == "seek")
             .Should().ContainSingle().Which.Value.Should().BeApproximately(5.0, 0.05);
         h.PlaybackSeconds.Should().BeApproximately(5.0, 0.05);
 
-        Raw(h, 8, 0, 10_440);
+        Raw(h, 8, 0, 10_480);
         Tick(h, clock, 2);
         h.Operations.Where(o => o.Name == "seek")
             .Should().ContainSingle("解除の 1 回適用は 1 回だけ");

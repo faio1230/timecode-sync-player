@@ -209,7 +209,7 @@ public class B6bPredictiveLocateTests
         (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
         h.AddTrack("A", 0, 120);
         h.ManualPlay();
-        h.AdvancePlayback(9.9);                             // 0.1 秒遅れて追従（varispeed が掛かる）
+        h.AdvancePlayback(9.9);
         h.Ltc.Normal(10.0, TimeSpan.FromSeconds(1));
         h.Ltc.Normal(14.0, TimeSpan.FromSeconds(2));       // 3 秒前へ飛ぶ（relocate）
         long start = clock.MonotonicMilliseconds;
@@ -220,6 +220,10 @@ public class B6bPredictiveLocateTests
         {
             h.AdvanceMilliseconds(40);
             long t = clock.MonotonicMilliseconds - start;
+            // v0.6.1 段 B: 最初のフレームで読み込み（LTC の位置から再生）になるので、読み込みの後に再生を 0.1 秒遅らせて
+            // 追従させる（varispeed が掛かる）。以前は、まとめて届いた最初のフレームの時刻の粗さで遅れが生じていた。
+            if (t == 200)
+                h.AdvancePlayback(h.PlaybackSeconds - 0.1);
             if (t <= 900)
             {
                 rateBeforeJump = h.Playback.Rate;
