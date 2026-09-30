@@ -756,6 +756,16 @@ give_device_context (TcsPlayer* p, GstElement* el);
 
 /* decodebin / late-plugged d3d11 elements post NEED_CONTEXT on the bus;
  * answer with OUR device so the whole chain stays on one ID3D11Device. */
+/* v0.6.0 stage 1: proresd3d11dec (the prores-gpu decoder) is named by its
+ * factory so the log line does not depend on the player's element fields. */
+static bool
+element_is_prores_gpu_decoder (GstElement* el)
+{
+  GstElementFactory* f = el ? gst_element_get_factory (el) : nullptr;
+  return f && g_strcmp0 (gst_plugin_feature_get_name (GST_PLUGIN_FEATURE (f)),
+      "proresd3d11dec") == 0;
+}
+
 static GstBusSyncReply
 sync_bus_handler (GstBus* /*bus*/, GstMessage* msg, gpointer user)
 {
@@ -765,6 +775,11 @@ sync_bus_handler (GstBus* /*bus*/, GstMessage* msg, gpointer user)
     gst_message_parse_context_type (msg, &type);
     if (g_strcmp0 (type, GST_D3D11_DEVICE_HANDLE_CONTEXT_TYPE) == 0 &&
         GST_IS_ELEMENT (GST_MESSAGE_SRC (msg))) {
+      /* The decoder asks only when it has no usable device yet (the
+       * set_context of build_video_chain_static was not taken). */
+      if (element_is_prores_gpu_decoder (GST_ELEMENT (GST_MESSAGE_SRC (msg))))
+        LOG ("prores-gpu: context given via=sync-handler (NEED_CONTEXT from %s)",
+            GST_ELEMENT_NAME (GST_MESSAGE_SRC (msg)));
       give_device_context (p, GST_ELEMENT (GST_MESSAGE_SRC (msg)));
       return GST_BUS_DROP;
     }
@@ -2303,6 +2318,9 @@ build_video_chain_static (TcsPlayer* p, int idx)
 
   if (p->vparse) give_device_context (p, p->vparse);
   if (p->vdec) give_device_context (p, p->vdec);
+  if (p->vdec && tcs_video_profile_sets_adapter_luid (idx))
+    LOG ("prores-gpu: context given via=set_context (%s, state NULL, adapter-luid written)",
+        GST_ELEMENT_NAME (p->vdec));
   give_device_context (p, p->vconvert);
   if (p->vupload) give_device_context (p, p->vupload);
   if (p->vgpuconvert) give_device_context (p, p->vgpuconvert);
@@ -3137,19 +3155,22 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
           qpc_diff_ms (t_attempt0, now, p->qpc_freq),
           (long long) frames_at_frame);
     };
-    /* v0.6.0 stage 1: once per prores-gpu attempt that reached set_state, the
-     * written adapter-luid next to the value read back after READY. Auxiliary
-     * only: with a shared device the element may just echo the written value
-     * (the out-mem line is the evidence of the device in use). */
+    /* v0.6.0 stage 1: once per prores-gpu attempt, the written adapter-luid
+     * next to the value read back. proresd3d11dec gets its device in start()
+     * (READY->PAUSED) and then reports the LUID of the device in use, so the
+     * read-back runs after the first-frame wait (or at set-state-fail, where
+     * start() may not have run). Auxiliary only: the out-mem line is the
+     * evidence of the device in use. */
     bool luid_logged = false;
-    auto log_adapter_luid_readback = [&] () {
+    auto log_adapter_luid_readback = [&] (const char* at, int frame) {
       if (luid_logged || !tcs_video_profile_sets_adapter_luid (idx) || !p->vdec)
         return;
       luid_logged = true;
       gint64 read = 0;
       g_object_get (p->vdec, "adapter-luid", &read, nullptr);
-      LOG ("prores-gpu: adapter-luid set=%016llx read=%016llx",
-          (unsigned long long) shim_device_luid_int64 (p), (unsigned long long) read);
+      LOG ("prores-gpu: adapter-luid set=%016llx read=%016llx at=%s frame=%d",
+          (unsigned long long) shim_device_luid_int64 (p), (unsigned long long) read,
+          at, frame);
     };
 
     teardown_pipeline (p);
@@ -3273,7 +3294,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     set_state_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     t_anchor = qpc_now ();
     if (scr == GST_STATE_CHANGE_FAILURE) {
-      log_adapter_luid_readback ();
+      log_adapter_luid_readback ("set-state-fail", 0);
       log_attempt ("set-state-fail");
       teardown_pipeline (p);
       continue;
@@ -3301,7 +3322,6 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
         break;
     }
     preroll_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
-    log_adapter_luid_readback ();
 
     bool done = false;
     bool current_gen_frame = false;
@@ -3323,6 +3343,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       Sleep (50);
     }
     first_frame_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
+    log_adapter_luid_readback ("first-frame-wait", current_gen_frame ? 1 : 0);
     {
       std::lock_guard<std::mutex> g (p->frame_lock);
       /* D34: width/height only. Variable-framerate containers may report
