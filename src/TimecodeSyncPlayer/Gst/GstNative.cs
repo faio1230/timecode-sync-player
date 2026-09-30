@@ -381,6 +381,50 @@ internal static class GstNativeLibraryResolver
         }
     }
 
+    /// <summary>開発機・試験で追加のプラグイン（ProRes の GPU 復号など）を置く、exe の隣のフォルダ名。</summary>
+    internal const string ExtraPluginsDirectoryName = "gst-extra-plugins";
+
+    /// <summary>
+    /// v0.6.0: 同梱でないとき（環境変数・Program Files の GStreamer）だけ、追加のプラグインのフォルダを
+    /// GST_PLUGIN_PATH に足した値を返す（既存の値があれば ';' で連結）。足さないときは null。
+    /// 同梱のときはプラグインが lib\gstreamer-1.0 に入るので足さない。
+    /// GST_PLUGIN_SYSTEM_PATH と GST_REGISTRY は触らない（システムのプラグインは今までどおり）。
+    /// </summary>
+    internal static string? ComposeExtraPluginPath(
+        GstRootSource source, string? existingPluginPath, string extraPluginsDirectory,
+        Func<string, bool> directoryExists)
+    {
+        if (source == GstRootSource.Bundled || !directoryExists(extraPluginsDirectory))
+            return null;
+        if (string.IsNullOrEmpty(existingPluginPath))
+            return extraPluginsDirectory;
+
+        foreach (string entry in existingPluginPath!.Split(';'))
+        {
+            if (string.Equals(entry.Trim(), extraPluginsDirectory, StringComparison.OrdinalIgnoreCase))
+                return null;
+        }
+        return existingPluginPath + ";" + extraPluginsDirectory;
+    }
+
+    private static void ApplyExtraPluginEnvironment(GstRootSource source)
+    {
+        try
+        {
+            string? pluginPath = ComposeExtraPluginPath(
+                source,
+                Environment.GetEnvironmentVariable("GST_PLUGIN_PATH"),
+                System.IO.Path.Combine(AppContext.BaseDirectory, ExtraPluginsDirectoryName),
+                System.IO.Directory.Exists);
+            if (pluginPath is not null)
+                Environment.SetEnvironmentVariable("GST_PLUGIN_PATH", pluginPath);
+        }
+        catch (Exception)
+        {
+            // 追加のプラグインが見えなくても、既存のプロファイル（CPU の復号など）で動き続けられるようにする。
+        }
+    }
+
     /// <summary>共有 resolver からの呼び出し。該当 DLL でなければ IntPtr.Zero。</summary>
     public static IntPtr ResolveLibrary(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
@@ -398,6 +442,8 @@ internal static class GstNativeLibraryResolver
 
         if (root.Value.Source == GstRootSource.Bundled)
             ApplyBundledPluginEnvironment(root.Value.Path);
+        else
+            ApplyExtraPluginEnvironment(root.Value.Source);
 
         bool originalApplied = SetDllDirectory(gstBin);
         try
