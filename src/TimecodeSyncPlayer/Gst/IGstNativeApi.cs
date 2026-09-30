@@ -33,6 +33,8 @@ internal interface IGstNativeApi
 
     /// <summary>最初の load 前に 1 回だけ。GstNative.DecodeModeHardware / DecodeModeSoftware。</summary>
     int SetDecodeMode(IntPtr player, int mode);
+    /// <summary>v0.6.0: 最初の load 前に 1 回だけ。GstNative.ProResGpuAuto / ProResGpuOn / ProResGpuOff。</summary>
+    int SetProResGpu(IntPtr player, int mode);
     bool TryGetTimePos(IntPtr player, out double seconds);
 
     /// <summary>

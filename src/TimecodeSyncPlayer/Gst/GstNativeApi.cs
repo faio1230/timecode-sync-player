@@ -60,6 +60,9 @@ internal sealed class GstNativeApi : IGstNativeApi
     public int SetDecodeMode(IntPtr player, int mode) =>
         GstNative.Imports.tcs_player_set_decode_mode(player, mode);
 
+    public int SetProResGpu(IntPtr player, int mode) =>
+        GstNative.Imports.tcs_player_set_prores_gpu(player, mode);
+
     public bool TryGetTimePos(IntPtr player, out double seconds) =>
         GstNative.Imports.tcs_player_get_time_pos(player, out seconds) == 0;
 
