@@ -44,7 +44,7 @@
 >
 > **今回の教訓（メモリにある）**: merge をパイプに通さない（merge-failure-hidden-by-pipe）／実機の試験は担当を跨いで 1 本ずつ（hardware-tests-one-at-a-time-across-agents）／OpenCode の上限は herdr の状態に出ない（working のまま止まる）ので、担当の出力も読むこと
 
-前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/C--Users-codea-Documents-timecode-sync-player/memory/`）から再開する。やり取りは日本語。
+前任: Claude Fable 5.1（コンテキスト上限のため交代）。後任はこの文書と `docs/HANDOVER-GPU-OUTPUT-2026-09-12.md`（コード側の引き継ぎ）、メモリ（`~/.claude/projects/<プロジェクト>/memory/`）から再開する。やり取りは日本語。
 
 > **2026-09-26 06:00 更新（TSP-Opus）**: **v0.5.2 を公開した。v0.5.3 はブランチ `v0.5.3`（`timecode-sync-player-v05`）で作業中。** 現在地は `docs/STATUS.md`、ゴールは `docs/GOAL-v0.6.md`。
 >

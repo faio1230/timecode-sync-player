@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.5.4 - (date to be set at release)
+## 0.5.4 - 2026-09-30
 
 Stable (Latest) release of the 0.5 line. Fixes the known errors and rebuilds how LTC following decides when to seek.
 Jump landings are faster, the stop position is exact, and playback speed no longer wavers while LTC is held.
