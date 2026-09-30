@@ -360,6 +360,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm.Sync.SyncCorrectionModeIndex =
             settingsManager.Current.SyncCorrectionMode == SyncCorrectionMode.Jump ? 1 : 0;
         _vm.Sync.SyncOffsetMs = settingsManager.Current.SyncOffsetMs;
+        // v0.6.0: 未知の値の警告は shim へ渡すとき（GstBackendState）に 1 回出すので、ここでは出さない。
+        _vm.Sync.InitializeProResGpu(ProResGpuPolicy.Resolve(settingsManager.Current.ProResGpu));
         _vm.Sync.LtcSignalLossModeIndex =
             settingsManager.Current.LtcSignalLossMode == LtcSignalLossMode.Stop ? 1 : 0;
         _playlistDragDropCoordinator = new PlaylistDragDropCoordinator(new PlaylistDragDropEffects(
@@ -487,6 +489,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     });
                     Log.Information("Sync offset changed offsetMs={OffsetMs}", _vm.Sync.SyncOffsetMs);
                     break;
+                case nameof(SyncViewModel.ProResGpuMode):
+                {
+                    string value = ProResGpuPolicy.Describe(_vm.Sync.ProResGpuMode);
+                    _ = _settingsManager.UpdateAsync(settings => settings with
+                    {
+                        ProResGpu = value,
+                    });
+                    Log.Information("ProRes GPU decode setting changed proResGpu={Mode} restartNotice={Notice}",
+                        value, _vm.Sync.ProResGpuRestartNotice.Length > 0);
+                    break;
+                }
                 case nameof(SyncViewModel.LtcSignalLossMode):
                     _ = _settingsManager.UpdateAsync(settings => settings with
                     {
