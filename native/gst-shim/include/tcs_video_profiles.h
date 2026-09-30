@@ -27,6 +27,9 @@ static const TcsVideoProfile kTcsVideoProfiles[] = {
   { "h265-gpu", "video/x-h265", "video/x-hevc", "h265parse", "d3d11h265dec", "d3d11colorconvert" },
   { "vp9-gpu",  "video/x-vp9",  nullptr, "vp9parse", "d3d11vp9dec", "d3d11colorconvert" },
   { "av1-gpu",  "video/x-av1",  nullptr, "av1parse", "d3d11av1dec", "d3d11colorconvert" },
+  /* v0.6.0: gst-prores-d3d11 (proresd3d11dec, D3D11 compute). Last of the GPU
+   * group so GPU stays before CPU; other media never match video/x-prores. */
+  { "prores-gpu", "video/x-prores", nullptr, nullptr, "proresd3d11dec", "d3d11colorconvert" },
   { "h264-cpu", "video/x-h264", nullptr, "h264parse", "avdec_h264", "videoconvert" },
   { "h265-cpu", "video/x-h265", "video/x-hevc", "h265parse", "avdec_h265", "videoconvert" },
   { "vp9-cpu",  "video/x-vp9",  nullptr, "vp9parse", "avdec_vp9", "videoconvert" },
@@ -45,6 +48,17 @@ tcs_video_profile_is_software (int idx)
 {
   return idx >= 0 && idx < TCS_VIDEO_PROFILE_COUNT &&
       strstr (kTcsVideoProfiles[idx].conv, "d3d11") == nullptr;
+}
+
+/* v0.6.0: GPU profiles whose decoder is not a per-adapter d3d11 class. The
+ * shim writes its device LUID into the element's adapter-luid instead of
+ * picking a deviceNdec class (D16-b). */
+static inline int
+tcs_video_profile_sets_adapter_luid (int idx)
+{
+  return idx >= 0 && idx < TCS_VIDEO_PROFILE_COUNT &&
+      kTcsVideoProfiles[idx].dec != nullptr &&
+      strcmp (kTcsVideoProfiles[idx].dec, "proresd3d11dec") == 0;
 }
 
 #endif /* TCS_VIDEO_PROFILES_H */
