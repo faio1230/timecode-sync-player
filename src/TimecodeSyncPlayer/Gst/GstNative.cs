@@ -6,8 +6,10 @@ using System.Runtime.InteropServices;
 namespace TimecodeSyncPlayer.Gst;
 
 /// <summary>
-/// tcs_gstreamer.dll 縺ｮ P/Invoke 縺ｨ繝ｭ繝ｼ繝芽ｧ｣豎ｺ縲・/// DLL 閾ｪ菴薙・繧｢繝励Μ蜃ｺ蜉帙ョ繧｣繝ｬ繧ｯ繝医Μ縲；Streamer 螳溯｡梧凾 DLL 縺ｯ
-/// GSTREAMER_1_0_ROOT_MSVC_X86_64・医∪縺溘・譌｢螳壹う繝ｳ繧ｹ繝医・繝ｫ蜈茨ｼ峨・ bin 縺九ｉ隗｣豎ｺ縺吶ｋ縲・/// </summary>
+/// tcs_gstreamer.dll の P/Invoke とロード解決。
+/// DLL 自体はアプリの出力ディレクトリ、GStreamer の実行時 DLL は
+/// GSTREAMER_1_0_ROOT_MSVC_X86_64（または既定のインストール先）の bin から解決する。
+/// </summary>
 internal static class GstNative
 {
     internal const string Lib = "tcs_gstreamer.dll";
