@@ -44,7 +44,10 @@ internal sealed class GstBackendState : IDisposable
 
     public string LastError { get; private set; } = string.Empty;
 
-    /// <summary>v0.6.0: 最後に shim へ渡した proResGpu（設定が失敗しても渡した値）。プレイヤー作成の前は null。</summary>
+    /// <summary>
+    /// v0.6.0: shim へ渡す proResGpu。最初のプレイヤー作成のときに設定から読んで固定し、GPU 復旧の
+    /// 作り直しでも同じ値を渡す（UI で変えた値は次の起動まで渡さない）。設定が失敗しても渡した値。作成の前は null。
+    /// </summary>
     public ProResGpuMode? AppliedProResGpu { get; private set; }
 
     /// <summary>pause プロパティの最新値ミラー（loadfile の初期状態に使う）。</summary>
@@ -114,10 +117,12 @@ internal sealed class GstBackendState : IDisposable
     /// v0.6.0: settings.json の proResGpu を shim に伝える。decodeMode と違い、既定 auto でも必ず呼ぶ
     /// （shim のログの source=setting で、設定が届いたことを確かめるため）。player 生成直後・最初の
     /// load 前に 1 回。失敗は警告だけで起動は止めない（shim は既定の auto のまま動く）。
+    /// 値は起動時に 1 回だけ読む。本番中の GPU 復旧で復号の方式が黙って変わらないようにし、
+    /// UI の「再起動の後に反映」と挙動を合わせる（decodeMode は作り直しのたびに読む。範囲外なので変えない）。
     /// </summary>
     private void ApplyProResGpu(IntPtr player)
     {
-        ProResGpuMode mode = ProResGpuPolicy.Resolve(
+        ProResGpuMode mode = AppliedProResGpu ?? ProResGpuPolicy.Resolve(
             _settingsManager?.Current.ProResGpu,
             value => Log.Warning("proResGpu の未知の値 '{Value}' は auto として扱います", value));
         string name = ProResGpuPolicy.Describe(mode);

@@ -166,6 +166,24 @@ public class GstBackendStateTests
     }
 
     [Fact]
+    public async Task ProResGpu_RecreateAfterSettingChange_KeepsTheStartupValue()
+    {
+        // UI で変えた値は次の起動まで shim に渡さない（「再起動の後に反映」と挙動を合わせる。
+        // 本番中の GPU 復旧で復号の方式が黙って変わらないようにする）。
+        AppSettingsManager manager = await CreateSettingsManagerFromJson("{\"proResGpu\":\"on\"}");
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native, manager);
+        state.EnsurePlayer().Should().BeTrue();
+
+        await manager.UpdateAsync(settings => settings with { ProResGpu = "off" });
+        state.RecreatePlayer(new IntPtr(0x99)).Should().BeTrue();
+
+        manager.Current.ProResGpu.Should().Be("off");
+        native.SetProResGpuCalls.Should().Equal(GstNative.ProResGpuOn, GstNative.ProResGpuOn);
+        state.AppliedProResGpu.Should().Be(ProResGpuMode.On);
+    }
+
+    [Fact]
     public async Task ProResGpu_FailureReturnCode_DoesNotStopPlayerCreate()
     {
         AppSettingsManager manager = await CreateSettingsManagerFromJson("{\"proResGpu\":\"on\"}");
