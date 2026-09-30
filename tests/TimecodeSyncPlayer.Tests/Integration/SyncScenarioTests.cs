@@ -15,12 +15,14 @@ public class SyncScenarioTests
         harness.SupplyLtc(1);
         harness.LoadedTrackId.Should().Be(first.Id);
 
+        // Real LTC reaches a new position as a Jump plus its confirming frame (+1 frame or the same value).
         harness.SupplyLtc(6);
+        harness.SupplyLtc(6.04);
         harness.GapState.Should().Be(GapState.EnteringFreeze);
         harness.CompleteFreezeCapture();
         harness.SupplyLtc(9);
-        harness.IsPaused.Should().BeFalse("the gap owns and releases its pause");
         harness.SupplyLtc(9);
+        harness.IsPaused.Should().BeFalse("the gap owns and releases its pause");
         harness.LoadedTrackId.Should().Be(second.Id);
 
         harness.AdvancePlayback(1.2, renderedFrames: 2);
@@ -39,6 +41,7 @@ public class SyncScenarioTests
         harness.EndSeekBarInteraction(2.5);
         harness.SetSyncEnabled(true);
         harness.SupplyLtc(10.5);
+        harness.SupplyLtc(10.54);
 
         harness.SyncEnabled.Should().BeTrue();
         harness.PlaybackSeconds.Should().BeApproximately(2.5, 1e-9,
@@ -212,6 +215,7 @@ public class SyncScenarioTests
             case 10:
                 LoseSignal(harness);
                 harness.SupplyLtc(6);
+                harness.SupplyLtc(6.04);
                 harness.IsGapActive.Should().BeFalse();
                 harness.ManualPlay();
                 break;
@@ -335,6 +339,7 @@ public class SyncScenarioTests
         harness.ManualPlay();
         harness.SupplyLtc(1);
         harness.SupplyLtc(6);
+        harness.SupplyLtc(6.04);
         harness.RenderSurface.Should().Be(ScenarioRenderSurface.Black);
 
         harness.ChangeMode(SyncMode.Single);
@@ -501,7 +506,9 @@ public class SyncScenarioTests
 
     private static void EnterAndCompleteGap(SyncScenarioHarness harness)
     {
+        // Jump into the gap plus its confirming +1 frame.
         harness.SupplyLtc(6);
+        harness.SupplyLtc(6.04);
         if (harness.GapState == GapState.EnteringFreeze)
             harness.CompleteFreezeCapture();
     }
