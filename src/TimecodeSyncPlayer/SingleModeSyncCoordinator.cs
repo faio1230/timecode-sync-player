@@ -250,6 +250,14 @@ internal sealed class SingleModeSyncCoordinator
         _boundary.Seek is { } seek && Math.Abs(seek.Target - edge) <= tolerance &&
         seek.Epoch == _syncService.FileLoadEpoch;
 
+    /// <summary>
+    /// v0.6.0 S-4: 規則 4 の入口の合わせ（LtcSyncController）がクリップの端へ収めた目標へシークしたことを覚える。
+    /// 記録の形は同期シークの <see cref="NoteBoundarySeek"/> と同じ（端と、いまの読み込み番号）。
+    /// 端の判定はクリップの範囲と fps だけを使うので、位置は照会せず目標を渡す。
+    /// </summary>
+    internal void NoteHoldEntryBoundarySeek(double targetSeconds) =>
+        NoteBoundarySeek(targetSeconds, _effects.BuildPlaybackState(targetSeconds));
+
     /// <summary>端へのシーク（範囲外 LTC の着地先）を出したことを覚える。</summary>
     private void NoteBoundarySeek(double targetSeconds, SyncPlaybackState state)
     {
