@@ -47,6 +47,7 @@ STATE_MUTEX_HOLDERS = {
     'pump_preroll_tick',
     'tcs_player_set_paused',
     'tcs_player_set_decode_mode',
+    'tcs_player_set_prores_gpu',
     'tcs_player_set_rate_instant',
 }
 

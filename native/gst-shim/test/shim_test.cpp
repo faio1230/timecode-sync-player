@@ -8,6 +8,7 @@
 #include "tcs_gop_policy.h"
 #include "tcs_load_policy.h"
 #include "tcs_position_policy.h"
+#include "tcs_prores_gpu_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 #include "tcs_hap.h"
@@ -753,6 +754,75 @@ run_gop_warn_measure (int argc, char** argv)
   tcs_player_destroy (p);
   check (st.active == 1, "gop-warn: probe active");
   return failures ? 1 : 0;
+}
+
+/* v0.6.0 stage 2: the ProRes GPU gate (design 3-3) and the decoder adapter
+ * mismatch rule, pinned without a GPU. The mode values are the C ABI shared
+ * with the app (0/1/2). */
+static void
+run_prores_gpu_policy_tests ()
+{
+  check (TCS_PRORES_GPU_AUTO == 0 && TCS_PRORES_GPU_ON == 1 && TCS_PRORES_GPU_OFF == 2,
+      "prores-gpu: ABI mode values are auto=0 on=1 off=2");
+  const unsigned vendors[] = { 0x10DEu, 0x1002u, 0x8086u, 0x1414u, 0u };
+  const char* vnames[] = { "nvidia", "amd", "intel", "microsoft(warp)", "unknown(0)" };
+  char what[160];
+  for (int v = 0; v < 5; v++) {
+    const bool nvidia = vendors[v] == 0x10DEu;
+    snprintf (what, sizeof (what), "prores-gpu gate: auto + %s -> %s", vnames[v],
+        nvidia ? "allowed" : "blocked");
+    check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_AUTO, vendors[v]) == (nvidia ? 1 : 0), what);
+    snprintf (what, sizeof (what), "prores-gpu gate: on + %s -> allowed", vnames[v]);
+    check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_ON, vendors[v]) == 1, what);
+    snprintf (what, sizeof (what), "prores-gpu gate: off + %s -> blocked", vnames[v]);
+    check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_OFF, vendors[v]) == 0, what);
+    snprintf (what, sizeof (what), "prores-gpu gate: on + %s unverified=%d", vnames[v],
+        nvidia ? 0 : 1);
+    check (tcs_prores_gpu_unverified (TCS_PRORES_GPU_ON, vendors[v]) == (nvidia ? 0 : 1), what);
+    check (tcs_prores_gpu_unverified (TCS_PRORES_GPU_AUTO, vendors[v]) == 0 &&
+           tcs_prores_gpu_unverified (TCS_PRORES_GPU_OFF, vendors[v]) == 0,
+        "prores-gpu gate: only mode=on is logged as unverified");
+  }
+  check (tcs_prores_gpu_allowed (3, 0x10DEu) == 0 && tcs_prores_gpu_allowed (-1, 0x10DEu) == 0,
+      "prores-gpu gate: an out-of-range mode never allows");
+  /* skip reasons (load.skip reason=...) */
+  check (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0x10DEu) == nullptr,
+      "prores-gpu skip: auto + nvidia -> no skip");
+  check (strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0x1002u), "prores-gpu-vendor") == 0 &&
+         strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0u), "prores-gpu-vendor") == 0,
+      "prores-gpu skip: auto + other/unknown vendor -> prores-gpu-vendor");
+  check (strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_OFF, 0x10DEu), "prores-gpu-off") == 0 &&
+         strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_OFF, 0u), "prores-gpu-off") == 0,
+      "prores-gpu skip: off -> prores-gpu-off (any vendor)");
+  check (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_ON, 0u) == nullptr,
+      "prores-gpu skip: on -> no skip (unknown vendor too)");
+  /* TCS_PRORES_GPU values */
+  check (tcs_prores_gpu_mode_parse ("auto") == TCS_PRORES_GPU_AUTO &&
+         tcs_prores_gpu_mode_parse ("ON") == TCS_PRORES_GPU_ON &&
+         tcs_prores_gpu_mode_parse ("Off") == TCS_PRORES_GPU_OFF,
+      "prores-gpu env: auto/on/off parse case-insensitively");
+  check (tcs_prores_gpu_mode_parse ("") == -1 && tcs_prores_gpu_mode_parse (nullptr) == -1 &&
+         tcs_prores_gpu_mode_parse ("1") == -1 && tcs_prores_gpu_mode_parse ("onn") == -1 &&
+         tcs_prores_gpu_mode_parse ("of") == -1 && tcs_prores_gpu_mode_parse (" on") == -1,
+      "prores-gpu env: other values are invalid (-1)");
+  check (strcmp (tcs_prores_gpu_mode_name (TCS_PRORES_GPU_AUTO), "auto") == 0 &&
+         strcmp (tcs_prores_gpu_mode_name (TCS_PRORES_GPU_ON), "on") == 0 &&
+         strcmp (tcs_prores_gpu_mode_name (TCS_PRORES_GPU_OFF), "off") == 0,
+      "prores-gpu: mode names");
+  /* decoder-adapter-mismatch (same: 1 on the shim device, 0 elsewhere, -1 unseen) */
+  const long long want = 0x1178cLL;
+  check (tcs_prores_gpu_adapter_mismatch (1, 1, want, want) == 0,
+      "prores-gpu mismatch: same device + same LUID -> ok");
+  check (tcs_prores_gpu_adapter_mismatch (0, 1, want, want) == 1,
+      "prores-gpu mismatch: output off the shim device -> fail");
+  check (tcs_prores_gpu_adapter_mismatch (0, 0, want, want) == 1,
+      "prores-gpu mismatch: same=0 fails without a frame too");
+  check (tcs_prores_gpu_adapter_mismatch (1, 1, 0x2222LL, want) == 1,
+      "prores-gpu mismatch: read-back LUID differs after a frame -> fail");
+  check (tcs_prores_gpu_adapter_mismatch (-1, 0, 0x2222LL, want) == 0,
+      "prores-gpu mismatch: no frame and no probe -> left to the D34 gate");
+  check (tcs_prores_gpu_adapter_mismatch (-1, 1, want, want) == 0,
+      "prores-gpu mismatch: probe unseen, LUID equal -> ok");
 }
 
 /* v0.5.0: HAP の解析と Snappy 展開（純粋なデータ処理。実データで固定する）。
@@ -1815,6 +1885,7 @@ main (int argc, char** argv)
     run_gop_policy_tests ();
     run_position_policy_tests ();
     run_hap_tests ();
+    run_prores_gpu_policy_tests ();
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
@@ -1822,6 +1893,7 @@ main (int argc, char** argv)
   run_gop_policy_tests ();
   run_position_policy_tests ();
   run_hap_tests ();
+  run_prores_gpu_policy_tests ();
   if (strcmp (argv[1], "--gop-warn") == 0) {
     int rc = run_gop_warn_measure (argc, argv);
     printf ("RESULT failures=%d\n", failures);
