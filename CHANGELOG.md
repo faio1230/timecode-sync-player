@@ -2,6 +2,37 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.6.0 - (date to be set at release)
+
+Pre-release. ProRes can be decoded on the GPU (gst-prores-d3d11 v0.2.1 bundled), on by default on NVIDIA GPUs.
+The stable (Latest) release stays 0.5.4.
+
+### Added
+
+- ProRes GPU decoding (`prores-gpu` profile, `proresd3d11dec`). Setting `proResGpu` = `auto` (default: NVIDIA
+  adapters only) / `on` / `off`, and a three-way choice in the UI; applied after restart and kept across GPU recovery.
+  `TCS_PRORES_GPU` overrides the setting for tests.
+- The decoder is given the shim's adapter LUID; if its output is not on the shim device, the attempt fails and
+  ProRes opens on the CPU (`prores-cpu`). One failure keeps ProRes on the CPU for the rest of the run.
+- Corrupt ProRes frames no longer stop playback (plugin v0.2.x); STREAM/DECODE warnings are logged once per load
+  with a count.
+- GLib WARNING/CRITICAL/ERROR and GStreamer ERROR messages are copied to the shim log, so a native abort leaves its
+  last message (diagnostics only; behavior unchanged).
+
+### Changed
+
+- The installer requires the Microsoft Visual C++ Redistributable 14.50.35710 or later (bundles 14.51.36247) and
+  installs it only when the installed runtime is missing or older.
+- Development and test scripts require PowerShell 7 (`pwsh`). `inspect-gop.ps1`, which users run, still works on
+  Windows PowerShell 5.1.
+
+### Known limitations
+
+- ProRes GPU decoding is verified on NVIDIA (RTX class) only; other vendors decode on the CPU by default.
+- Corrupt frames found by the GPU check are reported up to 3 frames late (plugin limitation).
+- When system commit is exhausted, a decoder allocation can fail and GStreamer aborts the app (4K CPU ProRes uses
+  1.5-1.7 GB; keep 4 GB free).
+
 ## 0.5.4 - 2026-09-30
 
 Stable (Latest) release of the 0.5 line. Fixes the known errors and rebuilds how LTC following decides when to seek.
