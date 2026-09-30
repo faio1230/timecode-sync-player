@@ -68,9 +68,11 @@ public class SyncScenarioHarnessTests
         harness.AddTrack("track-2", timelineIn: 8, duration: 5);
         harness.SupplyLtc(1);
 
+        // ギャップへ Jump して走り（確認の +1 フレーム）、次に track-2 へ Jump して走る。
         harness.SupplyLtc(6);
+        harness.SupplyLtc(6.04);
         harness.SupplyLtc(9);
-        harness.SupplyLtc(9);
+        harness.SupplyLtc(9.04);
 
         harness.CurrentTrackLabels.Should().ContainInOrder(
             "Gap: Black → track-2 @ 00:00:08",
