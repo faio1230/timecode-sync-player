@@ -8,6 +8,8 @@
 
 - Windows 10/11 (x64)
 - .NET 8 SDK
+- PowerShell 7（`pwsh`）。開発・試験のスクリプト（`scripts\`・`native\gst-shim\`）に要ります。v0.6.0 から PowerShell 7 専用で、Windows PowerShell 5.1 では動きません。
+  利用者が使うスクリプト（`scripts\inspect-gop.ps1`）は 5.1 のままでも動きます（`powershell -File` と `pwsh -File` のどちらでも可）
 
 `dotnet` コマンドが利用可能であること、およびバージョンを確認します。
 
@@ -16,6 +18,18 @@ dotnet --version
 ```
 
 `8.x.x` 系のバージョンが表示されれば問題ありません。表示されない場合は [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) をインストールしてください。
+
+PowerShell 7 が無い場合は導入し、`pwsh` で版を確認します（7.0 以上。開発機・検証機は 7.6.6）。
+開発・試験のスクリプトは `pwsh -File <スクリプト>` で実行します（`powershell -File` ではありません）。
+
+```powershell
+winget install Microsoft.PowerShell
+pwsh -NoProfile -Command '$PSVersionTable.PSVersion'
+```
+
+開発・試験のスクリプトを 5.1（`powershell`）で実行すると、読み込みの時点で `#requires` により止まり、
+`... cannot be run because it contained a "#requires" statement for Windows PowerShell 7.0 ...`
+（エラー ID `ScriptRequiresUnmatchedPSVersion`）と表示されます。スクリプトの不具合ではないので、`pwsh -File` で実行し直してください。
 
 ---
 
@@ -73,11 +87,11 @@ MSVC x64用の1.28.2ランタイムをインストールし、`bin`に`gstreamer
 
 ```powershell
 # Spout2 (tag 2.007.017) を vendor/Spout2 へ取得（git管理外）
-powershell -File native\gst-shim\get-spout.ps1
+pwsh -File native\gst-shim\get-spout.ps1
 # Debugビルド（Visual Studio Build Tools + CMake + Ninja が必要）
-powershell -File native\gst-shim\build-shim.ps1 -Config Debug
+pwsh -File native\gst-shim\build-shim.ps1 -Config Debug
 # 配布物を作る場合は Release ビルドも必要
-powershell -File native\gst-shim\build-shim.ps1 -Config Release
+pwsh -File native\gst-shim\build-shim.ps1 -Config Release
 # 出力: native\gst-shim\build-debug\tcs_gstreamer.dll
 #       native\gst-shim\build-release\tcs_gstreamer.dll
 ```
@@ -138,7 +152,7 @@ VB-CABLEを使った乱操作・耐久試験は [MONKEY-TESTING.md](MONKEY-TESTI
 ビルド・非E2Eテスト・E2Eテストをまとめて実行する検証スクリプトが `scripts/` に用意されています。
 
 ```powershell
-scripts\run-timecodesyncplayer-verification.ps1 -Profile Strict
+pwsh -File scripts\run-timecodesyncplayer-verification.ps1 -Profile Strict
 ```
 
 主なプロファイル:
@@ -280,6 +294,7 @@ Preference の「同期補正」で選べます（既定は **Smooth**）。
 | Spout出力ボタンが押せない（無効化されている） | `native/SpoutDX.dll` が無いだけです。Spout出力を使わないなら正常な動作であり、修正不要です。 |
 | `outputBackend=1`で再生できない | D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では、起動時ダイアログを出して**再生だけを無効**にします（Cpu 合成へはフォールバックしません）。表示された原因とログを確認してください。 |
 | 再生開始に失敗する | GStreamerランタイム未導入、または`tcs_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
+| スクリプトが `cannot be run because it contained a "#requires" statement` で止まる | Windows PowerShell 5.1 で実行しています。`pwsh -File <スクリプト>` で実行してください（「1. 前提環境」）。 |
 | コンソール出力やログの日本語が文字化けする | PowerShellのコンソールエンコーディングをUTF-8に設定してください。<br>`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` |
 
 ---

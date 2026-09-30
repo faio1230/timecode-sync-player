@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Generate the test clips the E2E suite expects under artifacts/media (gitignored).
 #
 # GStreamerBackendE2ETests and friends look for fixed file names. When they are
@@ -5,18 +6,14 @@
 # goal ("all E2E pass" before switching the default backend) needs these clips,
 # and every worktree needs its own copy because artifacts/ is gitignored.
 #
-#   powershell -File scripts\make-e2e-media.ps1
-#   powershell -File scripts\make-e2e-media.ps1 -OutDir D:\media -Force
-#   powershell -File scripts\make-e2e-media.ps1 -IncludeA1Repro   # also the 4K ProRes/AV1 clips
+#   pwsh -File scripts\make-e2e-media.ps1
+#   pwsh -File scripts\make-e2e-media.ps1 -OutDir D:\media -Force
+#   pwsh -File scripts\make-e2e-media.ps1 -IncludeA1Repro   # also the 4K ProRes/AV1 clips
 #
 # Requires ffmpeg (default C:\Program Files\ffmpeg\bin).
-#
-# NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
-# repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page, so
-# non-ASCII comments break parsing.
 [CmdletBinding()]
 param(
-    [string]$OutDir = '',
+    [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media'),
     [string]$FfmpegDir = 'C:\Program Files\ffmpeg\bin',
     [switch]$Force,
     # 4K ProRes / AV1 clips for reproducing A1. Off by default since v0.5.1: ProRes
@@ -25,11 +22,6 @@ param(
     [switch]$IncludeA1Repro
 )
 $ErrorActionPreference = 'Stop'
-# Windows PowerShell 5.1 leaves $PSScriptRoot empty inside param() defaults when the
-# script is started with powershell -File, so the default is resolved here.
-if ([string]::IsNullOrWhiteSpace($OutDir)) {
-    $OutDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media'
-}
 
 # Resolve one concrete ffmpeg.exe and call it by full path. -FfmpegDir used to be
 # APPENDED to PATH, so an older ffmpeg earlier on PATH won: ImageMagick ships
@@ -52,22 +44,13 @@ Write-Output ('ffmpeg: ' + $script:FfmpegExe)
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
-# Windows PowerShell 5.1 turns each stderr line of a native command into an
-# ErrorRecord, and with $ErrorActionPreference = 'Stop' the first one aborts the
-# script while ffmpeg is still writing. libsvtav1 prints "Svt[info]" banners to
-# stderr regardless of -v error, so the AV1 fixture aborted the whole runner and
-# left a zero-byte file behind that later runs skipped as "exists". Run ffmpeg
-# with 'Continue', judge by the exit code, and remove the output on failure.
+# libsvtav1 prints "Svt[info]" banners to stderr regardless of -v error. Judge
+# ffmpeg by the exit code and remove the output on failure, so an interrupted
+# encode never leaves a zero-byte file that later runs skip as "exists".
 $env:SVT_LOG = '1'
 function Invoke-Ffmpeg([string[]]$FfArgs, [string]$OutputPath, [string]$Name) {
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $messages = @(& $script:FfmpegExe @FfArgs 2>&1 | ForEach-Object { [string]$_ })
-        $code = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previous
-    }
+    $messages = @(& $script:FfmpegExe @FfArgs 2>&1 | ForEach-Object { [string]$_ })
+    $code = $LASTEXITCODE
     if ($code -ne 0) {
         $messages | Select-Object -Last 20 | ForEach-Object { Write-Output ('ffmpeg: ' + $_) }
         if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }

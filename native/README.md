@@ -21,9 +21,9 @@ GStreamerのデコード結果をD3D11テクスチャのリースAPIとして合
 
 ```powershell
 # Spout2 (tag 2.007.017) を vendor/Spout2 へ取得（git管理外）
-powershell -File native\gst-shim\get-spout.ps1
+pwsh -File native\gst-shim\get-spout.ps1
 # Debugビルド
-powershell -File native\gst-shim\build-shim.ps1 -Config Debug
+pwsh -File native\gst-shim\build-shim.ps1 -Config Debug
 # 出力: native\gst-shim\build-debug\tcs_gstreamer.dll
 ```
 

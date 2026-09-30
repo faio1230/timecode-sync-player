@@ -1,3 +1,4 @@
+#requires -Version 7.0
 [CmdletBinding()]
 param(
     [ValidateRange(1, 1000)][int]$Runs = 20,
@@ -58,7 +59,8 @@ function Get-BinaryHashes {
 
 function Start-OwnedProbe([string]$Executable, [string[]]$Arguments, [string]$Prefix) {
     # Windows file names cannot contain quotes. Reject control characters as well
-    # before constructing the command line required by Windows PowerShell 5.1.
+    # before constructing the command line: Start-Process joins -ArgumentList with spaces
+    # and does not quote the elements (Windows PowerShell 5.1 and PowerShell 7 alike).
     foreach ($argument in $Arguments) {
         if ($argument -match '["\r\n]') { throw 'Unsupported character in probe argument.' }
     }
@@ -92,7 +94,7 @@ function Stop-OwnedProcess($Process) {
 }
 
 function Read-CompletedJsonl([string]$Path) {
-    $rows = @(Get-Content -LiteralPath $Path -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ })
+    $rows = @(Get-Content -LiteralPath $Path | ForEach-Object { ConvertFrom-Json -InputObject $_ })
     $summaries = @($rows | Where-Object { $_.event -eq 'summary' })
     if ($rows.Count -eq 0 -or $summaries.Count -ne 1 -or $rows[-1].event -ne 'summary') {
         throw "Missing, duplicate or non-final summary: $Path"

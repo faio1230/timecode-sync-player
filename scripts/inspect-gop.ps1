@@ -19,6 +19,10 @@
 #
 # NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
 # repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page.
+# Users run this script directly, so unlike the development and test scripts
+# (PowerShell 7 since v0.6.0) it stays Windows PowerShell 5.1 compatible: no
+# "#requires -Version 7", CRLF line endings, and it must run under both
+# powershell and pwsh.
 
 [CmdletBinding()]
 param(

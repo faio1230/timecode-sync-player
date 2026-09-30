@@ -1,4 +1,5 @@
-﻿<#
+﻿#requires -Version 7.0
+<#
 .SYNOPSIS
   run-ltc-scenarios.ps1 の 1 回ぶんの ReportDir から、機械で差分を取れる結果 JSON（run-result.json）を作る。
   あわせて保持の規則を当てる（合格した回の出力トレースを消す、途中で止めた回の media ハードリンクを消す）。
@@ -17,7 +18,7 @@
     - ReportDir\media（実素材へのハードリンク）が残っていれば消す（ハードリンクなので実素材は消えない）
 
 .EXAMPLE
-  powershell -File scripts\ltc-run-report.ps1 -ReportDir <結果置き場>\<候補>\std-pass-a-rtx-<日時> -Prune
+  pwsh -File scripts\ltc-run-report.ps1 -ReportDir <結果置き場>\<候補>\std-pass-a-rtx-<日時> -Prune
 #>
 param(
     [Parameter(Mandatory = $true)][string]$ReportDir,
@@ -99,7 +100,7 @@ $passed = 0; $failed = 0; $skipped = 0
 $failures = @(); $invalid = @(); $skips = @()
 $trx = Get-ChildItem -LiteralPath $ReportDir -Filter '*.trx' -File | Select-Object -First 1
 if ($trx) {
-    [xml]$doc = Get-Content -LiteralPath $trx.FullName -Encoding UTF8
+    [xml]$doc = Get-Content -LiteralPath $trx.FullName
     foreach ($r in @($doc.TestRun.Results.UnitTestResult)) {
         $name = ($r.testName -split '\.')[-1]
         $message = ''

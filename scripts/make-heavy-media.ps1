@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Generate the "heavy" H.264 set under artifacts/media-heavy (gitignored).
 #
 # Recommended-format clips (H.264 High, one-second GOP) under the conditions the
@@ -14,11 +15,11 @@
 # second), 20 s long, burned-in second counter outside the centre probe area,
 # temporal noise and a constrained bitrate (4K: 40-50 Mbps) for a realistic decode load.
 #
-#   powershell -File scripts\make-heavy-media.ps1
-#   powershell -File scripts\make-heavy-media.ps1 -OutDir D:\heavy -Force
+#   pwsh -File scripts\make-heavy-media.ps1
+#   pwsh -File scripts\make-heavy-media.ps1 -OutDir D:\heavy -Force
 #
 # Requires ffmpeg (default C:\Program Files\ffmpeg\bin) and python (for the LTC
-# track, scripts\make-ltc-wav.py). Keep this file ASCII-only and BOM-less.
+# track, scripts\make-ltc-wav.py).
 [CmdletBinding()]
 param(
     [string]$OutDir = '',
@@ -36,14 +37,8 @@ $FfmpegExe = Join-Path $FfmpegDir 'ffmpeg.exe'
 if (-not (Test-Path -LiteralPath $FfmpegExe)) { throw ('ffmpeg not found: ' + $FfmpegExe) }
 
 function Invoke-Ffmpeg([string[]]$FfArgs, [string]$OutputPath, [string]$Name) {
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $messages = @(& $FfmpegExe @FfArgs 2>&1 | ForEach-Object { [string]$_ })
-        $code = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previous
-    }
+    $messages = @(& $FfmpegExe @FfArgs 2>&1 | ForEach-Object { [string]$_ })
+    $code = $LASTEXITCODE
     if ($code -ne 0) {
         $messages | Select-Object -Last 20 | ForEach-Object { Write-Output ('ffmpeg: ' + $_) }
         if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }

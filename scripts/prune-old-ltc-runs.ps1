@@ -1,4 +1,5 @@
-﻿<#
+﻿#requires -Version 7.0
+<#
 .SYNOPSIS
   結果置き場（-Root、省略時は環境変数 TCS_LTC_RESULTS_ROOT）の古い回を、要約だけ残して中身を消す（既定は一覧だけ）。
 
@@ -9,9 +10,9 @@
   実素材・Downloads には触らない。
 
 .EXAMPLE
-  powershell -File scripts\prune-old-ltc-runs.ps1                      # 一覧だけ
-  powershell -File scripts\prune-old-ltc-runs.ps1 -Apply               # 消す
-  powershell -File scripts\prune-old-ltc-runs.ps1 -Root E:\results -Days 3 -Apply
+  pwsh -File scripts\prune-old-ltc-runs.ps1                      # 一覧だけ
+  pwsh -File scripts\prune-old-ltc-runs.ps1 -Apply               # 消す
+  pwsh -File scripts\prune-old-ltc-runs.ps1 -Root E:\results -Days 3 -Apply
 #>
 param(
     [string]$Root = $env:TCS_LTC_RESULTS_ROOT,

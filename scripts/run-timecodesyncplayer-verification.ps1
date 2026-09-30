@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # TimecodeSyncPlayer verification wrapper.
 # Provides short profiles for automated pre-checks and log-only diagnostics.
 
@@ -48,7 +49,7 @@ switch ($Profile) {
     "Strict" {
         Write-Host "Running TimecodeSyncPlayer verification: Strict"
         if (Test-Path -LiteralPath $diagnosticsSelfTestScript) {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $diagnosticsSelfTestScript
+            & pwsh -NoProfile -ExecutionPolicy Bypass -File $diagnosticsSelfTestScript
             if ($LASTEXITCODE -ne 0) {
                 exit $LASTEXITCODE
             }
@@ -70,5 +71,5 @@ switch ($Profile) {
     }
 }
 
-& powershell -NoProfile -ExecutionPolicy Bypass -File $diagnosticsScript @diagnosticsArgs
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $diagnosticsScript @diagnosticsArgs
 exit $LASTEXITCODE

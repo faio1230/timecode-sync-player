@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # V1: run the generated codec matrix through the main app (GStreamer x Gpu), one clip at a time.
 [CmdletBinding()]
 param(
@@ -33,12 +34,10 @@ foreach ($c in $clips) {
         '-PlayerBackend', 'Gstreamer',
         '-AppExe', $AppExe,
         '-LogRoot', $LogRoot,
-        '-ExitDialog', 'Normal'
+        '-ExitDialog', 'Normal',
+        '-DecodeMode', $DecodeMode
     )
-    # Windows PowerShell 5.1 の子プロセス呼び出しでは空文字引数が落ちるため、
-    # hardware 既定（$DecodeMode が空）では -DecodeMode ごと渡さない。
-    if ($DecodeMode) { $trialArgs += @('-DecodeMode', $DecodeMode) }
-    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner @trialArgs 2>&1
+    $out = & pwsh -NoProfile -ExecutionPolicy Bypass -File $runner @trialArgs 2>&1
     $runLine = ($out | Select-String -Pattern '^RUN ' | Select-Object -First 1)
     $json = ($out | Where-Object { $_ -is [string] } | Where-Object { $_ -notmatch '^RUN ' -and $_ -notmatch 'tcs-gst' }) -join "`n"
     $rec = [ordered]@{ clip=$c.Name; run=($(if ($runLine) { $runLine.ToString().Substring(4) } else { $null })); appExit=$null; error=$null }

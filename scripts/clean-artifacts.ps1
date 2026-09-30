@@ -1,4 +1,5 @@
-﻿<#
+﻿#requires -Version 7.0
+<#
 .SYNOPSIS
   試験・計測で溜まる再生成可能なファイルを掃除する（既定は一覧だけで、消さない）。
 
@@ -14,9 +15,9 @@
   -Days より新しいものは残す（進行中の候補を消さないため）。-Keep に一致する名前も残す。
 
 .EXAMPLE
-  powershell -File scripts\clean-artifacts.ps1              # 一覧と合計だけ
-  powershell -File scripts\clean-artifacts.ps1 -Apply       # 消す
-  powershell -File scripts\clean-artifacts.ps1 -Days 0 -Apply -Keep 'cand5'
+  pwsh -File scripts\clean-artifacts.ps1              # 一覧と合計だけ
+  pwsh -File scripts\clean-artifacts.ps1 -Apply       # 消す
+  pwsh -File scripts\clean-artifacts.ps1 -Days 0 -Apply -Keep 'cand5'
 #>
 param(
     [int]$Days = 7,

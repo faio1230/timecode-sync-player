@@ -336,8 +336,8 @@ seek: diag stalled ... （3 秒以上ゲートが開かないときの状態ダ�
 
 ```powershell
 # vendor/Spout2 (tag 2.007.017 / commit 固定) を取得（git 管理外）
-powershell -File native/gst-shim/get-spout.ps1
-powershell -File native/gst-shim/build-shim.ps1 -Config Debug
+pwsh -File native/gst-shim/get-spout.ps1
+pwsh -File native/gst-shim/build-shim.ps1 -Config Debug
 # 出力: build-debug/tcs_gstreamer.dll, build-debug/tcs-shim-test.exe
 
 $env:PATH = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin;" + $env:PATH

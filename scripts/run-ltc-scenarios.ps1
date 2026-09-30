@@ -1,16 +1,17 @@
+#requires -Version 7.0
 # Run the LTC E2E scenarios against one app (installed or a local Debug build)
 # with a single command, and leave the evidence in one report directory.
 #
-#   powershell -File scripts\run-ltc-scenarios.ps1 -AppExe <path to TimecodeSyncPlayer.exe>
-#   powershell -File scripts\run-ltc-scenarios.ps1 -Filter "FullyQualifiedName~NoSuchTest"   # dry run
-#   powershell -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-Media M1,M3,M5] [-KeepProject]
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe <path to TimecodeSyncPlayer.exe>
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -Filter "FullyQualifiedName~NoSuchTest"   # dry run
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-Media M1,M3,M5] [-KeepProject]
 #       (-Media picks tracks by symbol: M<n> is the n-th video of the folder in name order;
 #        -MediaInOffsetSeconds N starts every track N seconds into its video)
 #       (the project .tsp is generated under the report directory, never in the
 #        media folder, and is removed after the run unless -KeepProject is set)
 #   U-1 (LtcScenarioE2ETests.U1_...) requires a gap-free project: pass -GapSeconds 0
 #   (with a gapped project U-1 reports preflight-invalid instead of judging).
-#   powershell -File scripts\run-ltc-scenarios.ps1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
 #       (L-1 continuous-follow audit: seconds / tracks / window length / settling
 #        exclusion via -FollowSettlingSeconds / follow-start gate bound via
 #        -FollowStartGateSeconds; the default filter includes L-1. To run only the
@@ -27,10 +28,8 @@
 #
 # Exit codes: 0 = no failures, 1 = test failures, 2 = prerequisite failure.
 #
-# NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
-# repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page, so
-# non-ASCII comments break parsing. Backslash- and control-character traps of
-# ".ps1" are checked by an empty run before use.
+# NOTE: backslash- and control-character traps of ".ps1" are checked by an empty
+# run before use.
 [CmdletBinding()]
 param(
     [string]$AppExe = '',
@@ -124,14 +123,8 @@ $ReportDir = (Resolve-Path -LiteralPath $ReportDir).Path
 # Raw reports can contain media paths. If the report is inside any Git worktree,
 # require Git to ignore the directory before any evidence is written there.
 $reportFull = [IO.Path]::GetFullPath($ReportDir)
-$previousPreference = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-try {
-    $reportGitRootText = (& git -C $ReportDir rev-parse --show-toplevel 2>$null | Select-Object -First 1)
-    $reportGitRootExit = $LASTEXITCODE
-} finally {
-    $ErrorActionPreference = $previousPreference
-}
+$reportGitRootText = (& git -C $ReportDir rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+$reportGitRootExit = $LASTEXITCODE
 if ($reportGitRootExit -eq 0 -and $reportGitRootText) {
     $reportGitRoot = [IO.Path]::GetFullPath([string]$reportGitRootText).TrimEnd([char]'\')
     if ([string]::Equals($reportFull.TrimEnd([char]'\'), $reportGitRoot,
@@ -149,9 +142,10 @@ Write-Output "app=$AppExe"
 Write-Output "report=$ReportDir"
 
 # ---- hard links (D23) ------------------------------------------------------
-# D23(a): Windows PowerShell 5.1 wildcard-expands the -Target of
-# New-Item -ItemType HardLink, so media names containing brackets fail.
-# Call kernel32 directly and report GetLastError on failure.
+# D23(a): Windows PowerShell 5.1 wildcard-expanded the -Target of
+# New-Item -ItemType HardLink, so media names containing brackets failed.
+# PowerShell 7 takes the target literally, but kernel32 is still called directly:
+# it reports GetLastError on failure, and D23-b needs GetFileInformationByHandle.
 if (-not ('Tcs.HardLink' -as [type])) {
     Add-Type -Namespace Tcs -Name HardLink -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
@@ -523,17 +517,12 @@ Write-Output ('l2: spout=' + $env:TCS_L2_ENABLE_SPOUT +
     ' max_handle_growth_per_hour=' + $env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR)
 
 # ---- build and run ---------------------------------------------------------
-# D23-c: Windows PowerShell 5.1 turns every stderr line of a native command into
-# an ErrorRecord; with $ErrorActionPreference = 'Stop' the first one (xUnit writes
-# "[FAIL]" lines to stderr) aborts the runner after dotnet exits, so the evidence
-# copy and the SUMMARY line are skipped. Native output is also decoded with the
-# console code page, which garbles the UTF-8 text of dotnet. Run native commands
-# with 'Continue', decode as UTF-8, and write ErrorRecords as plain text.
+# D23-c: native output is decoded with [Console]::OutputEncoding, which is still
+# the console code page under PowerShell 7 and garbles the UTF-8 text of dotnet.
+# Decode as UTF-8 and write the stderr lines (ErrorRecords) as plain text.
 function Invoke-NativeToLog([scriptblock]$Command, [string]$LogPath) {
-    $previousPreference = $ErrorActionPreference
     $previousEncoding = $null
     try { $previousEncoding = [Console]::OutputEncoding } catch { }
-    $ErrorActionPreference = 'Continue'
     try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
     try {
         & $Command 2>&1 | ForEach-Object {
@@ -541,7 +530,6 @@ function Invoke-NativeToLog([scriptblock]$Command, [string]$LogPath) {
         } | Out-File -FilePath $LogPath -Encoding utf8
         return $LASTEXITCODE
     } finally {
-        $ErrorActionPreference = $previousPreference
         if ($previousEncoding) {
             try { [Console]::OutputEncoding = $previousEncoding } catch { }
         }

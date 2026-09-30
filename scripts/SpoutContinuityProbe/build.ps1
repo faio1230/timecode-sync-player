@@ -1,3 +1,4 @@
+#requires -Version 7.0
 param(
     [string]$VendorPath,
     [string]$OutputDirectory,

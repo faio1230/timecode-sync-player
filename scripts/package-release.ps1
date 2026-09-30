@@ -1,4 +1,5 @@
-﻿# 配布物（zip と setup.exe）を作る。手順は docs\RELEASE-PROCEDURE-0.4.md の 1 節。
+﻿#requires -Version 7.0
+# 配布物（zip と setup.exe）を作る。手順は docs\RELEASE-PROCEDURE-0.4.md の 1 節。
 #
 # VC++ 再頒布パッケージ（v0.6.0 から 14.50.35710 以上。gst-prores-d3d11 が MSVC 14.50 の CRT を要る）
 # - 最低版・固定の版・SHA-256・入手元の URL は、この下の「VC++ 再頒布パッケージの固定値」の 1 か所に置く。
@@ -161,13 +162,11 @@ function Resolve-VcRedist([string]$ExplicitPath, [string]$Url, [string]$CacheDir
         $path = Join-Path $CacheDirectory "vc_redist.x64.exe"
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             Write-Host "Downloading $Url ..."
-            [Net.ServicePointManager]::SecurityProtocol =
-                [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
             $partial = "$path.partial"
             $oldProgress = $ProgressPreference
             $ProgressPreference = "SilentlyContinue"
             try {
-                Invoke-WebRequest -Uri $Url -OutFile $partial -UseBasicParsing
+                Invoke-WebRequest -Uri $Url -OutFile $partial
             }
             finally {
                 $ProgressPreference = $oldProgress
@@ -383,7 +382,8 @@ gstreamer folder; no separate GStreamer installation is required. SpoutDX.dll
 enables Spout2 output. See THIRD-PARTY-NOTICES.md for third-party terms. This
 release should be validated with your complete show setup before use.
 "@
-    Set-Content -LiteralPath (Join-Path $stagingDirectory "README.txt") -Value $readme -Encoding UTF8
+    # BOM 付きの UTF-8（5.1 の -Encoding UTF8 で作っていた配布物と同じバイト。7 の UTF8 は BOM なし）
+    Set-Content -LiteralPath (Join-Path $stagingDirectory "README.txt") -Value $readme -Encoding utf8BOM
 
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
