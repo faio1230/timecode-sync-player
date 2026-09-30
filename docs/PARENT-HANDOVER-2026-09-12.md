@@ -2,7 +2,7 @@
 
 > **2026-09-30 13:22 更新（TSP-Opus）**: v0.5.4 公開済み、**v0.6.0 設計中**（ブランチ `v0.6.0` を main `45505e1` から、作業ツリー `timecode-sync-player-v06`）。TSP-Fable の指示: 設計書 `docs/design/v0.6.0-prores-gpu.md` → レビュー依頼 → 実装はサブエージェント。実機は親だけが 1 本ずつ
 
-> **2026-09-30 13:25 更新（TSP-Opus）**: **v0.5.4 を安定版（Latest）で公開した**（13:18、タグ `v0.5.4`、main = `feeadc8`、ProductVersion `0.5.4+b3da57a`、zip `CCE46407…E8F7` / setup.exe `BB054C11…07DA`、digest 一致）。
+> **2026-09-30 13:19 更新（TSP-Opus）**: **v0.5.4 を安定版（Latest）で公開した**（13:18、タグ `v0.5.4`、main = `feeadc8`、ProductVersion `0.5.4+b3da57a`、zip `CCE46407…E8F7` / setup.exe `BB054C11…07DA`、digest 一致）。
 > 公開までの残り (1)〜(6) は完了: K4 は閉じた（検証機の C-1 は M1＝4K ProRes の途中、終端側は開発機の重い素材 4K 59.94 の C-1 で候補 3・4 とも 20/20、予算超え 0）。リリースノートの検証の欄を埋め、版を 0.5.4 に、README の入手先を Latest に、配布物の README.txt の beta を外した。
 > 公開した zip は候補 4 の zip と 104 ファイル中 99 が同一、違う 5 つは版の表記だけ。展開した配布物で C-1 1 本合格。次は v0.6.0（STATUS の先頭）。
 
