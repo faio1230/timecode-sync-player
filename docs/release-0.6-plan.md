@@ -22,6 +22,8 @@
 
 ## プラグイン側の前準備の結果（2026-09-25、Gst-ProRes セッションから）
 
+> **同梱する版は次版（タグ確定待ち）**（2026-09-30、利用者の決定。TSP-Fable 経由の原文「Gst-ProRes には伝えたんですが、今修正してもらって v2.0 を 0.6.0 から入れたいです」）。以下の v0.1.0 の値は、v0.6.0 の段 1（shim に通して確かめる段）の暫定値として残す。次版の zip 名・SHA-256・タグと変更点は Gst-ProRes から届き次第この節と設計書 `design/v0.6.0-prores-gpu.md` の 2-1 に入れる
+
 - **リリース**: タグ `v0.1.0`（commit `0a4f19b`）、https://github.com/faio1230/gst-prores-d3d11/releases/tag/v0.1.0
   - zip `gst-prores-d3d11-v0.1.0-win64-gst1.28.2.zip`（SHA-256 `2119a6ede678fe7ec4bfa4db3778b72a1ba57dd08c9d624e80a2cd03f7331e6b`）
   - 中身: `gstproresd3d11.dll`（SHA-256 `77b0776adbd62363e251623077546a2ea168c7dcb7f6cde72f04707433ff72d4`）、`prores_*.cso` 6 個、LICENSE、README.txt、SHA256SUMS.txt
