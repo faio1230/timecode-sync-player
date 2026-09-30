@@ -2,10 +2,10 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.6.0 - (date to be set at release)
+## 0.6.0 - 2026-10-01
 
 Pre-release. ProRes can be decoded on the GPU (gst-prores-d3d11 v0.2.1 bundled), on by default on NVIDIA GPUs.
-The stable (Latest) release stays 0.5.5.
+The stable (Latest) release stays 0.5.5. Includes the 0.5.5 fix.
 
 ### Added
 
@@ -25,6 +25,16 @@ The stable (Latest) release stays 0.5.5.
   installs it only when the installed runtime is missing or older.
 - Development and test scripts require PowerShell 7 (`pwsh`). `inspect-gop.ps1`, which users run, still works on
   Windows PowerShell 5.1.
+
+### Known issues
+
+- Right after the LTC signal is disturbed, position re-alignment seeks can follow one another and stall heavy video
+  (4K or 60p, H.264 or ProRes) for up to about 0.6 s. Same as 0.5.4; fixed in 0.6.1.
+- Selecting a playlist row right after adding files (for the few seconds the files are still being read) can move the
+  selection back to the first row, so "Up"/"Down" act on that row. Selecting again works. Same symptom as the 0.5.4
+  fix, left on another path.
+- Once on the 0.5.5 test machine, the picture went black for about 1.5 s after a large LTC jump and the backward
+  re-alignment. Not seen in the 0.6.0 tests; cause still being isolated. Followed up in 0.6.x.
 
 ### Known limitations
 
