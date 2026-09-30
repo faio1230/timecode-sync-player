@@ -1,4 +1,15 @@
-# 現在地（2026-09-28）
+# 現在地（2026-09-30）
+
+- **公開: v0.5.4（安定版、Latest）2026-09-30 13:18**。main = `feeadc8`（`--no-ff` の統合）、タグ `v0.5.4`。ProductVersion `0.5.4+b3da57a`。
+  zip `CCE46407…E8F7` / setup.exe `BB054C11…07DA`（GitHub の digest と一致）。https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.4
+  - 検証機が合格とした候補 4（`0.5.3+1751a96`）から製品の差分は版番号だけ（zip の 104 ファイル中、違うのは exe・dll・deps.json・README.txt・CHANGELOG の 5 つで、版の表記だけ）。配布物の README.txt から beta の表記を外した（`b3da57a`）
+  - 公開前の確認: 非E2E 2,781 合格 / 0 失敗、展開した配布物で C-1 1 本合格（ERR/FTL 0、残プロセス 0）、K4 を閉じた（release-0.5-plan.md の K4 の行）
+  - 0.5.x はこれで閉じる（利用者の決定 2026-09-29）。以後の 0.5 系は現場の不具合の hotfix だけ（`hotfix/0.5.x-…`、v0.6 へ前方マージ）
+- **次**: v0.6.0（ProRes の GPU 復号、Pre-release のまま。v0.5.4 の Latest は外さない）。ブランチは main から切る。GOAL 1 節の v0.6.0 の行と release-0.6-plan.md。負債（v0.6.x の候補）は release-0.5-plan.md「段 B の回帰」と「Auto の fps モードの扱い」
+
+---
+
+# 以前の現在地（2026-09-28）
 
 - **公開**: v0.5.3 (beta, Pre-release) 2026-09-26 20:38、main = タグ `v0.5.3` = `78ac486`（2026-09-26 23:50 の履歴の書き換えの後の SHA）。zip `734E45D0…728C` / setup.exe `E2088C06…93B4`。Latest（安定版）は v0.5.4 から
   （https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.3）
