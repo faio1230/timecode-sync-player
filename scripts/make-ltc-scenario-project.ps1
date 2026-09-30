@@ -4,7 +4,7 @@
 # The scenario tests never embed media file names: tracks are referred to as
 # M1..M7 by position, and this script writes those symbols as the track names.
 #
-#   powershell -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out C:\reports\ltc-scenario.tsp
+#   pwsh -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out C:\reports\ltc-scenario.tsp
 #
 # -Out is written wherever it points (the runner puts it under its report
 # directory). The media folder is user-managed and read-only on the test machine,
@@ -26,10 +26,6 @@
 # apart from a black gap); a video not longer than the offset stops with an error. The timeline starts with
 # a 5 s offset and keeps a GapSeconds gap after every track (default 5 s; 0 makes
 # the tracks adjacent).
-#
-# NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
-# repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page, so
-# non-ASCII comments break parsing.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
