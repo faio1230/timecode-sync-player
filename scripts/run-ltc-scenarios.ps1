@@ -15,9 +15,11 @@
 #   WITHOUT L-1 (L1_, continuous follow) and L-3 (L3_, ProductionDay, 12 hours):
 #       (FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests)&FullyQualifiedName!~L1_&FullyQualifiedName!~L3_
 #   -IncludeL1 / -IncludeL3 add them back to the default filter. An explicit -Filter is
-#   used as given, except that a -Filter naming L3_ (or ProductionDay) stops in the
-#   prerequisites unless -IncludeL3 is set too. The prerequisites print the final filter
-#   and whether it takes in L-1 / L-3 (yes / no / possible for a class-wide filter).
+#   used as given, except that a -Filter that may run L-3 (naming L3_, or taking in the
+#   whole class without "&FullyQualifiedName!~L3_") stops in the prerequisites unless
+#   -IncludeL3 is set too. The prerequisites print the final filter and whether it takes in
+#   L-1 / L-3 (yes = named, possible = through a wider term, no).
+#   Run L-1 alone with -IncludeL1 or -Filter "FullyQualifiedName~L1_".
 #   pwsh -File scripts\run-ltc-scenarios.ps1 -IncludeL1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
 #       (L-1 continuous-follow audit: seconds / tracks / window length / settling
 #        exclusion via -FollowSettlingSeconds / follow-start gate bound via
@@ -390,29 +392,93 @@ if (-not $filterGiven) {
     if (-not $IncludeL3) { $Filter += '&FullyQualifiedName!~L3_' }
 }
 
-# Whether a filter takes in L-1 / L-3: 'yes' when a positive term names it, 'no' when a
-# negative term excludes it (or nothing could match it), 'possible' when a positive term takes
-# in the whole scenario class (or a category) without excluding it. A reading of the terms,
-# not an evaluation of the filter.
-function Get-LtcFilterInclusion([string]$FilterText, [string]$NamePattern) {
-    $terms = @($FilterText -split '[&|()]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $positive = @($terms | Where-Object { $_ -notmatch '!' })
-    if (@($positive | Where-Object { $_ -match $NamePattern }).Count -gt 0) { return 'yes' }
-    if (@($terms | Where-Object { $_ -match '!' -and $_ -match $NamePattern }).Count -gt 0) { return 'no' }
-    if (@($positive | Where-Object { $_ -match '~LtcScenarioE2ETests\s*$|Category' }).Count -gt 0) { return 'possible' }
-    return 'no'
+# Whether a filter takes in L-1 / L-3. The filter is evaluated against the test's
+# FullyQualifiedName, Name and Category (the dotnet test --filter syntax: "~" contains, "="
+# equals, "!" negates, "&" before "|", parentheses). A term on another property, or of a form
+# not read here, counts as matching, so the answer errs towards "may run".
+#   'no'       - the filter does not select the test
+#   'yes'      - it selects the test and a positive term names it (L3_, ProductionDay, ...)
+#   'possible' - it selects the test through a wider term (the whole class, a category, ...)
+$ltcL1Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L1_Single_ContinuousFollow_DoesNotStall';
+    Name = 'L1_Single_ContinuousFollow_DoesNotStall'; Categories = @('E2E'); NamePattern = 'L1_|ContinuousFollow' }
+$ltcL3Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow';
+    Name = 'L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow'; Categories = @('E2E'); NamePattern = 'L3_|ProductionDay' }
+
+function Test-LtcFilterTerm([string]$Term, [hashtable]$Test) {
+    if ($Term -notmatch '^\s*([A-Za-z]+)\s*(!~|!=|~|=)\s*(.*?)\s*$') { return $true }
+    $property = $matches[1]; $operator = $matches[2]; $value = $matches[3]
+    $candidates = switch ($property) {
+        'FullyQualifiedName' { @($Test.Fqn) }
+        'DisplayName' { @($Test.Fqn) }
+        'Name' { @($Test.Name) }
+        'Category' { @($Test.Categories) }
+        'TestCategory' { @($Test.Categories) }
+        default { $null }
+    }
+    if ($null -eq $candidates) { return $true }
+    $hit = @($candidates | Where-Object {
+        if ($operator.EndsWith('~')) { $_.IndexOf($value, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+        else { [string]::Equals($_, $value, [StringComparison]::OrdinalIgnoreCase) }
+    }).Count -gt 0
+    if ($operator.StartsWith('!')) { return -not $hit }
+    return $hit
 }
+
+function Test-LtcFilterSelects([string]$FilterText, [hashtable]$Test) {
+    $tokens = @([regex]::Matches($FilterText, '[()&|]|[^()&|]+') | ForEach-Object { $_.Value } |
+        Where-Object { $_.Trim() })
+    $state = @{ At = 0 }
+    $peek = { if ($state.At -lt $tokens.Count) { $tokens[$state.At].Trim() } else { $null } }
+    $parseOr = $null
+    $parsePrimary = {
+        $token = & $peek
+        $state.At++
+        if ($token -eq '(') {
+            $inner = & $parseOr
+            if ((& $peek) -eq ')') { $state.At++ }
+            return $inner
+        }
+        return (Test-LtcFilterTerm $token $Test)
+    }
+    $parseAnd = {
+        $value = & $parsePrimary
+        while ((& $peek) -eq '&') { $state.At++; $right = & $parsePrimary; $value = $value -and $right }
+        return $value
+    }
+    $parseOr = {
+        $value = & $parseAnd
+        while ((& $peek) -eq '|') { $state.At++; $right = & $parseAnd; $value = $value -or $right }
+        return $value
+    }
+    return [bool](& $parseOr)
+}
+
+function Get-LtcFilterInclusion([string]$FilterText, [hashtable]$Test) {
+    if (-not (Test-LtcFilterSelects $FilterText $Test)) { return 'no' }
+    $positive = @($FilterText -split '[&|()]' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '!' })
+    if (@($positive | Where-Object { $_ -match $Test.NamePattern }).Count -gt 0) { return 'yes' }
+    return 'possible'
+}
+
+# The reason to stop, or $null: an explicit -Filter that selects L-3 (named or through a wider
+# term) without -IncludeL3. A filter like "FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_"
+# once ran into L-3 for 15 minutes.
+function Get-LtcFilterStopReason([string]$FilterText, [bool]$FilterGiven, [bool]$AllowL3, [string]$L3) {
+    if (-not $FilterGiven -or $AllowL3 -or $L3 -eq 'no') { return $null }
+    return ('the -Filter may run L-3 (L3_ProductionDay, 12 hours; l3=' + $L3 + '). Either add ' +
+        "'&FullyQualifiedName!~L3_' to the -Filter, or pass -IncludeL3 to run it")
+}
+
 if ($filterGiven) {
-    $filterL1 = Get-LtcFilterInclusion $Filter 'L1_|ContinuousFollow'
-    $filterL3 = Get-LtcFilterInclusion $Filter 'L3_|ProductionDay'
+    $filterL1 = Get-LtcFilterInclusion $Filter $ltcL1Test
+    $filterL3 = Get-LtcFilterInclusion $Filter $ltcL3Test
 } else {
     # The default filter takes in the whole scenario class, so the switches decide.
     $filterL1 = if ($IncludeL1) { 'yes' } else { 'no' }
     $filterL3 = if ($IncludeL3) { 'yes' } else { 'no' }
 }
-if ($filterGiven -and $filterL3 -eq 'yes' -and -not $IncludeL3) {
-    $problems += 'the -Filter names L-3 (L3_, 12 hours): pass -IncludeL3 as well to run it'
-}
+$filterStop = Get-LtcFilterStopReason $Filter $filterGiven ([bool]$IncludeL3) $filterL3
+if ($filterStop) { $problems += $filterStop }
 
 Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | capture: ' + ($captureCable -join '; ') +
     '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource + ' ffmpeg=' + $ffmpegText +
