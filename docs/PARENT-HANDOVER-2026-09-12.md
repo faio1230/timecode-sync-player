@@ -1,4 +1,14 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
+
+> **2026-09-30 22:14 更新（TSP-Opus）**: **v0.6.0 は候補 1 が検証機で 2 件不合格（S-4、A 切替 1 本目）。S-4 を直した候補 2（`0.5.4+944b0b1`）を作成済み、まだ送っていない。** 詳細は `docs/STATUS.md` の先頭と設計書 `design/v0.6.0-prores-gpu.md` 8-2。
+>
+> - **後任がすること**: (1) TSP-TestMachine から候補 1 の一式の残り（A の 2 本目、PR1〜PR3、内蔵 AMD、PR4、色の比較の数値）と A-1 のトレースの zip を受ける。(2) トレースで、公開不足 0.598 秒が後ろ向きのシーク 2 本（21:24:09.123・09.576）の着地の間に集中していることを確かめ、TSP-Fable に報告。(3) 候補 2 を Taildrop（`artifactselease` の 3 ファイル）して、検証機の固定の一式をやり直す（実インストールから）。A 2 本は「乱れが無ければ合格（D1 の効果は示さない）、同じ型なら同じ扱い、別の型なら止めて報告」。(4) 全条件合格なら版を 0.6.0 に上げて Pre-release で公開（GOAL 3 節）
+> - **色の比較**: 検証機で計算し、数値と caps の行だけを返してもらう（本番素材は検証機から出さない。スクリプト `compare-bgra.ps1` は送付済み）。しきい値は M5 と PR1 の分布で決める
+> - **hotfix v0.5.5**: `hotfix/0.5.5-boundary-hold`（`4389c7c`、`timecode-sync-player-hotfix055`）。出すかは朝に利用者が決める。出すなら版を 0.5.5 に上げて候補 → 検証機の一式 1 回 → 公開。検証機は v0.6.0 と重ならないよう 1 本ずつ
+> - **v0.6.1**: 設計書 `design/v0.6.1-jump-confirm.md` は承認済み（D1 は M の流れの帯、D2 は fps の疑わしい Duplicate を確認に数えない、T1・T1b は実機の列）。実装は v0.6.0 を公開して main に統合した後、main から `v0.6.1` を切って
+> - **負債（v0.6.2 の候補）**: instant-rate の変更が flush シークの直後に効かないことがある（glib.CRITICAL、推定）、境界の保持の不感帯（案 B）、起動の lateMs を配布ビルドで取る口、インストーラーの昇格（release-0.6-plan「v0.6.x の負債」）
+> - **担当**: サブエージェント s4-fix（`timecode-sync-player-v053` の `agent-a-v060-s4`、取り込み済み）と hotfix055 は止まっている。開発機の一式の記録は `artifactsnalysis-data` の `v060-4dea278-*`（D1 の数え方のスクリプトは親の scratchpad、数え方は v0.6.1 設計書 7-0）
+
 > **2026-09-30 18:53 更新（TSP-Opus、交代）**: **v0.6.0 の候補 1（2026-09-30 18:51、検証機へ送付）**: ProductVersion `0.5.4+e086e2e`（版は据え置き）。zip `9F48BD26…E970` / setup.exe `8AA8B76A…797F` / テストのソース `tcs-v060-e086e2e.tar`（`0EF42231…CEB8`、ランナーの既定の変更を含む）。置き場は `timecode-sync-player-v06` の `artifacts\release`。開発機: 固定の一式（標準 ×2・重い素材・ProRes ×2 が各 24/0、L-1 ×2 合格、ProRes は GPU 142 件・CPU 0・不一致 0）、展開した配布物で ProRes 4K が同梱の GStreamer（Bundled）で `prores-gpu`・`same=1`。検証機への依頼: (1) 実インストール（VC++ の版と再頒布の有無、初回起動）→ (2) 固定の一式（M5 は `prores-gpu`）→ (3) ProRes の追加（PR1〜PR3 を GPU、内蔵 AMD で `prores-cpu`、色の差、PR4 のアルファ）。依頼文は `docs/prompts/2026-09-30-v060-testmachine-request-draft.md` を元に送った。
 >
 > - **後任がすること**: 検証機（TSP-TestMachine）の結果を受ける（Taildrop で結果 JSON と 3 行の所見。開発機の Tailscale の GUI が起動していると `~/Downloads` に保存される）。合否は設計書 8 節と GOAL 1 節の v0.6.0 の行。全条件合格なら RELEASE-PROCEDURE（版を 0.6.0 に、`ApplicationVersionTests`、CHANGELOG の日付、リリースノートの検証の欄、Release の shim、`check-control-chars.ps1` 0、配布物の時刻と SHA）→ main へ `--no-ff`（refs を明示）→ タグ → `gh release create v0.6.0 --prerelease --latest=false`。README の入手先は v0.5.x のまま。事後報告は TSP-Fable へ。続けて v0.6.1（設計書 9 節の束）の設計書
