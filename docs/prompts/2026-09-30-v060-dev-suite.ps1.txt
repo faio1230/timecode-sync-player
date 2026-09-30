@@ -1,9 +1,11 @@
 #requires -Version 7.0
-# v0.6.0 dev-machine suite (parent only, serial). Test tooling in the scratchpad, not product code.
-# Every call passes an explicit -Filter: the runner's default includes L1_ and L3_ (L-3 = 12 hours).
+# v0.6.0 dev-machine suite (parent only, serial). Test tooling, not product code.
+# Every call passes an explicit -Filter. L-1 gets real long media (a 20 s fixture makes L-1 skip),
+# and a skipped L-1 marks the suite as failed so a skip never reads as a pass.
 $ErrorActionPreference = 'Continue'
 $root = 'C:\Users\<user>\Documents\timecode-sync-player-v06'
 $heavy = Join-Path $root 'artifacts\media-heavy'
+$long = Join-Path $root 'artifacts\media-long'
 $out = Join-Path $root 'artifacts\analysis-data'
 $progress = Join-Path $out 'v060-dev-suite-progress.txt'
 $env:TCS_FFMPEG = 'C:\Program Files\ffmpeg\bin\ffmpeg.exe'
@@ -11,27 +13,32 @@ $sha = (git -C $root rev-parse --short HEAD).Trim()
 $std = 'FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_&FullyQualifiedName!~L3_&FullyQualifiedName!~U1_'
 $l1 = 'FullyQualifiedName~L1_'
 $runs = @(
-    @{ label = "v060-$sha-std1b"; filter = $std },
-    @{ label = "v060-$sha-heavy-a"; filter = $std; media = 'M1,M3,M4' },
-    @{ label = "v060-$sha-heavy-prores1"; filter = $std; media = 'M5,M6,M3' },
-    @{ label = "v060-$sha-l1-1"; filter = $l1; follow = $true },
+    @{ label = "v060-$sha-std1"; filter = $std },
+    @{ label = "v060-$sha-heavy-a"; filter = $std; mediaDir = $heavy; media = 'M1,M3,M4' },
+    @{ label = "v060-$sha-heavy-prores1"; filter = $std; mediaDir = $heavy; media = 'M5,M6,M3' },
+    @{ label = "v060-$sha-l1-1"; filter = $l1; mediaDir = $long; media = 'M1,M2,M3'; follow = $true },
     @{ label = "v060-$sha-std2"; filter = $std },
-    @{ label = "v060-$sha-heavy-prores2"; filter = $std; media = 'M5,M6,M1' },
-    @{ label = "v060-$sha-l1-2"; filter = $l1; follow = $true }
+    @{ label = "v060-$sha-heavy-prores2"; filter = $std; mediaDir = $heavy; media = 'M5,M6,M1' },
+    @{ label = "v060-$sha-l1-2"; filter = $l1; mediaDir = $long; media = 'M1,M2,M3'; follow = $true }
 )
 function Log([string]$line) { Add-Content -LiteralPath $progress -Value $line -Encoding utf8 }
+$verdict = 'PASS'
 Log ("=== suite start " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " sha=" + $sha)
 foreach ($r in $runs) {
     $dir = Join-Path $out $r.label
     $args = @('-NoProfile', '-File', (Join-Path $root 'scripts\run-ltc-scenarios.ps1'), '-ReportDir', $dir, '-Filter', $r.filter)
-    if ($r.media) { $args += @('-MediaDir', $heavy, '-Media', $r.media) }
-    if ($r.follow) { $args += @('-FollowSeconds', '60', '-FollowTracks', 'A,B,C', '-FollowWindowSeconds', '2') }
+    if ($r.media) { $args += @('-MediaDir', $r.mediaDir, '-Media', $r.media) }
+    if ($r.follow) { $args += @('-TrackSegmentSeconds', '60,60,60', '-FollowSeconds', '60', '-FollowTracks', 'A,B,C', '-FollowWindowSeconds', '2') }
     $start = Get-Date
     Log ("--- " + $r.label + " start " + $start.ToString('HH:mm:ss') + " filter=" + $r.filter + " media=" + $r.media)
+    $summary = ''
     & pwsh @args 2>&1 | ForEach-Object {
         $line = "$_"
-        if ($line -match '^(SUMMARY|RESULT|PREREQ|prereqs: OK|preflight|filter=)') { Log ("    " + $line) }
+        if ($line -match '^(SUMMARY|RESULT|PREREQ|prereqs: OK|prereqs: filter|preflight)') { Log ("    " + $line) }
+        if ($line -match '^SUMMARY') { $summary = $line }
     }
+    if ($summary -notmatch 'failed=0' -or $summary -match 'prereq_failed') { $verdict = 'FAIL' }
+    if ($r.follow -and $summary -notmatch 'skipped=0') { $verdict = 'FAIL'; Log '    L-1 skipped: counts as FAIL' }
     Log ("--- " + $r.label + " end " + (Get-Date -Format 'HH:mm:ss') + " (" + [int]((Get-Date) - $start).TotalMinutes + " min)")
 }
-Log ("=== suite end " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+Log ("=== suite end " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " verdict=" + $verdict)
