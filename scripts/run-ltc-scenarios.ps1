@@ -11,15 +11,23 @@
 #        media folder, and is removed after the run unless -KeepProject is set)
 #   U-1 (LtcScenarioE2ETests.U1_...) requires a gap-free project: pass -GapSeconds 0
 #   (with a gapped project U-1 reports preflight-invalid instead of judging).
-#   pwsh -File scripts\run-ltc-scenarios.ps1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
+#   Default filter (v0.6.0 stage 5b): LtcHardwareLoopE2ETests and LtcScenarioE2ETests
+#   WITHOUT L-1 (L1_, continuous follow) and L-3 (L3_, ProductionDay, 12 hours):
+#       (FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests)&FullyQualifiedName!~L1_&FullyQualifiedName!~L3_
+#   -IncludeL1 / -IncludeL3 add them back to the default filter. An explicit -Filter is
+#   used as given, except that a -Filter that may run L-3 (naming L3_, or taking in the
+#   whole class without "&FullyQualifiedName!~L3_") stops in the prerequisites unless
+#   -IncludeL3 is set too. The prerequisites print the final filter and whether it takes in
+#   L-1 / L-3 (yes = named, possible = through a wider term, no).
+#   Run L-1 alone with -IncludeL1 or -Filter "FullyQualifiedName~L1_".
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -IncludeL1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
 #       (L-1 continuous-follow audit: seconds / tracks / window length / settling
 #        exclusion via -FollowSettlingSeconds / follow-start gate bound via
-#        -FollowStartGateSeconds; the default filter includes L-1. To run only the
-#        previous 22 scenarios:
-#        -Filter 'FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_')
+#        -FollowStartGateSeconds; the -Follow* values only matter with L-1 in the filter)
 #       -SegmentSeconds N raises the per-track used length above the 20 s default;
 #       L-1 needs >= 34 s used per track (60 s follow rounds down to used - 4).
 #       -TrackSegmentSeconds '25,25,25' sets the used length per track instead.
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -IncludeL3   # also the 12-hour L-3 production day
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg, .NET SDK, the
 # target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
@@ -28,14 +36,17 @@
 #
 # Exit codes: 0 = no failures, 1 = test failures, 2 = prerequisite failure.
 #
-# NOTE: backslash- and control-character traps of ".ps1" are checked by an empty
-# run before use.
+# NOTE: backslash- and control-character traps of ".ps1" are checked without running
+# the script (Parser.ParseFile, scripts\check-control-chars.ps1). Never "-?" as a dry run.
 [CmdletBinding()]
 param(
     [string]$AppExe = '',
     [string]$ReportDir = '',
     [int]$Cycles = 0,
     [string]$Filter = '',
+    # L-1 (continuous follow) and L-3 (12-hour production day) run only when asked for.
+    [switch]$IncludeL1,
+    [switch]$IncludeL3,
     [string]$MediaDir = '',
     [string[]]$Media = @(),
     [double]$MediaInOffsetSeconds = 0,
@@ -367,9 +378,112 @@ if ($MediaDir -and (Test-Path -LiteralPath $MediaDir)) {
     }
 }
 
+# ---- filter (v0.6.0 stage 5b) ----------------------------------------------
+# L-1 (L1_) and L-3 (L3_, ProductionDay: 12 hours) are left out of the default filter and
+# come back only with -IncludeL1 / -IncludeL3. A default run once took in L-3 and kept the
+# machine for 80 minutes before it was stopped.
+# RealProjectGapE2ETests is not in the default filter either: it assumes a fixture project
+# whose timeline starts at one hour (it sends 01:00:xx), so against the project generated
+# from -MediaDir its checks do not apply. Pass -Filter explicitly to run it.
+$filterGiven = -not [string]::IsNullOrWhiteSpace($Filter)
+if (-not $filterGiven) {
+    $Filter = '(FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests)'
+    if (-not $IncludeL1) { $Filter += '&FullyQualifiedName!~L1_' }
+    if (-not $IncludeL3) { $Filter += '&FullyQualifiedName!~L3_' }
+}
+
+# Whether a filter takes in L-1 / L-3. The filter is evaluated against the test's
+# FullyQualifiedName, Name and Category (the dotnet test --filter syntax: "~" contains, "="
+# equals, "!" negates, "&" before "|", parentheses). A term on another property, or of a form
+# not read here, counts as matching, so the answer errs towards "may run".
+#   'no'       - the filter does not select the test
+#   'yes'      - it selects the test and a positive term names it (L3_, ProductionDay, ...)
+#   'possible' - it selects the test through a wider term (the whole class, a category, ...)
+$ltcL1Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L1_Single_ContinuousFollow_DoesNotStall';
+    Name = 'L1_Single_ContinuousFollow_DoesNotStall'; Categories = @('E2E'); NamePattern = 'L1_|ContinuousFollow' }
+$ltcL3Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow';
+    Name = 'L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow'; Categories = @('E2E'); NamePattern = 'L3_|ProductionDay' }
+
+function Test-LtcFilterTerm([string]$Term, [hashtable]$Test) {
+    if ($Term -notmatch '^\s*([A-Za-z]+)\s*(!~|!=|~|=)\s*(.*?)\s*$') { return $true }
+    $property = $matches[1]; $operator = $matches[2]; $value = $matches[3]
+    $candidates = switch ($property) {
+        'FullyQualifiedName' { @($Test.Fqn) }
+        'DisplayName' { @($Test.Fqn) }
+        'Name' { @($Test.Name) }
+        'Category' { @($Test.Categories) }
+        'TestCategory' { @($Test.Categories) }
+        default { $null }
+    }
+    if ($null -eq $candidates) { return $true }
+    $hit = @($candidates | Where-Object {
+        if ($operator.EndsWith('~')) { $_.IndexOf($value, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+        else { [string]::Equals($_, $value, [StringComparison]::OrdinalIgnoreCase) }
+    }).Count -gt 0
+    if ($operator.StartsWith('!')) { return -not $hit }
+    return $hit
+}
+
+function Test-LtcFilterSelects([string]$FilterText, [hashtable]$Test) {
+    $tokens = @([regex]::Matches($FilterText, '[()&|]|[^()&|]+') | ForEach-Object { $_.Value } |
+        Where-Object { $_.Trim() })
+    $state = @{ At = 0 }
+    $peek = { if ($state.At -lt $tokens.Count) { $tokens[$state.At].Trim() } else { $null } }
+    $parseOr = $null
+    $parsePrimary = {
+        $token = & $peek
+        $state.At++
+        if ($token -eq '(') {
+            $inner = & $parseOr
+            if ((& $peek) -eq ')') { $state.At++ }
+            return $inner
+        }
+        return (Test-LtcFilterTerm $token $Test)
+    }
+    $parseAnd = {
+        $value = & $parsePrimary
+        while ((& $peek) -eq '&') { $state.At++; $right = & $parsePrimary; $value = $value -and $right }
+        return $value
+    }
+    $parseOr = {
+        $value = & $parseAnd
+        while ((& $peek) -eq '|') { $state.At++; $right = & $parseAnd; $value = $value -or $right }
+        return $value
+    }
+    return [bool](& $parseOr)
+}
+
+function Get-LtcFilterInclusion([string]$FilterText, [hashtable]$Test) {
+    if (-not (Test-LtcFilterSelects $FilterText $Test)) { return 'no' }
+    $positive = @($FilterText -split '[&|()]' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '!' })
+    if (@($positive | Where-Object { $_ -match $Test.NamePattern }).Count -gt 0) { return 'yes' }
+    return 'possible'
+}
+
+# The reason to stop, or $null: an explicit -Filter that selects L-3 (named or through a wider
+# term) without -IncludeL3. A filter like "FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_"
+# once ran into L-3 for 15 minutes.
+function Get-LtcFilterStopReason([string]$FilterText, [bool]$FilterGiven, [bool]$AllowL3, [string]$L3) {
+    if (-not $FilterGiven -or $AllowL3 -or $L3 -eq 'no') { return $null }
+    return ('the -Filter may run L-3 (L3_ProductionDay, 12 hours; l3=' + $L3 + '). Either add ' +
+        "'&FullyQualifiedName!~L3_' to the -Filter, or pass -IncludeL3 to run it")
+}
+
+if ($filterGiven) {
+    $filterL1 = Get-LtcFilterInclusion $Filter $ltcL1Test
+    $filterL3 = Get-LtcFilterInclusion $Filter $ltcL3Test
+} else {
+    # The default filter takes in the whole scenario class, so the switches decide.
+    $filterL1 = if ($IncludeL1) { 'yes' } else { 'no' }
+    $filterL3 = if ($IncludeL3) { 'yes' } else { 'no' }
+}
+$filterStop = Get-LtcFilterStopReason $Filter $filterGiven ([bool]$IncludeL3) $filterL3
+if ($filterStop) { $problems += $filterStop }
+
 Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | capture: ' + ($captureCable -join '; ') +
     '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource + ' ffmpeg=' + $ffmpegText +
     ' commit_free_gb=' + $commitFreeGb + ' c_free_gb=' + $cDriveFreeGb)
+Write-Output ('prereqs: filter=' + $Filter + ' given=' + $filterGiven + ' l1=' + $filterL1 + ' l3=' + $filterL3)
 if ($problems.Count -gt 0) {
     foreach ($p in $problems) { Write-Output ('PREREQ-ERROR ' + $p) }
     Write-Output ('SUMMARY prereq_failed=' + $problems.Count + ' report=' + $ReportDir)
@@ -467,12 +581,7 @@ if ($MediaDir) {
 }
 
 # ---- filter and environment ------------------------------------------------
-if ([string]::IsNullOrWhiteSpace($Filter)) {
-    # RealProjectGapE2ETests is not in the default filter: it assumes a fixture project whose
-    # timeline starts at one hour (it sends 01:00:xx), so against the project generated from
-    # -MediaDir its checks do not apply. Pass -Filter explicitly to run it.
-    $Filter = 'FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests'
-}
+# The filter itself is decided in the prerequisites (L-1 / L-3 rule).
 Write-Output "filter=$Filter"
 
 $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe

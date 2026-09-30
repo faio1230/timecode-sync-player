@@ -238,3 +238,76 @@ C# 側の `TCS_FFMPEG` は単体の試験（偽の ffmpeg.exe のフォルダ）
     設計書の補足 (b) のとおり、検証機の既定のフォルダを 8.0.1 へ向けるか、検証機で `TCS_FFMPEG` を 8.0.1 に設定しないと、
     検証機の試験は今より古い ffmpeg で素材を作る
   - 設計書の補足 (a): 切り替えの直後に両機で非E2E と E2E を 1 回ずつ回し、参照フレームの判定などの既存の合否の基準がそのまま通るかを見る（親の実機の手順）
+
+## 11. 追加: ランナーの既定から L-1・L-3 を外す（`44ccb6f`）
+
+制約（親が実機の一式を回している）に従い、dotnet build・dotnet test・shim のビルド・素材の生成はしていない。
+行ったのは編集、Parser.ParseFile、`check-control-chars.ps1`、`test-ltc-run-metrics.ps1` だけ。**非E2E は回していない**（親が取り込みの後に回す）。
+
+### 変更（`scripts/run-ltc-scenarios.ps1`）
+
+- 既定の絞り込み: `(FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests)&FullyQualifiedName!~L1_&FullyQualifiedName!~L3_`。
+  `-IncludeL1`・`-IncludeL3`（switch）で、それぞれの除外の項を付けない。試験の名前で `L1_`・`L3_` で始まるのは
+  `L1_Single_ContinuousFollow_DoesNotStall` と `L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow` の 2 つだけ（`tests` を grep）
+- `-Filter` を明示したときはその値をそのまま使う。ただし正の項（`!` を含まない項）が `L3_` か `ProductionDay` を名指し、`-IncludeL3` が無いときは
+  `PREREQ-ERROR the -Filter names L-3 (L3_, 12 hours): pass -IncludeL3 as well to run it`（終了コード 2）
+- 絞り込みの決定を事前確認（`prereqs:` の行の直後）へ移し、1 行 `prereqs: filter=<最終の値> given=<True|False> l1=<yes|no|possible> l3=<…>` を出す。
+  後段の既存の `filter=` の行と、ltc-run-report.ps1 に渡す `-Filter`（結果 JSON の `filter`）は最終の値のまま
+  - 既定のとき: `l1`・`l3` は switch で決める（yes / no）
+  - 明示のとき: 項を読む。正の項が名指し → yes、否定の項で除外 → no、正の項がクラス全体（`~LtcScenarioE2ETests` で終わる）か Category → possible、ほか no。
+    フィルターの評価ではなく項の読み取り（例: `Category=E2E&FullyQualifiedName!~LtcScenarioE2ETests` は実際には含まないが possible と出る）
+- 先頭の使い方のコメント: 新しい既定、`-IncludeL1`・`-IncludeL3`、L-1 の例に `-IncludeL1` を付けた。「前の 22 シナリオ」のフィルタの例は既定と同じになったので削った。
+  「空振りで確かめる」という注記を「実行しないで確かめる（Parser.ParseFile、check-control-chars.ps1）。`-?` は使わない」に直した
+
+### 確かめ
+
+- 構文: 全 `.ps1`・`.psm1` 37 本 errors=0、制御文字 0、裸の LF 0。`check-control-chars.ps1 -Path scripts/run-ltc-scenarios.ps1` は hits=0
+- 判定の関数だけを AST から取り出して 8 通りの絞り込みで確かめた（スクリプト本体は実行していない）: 既定（両方除外）→ no/no、
+  `…!~L3_` だけ → possible/no、除外なしのクラス全体 → possible/possible、`~NoSuchTest` → no/no、`~L3_ProductionDay` → no/yes、
+  `~LtcScenarioE2ETests.L1_` → yes/no、旧来の「22 シナリオ」の例 `~LtcScenarioE2ETests&!~L1_` → no/possible、上の Category の例 → possible/possible。8 通りすべて期待どおり
+- `test-ltc-run-metrics.ps1`: `ALL OK`（20 項目）
+
+### 親が知っておくこと
+
+- **L-1 は既定で走らなくなった**。合否の一式の「L-1 6 回」をランナーの既定（`-Filter` なし）で回していたなら、`-IncludeL1` を付ける必要がある。
+  `-FollowSeconds` などの `-Follow*` は、L-1 が絞り込みに入っていないと効かない（警告は出さない）
+- 明示の `-Filter` がクラス全体（例: 旧来の「22 シナリオ」の `FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_`）のときは、L-3 を含むのに止まらない
+  （指示どおり止めるのは L3_ を名指す指定だけ）。`prereqs: … l3=possible` の行で分かる。これも止めるかは親の判断
+- `dotnet test --filter` の括弧のまとめ（`(A|B)&C`）は VSTest の書式どおりのはず。実機では確かめていないので、一式の最初の回で
+  `dotnet-test.log` の実行件数が L-1・L-3 を除いた数になっていることを見ること
+
+## 12. 追加: l3=possible でも止める（`a544160`）
+
+親の判断: l3=possible でも止める。L-1 は `-IncludeL1` か `-Filter FullyQualifiedName~L1_` で明示する（親の駆動は後者）。
+括弧の書式は親が取り込み後の最初の回で確かめる。制約は 11 節と同じ（ビルド・試験・素材の生成なし）。
+
+### 変更（`scripts/run-ltc-scenarios.ps1`）
+
+- 11 節の「項の読み取り」をやめ、明示の `-Filter` を L-1・L-3 の試験（FullyQualifiedName・Name・Category=E2E）に当てて評価するようにした。
+  `~` は含む（大小を区別しない）、`=` は等しい、`!` は否定、`&` が `|` より先、括弧。ほかの属性の項・読めない形の項は当たるものとして扱う（走りうる側に倒す）
+  - 選ばない → `no`、選び、正の項が名指す（`L3_`・`ProductionDay`／`L1_`・`ContinuousFollow`）→ `yes`、選ぶが広い項（クラス全体、Category など）による → `possible`
+- 止める条件: `-Filter` を明示し、`-IncludeL3` が無く、`l3` が `no` でない（`yes` と `possible` の両方）。終了コード 2。メッセージ:
+  `the -Filter may run L-3 (L3_ProductionDay, 12 hours; l3=possible). Either add '&FullyQualifiedName!~L3_' to the -Filter, or pass -IncludeL3 to run it`
+- 既定の絞り込み（`-Filter` なし）は止めない（`-IncludeL3` が無ければ `!~L3_` が付く）
+- 先頭の使い方のコメントを合わせた（L-1 だけを走らせる 2 つの書き方も 1 行）
+
+### 確かめ（関数を AST から取り出した判定の試験、スクリプト本体は実行していない）
+
+17 通りすべて期待どおり（`bad=0`）。主なもの:
+
+| -Filter | l1 | l3 | -IncludeL3 | 止まる |
+| --- | --- | --- | --- | --- |
+| 既定（両方除外） | no | no | なし | いいえ |
+| 除外なしのクラス全体 `(…LtcHardwareLoopE2ETests\|…LtcScenarioE2ETests)` | possible | possible | なし | **はい** |
+| 同じ | possible | possible | あり | いいえ |
+| `FullyQualifiedName~L3_ProductionDay` | no | yes | なし | **はい** |
+| `FullyQualifiedName~L1_` | yes | no | なし | いいえ |
+| 旧来の `FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_`（L-3 に 15 分入った形） | no | possible | なし | **はい** |
+| 上に `&FullyQualifiedName!~L3_` を足したもの | no | no | なし | いいえ |
+| `Category=E2E&FullyQualifiedName!~LtcScenarioE2ETests` | no | no | なし | いいえ（11 節では possible と出ていたもの） |
+| `Category=E2E` / `Priority=1`（知らない属性） | possible | possible | なし | **はい** |
+| `(FullyQualifiedName~S1_\|FullyQualifiedName~C1_)&Category=E2E` | no | no | なし | いいえ |
+
+- 構文: 全 `.ps1`・`.psm1` 37 本 errors=0、制御文字 0、裸の LF 0。`check-control-chars.ps1 -Path scripts/run-ltc-scenarios.ps1` は hits=0
+- `test-ltc-run-metrics.ps1`: `ALL OK`
+- 判定の試験は scratchpad の使い捨て（リポジトリには入れていない）。非E2E は回していない（親が取り込み後に回す）
