@@ -75,7 +75,7 @@ internal sealed class SyncScenarioHarness
         // v0.6.1 段 A: 台本のフレームも実時間の LTC の口（ReceiveFrame）を通す。台本の状態は捨て、値と fps だけを
         // 渡す（状態は層 1 の診断が値から決める）。時刻は台本の予定時刻（時計はすでにそこまで進んでいる）。
         Ltc = new LtcScript(
-            (frame, at) => DeliverLtcFrame(frame.ResolvedSeconds, frame.ResolvedFps, receivedAtMilliseconds: at),
+            (frame, at) => DeliverLtcFrame(frame.Seconds, frame.Fps, receivedAtMilliseconds: at),
             startMilliseconds: scenarioClock?.MonotonicMilliseconds ?? _monotonicMilliseconds);
         // C2: 仮想時計が進むと偽プレイヤーの位置・着地・ロード・尺の到着も進む。
         if (scenarioClock is not null)

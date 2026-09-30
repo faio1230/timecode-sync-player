@@ -575,10 +575,6 @@ internal sealed class LtcSyncController
         ReceiveProcessedFrame(_frames.Process(frame, mode), receivedAtMilliseconds, frame, mode);
     }
 
-    /// <summary>Accept an already processed frame, retaining its diagnostic gate and display state.</summary>
-    public void ReceiveProcessedFrame(LtcFrameProcessingResult processed, long receivedAtMilliseconds) =>
-        ReceiveProcessedFrame(processed, receivedAtMilliseconds, sourceFrame: null, _effects.GetContext().FpsMode);
-
     private void ReceiveProcessedFrame(
         LtcFrameProcessingResult processed, long receivedAtMilliseconds,
         LtcFrameReceivedEventArgs? sourceFrame, TimecodeFpsMode mode)
