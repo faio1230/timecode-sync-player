@@ -2245,22 +2245,33 @@ set_decoder_adapter_luid (TcsPlayer* p, GstElement* dec)
   return true;
 }
 
-/* v0.6.0 stage 1: one-shot probes on the first frame of a ProRes chain. The
- * context holds a ref on the decoder src pad (released with the probe), and
+/* v0.6.0 stage 1: one-shot probes on the first frame of a ProRes chain.
  * `player` stays valid for the player lifetime (pipelines are torn down before
- * the player). Streaming thread; no shim lock is taken. */
+ * the player). Streaming thread; no shim lock is taken.
+ * Stage 2: the context holds NO strong ref on a pad. A probe that never fires
+ * stays on its pad until the pad is finalized, so a strong ref to that pad
+ * (out-mem: its own pad) made a pad -> probe -> context -> pad cycle that was
+ * never freed. The caps probe keeps only a weak ref on the decoder src pad
+ * and resolves it when it fires. */
 struct FirstFrameProbeContext {
   TcsPlayer* player;
   std::string profile;
-  GstPad* dec_src;
+  GWeakRef dec_src;              /* caps probe only; empty for out-mem */
 };
+
+static FirstFrameProbeContext*
+first_frame_probe_context_new (TcsPlayer* p, const char* profile, GstPad* dec_src)
+{
+  FirstFrameProbeContext* ctx = new FirstFrameProbeContext { p, profile, {} };
+  g_weak_ref_init (&ctx->dec_src, dec_src);
+  return ctx;
+}
 
 static void
 first_frame_probe_context_free (gpointer data)
 {
   FirstFrameProbeContext* ctx = (FirstFrameProbeContext*) data;
-  if (ctx->dec_src)
-    gst_object_unref (ctx->dec_src);
+  g_weak_ref_clear (&ctx->dec_src);
   delete ctx;
 }
 
@@ -2308,7 +2319,10 @@ static GstPadProbeReturn
 on_decode_caps_probe (GstPad* pad, GstPadProbeInfo* /*info*/, gpointer user)
 {
   FirstFrameProbeContext* ctx = (FirstFrameProbeContext*) user;
-  std::string dec_src = pad_caps_string (ctx->dec_src);
+  GstPad* dec_pad = (GstPad*) g_weak_ref_get (&ctx->dec_src);
+  std::string dec_src = pad_caps_string (dec_pad);
+  if (dec_pad)
+    gst_object_unref (dec_pad);
   std::string sink = pad_caps_string (pad);
   LOG ("decode.caps profile=%s dec-src=%s sink=%s", ctx->profile.c_str (),
       dec_src.c_str (), sink.c_str ());
@@ -2324,15 +2338,13 @@ install_first_frame_probes (TcsPlayer* p, const VideoProfile* prof, int idx)
   if (!dec_src)
     return;
   if (tcs_video_profile_sets_adapter_luid (idx)) {
-    FirstFrameProbeContext* ctx = new FirstFrameProbeContext {
-        p, prof->name, (GstPad*) gst_object_ref (dec_src) };
+    FirstFrameProbeContext* ctx = first_frame_probe_context_new (p, prof->name, nullptr);
     gst_pad_add_probe (dec_src, GST_PAD_PROBE_TYPE_BUFFER, on_prores_out_mem_probe,
         ctx, first_frame_probe_context_free);
   }
   GstPad* sinkpad = gst_element_get_static_pad (p->appsink, "sink");
   if (sinkpad) {
-    FirstFrameProbeContext* ctx = new FirstFrameProbeContext {
-        p, prof->name, (GstPad*) gst_object_ref (dec_src) };
+    FirstFrameProbeContext* ctx = first_frame_probe_context_new (p, prof->name, dec_src);
     gst_pad_add_probe (sinkpad, GST_PAD_PROBE_TYPE_BUFFER, on_decode_caps_probe,
         ctx, first_frame_probe_context_free);
     gst_object_unref (sinkpad);
