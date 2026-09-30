@@ -7,9 +7,11 @@
 #   powershell -File scripts\get-prores-plugin.ps1
 $ErrorActionPreference = "Stop"
 
-# Pinned version and hashes (single place).
+# Pinned version, URL and hashes (single place).
+# v0.1.0 is a provisional value for v0.6.0 stage 1. Replace the tag, the zip
+# name and both SHA-256 values here once the next release to be bundled is fixed.
 $version = "v0.1.0"
-$zipName = "gst-prores-d3d11-v0.1.0-win64-gst1.28.2.zip"
+$zipName = "gst-prores-d3d11-$version-win64-gst1.28.2.zip"
 $zipUrl = "https://github.com/faio1230/gst-prores-d3d11/releases/download/$version/$zipName"
 $expectedZipSha256 = "2119a6ede678fe7ec4bfa4db3778b72a1ba57dd08c9d624e80a2cd03f7331e6b"
 $dllName = "gstproresd3d11.dll"
