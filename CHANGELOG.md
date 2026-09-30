@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.5.5 - 
+## 0.5.5 - 2026-10-01
 
 Stable (Latest) bug-fix release of the 0.5 line.
 
@@ -15,10 +15,14 @@ Stable (Latest) bug-fix release of the 0.5 line.
   engaged if the position was read within 2 frames of the out point (about 33 ms at 60 fps). That seek is now recorded,
   so the next check always holds at the out point.
 
-### Known issues (fixed in 0.6.1)
+### Known issues
 
 - Right after the LTC signal is disturbed, position re-alignment seeks can follow one another and stall 4K 60p video
-  for up to about 0.6 s. Same as 0.5.4.
+  for up to about 0.6 s. Same as 0.5.4; fixed in 0.6.1.
+- Once on the test machine, the picture went black for about 1.5 s after a large LTC jump and the backward
+  re-alignment that followed. It did not recur in 4 reruns, and the same sequence played 200+ times without black
+  elsewhere. Same code as 0.5.4; the cause is still being isolated (another window over the test's screen capture is
+  not ruled out). Followed up in 0.6.x.
 
 ## 0.5.4 - 2026-09-30
 
