@@ -49,13 +49,13 @@ internal sealed class LatchLifetimeScenario
 
     // ─── 供給 ─────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// v0.6.1 段 A: 実時間の LTC の口（<see cref="SyncScenarioHarness.DeliverLtcFrame"/>）へ値だけを送る。状態の引数は
+    /// ハーネスへ渡さない（層 1 の診断が値から決める）。LastLtc の記録にだけ使う（台本の直しは段 A の後）。
+    /// </summary>
     public void Frame(double seconds, TimecodeFrameDiagnosticStatus status = TimecodeFrameDiagnosticStatus.Normal)
     {
-        Harness.Controller.ReceiveProcessedFrame(new LtcFrameProcessingResult(
-            "scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
-            new TimecodeFrameDiagnosticResult(status, 0, 0),
-            ShouldApplySync: status is TimecodeFrameDiagnosticStatus.Normal or TimecodeFrameDiagnosticStatus.Initial,
-            ShouldLogFps: false), 10_000);
+        Harness.DeliverLtcFrame(seconds);
         if (status != TimecodeFrameDiagnosticStatus.Jump)
             LastLtc = seconds;
     }
