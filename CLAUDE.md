@@ -29,12 +29,16 @@ LTC（Linear Timecode）を受信し、プレイリスト上の動画クリッ�
 
 **ビルド構成: Debug（開発標準）**
 
-**開発環境: Windows ネイティブ（PowerShell / Visual Studio）**
+**開発環境: Windows ネイティブ（PowerShell 7 / Visual Studio）**
 
 ```powershell
+pwsh -File native\gst-shim\build-shim.ps1 -Config Debug
 dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj
 ```
+
+**スクリプトは PowerShell 7 専用（v0.6.0 から）:** `scripts\`・`native\gst-shim\` の `.ps1` は `#requires -Version 7.0`。
+`pwsh -File` で実行する（`pwsh` はコマンド名で呼び、絶対パスを埋め込まない）。5.1 の `powershell` では読み込みの時点で止まる。
 
 **ソリューションファイル:** `TimecodeSyncPlayer.slnx`（.NET SDK 形式の `.slnx`、`.sln` ではない）
 

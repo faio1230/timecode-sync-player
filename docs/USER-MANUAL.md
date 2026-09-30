@@ -46,10 +46,11 @@ ffmpeg -i input.mov -c:v libx264 -g 120 -keyint_min 60 -sc_threshold 0 out.mp4
 ffmpeg -i input.mov -c:v libx264 -g 60 -keyint_min 30 -sc_threshold 0 out.mp4
 ```
 
-書き出した素材を確認するスクリプトを同梱しています（`ffprobe` があれば動きます）:
+書き出した素材を確認するスクリプトを同梱しています（`ffprobe` と PowerShell 7 の `pwsh` があれば動きます。
+`pwsh` が無ければ `winget install Microsoft.PowerShell`。Windows PowerShell 5.1 の `powershell` では `#requires` で止まります）:
 
 ```
-powershell -File scripts\inspect-gop.ps1 -Path D:\media
+pwsh -File scripts\inspect-gop.ps1 -Path D:\media
 ```
 
 ### 1-2. コーデック
