@@ -44,6 +44,9 @@ internal sealed class GstBackendState : IDisposable
 
     public string LastError { get; private set; } = string.Empty;
 
+    /// <summary>v0.6.0: 最後に shim へ渡した proResGpu（設定が失敗しても渡した値）。プレイヤー作成の前は null。</summary>
+    public ProResGpuMode? AppliedProResGpu { get; private set; }
+
     /// <summary>pause プロパティの最新値ミラー（loadfile の初期状態に使う）。</summary>
     public volatile bool IsPaused = true;
 
@@ -76,6 +79,7 @@ internal sealed class GstBackendState : IDisposable
             else
             {
                 ApplyDecodeMode(_player);
+                ApplyProResGpu(_player);
                 Log.Information("GstBackendState: プレイヤー生成 sender='{Sender}'", SenderName);
                 if (_renderCallback is not null)
                 {
@@ -105,6 +109,33 @@ internal sealed class GstBackendState : IDisposable
         else
             Log.Error("GstBackendState: decodeMode=software を shim に設定できませんでした rc={Rc}", rc);
     }
+
+    /// <summary>
+    /// v0.6.0: settings.json の proResGpu を shim に伝える。decodeMode と違い、既定 auto でも必ず呼ぶ
+    /// （shim のログの source=setting で、設定が届いたことを確かめるため）。player 生成直後・最初の
+    /// load 前に 1 回。失敗は警告だけで起動は止めない（shim は既定の auto のまま動く）。
+    /// </summary>
+    private void ApplyProResGpu(IntPtr player)
+    {
+        ProResGpuMode mode = ProResGpuPolicy.Resolve(
+            _settingsManager?.Current.ProResGpu,
+            value => Log.Warning("proResGpu の未知の値 '{Value}' は auto として扱います", value));
+        string name = ProResGpuPolicy.Describe(mode);
+
+        int rc = _native.SetProResGpu(player, ToNative(mode));
+        AppliedProResGpu = mode;
+        if (rc == 0)
+            Log.Information("GstBackendState: proResGpu={Mode} を shim に設定しました", name);
+        else
+            Log.Warning("GstBackendState: proResGpu={Mode} を shim に設定できませんでした rc={Rc}", name, rc);
+    }
+
+    internal static int ToNative(ProResGpuMode mode) => mode switch
+    {
+        ProResGpuMode.On => GstNative.ProResGpuOn,
+        ProResGpuMode.Off => GstNative.ProResGpuOff,
+        _ => GstNative.ProResGpuAuto,
+    };
 
     public void DisposePlayer()
     {
