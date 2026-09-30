@@ -1,4 +1,10 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
+> **2026-09-30 19:0x 更新（TSP-Opus、交代）**: **v0.6.0 の候補 1（2026-09-30 18:51、検証機へ送付）**: ProductVersion `0.5.4+e086e2e`（版は据え置き）。zip `9F48BD26…E970` / setup.exe `8AA8B76A…797F` / テストのソース `tcs-v060-e086e2e.tar`（`0EF42231…CEB8`、ランナーの既定の変更を含む）。置き場は `timecode-sync-player-v06` の `artifacts\release`。開発機: 固定の一式（標準 ×2・重い素材・ProRes ×2 が各 24/0、L-1 ×2 合格、ProRes は GPU 142 件・CPU 0・不一致 0）、展開した配布物で ProRes 4K が同梱の GStreamer（Bundled）で `prores-gpu`・`same=1`。検証機への依頼: (1) 実インストール（VC++ の版と再頒布の有無、初回起動）→ (2) 固定の一式（M5 は `prores-gpu`）→ (3) ProRes の追加（PR1〜PR3 を GPU、内蔵 AMD で `prores-cpu`、色の差、PR4 のアルファ）。依頼文は `docs/prompts/2026-09-30-v060-testmachine-request-draft.md` を元に送った。
+>
+> - **後任がすること**: 検証機（TSP-TestMachine）の結果を受ける（Taildrop で結果 JSON と 3 行の所見。開発機の Tailscale の GUI が起動していると `~/Downloads` に保存される）。合否は設計書 8 節と GOAL 1 節の v0.6.0 の行。全条件合格なら RELEASE-PROCEDURE（版を 0.6.0 に、`ApplicationVersionTests`、CHANGELOG の日付、リリースノートの検証の欄、Release の shim、`check-control-chars.ps1` 0、配布物の時刻と SHA）→ main へ `--no-ff`（refs を明示）→ タグ → `gh release create v0.6.0 --prerelease --latest=false`。README の入手先は v0.5.x のまま。事後報告は TSP-Fable へ。続けて v0.6.1（設計書 9 節の束）の設計書
+> - **この下の 17:32 の更新の「一式（進行中）」と「一式の後にすぐ取り込むもの」は済んだ**（一式は 18:24 に終了し全回合格、L-1 は長い素材で回し直して合格、担当 B の `a544160` は取り込み済み）
+> - 担当 A・B はどちらも完了して止まっている
+
 > **2026-09-30 17:32 更新（TSP-Opus、交代の準備）**: **v0.6.0 は段 1〜5b を `v0.6.0` に取り込み済み（`13f2e1d`）。開発機の固定の一式を再走中。候補を作って検証機へ送るところまでが次。** 後任が最初に読むもの: この更新 → `docs/STATUS.md` → `docs/design/v0.6.0-prores-gpu.md`（承認済み。7 節の段、8 節の検証、10b 節の潰す一覧）→ `docs/GOAL-v0.6.md` 3 節の「v0.6.x の運転」。
 >
 > - **開発機の一式（進行中）**: 17:31 に切り離したプロセスで起動（駆動 `docs/prompts/2026-09-30-v060-dev-suite.ps1.txt` の写しを scratchpad から実行）。進捗は `artifacts\analysis-data\v060-dev-suite-progress.txt`（`Get-Content -Tail`）。回: 標準 ×2（24 項目、`LtcScenarioE2ETests&!~L1_&!~L3_&!~U1_`）、重い素材 M1,M3,M4、ProRes M5,M6,M3 と M5,M6,M1（`artifacts\media-heavy` の M5 = ProRes 4K59.94 タグ付き、M6 = 1080p59.94、M7 = 4K タグ無し）、L-1 ×2。1 回目の標準（16:03）は駆動が `-Filter` 無しで L-3 に入り 80 分走ったので止めた（L-3 の途中のログは `v060-13f2e1d-std1\L3-interrupted`、L-3 以外の 9 シナリオは有効）。**開始 10 分後に各回の `scenarios` を見て L-3 が無いことを確かめる**

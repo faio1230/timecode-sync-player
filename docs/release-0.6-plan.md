@@ -138,3 +138,6 @@ v0.5.4 ではアプリ側で門の比較相手を目標と配信 PTS に替え�
 - L-2 の UI オートメーションの時間切れ（2026-09-28 02:38、1 回）との関係: その回の時間切れは、プレイヤーの生成と素材の読み込みの後（`app-started` の後）に起きていて、
   この 1.1 秒の区間とは時刻がずれる。再発したら `ui.heartbeat` の途切れと突き合わせる
 
+## v0.6.0 の候補 1（2026-09-30 18:51、検証機へ送付）
+
+- **v0.6.0 の候補 1（2026-09-30 18:51、検証機へ送付）**: ProductVersion `0.5.4+e086e2e`（版は据え置き）。zip `9F48BD26…E970` / setup.exe `8AA8B76A…797F` / テストのソース `tcs-v060-e086e2e.tar`（`0EF42231…CEB8`、ランナーの既定の変更を含む）。置き場は `timecode-sync-player-v06` の `artifacts\release`。開発機: 固定の一式（標準 ×2・重い素材・ProRes ×2 が各 24/0、L-1 ×2 合格、ProRes は GPU 142 件・CPU 0・不一致 0）、展開した配布物で ProRes 4K が同梱の GStreamer（Bundled）で `prores-gpu`・`same=1`。検証機への依頼: (1) 実インストール（VC++ の版と再頒布の有無、初回起動）→ (2) 固定の一式（M5 は `prores-gpu`）→ (3) ProRes の追加（PR1〜PR3 を GPU、内蔵 AMD で `prores-cpu`、色の差、PR4 のアルファ）。依頼文は `docs/prompts/2026-09-30-v060-testmachine-request-draft.md` を元に送った
