@@ -43,6 +43,13 @@ internal sealed class SyncScenarioHarness
     private readonly Func<long>? _frameEndQpc;
 
     /// <summary>
+    /// v0.6.1 段 A: ltc-frame の記録に層 1 の診断の状態を書くための写し。Controller の LtcFrameProcessor と同じ値
+    /// （受けた後の LastLtcSeconds と LastTimecodeFps）で同じ診断を回す。SyncModeChanged で Controller と同じく消す。
+    /// Controller.ReceiveFrame を直接呼んだフレームは写しに入らない（その後の記録の状態だけがずれうる）。
+    /// </summary>
+    private readonly TimecodeFrameDiagnostics _diagnosticsMirror = new();
+
+    /// <summary>
     /// v0.5.4 C1: ScenarioClock があるときは同じ時計の単調ミリ秒を返す。旧 ctor では従来どおり
     /// Tick100Milliseconds が進める内部値（10_000 起点）を使う。
     /// </summary>
@@ -68,7 +75,7 @@ internal sealed class SyncScenarioHarness
         // v0.6.1 段 A: 台本のフレームも実時間の LTC の口（ReceiveFrame）を通す。台本の状態は捨て、値と fps だけを
         // 渡す（状態は層 1 の診断が値から決める）。時刻は台本の予定時刻（時計はすでにそこまで進んでいる）。
         Ltc = new LtcScript(
-            (frame, at) => DeliverLtcFrame(frame.ResolvedSeconds, frame.ResolvedFps, receivedAtMilliseconds: at),
+            (frame, at) => DeliverLtcFrame(frame.Seconds, frame.Fps, receivedAtMilliseconds: at),
             startMilliseconds: scenarioClock?.MonotonicMilliseconds ?? _monotonicMilliseconds);
         // C2: 仮想時計が進むと偽プレイヤーの位置・着地・ロード・尺の到着も進む。
         if (scenarioClock is not null)
@@ -434,7 +441,11 @@ internal sealed class SyncScenarioHarness
         long frameEnd = _frameEndQpc?.Invoke() ?? 0;
         Controller.ReceiveFrame(
             new LtcFrameReceivedEventArgs(timecode, detectedFps ?? ltcFps, seconds, frameEnd, frameEnd), receivedAt);
-        RecordEvent("ltc-frame", seconds, "Frame", receivedAt);
+        // 層 1 の診断の状態（LtcFrameProcessor と同じく、fps が決まる前は Initial）。
+        TimecodeFrameDiagnosticStatus status = Controller.LastTimecodeFps > 0
+            ? _diagnosticsMirror.Analyze(Controller.LastLtcSeconds, Controller.LastTimecodeFps).Status
+            : TimecodeFrameDiagnosticStatus.Initial;
+        RecordEvent("ltc-frame", seconds, status.ToString(), receivedAt);
     }
 
     /// <summary>v0.6.1 段 A: 時計だけを進める（偽プレイヤー・台本は進むが、UI タイマーの Tick は呼ばない）。</summary>
@@ -572,6 +583,7 @@ internal sealed class SyncScenarioHarness
     {
         Mode = mode;
         Controller.SyncModeChanged();
+        _diagnosticsMirror.Reset();
     }
 
     public void SetSyncEnabled(bool enabled)

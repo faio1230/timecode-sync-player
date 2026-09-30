@@ -2,14 +2,15 @@ namespace TimecodeSyncPlayer.Tests.Integration;
 
 /// <summary>
 /// v0.5.4 C3: LTC 入力の台本（設計: docs/design/v0.5.4-scenario-layer.md §2-3）。
-/// Normal／Duplicate／Jump／無音／Raw を時刻つきで並べ、<see cref="AdvanceTime"/> で
+/// Normal／Duplicate／Jump／無音を時刻つきで並べ、<see cref="AdvanceTime"/> で
 /// 予定時刻に発行する。時刻は台本の内部時計（ミリ秒）で、開始は harness が渡す単調ミリ秒。
+/// v0.6.1 段 A: 台本が並べるのは値と fps だけ（状態は受け手の層 1 の診断が値から決める）。
 /// </summary>
 internal sealed class LtcScript
 {
-    private readonly record struct ScheduledFrame(long AtMilliseconds, LtcFrameProcessingResult Frame);
+    private readonly record struct ScheduledFrame(long AtMilliseconds, LtcScriptFrame Frame);
 
-    private readonly Action<LtcFrameProcessingResult, long> _emit;
+    private readonly Action<LtcScriptFrame, long> _emit;
     private readonly List<ScheduledFrame> _frames = [];
     private readonly double _defaultFps;
     private long _nowMilliseconds;
@@ -17,7 +18,7 @@ internal sealed class LtcScript
     private int _next;
 
     public LtcScript(
-        Action<LtcFrameProcessingResult, long> emit,
+        Action<LtcScriptFrame, long> emit,
         long startMilliseconds = 0,
         double defaultFps = 25.0)
     {
@@ -45,8 +46,7 @@ internal sealed class LtcScript
         long durationMs = (long)duration.TotalMilliseconds;
         for (int i = 0; FrameOffsetMilliseconds(i, stepFps) < durationMs; i++)
         {
-            AddFrame(start + FrameOffsetMilliseconds(i, stepFps), TimecodeFrameDiagnosticStatus.Normal,
-                fromSeconds + i / stepFps, stepFps, shouldApplySync: true);
+            AddFrame(start + FrameOffsetMilliseconds(i, stepFps), fromSeconds + i / stepFps, stepFps);
         }
         return this;
     }
@@ -59,8 +59,7 @@ internal sealed class LtcScript
         long durationMs = (long)duration.TotalMilliseconds;
         for (int i = 0; FrameOffsetMilliseconds(i, stepFps) < durationMs; i++)
         {
-            AddFrame(start + FrameOffsetMilliseconds(i, stepFps), TimecodeFrameDiagnosticStatus.Duplicate,
-                seconds, stepFps, shouldApplySync: false);
+            AddFrame(start + FrameOffsetMilliseconds(i, stepFps), seconds, stepFps);
         }
         return this;
     }
@@ -72,8 +71,7 @@ internal sealed class LtcScript
         long start = Begin(TimeSpan.FromMilliseconds(durationMs), atMilliseconds);
         for (int i = 0; i < count; i++)
         {
-            AddFrame(start + FrameOffsetMilliseconds(i, _defaultFps), TimecodeFrameDiagnosticStatus.Jump,
-                toSeconds, _defaultFps, shouldApplySync: false);
+            AddFrame(start + FrameOffsetMilliseconds(i, _defaultFps), toSeconds, _defaultFps);
         }
         return this;
     }
@@ -82,21 +80,6 @@ internal sealed class LtcScript
     public LtcScript Silence(TimeSpan duration, long? atMilliseconds = null)
     {
         Begin(duration, atMilliseconds);
-        return this;
-    }
-
-    /// <summary>状態と同期適用の可否を明示したフレームを並べる（細かい再現用）。</summary>
-    public LtcScript Raw(
-        TimecodeFrameDiagnosticStatus status, double seconds, int count = 1,
-        bool shouldApplySync = false, long? atMilliseconds = null)
-    {
-        long durationMs = count * FrameOffsetMilliseconds(1, _defaultFps);
-        long start = Begin(TimeSpan.FromMilliseconds(durationMs), atMilliseconds);
-        for (int i = 0; i < count; i++)
-        {
-            AddFrame(start + FrameOffsetMilliseconds(i, _defaultFps), status, seconds, _defaultFps,
-                shouldApplySync);
-        }
         return this;
     }
 
@@ -125,16 +108,12 @@ internal sealed class LtcScript
         return start;
     }
 
-    private void AddFrame(
-        long atMilliseconds, TimecodeFrameDiagnosticStatus status, double seconds, double fps,
-        bool shouldApplySync)
-    {
-        _frames.Add(new ScheduledFrame(atMilliseconds, new LtcFrameProcessingResult(
-            "scenario", $"{seconds:F3} s", seconds, fps, $"fps: {fps:0}",
-            new TimecodeFrameDiagnosticResult(status, 0, 0),
-            ShouldApplySync: shouldApplySync, ShouldLogFps: false)));
-    }
+    private void AddFrame(long atMilliseconds, double seconds, double fps) =>
+        _frames.Add(new ScheduledFrame(atMilliseconds, new LtcScriptFrame(seconds, fps)));
 
     private static long FrameOffsetMilliseconds(int index, double fps) =>
         (long)Math.Round(index * 1000.0 / fps);
 }
+
+/// <summary>v0.6.1 段 A: 台本の 1 フレーム（値と fps だけ。状態は受け手の層 1 の診断が決める）。</summary>
+internal readonly record struct LtcScriptFrame(double Seconds, double Fps);
