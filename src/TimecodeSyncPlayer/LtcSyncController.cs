@@ -1329,6 +1329,11 @@ internal sealed class LtcSyncController
         if (_effects.SeekTo(target))
         {
             _syncService.ReportSeekSent(target, "hold-entry");
+            // v0.6.0 S-4: 目標がクリップの端へ収めた値なら、端へのシークを出した記録をコーディネーターに残す
+            // （同期シークの NoteBoundarySeek と同じ形）。記録が無いと、境界の保持は位置が端の ±2 映像フレーム以内の
+            // 瞬間を読めたときしか入らず、60fps で着地が即時だと窓を過ぎて出口の先へ走り続けた。
+            if (state.Mode == SyncMode.Single && target != heldSeconds)
+                _single().NoteHoldEntryBoundarySeek(target);
             Log.Information(
                 "LTC timecode held (run-through): entry alignment seek issued target={Target:F3} ltc={Ltc:F3} position={Position:F3}",
                 target, heldSeconds, playback);
