@@ -2,6 +2,28 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.5.5 - 2026-10-01
+
+Stable (Latest) bug-fix release of the 0.5 line.
+
+### Fixed
+
+- Single mode with RunThrough: loading or switching tracks while LTC was held outside the clip (the LTC source
+  stopped) could let playback run past the clip's out point and show frames outside the clip. Mostly with 50/60 fps
+  video, and possible at 30 fps or lower when the UI briefly stalls; present in 0.5.4 and earlier. The alignment to the
+  held LTC position seeks to the out point, but did not record that seek for the clip-edge hold, so the hold only
+  engaged if the position was read within 2 frames of the out point (about 33 ms at 60 fps). That seek is now recorded,
+  so the next check always holds at the out point.
+
+### Known issues
+
+- Right after the LTC signal is disturbed, position re-alignment seeks can follow one another and stall 4K 60p video
+  for up to about 0.6 s. Same as 0.5.4; fixed in 0.6.1.
+- Once on the test machine, the picture went black for about 1.5 s after a large LTC jump and the backward
+  re-alignment that followed. It did not recur in 4 reruns, and the same sequence played 200+ times without black
+  elsewhere. Same code as 0.5.4; the cause is still being isolated (another window over the test's screen capture is
+  not ruled out). Followed up in 0.6.x.
+
 ## 0.5.4 - 2026-09-30
 
 Stable (Latest) release of the 0.5 line. Fixes the known errors and rebuilds how LTC following decides when to seek.
