@@ -1,4 +1,13 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
+> **2026-09-30 17:32 更新（TSP-Opus、交代の準備）**: **v0.6.0 は段 1〜5b を `v0.6.0` に取り込み済み（`13f2e1d`）。開発機の固定の一式を再走中。候補を作って検証機へ送るところまでが次。** 後任が最初に読むもの: この更新 → `docs/STATUS.md` → `docs/design/v0.6.0-prores-gpu.md`（承認済み。7 節の段、8 節の検証、10b 節の潰す一覧）→ `docs/GOAL-v0.6.md` 3 節の「v0.6.x の運転」。
+>
+> - **開発機の一式（進行中）**: 17:31 に切り離したプロセスで起動（駆動 `docs/prompts/2026-09-30-v060-dev-suite.ps1.txt` の写しを scratchpad から実行）。進捗は `artifacts\analysis-data\v060-dev-suite-progress.txt`（`Get-Content -Tail`）。回: 標準 ×2（24 項目、`LtcScenarioE2ETests&!~L1_&!~L3_&!~U1_`）、重い素材 M1,M3,M4、ProRes M5,M6,M3 と M5,M6,M1（`artifacts\media-heavy` の M5 = ProRes 4K59.94 タグ付き、M6 = 1080p59.94、M7 = 4K タグ無し）、L-1 ×2。1 回目の標準（16:03）は駆動が `-Filter` 無しで L-3 に入り 80 分走ったので止めた（L-3 の途中のログは `v060-13f2e1d-std1\L3-interrupted`、L-3 以外の 9 シナリオは有効）。**開始 10 分後に各回の `scenarios` を見て L-3 が無いことを確かめる**
+> - **合否**: v0.5.4 の開発機の一式（候補 4: 標準 24/0、重い素材 24/0）から落ちた項目なし、`prores` の内訳で ProRes が `prores-gpu`、`adapterMismatch` 0、`commitFreeGbAtStart` ≥ 4、`cDriveFreeGbAtStart` ≥ 20。合格したら候補（版は据え置き `0.5.4+<SHA>`）を RELEASE-PROCEDURE の 1 節で作る（Release の shim を native に置く、`check-control-chars.ps1` が 0）
+> - **検証機への依頼**: 下書きは `docs/prompts/2026-09-30-v060-testmachine-request-draft.md`（実インストール → 一式 → ProRes の追加の回）。**送る前に**: ランナーの既定から L1_/L3_ を外す変更（担当 B に依頼中、段 5b の追加）を取り込み、検証機のランナーにも同じ変更を入れる（TSP-TestMachine にパッチ）。検証機は準備済み: M1〜M7 は v0.5.4 と同じ（M5 はハードリンク）、ProRes のサブフォルダは PR1〜PR4、`TCS_FFMPEG` は 8.0.1、PowerShell 7.6.6
+> - **担当**: 担当 A（`timecode-sync-player-v053`、`agent-a-v060`）は完了して止まっている。担当 B（`timecode-sync-player-v054b`、`agent-b-v060`）はランナーの既定の変更中（**ビルド・試験は禁止**と伝えた。一式が終わってから親が取り込み、非E2E を回す）
+> - **夜間の規則**: 利用者の承認済み（GOAL 3 節「v0.6.x の運転」）。全条件合格なら Pre-release で公開（`--latest=false`）、続けて v0.6.1。方針の外は利用者に（夜間は止めて朝に）
+> - **今回の教訓（メモリにある）**: ランナーは既定で L-3 を含む（2 回目）／裏の実行は 10 分で切れるので進捗はファイルに／文書の Python の書き換えで `\` が制御文字に化ける（8 進・16 進も）／実機を回すツリーでは担当のビルドを止めてから／空振りで `-?` を使わない
+
 
 > **2026-09-30 13:22 更新（TSP-Opus）**: v0.5.4 公開済み、**v0.6.0 設計中**（ブランチ `v0.6.0` を main `45505e1` から、作業ツリー `timecode-sync-player-v06`）。TSP-Fable の指示: 設計書 `docs/design/v0.6.0-prores-gpu.md` → レビュー依頼 → 実装はサブエージェント。実機は親だけが 1 本ずつ
 
