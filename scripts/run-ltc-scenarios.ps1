@@ -233,7 +233,16 @@ Remove-LinkedMediaArtifacts
 # ---- prerequisites ---------------------------------------------------------
 $problems = @()
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $problems += 'dotnet is not on PATH' }
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { $problems += 'ffmpeg is not on PATH' }
+# The ffmpeg make-e2e-media.ps1 will use (TCS_FFMPEG, its default -FfmpegDir, PATH;
+# scripts\TcsFfmpeg.psm1). Its version is the first line of make-e2e-media.log.
+Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
+$ffmpegText = ''
+try {
+    $ffmpegResolved = Resolve-TcsFfmpeg -FfmpegDir (Join-Path $env:ProgramFiles 'ffmpeg\bin')
+    $ffmpegText = $ffmpegResolved.VersionLine + ' (' + $ffmpegResolved.Source + ')'
+} catch {
+    $problems += ('ffmpeg: ' + $_.Exception.Message)
+}
 if ($MaxFrameDeficitSeconds -le 0) { $problems += 'MaxFrameDeficitSeconds must be greater than zero' }
 if ($MaxPositionStallSeconds -le 0) { $problems += 'MaxPositionStallSeconds must be greater than zero' }
 if ($MaxSpoutReceiverGapMilliseconds -le 0) { $problems += 'MaxSpoutReceiverGapMilliseconds must be greater than zero' }
@@ -333,7 +342,7 @@ if ($MediaDir -and (Test-Path -LiteralPath $MediaDir)) {
 }
 
 Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | capture: ' + ($captureCable -join '; ') +
-    '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource)
+    '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource + ' ffmpeg=' + $ffmpegText)
 if ($problems.Count -gt 0) {
     foreach ($p in $problems) { Write-Output ('PREREQ-ERROR ' + $p) }
     Write-Output ('SUMMARY prereq_failed=' + $problems.Count + ' report=' + $ReportDir)
