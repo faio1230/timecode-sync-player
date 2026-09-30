@@ -281,6 +281,7 @@ Preference の「同期補正」で選べます（既定は **Smooth**）。
 - ProRes の素材は、GStreamer のプラグイン gst-prores-d3d11（v0.2.1、同梱）で GPU で復号します。NVIDIA（RTX 級）で検証しました
 - どちらで開いたかは、画面のメタデータ行のデコーダ名で分かります: `V:proresd3d11dec` なら GPU、`V:avdec_prores` なら CPU
 - GPU の復号に失敗したとき（プラグインが読めない、アダプタが合わないなど）は、CPU の復号に切り替えて開きます。**1 回失敗すると、その起動の間は ProRes を CPU で復号します**（GPU の復旧かアプリの再起動で、GPU をまた試します）。理由は `logs\tcs-gst-*.log` の `load.skip` / `load.fail` / `load.attempt` の行に出ます
+- ProRes 4444 / 4444 XQ（アルファ付きを含む）も GPU で復号します。アルファは合成で使わず、不透明で出します（v0.5.x と同じ）
 - 4K の CPU 復号は GPU の約 2.3 倍のメモリを使います（開発機の実測: 1.55 GB 対 0.68 GB）。NVIDIA 以外の GPU では既定で CPU になります
 - `decodeMode=software` のときは CPU の復号が先に試されるので、`proResGpu` が `auto`・`on` でも ProRes は CPU で開きます
 - 壊れたフレームがあっても再生は止まりません（そのフレームは捨てるか、そのまま出して続けます）。`tcs-gst-*.log` に `decode.warning` が 1 行と、件数の `decode.warnings` が出ます
