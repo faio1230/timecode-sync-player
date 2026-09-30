@@ -36,12 +36,6 @@ public sealed class LtcSingleClipEndHoldTests
         }
     }
 
-    private static LtcFrameProcessingResult Processed(double seconds, TimecodeFrameDiagnosticStatus status) =>
-        new("scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
-            new TimecodeFrameDiagnosticResult(status, 0, 0),
-            ShouldApplySync: status is TimecodeFrameDiagnosticStatus.Normal or TimecodeFrameDiagnosticStatus.Initial,
-            ShouldLogFps: false);
-
     [Fact]
     public void OutOfRangeLtc_AtClipOut_HoldsWithoutSeekOrCorrection()
     {
@@ -79,6 +73,8 @@ public sealed class LtcSingleClipEndHoldTests
         h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
         h.Operations.Clear();
 
+        // 範囲内への戻りは Jump とその確認の同値（40ms 後）として届く。
+        h.SupplyLtc(10.0);
         h.SupplyLtc(10.0);
 
         h.Operations.Should().Contain(o => o.Name == "clip-end-release");
@@ -111,7 +107,7 @@ public sealed class LtcSingleClipEndHoldTests
         h.AdvancePlayback(24.94);
 
         h.SupplyLtc(24.9);   // 有効フレーム（進行の時計を開始）
-        h.Controller.ReceiveProcessedFrame(Processed(40.0, TimecodeFrameDiagnosticStatus.Reverse), 10_000);
+        h.SupplyLtc(40.0);   // 範囲外の値 1 枚（未確認の Jump として保留され、適用されない）
         Tick(h, clock, 3);   // 範囲外の非適用フレームのみ → 信号断として一時停止
 
         h.IsPaused.Should().BeTrue();
@@ -140,7 +136,8 @@ public sealed class LtcSingleClipEndHoldTests
         h.Operations.Clear();
 
         clock.Advance(TimeSpan.FromSeconds(1));   // デバウンス窓を明ける
-        h.SupplyHeldLtc(10.0);   // 10 保持 → 解除 → pending に抑止されず 10 へ
+        h.SupplyHeldLtc(10.0);   // 10 保持（Jump とその確認の同値）→ 解除 → pending に抑止されず 10 へ
+        h.SupplyHeldLtc(10.0);
         Tick(h, clock, 3);       // D37-a: 粗い判定のゲート（3 サンプル）が開くまで保留を再送する
 
         h.Operations.Should().Contain(o => o.Name == "clip-end-release");
