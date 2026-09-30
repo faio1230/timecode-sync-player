@@ -1756,7 +1756,7 @@ profile_is_software (int idx)
   return tcs_video_profile_is_software (idx) != 0;
 }
 
-/* v0.5.0: HAP の経路を通すか（既定は無効。全条件に通ってから既定で有効にする）。 */
+/* v0.5.0: HAP の経路を通すか（既定で有効。TCS_HAP=off のときだけ無効）。 */
 static bool
 hap_enabled ()
 {
@@ -2398,7 +2398,7 @@ on_video_pad (TcsPlayer* p, GstPad* pad, GstCaps* caps)
     return;
   if (caps_is_hap (caps)) {
     /* v0.5.0: 圧縮テクスチャのまま受ける経路（hap-gpu）。**CPU デコーダには決して渡さない。**
-     * 既定では無効で、TCS_HAP=on のときだけ通す。 */
+     * 既定で有効で、TCS_HAP=off のときだけ断る（hap_enabled）。 */
     if (!hap_enabled ()) {
       p->rejected = true;
       set_error (p, "video/x-hap requires the reserved compressed-texture branch (refusing decodebin/avdec)");
