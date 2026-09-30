@@ -41,6 +41,13 @@ if ([string]::IsNullOrWhiteSpace($VcRedistUrl)) {
 }
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
+
+# 最初の検査（ビルドの前）: git 管理下の文書とスクリプトに制御文字が無いこと（docs\RELEASE-PROCEDURE-0.4.md の 0 節）。
+& (Join-Path $PSScriptRoot "check-control-chars.ps1")
+if ($LASTEXITCODE -ne 0) {
+    throw "Control characters were found in tracked files (see the lines above; scripts\check-control-chars.ps1)."
+}
+
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path (Join-Path $projectRoot "artifacts") "release"
 }

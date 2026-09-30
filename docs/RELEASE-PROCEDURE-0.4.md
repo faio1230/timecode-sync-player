@@ -17,6 +17,7 @@
 | 4 | SETUP / verification-checklist が現行 | 段 5 後半の統合後に親が通読 |
 | 5 | リリースノート草案 | `docs/release-0.4-plan.md` 3 節と `CHANGELOG.md` 0.4.0 節 |
 | 6 | 非E2E 全件・ロック規則・grep（mpv / CPU 合成 / ローカルパス） | `dotnet test`、`check-shim-lock-rule.py`、`git grep` |
+| 6b | 制御文字 0 件（2026-09-30 追加、v0.6.0 以降）: `*.md`・`*.txt` は制御文字とタブ、`*.ps1`・`*.psm1` はタブ以外の制御文字 | `pwsh -NoProfile -File scripts\check-control-chars.ps1` が `hits=0`・終了コード 0（`git ls-files` の対象。`package-release.ps1` もビルドの前に呼んで止まる） |
 | 7 | バージョン | `csproj` の `Version` が `0.4.0`、起動ログが `v0.4.0` |
 | 8 | 本番と同じ構成での一式（2026-09-28 追加、v0.5.4 以降） | 出力トレース・計測の環境変数を付けずに固定の一式を 1 回。試験の道具が製品の判断を変えていないことの確認（release-0.5-plan.md「試験と本番の差」） |
 
