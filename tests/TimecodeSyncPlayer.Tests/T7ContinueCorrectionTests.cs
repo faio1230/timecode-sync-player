@@ -23,27 +23,53 @@ public class T7ContinueCorrectionTests
 {
     // ── LtcSyncController + シナリオ基盤 ─────────────────────────────
 
-    private static SyncScenarioHarness ArrangeClip2OnTrack(double playbackSeconds)
+    /// <summary>
+    /// v0.6.1 段 A: LTC は実時間どおり 40ms ごとに +1 フレーム送る（同じ値の 2 枚は保持、2.5 フレームを超えて先の値は
+    /// Jump の保留になり、どちらも補正を評価しない）。firstLtc で読み込みに入り、読み込みの間に LTC が
+    /// waitingFrames フレーム進む（着地待ちで評価しない。0 なら即時に着地）。着地（配信 = 読み込みの開始位置）の後、
+    /// 着地を観測したサンプル（B6b 規則 3: 補正しない。残差 = (waitingFrames + 1) フレーム）を送る。次のフレーム
+    /// （最初に補正を評価するフレーム）の LTC は firstLtc + (waitingFrames + 2) フレーム。評価のフレームの残差は、
+    /// 1 フレームの間に物理的に動ける量の中で決める（残差ゲートが弾かない）。
+    /// </summary>
+    private static void LoadAndConsumeLandingSample(SyncScenarioHarness harness, double firstLtc, int waitingFrames)
+    {
+        harness.Playback.LoadDurationSeconds = waitingFrames > 0 ? 0.1 : 0;
+        for (int i = 0; i <= waitingFrames; i++)
+            harness.SupplyLtc(firstLtc + 0.04 * i);               // 読み込み・着地待ち
+        if (waitingFrames > 0)
+            harness.Playback.AdvanceTime(TimeSpan.FromMilliseconds(100));  // 読み込みの着地
+        harness.Playback.LoadDurationSeconds = 0;
+        harness.SupplyLtc(firstLtc + 0.04 * (waitingFrames + 1)); // 着地を観測したサンプル（補正しない）
+    }
+
+    /// <summary>v0.6.1 段 A: 位置を飛ばす LTC（Jump の値と、それを確認する +1 フレーム）。</summary>
+    private static void JumpLtc(SyncScenarioHarness harness, double seconds)
+    {
+        harness.SupplyLtc(seconds);
+        harness.SupplyLtc(seconds + 0.04);
+    }
+
+    private static SyncScenarioHarness ArrangeClip2OnTrack(double firstEvaluatedLtc, int waitingFrames)
     {
         var harness = new SyncScenarioHarness(enableCorrection: true);
         harness.AddTrack("clip1", 0);
         harness.AddTrack("clip2", 12);
         harness.ManualPlay();
-        harness.SupplyLtc(12.0);                                  // clip2 へ切替（素材 0.0 から）
-        harness.AdvancePlayback(playbackSeconds, renderedFrames: 2);  // ロード進捗を満たす
+        LoadAndConsumeLandingSample(harness, firstEvaluatedLtc - 0.04 * (waitingFrames + 2), waitingFrames);  // clip2 へ切替
         return harness;
     }
 
     [Fact]
     public void ContinueClip2_Smooth_ResidualIsMediaPositionMinusPlayback()
     {
-        SyncScenarioHarness harness = ArrangeClip2OnTrack(playbackSeconds: 0.450);
-        harness.SupplyLtc(12.5);                                  // B6b: 着地直後の 1 サンプル（補正しない）
+        // v0.6.1 段 A: LTC の値は 25fps のフレーム境界（12.5 は無い）。12.52 で素材位置 0.520。
+        SyncScenarioHarness harness = ArrangeClip2OnTrack(firstEvaluatedLtc: 12.52, waitingFrames: 0);
         harness.AppliedRates.Clear();
 
-        harness.SupplyLtc(12.5);                                  // 素材位置 0.500
+        harness.AdvancePlayback(0.470, renderedFrames: 2);
+        harness.SupplyLtc(12.52);                                 // 素材位置 0.520
 
-        // 残差は 0.500 - 0.450 = +50ms（12050ms ではない）
+        // 残差は 0.520 - 0.470 = +50ms（12050ms ではない）
         harness.AppliedRates.Should().ContainSingle();
         harness.AppliedRates[0].Should().BeApproximately(1.05, 1e-9);
         harness.CorrectionStatus.Should().Be("");
@@ -52,11 +78,11 @@ public class T7ContinueCorrectionTests
     [Fact]
     public void ContinueClip2_Jump_SeeksToMediaPosition()
     {
-        SyncScenarioHarness harness = ArrangeClip2OnTrack(playbackSeconds: 0.450);
+        SyncScenarioHarness harness = ArrangeClip2OnTrack(firstEvaluatedLtc: 12.6, waitingFrames: 2);
         harness.CorrectionMode = SyncCorrectionMode.Jump;
-        harness.SupplyLtc(12.6);                                  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.Operations.Clear();
 
+        harness.AdvancePlayback(0.450, renderedFrames: 2);
         harness.SupplyLtc(12.6);                                  // 素材 0.600、残差 +150ms（T8 のしきい値 80ms 超）
 
         var seek = harness.Operations.Should().ContainSingle(o => o.Name == "seek").Subject;
@@ -72,24 +98,25 @@ public class T7ContinueCorrectionTests
         harness.AddTrack("clip2", 12);
         harness.ManualPlay();
 
-        harness.SupplyLtc(1.0);                                   // clip1 へ切替（素材 1.0 から）
-        harness.AdvancePlayback(1.1, renderedFrames: 2);
+        LoadAndConsumeLandingSample(harness, 1.0, waitingFrames: 1);  // clip1 へ切替（素材 1.0 から）
 
-        // 残差 +100ms を維持したまま 2 秒以上経過させ、Smooth を smooth-ineffective にする。
-        for (int i = 0; i < 25; i++)
+        // 残差 +100ms を維持したまま 2 秒以上経過させ、Smooth を smooth-ineffective にする
+        // （LTC は 40ms ごとに +1 フレーム、再生も同じだけ進む＝倍率が効かない）。
+        for (int frame = 28; frame < 28 + 60; frame++)            // LTC 1.12 から 2.4 秒
         {
-            clock.Advance(TimeSpan.FromMilliseconds(100));
-            harness.SupplyLtc(2.0);                               // 素材位置 2.0
-            harness.AdvancePlayback(1.9, renderedFrames: 1);      // 残差 +100ms
+            clock.Advance(TimeSpan.FromMilliseconds(40));
+            double ltc = frame / 25.0;
+            harness.AdvancePlayback(ltc - 0.1, renderedFrames: 1); // 残差 +100ms
+            harness.SupplyLtc(ltc);                               // 素材位置 = LTC
         }
         harness.CorrectionStatus.Should().Contain("効かない");
 
-        harness.SupplyLtc(12.0);                                  // clip2 へ切替 → Reset
-        harness.AdvancePlayback(0.45, renderedFrames: 2);
-        harness.SupplyLtc(12.5);                                  // B6b: 着地直後の 1 サンプル（補正しない）
+        harness.SupplyLtc(12.36);                                 // clip2 へ飛ぶ（Jump の値。確認は次のフレーム）
+        LoadAndConsumeLandingSample(harness, 12.40, waitingFrames: 0);  // 確認して clip2 へ切替 → Reset
         harness.AppliedRates.Clear();
 
-        harness.SupplyLtc(12.5);                                  // 素材 0.5、残差 +50ms
+        harness.AdvancePlayback(0.43, renderedFrames: 2);
+        harness.SupplyLtc(12.48);                                 // 素材 0.48、残差 +50ms
 
         harness.AppliedRates.Should().ContainSingle();
         harness.AppliedRates[0].Should().BeApproximately(1.05, 1e-9);
@@ -108,11 +135,13 @@ public class T7ContinueCorrectionTests
         harness.AddTrack("clip2", 12);
         harness.ManualPlay();
 
-        harness.SupplyLtc(12.0 - (offsetMs / 1000.0));            // effective 12.0 で切替
-        harness.AdvancePlayback(0.45, renderedFrames: 2);
-        // v0.5.4 B6b（規則 3）: 着地直後の 1 サンプルは補正しない。trace の外で同じ値を 1 回送って消費する。
-        harness.SupplyLtc(12.5 - (offsetMs / 1000.0));
+        // effective 約 12.44 で切替（送る LTC は 25fps のフレーム境界に丸める）。v0.5.4 B6b（規則 3）: 着地直後の
+        // 1 サンプルは補正しない。trace の外で消費する。評価のフレームの素材位置から 50ms 遅れた位置を配信する。
+        double firstLtc = Math.Round((12.44 - (offsetMs / 1000.0)) * 25.0) / 25.0;
+        LoadAndConsumeLandingSample(harness, firstLtc, waitingFrames: 0);
         harness.AppliedRates.Clear();
+        double mediaSeconds = firstLtc + 0.08 + (offsetMs / 1000.0) - 12.0;
+        harness.AdvancePlayback(mediaSeconds - 0.05, renderedFrames: 2);
 
         double deltaSeconds;
         string dir = Path.Combine(Path.GetTempPath(), "tcs-t7-trace", Guid.NewGuid().ToString("N"));
@@ -123,7 +152,7 @@ public class T7ContinueCorrectionTests
             OutputTrace.Current = trace;
             try
             {
-                harness.SupplyLtc(12.5 - (offsetMs / 1000.0));    // effective 12.5、素材 0.500
+                harness.SupplyLtc(firstLtc + 0.08);               // effective 約 12.52、素材 mediaSeconds
             }
             finally
             {
@@ -176,7 +205,7 @@ public class T7ContinueCorrectionTests
         harness.AdvancePlayback(1.1, renderedFrames: 2);
         harness.AppliedRates.Clear();
 
-        harness.SupplyLtc(6.0);                                   // timeline 6 はギャップ
+        JumpLtc(harness, 6.0);                                    // timeline 6 はギャップ（Jump とその確認）
 
         harness.AppliedRates.Should().BeEmpty();
     }
@@ -189,8 +218,8 @@ public class T7ContinueCorrectionTests
         harness.AddTrack("clip1", 0);
         harness.ManualPlay();
         harness.SupplyLtc(1.0);                                   // clip1 へ切替
-        harness.AdvancePlayback(1.1, renderedFrames: 2);
-        harness.SupplyLtc(1.2);                                   // 残差 +0.1 → 文脈が入る
+        harness.AdvancePlayback(1.0, renderedFrames: 2);
+        harness.SupplyLtc(1.04);                                  // 次のフレーム（残差 +0.04）→ 文脈が入る
         harness.Controller.LastContinueFrame.Should().NotBeNull();
 
         // 信号断 → ポリシーが停止して ShouldSuppressSync=true になる。
@@ -199,7 +228,7 @@ public class T7ContinueCorrectionTests
         harness.Controller.LastContinueFrame.Should().NotBeNull("セットアップ: tick では文脈を捨てない");
         harness.AppliedRates.Clear();
 
-        harness.SupplyLtc(1.6);                                   // 抑止フレーム（RequestSync が走らない）
+        harness.SupplyLtc(1.08);                                  // 再開した LTC の 1 枚目＝抑止フレーム（RequestSync が走らない）
 
         harness.Controller.LastContinueFrame.Should().BeNull(
             "抑止フレームでは前のフレームの素材位置・再生位置を使わない");
@@ -213,13 +242,12 @@ public class T7ContinueCorrectionTests
         harness.AddTrack("clip1", 0);
         harness.AddTrack("clip2", 12);
         harness.ManualPlay();
-        harness.SupplyLtc(1.0);
+        LoadAndConsumeLandingSample(harness, 1.08, waitingFrames: 1);  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.AdvancePlayback(1.1, renderedFrames: 2);
-        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
 
-        harness.SupplyLtc(12.0);                                  // clip2 へ切替
+        JumpLtc(harness, 12.0);                                   // clip2 へ切替（Jump とその確認）
 
         harness.AppliedRates.Should().HaveCount(2);
         harness.AppliedRates[^1].Should().BeApproximately(1.0, 1e-9);
@@ -232,13 +260,12 @@ public class T7ContinueCorrectionTests
         harness.AddTrack("clip1", 0);
         harness.AddTrack("clip2", 8);
         harness.ManualPlay();
-        harness.SupplyLtc(1.0);
+        LoadAndConsumeLandingSample(harness, 1.08, waitingFrames: 1);  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.AdvancePlayback(1.1, renderedFrames: 2);
-        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
 
-        harness.SupplyLtc(6.0);                                   // ギャップ入り
+        JumpLtc(harness, 6.0);                                    // ギャップ入り（Jump とその確認）
 
         harness.AppliedRates.Should().HaveCount(2);
         harness.AppliedRates[^1].Should().BeApproximately(1.0, 1e-9);
@@ -250,16 +277,15 @@ public class T7ContinueCorrectionTests
         var harness = new SyncScenarioHarness(enableCorrection: true);
         harness.AddTrack("clip1", 0);
         harness.ManualPlay();
-        harness.SupplyLtc(1.0);
+        LoadAndConsumeLandingSample(harness, 1.08, waitingFrames: 1);  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.AdvancePlayback(1.1, renderedFrames: 2);
-        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
 
         harness.Controller.PlayPauseToggled();                     // 手動の再生・一時停止/差し替え相当
         harness.AppliedRates[^1].Should().BeApproximately(1.0, 1e-9);
 
-        harness.AdvancePlayback(1.3, renderedFrames: 1);
-        harness.SupplyLtc(1.4);                                   // rate 1.10 に戻す
+        harness.AdvancePlayback(1.14, renderedFrames: 1);
+        harness.SupplyLtc(1.24);                                  // 次のフレーム、残差 +100ms: rate 1.10 に戻す
         harness.AppliedRates[^1].Should().BeApproximately(1.10, 1e-9);
 
         harness.BeginSeekBarInteraction();                        // 手動シーク
@@ -274,9 +300,8 @@ public class T7ContinueCorrectionTests
         var harness = new SyncScenarioHarness(clock, enableCorrection: true);
         harness.AddTrack("clip1", 0);
         harness.ManualPlay();
-        harness.SupplyLtc(1.0);
+        LoadAndConsumeLandingSample(harness, 1.08, waitingFrames: 1);  // B6b: 着地直後の 1 サンプル（補正しない）
         harness.AdvancePlayback(1.1, renderedFrames: 2);
-        harness.SupplyLtc(1.2);                                   // B6b: 着地直後の 1 サンプル（補正しない）
         harness.SupplyLtc(1.2);                                   // rate 1.10
         harness.AppliedRates.Should().ContainSingle();
 
@@ -286,9 +311,9 @@ public class T7ContinueCorrectionTests
         harness.RateAttempts[^1].Should().BeApproximately(1.0, 1e-9);
 
         harness.RateApplySucceeds = true;
-        harness.AdvancePlayback(1.25, renderedFrames: 1);
-        clock.Advance(TimeSpan.FromMilliseconds(100));
-        harness.SupplyLtc(1.3);                                   // 評価の前に 1.0 へ戻す
+        harness.AdvancePlayback(1.19, renderedFrames: 1);
+        clock.Advance(TimeSpan.FromMilliseconds(40));
+        harness.SupplyLtc(1.24);                                  // 次のフレーム、残差 +50ms。評価の前に 1.0 へ戻す
 
         harness.AppliedRates.Should().HaveCount(3);
         harness.AppliedRates[1].Should().BeApproximately(1.0, 1e-9);

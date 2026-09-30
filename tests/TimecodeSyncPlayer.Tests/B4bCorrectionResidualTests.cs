@@ -44,10 +44,11 @@ public class B4bCorrectionResidualTests
         h.AddTrack("track", 0, duration: 5);
         h.ChangeMode(SyncMode.Single);
         h.ManualPlay();
-        h.AdvancePlayback(1.00, renderedFrames: 2);   // 配信 1.00（25fps。1 フレーム = 40ms）
+        h.AdvancePlayback(1.01, renderedFrames: 2);   // 配信 1.01（25fps。1 フレーム = 40ms）
         h.AppliedRates.Clear();
 
-        h.SupplyLtc(1.03);                            // 差 +30ms < 1 映像フレーム
+        // v0.6.1 段 A: LTC の値は 25fps のフレーム境界に乗る（1.03 は送れない）。1 フレーム未満の差は配信の側で作る。
+        h.SupplyLtc(1.04);                            // 差 +30ms < 1 映像フレーム
 
         h.AppliedRates.Should().BeEmpty("1 映像フレーム未満の差では Smooth を動かさない");
     }
@@ -60,14 +61,28 @@ public class B4bCorrectionResidualTests
         h.AddTrack("track", 0, duration: 5);
         h.ChangeMode(SyncMode.Single);
         h.ManualPlay();
-        h.AdvancePlayback(1.00, renderedFrames: 2);
+        h.AdvancePlayback(1.01, renderedFrames: 2);
         h.AppliedRates.Clear();
 
-        h.SupplyLtc(1.03);                            // 1 映像フレーム未満: 動かない
-        clock.Advance(TimeSpan.FromMilliseconds(300));// 残差ゲートの窓（250ms）を空ける
-        h.SupplyLtc(1.06);                            // +60ms > 1 映像フレーム: 補正する
+        // v0.6.1 段 A: LTC は実時間どおり 40ms ごとに +1 フレーム（値は 25fps のフレーム境界）。配信も同じだけ進め、
+        // 差は配信の側で作る。残差ゲートは直近 250ms（7 標本）の中央値なので、+60ms の標本が過半（4 つ目）に
+        // なった時点で、中央値が +60ms になって初めて補正する。
+        int frame = 26;                               // 1.04 s
+        for (int i = 0; i < 8; i++, frame++)          // 1 映像フレーム未満（+30ms）: 動かない
+            SupplyFrame(h, clock, frame, lagSeconds: 0.03);
+        for (int i = 0; i < 4; i++, frame++)          // +60ms > 1 映像フレーム: 補正する
+            SupplyFrame(h, clock, frame, lagSeconds: 0.06);
 
         h.AppliedRates.Should().ContainSingle().Which.Should().BeApproximately(1.06, 1e-9);
+    }
+
+    /// <summary>v0.6.1 段 A: 40ms 進めて、配信を LTC より lagSeconds 遅れた位置に置き、LTC の 1 フレームを送る。</summary>
+    private static void SupplyFrame(SyncScenarioHarness h, ManualTimeProvider clock, int frame, double lagSeconds)
+    {
+        clock.Advance(TimeSpan.FromMilliseconds(40));
+        double ltc = frame / 25.0;
+        h.AdvancePlayback(ltc - lagSeconds);
+        h.SupplyLtc(ltc);
     }
 
     private static Func<long> QpcFrom(ManualTimeProvider clock)
