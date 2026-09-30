@@ -593,6 +593,44 @@ public class GapFreezeHandlerTests
     }
 
     [Fact]
+    public void NotifyFrameArrived_WithPosition_StoresTheDeliveredFramePosition()
+    {
+        // C-4: 確定の門は照会値ではなく、ここで受け入れたフレームの PTS で窓を見る。
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333333334, "test.mp4");
+
+        handler.NotifyFrameArrived(19.983333333333334);
+
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+        handler.FrameSeenPositionSeconds.Should().BeApproximately(19.983333333333334, 1e-9);
+    }
+
+    [Fact]
+    public void NotifyFrameArrived_WithoutPosition_LeavesThePositionUnknown()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333333334, "test.mp4");
+
+        handler.NotifyFrameArrived();
+
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+        handler.FrameSeenPositionSeconds.Should().BeNull();
+    }
+
+    [Fact]
+    public void EnterFreezeCapture_ClearsTheStoredFramePosition()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.NotifyFrameArrived(42.5);
+
+        handler.EnterFreezeCapture(Guid.NewGuid(), 43.5, "test.mp4");
+
+        handler.FrameSeenPositionSeconds.Should().BeNull();
+        handler.FrameSeenSinceCapture.Should().BeFalse();
+    }
+
+    [Fact]
     public void TryBeginSeekRetry_IsBoundedAndRearmsFrameWait()
     {
         // D21-b (b): 目標位置でないフレームが届いたら再シークし、再びフレーム到着を待つ。
@@ -624,6 +662,54 @@ public class GapFreezeHandlerTests
 
         handler.SeekRetryCount.Should().Be(0);
         handler.CanRetrySeek.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryBeginSeekRetryForEnded_WhileEnteringWithoutFrame_StartsOneRetry()
+    {
+        // K3: EOS と重なった最終フレームのシークを、既存の再シークで取り直す。
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+
+        handler.TryBeginSeekRetryForEnded().Should().BeTrue();
+        handler.SeekRetryCount.Should().Be(1);
+        handler.FrameSeenSinceCapture.Should().BeFalse("再びフレーム到着を待つ");
+    }
+
+    [Fact]
+    public void TryBeginSeekRetryForEnded_AfterFrameArrived_DoesNotRestartTheWait()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.NotifyFrameArrived();
+
+        handler.TryBeginSeekRetryForEnded().Should().BeFalse("確定待ちのフレームを EOS で捨てない");
+        handler.SeekRetryCount.Should().Be(0);
+        handler.FrameSeenSinceCapture.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryBeginSeekRetryForEnded_OutsideCapture_DoesNothing()
+    {
+        var handler = new GapFreezeHandler();
+        handler.TryBeginSeekRetryForEnded().Should().BeFalse("捕獲中でなければ再シークしない");
+
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+        handler.ForceFreezeComplete();
+        handler.TryBeginSeekRetryForEnded().Should().BeFalse("打ち切り後は遅延確定に任せる");
+        handler.SeekRetryCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void TryBeginSeekRetryForEnded_IsBounded()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 42.5, "test.mp4");
+
+        handler.TryBeginSeekRetryForEnded().Should().BeTrue();
+        handler.TryBeginSeekRetryForEnded().Should().BeTrue();
+        handler.TryBeginSeekRetryForEnded().Should().BeFalse();
+        handler.SeekRetryCount.Should().Be(GapFreezeHandler.MaxSeekRetries);
     }
 
     private static PlaylistTrack MakeTrack(Guid id, double durationSeconds, double? fps = 24.0, double? mediaOutSeconds = null)
@@ -951,5 +1037,91 @@ public class GapFreezeHandlerTests
 
         action.Type.Should().Be(GapEnterActionType.UseCachedFrame);
         action.TrackId.Should().Be(nextTrackId);
+    }
+
+    // K3 f4-14: 合成層が Freeze の保存で比べる目標（照会位置ではない）。
+    [Fact]
+    public void OutputFreezeTarget_WhileCapturing_IsThePendingTarget()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333, "clip.mp4");
+
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+        handler.CurrentState = GapState.WaitingForFrameStep;
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_AfterConfirm_IsTheConfirmedTarget()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333, "clip.mp4");
+
+        handler.OnFreezeComplete(null);
+
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_AfterTimeout_IsTheLateConfirmTarget()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333, "clip.mp4");
+
+        handler.ForceFreezeComplete();
+
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_ForcedWithoutCapture_IsNull()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.ForceFreezeComplete();
+
+        handler.OutputFreezeTargetSeconds.Should().BeNull("目標が無いときは合成層が照会位置で比べる");
+    }
+
+    // D21-b (a) の現在の絵をそのまま確定する進入はシークしない。合成層は今どおり照会位置で比べる
+    // （目標と比べると、25fps で表示中の絵が目標の 2 フレーム手前のとき 0.05 を超えて保存されなくなる）。
+    [Fact]
+    public void OutputFreezeTarget_CurrentFramePath_KeepsQueriedPositionThroughConfirm()
+    {
+        var handler = new GapFreezeHandler();
+
+        handler.EnterFreezeCaptureWithCurrentFrame(Guid.NewGuid(), 19.96, "clip.mp4");
+        handler.OutputFreezeTargetSeconds.Should().BeNull("捕捉中");
+        handler.OnFreezeComplete(null);
+        handler.OutputFreezeTargetSeconds.Should().BeNull("確定後も同じ進入の間は照会位置");
+
+        // 次にシークする進入では目標で比べる。
+        handler.EnterFreezeCapture(Guid.NewGuid(), 19.983333333, "clip.mp4");
+        handler.OutputFreezeTargetSeconds.Should().Be(19.983333333);
+    }
+
+    [Fact]
+    public void OutputFreezeTarget_OutsideFreeze_IsNull()
+    {
+        var handler = new GapFreezeHandler();
+
+        foreach (GapState state in new[] { GapState.Inactive, GapState.BlackFrameActive, GapState.ForceBlack })
+        {
+            handler.CurrentState = state;
+            handler.OutputFreezeTargetSeconds.Should().BeNull(state.ToString());
+        }
+    }
+
+    // K3 f4-14（Fable）: 遅延確定の窓も 2 フレームちょうどを弾かない。
+    [Fact]
+    public void IsLateConfirmFrame_AcceptsExactlyTwoFramesOnTheNanosecondGrid()
+    {
+        var handler = new GapFreezeHandler();
+        handler.EnterFreezeCapture(Guid.NewGuid(), 16.683333333, "clip.mp4");
+        handler.ForceFreezeComplete();
+
+        handler.IsLateConfirmFrame(16.716666667, 60).Should().BeTrue();
+        handler.IsLateConfirmFrame(16.733333333, 60).Should().BeFalse("3 フレームは窓の外");
     }
 }

@@ -1,0 +1,21 @@
+# 公開リポジトリにローカルの絶対パス（利用者名入り）や開発機の名前を入れない（2026-09-26、2 回目の履歴の書き換えの後に追加）。
+# 禁止語は個別の名前を書かず、形で検出する（ここに実名を書くと、それ自体が漏れになる）。
+# 文書では C:\Users\<user>、<repo>、<test-machine> などの伏せ字を使う。
+name: no-local-paths
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ローカルの絶対パスと開発機の名前が無いこと
+        run: |
+          pattern='[A-Za-z]:[\x5c/]+Users[\x5c/]+(?!<user>|Public[\x5c/])[^\x5c/<>\s"'"'"'`*]+|(?i:DESKTOP-[A-Z0-9]{7})\b'
+          if git grep -n -I -P "$pattern" -- . ':!.github/workflows/no-local-paths.yml'; then
+            echo "::error::ローカルの絶対パスか開発機の名前が含まれています。C:\\Users\\<user> などの伏せ字に置き換えてください。"
+            exit 1
+          fi

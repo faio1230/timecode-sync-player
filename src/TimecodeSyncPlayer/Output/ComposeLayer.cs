@@ -59,10 +59,6 @@ internal readonly record struct LayerImage(
 /// </summary>
 internal sealed class ComposeLayer : IDisposable
 {
-    // Freeze 保存を許す目標位置との差（秒）。D21-b のフレーム到着判定（±2 フレーム）と
-    // 同じ意図で、25〜60fps の 1〜3 フレームに収まる値にする。
-    private const double FreezeTargetToleranceSeconds = 0.05;
-
     private readonly GpuDevice gpu;
     private readonly ShaderPipeline shaders;
     private CanvasSettings canvas;
@@ -129,25 +125,37 @@ internal sealed class ComposeLayer : IDisposable
     /// Held にする（D26）。戻り値は渡された acquired を Held として保持したか（常に false）。
     /// </summary>
     public bool Compose(Surface target, OutputGapMode gap, ClipPlacement clip, bool testCardEnabled, ImageStamp cardStamp, long origin,
-        LayerImage? acquired, double? acquirePositionSeconds = null, double? freezeTargetSeconds = null)
+        LayerImage? acquired, double? acquirePositionSeconds = null, double? freezeTargetSeconds = null,
+        double freezeFps = 0)
     {
         // D26/D26-b: Freeze として保存するのは「目標位置（現在の再生位置＝目標最終位置）に一致した
         // ソース画像」だけ。確定 tick（GapFreeze）では同じリースが続いて新しい画像が渡らないため、
         // 進入中に取得した画像を追跡しておき、それを使う。所有コピー（直前キャンバス）やジャンプ前の
         // フレームは凍結しない。目標フレームが届くまで frozen は null のまま、表示は Policy が Held を選ぶ。
+        // D21-b と同じ ±2 フレームの窓（GapFreezeFrameWindow）。fps 不明は 30fps として扱う。
+        double frameSeconds = GapFreezeFrameWindow.FrameSeconds(freezeFps);
         if (acquired != null)
-            TrackSourceFrame(acquired.Value, clip, acquirePositionSeconds, freezeTargetSeconds);
+            TrackSourceFrame(acquired.Value, clip, acquirePositionSeconds, freezeTargetSeconds, frameSeconds);
         if (gap == OutputGapMode.GapFreeze && frozen == null)
         {
             if (acquired != null && acquirePositionSeconds.HasValue &&
-                MatchesFreezeTarget(acquirePositionSeconds.Value, freezeTargetSeconds))
+                MatchesFreezeTarget(acquirePositionSeconds.Value, freezeTargetSeconds, frameSeconds))
             {
                 SaveFreeze(acquired.Value, clip);
             }
             else if (sourceFrame is { } tracked && sourceFramePositionKnown &&
-                     MatchesFreezeTarget(sourceFramePosition, freezeTargetSeconds))
+                     MatchesFreezeTarget(sourceFramePosition, freezeTargetSeconds, frameSeconds))
             {
                 SaveFreeze(tracked, sourceFrameClip);
+            }
+            else
+            {
+                // K3 f4-14: 保存しなかった tick の証拠（挙動は変えない。同じ値の繰り返しは記録側がまとめる）。
+                GapCaptureHandoffLog.Record("layer.freeze", "Freeze not saved",
+                    "tracked=" + FormatSeconds(sourceFrame.HasValue && sourceFramePositionKnown ? sourceFramePosition : null) +
+                    " acquired=" + FormatSeconds(acquired != null ? acquirePositionSeconds : null) +
+                    " target=" + FormatSeconds(freezeTargetSeconds) +
+                    " tol=" + FormatSeconds(GapFreezeFrameWindow.Frames * frameSeconds));
             }
         }
 
@@ -212,20 +220,26 @@ internal sealed class ComposeLayer : IDisposable
         shaders.PlaceView(heldCanvas!.View, heldCanvasWidth, heldCanvasHeight, target.Target!, canvas.Width, canvas.Height, placement);
     }
 
+    private static string FormatSeconds(double? seconds) =>
+        seconds is double value && double.IsFinite(value)
+            ? value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)
+            : "-";
+
     /// <summary>取得画像の位置が Freeze 目標（目標最終フレームの位置）に一致するか。</summary>
-    private static bool MatchesFreezeTarget(double positionSeconds, double? freezeTargetSeconds) =>
+    private static bool MatchesFreezeTarget(double positionSeconds, double? freezeTargetSeconds, double frameSeconds) =>
         freezeTargetSeconds.HasValue &&
-        Math.Abs(positionSeconds - freezeTargetSeconds.Value) <= FreezeTargetToleranceSeconds;
+        GapFreezeFrameWindow.Contains(positionSeconds, freezeTargetSeconds.Value, frameSeconds);
 
     /// <summary>
     /// Freeze 候補のソース画像を位置付きで更新する。目標位置に一致している追跡画像を、
     /// 目標外のフレーム（遅れて届いた別位置）で上書きしない。
     /// </summary>
-    private void TrackSourceFrame(LayerImage image, ClipPlacement clip, double? positionSeconds, double? freezeTargetSeconds)
+    private void TrackSourceFrame(LayerImage image, ClipPlacement clip, double? positionSeconds, double? freezeTargetSeconds,
+        double frameSeconds)
     {
-        bool acquiredMatches = positionSeconds.HasValue && MatchesFreezeTarget(positionSeconds.Value, freezeTargetSeconds);
+        bool acquiredMatches = positionSeconds.HasValue && MatchesFreezeTarget(positionSeconds.Value, freezeTargetSeconds, frameSeconds);
         bool trackedMatches = sourceFrame.HasValue && sourceFramePositionKnown &&
-                              MatchesFreezeTarget(sourceFramePosition, freezeTargetSeconds);
+                              MatchesFreezeTarget(sourceFramePosition, freezeTargetSeconds, frameSeconds);
         if (!acquiredMatches && trackedMatches) return;
         sourceFrame = image;
         sourceFrameClip = clip;

@@ -7,8 +7,25 @@ internal sealed class PlaybackControlState
 
     public bool IsPaused { get; private set; } = true;
 
-    public PlaybackPauseChange TogglePlayPause() =>
-        SetPaused(!IsPaused);
+    /// <summary>
+    /// v0.5.4 K5（§6 の 15）: 利用者が自分の操作（再生ボタン）で止めている。ほかの持ち主の
+    /// 一時停止・再開では変わらず、利用者が再開するか、読み込み・停止で下ろす。
+    /// </summary>
+    public bool UserPauseOwned { get; private set; }
+
+    public PlaybackPauseChange TogglePlayPause()
+    {
+        PlaybackPauseChange change = SetPaused(!IsPaused);
+        // v0.5.4 K5（§6 の 15）: 利用者の操作の結果だけを「利用者が止めている」とする。
+        UserPauseOwned = change.IsPaused;
+        return change;
+    }
+
+    /// <summary>
+    /// v0.5.4 K5（§6 の 15）: 利用者以外の理由の読み込み・停止で、利用者の一時停止の主張を下ろす
+    /// （新しいファイルは止めるかどうかをロードが決める。古い主張を残さない）。
+    /// </summary>
+    public void ClearUserPauseOwned() => UserPauseOwned = false;
 
     public PlaybackPauseChange SetPaused(bool paused)
     {

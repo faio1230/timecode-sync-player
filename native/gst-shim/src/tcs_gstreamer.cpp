@@ -70,7 +70,14 @@
 static void
 log_sink_write (const char* line)
 {
-  fputs (line, stderr);
+  SYSTEMTIME st;
+  GetLocalTime (&st);
+  char stamped[2112];
+  snprintf (stamped, sizeof (stamped), "%04d-%02d-%02d %02d:%02d:%02d.%03d %s",
+      (int) st.wYear, (int) st.wMonth, (int) st.wDay,
+      (int) st.wHour, (int) st.wMinute, (int) st.wSecond,
+      (int) st.wMilliseconds, line);
+  fputs (stamped, stderr);
   static std::mutex log_file_mutex;
   static FILE* log_file = nullptr;
   static bool log_file_tried = false;
@@ -83,7 +90,7 @@ log_sink_write (const char* line)
       log_file = fopen (path, "a");
   }
   if (log_file) {
-    fputs (line, log_file);
+    fputs (stamped, log_file);
     fflush (log_file);
   }
 }
@@ -2689,12 +2696,24 @@ bus_loop (TcsPlayer* p)
 
 /* ---------------- pipeline lifecycle ---------------- */
 
+/* v0.5.4 (shutdown diag): when `diag` is set (destroy only), log each step
+ * that can wait (bus thread join, set_state(NULL), unref) with its elapsed
+ * time, so a slow exit shows where it stopped. Logging only; no lock is held
+ * across the LOG calls and the steps themselves are unchanged. */
 static void
-teardown_pipeline (TcsPlayer* p)
+teardown_pipeline (TcsPlayer* p, const char* diag = nullptr)
 {
+  uint64_t step_qpc = diag ? qpc_now () : 0;
   p->bus_running = false;
+  if (diag)
+    LOG ("%s: bus join begin joinable=%d", diag, p->bus_thread.joinable () ? 1 : 0);
   if (p->bus_thread.joinable ())
     p->bus_thread.join ();
+  if (diag) {
+    uint64_t now = qpc_now ();
+    LOG ("%s: bus join end elapsed_ms=%.1f", diag, qpc_diff_ms (step_qpc, now, p->qpc_freq));
+    step_qpc = now;
+  }
 
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
@@ -2728,10 +2747,27 @@ teardown_pipeline (TcsPlayer* p)
   }
   p->gop_reanchor.store (false, std::memory_order_release);
 
+  if (diag) {
+    uint64_t now = qpc_now ();
+    LOG ("%s: frames released elapsed_ms=%.1f", diag, qpc_diff_ms (step_qpc, now, p->qpc_freq));
+    step_qpc = now;
+  }
   if (p->pipeline) {
+    if (diag)
+      LOG ("%s: set_state(NULL) begin", diag);
     gst_element_set_state (p->pipeline, GST_STATE_NULL);
+    if (diag) {
+      uint64_t now = qpc_now ();
+      LOG ("%s: set_state(NULL) end elapsed_ms=%.1f", diag, qpc_diff_ms (step_qpc, now, p->qpc_freq));
+      step_qpc = now;
+    }
     gst_object_unref (p->pipeline);
     p->pipeline = nullptr;
+    if (diag)
+      LOG ("%s: pipeline unref end elapsed_ms=%.1f", diag,
+          qpc_diff_ms (step_qpc, qpc_now (), p->qpc_freq));
+  } else if (diag) {
+    LOG ("%s: no pipeline", diag);
   }
   p->demux = nullptr;
   p->ahead = nullptr;
@@ -3215,6 +3251,8 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     }
 
     t_anchor = qpc_now ();
+    bool start_seek_armed = false;
+    uint64_t start_seek_gen = 0;
     if (start_sec > 0.0) {
       SeekRequest req;
       {
@@ -3222,9 +3260,9 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
         p->eos = false;
         /* same seek semantics (and TS gate) as a manual seek; a load seek
          * always starts at normal rate like before */
-        seek_prepare_locked (p, start_sec, 1.0, &req);
+        start_seek_gen = seek_prepare_locked (p, start_sec, 1.0, &req);
       }
-      seek_send (p, req);
+      start_seek_armed = seek_send (p, req);
     }
     seek_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     t_anchor = qpc_now ();
@@ -3278,6 +3316,17 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
             p->muted ? 0.0 : p->volume_value / 100.0, nullptr);
     } else {
       p->load_priming = false;
+    }
+
+    if (paused && start_seek_armed) {
+      /* S-load: a paused load with a start position primes a frame before the
+       * internal start seek; the seek bumps the generation and clears it.
+       * Without a pump the post-seek target frame is never delivered (appsink
+       * sync=true with a stopped clock), so the owner waits for the new
+       * generation until its capture timeout (F-5, 2026-09-27). Arm the same
+       * pump as a paused seek; the bus thread delivers the frame and restores
+       * PAUSED. */
+      pump_arm (p, start_seek_gen);
     }
 
     gint64 q = 0;
@@ -3434,12 +3483,18 @@ tcs_player_destroy (TcsPlayer* player)
   if (!player)
     return;
   TcsPlayer* p = player;
+  /* v0.5.4 (shutdown diag): entry/exit and each step that can wait. */
+  const uint64_t destroy_qpc = qpc_now ();
+  const int64_t destroy_freq = p->qpc_freq;
+  LOG ("destroy: enter");
   {
     std::lock_guard<std::mutex> g (p->frame_lock);
     p->notify = nullptr;
     p->notify_user = nullptr;
   }
-  teardown_pipeline (p);
+  LOG ("destroy: notify cleared elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
+  teardown_pipeline (p, "destroy");
+  LOG ("destroy: pipeline torn down elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
   /* ring handles belong to the shim (CreateSharedHandle); close them before
    * the device goes away. The compositor's opened references stay alive. */
   if (p->ring_ready)
@@ -3449,10 +3504,13 @@ tcs_player_destroy (TcsPlayer* player)
   destroy_ring (p);
   if (p->hap_gpu) { tcs_hap_gpu_destroy (p->hap_gpu); p->hap_gpu = nullptr; }
   if (p->single_tex) p->single_tex->Release ();
+  LOG ("destroy: ring and hap released elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
   if (p->spout) {
+    LOG ("destroy: spout release begin");
     p->spout->ReleaseSender ();
     p->spout->CloseDirectX11 ();
     delete p->spout;
+    LOG ("destroy: spout release end elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
   }
   if (p->gst_dev) gst_object_unref (p->gst_dev);
   if (p->context4) p->context4->Release ();
@@ -3460,6 +3518,7 @@ tcs_player_destroy (TcsPlayer* player)
   if (p->context) p->context->Release ();
   if (p->device) p->device->Release ();
   delete p;
+  LOG ("destroy: exit elapsed_ms=%.1f", qpc_diff_ms (destroy_qpc, qpc_now (), destroy_freq));
 }
 
 TCS_GST_API int

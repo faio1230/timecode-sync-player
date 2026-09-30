@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -7,6 +8,11 @@ public class SingleModeSyncCoordinatorTests
 {
     private static TimecodeSyncService CreateService() =>
         new(new SyncDecisionEngine(), new TimecodeSyncSeekState());
+
+    /// <summary>秒と同じ照会の結果。サンプルは常に配信済み（着地の観測ができる形）。</summary>
+    private static SyncPositionRead PositionRead(double playbackSeconds) => new(
+        true, playbackSeconds,
+        new PlaybackPositionSample(playbackSeconds, PlaybackPositionBasis.Pipeline, 1, playbackSeconds, 1, 1));
 
     // SyncEnabled + CurrentTrack + not seeking + finite + usable duration + |delta|>tolerance → Seek
     private static SyncPlaybackState SeekYieldingState(double playbackSeconds) => new(
@@ -28,68 +34,58 @@ public class SingleModeSyncCoordinatorTests
         TimecodeFps: 30.0);
 
     [Fact]
-    public void Apply_NativeSeeking_DoesNotSettleSyntheticTarget_AndResumesLatestRequestAfterCompletion()
+    public void Apply_WhileWaitingForLanding_SyntheticTargetDoesNotSettle_AndFarRequestSeeksImmediately()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState(), clock);
         service.ReportSeekSent(10);
-        bool nativeSeeking = true;
-        double playback = 10; // mpv can report the requested position before it finishes seeking.
+        double playback = 10; // ネイティブはシーク完了前に要求位置を返し得る（合成位置）。
         int positionReads = 0;
         var seekTargets = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(service, new SingleModeSyncEffects(
             ReadPosition: () => { positionReads++; return new SyncPositionRead(true, playback); },
             BuildPlaybackState: SeekYieldingState,
-            SeekTo: target => { seekTargets.Add(target); return true; },
-            IsNativeSeeking: () => nativeSeeking));
+            SeekTo: target => { seekTargets.Add(target); return true; }));
 
+        // 照会値が目標と同じでも、配信の世代が追いつくまでは着地にしない（合成位置で確定しない）。
         coordinator.Apply(10).Should().Be(SyncRequestResult.Deferred);
         clock.Advance(TimeSpan.FromSeconds(3));
         coordinator.Apply(10).Should().Be(SyncRequestResult.Deferred);
-        coordinator.Apply(30).Should().Be(SyncRequestResult.Deferred);
-        positionReads.Should().Be(0);
+        positionReads.Should().Be(2);
         service.SeekState.HasPendingSeek.Should().BeTrue();
         service.SeekState.TargetSeconds.Should().Be(10);
         service.SeekState.LastStatus.Should().Be(TimecodeSyncSeekPendingStatus.Pending);
         seekTargets.Should().BeEmpty();
 
-        nativeSeeking = false;
-        playback = 11; // A completed seek outside the old target window can now be evaluated.
-        // D37-b: セトル窓内 → 時間切れ → 位置が安定するまで（3 サンプル）判定しない。
-        coordinator.Apply(30).Should().Be(SyncRequestResult.Deferred);
-        for (int i = 1; i <= 4; i++)
-        {
-            clock.Advance(TimeSpan.FromMilliseconds(100));
-            playback += 0.1;
-            coordinator.Apply(30).Should().Be(SyncRequestResult.Deferred, $"位置の再確認中 {i} サンプル目");
-        }
-        // 再確認が完了した次のフレームで、新しい要求（30）が発行される。
-        clock.Advance(TimeSpan.FromMilliseconds(100));
-        playback += 0.1;
+        playback = 11; // 完了したシークの位置で、古い目標の窓の外を評価できる。
+        // v0.5.4 段 B / 門 8 / §9-2: 遠い要求は着地待ちの目標を置き換え、その場でシークする
+        // （捨てた後に古い位置で判定する隙間を作らない。再確認の 3 サンプルは畳んだ）。
         coordinator.Apply(30).Should().Be(SyncRequestResult.Complete);
         seekTargets.Should().Equal(30);
         service.SeekState.TargetSeconds.Should().Be(30);
     }
 
     [Fact]
-    public void Apply_NativeSeeking_DoesNotMarkFileLoadedFromSyntheticProgress()
+    public void Apply_WhileLoading_DoesNotMarkFileLoadedFromSyntheticProgress()
     {
         var service = CreateService();
         service.BeginFileLoad(10, 0);
-        bool nativeSeeking = true;
         var coordinator = new SingleModeSyncCoordinator(service, new SingleModeSyncEffects(
             ReadPosition: () => new SyncPositionRead(true, 11),
             BuildPlaybackState: SeekYieldingState,
             SeekTo: _ => true,
-            GetTotalRenderedFrames: () => 10,
-            IsNativeSeeking: () => nativeSeeking));
+            GetTotalRenderedFrames: () => 10));
 
         coordinator.Apply(11).Should().Be(SyncRequestResult.Deferred);
-        service.IsLoadingFile.Should().BeTrue();
+        service.IsLoadingFile.Should().BeTrue("合成の進捗ではロード成立にしない");
 
-        nativeSeeking = false;
-        coordinator.Apply(11).Should().Be(SyncRequestResult.Complete);
+        // v0.5.4 段 B3: ロードの成立（旧 門 18）は読み込みの世代の最初のフレームの配信で決まる。
+        service.ObserveLandingState(
+            new PlaybackPositionSample(11, PlaybackPositionBasis.Pipeline, 1, 11, 1, 1),
+            toleranceSeconds: 0.2);
         service.IsLoadingFile.Should().BeFalse();
+
+        coordinator.Apply(11).Should().Be(SyncRequestResult.Complete);
     }
 
     [Fact]
@@ -132,7 +128,7 @@ public class SingleModeSyncCoordinatorTests
     public void Apply_DoesNotSeekButLogs_WhenSuppressed()
     {
         var service = CreateService();
-        // ファイルロード中は全シーク抑止（ShouldSuppressSeek == true）
+        // v0.5.4 段 B3: ロード中は着地待ちが判定とシークを止める（旧 門 17・18 の early return は畳んだ）
         service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
         var seekCalls = new List<double>();
         var coordinator = new SingleModeSyncCoordinator(
@@ -145,15 +141,18 @@ public class SingleModeSyncCoordinatorTests
         coordinator.Apply(ltcSeconds: 100.0);
 
         seekCalls.Should().BeEmpty();
-        service.SeekState.HasPendingSeek.Should().BeFalse();
+        service.SeekState.HasPendingSeek.Should().BeTrue("ロードの着地待ち");
     }
 
     [Fact]
     public void Apply_DoesNotSeek_WhenDebounced()
     {
         var service = CreateService();
-        // ロード完了直後はデバウンス中（IsDebounced == true）かつ抑止は解除される
+        // ロードの着地（配信の世代の最初のフレーム）で解除される。直後はデバウンス中。
         service.BeginFileLoad(startPositionSeconds: 0.0, renderedFrameCount: 0);
+        service.ObserveLandingState(
+            new PlaybackPositionSample(1.0, PlaybackPositionBasis.Pipeline, 1, 1.0, 1, 1),
+            toleranceSeconds: 0.2);
         service.TryMarkFileLoaded(playbackSeconds: 1.0, renderedFrameCount: 10).Should().BeTrue();
         service.ShouldSuppressSeek(playbackSeconds: 0.0, toleranceSeconds: 0.2).Should().BeFalse();
         service.IsDebounced().Should().BeTrue();
@@ -477,7 +476,7 @@ public class SingleModeSyncCoordinatorTests
         var coordinator = new SingleModeSyncCoordinator(
             CreateService(),
             new SingleModeSyncEffects(
-                ReadPosition: () => new SyncPositionRead(true, playback),
+                ReadPosition: () => PositionRead(playback),
                 BuildPlaybackState: ps => ClipState(ps, mediaIn: 10.0, mediaOut: 18.0),
                 SeekTo: t => { seekCalls.Add(t); return true; },
                 SetEndHold: held => holdCalls.Add(held)));
@@ -487,7 +486,7 @@ public class SingleModeSyncCoordinatorTests
         holdCalls.Should().BeEmpty("入口に着く前はホールドしない");
         seekCalls.Should().ContainSingle().Which.Should().Be(10.0);
 
-        playback = 10.0;
+        playback = 10.0;                                 // 入口へのシークの着地（配信の PTS が目標の近く）
         coordinator.Apply(ltcSeconds: 8.2);
         holdCalls.Should().Equal(true);
     }
@@ -497,13 +496,16 @@ public class SingleModeSyncCoordinatorTests
     {
         // キーフレームの都合で入口より手前に着地しても、入口へのシークを出した後なら着いたとみなす
         // （長い GOP の素材でのこれまでの挙動を保つ）。
+        // v0.5.4 段 B3: 着地待ちの間は境界を評価しないので、着地せずの時間切れを過ぎてから評価する。
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState(), clock);
         double playback = 1.0;
         var seekCalls = new List<double>();
         var holdCalls = new List<bool>();
         var coordinator = new SingleModeSyncCoordinator(
-            CreateService(),
+            service,
             new SingleModeSyncEffects(
-                ReadPosition: () => new SyncPositionRead(true, playback),
+                ReadPosition: () => PositionRead(playback),
                 BuildPlaybackState: ps => ClipState(ps, mediaIn: 10.0, mediaOut: 18.0),
                 SeekTo: t => { seekCalls.Add(t); return true; },
                 SetEndHold: held => holdCalls.Add(held)));
@@ -511,7 +513,8 @@ public class SingleModeSyncCoordinatorTests
         coordinator.Apply(ltcSeconds: 8.0);
         seekCalls.Should().Equal(10.0);
 
-        playback = 8.5;                                  // 入口の 1.5 秒手前に着地
+        playback = 8.5;                                  // 入口の 1.5 秒手前に着地（着地の窓の外）
+        clock.Advance(TimecodeSyncSeekState.LandingSafetyTimeout);
         coordinator.Apply(ltcSeconds: 8.2);
 
         holdCalls.Should().Equal(true);
@@ -532,7 +535,7 @@ public class SingleModeSyncCoordinatorTests
         var coordinator = new SingleModeSyncCoordinator(
             service,
             new SingleModeSyncEffects(
-                ReadPosition: () => new SyncPositionRead(true, playback),
+                ReadPosition: () => PositionRead(playback),
                 BuildPlaybackState: ps => ClipState(ps, mediaIn: 182.0, mediaOut: 202.0, duration: 300.0),
                 SeekTo: t => { seekCalls.Add(t); return true; },
                 SetEndHold: held => holdCalls.Add(held)));
@@ -546,8 +549,7 @@ public class SingleModeSyncCoordinatorTests
             }
         }
 
-        service.BeginFileLoad(0.0, 0);                 // B を読み込む
-        service.TryMarkFileLoaded(0.2, 10);
+        service.BeginFileLoad(0.0, 0);                 // B を読み込む（着地の事象で解除される）
         playback = 0.2;
         ApplyRepeatedly(10);
         seekCalls.Should().Equal(182.0);
@@ -556,7 +558,6 @@ public class SingleModeSyncCoordinatorTests
         holdCalls.Should().Equal(true);
 
         service.BeginFileLoad(0.0, 0);                 // C を読み込む（位置 0 付近から再生が始まる）
-        service.TryMarkFileLoaded(0.2, 10);
         playback = 0.2;
         ApplyRepeatedly(10);
 
@@ -598,7 +599,7 @@ public class SingleModeSyncCoordinatorTests
         var coordinator = new SingleModeSyncCoordinator(
             service,
             new SingleModeSyncEffects(
-                ReadPosition: () => new SyncPositionRead(true, playback),
+                ReadPosition: () => PositionRead(playback),
                 BuildPlaybackState: ps => ClipState(ps, mediaIn: 5.0, mediaOut: 25.0),
                 SeekTo: _ => true,
                 SetEndHold: held => holdCalls.Add(held),

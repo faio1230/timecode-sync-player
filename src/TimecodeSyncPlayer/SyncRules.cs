@@ -7,10 +7,8 @@ internal static class SyncRules
         bool isMonitoring,
         bool isPlaybackPaused,
         bool isSeeking,
-        bool hasPendingSeek,
-        bool isPlaybackPositionUsable) =>
-        syncEnabled && isMonitoring && !isPlaybackPaused && !isSeeking &&
-        !hasPendingSeek && isPlaybackPositionUsable;
+        bool isWaitingForLanding) =>
+        syncEnabled && isMonitoring && !isPlaybackPaused && !isSeeking && !isWaitingForLanding;
 
     internal static bool CanApplySync(
         bool isPlayerReady,
@@ -35,7 +33,22 @@ internal static class SyncRules
         bool isSeeking) =>
         isPlayerReady && isMonitoring && syncEnabled && !isSeeking;
 
-    internal static bool ShouldSkipHeldLanding(bool isBoundaryHeld) => isBoundaryHeld;
+    /// <summary>
+    /// v0.5.4 U5: 境界ホールド中の保持着地のスキップ（門 20）を、一時停止の持ち主の集合（D）の
+    /// 判定に畳む。境界ホールドが持ち主の 1 つなら、端で受け持つ（端への明示着地は保留シークを
+    /// 作り、解除時の範囲内 LTC への着地を抑止するため発行しない）。
+    /// </summary>
+    internal static bool ShouldSkipHeldLanding(PauseOwners owners) =>
+        owners.HasFlag(PauseOwners.BoundaryHold);
+
+    /// <summary>
+    /// v0.5.4（規則 4 のマスター停止の判定、設計書 §10-1）: マスターが保持で止まっているか。数える保持の連続
+    /// （<see cref="LtcInputState.HeldRunLength"/>: 連続した同値の Duplicate で、fps の疑わしいものは数えない）が
+    /// minimumHeldFrames 枚以上。relocate の先行量を 0 にするのは 1 枚（信号断の損失も止まっている扱いで、
+    /// それは呼び出し側が足す）、規則 4 の入口（RunThrough の合わせ・停止モードの U8）は 2 枚。
+    /// </summary>
+    internal static bool IsMasterStopped(int heldRunLength, int minimumHeldFrames) =>
+        heldRunLength >= minimumHeldFrames;
 
     internal static bool CanPauseForSignalLoss(
         LtcSignalLossMode mode,
@@ -56,13 +69,16 @@ internal static class SyncRules
     internal static bool ShouldResumeOnBoundaryHoldRelease(PauseOwners otherOwners) =>
         otherOwners == PauseOwners.None;
 
+    /// <summary>v0.5.4 K5（§6 の 15）: 利用者（<see cref="PauseOwners.User"/>）も含める。</summary>
     internal static PauseOwners CollectOtherPauseOwners(
         bool isSignalLossPauseOwned,
         bool isGapPauseOwned,
-        bool isProjectRestorePaused) =>
+        bool isProjectRestorePaused,
+        bool isUserPaused) =>
         (isSignalLossPauseOwned ? PauseOwners.SignalLoss : PauseOwners.None) |
         (isGapPauseOwned ? PauseOwners.Gap : PauseOwners.None) |
-        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None);
+        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None) |
+        (isUserPaused ? PauseOwners.User : PauseOwners.None);
 
     /// <summary>
     /// v0.5.3 段 3i: 信号断のポリシーが自分の一時停止を解いた（ランスルーへ変更）とき、
@@ -73,13 +89,16 @@ internal static class SyncRules
 
     /// <summary>
     /// v0.5.3 段 3i: 信号断のポリシー以外の一時停止の持ち主（境界ホールド・ギャップ・
-    /// プロジェクト復元）を組み立てる。MainWindow とハーネスが同じ関数を使う。
+    /// プロジェクト復元・利用者。v0.5.4 K5 で利用者を足した）を組み立てる。
+    /// MainWindow とハーネスが同じ関数を使う。
     /// </summary>
     internal static PauseOwners CollectPauseOwnersExceptSignalLoss(
         bool isBoundaryHoldPauseOwned,
         bool isGapPauseOwned,
-        bool isProjectRestorePaused) =>
+        bool isProjectRestorePaused,
+        bool isUserPaused) =>
         (isBoundaryHoldPauseOwned ? PauseOwners.BoundaryHold : PauseOwners.None) |
         (isGapPauseOwned ? PauseOwners.Gap : PauseOwners.None) |
-        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None);
+        (isProjectRestorePaused ? PauseOwners.ProjectRestore : PauseOwners.None) |
+        (isUserPaused ? PauseOwners.User : PauseOwners.None);
 }

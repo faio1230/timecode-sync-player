@@ -8,8 +8,7 @@ namespace TimecodeSyncPlayer.Tests;
 /// v0.5.2 段 2g-1/2g-2: §6 の 12（境界ホールドの解除 <c>SetEndHold(false)</c> が、ほかの持ち主が
 /// 止めていても再生を再開する）を固定する。2g-2 で解除は
 /// <see cref="SyncRules.ShouldResumeOnBoundaryHoldRelease"/> を通り、信号断が止めている間は
-/// 再開しない（この 1 件は緑）。利用者が止めている件は、利用者を持ち主として記録する
-/// v0.5.3（§6 の 15）まで Skip のまま。
+/// 再開しない。利用者が止めている件は v0.5.4 K5（§6 の 15）で利用者を持ち主として記録する。
 /// </summary>
 public sealed class BoundaryHoldPauseOwnerTests
 {
@@ -79,6 +78,27 @@ public sealed class BoundaryHoldPauseOwnerTests
     }
 
     [Fact]
+    public void FileLoad_WhileBoundaryHeld_ReleasesWithResumeAndCleanup()
+    {
+        (SyncScenarioHarness h, _) = Arrange();
+        h.AdvancePlayback(25.0);
+
+        h.SupplyLtc(40.0);   // 範囲外 → 終端ホールド（一時停止）
+        h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
+        h.IsPaused.Should().BeTrue("前提: 境界ホールドが止めている");
+        h.Single.LatchSnapshot()["clipBoundaryHeld"].Should().BeTrue("前提: ホールドのラッチ");
+        h.Operations.Clear();
+
+        h.BeginManualFileLoad();   // FileLoad（読み込み）
+
+        h.Single.LatchSnapshot()["clipBoundaryHeld"].Should().BeFalse(
+            "v0.5.4 K5: 読み込みで前のファイルの境界ホールドを持ち越さない（§6 の 1）");
+        h.Operations.Should().Contain(o => o.Name == "clip-end-release",
+            "解除の副作用（再開・片付け）を落とさない（ラッチを消すだけにしない。段 3c の教訓）");
+        h.IsPaused.Should().BeFalse("ほかの持ち主がいなければ解除で再開する");
+    }
+
+    [Fact]
     public void SyncDisabled_WhileBoundaryHeld_ClearsLatchAndKeepsPause()
     {
         (SyncScenarioHarness h, _) = Arrange();
@@ -99,7 +119,7 @@ public sealed class BoundaryHoldPauseOwnerTests
             "解除のできごと（SetEndHold(false) / BoundaryHoldReleased）は出さない");
     }
 
-    [Fact(Skip = "v0.5.3（利用者を一時停止の持ち主として記録してから。§6 の 15）")]
+    [Fact]
     public void BoundaryHoldRelease_WhileUserPaused_DoesNotResumePlayback()
     {
         (SyncScenarioHarness h, _) = Arrange();
@@ -114,6 +134,6 @@ public sealed class BoundaryHoldPauseOwnerTests
         h.Operations.Should().Contain(o => o.Name == "clip-end-release");
 
         h.IsPaused.Should().BeTrue(
-            "利用者の一時停止は、境界ホールドの解除で解除されない（§6 の 12 の期待。利用者はまだ持ち主として記録されていない）");
+            "利用者の一時停止は、境界ホールドの解除で解除されない（§6 の 15。利用者も持ち主として記録する）");
     }
 }

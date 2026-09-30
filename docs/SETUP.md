@@ -203,14 +203,19 @@ GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-Y
 
 ### LTC fps モード（24 / 25 / 29.97 / 30）
 
-LTC のフレームレートを Preference の「LTC fps」で選びます（既定 **Auto**）。Auto は受信した
-フレームから自動判定します。判定結果はログの
-`LTC fps resolved mode=... detectedFps=... resolvedFps=...` で確認できます。
+LTC のフレームレートを Preference の「LTC fps」で選びます（既定 **Auto**）。
+
+**本番では、LTC の発生器と同じ fps に固定（Fixed 24 / 25 / 29.97 / 30）してください。**
+Auto は、つないだ LTC の fps が分からないときに確かめるための補助の設定です。Auto のままだと、
+信号が乱れた瞬間に追従が一時的に遅れることがあります（固定なら乱れて読めたフレームを見分けられます）。
+
+Auto は受信したフレームから自動判定します。判定結果はログの
+`LTC fps resolved mode=... detectedFps=... resolvedFps=...` で確認できます。確かめた値を Fixed に設定して本番に使います。
 
 | モード | 使う場面 |
 |---|---|
-| **Auto**（既定） | 24 / 25 / 30 は自動判定できます |
-| **Fixed 24 / Fixed 25 / Fixed 30** | Auto の判定を固定したいとき |
+| **Fixed 24 / Fixed 25 / Fixed 30** | **本番**。LTC の発生器と同じ値にする |
+| **Auto**（既定） | 準備のときに、つないだ LTC の fps を確かめる（24 / 25 / 30 は自動判定できる） |
 | **Fixed 29.97** | **29.97 ノンドロップの信号を使うときは必須**。LTC のドロップフレームフラグが false のため、Auto では 30 と区別できず 30 として解決されます |
 
 - V3 の LTC fps マトリクス（24 / 25 / 29.97 / 30）は `scripts/run-v3-accuracy.ps1` の

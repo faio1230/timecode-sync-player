@@ -1015,7 +1015,8 @@ internal sealed class OutputEngine : IDisposable
                 gapMode,
                 effective?.Clip ?? new ClipPlacement(null),
                 effective?.TestCardEnabled ?? testCard,
-                stamp, originQpc, acquired, acquiredPositionSeconds, position);
+                stamp, originQpc, acquired, acquiredPositionSeconds, effective?.FreezeComparisonSeconds ?? position,
+                effective?.VideoFps ?? 0);
             if (forceGapBlackOnSwitch && acquired != null)
             {
                 anyFrameAcquired = true;
@@ -1194,11 +1195,14 @@ internal sealed class OutputEngine : IDisposable
         if (gstSource == null) return;
         int shimGeneration = gstSource.Generation;
         if (shimGeneration == lastGstGeneration) return;
+        int previousGeneration = lastGstGeneration;
         lastGstGeneration = shimGeneration;
         lastGstSequence = -1;
         // D25-b: 保留中のリースは旧世代のリング面を参照する。返却してから新しい世代を取得する。
         ReleasePendingFenceLease("gst.generation");
         layer?.ClearSourceFrame();
+        GapCaptureHandoffLog.Record("engine.gen", "shim generation changed",
+            "previous=" + previousGeneration + " current=" + shimGeneration);
         // D5 決定再現: 再生開始後に世代が変わったら、その世代の最初のフレームまで Black を強制する。
         if (forceGapBlackOnSwitch && anyFrameAcquired)
             armedForceGapBlack = true;
@@ -1249,6 +1253,8 @@ internal sealed class OutputEngine : IDisposable
             var pendingStamp = pendingFenceLease.Stamp;
             if ((int)pendingStamp.Generation != generation)
             {
+                GapCaptureHandoffLog.Record("engine.pending", "releasing the held fence lease for a generation change",
+                    "leaseGen=" + pendingStamp.Generation + " shimGen=" + generation + " seq=" + pendingStamp.Sequence);
                 ReleasePendingFenceLease("generation");
             }
             else
@@ -1259,9 +1265,12 @@ internal sealed class OutputEngine : IDisposable
                     pendingFenceSinceQpc, nowPending, Stopwatch.Frequency);
                 if (action == GstFencePendingAction.Timeout)
                 {
-                    long elapsedMs = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
+                    // トレースの Value はマイクロ秒（他の compose.* と同じ）。ログの elapsedMs はミリ秒。
+                    long elapsedMicroseconds = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
                     settings.Trace.Record(new("compose.fencePending", "GPU", nowPending, 0,
-                        pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "timeout", Value: elapsedMs));
+                        pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "timeout", Value: elapsedMicroseconds));
+                    GapCaptureHandoffLog.Record("engine.fence", "ring fence still incomplete; stopping new work",
+                        "seq=" + pendingFenceSequence + " elapsedMs=" + (elapsedMicroseconds / 1000.0).ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
                     // D28 と同じ扱い: 新規処理を止め、資源は完了かデバイス消失まで保持する。
                     Fault($"compose.source: ring fence pending >{GstFencePendingPolicy.LimitSeconds:0}s for seq {pendingFenceSequence}; new work stopped, retaining resources until completion/device loss.");
                     return new(SourceStatus.Ready, pendingFenceLease, null, pendingStamp, HoldLease: true);
@@ -1269,12 +1278,19 @@ internal sealed class OutputEngine : IDisposable
                 if (action == GstFencePendingAction.Hold)
                 {
                     // この tick は Held を描く。リースは保持したまま（返却しない）。
+                    GapCaptureHandoffLog.Record("engine.fence", "holding the lease until the ring fence completes",
+                        "seq=" + pendingFenceSequence);
                     return new(SourceStatus.Ready, pendingFenceLease, null, pendingStamp, HoldLease: true);
                 }
-                long waitedMs = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
+                // トレースの Value はマイクロ秒。ログの waitedMs と保持の計数はミリ秒（以前はマイクロ秒の値を
+                // waitedMs として出していた）。
+                long waitedMicroseconds = (nowPending - pendingFenceSinceQpc) * 1_000_000 / Stopwatch.Frequency;
+                double waitedMs = waitedMicroseconds / 1000.0;
                 settings.Trace.Record(new("compose.fencePending", "GPU", nowPending, 0,
-                    pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "complete", Value: waitedMs));
-                holdCounter.RecordFenceWait(waitedMs / 1000.0);
+                    pendingFenceSequence, pendingStamp.DecodedQpc, Detail: "complete", Value: waitedMicroseconds));
+                GapCaptureHandoffLog.Record("engine.fence", "ring fence complete; drawing the held lease",
+                    "seq=" + pendingFenceSequence + " waitedMs=" + waitedMs.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
+                holdCounter.RecordFenceWait(waitedMs);
                 ISourceImageLease completed = pendingFenceLease;
                 pendingFenceLease = null;
                 pendingFenceSequence = 0;
@@ -1286,7 +1302,12 @@ internal sealed class OutputEngine : IDisposable
         var status = gstSource.TryAcquire(generation, position, out var lease);
         if (status != SourceStatus.Ready || lease == null) return new(status, null, null, default);
         var stamp = lease.Stamp;
-        if (stamp.Sequence == lastGstSequence) return new(status, lease, null, stamp);
+        if (stamp.Sequence == lastGstSequence)
+        {
+            GapCaptureHandoffLog.Record("engine.dup", "frame already drawn; not notifying again",
+                "seq=" + stamp.Sequence + " gen=" + stamp.Generation);
+            return new(status, lease, null, stamp);
+        }
         var gstLease = (GStreamerSource.Lease)lease;
         if (gstLease.Slot >= 0 && layer!.HasHeld && !gstSource.IsRingFenceComplete(stamp.Sequence))
         {

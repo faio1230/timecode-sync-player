@@ -230,9 +230,15 @@ internal sealed class LatchLifetimeScenario
                     NextNormalFrame();
                 break;
             case LifecycleEvent.JumpRecovery:
-                // 保持が理由の損失中に、値が動いた Jump 1 枚で即復帰する（LtcSyncController.cs:527-532）。
-                Frame(LastLtc + 3.0, TimecodeFrameDiagnosticStatus.Jump);
+            {
+                // 保持が理由の損失中に、値が動いた Jump で復帰する（D27-b/c）。
+                // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめるので、+1 フレームで確認する
+                // （確認した時点で ApplyConfirmedJump が復帰させる）。
+                double jumpTo = LastLtc + 3.0;
+                Frame(jumpTo, TimecodeFrameDiagnosticStatus.Jump);
+                Frame(jumpTo + FrameSeconds);
                 break;
+            }
             case LifecycleEvent.NormalFrame:
                 NextNormalFrame();
                 break;

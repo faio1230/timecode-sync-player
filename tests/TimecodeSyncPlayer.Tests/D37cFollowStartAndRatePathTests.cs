@@ -34,11 +34,11 @@ public class D37cFollowStartAndRatePathTests
     }
 
     [Fact]
-    public void FollowStart_SmallDeficitBelowHalfSeekCost_DoesNotSeek()
+    public void FollowStart_SmallDeficitBeyondTolerance_RelocatesOnce()
     {
-        // D37-d: L-1 実機の小さい誤差（0.3 秒 < 0.5 × 既定 1.0 秒）では、着地窓中でも
-        // シークを強制しない（シークは誤差を増やすだけ）。前進ガードは境界帯用に残る
-        // （サービス単体で固定）。
+        // D37-d（v0.5.4 B6b 追補 3 で書き換え）: 旧は「0.3 秒 < 0.5 × 既定 1.0 秒は着地窓中でもシークしない」。
+        // 既定の 1.0 秒は削除し、学習前の閾値は tol（0.24）。0.30〜0.33 秒は relocate するが、
+        // 1 回だけ（着地待ちの間は次を出さない。着地後の残差は予測ロケートの 2 本目で詰める）。
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: QpcFrom(clock));
         h.AddTrack("track", 0, duration: 5);
@@ -52,10 +52,11 @@ public class D37cFollowStartAndRatePathTests
         for (int i = 0; i < 4; i++)
         {
             clock.Advance(TimeSpan.FromMilliseconds(40));
-            h.SupplyLtc(1.30 + (i * 0.01));            // ずれ 0.30〜0.33 秒（既定 1.0 秒の半分以下）
+            h.SupplyLtc(1.30 + (i * 0.01));            // ずれ 0.30〜0.33 秒（学習前の閾値 tol 0.24 を超える）
         }
 
-        h.Operations.Should().NotContain(o => o.Name == "seek");
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle(
+            "学習前は先行量 0 で 1 回 relocate し、着地を待つ間は次のシークを出さない");
     }
 
     [Fact]
@@ -102,9 +103,11 @@ public class D37cFollowStartAndRatePathTests
     }
 
     [Fact]
-    public void SteadyDeficitBelowLearnedSeekCost_WithoutLandingWindow_UsesRateCatchUp()
+    public void SteadyDeficit_WithALearnedSeekCost_RelocatesLikeTheFollowStart()
     {
-        // 上の対照: 同じ 1.8 秒・同じ学習値でも、着地窓がなければ既存ルールどおり速度補正。
+        // 上の対照（v0.5.4 B6b 追補 3 で書き換え）: 旧は「着地窓がなければ 1.8 < 学習値 2.0 は速度補正」。
+        // いまは追従開始の特別扱いが無く、閾値 max(tol, r_max × c) = 0.24 を超える不足は定常でも relocate し、
+        // 目標は追従開始と同じ M(now) + c（経路で分けない）。
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: QpcFrom(clock));
         h.AddTrack("track", 0, duration: 10);
@@ -115,11 +118,13 @@ public class D37cFollowStartAndRatePathTests
         h.Operations.Clear();
         h.RateAttempts.Clear();
 
-        h.SupplyLtc(2.8);                               // 追従開始イベントなし
+        h.SupplyLtc(2.8);                               // 追従開始イベントなし。着地直後の 1 サンプル（B6b）
+        clock.Advance(TimeSpan.FromMilliseconds(40));
+        h.SupplyLtc(2.8);                               // 補正を評価するサンプル
 
         h.SeekState.LearnedSeekDurationSeconds.Should().BeApproximately(2.0, 1e-6);
-        h.Operations.Should().NotContain(o => o.Name == "seek");
-        h.RateAttempts.Should().NotBeEmpty("1.8 < 2.0 のときの既存ルール（速度補正）を変えない");
+        h.Operations.Where(o => o.Name == "seek").Should().ContainSingle()
+            .Which.Value.Should().BeApproximately(4.8, 1e-9, "LTC 2.8 + c 2.0（追従開始と同じ目標）");
     }
 
     // ── 穴 2: 速度補正の入力の前処理 ──────────────────────────────
@@ -168,18 +173,17 @@ public class D37cFollowStartAndRatePathTests
             "跳びを弾いた後の残差は +60ms 前後なので、rate は上下限（±0.10）に張り付かない");
     }
 
-    /// <summary>保留状態を直接動かして、シーク所要の学習値を作る（製品経路は通らない）。</summary>
+    /// <summary>着地の状態を直接動かして、シーク所要の学習値を作る（製品経路は通らない）。</summary>
     private static void LearnSeekDuration(SyncScenarioHarness harness, ManualTimeProvider clock, double seconds)
     {
         harness.SeekState.BeginSeek(1.0, clock.GetUtcNow().UtcDateTime);
         clock.Advance(TimeSpan.FromSeconds(seconds));
-        // 最初の到達（クールダウン中はまだ settle しない）。
-        harness.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
-        clock.Advance(TimeSpan.FromMilliseconds(250));
-        // クールダウン明けの settle で、発行からの実測時間が学習される。
-        harness.SeekState.ShouldSuppressSeek(1.0, 0.24, clock.GetUtcNow().UtcDateTime);
+        // v0.5.4 段 B: 着地は配信の世代と位置の事象で取る（旧 門 6 の窓と cooldown は畳んだ）。
+        harness.SeekState.ObserveLandingSample(
+            new TimecodeSyncPlayer.Contracts.PlaybackPositionSample(
+                1.0, TimecodeSyncPlayer.Contracts.PlaybackPositionBasis.Pipeline, 1, 1.0, 1, 1),
+            0.24, clock.GetUtcNow().UtcDateTime);
         harness.SeekState.LearnedSeekDurationSeconds.Should().BeApproximately(seconds, 1e-6);
-        // settle 後の PostSettleSuppress（500ms）を追い越して、次の判定に影響させない。
         clock.Advance(TimeSpan.FromMilliseconds(600));
     }
 

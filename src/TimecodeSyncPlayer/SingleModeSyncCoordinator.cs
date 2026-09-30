@@ -1,6 +1,5 @@
 using Serilog;
 using TimecodeSyncPlayer.Contracts;
-using TimecodeSyncPlayer.Output;
 
 namespace TimecodeSyncPlayer;
 
@@ -30,41 +29,26 @@ internal sealed class SingleModeSyncCoordinator
 
     public SyncRequestResult Apply(double ltcSeconds)
     {
-        // 0.4.5-A フェーズ 1: shadow は trace 有効時だけ読む（無効時は従来どおり位置を読まない）。
-        bool traceEnabled = OutputTrace.Current.IsEnabled;
-
-        // During a native seek, time-pos can still be the synthetic requested target.
-        // Do not let it settle the pending seek or complete file-load stability checks.
-        if (_effects.IsNativeSeeking?.Invoke() == true)
-        {
-            if (traceEnabled)
-            {
-                SyncPositionRead shadowRead = _effects.ReadPosition();
-                if (shadowRead.Succeeded)
-                {
-                    SyncPlaybackState shadowState = _effects.BuildPlaybackState(shadowRead.PlaybackSeconds);
-                    _syncService.RecordPositionShadow(ltcSeconds, shadowState, shadowRead.Sample, "native-seeking");
-                }
-            }
-            return SyncRequestResult.Deferred;
-        }
-
         SyncPositionRead read = _effects.ReadPosition();
         if (!read.Succeeded) return SyncRequestResult.Deferred;
         double playbackSeconds = read.PlaybackSeconds;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
-        // 位置サンプルは秒と同じ照会の結果。shadow は trace 有効時だけ渡す。
-        PlaybackPositionSample? positionSample = traceEnabled ? read.Sample : null;
-
-        if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
-            !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
-            return SyncRequestResult.Deferred;
+        // 位置サンプルは秒と同じ照会の結果（追加の照会は無い）。v0.5.4 #7: 出力トレースの有無と関係なく
+        // 常に渡し、relocate の粗い判定の誤差を配信 PTS（評価位置）で測る（試験の道具で判断を変えない）。
+        PlaybackPositionSample? positionSample = read.Sample;
+        // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する。
+        // v0.5.4 段 B3: ロードの成立（旧 門 18）も着地の事象で決まるので、観測の後に解除だけ試す。
+        // ロード中の抑止は着地待ち（EvaluateDecision の未信頼）が担う。
+        _syncService.ObserveLandingState(read, state.VideoFps, state.TimecodeFps);
+        if (_effects.GetTotalRenderedFrames != null)
+            _syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames());
 
         // D33: 範囲外の LTC（D29 の clamp 後は clipIn/clipOut に貼り付く）で再生位置が端に
         // 達したら、シークも補正もせず終端ホールド（一時停止＋ラッチ）。LTC が許容分だけ
         // 内側へ戻ったら解除して追従を再開する。
-        if (ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state))
+        // v0.5.4 段 B3: 着地待ちの間は評価しない（シーク中の合成位置を端と誤認しない。門 22）。
+        if (!_syncService.IsWaitingForLanding && ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state))
             return SyncRequestResult.Complete;
 
         SyncDecision decision = _syncService.EvaluateDecision(ltcSeconds, state, positionSample);
@@ -93,12 +77,18 @@ internal sealed class SingleModeSyncCoordinator
         }
 
         if (_syncService.IsDebounced())
+        {
+            // v0.5.4 段 0: シークのデバウンス（門 14）を数える。
+            Log.Debug("sync.gate seek-debounce ltc={Ltc:F3} playback={Playback:F3}", ltcSeconds, playbackSeconds);
             return SyncRequestResult.Deferred;
+        }
 
         bool success = _effects.SeekTo(decision.TargetSeconds);
         if (success)
         {
             _syncService.ReportSeekSent(decision.TargetSeconds);
+            // v0.5.4 段 B2 の計測: 着地から 500ms 以内の同期シーク（旧 門 9 が隠していた量）。
+            _syncService.NotePostLandingSeekIssued(decision.TargetSeconds);
             NoteBoundarySeek(decision.TargetSeconds, state);
         }
         Log.Information(
@@ -115,17 +105,20 @@ internal sealed class SingleModeSyncCoordinator
     /// </summary>
     public bool ApplyClipBoundaryHoldOnly(double ltcSeconds)
     {
-        if (_effects.IsNativeSeeking?.Invoke() == true)
-            return _boundary.IsHeld;
-
         SyncPositionRead read = _effects.ReadPosition();
         if (!read.Succeeded)
             return _boundary.IsHeld;
         double playbackSeconds = read.PlaybackSeconds;
 
         SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
-        if (_syncService.IsLoadingFile && _effects.GetTotalRenderedFrames != null &&
-            !_syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames()))
+        // v0.5.4 段 B1: 着地の状態（新しい判定）は、位置を照会したすべての場所で観測する。
+        // v0.5.4 段 B3: ロードの成立（旧 門 18）も着地の事象で決まるので、観測の後に解除だけ試す。
+        _syncService.ObserveLandingState(read, state.VideoFps, state.TimecodeFps);
+        if (_effects.GetTotalRenderedFrames != null)
+            _syncService.TryMarkFileLoaded(playbackSeconds, _effects.GetTotalRenderedFrames());
+
+        // v0.5.4 段 B3: 着地待ちの間は境界ホールドを評価しない（シーク中の合成位置で端に貼り付かない。門 22）。
+        if (_syncService.IsWaitingForLanding)
             return _boundary.IsHeld;
 
         return ApplyClipBoundaryHold(ltcSeconds, playbackSeconds, state);
@@ -146,7 +139,31 @@ internal sealed class SingleModeSyncCoordinator
             case SyncLifecycleEvent.PlaybackStopped:
                 ClearBoundaryLatches(evt);
                 break;
+            case SyncLifecycleEvent.FileLoad:
+                // v0.5.4 K5（§6 の 1）: 読み込みで前のファイルの境界ホールドを持ち越さない。
+                // ラッチを消すだけにすると解除の副作用（再開・片付け）を落とすため、解除と同じ経路を通す。
+                ReleaseBoundaryHoldOnFileLoad();
+                break;
         }
+    }
+
+    /// <summary>
+    /// v0.5.4 K5（§6 の 1）: 読み込み（FileLoad）での境界ホールドの解除。解除の副作用
+    /// （SetEndHold(false) による再開の判定と、OnBoundaryHoldReleased の片付け）を落とさない。
+    /// </summary>
+    private void ReleaseBoundaryHoldOnFileLoad()
+    {
+        if (!_boundary.IsHeld)
+        {
+            _boundary.ClearSeek();
+            return;
+        }
+
+        _boundary.ClearHeld();
+        _boundary.ClearSeek();
+        _effects.SetEndHold?.Invoke(false);
+        _effects.OnBoundaryHoldReleased?.Invoke();
+        Log.Information("Single mode: clip boundary hold released (file load)");
     }
 
     private void ClearBoundaryLatches(SyncLifecycleEvent evt)
@@ -282,7 +299,6 @@ internal sealed record SingleModeSyncEffects(
     Func<double, SyncPlaybackState> BuildPlaybackState,
     Func<double, bool> SeekTo,
     Func<long>? GetTotalRenderedFrames = null,
-    Func<bool>? IsNativeSeeking = null,
     // D33: 終端ホールドの pause/resume（true = 端で一時停止、false = 解除して再開）。
     Action<bool>? SetEndHold = null,
     // D35-b: 終端ホールドの解除通知。保留シーク状態と保持着地のラッチを解除する。

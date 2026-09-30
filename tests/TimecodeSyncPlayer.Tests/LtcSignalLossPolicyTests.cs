@@ -370,19 +370,37 @@ public class LtcSignalLossPolicyTests
     // ---- D27: 保持（値が進まない LTC） ----
 
     [Fact]
-    public void Evaluate_AfterHeldFrames_ReportsTimecodeHeldReason()
+    public void Evaluate_AfterAHeldFrame_ReportsTimecodeHeldReason()
     {
+        // v0.5.4 B6b（追補 3）: 保持 2 枚は U8 で 250ms を待たずに確定する（Jump の有無を問わない）ので、
+        // 250ms の確定と理由の判定は保持 1 枚で確かめる。
         var policy = CreatePolicy();
         LtcSignalLossContext context = Context();
 
         policy.ObserveValidFrame(Start, context);
-        policy.ObserveHeldFrame(At(100), context);
         policy.ObserveHeldFrame(At(200), context);
         policy.Evaluate(At(249), context).Should().Be(LtcSignalLossAction.None);
 
         policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
         policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
         policy.IsLost.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_TwoHeldFramesWithoutAJump_ConfirmsHeldLossBeforeTheTimeout()
+    {
+        // v0.5.4 B6b（規則 4 の入口を両モードで統一）: 保持（Duplicate）が 2 枚続いたら、Jump の後でなくても
+        // 250ms を待たずに停止モードの損失を確定する（旧は「適用した Jump の後の 2 枚」だけ）。
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(40), context);
+        policy.Evaluate(At(60), context).Should().Be(LtcSignalLossAction.None, "1 枚では確定しない");
+        policy.ObserveHeldFrame(At(80), context);
+
+        policy.Evaluate(At(100), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
     }
 
     [Fact]
@@ -629,6 +647,129 @@ public class LtcSignalLossPolicyTests
         policy.ObserveJumpFrame(At(1000), paused).Should().Be(LtcSignalLossAction.None);
         policy.IsLost.Should().BeTrue();
         policy.IsPauseOwned.Should().BeTrue();
+    }
+
+    // ---- U8: 停止モードの Jump 直後に Duplicate が 2 枚続いたら、250ms を待たずに停止 ----
+
+    [Fact]
+    public void Evaluate_AppliedJumpThenOneHeldFrame_DoesNotConfirmYet()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveAppliedJump(At(40), context);
+        policy.ObserveHeldFrame(At(80), context);
+        policy.Evaluate(At(120), context).Should().Be(LtcSignalLossAction.None,
+            "合わせ直しで Jump の直後に同値が 1 枚挟まる場合があるので、1 枚では即時確定しない");
+
+        // 続けて値が進めば、そもそも損失にならない。
+        policy.ObserveValidFrame(At(160), context);
+        policy.Evaluate(At(180), context).Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Evaluate_AppliedJumpThenTwoHeldFrames_ConfirmsHeldLossBeforeTheTimeout()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveAppliedJump(At(40), context);
+        policy.ObserveHeldFrame(At(80), context);
+        policy.ObserveHeldFrame(At(120), context);
+        policy.Evaluate(At(160), context).Should().Be(LtcSignalLossAction.Pause,
+            "Jump の直後に保持が 2 枚続いたら、無音と保持の区別が付いているので 250ms を待たない");
+
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+        policy.IsLost.Should().BeTrue();
+        policy.IsPauseOwned.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_AppliedJumpThenOneHeldFrame_ThenValidFrame_WaitsAgain()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveAppliedJump(At(40), context);
+        policy.ObserveHeldFrame(At(80), context);
+        policy.ObserveValidFrame(At(120), context);
+        policy.ObserveHeldFrame(At(160), context);
+
+        policy.Evaluate(At(180), context).Should().Be(LtcSignalLossAction.None,
+            "値が進むフレームで Jump 直後の保持は明け、その後の保持は従来どおり待つ");
+        policy.IsLost.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Evaluate_AppliedJumpWithoutHeldFrame_WaitsTheTimeout()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveAppliedJump(At(40), context);
+        policy.Evaluate(At(120), context).Should().Be(LtcSignalLossAction.None,
+            "保持が届いていない（無音）ので、区別は付いていない＝従来どおり待つ");
+
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.SignalLoss);
+    }
+
+    [Fact]
+    public void Evaluate_HeldFrameBeforeTheAppliedJump_DoesNotCount()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveHeldFrame(At(40), context);
+        policy.ObserveAppliedJump(At(80), context);
+        policy.ObserveHeldFrame(At(120), context);
+
+        policy.Evaluate(At(160), context).Should().Be(LtcSignalLossAction.None,
+            "Jump より前の保持は、Jump 後の 2 枚に数えない");
+    }
+
+    [Fact]
+    public void Evaluate_NewAppliedJump_RestartsTheHeldRun()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveAppliedJump(At(40), context);
+        policy.ObserveHeldFrame(At(80), context);
+        policy.ObserveAppliedJump(At(120), context);   // 次の Jump で数え直す
+        policy.ObserveHeldFrame(At(160), context);
+
+        policy.Evaluate(At(200), context).Should().Be(LtcSignalLossAction.None,
+            "新しい Jump の後は保持 1 枚から数え直す");
+
+        policy.ObserveHeldFrame(At(200), context);
+        policy.Evaluate(At(240), context).Should().Be(LtcSignalLossAction.Pause);
+    }
+
+    [Fact]
+    public void Evaluate_AppliedJumpThenTwoHeldFrames_InRunThrough_DoesNotConfirmEarly()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context() with { Mode = LtcSignalLossMode.RunThrough };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveAppliedJump(At(40), context);
+        policy.ObserveHeldFrame(At(80), context);
+        policy.ObserveHeldFrame(At(120), context);
+        policy.Evaluate(At(160), context).Should().Be(LtcSignalLossAction.None,
+            "即時確定は停止モードだけ（ランスルーは従来どおり）");
+        policy.IsLost.Should().BeFalse();
+
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.None);
+        policy.IsLost.Should().BeTrue();
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
     }
 
     private static LtcSignalLossPolicy CreatePolicy(int resumeFrames = 5) =>

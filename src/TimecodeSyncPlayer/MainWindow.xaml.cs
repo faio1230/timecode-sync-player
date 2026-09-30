@@ -215,6 +215,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         OutputBackendState outputBackendState,
         IServiceProvider services)
     {
+        StartUiHeartbeat();
         _ltcMonitor = ltcMonitor;
         _playlist = playlist;
         _syncService = syncService;
@@ -332,11 +333,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GetOtherPauseOwners: () => SyncRules.CollectPauseOwnersExceptSignalLoss(
                     _singleModeSyncCoordinator?.IsBoundaryHeld ?? false,
                     _gapFreezeHandler.IsPauseOwnedByGap,
-                    _projectRestorePauseState.IsPending)),
+                    _projectRestorePauseState.IsPending,
+                    _playbackControl.UserPauseOwned),
+                // v0.5.4 段 B1: UI タイマー・保持の Duplicate からの着地の状態（新しい判定）の観測用。
+                ReadPosition: ReadSyncPosition),
             CreateSingleModeSyncCoordinator, CreateContinueOnTrackCoordinator, CreateGapEnterCoordinator);
-        // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードと着地窓を渡す。
+        // 0.4.5-A フェーズ 1: shadow の「出したとしたら」レートに、実際の補正モードを渡す。
         _syncService.CorrectionModeSource = () => _vm.Sync.SyncCorrectionMode;
-        _syncService.CorrectionLandingActiveSource = _ltcSyncController.IsCorrectionLandingWindowActive;
         var audioState = new AudioControlState(
             settingsManager.Current.IsMuted,
             settingsManager.Current.Volume);
@@ -608,6 +611,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             : SyncPositionRead.Failed;
     }
 
+    /// <summary>
+    /// v0.5.4 段 B1: 描画の tick で着地の状態（新しい判定）を観測する。位置の照会と観測だけを行い、
+    /// 判定は変えない（B1 では新しい状態は判定に使わない）。
+    /// </summary>
+    private void ObserveLandingState()
+    {
+        if (_ltcSyncController == null) return;
+        _syncService.ObserveLandingState(ReadSyncPosition(), _fps, _ltcSyncController.LastTimecodeFps);
+    }
+
     // Gpu backend: ギャップ・カード・世代・位置を GPU worker の mailbox へ渡す（最新1件）。
     private void SubmitOutputState()
     {
@@ -625,7 +638,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _vm.Output.TestCardEnabled,
             _projectCanvasState.Current,
             TimelineOutputState.PlacementFor(_playlist.Current),
-            ReadPlaybackTimePos() ?? 0));
+            ReadPlaybackTimePos() ?? 0,
+            _gapFreezeHandler.OutputFreezeTargetSeconds,
+            _fps));
     }
 
     private static string ResolveOutputSenderName()
@@ -780,7 +795,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 _renderSession.AttachPlayer(_gstBackendState.Player);
                 Log.Information("GPU 復旧: フレーム通知を新しいプレイヤーへつなぎ直した");
                 _outputEngine.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
-                    _gstBackendState.Seeking.NotifyEnded);
+                    HandleGStreamerEnded);
                 ReloadCurrentTrackAfterGpuRecovery(position);
                 Log.Information("GPU 復旧: GStreamer player を再生成し位置 {Position:F3}s へ復帰", position);
             }
@@ -838,7 +853,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             // プレイヤー生成後にエンジンへソースを接続する。
             _outputEngine?.AttachGStreamerSource(_gstBackendState.Player, _gstNativeApi,
-                _gstBackendState.Seeking.NotifyEnded);
+                HandleGStreamerEnded);
             RefreshDisplaySelection(_settingsManager.Current.FullscreenDisplayDeviceName);
         }
         return initialized;
@@ -1073,7 +1088,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     MediaOutSeconds: _playlist.Current?.MediaOut?.TotalSeconds),
                 SeekTo: target => SeekTo(target),
                 GetTotalRenderedFrames: () => _syncGateRenderedFrames.Read(),
-                IsNativeSeeking: IsNativeSeeking,
                 // D33: 範囲外 LTC の終端ホールド。一時停止／解除を UI 状態と一緒に反映する。
                 SetEndHold: ApplyBoundaryHold,
                 // D35-b: ホールド解除時に保留シークと保持着地のラッチを解除する。
@@ -1108,8 +1122,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                     PlaybackSeconds: playbackSeconds,
                     DurationSeconds: _duration,
                     VideoFps: _fps,
-                    TimecodeFps: _ltcSyncController.LastTimecodeFps),
-                IsNativeSeeking: IsNativeSeeking));
+                    TimecodeFps: _ltcSyncController.LastTimecodeFps)));
 
     private GapEnterCoordinator CreateGapEnterCoordinator() =>
         _gapEnterCoordinator ??= new(_gapFreezeHandler, new GapEnterEffects(
@@ -1194,6 +1207,17 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void PlaylistList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
+        // D39 K2: 長さの更新は行を差し替えるため、選択中の行が外れる（SelectedIndex=-1）。
+        // 外れた項目が同じ Id の別インスタンスへ差し替えられたときだけ、同じ Id の行へ戻す。
+        if (PlaylistList.SelectedIndex < 0 &&
+            e.RemovedItems.Count == 1 &&
+            e.RemovedItems[0] is PlaylistTrack removed &&
+            PlaylistSelectionRestore.IndexAfterReplacement(_playlist, removed) is int restoreIndex)
+        {
+            PlaylistList.SelectedIndex = restoreIndex;
+            return;
+        }
+
         _vm.Playlist.SelectedIndex = PlaylistList.SelectedIndex;
         UpdateCurrentTrackLabel();
     }
@@ -1625,7 +1649,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         PauseOwners otherOwners = SyncRules.CollectOtherPauseOwners(
             _ltcSyncController.IsSignalLossPauseOwned,
             _gapFreezeHandler.IsPauseOwnedByGap,
-            _projectRestorePauseState.IsPending);
+            _projectRestorePauseState.IsPending,
+            _playbackControl.UserPauseOwned);
         if (!SyncRules.ShouldResumeOnBoundaryHoldRelease(otherOwners))
         {
             Log.Information(
@@ -1649,7 +1674,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             return;
         }
         if (_playbackApi.Seek(current + seconds).Success)
+        {
+            // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
+            _syncService.NotifyManualSeek(current + seconds);
             _playbackApi.SetPaused(_playbackControl.IsPaused);
+        }
     }
 
     void IPlaybackController.CycleSpeed()
@@ -2005,6 +2034,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         _ltcSyncController.TimelineSeek();
         bool success = SeekTo(e.TargetSeconds);
+        if (success)
+        {
+            // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
+            _syncService.NotifyManualSeek(e.TargetSeconds);
+        }
         Log.Information("Timeline seek target={Target:F3} trackIndex={TrackIndex} success={Success}",
             e.TargetSeconds, e.TrackIndex, success);
     }
@@ -2185,6 +2219,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         TryCompleteGapFreeze(renderGeneration, hasFrame);
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return Task.CompletedTask;
         SubmitOutputState();
+        // v0.5.4 段 B1: 描画の tick でも着地の状態（新しい判定）を観測する（LTC のフレームの経路と独立）。
+        ObserveLandingState();
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return Task.CompletedTask;
         UpdatePerFrameUI();
         return Task.CompletedTask;
@@ -2203,16 +2239,24 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _playbackApi.IsPaused())
         {
             bool hasPosition = _playbackApi.TryGetTimePos(out double actualPos);
+            bool isExpectedPath = IsCurrentPathExpectedForGapFreeze();
+            bool frameSeen = _gapFreezeHandler.FrameSeenSinceCapture;
+            double? deliveredFramePosition = frameSeen ? _gapFreezeHandler.FrameSeenPositionSeconds : null;
+            double gatePosition = deliveredFramePosition ?? actualPos;
+            double target = _gapFreezeHandler.PendingTargetSeconds;
+            double fps = _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps;
             GapFrameCaptureDecision decision = GapFrameCaptureCoordinator.Decide(
                 _gapFreezeHandler.CurrentState,
                 hasFrame,
-                IsCurrentPathExpectedForGapFreeze(),
+                isExpectedPath,
                 hasPosition,
                 actualPos,
-                _gapFreezeHandler.PendingTargetSeconds,
-                _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps,
+                target,
+                fps,
                 allowRedraw: allowRedraw,
-                frameSeenSinceCapture: _gapFreezeHandler.FrameSeenSinceCapture);
+                frameSeenSinceCapture: frameSeen,
+                deliveredFramePositionSeconds: deliveredFramePosition);
+            LogGapFreezeDecision(hasFrame, allowRedraw, isExpectedPath, hasPosition, actualPos, gatePosition, target, fps, frameSeen, decision);
 
             if (decision == GapFrameCaptureDecision.RenderAndCapture)
             {
@@ -2234,6 +2278,41 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
+    private void LogGapFreezeDecision(bool hasFrame, bool allowRedraw, bool isExpectedPath, bool hasPosition,
+        double actualPos, double gatePosition, double target, double fps, bool frameSeen, GapFrameCaptureDecision decision)
+    {
+        string reason;
+        if (decision == GapFrameCaptureDecision.RenderAndCapture)
+            reason = "capture confirmed";
+        else if (!hasFrame && !allowRedraw)
+            reason = "no drawn frame this tick";
+        else if (!isExpectedPath)
+            reason = "expected path mismatch";
+        else if (!frameSeen)
+            reason = "target frame not arrived since capture";
+        else if (!hasPosition)
+            reason = "no position";
+        else if (!GapFreezeFrameWindow.Contains(gatePosition, target, GapFreezeFrameWindow.FrameSeconds(fps)))
+            reason = "position outside the window";
+        else
+            reason = "capture not confirmable";
+        string actualText = hasPosition && double.IsFinite(actualPos)
+            ? actualPos.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
+            : "-";
+        string gateText = double.IsFinite(gatePosition)
+            ? gatePosition.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
+            : "-";
+        string deltaText = double.IsFinite(gatePosition)
+            ? ((gatePosition - target) * 1000.0).ToString("F1", System.Globalization.CultureInfo.InvariantCulture)
+            : "-";
+        GapCaptureHandoffLog.Record("ui.decide", reason,
+            "hasFrame=" + hasFrame + " path=" + isExpectedPath + " hasPosition=" + hasPosition +
+            " actual=" + actualText + " gate=" + gateText +
+            " target=" + target.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) +
+            " deltaMs=" + deltaText + " frameSeen=" + frameSeen + " allowRedraw=" + allowRedraw +
+            " decision=" + decision);
+    }
+
     /// <summary>
     /// OutputEngine の GPU worker から呼ばれる（UI スレッドではない）。ソースフレームの位置（PTS）が
     /// 目標の最終フレームと一致したときだけ「届いた」と数える（D21-b）。
@@ -2245,12 +2324,38 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         GapFreezeHandler handler = _gapFreezeHandler;
         double fps = _fps > 0 ? _fps : GapFreezeHandler.DefaultFallbackFps;
+        if (handler.CurrentState is GapState.EnteringFreeze or GapState.WaitingForFrameStep ||
+            (handler.CurrentState == GapState.FreezeComplete && handler.HasLateConfirmTarget))
+        {
+            double target = handler.CurrentState == GapState.FreezeComplete
+                ? handler.LateConfirmTargetSeconds ?? handler.CachedTargetSeconds
+                : handler.PendingTargetSeconds;
+            double frameSeconds = fps > 0 ? 1.0 / fps : 1.0 / GapFreezeHandler.DefaultFallbackFps;
+            string decision;
+            if (!double.IsFinite(positionSeconds))
+                decision = "ignored (no finite position)";
+            else if (handler.CurrentState == GapState.FreezeComplete)
+                decision = "late confirm candidate";
+            else if (handler.FrameSeenSinceCapture)
+                decision = "ignored (target frame already seen)";
+            else if (GapFreezeFrameWindow.Contains(positionSeconds, target, frameSeconds))
+                decision = "accepted as the target frame";
+            else
+                decision = "outside window";
+            Log.Debug("Gap capture handoff: {Site} {Reason} {Fields}", "ui.frame", decision,
+                "gen=" + generation + " seq=" + sequence +
+                " position=" + positionSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) +
+                " target=" + target.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) +
+                " deltaFrames=" + ((frameSeconds > 0 ? Math.Abs(positionSeconds - target) / frameSeconds : -1.0))
+                    .ToString("F2", System.Globalization.CultureInfo.InvariantCulture) +
+                " state=" + handler.CurrentState + " frameSeen=" + handler.FrameSeenSinceCapture);
+        }
         // D32: 3 秒のタイムアウトで打ち切った後でも、同じギャップの目標に一致するフレームが
         // 遅れて届いたら捕捉を開き直して確定する（タイムアウトは Held のまま待ち続けない保険）。
         if (handler.CurrentState == GapState.FreezeComplete &&
             handler.IsLateConfirmFrame(positionSeconds, fps))
         {
-            RequestGapFreezeLateFrameConfirm();
+            RequestGapFreezeLateFrameConfirm(positionSeconds);
             return;
         }
 
@@ -2262,9 +2367,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
 
         // 許容は 2 フレーム（フレーム先頭/終端の解釈差と実素材の端数を含む）。
-        if (Math.Abs(positionSeconds - handler.PendingTargetSeconds) <= 2.0 / fps)
+        if (GapFreezeFrameWindow.Contains(positionSeconds, handler.PendingTargetSeconds, GapFreezeFrameWindow.FrameSeconds(fps)))
         {
-            handler.NotifyFrameArrived();
+            handler.NotifyFrameArrived(positionSeconds);
             return;
         }
 
@@ -2277,28 +2382,83 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// D32: 遅延して届いた目標フレームで、タイムアウト済みのフリーズ捕捉を開き直す。
     /// GPU worker から呼ばれるため、状態の更新は UI スレッドで行う（1 件だけ予約する）。
     /// </summary>
-    private void RequestGapFreezeLateFrameConfirm()
+    private void RequestGapFreezeLateFrameConfirm(double positionSeconds)
     {
         if (Interlocked.CompareExchange(ref _gapFreezeLateFramePosted, 1, 0) != 0)
             return;
         Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
         {
             Interlocked.Exchange(ref _gapFreezeLateFramePosted, 0);
-            ConfirmLateGapFreezeFrame();
+            ConfirmLateGapFreezeFrame(positionSeconds);
         });
     }
 
-    private void ConfirmLateGapFreezeFrame()
+    private void ConfirmLateGapFreezeFrame(double positionSeconds)
     {
         if (_disposed)
             return;
         GapFreezeHandler handler = _gapFreezeHandler;
         if (handler.CurrentState != GapState.FreezeComplete || !handler.HasLateConfirmTarget)
             return;
-        handler.ReopenCaptureForLateFrame();
+        handler.ReopenCaptureForLateFrame(positionSeconds);
         Log.Information(
             "Continue mode: late final-frame arrival after the capture timeout, retrying the freeze capture target={Target:F3}",
             handler.PendingTargetSeconds);
+    }
+
+    private int _gapFreezeEndedRetryPosted;
+
+    /// <summary>
+    /// D11 + K3: shim の EOS（Ended）を、シーク保留の解除とギャップ捕獲の再シークへ配る。
+    /// GPU worker（OutputEngine）から呼ばれる。
+    /// </summary>
+    private void HandleGStreamerEnded()
+    {
+        GapFreezeHandler endedHandler = _gapFreezeHandler;
+        GapCaptureHandoffLog.Record("ui.ended", "shim Ended received",
+            "state=" + endedHandler.CurrentState + " frameSeen=" + endedHandler.FrameSeenSinceCapture);
+        _gstBackendState.Seeking.NotifyEnded();
+        RequestGapFreezeSeekRetryForEnded();
+    }
+
+    /// <summary>
+    /// K3: 最終フレームのシーク中に EOS を観測した。捕獲中で目標フレームが未到着のときだけ、
+    /// 既存の再シーク（D21-b）で取り直す。GPU worker から呼ばれるため、UI スレッドへ 1 件だけ予約する。
+    /// </summary>
+    private void RequestGapFreezeSeekRetryForEnded()
+    {
+        GapFreezeHandler handler = _gapFreezeHandler;
+        if (handler.CurrentState is not (GapState.EnteringFreeze or GapState.WaitingForFrameStep) ||
+            handler.FrameSeenSinceCapture)
+            return;
+        if (Interlocked.CompareExchange(ref _gapFreezeEndedRetryPosted, 1, 0) != 0)
+            return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+        {
+            Interlocked.Exchange(ref _gapFreezeEndedRetryPosted, 0);
+            RetryGapFreezeSeekForEnded();
+        });
+    }
+
+    /// <summary>
+    /// K3: EOS と重なった最終フレームのシークを、既存の再シークで取り直す
+    /// （捕獲中・フレーム未到着の確認と上限は <see cref="GapFreezeHandler.TryBeginSeekRetryForEnded"/>）。
+    /// </summary>
+    private void RetryGapFreezeSeekForEnded()
+    {
+        if (_disposed)
+            return;
+        GapFreezeHandler handler = _gapFreezeHandler;
+        if (!handler.TryBeginSeekRetryForEnded())
+            return;
+
+        double target = handler.PendingTargetSeconds;
+        bool seekSuccess = SeekTo(target);
+        Log.Warning(
+            "Continue mode: gap freeze final-frame seek hit EOS, reissuing final-frame seek target={Target:F3} retry={Retry} seekOk={SeekOk}",
+            target, handler.SeekRetryCount, seekSuccess);
+        if (!seekSuccess)
+            handler.ForceFreezeComplete();
     }
 
     private int _gapFreezeStaleFrameRetryPosted;
@@ -2376,7 +2536,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         bool hasPosition = _playbackApi.TryGetTimePos(out double position);
         return GapFrameCaptureCoordinator.Decide(_gapFreezeHandler.CurrentState, true, true,
             hasPosition, position, _gapFreezeHandler.PendingTargetSeconds, _fps,
-            frameSeenSinceCapture: _gapFreezeHandler.FrameSeenSinceCapture) ==
+            frameSeenSinceCapture: _gapFreezeHandler.FrameSeenSinceCapture,
+            deliveredFramePositionSeconds: _gapFreezeHandler.FrameSeenPositionSeconds) ==
             GapFrameCaptureDecision.RenderAndCapture;
     }
 
@@ -2479,7 +2640,43 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_disposed) return;
         _disposed = true;
+        StopUiHeartbeat("closing");
         GetResourceDisposer().DisposeAll();
+    }
+
+    // ── 起動直後の UI スレッドの生存記録（v0.5.4、記録だけ） ──────────────
+    // 起動から 30 秒、100ms ごとに Debug で 1 行。区間の後はタイマーを捨てる。
+    // 優先度 Normal: Background の描画更新や OnTick に埋もれず、UI スレッドが回っているかを見る。
+    private readonly UiHeartbeatRecorder _uiHeartbeat =
+        new(fields => Log.Debug("ui.heartbeat {Fields}", fields));
+    private DispatcherTimer? _uiHeartbeatTimer;
+
+    private void StartUiHeartbeat()
+    {
+        _uiHeartbeat.Start(Stopwatch.GetElapsedTime(0));
+        _uiHeartbeatTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = UiHeartbeatRecorder.Interval };
+        _uiHeartbeatTimer.Tick += OnUiHeartbeatTick;
+        _uiHeartbeatTimer.Start();
+    }
+
+    private void OnUiHeartbeatTick(object? sender, EventArgs e)
+    {
+        if (!_uiHeartbeat.Tick(Stopwatch.GetElapsedTime(0)))
+            DiscardUiHeartbeatTimer();
+    }
+
+    private void StopUiHeartbeat(string reason)
+    {
+        _uiHeartbeat.Stop(Stopwatch.GetElapsedTime(0), reason);
+        DiscardUiHeartbeatTimer();
+    }
+
+    private void DiscardUiHeartbeatTimer()
+    {
+        if (_uiHeartbeatTimer == null) return;
+        _uiHeartbeatTimer.Stop();
+        _uiHeartbeatTimer.Tick -= OnUiHeartbeatTick;
+        _uiHeartbeatTimer = null;
     }
 
     private MainWindowResourceDisposer GetResourceDisposer() => _resourceDisposer ??= new MainWindowResourceDisposer(
@@ -2522,7 +2719,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             GetResourceDisposer(),
             runOffUiThread: action => Task.Run(action),
             forceExit: ForceExitProcess,
-            shutdownCompleted: () => Dispatcher.BeginInvoke(new Action(Close)));
+            shutdownCompleted: () => Dispatcher.BeginInvoke(new Action(Close)),
+            // 終了の手順は Dispose を通らない。生存記録は手順の入口で閉じる（行の途切れ = 止まった、と読めるように）。
+            shutdownStarting: () => StopUiHeartbeat("closing"));
         _exitDialogHost.CancelRequested += _exitCoordinator.CancelRequested;
         _exitDialogHost.NormalExitRequested += _exitCoordinator.NormalExitRequested;
         _exitDialogHost.ForceExitRequested += _exitCoordinator.ForceRequested;
@@ -2689,6 +2888,11 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _ltcSyncController.CancelPendingSync("seekbar-commit");
         _vm.Player.SeekBarValue = commit.SliderValue;
         bool success = SeekTo(commit.TargetSeconds);
+        if (success)
+        {
+            // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
+            _syncService.NotifyManualSeek(commit.TargetSeconds);
+        }
         _playbackApi.TryGetTimePos(out double timePos);
         Log.Information(
             "Seek command sent source={Source} value={SliderValue:F6} duration={Duration:F3} target={Target:F3} success={Success} immediateTimePos={TimePos:F3}",

@@ -83,6 +83,8 @@ public partial class App : Application
         Directory.CreateDirectory(logDir);
         // D15/O1: shim の LOG 出力先（TCS_LOG_FILE）を同じ logs ディレクトリへ固定する（GStreamer 初期化前）。
         GstNativeLibraryResolver.ConfigureLogFile(logDir);
+        // v0.5.4 K3 (3): shim のポンプの予算（着地の時間切れ − 0.5 秒）を DLL ロード前に渡す。
+        GstNativeLibraryResolver.ConfigurePumpBudget();
         string logPath = Path.Combine(logDir, "timecodesyncplayer-.log");
 
 #if DEBUG

@@ -1,7 +1,4 @@
 using FluentAssertions;
-using Serilog;
-using Serilog.Core;
-using Serilog.Events;
 using TimecodeSyncPlayer.Tests.Helpers;
 using TimecodeSyncPlayer.Tests.Integration;
 
@@ -11,56 +8,17 @@ namespace TimecodeSyncPlayer.Tests;
 /// v0.5.3 D38: 保持後のジャンプの着地の遅れ（`docs/design/v0.5.3-d38-seek-gates.md` §6）。
 /// (a) 同期を適用しないフレーム（保持の Duplicate）でも、保留の着地を観測して位置の信頼を戻す。
 /// (b) 位置が未信頼でも、pending から 4×tolerance を超える新しい要求は置き換える。
-/// 門 3: `JumpAppliedOnce` で Jump を捨てたときは Information を 1 行出す（振る舞いは変えない）。
+/// 門 3（JumpAppliedOnce のラッチ）は v0.5.4 U1 で消した（このファイルの該当テストも削除）。
 /// </summary>
 [Collection("Serilog global logger")]
 public sealed class D38SeekGatesTests
 {
-    private sealed class ListSink : ILogEventSink
-    {
-        public List<LogEvent> Events { get; } = new();
-        public void Emit(LogEvent logEvent) { lock (Events) Events.Add(logEvent); }
-    }
-
-    private sealed class LoggerCapture : IDisposable
-    {
-        private readonly ILogger _previous;
-
-        public LoggerCapture(ListSink sink)
-        {
-            Sink = sink;
-            _previous = Log.Logger;
-            Log.Logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
-        }
-
-        public ListSink Sink { get; }
-
-        public List<LogEvent> Snapshot()
-        {
-            lock (Sink.Events) return Sink.Events.ToList();
-        }
-
-        public void Dispose() => Log.Logger = _previous;
-    }
-
-    private static bool IsDroppedJumpLog(LogEvent logEvent) =>
-        logEvent.MessageTemplate.Text.Contains("Jump dropped (JumpAppliedOnce)", StringComparison.Ordinal);
-
     private static void Raw(SyncScenarioHarness h, double seconds, long at, double detectedFps = 25.0)
     {
         int frame = (int)Math.Round(seconds * 25.0);
         var timecode = new LtcTimecode(
             frame / (25 * 3600), (frame / (25 * 60)) % 60, (frame / 25) % 60, frame % 25, false);
         h.Controller.ReceiveFrame(new LtcFrameReceivedEventArgs(timecode, detectedFps, seconds, 0, 0), at);
-    }
-
-    private static void Tick(SyncScenarioHarness h, ManualTimeProvider clock, int count)
-    {
-        for (int i = 0; i < count; i++)
-        {
-            clock.Advance(TimeSpan.FromMilliseconds(100));
-            h.Tick100Milliseconds();
-        }
     }
 
     [Fact]
@@ -106,34 +64,19 @@ public sealed class D38SeekGatesTests
         // 未信頼のまま、pending の目標から 4×tolerance を超える要求（LTC 20.0 → 目標 20.0）。
         h.SupplyLtc(20.0);
 
-        h.SyncService.SeekState.HasPendingSeek.Should().BeFalse(
-            "未信頼でも 4×tolerance を超える新しい要求は、到達不能な pending を捨てる（D38 (b)）");
+        // v0.5.4 段 B / 門 8 / §9-2: 着地待ちの目標を置き換え、その場で置き換えのシークを出す
+        // （2 秒のタイムアウトを待たない）。位置は置き換えの着地まで使わない。
+        h.SyncService.SeekState.TargetSeconds.Should().BeApproximately(20.0, 1e-6,
+            "未信頼でも 4×tolerance を超える新しい要求は着地待ちの目標を置き換える（D38 (b)）");
+        h.SyncService.SeekState.HasPendingSeek.Should().BeTrue(
+            "着地待ちは維持する（位置を使わないまま、同じ手順で新しい着地待ちに入る）");
         h.SyncService.IsPlaybackPositionUsable.Should().BeFalse(
-            "捨てた後は位置の再確認（11）とゲート（13）を通ってからシークする");
-    }
+            "置き換えの着地まで位置を使わない（古い位置で判定・補正をしない）");
 
-    [Fact]
-    public void JumpDroppedByJumpAppliedOnce_LogsOneLine()
-    {
-        using var capture = new LoggerCapture(new ListSink());
-        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 26, 0, 0, 0, TimeSpan.Zero));
-        var h = new SyncScenarioHarness(clock) { SignalLossMode = LtcSignalLossMode.Stop, GapBehavior = GapBehavior.Black };
-        h.AddTrack("A", 5, 20);
-        h.ReloadProject();
-        h.ManualPlay();
-        Raw(h, 7.0, 10_000);
-        Raw(h, 7.04, 10_040);
-        Tick(h, clock, 3);
-        h.IsPaused.Should().BeTrue("前提: 無音の信号断で一時停止する");
-
-        Raw(h, 12.0, 10_340);   // 1 枚目: 損失中なので 1 回だけ適用され、JumpAppliedOnce が立つ
-        h.Controller.SignalLossLatchSnapshot()["lost"].Should().BeTrue("前提: 無音の損失は Jump 1 枚では解けない");
-        capture.Snapshot().Count(IsDroppedJumpLog).Should().Be(0, "前提: まだ捨てていない");
-
-        Tick(h, clock, 3);
-        Raw(h, 16.0, 10_640);   // 2 枚目: JumpAppliedOnce が残っているため捨てられる
-
-        capture.Snapshot().Count(IsDroppedJumpLog).Should().Be(1,
-            "JumpAppliedOnce で捨てたときは Information を 1 行出す（門 3。振る舞いは変えない）");
+        // デバウンス（250ms）を明けて、置き換えのシークがその場で出ることを確かめる。
+        clock.Advance(TimeSpan.FromMilliseconds(300));
+        h.Tick100Milliseconds();
+        h.Operations.Should().Contain(o => o.Name == "seek" && Math.Abs((o.Value ?? 0) - 20.0) < 1e-6,
+            "2 秒のタイムアウトを待たずに置き換えた目標へ着地する");
     }
 }

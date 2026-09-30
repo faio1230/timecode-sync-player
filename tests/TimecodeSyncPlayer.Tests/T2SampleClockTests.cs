@@ -21,6 +21,9 @@ public class T2SampleClockTests
         harness.AddTrack("track", 0);
         harness.ManualPlay();
         harness.ChangeMode(SyncMode.Single);
+        // v0.5.4 #7: relocate の判定は配信したフレームの PTS で測り、配信が無い間は判定しない。
+        // 偽の再生 API の初期位置（1.0）は未配信なので、その位置のフレームを配信しておく。
+        harness.AdvancePlayback(1.0);
         harness.Operations.Clear();
         return harness;
     }
@@ -89,16 +92,20 @@ public class T2SampleClockTests
         harness.AddTrack("track", 0);
         harness.ManualPlay();
         harness.ChangeMode(SyncMode.Single);
+        // v0.5.4 #7: relocate の判定は配信したフレームの PTS で測り、配信が無い間は判定しない。
+        // 偽の再生 API の初期位置（1.0）は未配信なので、その位置のフレームを配信しておく。
+        harness.AdvancePlayback(1.0);
         harness.Operations.Clear();
 
-        // ネイティブシーク中は同期要求が保留になる。
-        harness.NativeSeeking = true;
+        // v0.5.4 段 B3: ネイティブのシーク中は着地待ち（合成位置では着地しない）で、同期要求が保留になる。
+        harness.SyncService.ReportSeekSent(3.1);
         harness.SupplyLtcFrame(3.0, frameEndTimestamp: now[0] - Ticks(0.1));
         harness.Operations.Should().NotContain(o => o.Name == "seek");
 
-        // 使う時点の age（0.2 秒）で実効値を取り直す。
+        // ネイティブのシーク完了（着地待ちを外す）。使う時点の age（0.2 秒）で実効値を取り直す。
+        harness.ClearLandingWait();
+        clock.Advance(TimeSpan.FromMilliseconds(300));
         now[0] += Ticks(0.1);
-        harness.NativeSeeking = false;
         harness.Tick100Milliseconds();
 
         var seek = harness.Operations.Should().ContainSingle(o => o.Name == "seek").Subject;

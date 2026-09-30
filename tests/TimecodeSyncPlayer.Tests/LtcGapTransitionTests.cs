@@ -1,4 +1,5 @@
 using FluentAssertions;
+using TimecodeSyncPlayer.Tests.Helpers;
 using TimecodeSyncPlayer.Tests.Integration;
 
 namespace TimecodeSyncPlayer.Tests;
@@ -186,6 +187,39 @@ public sealed class LtcGapTransitionTests
         h.SetSyncEnabled(true);
 
         h.Operations.Should().NotContain(o => o.Name == "loadfile" || o.Name == "seek");
+    }
+
+    // ---- v0.5.4 B4（chase モデルの規則 4）: D の集合（ギャップなど）がいる間は補正を評価しない ----
+
+    [Fact]
+    public void GapActive_DoesNotEvaluateRateCorrection()
+    {
+        long qpc = 10_000_000;
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 7, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock, enableCorrection: true, getQpc: () => qpc)
+        {
+            GapBehavior = GapBehavior.Black,
+        };
+        h.AddTrack("first", 0, 30);
+        h.AddTrack("second", 40, 30);
+        h.ManualPlay();
+
+        Raw(h, 5);                            // トラック A を追従
+        qpc += 200 * (System.Diagnostics.Stopwatch.Frequency / 1000);
+
+        Raw(h, 35);                           // タイムラインのギャップ（30〜40）へ（Jump は未確認）
+        Raw(h, 35, 1);                        // 確認フレーム → ギャップへ
+
+        h.GapState.Should().Be(GapState.BlackFrameActive, "前提: ギャップが有効");
+        h.IsPaused.Should().BeTrue("前提: ギャップの持ち主が止めている");
+
+        h.AdvancePlayback(25.0, 1);           // ギャップ中に大きな残差を作る
+        int before = h.AppliedRates.Count;
+        Raw(h, 35, 2);                        // ギャップ中のフレーム
+        qpc += 200 * (System.Diagnostics.Stopwatch.Frequency / 1000);
+
+        h.AppliedRates.Skip(before).Should().NotContain(r => Math.Abs(r - 1.0) > 1e-9,
+            "ギャップの持ち主がいる間は補正を評価しない");
     }
 }
 

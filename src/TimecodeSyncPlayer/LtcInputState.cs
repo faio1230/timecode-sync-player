@@ -52,29 +52,47 @@ internal sealed class LtcInputState
     /// </summary>
     public double? HeldLossLandingSeconds { get; private set; }
 
-    /// <summary>D20-b (i): 同一の Jump 連続で何度も適用しないためのラッチ（Normal/Initial で解除）。</summary>
-    public bool JumpAppliedOnce { get; private set; }
-
     /// <summary>D20-b: 保持値の変更で 1 回だけ適用したことを示すラッチ（Normal/Initial で解除）。</summary>
     public bool HeldReapplyDone { get; private set; }
 
     /// <summary>
-    /// D37-c: 追従開始（同期の有効化・監視開始）の最初の同期評価を、既存の着地窓
-    /// （D37-b2 の NotifyLanding / RateCatchUpAllowed）と同じ扱いにする。追従開始の瞬間は
-    /// 画面がまだ合っていないので、速度補正より速いシークで詰める。
+    /// v0.5.4（規則 4 の入口の数え方）: 入口に数える保持の連続（直前のフレームから続けて届いた同値の
+    /// Duplicate の枚数）。別の値・Jump の保留・fps の疑わしいフレームが挟まったら数え直す。
     /// </summary>
-    public bool FollowStartPending { get; private set; }
+    public int HeldRunLength { get; private set; }
+
+    private double? _heldRunSeconds;
+
+    /// <summary>
+    /// 受けたフレームごとに呼ぶ。countedSeconds は入口に数える Duplicate の値（数えないフレームは null）。
+    /// 直前のフレームも数えた Duplicate で、値の差が sameValueSeconds 以内なら連続を 1 伸ばす。
+    /// </summary>
+    public int ObserveHeldRun(double? countedSeconds, double sameValueSeconds)
+    {
+        if (countedSeconds is not double seconds)
+        {
+            HeldRunLength = 0;
+            _heldRunSeconds = null;
+            return 0;
+        }
+
+        HeldRunLength = _heldRunSeconds is double previous && Math.Abs(seconds - previous) <= sameValueSeconds
+            ? HeldRunLength + 1
+            : 1;
+        _heldRunSeconds = seconds;
+        return HeldRunLength;
+    }
 
     /// <summary>監視の開始・停止で、受けたフレームの記録と 1 回適用のラッチを捨てる（移す前の ClearFrameHistory）。</summary>
     public void ClearFrameHistory()
     {
+        ObserveHeldRun(null, 0.0);
         Accepted = null;
         LastAppliedLtcSeconds = null;
         LastHeldEffectiveSeconds = null;
         HeldLossLandingSeconds = null;
         Pending = null;
         DiscardPendingJump();
-        JumpAppliedOnce = false;
         HeldReapplyDone = false;
     }
 
@@ -109,22 +127,15 @@ internal sealed class LtcInputState
     /// <summary>保持（Duplicate）の値を捨てる（値が進むフレームで保持が明けたとき）。</summary>
     public void ClearHeldEffective() => LastHeldEffectiveSeconds = null;
 
-    /// <summary>Jump を 1 回適用したラッチを立てる。</summary>
-    public void MarkJumpApplied() => JumpAppliedOnce = true;
-
-    /// <summary>Jump を 1 回適用したラッチを下ろす。</summary>
-    public void ClearJumpApplied() => JumpAppliedOnce = false;
-
     /// <summary>保持値の 1 回適用のラッチを立てる。</summary>
     public void MarkHeldReapplied() => HeldReapplyDone = true;
 
     /// <summary>保持値の 1 回適用のラッチを下ろす。</summary>
     public void ClearHeldReapplied() => HeldReapplyDone = false;
 
-    /// <summary>値が進むフレームで、1 回適用のラッチ 2 つと保持値 2 つを下ろす。</summary>
+    /// <summary>値が進むフレームで、保持値の 1 回適用のラッチと保持値 2 つを下ろす。</summary>
     public void OnNormalFrame()
     {
-        JumpAppliedOnce = false;
         HeldReapplyDone = false;
         LastHeldEffectiveSeconds = null;
         HeldLossLandingSeconds = null;
@@ -145,10 +156,4 @@ internal sealed class LtcInputState
 
     /// <summary>同期へ適用した最後の値だけを書く（保持値からの適用・ロード解除の再適用）。</summary>
     public void MarkLastApplied(double? seconds) => LastAppliedLtcSeconds = seconds;
-
-    /// <summary>追従開始の消費待ちを立てる（同期の有効化・監視開始）。</summary>
-    public void MarkFollowStart() => FollowStartPending = true;
-
-    /// <summary>追従開始の消費待ちを下ろす（同期の無効化・監視停止・ApplySync での消費）。</summary>
-    public void ClearFollowStart() => FollowStartPending = false;
 }

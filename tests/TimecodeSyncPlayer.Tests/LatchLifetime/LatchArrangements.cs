@@ -8,7 +8,6 @@ namespace TimecodeSyncPlayer.Tests.LatchLifetime;
 /// </summary>
 internal static class LatchArrangements
 {
-    public static readonly LatchId JumpAppliedOnce = new(LatchOwner.LtcSyncController, "jumpAppliedOnce");
     public static readonly LatchId HeldReapplyDone = new(LatchOwner.LtcSyncController, "heldReapplyDone");
     public static readonly LatchId PendingJump = new(LatchOwner.LtcSyncController, "pendingJump");
     public static readonly LatchId PendingSync = new(LatchOwner.LtcSyncController, "pendingSync");
@@ -16,7 +15,6 @@ internal static class LatchArrangements
     public static readonly LatchId HeldLossLanding = new(LatchOwner.LtcSyncController, "heldLossLanding");
     public static readonly LatchId LastAppliedLtc = new(LatchOwner.LtcSyncController, "lastAppliedLtc");
     public static readonly LatchId LastAcceptedLtc = new(LatchOwner.LtcSyncController, "lastAcceptedLtc");
-    public static readonly LatchId FollowStartPending = new(LatchOwner.LtcSyncController, "followStartPending");
     public static readonly LatchId RateRestorePending = new(LatchOwner.LtcSyncController, "rateRestorePending");
     public static readonly LatchId SmoothUnavailable = new(LatchOwner.LtcSyncController, "smoothUnavailable");
     public static readonly LatchId CorrectionPausedForPosition =
@@ -25,8 +23,6 @@ internal static class LatchArrangements
 
     public static readonly LatchId LoadingFile = new(LatchOwner.TimecodeSyncService, "loadingFile");
     public static readonly LatchId FileLoadReleasePending = new(LatchOwner.TimecodeSyncService, "fileLoadReleasePending");
-    public static readonly LatchId SeekLandingActive = new(LatchOwner.TimecodeSyncService, "seekLandingActive");
-    public static readonly LatchId FollowStartLanding = new(LatchOwner.TimecodeSyncService, "followStartLanding");
     public static readonly LatchId PositionUntrusted = new(LatchOwner.TimecodeSyncService, "positionUntrusted");
 
     public static readonly LatchId ClipBoundaryHeld = new(LatchOwner.SingleModeSyncCoordinator, "clipBoundaryHeld");
@@ -38,17 +34,16 @@ internal static class LatchArrangements
         new(LatchOwner.LtcSignalLossPolicy, "manualResumeSuppressesPause");
 
     public static readonly LatchId PendingSeek = new(LatchOwner.TimecodeSyncSeekState, "pendingSeek");
-    public static readonly LatchId LastSettledRecent = new(LatchOwner.TimecodeSyncSeekState, "lastSettledRecent");
 
     public static IReadOnlyList<LatchId> All { get; } =
     [
-        JumpAppliedOnce, HeldReapplyDone, PendingJump, PendingSync, LastHeldEffective, HeldLossLanding,
-        LastAppliedLtc, LastAcceptedLtc, FollowStartPending, RateRestorePending, SmoothUnavailable,
+        HeldReapplyDone, PendingJump, PendingSync, LastHeldEffective, HeldLossLanding,
+        LastAppliedLtc, LastAcceptedLtc, RateRestorePending, SmoothUnavailable,
         CorrectionPausedForPosition, RateNotUnity,
-        LoadingFile, FileLoadReleasePending, SeekLandingActive, FollowStartLanding, PositionUntrusted,
+        LoadingFile, FileLoadReleasePending, PositionUntrusted,
         ClipBoundaryHeld, BoundarySeekTarget,
         Lost, PausedByPolicy, ManualResumeSuppressesPause,
-        PendingSeek, LastSettledRecent,
+        PendingSeek,
     ];
 
     /// <summary>
@@ -73,15 +68,7 @@ internal static class LatchArrangements
             : LatchLifetimeScenario.Single(lossMode);
         SyncScenarioHarness h = s.Harness;
 
-        if (latch == JumpAppliedOnce)
-        {
-            // 同じトラック内の Jump は次の 1 フレームで確かめてから適用する（LtcSyncController.cs:685）。
-            // 確認フレームで ApplyConfirmedJump が立てる（:643）。
-            double jump = s.LastLtc + 3.0;
-            s.Frame(jump, TimecodeFrameDiagnosticStatus.Jump);
-            s.Frame(jump + 0.04);
-        }
-        else if (latch == HeldReapplyDone)
+        if (latch == HeldReapplyDone)
         {
             // 最後の適用値から許容を超えて離れた保持値（LtcSyncController.cs:566-571）。
             s.Frame(s.LastLtc + 3.0, TimecodeFrameDiagnosticStatus.Duplicate);
@@ -93,10 +80,11 @@ internal static class LatchArrangements
         }
         else if (latch == PendingSync)
         {
-            // ネイティブシーク中は同期要求が Deferred になり、再送用に保持する（:317-322）。
-            h.NativeSeeking = true;
-            s.NextNormalFrame();
-            h.NativeSeeking = false;
+            // シークの発行が失敗したフレームでは同期要求が Deferred になり、再送用に保持する（:317-322）。
+            // 失敗の間だけ Deferred になるので、次の有効フレームでは Complete に戻る（従来の寿命のまま）。
+            h.SeekSucceeds = false;
+            SeekFromFarPosition(s);
+            h.SeekSucceeds = true;
         }
         else if (latch == LastHeldEffective)
         {
@@ -111,11 +99,6 @@ internal static class LatchArrangements
         else if (latch == LastAppliedLtc || latch == LastAcceptedLtc)
         {
             // 基本配置の通常フレームで立つ（:597, :600）。
-        }
-        else if (latch == FollowStartPending)
-        {
-            // 監視の開始（同期が有効）で立つ（:388-396）。
-            h.IsMonitoring = true;
         }
         else if (latch == RateRestorePending)
         {
@@ -156,20 +139,14 @@ internal static class LatchArrangements
             h.AdvancePlayback(h.PlaybackSeconds + 0.2, 3);
             s.Frame(s.LastLtc + 0.2);
         }
-        else if (latch == SeekLandingActive || latch == FollowStartLanding ||
-                 latch == PendingSeek || latch == PositionUntrusted)
+        else if (latch == PendingSeek || latch == PositionUntrusted)
         {
-            // 追従開始（監視の開始）から、離れた位置へ同期シークを出す。
+            // 監視の開始から、離れた位置へ同期シークを出す。
             h.IsMonitoring = true;
+            // v0.5.4 段 B: 着地は配信の事象で取るので、着地を遅らせて着地待ちのまま保つ
+            // （即時配信だと次のフレームの観測で解けてしまう）。
+            h.Playback.SeekLandingDelaySeconds = 10.0;
             SeekFromFarPosition(s);
-        }
-        else if (latch == LastSettledRecent)
-        {
-            h.IsMonitoring = true;
-            SeekFromFarPosition(s);
-            // 着地（目標の近くで 200ms の冷却を過ぎる。TimecodeSyncSeekState.cs:78-96）。
-            for (int i = 0; i < 8 && h.SeekState.HasPendingSeek; i++)
-                s.NextNormalFrame();
         }
         else if (latch == ClipBoundaryHeld || latch == BoundarySeekTarget)
         {

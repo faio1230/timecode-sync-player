@@ -71,7 +71,7 @@ internal sealed class RateCorrectionState
     /// <summary>T5: レート変更が拒否され、Smooth を使えないと分かった。</summary>
     public void MarkSmoothUnavailable() => SmoothAvailable = false;
 
-    /// <summary>T5/T7: Smooth を再試行できるようにする（有効化・モード切替・トラック切替）。</summary>
+    /// <summary>T5/T7: Smooth を再試行できるようにする（有効化・モード切替・トラック切替・読み込み）。</summary>
     public void ResetSmoothAvailability() => SmoothAvailable = true;
 
     /// <summary>0.4.8: 位置が不安定になり、補正を止めに入る。今回 false→true に変わったときだけ true。</summary>

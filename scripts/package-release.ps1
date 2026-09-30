@@ -249,7 +249,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot "CHANGELOG.md") -Destination $stagingDirectory
 
     $readme = @"
-TimecodeSyncPlayer v$Version (Windows x64 beta)
+TimecodeSyncPlayer v$Version (Windows x64)
 
 Requirements
 - Windows 10/11 x64
@@ -267,7 +267,7 @@ Setup
 The GStreamer 1.28.2 runtime (bin, plugins and license texts) is included in the
 gstreamer folder; no separate GStreamer installation is required. SpoutDX.dll
 enables Spout2 output. See THIRD-PARTY-NOTICES.md for third-party terms. This
-beta should be validated with your complete show setup before use.
+release should be validated with your complete show setup before use.
 "@
     Set-Content -LiteralPath (Join-Path $stagingDirectory "README.txt") -Value $readme -Encoding UTF8
 

@@ -47,7 +47,10 @@ internal sealed record LtcSyncEffects(
     Func<bool>? IsPlaybackPositionUnstable = null,
     // v0.5.3 段 3i: 信号断のポリシー以外の一時停止の持ち主（境界ホールド・ギャップ・
     // プロジェクト復元）。ポリシーの一時停止を解いたときの再開判定に使う。
-    Func<PauseOwners>? GetOtherPauseOwners = null);
+    Func<PauseOwners>? GetOtherPauseOwners = null,
+    // v0.5.4 段 B1: 着地の状態（新しい判定）の観測用。位置を照会するすべての場所から呼ぶ
+    // （UI タイマー・保持の Duplicate）。サンプルが取れない環境では null のままでよい。
+    Func<SyncPositionRead>? ReadPosition = null);
 
 /// <summary>
 /// UI-thread LTC session orchestration shared by the window and integration scenarios.
@@ -114,11 +117,17 @@ internal sealed class LtcSyncController
             "LTC sample clock: {State}（{Variable}=off のときだけ無効）",
             _sampleClockEnabled ? "有効" : "無効", SampleClockEnvironmentVariable);
         _syncService.SeekIssued += OnSeekIssued;
+        // v0.5.4 B6b（規則 1・3）: マスターが止まっている（保持の Duplicate・信号断）間は、relocate の
+        // 目標に先行量を付けない（停止した値へ合わせる。D37-g の守り）。
+        // v0.5.4（マスター停止の判定の共通化）: 保持は数える保持の連続 1 枚以上（fps の疑わしい Duplicate は
+        // 数えない）。保持値の記録（D27-d、化けた 1 枚でも立つ）では判定しない。
+        _syncService.MasterStoppedSource = () =>
+            SyncRules.IsMasterStopped(_input.HeldRunLength, minimumHeldFrames: 1) || _signalLoss.IsLost;
         _syncService.LifecycleRaised += OnSyncServiceLifecycle;
     }
 
     /// <summary>
-    /// v0.5.3 段 3e: サービスのできごとで、Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
+    /// v0.5.3 段 3e: サービスのできごとで、保持値の 1 回適用のラッチを下ろす（§6 の 5）。
     /// BeginFileLoad の FileLoad はサービスの OnLifecycle の中で起き、コントローラの
     /// OnLifecycle には届かないため、購読して受け取る。
     /// </summary>
@@ -126,8 +135,26 @@ internal sealed class LtcSyncController
     {
         if (evt != SyncLifecycleEvent.FileLoad)
             return;
-        _input.ClearJumpApplied();
         _input.ClearHeldReapplied();
+        // v0.5.4 K5（§6 の 6）: 読み込みで Smooth を再試行できるようにする。
+        _rate.ResetSmoothAvailability();
+        // v0.5.4 K5（§6 の 1）: 読み込みで Single の境界ホールドを解除する（解除の副作用つき）。
+        _single().OnLifecycle(SyncLifecycleEvent.FileLoad);
+        PauseOnFileLoadDuringLoss();
+    }
+
+    /// <summary>
+    /// v0.5.4（規則 4 の読み込みの入口）: 停止モードで損失のまま読み込んだら、読み込みが始めた再生を
+    /// 規則 4 の入口と同じく一時停止する（持ち主 = 信号断）。新しいトラックでも保持値へ 1 回着地するよう
+    /// 保持着地の記録を下ろし、着地は読み込みが着地した後の保持のフレーム（D35 の経路、尺と fps が
+    /// 分かってから）に任せる。復帰は新しい値のフレームで今どおり（規則 2〜3）。
+    /// </summary>
+    private void PauseOnFileLoadDuringLoss()
+    {
+        if (_signalLoss.OnFileLoad(SignalContext()) != LtcSignalLossAction.Pause)
+            return;
+        _input.ClearHeldLossLanding();
+        ApplySignalLossAction(LtcSignalLossAction.Pause, landOnHeldValue: false);
     }
 
     public double LastLtcSeconds { get; private set; }
@@ -137,11 +164,6 @@ internal sealed class LtcSyncController
 
     /// <summary>D37-c: 速度補正の入力から弾いた標本の累計（計測・テスト用）。</summary>
     internal long CorrectionRejectedSamples => _rate.RejectedSamples;
-
-    /// <summary>
-    /// 0.4.5-A フェーズ 1: 速度補正の着地窓（±0.20）が開いているか（shadow 記録用。状態は変えない）。
-    /// </summary>
-    public bool IsCorrectionLandingWindowActive() => _correction.IsLandingWindowActive(_getUtcNow());
 
     /// <summary>
     /// 環境変数の解釈（T2 段 3: 既定 on）。明示的な off（大文字小文字不問）のときだけ無効。
@@ -212,7 +234,7 @@ internal sealed class LtcSyncController
     /// v0.5.2 段 1: できごとでこのクラスのラッチを消す入口。段 0 の寿命の表の「現状」の列どおりに消す
     /// （各分岐は段 1 の前に各入口メソッドにあった処理を、順番を変えずに移したもの）。
     /// フレームの中で消えるもの（Normal フレーム、Continue のトラック切替、ギャップのフレーム、
-    /// 補正評価、追従開始の消費）はフレーム経路のまま。
+    /// 補正評価）はフレーム経路のまま。
     /// </summary>
     private void OnLifecycle(SyncLifecycleEvent evt)
     {
@@ -221,33 +243,28 @@ internal sealed class LtcSyncController
             case SyncLifecycleEvent.SyncEnabled:
                 ResetCorrection();
                 _rate.ResetSmoothAvailability();
-                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
-                _input.ClearJumpApplied();
+                // v0.5.3 段 3e: 保持値の 1 回適用のラッチを下ろす（§6 の 5）。
                 _input.ClearHeldReapplied();
-                // D37-c: 有効化後の最初の同期評価を追従開始として扱う（再適用が古い値で
-                // 流れた場合は次の有効フレームが引き継ぐ。ApplySync 側で消費する）。
-                _input.MarkFollowStart();
                 break;
             case SyncLifecycleEvent.SyncDisabled:
                 ResetCorrection();
+                // v0.5.4 K5（§6 の 7）: 無効化の時点で戻せなくても、復帰待ちを残さない。
+                RetryRateRestoreIfPending();
                 _rate.ResetSmoothAvailability();
-                _input.ClearFollowStart();
                 break;
             case SyncLifecycleEvent.SyncModeChanged:
                 ResetCorrection();
                 _rate.ResetSmoothAvailability();
                 _frames.ResetDiagnostics();
                 _input.DiscardPendingJump();
-                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
-                _input.ClearJumpApplied();
+                // v0.5.3 段 3e: 保持値の 1 回適用のラッチを下ろす（§6 の 5）。
                 _input.ClearHeldReapplied();
                 break;
             case SyncLifecycleEvent.ManualSeek:
             case SyncLifecycleEvent.TimelineSeek:
                 _input.DiscardPendingSync();
                 _input.DiscardPendingJump();
-                // v0.5.3 段 3e: Jump と保持値の 1 回適用のラッチを下ろす（§6 の 5）。
-                _input.ClearJumpApplied();
+                // v0.5.3 段 3e: 保持値の 1 回適用のラッチを下ろす（§6 の 5）。
                 _input.ClearHeldReapplied();
                 // T7: 手動シークは補正状態（Smooth の無効化を含む）も捨てる。
                 ResetCorrection();
@@ -255,9 +272,14 @@ internal sealed class LtcSyncController
                 _rate.ResetSmoothAvailability();
                 break;
             case SyncLifecycleEvent.PlaybackStopped:
-            case SyncLifecycleEvent.PlayPauseToggled:
-                // T7: 操作者の再生・一時停止、停止・プロジェクト差し替えで補正状態を捨てる。
+                // T7: 停止・プロジェクト差し替えで補正状態を捨てる。
                 ResetCorrection();
+                break;
+            case SyncLifecycleEvent.PlayPauseToggled:
+                // T7: 操作者の再生・一時停止で補正状態を捨てる。
+                ResetCorrection();
+                // v0.5.4 K5（§6 の 7）: 一時停止中に戻せなかった保留を、操作のたびに戻しにいく。
+                RetryRateRestoreIfPending();
                 break;
             case SyncLifecycleEvent.CorrectionModeChanged:
                 // v0.5.3 段 3h: 補正モードの変更で倍率を 1.0 に戻す（§6 の 8）。
@@ -272,35 +294,27 @@ internal sealed class LtcSyncController
                 _input.ClearFrameHistory();
                 _monitoring.MarkStarted();
                 _signalLoss.OnLifecycle(evt);
-                // D37-c: 監視開始時に既に同期が有効なら、最初の有効フレームを追従開始として扱う。
-                if (_effects.GetContext().SyncEnabled)
-                    _input.MarkFollowStart();
                 break;
             case SyncLifecycleEvent.MonitoringStopped:
                 // v0.5.3 段 3h: 監視の停止で倍率を 1.0 に戻す（§6 の 14、利用者決定 2026-09-25）。
                 ResetCorrection();
                 _input.ClearFrameHistory();
                 if (!_monitoring.IsDetectionActive(isReportedRunning: false))
-                {
                     _signalLoss.OnLifecycle(evt);
-                    _input.ClearFollowStart();
-                }
                 break;
             case SyncLifecycleEvent.MonitorDeviceStopped:
                 // 信号断のポリシーの初期化は、正常な停止のときだけ入口（MonitorStopped）が行う。
                 // v0.5.3 段 3h: 監視の停止で倍率を 1.0 に戻す（§6 の 14、利用者決定 2026-09-25）。
                 ResetCorrection();
                 _input.ClearFrameHistory();
-                _input.ClearFollowStart();
                 break;
             case SyncLifecycleEvent.BoundaryHoldReleased:
                 // D35-b: ホールド中に残った端への保留シークと保持着地のラッチを解除する。
-                // D37-g: 追従開始のエピソードも終わらせる（先行量を引き継がせない）。
                 _input.ClearHeldLossLanding();
                 _input.ClearHeldReapplied();
                 _input.DiscardPendingSync();
-                _syncService.SeekState.Clear();
-                _syncService.EndFollowStartLanding("boundary hold released");
+                // v0.5.4 段 B: 保留を外から破棄したので、着地待ちと着地の記録を初期化する。
+                _syncService.SeekState.ResetLandingState();
                 break;
         }
     }
@@ -376,19 +390,21 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
-    /// T9: 粗い同期シークの発行で、着地直後の Smooth 速度上限（±0.20）の窓を開く。
-    /// Jump の補正シークも ReportSeekSent を通るため、Smooth のときだけ通知する
-    /// （窓を参照するのは Smooth だけだが、無駄な状態更新を避ける）。
+    /// <summary>
+    /// T9/B6b-16/23: 粗い同期シークの発行。速度補正の残差の系列を切る（粗い判定の ResetSeekGate と
+    /// 同じ考え方）。着地直後の上限窓（±0.20）は畳んだ（着地直後の 1 サンプルは varispeed しない）。
     /// </summary>
     private void OnSeekIssued()
     {
-        // D37-c: シークで位置が飛ぶため、速度補正の残差の系列も切る（粗い判定の
-        // ResetSeekGate と同じ考え方）。
         _rate.ResetResidualGate();
         _rate.ClearRejectedLogged();
-        if (_effects.GetCorrectionMode?.Invoke() != SyncCorrectionMode.Smooth)
-            return;
-        _correction.NotifyLanding(_getUtcNow());
+        // v0.5.4 B6b（規則 3、TSP-Fable の判定）: relocate は varispeed を持ち越さない。どの経路の relocate
+        // （同期・ギャップの出口・保持の着地・保持の入口・Jump の補正）でも、発行した時点で位置の不安定による
+        // 補正の停止を下ろし、倍率を 1.0 に戻す（戻せなければ既存どおり復帰待ちにする）。
+        if (_rate.ExitPositionPause())
+            Log.Information("Smooth correction resumed: relocate issued");
+        if (_rate.RateRestorePending || _rate.RateNotUnity)
+            TryRestoreRateToUnity();
     }
 
     /// <summary>T7: 再生の停止（プロジェクト・プレイリストの差し替えを含む）で補正状態を捨てる。</summary>
@@ -421,10 +437,28 @@ internal sealed class LtcSyncController
         _rate.ClearRejectedLogged();
         if (_rate.RateRestorePending || !_rate.RateNotUnity)
             return;
+        TryRestoreRateToUnity();
+    }
+
+    /// <summary>倍率を 1.0 へ戻す。戻せなかったら復帰待ちにする。</summary>
+    private void TryRestoreRateToUnity()
+    {
         if (_effects.ApplyRateInstant?.Invoke(1.0) == true)
             _rate.MarkRestored();
         else
             _rate.MarkRestorePending();
+    }
+
+    /// <summary>
+    /// v0.5.4 K5（§6 の 7）: 復帰待ちの保留を 1.0 へ戻すことを試す（戻せたら下ろす）。
+    /// 同期の無効化・一時停止のあとの操作で、速度が 1.0 に戻らない保留を残さない。
+    /// </summary>
+    private void RetryRateRestoreIfPending()
+    {
+        if (!_rate.RateRestorePending)
+            return;
+        if (_effects.ApplyRateInstant?.Invoke(1.0) == true)
+            _rate.MarkRestored();
     }
 
     private void RequestSync(double rawSeconds, long frameEndTimestamp, string source = "frame")
@@ -554,6 +588,11 @@ internal sealed class LtcSyncController
             LogFrameDiagnostics(sourceFrame, processed, mode);
         double rawSeconds = processed.ResolvedSeconds;
         long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
+        // v0.5.4（規則 4 の入口の数え方）: 入口に数える保持の連続を、すべてのフレームで数える。Jump の保留・
+        // 別の値・fps の疑わしい Duplicate が挟まったら数え直す（RunThrough の入口と停止モードの U8 で共有）。
+        int heldRun = _input.ObserveHeldRun(
+            IsCountedHeldFrame(processed, sourceFrame, mode) ? rawSeconds : null,
+            (LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04) * 0.5);
         // D30: 未確認 Jump の確認。直後の 1 フレームが同値の Duplicate か +1 フレームなら、
         // その値を確認済み Jump として適用する（保持損失からの復帰も確認後に行う）。
         if (_input.PendingJumpSeconds is double pendingJump)
@@ -566,7 +605,7 @@ internal sealed class LtcSyncController
                 JumpConfirmationPolicy.IsConfirmedBy(
                     pendingJump, rawSeconds, LastTimecodeFps, processed.Diagnostic.Status))
             {
-                ApplyConfirmedJump(processed.Diagnostic.Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
+                ApplyConfirmedJump(processed.Diagnostic.Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds, heldRun);
                 return;
             }
             if (!withinWindow)
@@ -586,19 +625,26 @@ internal sealed class LtcSyncController
         if (!processed.ShouldApplySync)
         {
             bool heldValueChangedDuringLoss = false;
+            // v0.5.4 B6b（規則 4）: マスター停止（保持）の入口。同じ値のフレームが続いた 2 枚目の
+            // Duplicate（直前も保持）で、この保持でまだ合わせていない（保持着地の記録が無い）とき。
+            // v0.5.4（入口の数え方）: 2 枚は連続した同値で、fps の疑わしいものは数えない（heldRun）。
+            bool holdEntry = false;
             // D27: 解読は続いているが値が進まない保持（Duplicate）を信号停止の判定へ伝える。
             // 無音（フレームが届かない）と同じ経路で損失になり、損失の理由だけが分かれる。
             // D27-d: 停止時の着地目標に使う「保持として届いた値」もここで記録する
             // （保持直前の受理値は 1 フレーム手前になり得る）。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate)
             {
-                _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
+                _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
                 // D27-d: 着地目標は保持として届いた値そのもの。保持値は凍結されて進まないため、
                 // サンプル時計の age は足さず T3 オフセットだけ適用する。
                 double heldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
+                holdEntry = _input.LastHeldEffectiveSeconds is not null &&
+                    SyncRules.IsMasterStopped(heldRun, minimumHeldFrames: 2) &&
+                    _input.HeldLossLandingSeconds is null;
                 _input.MarkHeldEffective(heldEffectiveSeconds);
                 // D38 (a): 保持の Duplicate でも、保留中のシークが着地していれば観測して
                 // 位置の信頼を戻す（シークは出さない）。
@@ -609,54 +655,18 @@ internal sealed class LtcSyncController
                 if (heldState.Mode == SyncMode.Single && heldState.SyncEnabled && heldState.IsMonitoring)
                     _single().ApplyClipBoundaryHoldOnly(heldEffectiveSeconds);
             }
-            // D30: 写像がギャップ／別トラックの Jump と、Fixed モードでデコーダ推定 fps が
-            // 食い違う Jump は未確認にして次の 1 フレームの連続を待つ（誤値 1 枚で状態を動かさない）。
+            // v0.5.4 B7（Jump の確認の一様化、§10-0）: Jump はすべて未確認にして、次の 1 フレームの
+            // 値の連続性（同値の Duplicate か +1 フレーム）だけで確かめる（誤値 1 枚で状態を動かさない。D30）。
+            // 写像（ギャップ・別トラック・範囲外）や保持損失中かどうかで分けない。遅れは 1 フレームで一律。
+            // 保持損失中の Jump の復帰（D27-b/c）も、確認した後に ApplyConfirmedJump が行う。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Jump)
             {
-                string? deferReason = UnconfirmedJumpReason(processed, sourceFrame, rawSeconds, frameEndTimestamp);
-                if (deferReason != null)
-                {
-                    _input.HoldPendingJump(rawSeconds, receivedAtMilliseconds, frameEndTimestamp);
-                    Log.Information(
-                        "Timecode sync: holding unconfirmed Jump frame ltc={Ltc:F3} reason={Reason}",
-                        rawSeconds, deferReason);
-                    return;
-                }
-
-                // D27-b: 保持が理由の損失中は、値が動いた Jump 1 枚で即復帰する（無音からの
-                // 復帰は既存どおり有効フレーム N 枚）。復帰した Jump は新値へ 1 回だけ着地させる
-                // （ラッチ済みの Jump でも数えるためラッチを解除してから適用する）。
-                // D27-c: 保持フレームの途切れで理由が信号断へ下がっていても、保持の直後の Jump は
-                // 復帰に数える（判定は ObserveJumpFrame 側。無音からの Jump は復帰しない）。
-                if (_signalLoss.IsLost)
-                {
-                    ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
-                    if (!_signalLoss.IsLost)
-                    {
-                        // v0.5.3 段 3k: 復帰したので、Jump 前の古い保持値と保持着地の記録を
-                        // 下ろす（§6 の 4。無音の再損失で古い保持値へ着地しない）。
-                        _input.ClearJumpApplied();
-                        _input.ClearHeldLossLanding();
-                        _input.ClearHeldEffective();
-                    }
-                }
-                // D20-b (i): Jump の直後は 1 回だけ新値で適用する。
-                if (!_input.JumpAppliedOnce)
-                {
-                    _input.MarkJumpApplied();
-                    applyOnce = true;
-                    applyReason = "first Jump";
-                }
-                else
-                {
-                    // D38 門 3（記録のみ。振る舞いは変えない）: JumpAppliedOnce が残っているため
-                    // この Jump は適用しない（保持中は Normal フレームが来ず、ラッチが下りない）。
-                    Log.Information(
-                        "sync: Jump dropped (JumpAppliedOnce) ltc={Ltc:F3} reason={Reason}",
-                        rawSeconds, _signalLoss.IsLost ? "still-lost" : "not-lost");
-                    TryReapplyAfterFileLoadRelease();
-                    return;
-                }
+                string deferReason = UnconfirmedJumpReason(processed, sourceFrame);
+                _input.HoldPendingJump(rawSeconds, receivedAtMilliseconds, frameEndTimestamp);
+                Log.Information(
+                    "Timecode sync: holding unconfirmed Jump frame ltc={Ltc:F3} reason={Reason}",
+                    rawSeconds, deferReason);
+                return;
             }
             // D31-b: 保持損失中に保持値そのもの（タイムコード停止位置）が変わったら、停止モードは
             // 新しい保持値へ 1 回だけ着地する（D27 の着地を遷移時から変化時へ拡張）。ランスルーは
@@ -675,6 +685,18 @@ internal sealed class LtcSyncController
                 }
                 applyOnce = true;
                 applyReason = "held value change";
+            }
+            // v0.5.4 B6b（規則 4）: ランスルーのマスター停止の入口で、停止した値へ 1 回だけ合わせる
+            // （規則 3 と同じ判定: |e| > tol なら relocate、以内なら何もしない）。以後は合わせた位置から
+            // 1.0 で走る（varispeed は B4 が止め、この保持では relocate しない）。
+            else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
+                     holdEntry && _effects.GetContext().SignalLossMode == LtcSignalLossMode.RunThrough)
+            {
+                AlignOnRunThroughHoldEntry();
+                _input.MarkHeldReapplied();
+                _input.MarkLastApplied(_input.LastHeldEffectiveSeconds);
+                _lastContinueFrame = null;
+                return;
             }
             // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超
             // ずれているときだけ 1 回適用する（定常の Duplicate ゲートは維持）。
@@ -712,9 +734,6 @@ internal sealed class LtcSyncController
             // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
             // （ObserveValidFrame を呼ばない）。保持損失からの復帰は上の D27-b の経路。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
-            // 0.4.6: LTC が不連続に動いたので、追従開始の先行量の前提（LTC が進み続ける）が崩れた。
-            // このフレームで始まる追従開始は ApplySync で開くので、終わるのはそれより前のものだけ。
-            _syncService.EndFollowStartLanding("ltc jump");
             RequestSyncEffective(effectiveSeconds);
             ApplyCorrection(effectiveSeconds);
             return;
@@ -729,11 +748,15 @@ internal sealed class LtcSyncController
     /// Jump として復帰させ、着地は確認フレームの値で行う。
     /// </summary>
     private void ApplyConfirmedJump(
-        TimecodeFrameDiagnosticStatus status, double rawSeconds, long frameEndTimestamp, long receivedAtMilliseconds)
+        TimecodeFrameDiagnosticStatus status, double rawSeconds, long frameEndTimestamp, long receivedAtMilliseconds,
+        int heldRun)
     {
+        // U8: 確認済みの Jump の適用を先に記録する（確認フレームが保持なら、その保持が Jump 後の 1 枚目）。
+        _signalLoss.ObserveAppliedJump(receivedAtMilliseconds, SignalContext());
+
         if (status == TimecodeFrameDiagnosticStatus.Duplicate)
         {
-            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext());
+            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
             _input.MarkHeldEffective(SyncOffsetPolicy.Apply(rawSeconds,
                 _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds));
         }
@@ -745,11 +768,8 @@ internal sealed class LtcSyncController
         if (_signalLoss.IsLost)
         {
             ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
-            if (!_signalLoss.IsLost)
-                _input.ClearJumpApplied();
         }
 
-        _input.MarkJumpApplied();
         _input.ClearHeldReapplied();
         // D31-b: 確認済みの適用で損失が明けた（または新しい値へ動いた）ので、損失中の着地値は捨てる。
         _input.ClearHeldLossLanding();
@@ -757,38 +777,34 @@ internal sealed class LtcSyncController
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
         _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
         Log.Information("Timecode sync: applying the confirmed Jump frame once ltc={Ltc:F3}", rawSeconds);
-        _syncService.EndFollowStartLanding("ltc jump");
         RequestSyncEffective(effectiveSeconds);
         ApplyCorrection(effectiveSeconds);
     }
 
     /// <summary>
-    /// D30: この Jump を即時適用できない理由（null なら即時）。ギャップ（先頭オフセットを含む）／
-    /// 現在と別トラックへの写像と、Fixed fps モードでのデコーダ推定 fps の食い違いを未確認とする。
-    /// Single はトラックの写像を持たないため、写像による保留はしない。
+    /// v0.5.4（規則 4 の入口の数え方）: 入口の保持の 2 枚に数えるフレームか。Duplicate で、Fixed fps モードで
+    /// デコーダ推定 fps が解決 fps と食い違わない（音が化けた最中の 1 枚を保持の証拠にしない）。
+    /// D27-d の保持値の記録はこの判定に依らない。
     /// </summary>
-    private string? UnconfirmedJumpReason(
-        LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame,
-        double rawSeconds, long frameEndTimestamp)
+    private static bool IsCountedHeldFrame(
+        LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame, TimecodeFpsMode mode) =>
+        processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
+        !(sourceFrame != null &&
+          JumpConfirmationPolicy.IsDetectedFpsSuspect(mode, sourceFrame.Fps, processed.ResolvedFps));
+
+    /// <summary>
+    /// D30 / v0.5.4 B7: 未確認の Jump を保留する理由（ログ用。判定はどれも同じで、次の 1 フレームの値の連続性）。
+    /// Fixed fps モードでデコーダ推定 fps が食い違うときは "detected-fps"（層 1 の診断）、ほかは "value-continuity"。
+    /// LTC には誤り検出が無く、化けた 1 枚（検証機の 2 時間試験で 1 回）をそのまま採ると +2.3 秒シークして
+    /// 0.8 秒後に戻していた。本物の Jump は次のフレームが続くので、遅れは 1 フレーム（30fps で 33ms）。
+    /// </summary>
+    private string UnconfirmedJumpReason(LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame)
     {
         LtcSyncContext state = _effects.GetContext();
         if (sourceFrame != null &&
             JumpConfirmationPolicy.IsDetectedFpsSuspect(state.FpsMode, sourceFrame.Fps, processed.ResolvedFps))
             return "detected-fps";
-        if (state.Mode == SyncMode.Continue)
-        {
-            double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
-            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(effectiveSeconds);
-            if (result.Status != TimelineQueryStatus.OnTrack || result.Track?.Id != state.LoadedTrackId)
-                return "track-or-gap";
-        }
-        // v0.5.1: 同じトラックの中の Jump も次の 1 フレームで確かめる。LTC には誤り検出が無く、
-        // 化けた 1 枚（検証機の 2 時間試験で 1 回）をそのまま採ると +2.3 秒シークして 0.8 秒後に
-        // 戻していた。本物の Jump は次のフレームが続くので、遅れは 1 フレーム（30fps で 33ms）。
-        // 保持損失中の Jump は D27-b/c のとおり 1 枚で復帰させる（止まった値からの再開を遅らせない）。
-        if (_signalLoss.IsLost)
-            return null;
-        return "in-track";
+        return "value-continuity";
     }
 
     /// <summary>
@@ -829,10 +845,12 @@ internal sealed class LtcSyncController
     /// D35: 無音損失（SignalLoss）で一時停止した後に、保持値（Duplicate）が初めて届いたか。
     /// この損失でまだ着地しておらず、今回のフレームで保持値が分かったときに停止モードの
     /// 明示着地を行う（損失理由や値の到着順に依存しない）。
+    /// v0.5.4（規則 4 の読み込みの入口）: 損失のままの読み込みの後もこの経路で着地する。規則 3 と同じく、
+    /// 着地を待っている間（読み込み・シークの着地の前）は判定しない。
     /// </summary>
     private bool ShouldLandOnFirstHeldValueDuringPause() =>
         _signalLoss.IsPauseOwned && _input.HeldLossLandingSeconds is null &&
-        _input.LastHeldEffectiveSeconds is not null;
+        _input.LastHeldEffectiveSeconds is not null && !_syncService.IsWaitingForLanding;
 
     /// <summary>
     /// D20-b (i): 保持 LTC（Duplicate）では通常の同期経路が走らないため、ロード解除だけを
@@ -882,10 +900,21 @@ internal sealed class LtcSyncController
 
         LtcSyncContext state = _effects.GetContext();
         // D37-b: シーク中・着地未確認の位置では補正を評価しない。
+        // v0.5.4 U4: A（着地の状態）の 1 つの条件（着地を待っている間）で止める（門 10）。
         if (!SyncRules.CanEvaluateCorrection(
                 state.SyncEnabled, state.IsMonitoring, state.IsPlaybackPaused, state.IsSeeking,
-                _syncService.SeekState.HasPendingSeek, _syncService.IsPlaybackPositionUsable))
+                _syncService.IsWaitingForLanding))
             return;
+
+        // v0.5.4 B4（chase モデルの規則 4）: 信号断・保持の持ち主（D の集合）がいる間、または
+        // 直近のフレームが保持（Duplicate）の間は、速度補正を評価しない（rate は 1.0 のまま）。
+        // 停止モードは一時停止が、ランスルーはここが保持中の補正を止める。ランスルーの保持に
+        // 入るときは、直前に掛かっていた倍率を 1.0 に戻す。
+        if (IsCorrectionHeldOff())
+        {
+            RestoreRateForHold();
+            return;
+        }
 
         if (_rate.RateRestorePending)
         {
@@ -915,21 +944,24 @@ internal sealed class LtcSyncController
             Log.Information("Smooth correction resumed: playback position is stable again");
         }
 
+        // v0.5.4 B4b（chase モデルの規則 2）: 補正の誤差 e は、照会した再生位置ではなく、
+        // 配信したフレームの PTS（着地の判定と同じ SyncPositionRead のサンプル）で測る。
         double residualSeconds;
         double targetSeconds;
         if (state.Mode == SyncMode.Continue)
         {
-            // T7: Continue は粗い同期判定と同じ素材位置と再生位置を使う。素材位置は
-            // コーディネーターが 1 か所で出した値なので、残差は sync.evaluate の delta と一致する。
+            // T7: Continue の素材位置はコーディネーターが 1 か所で出した値を使う（写像は変えない）。
+            // B4b: 再生位置の側だけを配信したフレームの PTS に置き換える。
             if (_lastContinueFrame is not { CorrectionAllowed: true } frame)
                 return;
-            residualSeconds = frame.MediaPositionSeconds - frame.PlaybackSeconds;
+            if (!TryReadDeliveredSeconds(out double delivered))
+                return;
+            residualSeconds = frame.MediaPositionSeconds - delivered;
             targetSeconds = frame.MediaPositionSeconds;
         }
         else
         {
-            if (_effects.GetPlaybackSeconds == null) return;
-            if (_effects.GetPlaybackSeconds() is not double playback || !double.IsFinite(playback))
+            if (!TryReadDeliveredSeconds(out double delivered))
                 return;
             // D33: 範囲外の LTC は補正しない（Jump の生値シーク・Smooth の暴走で MediaOut を
             // 越えない）。粗い判定の終端シークと Single の終端ホールドに任せる。範囲内は clamp は no-op。
@@ -937,9 +969,19 @@ internal sealed class LtcSyncController
                 state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
             if (ltcSeconds < clipIn || ltcSeconds > clipOut)
                 return;
-            residualSeconds = ltcSeconds - playback;
+            residualSeconds = ltcSeconds - delivered;
             targetSeconds = SyncDecisionEngine.ClampToClip(
                 ltcSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
+        }
+
+        // v0.5.4 B6b-16/23（規則 3）: relocate・読み込みの着地を観測した直後の 1 サンプルは
+        // varispeed しない（消費する）。シークの可否は粗い判定（15 の閾値と 13 のゲート）が決める。
+        if (_syncService.ConsumeFirstSampleAfterLanding())
+        {
+            // 計数用（平常時の発火回数を数える。門ではない）。
+            Log.Debug("sync.gate first-sample-after-landing mode={Mode} residualMs={ResidualMs:F1}",
+                _effects.GetCorrectionMode(), residualSeconds * 1000.0);
+            return;
         }
 
         // D37-c: 粗い判定と同じ前処理を補正の残差にも通す。ありえない変化の標本は捨て、
@@ -959,8 +1001,10 @@ internal sealed class LtcSyncController
         _rate.ClearRejectedLogged();
         residualSeconds = correctionGate.MedianSeconds;
 
+        // v0.5.4 B4b: Smooth の不感帯は 1 映像フレーム（fps が不明なら LTC の 1 フレーム）。
         SyncCorrectionDecision decision = _correction.Evaluate(
-            residualSeconds, targetSeconds, _effects.GetCorrectionMode(), _rate.SmoothAvailable, _getUtcNow());
+            residualSeconds, targetSeconds, _effects.GetCorrectionMode(), _rate.SmoothAvailable, _getUtcNow(),
+            SyncCorrectionController.FrameDurationSeconds(state.VideoFps, LastTimecodeFps));
 
         switch (decision.Action)
         {
@@ -977,6 +1021,8 @@ internal sealed class LtcSyncController
                         "Smooth correction rate={Rate:F5} residualMs={ResidualMs:F1} rawResidualMs={RawResidualMs:F1} rejectedTotal={RejectedTotal}",
                         decision.Rate, residualSeconds * 1000.0, rawResidualSeconds * 1000.0,
                         correctionGate.RejectedTotal);
+                    // v0.5.4 段 B2 の計測: 着地から 500ms 以内の速度補正（旧 門 9 が隠していた量）。
+                    _syncService.NotePostLandingRateApplied(decision.Rate);
                 }
                 break;
             case SyncCorrectionActionType.Seek:
@@ -989,7 +1035,7 @@ internal sealed class LtcSyncController
                         "Jump correction seek target={Target:F3} residualMs={ResidualMs:F1} rawResidualMs={RawResidualMs:F1} rejectedTotal={RejectedTotal}",
                         decision.TargetSeconds, residualSeconds * 1000.0, rawResidualSeconds * 1000.0,
                         correctionGate.RejectedTotal);
-                    _syncService.ReportSeekSent(decision.TargetSeconds);
+                    _syncService.ReportSeekSent(decision.TargetSeconds, "jump-correction");
                 }
                 break;
         }
@@ -999,6 +1045,23 @@ internal sealed class LtcSyncController
             : _correction.SmoothDisabled ? "Smooth 補正なし（効かない）"
             : "";
         _effects.SetCorrectionStatus?.Invoke(status);
+    }
+
+    /// <summary>
+    /// v0.5.4 B4b（chase モデルの規則 2）: 補正の誤差を測る「配信したフレームの PTS」を読む。
+    /// 着地の判定と同じ <see cref="LtcSyncEffects.ReadPosition"/> のサンプルを使う。配信の
+    /// サンプルが無い間（配信世代が 0。`_ex` が無い旧 DLL のフォールバックも 0）は false を返し、
+    /// 呼び出し側は補正を評価しない。
+    /// </summary>
+    private bool TryReadDeliveredSeconds(out double deliveredSeconds)
+    {
+        deliveredSeconds = 0.0;
+        if (_effects.ReadPosition?.Invoke() is not { Succeeded: true, Sample: { } sample })
+            return false;
+        if (sample.DeliveredGeneration == 0)
+            return false;
+        deliveredSeconds = sample.DeliveredSeconds;
+        return true;
     }
 
     /// <summary>
@@ -1054,6 +1117,8 @@ internal sealed class LtcSyncController
 
     public void Tick(long nowMilliseconds)
     {
+        // v0.5.4 段 B1: UI タイマーでも着地の状態（新しい判定）を観測する（LTC のフレームの経路と独立）。
+        ObserveLandingStateFromEffects();
         ApplySignalLossAction(_signalLoss.Evaluate(nowMilliseconds, SignalContext()));
         RefreshDisplay();
         if (_input.Pending is { } pending)
@@ -1082,49 +1147,62 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
-    /// D38 (a): 同期を適用しないフレーム（保持の Duplicate）で、保留中のシークの着地を観測する。
-    /// 着地していれば位置の信頼が戻り、次の Jump が未信頼とタイムアウトを通らない。
+    /// D38 (a) / v0.5.4 段 B: 同期を適用しないフレーム（保持の Duplicate）でも、位置サンプルから
+    /// 着地の状態（A）を観測する。着地していれば次の Jump が着地待ちとタイムアウトを通らない。
     /// </summary>
-    private void ObservePendingSeekLanding()
+    private void ObservePendingSeekLanding() => ObserveLandingStateFromEffects();
+
+    /// <summary>
+    /// v0.5.4 段 B1: 位置を照会して着地の状態（新しい判定）を観測する。LTC のフレームの経路とは
+    /// 独立に、UI タイマー（<see cref="Tick"/>）と保持の Duplicate から呼ぶ。B1 では判定に使わない。
+    /// </summary>
+    private void ObserveLandingStateFromEffects()
     {
-        if (!_syncService.SeekState.HasPendingSeek)
-            return;
         LtcSyncContext state = _effects.GetContext();
         if (!state.SyncEnabled || !state.IsMonitoring)
             return;
-        if (_effects.GetPlaybackSeconds?.Invoke() is not double playback || !double.IsFinite(playback))
-            return;
-        double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
-        _syncService.ObservePendingSeekLanding(playback, toleranceSeconds);
+        if (_effects.ReadPosition?.Invoke() is { Succeeded: true } read)
+            _syncService.ObserveLandingState(read, state.VideoFps, LastTimecodeFps);
     }
 
-    private void ApplySignalLossAction(LtcSignalLossAction action)
+    private void ApplySignalLossAction(LtcSignalLossAction action, bool landOnHeldValue = true)
     {
         if (action == LtcSignalLossAction.None || !_effects.GetContext().IsPlayerReady)
             return;
         bool pause = action == LtcSignalLossAction.Pause;
-        // D35: 停止モードの保持で止める直前に Smooth の残り倍率を 1.0 へ戻す
-        // （一時停止後はレート変更を受け付けない）。
-        if (pause)
-            RestoreRateBeforePolicyPause();
-        _effects.SetSignalLossPaused(pause);
-        LtcSyncContext state = _effects.GetContext();
         if (pause)
         {
+            // D35: 停止モードの保持で止める直前に Smooth の残り倍率を 1.0 へ戻す
+            // （一時停止後はレート変更を受け付けない）。
+            RestoreRateBeforePolicyPause();
+            _effects.SetSignalLossPaused(true);
+            LtcSyncContext state = _effects.GetContext();
             Log.Information(
                 "LTC signal lost: playback paused timeoutMs={TimeoutMs} reason={Reason}",
                 state.SignalLossTimeoutMilliseconds, _signalLoss.Reason);
             // D35: 停止モードの保持は、損失理由（SignalLoss / TimecodeHeld）や保持値が損失宣言の
             // 前後どちらで分かったかに依らず、値が分かった時点で保持値へ明示的に 1 回着地する。
             // まだ値が無い（無音損失）ときは、その後の Duplicate が届いた時点で受信経路が着地する。
-            if (_input.LastHeldEffectiveSeconds is not null ||
-                _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld)
+            // 読み込みの入口（landOnHeldValue = false）は、読み込みの着地の後に受信経路が着地する。
+            if (landOnHeldValue &&
+                (_input.LastHeldEffectiveSeconds is not null ||
+                 _signalLoss.Reason == LtcSignalLossReason.TimecodeHeld))
                 ReapplyHeldValueOnPause();
+            return;
         }
-        else
+
+        // v0.5.4 K5（§6 の 15）: 利用者を含むほかの持ち主が止めている間は、信号断の復帰でも再開しない
+        // （境界ホールドの解除・ギャップの解除と同じ判定）。
+        PauseOwners otherOwners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+        if (!SyncRules.ShouldResumeOnPolicyPauseRelease(otherOwners))
         {
-            Log.Information("LTC signal restored: playback resumed resumeFrames={ResumeFrames}", state.SignalResumeFrames);
+            Log.Information("LTC signal restored: playback stays paused owners={Owners}", otherOwners);
+            return;
         }
+
+        _effects.SetSignalLossPaused(false);
+        LtcSyncContext resumed = _effects.GetContext();
+        Log.Information("LTC signal restored: playback resumed resumeFrames={ResumeFrames}", resumed.SignalResumeFrames);
     }
 
     /// <summary>
@@ -1149,6 +1227,42 @@ internal sealed class LtcSyncController
     }
 
     /// <summary>
+    /// v0.5.4 B4（chase モデルの規則 4）: 補正を保留すべき状態か。信号断・保持の持ち主
+    /// （D の集合。ギャップ・境界ホールド・プロジェクト復元・利用者の一時停止を含む）がいる間と、
+    /// 直近のフレームが保持（Duplicate。<see cref="LtcInputState.LastHeldEffectiveSeconds"/> が
+    /// Normal で消えるまで残る）の間。
+    /// </summary>
+    private bool IsCorrectionHeldOff()
+    {
+        if (_input.LastHeldEffectiveSeconds is not null)
+            return true;
+        PauseOwners owners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+        return _signalLoss.IsPauseOwned || owners != PauseOwners.None;
+    }
+
+    /// <summary>
+    /// v0.5.4 B4: 保持・信号断で補正を止めるときに、掛かったままの倍率を 1.0 に戻す
+    /// （ランスルーは保持中も 1.0 で進む）。戻せなければ復帰待ちにする（既存の仕組みと同じ）。
+    /// </summary>
+    private void RestoreRateForHold()
+    {
+        if (_effects.ApplyRateInstant == null)
+            return;
+        if (!_rate.RateRestorePending && !_rate.RateNotUnity)
+            return;
+        if (_effects.ApplyRateInstant(1.0))
+        {
+            _rate.MarkRestored();
+            Log.Information(
+                "Timecode held or signal lost: rate restored to 1.0 (correction is not evaluated while held)");
+        }
+        else
+        {
+            _rate.MarkRestorePending();
+        }
+    }
+
+    /// <summary>
     /// D27: 保持で一時停止したときの 1 回の着地。保持値へシークし、フレームが保持時刻に
     /// 対応した位置で止まるようにする。同期エンジンのデバウンス・保留状態には依存しない
     /// （停止時の 1 回だけ）。
@@ -1163,39 +1277,8 @@ internal sealed class LtcSyncController
         if (held is not double heldSeconds || _effects.SeekTo == null)
             return;
         LtcSyncContext state = _effects.GetContext();
-        if (!state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
+        if (!TryGetHeldLandingTarget(heldSeconds, state, out double target))
             return;
-
-        double target;
-        if (state.Mode == SyncMode.Continue)
-        {
-            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(heldSeconds);
-            if (result.Status != TimelineQueryStatus.OnTrack)
-                return;
-            target = result.MediaPositionSeconds;
-        }
-        else
-        {
-            // D35-b: D33 の境界ホールド中は端で受け持つ。端への明示着地は保留シークを作り、
-            // 解除時の範囲内 LTC への着地を抑止するため発行しない。
-            if (SyncRules.ShouldSkipHeldLanding(_single().IsBoundaryHeld))
-            {
-                _input.MarkHeldLossLanding(heldSeconds);
-                Log.Debug(
-                    "LTC timecode held: landing skipped (clip boundary hold active) ltc={Ltc:F3}",
-                    heldSeconds);
-                return;
-            }
-            // D29: 着地先はほかの経路と同じくクリップの [MediaIn, MediaOut ?? 尺] に収める。
-            // 以前は尺だけで収めていたため、LTC が入口より手前で止まると、クリップの外（入口の手前）の
-            // 絵へ着地した（検証機の S-2、クリップ [10,18] で LTC を 8.0 に止めた回）。
-            target = SyncDecisionEngine.ClampToClip(
-                heldSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds,
-                state.VideoFps);
-        }
-
-        // D31-b: この損失で着地を試みた保持値を覚え、値が変わったときだけ再度着地する。
-        _input.MarkHeldLossLanding(heldSeconds);
 
         // D35: 1 フレーム以内なら既に保持位置なので省略する（停止中の微小残差でシークしない）。
         if (_effects.GetPlaybackSeconds?.Invoke() is double playback &&
@@ -1210,23 +1293,116 @@ internal sealed class LtcSyncController
 
         if (_effects.SeekTo(target))
         {
-            _syncService.ReportSeekSent(target);
+            _syncService.ReportSeekSent(target, "held-landing");
             Log.Information(
                 "LTC timecode held: landing seek issued target={Target:F3} ltc={Ltc:F3}", target, heldSeconds);
         }
     }
 
-    /// <summary>D35: 着地の省略判定に使う 1 フレーム。映像 fps が無ければ LTC の 1 フレーム。</summary>
-    private double HeldLandingFrameSeconds(LtcSyncContext state)
+    /// <summary>
+    /// v0.5.4 B6b（規則 4）: ランスルーのマスター停止（保持）の入口で、停止した値へ 1 回だけ合わせる。
+    /// 判定は規則 3 と同じ（|e| &gt; tol なら relocate、以内なら何もしない）。停止モードの
+    /// <see cref="ReapplyHeldValueOnPause"/> と同じ着地先（写像・クリップの範囲・境界ホールド）を使い、
+    /// この保持で合わせた値を保持着地の記録に残す（同じ保持では繰り返さない）。
+    /// </summary>
+    private void AlignOnRunThroughHoldEntry()
     {
-        double fps = state.VideoFps > 0 ? state.VideoFps : LastTimecodeFps;
-        return fps > 0 ? 1.0 / fps : 0.04;
+        if (_input.LastHeldEffectiveSeconds is not double heldSeconds || _effects.SeekTo == null)
+            return;
+        // 規則 3: 着地を待っている間は判定しない（出ているシークが relocate）。保持着地の記録を
+        // 残さないので、着地した後の次の保持フレームがこの入口の判定をする。
+        if (_syncService.IsWaitingForLanding)
+            return;
+        LtcSyncContext state = _effects.GetContext();
+        if (!TryGetHeldLandingTarget(heldSeconds, state, out double target))
+            return;
+        if (_effects.GetPlaybackSeconds?.Invoke() is not double playback || !double.IsFinite(playback))
+            return;
+        double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
+        if (Math.Abs(playback - target) <= toleranceSeconds)
+        {
+            Log.Debug(
+                "LTC timecode held (run-through): entry alignment not needed position={Position:F3} target={Target:F3}",
+                playback, target);
+            return;
+        }
+        if (_effects.SeekTo(target))
+        {
+            _syncService.ReportSeekSent(target, "hold-entry");
+            Log.Information(
+                "LTC timecode held (run-through): entry alignment seek issued target={Target:F3} ltc={Ltc:F3} position={Position:F3}",
+                target, heldSeconds, playback);
+        }
     }
+
+    /// <summary>
+    /// 保持値の着地先（Continue はタイムライン → 素材位置、Single はクリップの範囲）。境界ホールドが
+    /// 一時停止の持ち主なら端で受け持つので false。着地先が決まったら、この損失（保持）で着地を試みた
+    /// 保持値として記録する（D31-b）。
+    /// v0.5.4（S-4 の回帰の修正）: 写像（尺・fps）が分かるまでは判定せず false（記録もしない）。
+    /// 分かった後の最初の保持のフレームで、呼び出し側（規則 4 の入口・停止の着地）が 1 回だけ合わせる。
+    /// </summary>
+    private bool TryGetHeldLandingTarget(double heldSeconds, LtcSyncContext state, out double target)
+    {
+        target = 0.0;
+        if (!state.IsMonitoring || !state.SyncEnabled || state.IsSeeking)
+            return false;
+        // 読み込みの直後は尺が 0（アプリは UI タイマーが取れたときに入れる）。この間にクリップの端へ収めると、
+        // 端が素材の終わりちょうど（MediaOut）になり、そこへシークして EOF に入る（S-4）。同期の判定（エンジン）の
+        // bad-duration と同じく、尺が使えない間は判定しない。
+        if (!SeekBarUpdateState.IsUsableDuration(state.DurationSeconds))
+        {
+            Log.Debug("LTC timecode held: landing deferred until the duration is known ltc={Ltc:F3}", heldSeconds);
+            return false;
+        }
+
+        if (state.Mode == SyncMode.Continue)
+        {
+            TimelineQueryResult result = _playlist.FindTrackAtTimelinePosition(heldSeconds);
+            if (result.Status != TimelineQueryStatus.OnTrack)
+                return false;
+            target = result.MediaPositionSeconds;
+        }
+        else
+        {
+            // D35-b: D33 の境界ホールド中は端で受け持つ。端への明示着地は保留シークを作り、
+            // 解除時の範囲内 LTC への着地を抑止するため発行しない。
+            // v0.5.4 U5: 判定は一時停止の持ち主の集合（D）に畳む（境界ホールドが持ち主なら飛ばす）。
+            PauseOwners owners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+            if (SyncRules.ShouldSkipHeldLanding(owners))
+            {
+                _input.MarkHeldLossLanding(heldSeconds);
+                Log.Debug(
+                    "LTC timecode held: landing skipped (boundary hold is a pause owner) ltc={Ltc:F3}",
+                    heldSeconds);
+                return false;
+            }
+            // 端（最後のコマの頭）は映像 fps から決まる。fps が分からない間も判定しない（端が素材の終わりちょうどになる）。
+            if (!SyncDecisionEngine.IsUsableFps(state.VideoFps))
+            {
+                Log.Debug("LTC timecode held: landing deferred until the video fps is known ltc={Ltc:F3}", heldSeconds);
+                return false;
+            }
+            // D29: 着地先はほかの経路と同じくクリップの [MediaIn, MediaOut ?? 尺] に収める。
+            // 以前は尺だけで収めていたため、LTC が入口より手前で止まると、クリップの外（入口の手前）の
+            // 絵へ着地した（検証機の S-2、クリップ [10,18] で LTC を 8.0 に止めた回）。
+            target = SyncDecisionEngine.ClampToClip(
+                heldSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds,
+                state.VideoFps);
+        }
+
+        // D31-b: この損失で着地を試みた保持値を覚え、値が変わったときだけ再度着地する。
+        _input.MarkHeldLossLanding(heldSeconds);
+        return true;
+    }
+
+    /// <summary>D35: 着地の省略判定に使う 1 フレーム。映像 fps が無ければ LTC の 1 フレーム。</summary>
+    private double HeldLandingFrameSeconds(LtcSyncContext state) =>
+        SyncCorrectionController.FrameDurationSeconds(state.VideoFps, LastTimecodeFps);
 
     /// <summary>
     /// D35-b: D33 の境界ホールド（Single）が解除されたときに呼ぶ。ホールド中に残った端への
     /// 保留シークと保持着地のラッチを必ず解除し、解除後の範囲内 LTC への着地を抑止しない。
-    /// D37-g: 追従開始のエピソードもここで終わらせる（先行量を引き継がせない）。
     /// v0.5.2 段 1 の追加: ほかの入口と同じくできごとを記録し、消す処理は OnLifecycle に置く。
     /// </summary>
     internal void NotifyClipBoundaryHoldReleased()
@@ -1244,15 +1420,6 @@ internal sealed class LtcSyncController
                 state.IsPlayerReady, state.IsMonitoring, state.SyncEnabled,
                 state.IsSeeking, _signalLoss.ShouldSuppressSync))
             return SyncRequestResult.Complete;
-        // D37-c: 追従開始の最初の同期評価は、D37-b2 の着地窓と同じ扱いにする
-        // （着地まで速度補正を優先せず、シークで詰める）。古い値の再適用（gapDisplayOnly）では
-        // 消費せず、次の有効フレームに任せる。
-        if (!gapDisplayOnly && _input.FollowStartPending)
-        {
-            _input.ClearFollowStart();
-            _syncService.NotifyLanding(LandingOrigin.FollowStart);
-            Log.Information("Timecode sync: follow start landing window opened ltc={Ltc:F3}", seconds);
-        }
         if (state.Mode != SyncMode.Continue)
         {
             // U1: 古い再適用では Single の同期（シーク目標）も次の有効フレームに任せる。
@@ -1282,9 +1449,6 @@ internal sealed class LtcSyncController
                     // T7: トラック切替（ロード成功）で補正状態を捨て、Smooth を再試行できるようにする。
                     ResetCorrection();
                     _rate.ResetSmoothAvailability();
-                    // T9: 着地（ロード成立）から 1.0 秒の補正窓を開く。ResetCorrection の後に置くこと
-                    // （Reset は前の窓を捨てる）。
-                    _correction.NotifyLanding(_getUtcNow());
                 }
                 if (frame.ExitedGap)
                     ResetCorrection();
@@ -1324,8 +1488,16 @@ internal sealed class LtcSyncController
             return;
         GapExitAction exit = _gap.DecideGapExit();
         _gap.ResetAll();
-        if (exit.ShouldResumePlayback && !_signalLoss.IsPauseOwned && state.IsPlayerReady)
+        // v0.5.4 K5（§6 の 15）: 信号断とほかの持ち主（利用者を含む）が止めていれば再開しない
+        // （境界ホールドの解除・信号断の復帰と同じ判定。ResetAll の後に読むとギャップ自身は入らない）。
+        PauseOwners otherOwners = _effects.GetOtherPauseOwners?.Invoke() ?? PauseOwners.None;
+        if (_signalLoss.IsPauseOwned)
+            otherOwners |= PauseOwners.SignalLoss;
+        if (exit.ShouldResumePlayback && state.IsPlayerReady &&
+            SyncRules.ShouldResumeOnPolicyPauseRelease(otherOwners))
+        {
             _effects.ResumeGapPause();
+        }
         _effects.ClearGapFreezeFrame();
         _effects.RefreshCurrentVideoFrame();
         Log.Information("Gap state cleared for manual control syncEnabled={SyncEnabled} mode={Mode}",
@@ -1339,7 +1511,6 @@ internal sealed class LtcSyncController
     /// </summary>
     internal IReadOnlyDictionary<string, bool> LatchSnapshot() => new Dictionary<string, bool>
     {
-        ["jumpAppliedOnce"] = _input.JumpAppliedOnce,
         ["heldReapplyDone"] = _input.HeldReapplyDone,
         ["pendingJump"] = _input.PendingJumpSeconds is not null,
         ["pendingSync"] = _input.Pending is not null,
@@ -1347,7 +1518,6 @@ internal sealed class LtcSyncController
         ["heldLossLanding"] = _input.HeldLossLandingSeconds is not null,
         ["lastAppliedLtc"] = _input.LastAppliedLtcSeconds is not null,
         ["lastAcceptedLtc"] = _input.Accepted is not null,
-        ["followStartPending"] = _input.FollowStartPending,
         ["rateRestorePending"] = _rate.RateRestorePending,
         ["smoothUnavailable"] = !_rate.SmoothAvailable,
         // 倍率が 1.0 でないまま残っているか（ResetCorrection と同じ判定幅）。

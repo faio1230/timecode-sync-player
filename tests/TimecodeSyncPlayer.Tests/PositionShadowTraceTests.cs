@@ -37,7 +37,7 @@ public class PositionShadowTraceTests
         recorded.Detail.Should().Contain("playback=10.000000");
         recorded.Detail.Should().Contain("evalPosition=10.500000");
         recorded.Detail.Should().Contain("evalDelta=0.000000");
-        recorded.Detail.Should().Contain("evalBasis=pipeline");
+        recorded.Detail.Should().Contain("evalBasis=delivered");   // v0.5.4 #7: 着地済みは配信 PTS
         recorded.Detail.Should().Contain("deliveredGen=3");
         recorded.Detail.Should().Contain("currentGen=3");
         recorded.Detail.Should().Contain("shadowRate=1.00000");
@@ -104,11 +104,11 @@ public class PositionShadowTraceTests
         OutputTraceEvent recorded = trace.Snapshot().Single(e => e.Stage == "sync.evaluate");
         recorded.Detail.Should().Contain("playback=10.000000");
         recorded.Detail.Should().Contain("evalPosition=10.500000");
-        recorded.Detail.Should().Contain("evalBasis=pipeline");
+        recorded.Detail.Should().Contain("evalBasis=delivered");   // v0.5.4 #7: 着地済みは配信 PTS
     }
 
     [Fact]
-    public void ContinueCoordinator_NativeSeekingShadow_UsesSampleAndPlaybackFromSameRead()
+    public void ContinueCoordinator_WhileWaitingForLandingShadow_UsesSampleAndPlaybackFromSameRead()
     {
         var trace = new OutputTrace(CreateTempDirectory(), capacity: 1000) { OriginQpc = Stopwatch.GetTimestamp() };
         OutputTrace.Current = trace;
@@ -116,6 +116,9 @@ public class PositionShadowTraceTests
         try
         {
             var service = new TimecodeSyncService(new SyncDecisionEngine(), new TimecodeSyncSeekState());
+            // v0.5.4 段 B3: ネイティブのシーク中は着地待ち（未信頼の決定）として shadow を残す。
+            // 目標は配信 PTS（10.5）から離し、着地の観測で待ちが解けないようにする。
+            service.ReportSeekSent(20.0);
             var track = new PlaylistTrack(
                 Guid.NewGuid(), "C:/clip.mp4", "track", TimeSpan.Zero, null, TimeSpan.Zero,
                 TimeSpan.FromSeconds(60), TimeSpan.Zero, 25, true);
@@ -137,8 +140,7 @@ public class PositionShadowTraceTests
                     GetTotalRenderedFrames: () => 0,
                     ReadPosition: () => { reads++; return new SyncPositionRead(true, 10.0, sample); },
                     BuildPlaybackState: playback => new SyncPlaybackState(true, true, false,
-                        PlaybackSeconds: playback, DurationSeconds: 60, VideoFps: 25, TimecodeFps: 25),
-                    IsNativeSeeking: () => true));
+                        PlaybackSeconds: playback, DurationSeconds: 60, VideoFps: 25, TimecodeFps: 25)));
 
             _ = coordinator.Handle(new TimelineQueryResult(TimelineQueryStatus.OnTrack, track, 10.5, null), 10.5);
         }
@@ -149,7 +151,7 @@ public class PositionShadowTraceTests
 
         reads.Should().Be(1);
         OutputTraceEvent recorded = trace.Snapshot().Single(e => e.Stage == "sync.evaluate");
-        recorded.Detail.Should().Contain("native-seeking");
+        recorded.Detail.Should().Contain("position-untrusted");
         recorded.Detail.Should().Contain("playback=10.000000");
         recorded.Detail.Should().Contain("evalPosition=10.500000");
         recorded.Detail.Should().Contain("evalBasis=delivered");

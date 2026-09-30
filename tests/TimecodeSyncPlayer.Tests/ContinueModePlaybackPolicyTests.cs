@@ -367,4 +367,30 @@ public class ContinueModePlaybackPolicyTests
 
         result.Should().BeTrue();
     }
+
+    // K3 f4-14（Fable）: 窓は「2 フレーム × フレーム時間」。ns の格子に乗った値でも倍精度の差が
+    // 境界をわずかに超える（16.716666667 − 16.683333333 は 2/60 を 6.7e-10 超える）。境界ちょうどは窓の中。
+    [Fact]
+    public void ShouldCaptureFreezeFrameAfterFrameStep_AcceptsExactlyTwoFramesOnTheNanosecondGrid()
+    {
+        bool result = ContinueModePlaybackPolicy.ShouldCaptureFreezeFrameAfterFrameStep(
+            timePosReadSucceeded: true,
+            actualPositionSeconds: 16.716666667,
+            targetSeconds: 16.683333333,
+            frameSeconds: 1.0 / 60.0);
+
+        result.Should().BeTrue("2 フレームちょうどの差は窓の境界で、弾かない");
+    }
+
+    [Fact]
+    public void ShouldCaptureFreezeFrameAfterFrameStep_RejectsThreeFrames()
+    {
+        bool result = ContinueModePlaybackPolicy.ShouldCaptureFreezeFrameAfterFrameStep(
+            timePosReadSucceeded: true,
+            actualPositionSeconds: 20.033333333,
+            targetSeconds: 19.983333333,
+            frameSeconds: 1.0 / 60.0);
+
+        result.Should().BeFalse("3 フレーム離れた値（f4-14 の照会値）は窓の外");
+    }
 }
