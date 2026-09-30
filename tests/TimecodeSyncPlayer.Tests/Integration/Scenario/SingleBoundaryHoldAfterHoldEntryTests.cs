@@ -45,14 +45,28 @@ public class SingleBoundaryHoldAfterHoldEntryTests
     /// 保持（35.0 の Duplicate）の中で次のトラックを読み込み、10 秒進める。読み込みの後の映像 fps と着地の遅れを
     /// 与える（偽プレイヤーの読み込みは fps をトラックの 25 に戻すので、読み込みの後に入れる）。
     /// <paramref name="ltcPhaseMilliseconds"/> は LTC の標本の位相（台本の開始を歩みの途中へずらす）。
+    /// <paramref name="observationBeatMilliseconds"/> が 1 LTC フレームより長いときは、保持のフレームをその間隔で
+    /// 1 枚ずつ届ける（間は無音。UI の停止などで観測の拍が伸びた場面。信号断の 250ms より短くする）。
     /// </summary>
     private static SyncScenarioHarness RunHoldEntryAfterLoad(
-        double videoFps, double seekLandingDelaySeconds, int ltcPhaseMilliseconds, int stepMilliseconds)
+        double videoFps, double seekLandingDelaySeconds, int ltcPhaseMilliseconds, int stepMilliseconds,
+        int observationBeatMilliseconds = 40)
     {
         (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
         long start = clock.MonotonicMilliseconds + ltcPhaseMilliseconds;
-        h.Ltc.Normal(34.8, TimeSpan.FromMilliseconds(200), atMilliseconds: start)
-            .Duplicate(35.0, TimeSpan.FromSeconds(15));
+        h.Ltc.Normal(34.8, TimeSpan.FromMilliseconds(200), atMilliseconds: start);
+        if (observationBeatMilliseconds <= 40)
+        {
+            h.Ltc.Duplicate(35.0, TimeSpan.FromSeconds(15));
+        }
+        else
+        {
+            for (int elapsed = 0; elapsed < 15_000; elapsed += observationBeatMilliseconds)
+            {
+                h.Ltc.Duplicate(35.0, TimeSpan.FromMilliseconds(40))
+                    .Silence(TimeSpan.FromMilliseconds(observationBeatMilliseconds - 40));
+            }
+        }
         RunFor(h, clock, 1_500, stepMilliseconds);
 
         h.Playback.SeekLandingDelaySeconds = seekLandingDelaySeconds;
@@ -71,7 +85,11 @@ public class SingleBoundaryHoldAfterHoldEntryTests
         return h;
     }
 
-    private static void AssertHeldAtOut(SyncScenarioHarness h, double videoFps)
+    /// <summary>
+    /// 出口の近く: 保持の判定は観測の拍ごとなので、着地から最初の観測までに 1 拍（LTC の 1 フレームか、それより長い
+    /// 歩み）ぶん進み得る。その先に保持の窓（2 映像フレーム）を足した範囲に留まる。
+    /// </summary>
+    private static void AssertHeldAtOut(SyncScenarioHarness h, double videoFps, int beatMilliseconds)
     {
         List<string> names = h.Operations.Select(o => o.Name).ToList();
         IReadOnlyList<double> seeks = h.Operations.Where(o => o.Name == "seek").Select(o => o.Value ?? double.NaN).ToList();
@@ -79,7 +97,8 @@ public class SingleBoundaryHoldAfterHoldEntryTests
 
         names.Should().Contain("clip-end-hold",
             "入口の合わせで出口へ着いた後は、境界の保持（出口で一時停止）に入る（" + because + "）");
-        h.PlaybackSeconds.Should().BeInRange(ClipOut, ClipOut + LtcFrameSeconds + 2.0 / videoFps,
+        double beatSeconds = Math.Max(LtcFrameSeconds, beatMilliseconds / 1000.0);
+        h.PlaybackSeconds.Should().BeInRange(ClipOut, ClipOut + beatSeconds + 2.0 / videoFps,
             "保持の間は出口の近くに留まる（出口の先へ走り続けない。" + because + "）");
     }
 
@@ -92,7 +111,7 @@ public class SingleBoundaryHoldAfterHoldEntryTests
     public void HoldEntryAlignment_60fps_ImmediateLanding_EntersBoundaryHold(int ltcPhaseMilliseconds, int stepMilliseconds)
     {
         SyncScenarioHarness h = RunHoldEntryAfterLoad(60, 0, ltcPhaseMilliseconds, stepMilliseconds);
-        AssertHeldAtOut(h, 60);
+        AssertHeldAtOut(h, 60, stepMilliseconds);
     }
 
     /// <summary>対照（B 型）: 60fps・着地の遅れ 0.3 秒。着地の直後のフレームで位置が窓の中にあり、保持に入る。</summary>
@@ -102,7 +121,7 @@ public class SingleBoundaryHoldAfterHoldEntryTests
     public void HoldEntryAlignment_60fps_DelayedLanding_EntersBoundaryHold(int ltcPhaseMilliseconds, int stepMilliseconds)
     {
         SyncScenarioHarness h = RunHoldEntryAfterLoad(60, 0.3, ltcPhaseMilliseconds, stepMilliseconds);
-        AssertHeldAtOut(h, 60);
+        AssertHeldAtOut(h, 60, stepMilliseconds);
     }
 
     /// <summary>対照: 25fps（窓 ±80ms）・着地の遅れ 0。次の保持のフレームでも位置が窓の中にあり、保持に入る。</summary>
@@ -112,6 +131,20 @@ public class SingleBoundaryHoldAfterHoldEntryTests
     public void HoldEntryAlignment_25fps_ImmediateLanding_EntersBoundaryHold(int ltcPhaseMilliseconds, int stepMilliseconds)
     {
         SyncScenarioHarness h = RunHoldEntryAfterLoad(25, 0, ltcPhaseMilliseconds, stepMilliseconds);
-        AssertHeldAtOut(h, 25);
+        AssertHeldAtOut(h, 25, stepMilliseconds);
+    }
+
+    /// <summary>
+    /// 30fps（窓 ±66ms）・着地の遅れ 0 で観測の拍が長い（WASAPI の約 50ms の 2 枚まとめで 100ms、UI の停止などで
+    /// 約 120ms）。着地から次の保持のフレームまでに窓を過ぎる。
+    /// </summary>
+    [Theory]
+    [InlineData(0, 100)]
+    [InlineData(0, 120)]
+    [InlineData(20, 120)]
+    public void HoldEntryAlignment_30fps_LongObservationBeat_EntersBoundaryHold(int ltcPhaseMilliseconds, int beatMilliseconds)
+    {
+        SyncScenarioHarness h = RunHoldEntryAfterLoad(30, 0, ltcPhaseMilliseconds, 10, beatMilliseconds);
+        AssertHeldAtOut(h, 30, beatMilliseconds);
     }
 }
