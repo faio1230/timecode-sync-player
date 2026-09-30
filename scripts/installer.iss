@@ -10,6 +10,16 @@
 #ifndef VcRedistFile
   #error VcRedistFile must be supplied by package-release.ps1
 #endif
+; VC++ runtime minimum (v0.6.0: 14.50.35710). The value is kept in package-release.ps1.
+#ifndef VcMinMajor
+  #error VcMinMajor must be supplied by package-release.ps1
+#endif
+#ifndef VcMinMinor
+  #error VcMinMinor must be supplied by package-release.ps1
+#endif
+#ifndef VcMinBld
+  #error VcMinBld must be supplied by package-release.ps1
+#endif
 
 #define MyAppName "TimecodeSyncPlayer"
 #define MyAppPublisher "Studio Sandix"
@@ -54,17 +64,37 @@ Source: "{#VcRedistFile}"; DestDir: "{tmp}"; DestName: "vc_redist.x64.exe"; Flag
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 
 [Run]
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ 2015-2022 Redistributable (x64)..."; Flags: waituntilterminated shellexec; Check: VcRuntimeMissing
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Redistributable (x64) {#VcMinMajor}.{#VcMinMinor}.{#VcMinBld} or later..."; Flags: waituntilterminated shellexec; Check: VcRuntimeMissing
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+const
+  VcRuntimeKey = 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
+
+{ True when the x64 VC++ runtime is not installed or is older than the minimum
+  (Major.Minor.Bld compared in order). Missing values count as missing runtime. }
 function VcRuntimeMissing: Boolean;
 var
-  Installed: Cardinal;
+  Installed, Major, Minor, Bld: Cardinal;
 begin
   Result := True;
-  if RegQueryDWordValue(HKLM64, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) then
-    Result := Installed <> 1;
+  if not RegQueryDWordValue(HKLM64, VcRuntimeKey, 'Installed', Installed) then
+    Exit;
+  if Installed <> 1 then
+    Exit;
+  if not RegQueryDWordValue(HKLM64, VcRuntimeKey, 'Major', Major) then
+    Exit;
+  if not RegQueryDWordValue(HKLM64, VcRuntimeKey, 'Minor', Minor) then
+    Exit;
+  if not RegQueryDWordValue(HKLM64, VcRuntimeKey, 'Bld', Bld) then
+    Exit;
+  if Major <> {#VcMinMajor} then
+    Result := Major < {#VcMinMajor}
+  else if Minor <> {#VcMinMinor} then
+    Result := Minor < {#VcMinMinor}
+  else
+    Result := Bld < {#VcMinBld};
+  Log(Format('VC++ runtime x64 installed %d.%d.%d, minimum {#VcMinMajor}.{#VcMinMinor}.{#VcMinBld}, install=%d', [Major, Minor, Bld, Ord(Result)]));
 end;

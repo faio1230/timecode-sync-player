@@ -1,16 +1,43 @@
-﻿[CmdletBinding()]
+﻿# 配布物（zip と setup.exe）を作る。手順は docs\RELEASE-PROCEDURE-0.4.md の 1 節。
+#
+# VC++ 再頒布パッケージ（v0.6.0 から 14.50.35710 以上。gst-prores-d3d11 が MSVC 14.50 の CRT を要る）
+# - 最低版・固定の版・SHA-256・入手元の URL は、この下の「VC++ 再頒布パッケージの固定値」の 1 か所に置く。
+#   インストーラーの版の比較（installer.iss の VcRuntimeMissing）にも、ここの最低版を /D で渡す
+# - キャッシュ artifacts\cache\vc_redist.x64.exe が最低版より古い、または固定の SHA-256 と違うときは止まる
+# - キャッシュの更新の手順:
+#   1. https://aka.ms/vc14/vc_redist.x64.exe（Microsoft の最新の v14 再頒布パッケージの固定リンク。
+#      https://aka.ms/vs/18/release/vc_redist.x64.exe へ転送される）の転送先 URL を確かめる
+#      （curl -sSIL <URL> の Location。download.visualstudio.microsoft.com の版ごとの URL）
+#   2. その URL のファイルを落とし、ProductVersion（(Get-Item <exe>).VersionInfo.ProductVersion）、
+#      SHA-256（Get-FileHash）、署名（Get-AuthenticodeSignature が Valid、Microsoft Corporation）を確かめる
+#   3. 下の $vcRedistPinnedUrl・$vcRedistPinnedVersion・$vcRedistPinnedSha256 を書き換え、
+#      artifacts\cache\vc_redist.x64.exe を消して（または退避して）このスクリプトを実行し直す（固定の URL から落として照合する）
+#   注意: https://aka.ms/vs/17/release/vc_redist.x64.exe は 14.44（VS 2022 の系列）を返すので使わない（2026-09-30 に確認）
+[CmdletBinding()]
 param(
     [string]$Version,
     [string]$OutputDirectory,
     [string]$InnoSetupCompiler,
     [string]$GStreamerRoot,
     [string]$VcRedistPath,
-    [string]$VcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+    [string]$VcRedistUrl,
+    [string]$ProResPluginDir,
     [switch]$SkipBuild,
     [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = "Stop"
+
+# VC++ 再頒布パッケージの固定値（1 か所。更新の手順は先頭のコメント）。
+# 最低版はプラグイン側の回答（付属の再頒布パッケージが 14.50.35710）。固定の版は 2026-09-30 に
+# https://aka.ms/vc14/vc_redist.x64.exe が返したもの。
+$vcRedistMinVersion = [Version]"14.50.35710"
+$vcRedistPinnedVersion = "14.51.36247.0"
+$vcRedistPinnedSha256 = "843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C"
+$vcRedistPinnedUrl = "https://download.visualstudio.microsoft.com/download/pr/ebdab8e5-1d7b-4d9f-a11b-cbb1720c3b12/843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C/VC_redist.x64.exe"
+if ([string]::IsNullOrWhiteSpace($VcRedistUrl)) {
+    $VcRedistUrl = $vcRedistPinnedUrl
+}
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -123,7 +150,8 @@ function Copy-GStreamerBundle([string]$root, [string]$staging) {
 
 function Resolve-VcRedist([string]$ExplicitPath, [string]$Url, [string]$CacheDirectory) {
     $path = $ExplicitPath
-    if (-not [string]::IsNullOrWhiteSpace($path)) {
+    $fromCache = [string]::IsNullOrWhiteSpace($path)
+    if (-not $fromCache) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "VcRedistPath not found: $path"
         }
@@ -135,16 +163,47 @@ function Resolve-VcRedist([string]$ExplicitPath, [string]$Url, [string]$CacheDir
             Write-Host "Downloading $Url ..."
             [Net.ServicePointManager]::SecurityProtocol =
                 [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $Url -OutFile $path -UseBasicParsing
+            $partial = "$path.partial"
+            $oldProgress = $ProgressPreference
+            $ProgressPreference = "SilentlyContinue"
+            try {
+                Invoke-WebRequest -Uri $Url -OutFile $partial -UseBasicParsing
+            }
+            finally {
+                $ProgressPreference = $oldProgress
+            }
+            Move-Item -LiteralPath $partial -Destination $path -Force
         }
     }
+    $path = [System.IO.Path]::GetFullPath($path)
 
     $signature = Get-AuthenticodeSignature -LiteralPath $path
     if ($signature.Status -ne "Valid" -or
         $signature.SignerCertificate.Subject -notmatch "Microsoft Corporation") {
         throw "vc_redist.x64.exe の署名を検証できませんでした（Status=$($signature.Status)）。-VcRedistPath で検証済みのファイルを指定してください。"
     }
-    return [System.IO.Path]::GetFullPath($path)
+
+    # v0.6.0: gst-prores-d3d11 は 14.50 以上の CRT が要る。古い再頒布パッケージを同梱しない。
+    $productVersionText = (Get-Item -LiteralPath $path).VersionInfo.ProductVersion
+    $productVersion = $null
+    if (-not [Version]::TryParse(("" + $productVersionText).Trim(), [ref]$productVersion)) {
+        throw "vc_redist.x64.exe の ProductVersion を読めませんでした（'$productVersionText'）: $path"
+    }
+    $updateHint = "キャッシュの更新の手順は scripts\package-release.ps1 の先頭のコメントと docs\RELEASE-PROCEDURE-0.4.md の 1 節を参照。" +
+        "固定の版 $vcRedistPinnedVersion（SHA-256 $vcRedistPinnedSha256）を使うなら、$path を消して（または退避して）実行し直すと $vcRedistPinnedUrl から落として照合する。"
+    if ($productVersion -lt $vcRedistMinVersion) {
+        if ($fromCache) {
+            throw "キャッシュの vc_redist.x64.exe が古い（$productVersion、最低版 $vcRedistMinVersion）: $path。$updateHint"
+        }
+        throw "-VcRedistPath の vc_redist.x64.exe が古い（$productVersion、最低版 $vcRedistMinVersion）: $path"
+    }
+
+    $sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    if ($fromCache -and $sha256 -ne $vcRedistPinnedSha256) {
+        throw "キャッシュの vc_redist.x64.exe（$productVersion、SHA-256 $sha256）が固定値と違う: $path。$updateHint"
+    }
+    Write-Host "VC++ redistributable: $productVersion SHA-256 $sha256 ($path)"
+    return $path
 }
 
 function Resolve-InnoSetupCompiler([string]$ExplicitPath) {
@@ -173,6 +232,30 @@ function Resolve-InnoSetupCompiler([string]$ExplicitPath) {
     throw "Inno Setup 6 compiler (ISCC.exe) was not found. Use -InnoSetupCompiler or set INNO_SETUP_COMPILER_PATH."
 }
 
+# v0.6.0: ProRes の GPU 復号プラグイン（gst-prores-d3d11）。DLL の SHA-256（固定値）と .cso 6 個
+# （SHA256SUMS.txt）を get-prores-plugin.ps1 -VerifyDir で照合する（固定値はそのスクリプトの先頭の 1 か所）。
+# 無い・違うときは止める（ProRes の GPU 復号の無い配布物を黙って作らない）。ビルドの前に見て早く止める。
+if ([string]::IsNullOrWhiteSpace($ProResPluginDir)) {
+    $ProResPluginDir = Join-Path $projectRoot "native\gst-prores"
+}
+$ProResPluginDir = [System.IO.Path]::GetFullPath($ProResPluginDir)
+$proResDllName = "gstproresd3d11.dll"
+try {
+    & (Join-Path $PSScriptRoot "get-prores-plugin.ps1") -VerifyDir $ProResPluginDir
+}
+catch {
+    throw "ProRes の GPU 復号プラグインを照合できませんでした（$ProResPluginDir）: $($_.Exception.Message)。scripts\get-prores-plugin.ps1 を実行するか -ProResPluginDir を指定してください。"
+}
+
+# インストーラーの材料（VC++ 再頒布パッケージの版と SHA-256 を含む）もビルドの前に確かめる。
+# 古い再頒布パッケージのときに zip だけができて止まる、を避ける。
+$isccPath = $null
+$vcRedist = $null
+if (-not $SkipInstaller) {
+    $isccPath = Resolve-InnoSetupCompiler $InnoSetupCompiler
+    $vcRedist = Resolve-VcRedist $VcRedistPath $VcRedistUrl (Join-Path (Join-Path $projectRoot "artifacts") "cache")
+}
+
 if (-not $SkipBuild) {
     Write-Host "Building TimecodeSyncPlayer $Version (Release)..."
     & dotnet build $projectPath -c Release -v minimal
@@ -185,7 +268,10 @@ if (-not (Test-Path -LiteralPath $releaseDirectory -PathType Container)) {
     throw "Release output was not found: $releaseDirectory"
 }
 
-$releaseSubdirectories = @(Get-ChildItem -LiteralPath $releaseDirectory -Directory)
+# gst-extra-plugins は開発用（csproj が native\gst-prores の DLL と .cso をコピーする。同梱でないときだけ
+# GST_PLUGIN_PATH に足される）。配布物には入れず、プラグインは下で gstreamer\lib\gstreamer-1.0 に置く。
+$releaseSubdirectories = @(Get-ChildItem -LiteralPath $releaseDirectory -Directory |
+    Where-Object { $_.Name -ne "gst-extra-plugins" })
 if ($releaseSubdirectories.Count -gt 0) {
     $names = ($releaseSubdirectories | ForEach-Object { $_.Name }) -join ", "
     throw "Release output contains subdirectories, but zip staging and installer.iss intentionally copy only top-level files. Remove these directories and retry: $names"
@@ -244,6 +330,30 @@ try {
         }
     }
 
+    # v0.6.0: ProRes の GPU 復号プラグイン（照合済み）を同梱のプラグインのフォルダへ。DLL の名前は変えない
+    # （GStreamer がファイル名から入口関数を探す）。.cso は DLL と同じフォルダ（プラグインは DLL 自身の
+    # フォルダから探す）。ライセンス文書は gstreamer\share\licenses\gst-prores-d3d11。
+    $proResTarget = Join-Path $stagingDirectory "gstreamer\lib\gstreamer-1.0"
+    $proResLicenseTarget = Join-Path $stagingDirectory "gstreamer\share\licenses\gst-prores-d3d11"
+    New-Item -ItemType Directory -Path $proResLicenseTarget -Force | Out-Null
+    $proResFiles = @(Get-Item -LiteralPath (Join-Path $ProResPluginDir $proResDllName)) +
+        @(Get-ChildItem -LiteralPath $ProResPluginDir -File -Filter "prores_*.cso")
+    $proResCopies = @()
+    foreach ($file in $proResFiles) {
+        $proResCopies += , @($file.FullName, (Join-Path $proResTarget $file.Name))
+    }
+    foreach ($name in @("LICENSE", "README.txt")) {
+        $proResCopies += , @((Join-Path (Join-Path $ProResPluginDir "licenses") $name), (Join-Path $proResLicenseTarget $name))
+    }
+    foreach ($copy in $proResCopies) {
+        Copy-Item -LiteralPath $copy[0] -Destination $copy[1]
+        if ((Get-FileHash -LiteralPath $copy[0] -Algorithm SHA256).Hash -ne
+            (Get-FileHash -LiteralPath $copy[1] -Algorithm SHA256).Hash) {
+            throw "ProRes plugin file differs after copy: $($copy[1])"
+        }
+    }
+    Write-Host "Bundled gst-prores-d3d11: $proResDllName and $($proResFiles.Count - 1) .cso in gstreamer\lib\gstreamer-1.0, licenses in gstreamer\share\licenses\gst-prores-d3d11"
+
     Copy-Item -LiteralPath (Join-Path $projectRoot "LICENSE") -Destination $stagingDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot "THIRD-PARTY-NOTICES.md") -Destination $stagingDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot "CHANGELOG.md") -Destination $stagingDirectory
@@ -254,15 +364,19 @@ TimecodeSyncPlayer v$Version (Windows x64)
 Requirements
 - Windows 10/11 x64
 - .NET 8 Desktop Runtime
-- Microsoft Visual C++ 2015-2022 Redistributable (x64)
-  The setup installs it automatically. When using the zip, install it manually
-  if it is missing: https://aka.ms/vs/17/release/vc_redist.x64.exe
+- Microsoft Visual C++ 2015-2026 Redistributable (x64) 14.50.35710 or later
+  The setup installs or updates it automatically. When using the zip, install it
+  manually if it is missing or older: https://aka.ms/vc14/vc_redist.x64.exe
 - An audio input device carrying LTC
 
 Setup
 1. Start TimecodeSyncPlayer.exe.
 2. Select the LTC capture device and press START.
 3. Load media, then press Sync ON.
+
+ProRes GPU decoding (gst-prores-d3d11) is enabled by default on NVIDIA GPUs; other
+GPU vendors decode ProRes on the CPU by default. Change it with the proResGpu
+setting (auto / on / off, applied after restart).
 
 The GStreamer 1.28.2 runtime (bin, plugins and license texts) is included in the
 gstreamer folder; no separate GStreamer installation is required. SpoutDX.dll
@@ -285,11 +399,10 @@ release should be validated with your complete show setup before use.
     }
     else {
         # インストーラーは zip と同じステージング内容（同梱 GStreamer・ライセンス含む）から作る。
-        $isccPath = Resolve-InnoSetupCompiler $InnoSetupCompiler
-        $vcRedist = Resolve-VcRedist $VcRedistPath $VcRedistUrl (Join-Path (Join-Path $projectRoot "artifacts") "cache")
+        # ISCC と再頒布パッケージはビルドの前に解決済み。VC++ の最低版は installer.iss の比較へ渡す。
         $installerScript = Join-Path $PSScriptRoot "installer.iss"
         Write-Host "Creating $setupName with $isccPath..."
-        & $isccPath "/DMyAppVersion=$Version" "/DReleaseDirectory=$stagingDirectory" "/DVcRedistFile=$vcRedist" "/DProjectRoot=$projectRoot" "/O$OutputDirectory" "/F$([System.IO.Path]::GetFileNameWithoutExtension($setupName))" $installerScript
+        & $isccPath "/DMyAppVersion=$Version" "/DReleaseDirectory=$stagingDirectory" "/DVcRedistFile=$vcRedist" "/DProjectRoot=$projectRoot" "/DVcMinMajor=$($vcRedistMinVersion.Major)" "/DVcMinMinor=$($vcRedistMinVersion.Minor)" "/DVcMinBld=$($vcRedistMinVersion.Build)" "/O$OutputDirectory" "/F$([System.IO.Path]::GetFileNameWithoutExtension($setupName))" $installerScript
         if ($LASTEXITCODE -ne 0) {
             throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
         }
