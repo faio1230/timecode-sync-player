@@ -79,6 +79,7 @@ v0.6.0（新しい復号経路 = 機能の追加）。v0.5.2（状態の整理�
 - インストーラーの昇格: VC++ が古い PC では vc_redist の `/quiet` が UAC を出す（インストーラーは `PrivilegesRequired=lowest`）。`PrivilegesRequiredOverridesAllowed=dialog` か、VC++ が古いときだけ昇格を求める形にする（優先度低、TSP-Fable の判定。利用者に諮る事項ではない）
 - instant-rate の変更が flush シークの直後に効かないことがある（推定）。`glib.CRITICAL gst_segment_do_seek` の行、shim は TRUE を成功とみなす。詳細と確かめ方は `design/v0.6.0-prores-gpu.md` 8-2（v0.6.2 の候補）
 - 境界の保持の不感帯: 範囲外の保持中に位置が端の外（端 + 2 フレーム〜許容 6 フレーム）にあると、境界の保持も同期の判定も動かない。S-4 の直し（案 A）で記録の欠けは埋めたが、不感帯そのものは残る。案 B（境界の保持が自分で端へ戻す）を §10-0 の L 系と一緒に（TSP-Fable の判定）
+- 試験基盤: E2E のログの読み方の日次の切り替え（2026-10-01、v0.5.5 の検証機の R-5 で発見）。`LtcScenarioE2ETests` は `ReadLogLinesSince` で直した（`cbdefca`、取り込み `9a436d6`）。同じ「最後に書かれた 1 ファイルだけを読む」形が `CanvasTestCardE2ETests.cs:44-48`・`ExitDialogE2ETests.cs:46-50`・`GStreamerBackendE2ETests.cs:478` に残る（`VolumeControlE2ETests.cs:188` は列挙だけ、未確認）。どれも短い単発のテストで 0 時をまたぐ見込みは低いので、直すときは同じ関数を通す（優先度低）
 - 起動の遅れの口: `ui.heartbeat` は Debug の行で、配布ビルドでは取れない。環境変数で起動の最初の N 秒だけ Information にする口を v0.6.2（起動の停止の直し）の設計で足す
 
 ## 将来の項目（版未定。v0.7.0 の UI 刷新か v0.8.0 のトランジションと合わせて判断）
