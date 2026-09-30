@@ -130,7 +130,8 @@ public sealed class BoundaryHoldPauseOwnerTests
         h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
         h.IsPaused.Should().BeTrue("前提: 利用者が止めている");
 
-        h.SupplyLtc(10.0);   // 範囲内へ → 境界ホールド解除
+        h.SupplyLtc(10.0);   // 範囲内へ（Jump とその確認の同値）→ 境界ホールド解除
+        h.SupplyLtc(10.0);
         h.Operations.Should().Contain(o => o.Name == "clip-end-release");
 
         h.IsPaused.Should().BeTrue(
