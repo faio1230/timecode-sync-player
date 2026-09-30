@@ -270,7 +270,7 @@ MMCSS 中の `GetThreadPriority` は相対 15）も同ブランチにある。
 | `TimecodeSyncPlayer-v0.4.1-win-x64.zip` | `E54D1579C9A1E6A410340712212811B146190A3E971B4C3A6B8343C386D893B0` | 17,730,029 |
 
 - 同梱: プラグイン 19（gstaudioresample / gsttypefindfunctions を含む）、bin に gio-2.0-0.dll、mpv 0、shim は Release ビルドとハッシュ一致
-- 起動確認（06:26、展開した zip、44.1kHz AAC + H.264 720p30、`-ClickPlay`、20 秒）: 起動ログ `v0.4.1`、ロード 183.9ms（attempt=0）、`logs	cs-gst-20260917.log` 13 行、`already playing`、`send.publish` 60/秒、ERR 0、exit 0、残プロセス 0（`TestResults/gpu-app/<UTC>-v041-smoke`）→ **完了条件 4 は開発機側で合格**（検証機側は別途）
+- 起動確認（06:26、展開した zip、44.1kHz AAC + H.264 720p30、`-ClickPlay`、20 秒）: 起動ログ `v0.4.1`、ロード 183.9ms（attempt=0）、`logs\tcs-gst-20260917.log` 13 行、`already playing`、`send.publish` 60/秒、ERR 0、exit 0、残プロセス 0（`TestResults/gpu-app/<UTC>-v041-smoke`）→ **完了条件 4 は開発機側で合格**（検証機側は別途）
 - GitHub にドラフトとして置いたあと、**利用者の判断（06:35）で Pre-release `v0.4.1 (beta)` として公開**（タグ `v0.4.1` = main `4d7220c`）。理由: 検証機に gh が無く、公開 URL でないと取得できない。検証機の確認（完了条件 3）で欠陥が出た場合は v0.4.2 で対処する
 
 ## v0.4.1 の完了の定義（2026-09-17、親）
@@ -301,7 +301,7 @@ MMCSS 中の `GetThreadPriority` は相対 15）も同ブランチにある。
 | --- | --- | --- |
 | 1 | 検証機で AV1 6 本 + ProRes がクラッシュ 0・ロード 3 秒未満 | **合格** 08:05 |
 | 2 | 開発機の回帰 | **合格** |
-| 3 | 検証機の LTC 同期 E2E 14 件 | **合格** 14/14（08:11、PATH に同梱 gstreamerin を補った 2 回目。1 回目の 8/6 はテスト環境の欠陥 D18） |
+| 3 | 検証機の LTC 同期 E2E 14 件 | **合格** 14/14（08:11、PATH に同梱 gstreamer\bin を補った 2 回目。1 回目の 8/6 はテスト環境の欠陥 D18） |
 | 4 | 配布物の起動確認 | 開発機 **合格**（08:13）、検証機 **合格**（08:21、ProductVersion 0.4.2+e7594b9、AV1 1279.5ms / 44k 990.4ms、クラッシュ 0） |
 
 ## 5. 0.4.4 と 0.4.5 の範囲（2026-09-18、利用者の決定）

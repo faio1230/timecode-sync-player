@@ -466,7 +466,7 @@ OS のタイマ／スケジューリング由来で、素材の負荷や fps に
 両方とも exit 0。`dirty` フラグで「保存で記録」と「仮採用」が明確に分かれている。
 なお OK 側は既定値（1920×1080）のまま確定したので、**ダイアログで別の寸法を選ぶ操作は未実施**。
 
-## V6 の結果（2026-09-13 05:43〜06:44 JST、`E:	cs-testresults6`）— **部分合格**
+## V6 の結果（2026-09-13 05:43〜06:44 JST、`E:\tcs-testresults\v6`）— **部分合格**
 
 1080p60＋1kHz サイン音の 300 秒素材を 13 トラックのプレイリストにして 290 秒ごとに進め、60 分連続再生
 （GStreamer×Gpu、Spout ON、DISPLAY2 全画面）。出力は C: の空きが 1.3GB しかないため E: に退避した。
@@ -2818,19 +2818,19 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 | shim 実素材テスト | 既存 6 + d12 4 の計 10 素材 failures=0、`check-shim-lock-rule.py` PASS |
 
 - 証跡: `TestResults/gpu-app/20260916T210501Z-d12-v5-seek`、`TestResults/v3/d12-after-v3-ltc25-gst`（agent-a の作業ツリー）
-- **統合**: agent-a `8a706d6` → main `60d0b44`、agent-b `e5014d4` → main `061419f`。統合後の main で親が Debug の shim を再ビルドし、非E2E 1672 合格、44.1kHz 素材のロード 169.7ms（attempt=0）、`logs	cs-gst-20260917.log` の生成（13 行）、残プロセス 0 を確認（`TestResults/gpu-app/20260916T213018Z-aud441-merged` 相当）
+- **統合**: agent-a `8a706d6` → main `60d0b44`、agent-b `e5014d4` → main `061419f`。統合後の main で親が Debug の shim を再ビルドし、非E2E 1672 合格、44.1kHz 素材のロード 169.7ms（attempt=0）、`logs\tcs-gst-20260917.log` の生成（13 行）、残プロセス 0 を確認（`TestResults/gpu-app/20260916T213018Z-aud441-merged` 相当）
 
 ### 除去担当の E2E 全件（統合後 main `44c98c9` 相当、新セッション、shim は自ツリーで再ビルド `248813D9…`、2026-09-17 06:45〜06:55、親が trx を確認）
 
 - 音声付き 2 本: **2 合格 / 0 失敗**（`e2e-audio-prefix.trx`）
 - 全件: **65 合格 / 0 失敗 / 6 スキップ**（opt-in 6 件。基準 63 + 追加 2、`e2e-all.trx`）、6 分 51 秒、残プロセス 0
-- `logs	cs-gst-20260917.log` 190KB 生成（E2E 全件分の shim ログ）
+- `logs\tcs-gst-20260917.log` 190KB 生成（E2E 全件分の shim ログ）
 - 証跡: `TestResults/v041-removal-b/`（agent-b の作業ツリー）
 - **判定: v0.4.1 の完了条件 1（開発機の修正前後 4 本）と 2（E2E 全件）は合格。** バージョン 0.4.1 は main `514b4a0`
 
 ### 検証機（クリーン環境）での v0.4.1 setup 版の確認（2026-09-17 06:38〜06:55、`TSP-TestMachine`、親の判定）
 
-導入: SHA-256 一致、v0.4.0 の上へ上書き、FileVersion 0.4.1.0、プラグイン 19、`logs	cs-gst-20260917.log` 生成。
+導入: SHA-256 一致、v0.4.0 の上へ上書き、FileVersion 0.4.1.0、プラグイン 19、`logs\tcs-gst-20260917.log` 生成。
 
 | 素材（`--open` 20 秒、環境変数なし） | 結果 |
 | --- | --- |
@@ -2960,14 +2960,14 @@ V1/V2/S1 が見逃した理由: 検証素材の音声は 48kHz（開発機のミ
 
 - 環境: VB-CABLE（CABLE Input / Output とも Active、48kHz）、リポジトリ main `2b65bc5` を HTTPS で取得、tests をビルド（0/0）
 - 1 回目（`TIMECODE_SYNC_PLAYER_E2E_APP_PATH` + `GSTREAMER_1_0_ROOT_MSVC_X86_64`=同梱フォルダ）: **8 合格 / 6 失敗**。失敗 6 件はすべて再生位置を待つテストで、アプリログに `element factory failed (demux qtdemux)` が 296 回（ロード 0 成功）。LTC 受信自体は動作（decoderFps 25.000、peak 0.985）
-- 2 回目（同じ + PATH の先頭に同梱 `gstreamerin`）: **14 合格 / 0 失敗**（81 秒）。`Sync seek` 14 行すべて success、`Gst loadfile` rc=0、残プロセス 0。証跡 `tests/TimecodeSyncPlayer.Tests/TestResults/ltc-loop-pathfix.trx`（検証機）
+- 2 回目（同じ + PATH の先頭に同梱 `gstreamer\bin`）: **14 合格 / 0 失敗**（81 秒）。`Sync seek` 14 行すべて success、`Gst loadfile` rc=0、残プロセス 0。証跡 `tests/TimecodeSyncPlayer.Tests/TestResults/ltc-loop-pathfix.trx`（検証機）
 - **判定: LTC 同期は検証機（クリーン環境 + インストール済みアプリ）で合格。v0.4.2 の完了条件 (3) 合格**
 
 ## D18: テスト環境の欠陥。環境変数が同梱の GStreamer フォルダを指すとアプリが同梱プラグインの環境を適用しない（2026-09-17 08:15、検証機）
 
 - 事実（検証機の読み取り）: `GstNative.cs` の `ResolveLibrary` はルートの出所が環境変数だと `ApplyBundledPluginEnvironment` を呼ばず、shim 読み込み後に `SetDllDirectory` を戻す（戻さないのは `Bundled` のときだけ）。一方 `E2EAppRunner.ResolvePrereqs` は環境変数か Program Files の GStreamer が無いと「GStreamer ランタイムが見つかりません」でスキップする。インストール済みアプリを E2E の対象にすると両者が食い違う
 - 影響: 製品の通常利用（環境変数なし）には無い。E2E をインストール済みアプリに向けるときだけ
-- 対処（v0.4.2 には入れない。除去担当の候補）: `E2EAppRunner.ResolvePrereqs` が `TIMECODE_SYNC_PLAYER_E2E_APP_PATH` の exe と同じディレクトリの `gstreamer` フォルダを同梱ランタイムとして認め、環境変数を要求しない。手順書（`docs/RELEASE-PROCEDURE-0.4.md` 1.5 節）に「LTC 同期 E2E をインストール済みアプリで回すときは PATH の先頭に同梱 `gstreamerin` を足す」を暫定で書く
+- 対処（v0.4.2 には入れない。除去担当の候補）: `E2EAppRunner.ResolvePrereqs` が `TIMECODE_SYNC_PLAYER_E2E_APP_PATH` の exe と同じディレクトリの `gstreamer` フォルダを同梱ランタイムとして認め、環境変数を要求しない。手順書（`docs/RELEASE-PROCEDURE-0.4.md` 1.5 節）に「LTC 同期 E2E をインストール済みアプリで回すときは PATH の先頭に同梱 `gstreamer\bin` を足す」を暫定で書く
 
 （続き: 0.4.2 の配布物 → Taildrop で検証機の最終確認 → タグ・公開）
 
