@@ -76,11 +76,15 @@ public sealed class LtcSyncControllerTests
         h.DisplayStates[^1].FormatText.Should().Be("NO SIGNAL");
         h.Operations.Should().NotContain(o => o.Name == "seek" || o.Name == "signal-loss-resume");
         h.Tick100Milliseconds();
+        // v0.6.1 段 A: 状態は層 1 の診断が値から決める。誤値（70）からの戻り（1.04）も Jump で、次の +1 フレーム
+        // （1.08）で確認される（確認済みの Jump は回復の有効フレームに数えない）。有効フレームはその後の 3 枚。
         h.SupplyLtc(1.04);
         h.SupplyLtc(1.08);
+        h.SupplyLtc(1.12);
+        h.SupplyLtc(1.16);
         h.DisplayStates[^1].FormatText.Should().Be("NO SIGNAL", "the diagnostic jump must not count toward recovery");
         h.IsPaused.Should().BeTrue();
-        h.SupplyLtc(1.12);
+        h.SupplyLtc(1.20);
         h.IsPaused.Should().BeFalse();
     }
 
@@ -94,10 +98,14 @@ public sealed class LtcSyncControllerTests
         h.SupplyLtc(1);
         h.Tick100Milliseconds(3);
         h.Operations.Clear();
+        // v0.6.1 段 A: 無音の後に別の位置（9）から再開する LTC は、1 枚目が Jump、次の +1 フレーム（9.04）が
+        // その確認になる（確認済みの Jump は回復の有効フレームに数えない）。有効フレームはその後の 3 枚。
         h.SupplyLtc(9);
         h.SupplyLtc(9.04);
-        h.Operations.Should().BeEmpty();
         h.SupplyLtc(9.08);
+        h.SupplyLtc(9.12);
+        h.Operations.Should().BeEmpty();
+        h.SupplyLtc(9.16);
         h.Operations.FindIndex(o => o.Name == "signal-loss-resume").Should().Be(0);
         h.Operations.FindIndex(o => o.Name == "loadfile").Should().BeGreaterThan(0);
         h.DisplayStates[^1].PauseReason.Should().BeEmpty();
