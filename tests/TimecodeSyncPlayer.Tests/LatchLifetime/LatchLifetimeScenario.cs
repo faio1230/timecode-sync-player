@@ -68,14 +68,34 @@ internal sealed class LatchLifetimeScenario
         Frame(LastLtc + FrameSeconds);
     }
 
-    /// <summary>同値の保持（Duplicate）を送りつつ 100ms ずつ 3 回（保持が理由の損失にする）。</summary>
+    /// <summary>
+    /// 同値の保持（Duplicate）を 40ms ごとに 8 枚（320ms、timeout 250ms を超える）送り、毎回 UI タイマーの Tick を
+    /// 回す（保持が理由の損失にする）。v0.6.1 段 A: 実機の保持と同じく、同値が 40ms ごとに届く列にした。
+    /// </summary>
     public void HeldPastTimeout()
     {
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 8; i++)
         {
             Frame(LastLtc, TimecodeFrameDiagnosticStatus.Duplicate);
-            Harness.Tick100Milliseconds();
+            Harness.AdvanceMilliseconds(0);
         }
+    }
+
+    /// <summary>
+    /// v0.6.1 段 A: 値を飛ばす（Jump と、確認の +1 フレーム）。実機の LTC の位置の飛びと同じく、飛んだ先の値と、
+    /// 次の 1 フレームの続きを送る。
+    /// </summary>
+    public void JumpTo(double seconds)
+    {
+        Frame(seconds, TimecodeFrameDiagnosticStatus.Jump);
+        Frame(seconds + FrameSeconds);
+    }
+
+    /// <summary>v0.6.1 段 A: 再生と LTC を <paramref name="frames"/> フレームぶん 40ms ごとに進める（追従）。</summary>
+    public void FollowFrames(int frames)
+    {
+        for (int i = 0; i < frames; i++)
+            NextNormalFrame();
     }
 
     /// <summary>無音のまま 100ms ずつ 3 回（timeout 250ms を超える）。</summary>
@@ -99,12 +119,10 @@ internal sealed class LatchLifetimeScenario
         h.AddTrack("second", 40, 30);
         h.ManualPlay();
         s.Frame(12.0);                    // 1 本目へ切替（ロード開始）
-        s.Clock.Advance(TimeSpan.FromMilliseconds(200));
-        h.AdvancePlayback(12.2, 3);
-        s.Frame(12.2);                    // 再生と描画が進んだのでロード解除
-        s.Clock.Advance(TimeSpan.FromSeconds(2));
-        h.AdvancePlayback(12.24, 1);
-        s.Frame(12.24);
+        // v0.6.1 段 A: LTC は 40ms ごとに +1 フレーム進む。再生と描画が進んだフレームでロード解除、
+        // 続けて 2 秒追従して解除の回収待ち（fileLoadReleasePending）を鮮度切れにしておく。
+        s.FollowFrames(5);
+        s.FollowFrames(50);
         return s;
     }
 
@@ -126,9 +144,8 @@ internal sealed class LatchLifetimeScenario
         h.AdvancePlayback(12.0, 5);
         s.Clock.Advance(TimeSpan.FromMilliseconds(200));
         s.Frame(12.0);                    // 再生と描画が進んだのでロード解除
-        s.Clock.Advance(TimeSpan.FromSeconds(2));
-        h.AdvancePlayback(12.04, 1);
-        s.Frame(12.04);
+        // v0.6.1 段 A: LTC は 40ms ごとに +1 フレーム進む。2 秒追従して回収待ちを鮮度切れにしておく。
+        s.FollowFrames(50);
         return s;
     }
 
@@ -159,7 +176,7 @@ internal sealed class LatchLifetimeScenario
                 StopMonitoring();
                 return !Harness.IsMonitoring;
             case LifecycleEvent.GapExit:
-                Frame(GapSeconds);
+                JumpTo(GapSeconds);
                 return Harness.IsGapActive;
             case LifecycleEvent.SignalRecovered:
                 SilencePastTimeout();
@@ -218,11 +235,11 @@ internal sealed class LatchLifetimeScenario
                 h.StopPlayback();
                 break;
             case LifecycleEvent.GapEnter:
-                Frame(GapSeconds);
+                JumpTo(GapSeconds);
                 break;
             case LifecycleEvent.GapExit:
                 // 同じトラックへ戻る（次のトラックへ出ると読み込みが混ざるため）。
-                Frame(29.0);
+                JumpTo(29.0);
                 break;
             case LifecycleEvent.SignalRecovered:
                 // 有効フレーム 3 枚（resumeFrames=3）。
@@ -234,9 +251,7 @@ internal sealed class LatchLifetimeScenario
                 // 保持が理由の損失中に、値が動いた Jump で復帰する（D27-b/c）。
                 // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめるので、+1 フレームで確認する
                 // （確認した時点で ApplyConfirmedJump が復帰させる）。
-                double jumpTo = LastLtc + 3.0;
-                Frame(jumpTo, TimecodeFrameDiagnosticStatus.Jump);
-                Frame(jumpTo + FrameSeconds);
+                JumpTo(LastLtc + 3.0);
                 break;
             }
             case LifecycleEvent.NormalFrame:
