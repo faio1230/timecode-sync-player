@@ -1,4 +1,3 @@
-#requires -Version 7.0
 # Report the keyframe interval distribution of one or more video files.
 #
 # Long keyframe intervals make seeking slow: a seek must decode from the
@@ -12,11 +11,18 @@
 # is slow. The head gap (0 -> first keyframe) and the tail gap (last keyframe
 # -> duration) are included for the same reason.
 #
-#   pwsh -File scripts\inspect-gop.ps1 -Path clip.mp4
-#   pwsh -File scripts\inspect-gop.ps1 -Path C:\media -Recurse
-#   pwsh -File scripts\inspect-gop.ps1 -Path a.mp4,b.mov -WarnSeconds 5 -ErrorSeconds 10
+#   powershell -File scripts\inspect-gop.ps1 -Path clip.mp4
+#   powershell -File scripts\inspect-gop.ps1 -Path C:\media -Recurse
+#   powershell -File scripts\inspect-gop.ps1 -Path a.mp4,b.mov -WarnSeconds 5 -ErrorSeconds 10
 #
 # Requires ffprobe on PATH, or pass -FfprobePath.
+#
+# NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
+# repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page.
+# Users run this script directly, so unlike the development and test scripts
+# (PowerShell 7 since v0.6.0) it stays Windows PowerShell 5.1 compatible: no
+# "#requires -Version 7", CRLF line endings, and it must run under both
+# powershell and pwsh.
 
 [CmdletBinding()]
 param(

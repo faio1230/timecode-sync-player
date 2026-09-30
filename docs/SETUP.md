@@ -8,7 +8,8 @@
 
 - Windows 10/11 (x64)
 - .NET 8 SDK
-- PowerShell 7（`pwsh`）。`scripts\`・`native\gst-shim\` のスクリプトは v0.6.0 から PowerShell 7 専用です（Windows PowerShell 5.1 では動きません）
+- PowerShell 7（`pwsh`）。開発・試験のスクリプト（`scripts\`・`native\gst-shim\`）に要ります。v0.6.0 から PowerShell 7 専用で、Windows PowerShell 5.1 では動きません。
+  利用者が使うスクリプト（`scripts\inspect-gop.ps1`）は 5.1 のままでも動きます（`powershell -File` と `pwsh -File` のどちらでも可）
 
 `dotnet` コマンドが利用可能であること、およびバージョンを確認します。
 
@@ -19,14 +20,14 @@ dotnet --version
 `8.x.x` 系のバージョンが表示されれば問題ありません。表示されない場合は [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) をインストールしてください。
 
 PowerShell 7 が無い場合は導入し、`pwsh` で版を確認します（7.0 以上。開発機・検証機は 7.6.6）。
-スクリプトは `pwsh -File <スクリプト>` で実行します（`powershell -File` ではありません）。
+開発・試験のスクリプトは `pwsh -File <スクリプト>` で実行します（`powershell -File` ではありません）。
 
 ```powershell
 winget install Microsoft.PowerShell
 pwsh -NoProfile -Command '$PSVersionTable.PSVersion'
 ```
 
-5.1（`powershell`）で実行すると、スクリプトは読み込みの時点で `#requires` により止まり、
+開発・試験のスクリプトを 5.1（`powershell`）で実行すると、読み込みの時点で `#requires` により止まり、
 `... cannot be run because it contained a "#requires" statement for Windows PowerShell 7.0 ...`
 （エラー ID `ScriptRequiresUnmatchedPSVersion`）と表示されます。スクリプトの不具合ではないので、`pwsh -File` で実行し直してください。
 

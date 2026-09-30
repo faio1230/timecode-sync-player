@@ -39,6 +39,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj
 
 **スクリプトは PowerShell 7 専用（v0.6.0 から）:** `scripts\`・`native\gst-shim\` の `.ps1` は `#requires -Version 7.0`。
 `pwsh -File` で実行する（`pwsh` はコマンド名で呼び、絶対パスを埋め込まない）。5.1 の `powershell` では読み込みの時点で止まる。
+例外: 利用者が直接実行する `scripts\inspect-gop.ps1` は 5.1 互換のまま（`#requires` なし、ASCII のみ・BOM なし・CRLF。5.1 と 7 の両方で動かす）。
 
 **ソリューションファイル:** `TimecodeSyncPlayer.slnx`（.NET SDK 形式の `.slnx`、`.sln` ではない）
 
