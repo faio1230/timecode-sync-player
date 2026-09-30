@@ -6,8 +6,10 @@ using System.Runtime.InteropServices;
 namespace TimecodeSyncPlayer.Gst;
 
 /// <summary>
-/// tcs_gstreamer.dll 縺ｮ P/Invoke 縺ｨ繝ｭ繝ｼ繝芽ｧ｣豎ｺ縲・/// DLL 閾ｪ菴薙・繧｢繝励Μ蜃ｺ蜉帙ョ繧｣繝ｬ繧ｯ繝医Μ縲；Streamer 螳溯｡梧凾 DLL 縺ｯ
-/// GSTREAMER_1_0_ROOT_MSVC_X86_64・医∪縺溘・譌｢螳壹う繝ｳ繧ｹ繝医・繝ｫ蜈茨ｼ峨・ bin 縺九ｉ隗｣豎ｺ縺吶ｋ縲・/// </summary>
+/// tcs_gstreamer.dll の P/Invoke とロード解決。
+/// DLL 自体はアプリの出力ディレクトリ、GStreamer の実行時 DLL は
+/// GSTREAMER_1_0_ROOT_MSVC_X86_64（または既定のインストール先）の bin から解決する。
+/// </summary>
 internal static class GstNative
 {
     internal const string Lib = "tcs_gstreamer.dll";
@@ -379,6 +381,50 @@ internal static class GstNativeLibraryResolver
         }
     }
 
+    /// <summary>開発機・試験で追加のプラグイン（ProRes の GPU 復号など）を置く、exe の隣のフォルダ名。</summary>
+    internal const string ExtraPluginsDirectoryName = "gst-extra-plugins";
+
+    /// <summary>
+    /// v0.6.0: 同梱でないとき（環境変数・Program Files の GStreamer）だけ、追加のプラグインのフォルダを
+    /// GST_PLUGIN_PATH に足した値を返す（既存の値があれば ';' で連結）。足さないときは null。
+    /// 同梱のときはプラグインが lib\gstreamer-1.0 に入るので足さない。
+    /// GST_PLUGIN_SYSTEM_PATH と GST_REGISTRY は触らない（システムのプラグインは今までどおり）。
+    /// </summary>
+    internal static string? ComposeExtraPluginPath(
+        GstRootSource source, string? existingPluginPath, string extraPluginsDirectory,
+        Func<string, bool> directoryExists)
+    {
+        if (source == GstRootSource.Bundled || !directoryExists(extraPluginsDirectory))
+            return null;
+        if (string.IsNullOrEmpty(existingPluginPath))
+            return extraPluginsDirectory;
+
+        foreach (string entry in existingPluginPath!.Split(';'))
+        {
+            if (string.Equals(entry.Trim(), extraPluginsDirectory, StringComparison.OrdinalIgnoreCase))
+                return null;
+        }
+        return existingPluginPath + ";" + extraPluginsDirectory;
+    }
+
+    private static void ApplyExtraPluginEnvironment(GstRootSource source)
+    {
+        try
+        {
+            string? pluginPath = ComposeExtraPluginPath(
+                source,
+                Environment.GetEnvironmentVariable("GST_PLUGIN_PATH"),
+                System.IO.Path.Combine(AppContext.BaseDirectory, ExtraPluginsDirectoryName),
+                System.IO.Directory.Exists);
+            if (pluginPath is not null)
+                Environment.SetEnvironmentVariable("GST_PLUGIN_PATH", pluginPath);
+        }
+        catch (Exception)
+        {
+            // 追加のプラグインが見えなくても、既存のプロファイル（CPU の復号など）で動き続けられるようにする。
+        }
+    }
+
     /// <summary>共有 resolver からの呼び出し。該当 DLL でなければ IntPtr.Zero。</summary>
     public static IntPtr ResolveLibrary(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
@@ -396,6 +442,8 @@ internal static class GstNativeLibraryResolver
 
         if (root.Value.Source == GstRootSource.Bundled)
             ApplyBundledPluginEnvironment(root.Value.Path);
+        else
+            ApplyExtraPluginEnvironment(root.Value.Source);
 
         bool originalApplied = SetDllDirectory(gstBin);
         try

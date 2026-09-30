@@ -401,14 +401,18 @@ run_delivery_policy_tests ()
         "D10: invalid PTS falls back unchanged");
   }
 
-  /* V11: decode profile order (pure). 4 GPU profiles then 5 CPU profiles,
-   * mirroring the shim's table shape (9 profiles + decodebin fallback).
+  /* V11: decode profile order (pure). 5 GPU profiles then 5 CPU profiles,
+   * mirroring the shim's table shape (10 profiles + decodebin fallback).
+   * v0.6.0 added prores-gpu as the last GPU profile (index 4): only the count
+   * and the indices changed; the ordering rules themselves are unchanged
+   * (hardware = last-good + table order + fallback; software = CPU + fallback
+   * + GPU).
    * `order` is sized profile_count + 2 and carries a sentinel just past the
    * documented maximum (profile_count + 1): the function must never write
    * past that, and build_pipeline appends nothing itself. */
   {
-    const int software_flags[9] = { 0, 0, 0, 0, 1, 1, 1, 1, 1 };
-    const int profile_count = 9;
+    const int software_flags[10] = { 0, 0, 0, 0, 0, 1, 1, 1, 1, 1 };
+    const int profile_count = 10;
     const int sentinel = 0x5A5A5A5A;
     int order[profile_count + 2];
     int n;
@@ -430,15 +434,15 @@ run_delivery_policy_tests ()
     check (n == profile_count + 1, "decode order: hardware count");
     check (order[0] == 0 && order[1] == 1 && order[2] == 2 && order[3] == 3 &&
            order[4] == 4 && order[5] == 5 && order[6] == 6 && order[7] == 7 &&
-           order[8] == 8 && order[9] == TCS_DECODE_PROFILE_FALLBACK,
+           order[8] == 8 && order[9] == 9 && order[10] == TCS_DECODE_PROFILE_FALLBACK,
         "decode order: hardware is table order + fallback");
     check (fallback_count (order, n) == 1, "decode order: hardware fallback once");
     check (order[profile_count + 1] == sentinel, "decode order: hardware sentinel");
 
     /* hardware, cached CPU profile: cache first, fallback last. */
     fresh ();
-    n = tcs_decode_profile_order (0, 0, 6, software_flags, profile_count, order);
-    check (n == profile_count + 1 && order[0] == 6 &&
+    n = tcs_decode_profile_order (0, 0, 7, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 7 &&
            order[profile_count] == TCS_DECODE_PROFILE_FALLBACK,
         "decode order: hardware keeps last-good first");
     check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
@@ -448,18 +452,19 @@ run_delivery_policy_tests ()
     fresh ();
     n = tcs_decode_profile_order (0, 1, 0, software_flags, profile_count, order);
     check (n == profile_count + 1, "decode order: software count");
-    check (order[0] == 4 && order[1] == 5 && order[2] == 6 && order[3] == 7 &&
-           order[4] == 8 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
-           order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
+    check (order[0] == 5 && order[1] == 6 && order[2] == 7 && order[3] == 8 &&
+           order[4] == 9 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
+           order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3 &&
+           order[10] == 4,
         "decode order: software is CPU + decodebin + GPU");
     check (fallback_count (order, n) == 1, "decode order: software fallback once");
     check (order[profile_count + 1] == sentinel, "decode order: software sentinel");
 
     /* software, cached CPU profile: cache first, no duplicate. */
     fresh ();
-    n = tcs_decode_profile_order (0, 1, 5, software_flags, profile_count, order);
-    check (n == profile_count + 1 && order[0] == 5 && order[1] == 4 &&
-           order[2] == 6 && order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
+    n = tcs_decode_profile_order (0, 1, 6, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 6 && order[1] == 5 &&
+           order[2] == 7 && order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
         "decode order: software keeps a CPU last-good first");
     check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
         "decode order: software last-good fallback once + sentinel");
@@ -467,9 +472,9 @@ run_delivery_policy_tests ()
     /* software, cached GPU profile: the GPU cache stays in the GPU block. */
     fresh ();
     n = tcs_decode_profile_order (0, 1, 2, software_flags, profile_count, order);
-    check (n == profile_count + 1 && order[0] == 4 &&
+    check (n == profile_count + 1 && order[0] == 5 &&
            order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0 &&
-           order[7] == 1 && order[8] == 2 && order[9] == 3,
+           order[7] == 1 && order[8] == 2 && order[9] == 3 && order[10] == 4,
         "decode order: software does not promote a GPU last-good");
     check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
         "decode order: software GPU-cache fallback once + sentinel");
@@ -481,7 +486,7 @@ run_delivery_policy_tests ()
         "decode order: decodebin is fallback only");
     check (order[1] == sentinel, "decode order: decodebin sentinel");
     fresh ();
-    n = tcs_decode_profile_order (1, 1, 6, software_flags, profile_count, order);
+    n = tcs_decode_profile_order (1, 1, 7, software_flags, profile_count, order);
     check (n == 1 && order[0] == TCS_DECODE_PROFILE_FALLBACK && order[1] == sentinel,
         "decode order: decodebin ignores mode and cache");
   }
@@ -491,15 +496,26 @@ run_delivery_policy_tests ()
    * conv became a d3d11 converter would lose d3d11upload (and the software
    * search order). CPU conversion for V11-h is a separate post-upload element. */
   {
-    check (TCS_VIDEO_PROFILE_COUNT == 9, "profiles: table has 9 entries");
+    /* v0.6.0: prores-gpu is the 5th GPU profile (index 4); CPU is 5..9. */
+    check (TCS_VIDEO_PROFILE_COUNT == 10, "profiles: table has 10 entries");
     int flags_ok = 1;
     for (int i = 0; i < TCS_VIDEO_PROFILE_COUNT; i++)
-      flags_ok = flags_ok && (tcs_video_profile_is_software (i) == (i >= 4 ? 1 : 0));
+      flags_ok = flags_ok && (tcs_video_profile_is_software (i) == (i >= 5 ? 1 : 0));
     check (flags_ok == 1, "profiles: software flags are the CPU profiles only");
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 5; i++)
       check (strstr (kTcsVideoProfiles[i].conv, "d3d11") != nullptr,
           "profiles: GPU profiles convert on the GPU");
-    for (int i = 4; i < TCS_VIDEO_PROFILE_COUNT; i++)
+    check (strcmp (kTcsVideoProfiles[4].name, "prores-gpu") == 0 &&
+           strcmp (kTcsVideoProfiles[4].media, "video/x-prores") == 0 &&
+           kTcsVideoProfiles[4].parse == nullptr &&
+           strcmp (kTcsVideoProfiles[4].dec, "proresd3d11dec") == 0,
+        "profiles: prores-gpu is the last GPU profile");
+    int luid_ok = 1;
+    for (int i = 0; i < TCS_VIDEO_PROFILE_COUNT; i++)
+      luid_ok = luid_ok && (tcs_video_profile_sets_adapter_luid (i) == (i == 4 ? 1 : 0));
+    check (luid_ok == 1 && tcs_video_profile_sets_adapter_luid (-1) == 0,
+        "profiles: only prores-gpu gets adapter-luid written (skips D16-b)");
+    for (int i = 5; i < TCS_VIDEO_PROFILE_COUNT; i++)
       check (strstr (kTcsVideoProfiles[i].conv, "d3d11") == nullptr,
           "profiles: CPU profiles keep a CPU converter (upload must be built)");
   }

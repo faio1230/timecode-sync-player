@@ -756,6 +756,16 @@ give_device_context (TcsPlayer* p, GstElement* el);
 
 /* decodebin / late-plugged d3d11 elements post NEED_CONTEXT on the bus;
  * answer with OUR device so the whole chain stays on one ID3D11Device. */
+/* v0.6.0 stage 1: proresd3d11dec (the prores-gpu decoder) is named by its
+ * factory so the log line does not depend on the player's element fields. */
+static bool
+element_is_prores_gpu_decoder (GstElement* el)
+{
+  GstElementFactory* f = el ? gst_element_get_factory (el) : nullptr;
+  return f && g_strcmp0 (gst_plugin_feature_get_name (GST_PLUGIN_FEATURE (f)),
+      "proresd3d11dec") == 0;
+}
+
 static GstBusSyncReply
 sync_bus_handler (GstBus* /*bus*/, GstMessage* msg, gpointer user)
 {
@@ -765,6 +775,11 @@ sync_bus_handler (GstBus* /*bus*/, GstMessage* msg, gpointer user)
     gst_message_parse_context_type (msg, &type);
     if (g_strcmp0 (type, GST_D3D11_DEVICE_HANDLE_CONTEXT_TYPE) == 0 &&
         GST_IS_ELEMENT (GST_MESSAGE_SRC (msg))) {
+      /* The decoder asks only when it has no usable device yet (the
+       * set_context of build_video_chain_static was not taken). */
+      if (element_is_prores_gpu_decoder (GST_ELEMENT (GST_MESSAGE_SRC (msg))))
+        LOG ("prores-gpu: context given via=sync-handler (NEED_CONTEXT from %s)",
+            GST_ELEMENT_NAME (GST_MESSAGE_SRC (msg)));
       give_device_context (p, GST_ELEMENT (GST_MESSAGE_SRC (msg)));
       return GST_BUS_DROP;
     }
@@ -1756,7 +1771,7 @@ profile_is_software (int idx)
   return tcs_video_profile_is_software (idx) != 0;
 }
 
-/* v0.5.0: HAP の経路を通すか（既定は無効。全条件に通ってから既定で有効にする）。 */
+/* v0.5.0: HAP の経路を通すか（既定で有効。TCS_HAP=off のときだけ無効）。 */
 static bool
 hap_enabled ()
 {
@@ -2065,6 +2080,126 @@ install_gop_probe (TcsPlayer* p, GstPad* pad)
       gop_probe_context_free);
 }
 
+/* v0.6.0 stage 1: the shim device LUID as the gint64 that d3d11 elements use
+ * for adapter-luid (0 when it cannot be read). */
+static gint64
+shim_device_luid_int64 (TcsPlayer* p)
+{
+  LUID luid = {};
+  if (!device_luid (p->device, &luid))
+    return 0;
+  return gst_d3d11_luid_to_int64 (&luid);
+}
+
+/* v0.6.0 stage 1: proresd3d11dec is not a per-adapter d3d11 class (D16-b does
+ * not apply). Write the shim device LUID into its adapter-luid before it
+ * leaves NULL. Returns false when the element has no such property (the
+ * attempt is then a chain-fail). */
+static bool
+set_decoder_adapter_luid (TcsPlayer* p, GstElement* dec)
+{
+  GParamSpec* spec = g_object_class_find_property (G_OBJECT_GET_CLASS (dec), "adapter-luid");
+  if (!spec || spec->value_type != G_TYPE_INT64) {
+    LOG ("prores-gpu: %s has no gint64 adapter-luid property -> chain-fail",
+        GST_ELEMENT_NAME (dec));
+    return false;
+  }
+  g_object_set (dec, "adapter-luid", shim_device_luid_int64 (p), nullptr);
+  return true;
+}
+
+/* v0.6.0 stage 1: one-shot probes on the first frame of a ProRes chain. The
+ * context holds a ref on the decoder src pad (released with the probe), and
+ * `player` stays valid for the player lifetime (pipelines are torn down before
+ * the player). Streaming thread; no shim lock is taken. */
+struct FirstFrameProbeContext {
+  TcsPlayer* player;
+  std::string profile;
+  GstPad* dec_src;
+};
+
+static void
+first_frame_probe_context_free (gpointer data)
+{
+  FirstFrameProbeContext* ctx = (FirstFrameProbeContext*) data;
+  if (ctx->dec_src)
+    gst_object_unref (ctx->dec_src);
+  delete ctx;
+}
+
+static std::string
+pad_caps_string (GstPad* pad)
+{
+  GstCaps* caps = pad ? gst_pad_get_current_caps (pad) : nullptr;
+  if (!caps)
+    return "(none)";
+  gchar* str = gst_caps_to_string (caps);
+  std::string out = str ? str : "(none)";
+  g_free (str);
+  gst_caps_unref (caps);
+  return out;
+}
+
+/* Decoder src pad (prores-gpu only): name the device of the decoder output
+ * memory next to the shim device. The device identity is the ID3D11Device
+ * (two GstD3D11Device wrappers may share one); same=1 means the decoder
+ * output is on the shim device. */
+static GstPadProbeReturn
+on_prores_out_mem_probe (GstPad* /*pad*/, GstPadProbeInfo* info, gpointer user)
+{
+  FirstFrameProbeContext* ctx = (FirstFrameProbeContext*) user;
+  TcsPlayer* p = ctx->player;
+  GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER (info);
+  if (!buf || gst_buffer_n_memory (buf) == 0)
+    return GST_PAD_PROBE_OK;
+  GstMemory* mem = gst_buffer_peek_memory (buf, 0);
+  const bool d3d11 = mem && gst_is_d3d11_memory (mem);
+  GstD3D11Device* dev = d3d11 ? GST_D3D11_MEMORY_CAST (mem)->device : nullptr;
+  ID3D11Device* handle = dev ? gst_d3d11_device_get_device_handle (dev) : nullptr;
+  LOG ("prores-gpu: out-mem d3d11=%d dev=%p/%p shim-dev=%p/%p same=%d",
+      d3d11 ? 1 : 0, (void*) dev, (void*) handle, (void*) p->gst_dev,
+      (void*) p->device, (handle && handle == p->device) ? 1 : 0);
+  return GST_PAD_PROBE_REMOVE;
+}
+
+/* appsink sink pad (ProRes profiles, GPU and CPU): the decoder output caps and
+ * the sink caps (colorimetry and range included) for the colour comparison. */
+static GstPadProbeReturn
+on_decode_caps_probe (GstPad* pad, GstPadProbeInfo* /*info*/, gpointer user)
+{
+  FirstFrameProbeContext* ctx = (FirstFrameProbeContext*) user;
+  std::string dec_src = pad_caps_string (ctx->dec_src);
+  std::string sink = pad_caps_string (pad);
+  LOG ("decode.caps profile=%s dec-src=%s sink=%s", ctx->profile.c_str (),
+      dec_src.c_str (), sink.c_str ());
+  return GST_PAD_PROBE_REMOVE;
+}
+
+static void
+install_first_frame_probes (TcsPlayer* p, const VideoProfile* prof, int idx)
+{
+  if (!p->vdec || !p->appsink || g_strcmp0 (prof->media, "video/x-prores") != 0)
+    return;
+  GstPad* dec_src = gst_element_get_static_pad (p->vdec, "src");
+  if (!dec_src)
+    return;
+  if (tcs_video_profile_sets_adapter_luid (idx)) {
+    FirstFrameProbeContext* ctx = new FirstFrameProbeContext {
+        p, prof->name, (GstPad*) gst_object_ref (dec_src) };
+    gst_pad_add_probe (dec_src, GST_PAD_PROBE_TYPE_BUFFER, on_prores_out_mem_probe,
+        ctx, first_frame_probe_context_free);
+  }
+  GstPad* sinkpad = gst_element_get_static_pad (p->appsink, "sink");
+  if (sinkpad) {
+    FirstFrameProbeContext* ctx = new FirstFrameProbeContext {
+        p, prof->name, (GstPad*) gst_object_ref (dec_src) };
+    gst_pad_add_probe (sinkpad, GST_PAD_PROBE_TYPE_BUFFER, on_decode_caps_probe,
+        ctx, first_frame_probe_context_free);
+    gst_object_unref (sinkpad);
+  }
+  gst_object_unref (dec_src);
+}
+
 /* Build the static video tail for profile index idx (-1 = decodebin
  * fallback). Elements are added, given the device context and linked;
  * on_demux_pad_added only links the demux pad to p->vhead. */
@@ -2163,6 +2298,11 @@ build_video_chain_static (TcsPlayer* p, int idx)
     set_error (p, "chain factory failed for profile %s", prof->name);
     return FALSE;
   }
+  if (p->vdec && tcs_video_profile_sets_adapter_luid (idx) &&
+      !set_decoder_adapter_luid (p, p->vdec)) {
+    set_error (p, "decoder %s lacks adapter-luid (profile %s)", dec_name, prof->name);
+    return FALSE;
+  }
   configure_video_queue (p->vqueue);
   head = p->vqueue;
   p->vhead = head;
@@ -2178,6 +2318,9 @@ build_video_chain_static (TcsPlayer* p, int idx)
 
   if (p->vparse) give_device_context (p, p->vparse);
   if (p->vdec) give_device_context (p, p->vdec);
+  if (p->vdec && tcs_video_profile_sets_adapter_luid (idx))
+    LOG ("prores-gpu: context given via=set_context (%s, state NULL, adapter-luid written)",
+        GST_ELEMENT_NAME (p->vdec));
   give_device_context (p, p->vconvert);
   if (p->vupload) give_device_context (p, p->vupload);
   if (p->vgpuconvert) give_device_context (p, p->vgpuconvert);
@@ -2196,6 +2339,7 @@ build_video_chain_static (TcsPlayer* p, int idx)
     prev = chain[i];
   }
   log_video_chain (prof->name, chain, nChain);
+  install_first_frame_probes (p, prof, idx);
   if (p->vparse) {
     GstPad* srcpad = gst_element_get_static_pad (p->vparse, "src");
     if (srcpad) {
@@ -2272,7 +2416,7 @@ on_video_pad (TcsPlayer* p, GstPad* pad, GstCaps* caps)
     return;
   if (caps_is_hap (caps)) {
     /* v0.5.0: 圧縮テクスチャのまま受ける経路（hap-gpu）。**CPU デコーダには決して渡さない。**
-     * 既定では無効で、TCS_HAP=on のときだけ通す。 */
+     * 既定で有効で、TCS_HAP=off のときだけ断る（hap_enabled）。 */
     if (!hap_enabled ()) {
       p->rejected = true;
       set_error (p, "video/x-hap requires the reserved compressed-texture branch (refusing decodebin/avdec)");
@@ -3011,6 +3155,23 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
           qpc_diff_ms (t_attempt0, now, p->qpc_freq),
           (long long) frames_at_frame);
     };
+    /* v0.6.0 stage 1: once per prores-gpu attempt, the written adapter-luid
+     * next to the value read back. proresd3d11dec gets its device in start()
+     * (READY->PAUSED) and then reports the LUID of the device in use, so the
+     * read-back runs after the first-frame wait (or at set-state-fail, where
+     * start() may not have run). Auxiliary only: the out-mem line is the
+     * evidence of the device in use. */
+    bool luid_logged = false;
+    auto log_adapter_luid_readback = [&] (const char* at, int frame) {
+      if (luid_logged || !tcs_video_profile_sets_adapter_luid (idx) || !p->vdec)
+        return;
+      luid_logged = true;
+      gint64 read = 0;
+      g_object_get (p->vdec, "adapter-luid", &read, nullptr);
+      LOG ("prores-gpu: adapter-luid set=%016llx read=%016llx at=%s frame=%d",
+          (unsigned long long) shim_device_luid_int64 (p), (unsigned long long) read,
+          at, frame);
+    };
 
     teardown_pipeline (p);
     teardown_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
@@ -3029,8 +3190,12 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       continue;
     }
     /* D16-b: the decoder class must be registered for the shim adapter; the
-     * per-adapter variants are tried by the helper. */
-    if (!decoder_matches_shim_adapter (p, idx, &p->decoder_element_name)) {
+     * per-adapter variants are tried by the helper. v0.6.0: prores-gpu is not
+     * a per-adapter class; build_video_chain_static writes the shim LUID into
+     * its adapter-luid instead. */
+    if (tcs_video_profile_sets_adapter_luid (idx))
+      p->decoder_element_name = g_profiles[idx].dec;
+    else if (!decoder_matches_shim_adapter (p, idx, &p->decoder_element_name)) {
       LUID luid = {};
       device_luid (p->device, &luid);
       LOG ("load.skip path=%s attempt=%d profile=%s reason=decoder-adapter-mismatch "
@@ -3129,6 +3294,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     set_state_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
     t_anchor = qpc_now ();
     if (scr == GST_STATE_CHANGE_FAILURE) {
+      log_adapter_luid_readback ("set-state-fail", 0);
       log_attempt ("set-state-fail");
       teardown_pipeline (p);
       continue;
@@ -3177,6 +3343,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       Sleep (50);
     }
     first_frame_ms = qpc_diff_ms (t_anchor, qpc_now (), p->qpc_freq);
+    log_adapter_luid_readback ("first-frame-wait", current_gen_frame ? 1 : 0);
     {
       std::lock_guard<std::mutex> g (p->frame_lock);
       /* D34: width/height only. Variable-framerate containers may report
