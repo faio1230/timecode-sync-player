@@ -7,8 +7,8 @@
 # and SHA256SUMS.txt from the zip go to native\gst-prores\licenses.
 # The DLL name must not change (GStreamer derives the entry point from it).
 # Usage (from the repository root):
-#   powershell -File scripts\get-prores-plugin.ps1
-#   powershell -File scripts\get-prores-plugin.ps1 -VerifyDir <plugin dir>
+#   pwsh -File scripts\get-prores-plugin.ps1
+#   pwsh -File scripts\get-prores-plugin.ps1 -VerifyDir <plugin dir>
 # -VerifyDir only checks an already placed plugin directory (same layout as
 # native\gst-prores) and stops on any mismatch. package-release.ps1 uses it so
 # the pinned values below stay in this one place.
@@ -109,13 +109,12 @@ if (Test-Path -LiteralPath $zipPath) {
     Write-Host "Using cached $zipName; verifying..."
 } else {
     New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $partial = "$zipPath.partial"
     Write-Host "Downloading $zipUrl"
     $oldProgress = $ProgressPreference
     $ProgressPreference = "SilentlyContinue"
     try {
-        Invoke-WebRequest -Uri $zipUrl -OutFile $partial -UseBasicParsing
+        Invoke-WebRequest -Uri $zipUrl -OutFile $partial
     } finally {
         $ProgressPreference = $oldProgress
     }

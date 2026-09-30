@@ -162,13 +162,11 @@ function Resolve-VcRedist([string]$ExplicitPath, [string]$Url, [string]$CacheDir
         $path = Join-Path $CacheDirectory "vc_redist.x64.exe"
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             Write-Host "Downloading $Url ..."
-            [Net.ServicePointManager]::SecurityProtocol =
-                [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
             $partial = "$path.partial"
             $oldProgress = $ProgressPreference
             $ProgressPreference = "SilentlyContinue"
             try {
-                Invoke-WebRequest -Uri $Url -OutFile $partial -UseBasicParsing
+                Invoke-WebRequest -Uri $Url -OutFile $partial
             }
             finally {
                 $ProgressPreference = $oldProgress
@@ -384,7 +382,8 @@ gstreamer folder; no separate GStreamer installation is required. SpoutDX.dll
 enables Spout2 output. See THIRD-PARTY-NOTICES.md for third-party terms. This
 release should be validated with your complete show setup before use.
 "@
-    Set-Content -LiteralPath (Join-Path $stagingDirectory "README.txt") -Value $readme -Encoding UTF8
+    # BOM 付きの UTF-8（5.1 の -Encoding UTF8 で作っていた配布物と同じバイト。7 の UTF8 は BOM なし）
+    Set-Content -LiteralPath (Join-Path $stagingDirectory "README.txt") -Value $readme -Encoding utf8BOM
 
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
