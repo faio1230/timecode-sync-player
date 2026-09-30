@@ -9,6 +9,8 @@ public sealed class CodecAdviceTests
     [InlineData("d3d11h264dec", CodecStanding.Recommended)]
     [InlineData("avdec_h264", CodecStanding.Recommended)]
     [InlineData("avdec_prores", CodecStanding.Acceptable)]
+    // v0.6.0: GPU で開いた ProRes も「可」のまま（推奨に上げるかは利用者の判断待ち）。
+    [InlineData("proresd3d11dec", CodecStanding.Acceptable)]
     [InlineData("hap(gpu)", CodecStanding.Acceptable)]
     [InlineData("d3d11vp9dec", CodecStanding.NotRecommended)]
     [InlineData("avdec_vp9", CodecStanding.NotRecommended)]
@@ -29,6 +31,7 @@ public sealed class CodecAdviceTests
     [Theory]
     [InlineData("d3d11h264dec")]
     [InlineData("avdec_prores")]
+    [InlineData("proresd3d11dec")]
     // v0.5.0: HAP は圧縮テクスチャのまま GPU へ渡すので復号は軽い（4K60 で 1 コマ 2.0ms）。
     // ProRes と同じ「使える」に置き、警告は出さない。
     [InlineData("hap(gpu)")]

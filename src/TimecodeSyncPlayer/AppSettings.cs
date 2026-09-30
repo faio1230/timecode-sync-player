@@ -51,6 +51,8 @@ public sealed record AppSettings
     public OutputBackend OutputBackend { get; init; } = OutputBackend.Gpu;
     /// <summary>"hardware"（既定）/ "software"。不正値は hardware として扱い警告する。変更には再起動が必要。</summary>
     public string DecodeMode { get; init; } = DecodeModePolicy.HardwareValue;
+    /// <summary>v0.6.0: "auto"（既定）/ "on" / "off"。不正値は auto として扱い警告する。変更には再起動が必要。</summary>
+    public string ProResGpu { get; init; } = ProResGpuPolicy.AutoValue;
     /// <summary>T5: 同期補正モード。既定はフィードバック（レート微調整）。</summary>
     public SyncCorrectionMode SyncCorrectionMode { get; init; } = SyncCorrectionMode.Smooth;
     /// <summary>

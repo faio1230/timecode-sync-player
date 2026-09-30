@@ -107,6 +107,13 @@ internal sealed class FakeGstNative : IGstNativeApi
         SetDecodeModeCalls.Add(mode);
         return SetDecodeModeResult;
     }
+    public List<int> SetProResGpuCalls { get; } = [];
+    public int SetProResGpuResult { get; set; }
+    public int SetProResGpu(IntPtr player, int mode)
+    {
+        SetProResGpuCalls.Add(mode);
+        return SetProResGpuResult;
+    }
     public bool TryGetTimePos(IntPtr player, out double seconds) { seconds = TimePos; return true; }
 
     /// <summary>0.4.5-A: 旧 DLL の EntryPointNotFoundException を再現するテストフック。</summary>

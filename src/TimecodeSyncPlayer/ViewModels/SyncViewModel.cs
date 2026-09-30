@@ -188,6 +188,39 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
     public SyncCorrectionMode SyncCorrectionMode =>
         _syncCorrectionModeIndex == 1 ? SyncCorrectionMode.Jump : SyncCorrectionMode.Smooth;
 
+    // v0.6.0: ProRes の GPU 復号。0=auto, 1=on, 2=off。適用は再起動の後（shim は最初のロードの前だけ受け付ける）。
+    private static readonly ProResGpuMode[] ProResGpuModes =
+        [ProResGpuMode.Auto, ProResGpuMode.On, ProResGpuMode.Off];
+
+    private ProResGpuMode _proResGpuStartupMode;
+    private int _proResGpuModeIndex;
+    public int ProResGpuModeIndex
+    {
+        get => _proResGpuModeIndex;
+        set
+        {
+            _proResGpuModeIndex = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ProResGpuMode));
+            OnPropertyChanged(nameof(ProResGpuRestartNotice));
+        }
+    }
+
+    public ProResGpuMode ProResGpuMode =>
+        _proResGpuModeIndex >= 0 && _proResGpuModeIndex < ProResGpuModes.Length
+            ? ProResGpuModes[_proResGpuModeIndex]
+            : ProResGpuMode.Auto;
+
+    /// <summary>選んだ値が起動時の値と違うときだけ「再起動の後に反映」。</summary>
+    public string ProResGpuRestartNotice => ProResGpuPolicy.RestartNotice(_proResGpuStartupMode, ProResGpuMode);
+
+    /// <summary>起動時の設定の値を選択状態にし、再起動の案内の基準にする。</summary>
+    public void InitializeProResGpu(ProResGpuMode startupMode)
+    {
+        _proResGpuStartupMode = startupMode;
+        ProResGpuModeIndex = Array.IndexOf(ProResGpuModes, startupMode);
+    }
+
     private string _syncCorrectionStatus = "";
     public string SyncCorrectionStatus
     {

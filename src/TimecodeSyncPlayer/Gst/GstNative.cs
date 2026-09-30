@@ -17,6 +17,10 @@ internal static class GstNative
     /* tcs_gstreamer.h の tcs_decode_mode と同じ値。 */
     internal const int DecodeModeHardware = 0;
     internal const int DecodeModeSoftware = 1;
+    /* tcs_gstreamer.h の TCS_PRORES_GPU_* と同じ値（v0.6.0）。 */
+    internal const int ProResGpuAuto = 0;
+    internal const int ProResGpuOn = 1;
+    internal const int ProResGpuOff = 2;
 
     internal static bool IsGstLibrary(string libraryName) =>
         string.Equals(libraryName, Lib, StringComparison.OrdinalIgnoreCase);
@@ -148,6 +152,9 @@ internal static class GstNative
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_set_decode_mode(IntPtr player, int mode);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int tcs_player_set_prores_gpu(IntPtr player, int mode);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int tcs_player_get_time_pos(IntPtr player, out double outSec);
