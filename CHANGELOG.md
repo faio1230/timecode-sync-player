@@ -4,7 +4,7 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 
 ## 0.5.5 - 
 
-Bug-fix release of the 0.5 line (draft, not yet released).
+Stable (Latest) bug-fix release of the 0.5 line.
 
 ### Fixed
 
@@ -14,6 +14,11 @@ Bug-fix release of the 0.5 line (draft, not yet released).
   held LTC position seeks to the out point, but did not record that seek for the clip-edge hold, so the hold only
   engaged if the position was read within 2 frames of the out point (about 33 ms at 60 fps). That seek is now recorded,
   so the next check always holds at the out point.
+
+### Known issues (fixed in 0.6.1)
+
+- Right after the LTC signal is disturbed, position re-alignment seeks can follow one another and stall 4K 60p video
+  for up to about 0.6 s. Same as 0.5.4.
 
 ## 0.5.4 - 2026-09-30
 
