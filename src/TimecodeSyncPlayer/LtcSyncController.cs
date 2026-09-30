@@ -617,6 +617,9 @@ internal sealed class LtcSyncController
                 Diagnostic = processed.Diagnostic with { Status = mapped },
                 ShouldApplySync = TimecodeSyncFrameGate.ShouldApplySync(mapped),
             };
+            // v0.6.1 (D): 受理しないフレーム（Reverse・Jump の保留）の到着は「LTC は来ている」だけを進める。
+            if (layer2Class is Layer2Class.Reverse or Layer2Class.Jump)
+                _signalLoss.ObserveFrameArrival(receivedAtMilliseconds, SignalContext());
         }
         bool confirmedIntoHold = false;
         TimecodeFrameDiagnosticStatus status = processed.Diagnostic.Status;
@@ -705,6 +708,8 @@ internal sealed class LtcSyncController
                 _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
             _input.AcceptFrame(creepEffectiveSeconds, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
             _input.MarkHeldEffective(creepEffectiveSeconds);
+            // v0.6.1 (D): 這う前進の受理は保持の到着（止まりかけの送出の 1 歩）。
+            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
             _input.DiscardPendingSync();
             _lastContinueFrame = null;
             Log.Debug("LTC frame layer2: creeping advance accepted ltc={Ltc:F3} heldRun={HeldRun}", rawSeconds, heldRun);
@@ -730,7 +735,11 @@ internal sealed class LtcSyncController
             // （保持直前の受理値は 1 フレーム手前になり得る）。
             if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate)
             {
-                _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
+                // v0.6.1 (D): 保留した Jump の確認の 1 枚（(C) で保持値の変更へ渡したもの）は、保持の到着に数えない。
+                if (confirmedIntoHold)
+                    _signalLoss.ObserveFrameArrival(receivedAtMilliseconds, SignalContext());
+                else
+                    _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
                 // D27-d: 着地目標は保持として届いた値そのもの。保持値は凍結されて進まないため、
                 // サンプル時計の age は足さず T3 オフセットだけ適用する。
                 double heldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
@@ -852,7 +861,8 @@ internal sealed class LtcSyncController
 
         if (status == TimecodeFrameDiagnosticStatus.Duplicate)
         {
-            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
+            // v0.6.1 (D): 確認の 1 枚は保持の到着に数えない（「LTC は来ている」だけを進める）。保持の連続は次の同値から数える。
+            _signalLoss.ObserveFrameArrival(receivedAtMilliseconds, SignalContext());
             _input.MarkHeldEffective(SyncOffsetPolicy.Apply(rawSeconds,
                 _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds));
         }

@@ -534,6 +534,44 @@ public class LtcSignalLossPolicyTests
         policy.IsPauseOwned.Should().BeTrue();
     }
 
+    /// <summary>
+    /// v0.6.1 (D): 受理しないフレーム（Reverse・Jump の保留とその確認）だけが届く間の損失は、LTC は来ているので理由が
+    /// 「停止」になる。ただし保持の到着ではないので、保持の直後の即時の復帰（D27-b/c）には数えない。
+    /// </summary>
+    [Fact]
+    public void UnacceptedArrivals_ReportTheHeldReason_ButDoNotResumeOnAJump()
+    {
+        var policy = CreatePolicy(resumeFrames: 5);
+        LtcSignalLossContext context = Context();
+        LtcSignalLossContext paused = context with { IsPlaybackPaused = true };
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveFrameArrival(At(100), context);
+        policy.ObserveFrameArrival(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld, "値は読めない・進まないが LTC は来ている");
+
+        policy.ObserveFrameArrival(At(300), paused);
+        policy.ObserveJumpFrame(At(340), paused).Should().Be(LtcSignalLossAction.None,
+            "未受理の到着だけから付いた「停止」は、保持の直後の即時の復帰に数えない");
+        policy.IsLost.Should().BeTrue();
+    }
+
+    [Fact]
+    public void UnacceptedArrivals_AfterSilence_KeepTheHeldReasonWhileArriving()
+    {
+        var policy = CreatePolicy();
+        LtcSignalLossContext context = Context();
+
+        policy.ObserveValidFrame(Start, context);
+        policy.ObserveFrameArrival(At(200), context);
+        policy.Evaluate(At(250), context).Should().Be(LtcSignalLossAction.Pause);
+        policy.Reason.Should().Be(LtcSignalLossReason.TimecodeHeld);
+
+        policy.Evaluate(At(500), context);
+        policy.Reason.Should().Be(LtcSignalLossReason.SignalLoss, "何も届かなくなったら「信号なし」へ下げる");
+    }
+
     [Fact]
     public void ObserveJumpFrame_StartsANewLossClock()
     {
