@@ -1,5 +1,6 @@
 # 現在地（2026-09-30）
 
+- **v0.5.4 公開済み、v0.6.0 設計中**（2026-09-30、ブランチ `v0.6.0`、作業ツリー `timecode-sync-player-v06`）。最初の成果物は設計書 `docs/design/v0.6.0-prores-gpu.md`、TSP-Fable のレビューの後に実装（サブエージェント方式）
 - **公開: v0.5.4（安定版、Latest）2026-09-30 13:18**。main = `feeadc8`（`--no-ff` の統合）、タグ `v0.5.4`。ProductVersion `0.5.4+b3da57a`。
   zip `CCE46407…E8F7` / setup.exe `BB054C11…07DA`（GitHub の digest と一致）。https://github.com/faio1230/timecode-sync-player/releases/tag/v0.5.4
   - 検証機が合格とした候補 4（`0.5.3+1751a96`）から製品の差分は版番号だけ（zip の 104 ファイル中、違うのは exe・dll・deps.json・README.txt・CHANGELOG の 5 つで、版の表記だけ）。配布物の README.txt から beta の表記を外した（`b3da57a`）
