@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Generate the "heavy" H.264 set under artifacts/media-heavy (gitignored).
 #
 # Recommended-format clips (H.264 High, one-second GOP) under the conditions the

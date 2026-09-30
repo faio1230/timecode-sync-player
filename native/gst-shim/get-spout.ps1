@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Fetch the pinned Spout2 SDK sources used to build tcs_gstreamer.dll.
 # Tag 2.007.017 / commit f49e2f469f8cb25f559a6eaa61a3f5b8173fc100
 # Usage (from the repository root):

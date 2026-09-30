@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Report the keyframe interval distribution of one or more video files.
 #
 # Long keyframe intervals make seeking slow: a seek must decode from the

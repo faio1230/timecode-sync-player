@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Build a project file for the LTC scenario E2E from a folder of real media.
 #
 # The scenario tests never embed media file names: tracks are referred to as

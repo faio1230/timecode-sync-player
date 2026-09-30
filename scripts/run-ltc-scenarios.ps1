@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Run the LTC E2E scenarios against one app (installed or a local Debug build)
 # with a single command, and leave the evidence in one report directory.
 #

@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # V1: run the generated codec matrix through the main app (GStreamer x Gpu), one clip at a time.
 [CmdletBinding()]
 param(

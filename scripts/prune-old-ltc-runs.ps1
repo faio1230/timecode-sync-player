@@ -1,4 +1,5 @@
-﻿<#
+﻿#requires -Version 7.0
+<#
 .SYNOPSIS
   結果置き場（-Root、省略時は環境変数 TCS_LTC_RESULTS_ROOT）の古い回を、要約だけ残して中身を消す（既定は一覧だけ）。
 

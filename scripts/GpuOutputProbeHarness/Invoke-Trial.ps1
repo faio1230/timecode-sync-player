@@ -1,4 +1,5 @@
-﻿# One explicitly requested trial + analysis. Run serially from the worktree root; the parent evaluates each result before the next.
+﻿#requires -Version 7.0
+# One explicitly requested trial + analysis. Run serially from the worktree root; the parent evaluates each result before the next.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('off','signal')][string]$CopyRetry,

@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Generate the test clips the E2E suite expects under artifacts/media (gitignored).
 #
 # GStreamerBackendE2ETests and friends look for fixed file names. When they are

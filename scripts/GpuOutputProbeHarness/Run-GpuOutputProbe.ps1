@@ -1,4 +1,5 @@
-﻿# One explicitly requested native run. Do not wrap this script in an unattended matrix.
+﻿#requires -Version 7.0
+# One explicitly requested native run. Do not wrap this script in an unattended matrix.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$AppExe,

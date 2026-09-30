@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Build script for tcs-gst-proto (GStreamer -> D3D11 -> Spout prototype).
 # Usage: powershell -File build-proto.ps1 [-Config Debug|Release]
 # Requirements: VS Build Tools (vcvars64), CMake, Ninja (bundled with VS), GStreamer MSVC SDK.

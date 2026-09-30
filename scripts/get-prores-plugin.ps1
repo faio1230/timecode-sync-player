@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Fetch the pinned gst-prores-d3d11 plugin (proresd3d11dec) for development.
 # Downloads the release zip into artifacts\cache (reused when present), checks
 # the SHA-256 of the zip and of gstproresd3d11.dll against the pinned values,

@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # V6 soak: sample WorkingSet/PrivateBytes of the trial app every -SampleSeconds and write
 # <run>\memory-samples.csv. Run it as a background job before Invoke-AppGpuTrial.ps1; it exits
 # by itself when the sampled process (PID + start time) is gone.

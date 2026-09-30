@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # TimecodeSyncPlayer diagnostics runner.
 # Runs build/tests, analyzes the latest TimecodeSyncPlayer log, and writes a Markdown report.
 

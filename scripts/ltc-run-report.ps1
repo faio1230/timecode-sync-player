@@ -1,4 +1,5 @@
-﻿<#
+﻿#requires -Version 7.0
+<#
 .SYNOPSIS
   run-ltc-scenarios.ps1 の 1 回ぶんの ReportDir から、機械で差分を取れる結果 JSON（run-result.json）を作る。
   あわせて保持の規則を当てる（合格した回の出力トレースを消す、途中で止めた回の media ハードリンクを消す）。

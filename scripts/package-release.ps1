@@ -1,4 +1,5 @@
-﻿# 配布物（zip と setup.exe）を作る。手順は docs\RELEASE-PROCEDURE-0.4.md の 1 節。
+﻿#requires -Version 7.0
+# 配布物（zip と setup.exe）を作る。手順は docs\RELEASE-PROCEDURE-0.4.md の 1 節。
 #
 # VC++ 再頒布パッケージ（v0.6.0 から 14.50.35710 以上。gst-prores-d3d11 が MSVC 14.50 の CRT を要る）
 # - 最低版・固定の版・SHA-256・入手元の URL は、この下の「VC++ 再頒布パッケージの固定値」の 1 か所に置く。

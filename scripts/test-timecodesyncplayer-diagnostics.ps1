@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Validates TimecodeSyncPlayer diagnostics report sections with a synthetic log.
 
 [CmdletBinding()]

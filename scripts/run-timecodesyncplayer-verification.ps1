@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # TimecodeSyncPlayer verification wrapper.
 # Provides short profiles for automated pre-checks and log-only diagnostics.
 

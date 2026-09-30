@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # V3 (LTC sync accuracy): run the VB-CABLE accuracy harness for one or both backends
 # and print the two metrics the plan defines: steady error and recovery time.
 #

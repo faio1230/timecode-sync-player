@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Build script for tcs_gstreamer shim (DLL + native smoke test).
 # Usage: powershell -File build-shim.ps1 [-Config Debug|Release]
 param(

@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Parent-run trial of the main app with OutputBackend=Gpu. One explicitly requested run; serial; owned processes only.
 [CmdletBinding()]
 param(

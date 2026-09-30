@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # M6: run the dirty-LTC limit harness for one condition plan and leave the evidence
 # in one report directory per run.
 #
