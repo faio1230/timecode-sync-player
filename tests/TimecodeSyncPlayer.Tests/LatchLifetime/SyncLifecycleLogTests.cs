@@ -100,7 +100,7 @@ public sealed class SyncLifecycleLogTests
         LatchLifetimeScenario s = LatchLifetimeScenario.Continue();
 
         using var capture = new LoggerCapture();
-        s.Frame(45.0);   // 2 本目 [40,70) へ切替
+        s.JumpTo(45.0);   // 2 本目 [40,70) へ切替（v0.6.1 段 A: Jump と確認の +1 フレーム）
 
         capture.Lifecycle().Should().Equal("FileLoad/track-switch");
     }
@@ -113,7 +113,7 @@ public sealed class SyncLifecycleLogTests
         s.Read(LatchArrangements.ClipBoundaryHeld).Should().BeTrue("配置で境界ホールドが立っていること");
 
         using var capture = new LoggerCapture();
-        s.Frame(15.0);   // LTC が clipOut=20 の内側へ戻り、端でのホールドが解除される
+        s.JumpTo(15.0);   // LTC が clipOut=20 の内側へ戻り、端でのホールドが解除される（v0.6.1 段 A: Jump と確認）
 
         capture.Lifecycle().Should().Equal("BoundaryHoldReleased/left-boundary");
     }
