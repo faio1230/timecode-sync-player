@@ -32,14 +32,16 @@ public sealed class FfmpegToolTests : IDisposable
     };
 
     [Fact]
-    public void Resolve_EnvironmentWinsOverPath_AndFfprobeComesFromTheSameFolder()
+    public void Resolve_EnvironmentWinsOverDefaultAndPath_AndFfprobeComesFromTheSameFolder()
     {
         string pinned = MakeFile("pinned", "ffmpeg.exe");
         string pinnedProbe = MakeFile("pinned", "ffprobe.exe");
+        MakeFile("default", "ffmpeg.exe");
+        MakeFile("default", "ffprobe.exe");
         MakeFile("path", "ffmpeg.exe");
         MakeFile("path", "ffprobe.exe");
 
-        FfmpegResolution resolution = FfmpegTool.Resolve(Env(ffmpeg: pinned), Path.Combine(_root, "path"));
+        FfmpegResolution resolution = FfmpegTool.Resolve(Env(ffmpeg: pinned), Path.Combine(_root, "default"), Path.Combine(_root, "path"));
 
         Assert.Equal(pinned, resolution.Ffmpeg);
         Assert.Equal("env:TCS_FFMPEG", resolution.FfmpegSource);
@@ -48,14 +50,29 @@ public sealed class FfmpegToolTests : IDisposable
     }
 
     [Fact]
-    public void Resolve_WithoutEnvironment_UsesTheFirstPathEntry()
+    public void Resolve_WithoutEnvironment_DefaultFolderWinsOverPath()
+    {
+        string preset = MakeFile("default", "ffmpeg.exe");
+        string presetProbe = MakeFile("default", "ffprobe.exe");
+        MakeFile("path", "ffmpeg.exe");
+
+        FfmpegResolution resolution = FfmpegTool.Resolve(Env(), Path.Combine(_root, "default"), Path.Combine(_root, "path"));
+
+        Assert.Equal(preset, resolution.Ffmpeg);
+        Assert.Equal("default-dir", resolution.FfmpegSource);
+        Assert.Equal(presetProbe, resolution.Ffprobe);
+        Assert.Equal("next-to-ffmpeg", resolution.FfprobeSource);
+    }
+
+    [Fact]
+    public void Resolve_WithoutEnvironmentAndDefaultFolder_UsesTheFirstPathEntry()
     {
         MakeFile("old", "ffmpeg.exe");
         string newer = MakeFile("new", "ffmpeg.exe");
         string newerProbe = MakeFile("new", "ffprobe.exe");
         string path = string.Join(Path.PathSeparator, Path.Combine(_root, "old"), Path.Combine(_root, "new"));
 
-        FfmpegResolution resolution = FfmpegTool.Resolve(Env(), path);
+        FfmpegResolution resolution = FfmpegTool.Resolve(Env(), Path.Combine(_root, "no-default"), path);
 
         // ffmpeg は PATH の先頭（old）。old に ffprobe が無いので ffprobe は PATH から（new）。
         Assert.Equal(Path.Combine(_root, "old", "ffmpeg.exe"), resolution.Ffmpeg);
@@ -72,7 +89,7 @@ public sealed class FfmpegToolTests : IDisposable
         MakeFile("pinned", "ffprobe.exe");
         string probe = MakeFile("probe", "ffprobe.exe");
 
-        FfmpegResolution resolution = FfmpegTool.Resolve(Env(ffmpeg: pinned, ffprobe: probe), null);
+        FfmpegResolution resolution = FfmpegTool.Resolve(Env(ffmpeg: pinned, ffprobe: probe), null, null);
 
         Assert.Equal(probe, resolution.Ffprobe);
         Assert.Equal("env:TCS_FFPROBE", resolution.FfprobeSource);
@@ -81,12 +98,12 @@ public sealed class FfmpegToolTests : IDisposable
     [Fact]
     public void Resolve_EnvironmentPointingNowhere_Throws() =>
         Assert.Throws<InvalidOperationException>(() =>
-            FfmpegTool.Resolve(Env(ffmpeg: Path.Combine(_root, "missing", "ffmpeg.exe")), null));
+            FfmpegTool.Resolve(Env(ffmpeg: Path.Combine(_root, "missing", "ffmpeg.exe")), null, null));
 
     [Fact]
     public void Resolve_NothingFound_FallsBackToTheNames()
     {
-        FfmpegResolution resolution = FfmpegTool.Resolve(Env(), Path.Combine(_root, "empty"));
+        FfmpegResolution resolution = FfmpegTool.Resolve(Env(), Path.Combine(_root, "no-default"), Path.Combine(_root, "empty"));
         Assert.Equal("ffmpeg", resolution.Ffmpeg);
         Assert.Equal("ffprobe", resolution.Ffprobe);
     }

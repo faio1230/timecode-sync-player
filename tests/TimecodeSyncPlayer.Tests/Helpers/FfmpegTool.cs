@@ -9,7 +9,8 @@ internal sealed record FfmpegResolution(string Ffmpeg, string FfmpegSource, stri
 
 /// <summary>
 /// v0.6.0 段 5b: 試験で素材を作る ffmpeg / ffprobe の解決。スクリプト（scripts\TcsFfmpeg.psm1）と同じ順:
-/// ffmpeg は <c>TCS_FFMPEG</c>（ffmpeg.exe のフルパス）→ PATH。試験には -FfmpegDir に当たる引数が無い。
+/// ffmpeg は <c>TCS_FFMPEG</c>（ffmpeg.exe のフルパス）→ 既定のフォルダ（スクリプトの -FfmpegDir の既定と同じ
+/// <c>%ProgramFiles%\ffmpeg\bin</c>。試験には引数が無いので既定だけ）→ PATH。
 /// ffprobe は <c>TCS_FFPROBE</c> → 解決した ffmpeg と同じフォルダ → PATH。
 /// 以前は名前（"ffmpeg"）で起動しており、開発機と検証機で PATH の先頭の版が逆向きにずれていた。
 /// </summary>
@@ -21,8 +22,12 @@ internal static class FfmpegTool
     /// <summary>これより古い版で新しく素材を作ったら警告を 1 行出す。</summary>
     public const int MinimumMajor = 6;
 
+    /// <summary>既定のフォルダ（scripts の make-*-media.ps1 の -FfmpegDir の既定と同じ）。</summary>
+    public static string DefaultDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin");
+
     private static readonly Lazy<FfmpegResolution> s_resolution = new(() =>
-        Resolve(Environment.GetEnvironmentVariable, Environment.GetEnvironmentVariable("PATH")));
+        Resolve(Environment.GetEnvironmentVariable, DefaultDirectory, Environment.GetEnvironmentVariable("PATH")));
 
     private static readonly Lazy<string> s_versionLines = new(() => ReadVersionLines(s_resolution.Value.Ffmpeg));
 
@@ -46,7 +51,7 @@ internal static class FfmpegTool
                $"Point {FfmpegEnvironmentVariable} at a build {MinimumMajor} or later.";
     }
 
-    internal static FfmpegResolution Resolve(Func<string, string?> getEnvironment, string? pathVariable)
+    internal static FfmpegResolution Resolve(Func<string, string?> getEnvironment, string? defaultDirectory, string? pathVariable)
     {
         string ffmpeg;
         string ffmpegSource;
@@ -57,6 +62,11 @@ internal static class FfmpegTool
                 throw new InvalidOperationException($"{FfmpegEnvironmentVariable} does not point to a file: {fromEnvironment}");
             ffmpeg = Path.GetFullPath(fromEnvironment);
             ffmpegSource = "env:" + FfmpegEnvironmentVariable;
+        }
+        else if (!string.IsNullOrEmpty(defaultDirectory) && File.Exists(Path.Combine(defaultDirectory, "ffmpeg.exe")))
+        {
+            ffmpeg = Path.GetFullPath(Path.Combine(defaultDirectory, "ffmpeg.exe"));
+            ffmpegSource = "default-dir";
         }
         else if (FindOnPath("ffmpeg.exe", pathVariable) is { } onPath)
         {
