@@ -683,6 +683,9 @@ internal sealed class LtcSyncController
             _input.DiscardPendingSync();
             _lastContinueFrame = null;
             Log.Debug("LTC frame layer2: creeping advance accepted ltc={Ltc:F3} heldRun={HeldRun}", rawSeconds, heldRun);
+            // v0.6.1 β (A): 損失からの復帰の有効フレームは、到着と前進で数える（這う前進も 1 枚に数える）。
+            if (_signalLoss.IsLost)
+                ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
             AlignOnRunThroughHoldEntry();
             return;
         }
@@ -835,6 +838,10 @@ internal sealed class LtcSyncController
         if (_signalLoss.IsLost)
         {
             ApplySignalLossAction(_signalLoss.ObserveJumpFrame(receivedAtMilliseconds, SignalContext()));
+            // v0.6.1 β (B): 保持の直後の復帰（D27-b/c）に当たらないとき、確定した Jump の確認のフレーム（前進）を
+            // 損失からの復帰の有効フレームに 1 枚数える（確定の遅れを 1 枚に）。
+            if (_signalLoss.IsLost && status != TimecodeFrameDiagnosticStatus.Duplicate)
+                ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
         }
 
         _input.ClearHeldReapplied();
