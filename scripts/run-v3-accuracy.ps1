@@ -2,9 +2,9 @@
 # V3 (LTC sync accuracy): run the VB-CABLE accuracy harness for one or both backends
 # and print the two metrics the plan defines: steady error and recovery time.
 #
-#   powershell -File scripts\run-v3-accuracy.ps1 -Backends gst -Label after-d2
+#   pwsh -File scripts\run-v3-accuracy.ps1 -Backends gst -Label after-d2
 #
-# NOTE: array parameters do not survive `powershell -File` (the whole list arrives
+# NOTE: array parameters do not survive `pwsh -File` (the whole list arrives
 # as one string and fails ValidateSet), so call this once per backend.
 #
 # Each run needs its own empty report directory (phases.jsonl uses FileMode.CreateNew)
@@ -26,8 +26,6 @@
 # enabled the app records samples from the published GPU texture
 # (OutputEngine.RecordGpuAccuracyFrame), so the GPU path is measurable. The older note
 # that required outputBackend=0 (WriteableBitmap sampling only) is obsolete (2026-09-15).
-#
-# NOTE: keep this file ASCII-only and BOM-less like the other scripts in this repo.
 [CmdletBinding()]
 param(
     [ValidateSet('gst', 'mpv')][string[]]$Backends = @('gst', 'mpv'),

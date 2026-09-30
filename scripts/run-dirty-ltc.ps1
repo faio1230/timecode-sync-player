@@ -2,8 +2,8 @@
 # M6: run the dirty-LTC limit harness for one condition plan and leave the evidence
 # in one report directory per run.
 #
-#   powershell -File scripts\run-dirty-ltc.ps1 -Condition dry-clean
-#   powershell -File scripts\run-dirty-ltc.ps1 -Condition A-noise -Repeats 2 -Label near-limit
+#   pwsh -File scripts\run-dirty-ltc.ps1 -Condition dry-clean
+#   pwsh -File scripts\run-dirty-ltc.ps1 -Condition A-noise -Repeats 2 -Label near-limit
 #
 # One run = one condition; the levels are played back to back inside the run by
 # tests\TimecodeSyncPlayer.Tests\E2E\DirtyLtcE2ETests.cs. The plan json lives in
@@ -14,7 +14,6 @@
 #
 # Exit codes: 0 = all test runs passed, 1 = at least one test failure (partial
 # traces stay in the report).
-# NOTE: keep this file ASCII-only and BOM-less like the other scripts in this repo.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Condition,
@@ -109,9 +108,9 @@ try {
     if ($reports.Count -gt 1) {
         & python $analyzer $reports |
             Out-File -FilePath (Join-Path $reports[0] 'analysis-dirty-combined.txt') -Encoding utf8
-        Get-Content -LiteralPath (Join-Path $reports[0] 'analysis-dirty-combined.txt') -Encoding UTF8
+        Get-Content -LiteralPath (Join-Path $reports[0] 'analysis-dirty-combined.txt')
     } else {
-        Get-Content -LiteralPath (Join-Path $reports[0] 'analysis-dirty.txt') -Encoding UTF8
+        Get-Content -LiteralPath (Join-Path $reports[0] 'analysis-dirty.txt')
     }
 } finally {
     if ($previousEncoding) { [Console]::OutputEncoding = $previousEncoding }

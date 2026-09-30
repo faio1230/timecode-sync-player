@@ -18,7 +18,7 @@
     - ReportDir\media（実素材へのハードリンク）が残っていれば消す（ハードリンクなので実素材は消えない）
 
 .EXAMPLE
-  powershell -File scripts\ltc-run-report.ps1 -ReportDir <結果置き場>\<候補>\std-pass-a-rtx-<日時> -Prune
+  pwsh -File scripts\ltc-run-report.ps1 -ReportDir <結果置き場>\<候補>\std-pass-a-rtx-<日時> -Prune
 #>
 param(
     [Parameter(Mandatory = $true)][string]$ReportDir,
@@ -100,7 +100,7 @@ $passed = 0; $failed = 0; $skipped = 0
 $failures = @(); $invalid = @(); $skips = @()
 $trx = Get-ChildItem -LiteralPath $ReportDir -Filter '*.trx' -File | Select-Object -First 1
 if ($trx) {
-    [xml]$doc = Get-Content -LiteralPath $trx.FullName -Encoding UTF8
+    [xml]$doc = Get-Content -LiteralPath $trx.FullName
     foreach ($r in @($doc.TestRun.Results.UnitTestResult)) {
         $name = ($r.testName -split '\.')[-1]
         $message = ''
