@@ -13,6 +13,7 @@
     L-1 / L-2 の要約（l1-summary / l2-summary から主要な値）。
     v0.6.0 段 5b の追加（scripts\LtcRunMetrics.psm1）:
     commitFreeGbAtStart（ランナーの開始時のシステムのコミットの空き、runner-preflight.json）、
+    cDriveFreeGbAtStart（ランナーの開始時の C: の空き、runner-preflight.json）、
     appExit（終了を押してからプロセスが消えるまでの秒数。回数・中央・最大と、15 秒を超えた回の終了の段のログ行）、
     prores（ProRes のロードの profile の内訳 prores-gpu / prores-cpu と decoder-adapter-mismatch の発火の回数。
     この回の trx の開始より前のログ行は数えない）。
@@ -193,6 +194,7 @@ $skipped = $skips.Count
 # ---- 段 5b の追加 ---------------------------------------------------------------
 $runStartUtc = if ($trx) { Get-TcsRunStartUtc $trx.FullName } else { $null }
 $commitFreeGbAtStart = Get-TcsCommitFreeGbAtStart $ReportDir
+$cDriveFreeGbAtStart = Get-TcsRunnerPreflightValue $ReportDir 'cDriveFreeGbAtStart'
 $appExit = Get-TcsAppExitSummary -Events $appExitEvents -AppLines $appLines -ShimLines @($shimLines | Where-Object { $_ -match '\] destroy: ' }) `
     -ShimLinesByScenario $shimLinesByScenario
 $prores = Get-TcsProResLoadSummary -ShimLines $shimLines -SinceUtc $runStartUtc
@@ -224,6 +226,7 @@ $result = [ordered]@{
     l1 = $l1
     l2 = $l2
     commitFreeGbAtStart = $commitFreeGbAtStart
+    cDriveFreeGbAtStart = $cDriveFreeGbAtStart
     appExit = $appExit
     prores = $prores
 }
@@ -232,7 +235,7 @@ $outPath = Join-Path $ReportDir 'run-result.json'
 $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $outPath -Encoding UTF8
 Write-Output ('RESULT ' + $outPath + ' passed=' + $passed + ' failed=' + $failed + ' invalid=' + $invalid.Count +
     ' skipped=' + $skipped + ' zero_caps=' + $zeroCaps + ' fast_loads=' + $fastLoads + ' trace_save_fail=' + $traceSaveFailures)
-Write-Output ('RESULT-5B commit_free_gb=' + $commitFreeGbAtStart + ' app_exit_count=' + $appExit.count +
+Write-Output ('RESULT-5B commit_free_gb=' + $commitFreeGbAtStart + ' c_free_gb=' + $cDriveFreeGbAtStart + ' app_exit_count=' + $appExit.count +
     ' app_exit_median_s=' + $appExit.medianSeconds + ' app_exit_max_s=' + $appExit.maxSeconds + ' app_exit_over15s=' + @($appExit.over15s).Count +
     ' prores_gpu=' + $prores.gpu + ' prores_cpu=' + $prores.cpu + ' adapter_mismatch=' + $prores.adapterMismatch)
 

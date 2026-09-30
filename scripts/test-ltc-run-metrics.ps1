@@ -1,6 +1,6 @@
 #requires -Version 7.0
 # Self-test of scripts\LtcRunMetrics.psm1 and the fields it adds to run-result.json
-# (v0.6.0 stage 5b: commitFreeGbAtStart, appExit, prores). Builds a small fake report
+# (v0.6.0 stage 5b: commitFreeGbAtStart, cDriveFreeGbAtStart, appExit, prores). Builds a small fake report
 # directory under %TEMP%, runs ltc-run-report.ps1 on it (reads that folder only, no
 # -Prune) and checks the JSON. Starts no app and no test run; removes the folder at the end.
 #
@@ -29,7 +29,7 @@ try {
     function Utc([DateTime]$At) { $At.ToUniversalTime().ToString('o') }
 
     New-Item -ItemType Directory -Force -Path (Join-Path $root 'app-logs') | Out-Null
-    [ordered]@{ commitFreeGbAtStart = 18.52; measuredAt = $day.ToString('o') } | ConvertTo-Json |
+    [ordered]@{ commitFreeGbAtStart = 18.52; cDriveFreeGbAtStart = 47.25; measuredAt = $day.ToString('o') } | ConvertTo-Json |
         Set-Content -LiteralPath (Join-Path $root 'runner-preflight.json') -Encoding UTF8
     @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -108,6 +108,7 @@ try {
     $json = Get-Content -LiteralPath (Join-Path $root 'run-result.json') -Raw | ConvertFrom-Json
     Check ($json.schema -eq 'ltc-run-result/1') 'schema unchanged'
     Check ($json.commitFreeGbAtStart -eq 18.52) 'commitFreeGbAtStart from runner-preflight.json'
+    Check ($json.cDriveFreeGbAtStart -eq 47.25) 'cDriveFreeGbAtStart from runner-preflight.json'
     Check ($json.prores.gpu -eq 2) 'prores.gpu: 2 (the line before the trx start is not counted; a path with a space counts)'
     Check ($json.prores.cpu -eq 1) 'prores.cpu: 1'
     Check ($json.prores.adapterMismatch -eq 1) 'prores.adapterMismatch: load.fail only (D16-b load.skip is not counted)'
@@ -125,7 +126,7 @@ try {
     $c3 = $over | Where-Object { $_.test -eq 'C-3' }
     Check ($null -ne $c3 -and -not $c3.exited -and $c3.seconds -eq 25.1) 'C-3 over15s entry: exited=false, seconds = waited (lower bound)'
     Write-Output ('--- appExit and prores of the fake run:')
-    [ordered]@{ commitFreeGbAtStart = $json.commitFreeGbAtStart; appExit = $json.appExit; prores = $json.prores } | ConvertTo-Json -Depth 6
+    [ordered]@{ commitFreeGbAtStart = $json.commitFreeGbAtStart; cDriveFreeGbAtStart = $json.cDriveFreeGbAtStart; appExit = $json.appExit; prores = $json.prores } | ConvertTo-Json -Depth 6
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }

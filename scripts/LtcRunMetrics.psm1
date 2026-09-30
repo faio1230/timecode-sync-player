@@ -2,6 +2,7 @@
 # Aggregations for the LTC runner result (ltc-run-report.ps1, run-result.json schema
 # ltc-run-result/1). Added in v0.6.0 stage 5b; the fields are additions only:
 #   commitFreeGbAtStart  - system commit free when the runner started (runner-preflight.json)
+#   cDriveFreeGbAtStart  - free space on C: when the runner started (runner-preflight.json)
 #   appExit              - seconds from pressing Exit (BtnExitNormal) to the process being gone,
 #                          from the harness event "app-exit-timing" of each scenario
 #   prores               - ProRes loads by profile (prores-gpu / prores-cpu) and the
@@ -176,11 +177,19 @@ function Get-TcsAppExitSummary {
     }
 }
 
-# commitFreeGbAtStart from runner-preflight.json (written by run-ltc-scenarios.ps1), or $null.
-function Get-TcsCommitFreeGbAtStart([string]$ReportDir) {
+# A value of runner-preflight.json (written by run-ltc-scenarios.ps1: commitFreeGbAtStart,
+# cDriveFreeGbAtStart), or $null.
+function Get-TcsRunnerPreflightValue([string]$ReportDir, [string]$Name) {
     $path = Join-Path $ReportDir 'runner-preflight.json'
     if (-not (Test-Path -LiteralPath $path)) { return $null }
-    return Get-TcsField (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) 'commitFreeGbAtStart'
+    return Get-TcsField (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) $Name
+}
+
+function Get-TcsCommitFreeGbAtStart([string]$ReportDir) { Get-TcsRunnerPreflightValue $ReportDir 'commitFreeGbAtStart' }
+
+# Free space of a drive in GB (the release gate rule: 20 GB free on C: before a run).
+function Get-TcsDriveFreeGb([string]$Drive = 'C:\') {
+    return [math]::Round([double]([IO.DriveInfo]::new($Drive).AvailableFreeSpace) / 1GB, 2)
 }
 
 # System commit free in GB (Win32_OperatingSystem.FreeVirtualMemory is in KB: commit limit
@@ -191,4 +200,5 @@ function Get-TcsSystemCommitFreeGb {
 }
 
 Export-ModuleMember -Function Get-TcsField, ConvertTo-TcsUtc, Get-TcsLogLineUtc, Get-TcsRunStartUtc, Get-TcsProResLoadSummary,
-    Get-TcsMedian, Get-TcsExitLogLines, Get-TcsAppExitSummary, Get-TcsCommitFreeGbAtStart, Get-TcsSystemCommitFreeGb
+    Get-TcsMedian, Get-TcsExitLogLines, Get-TcsAppExitSummary, Get-TcsCommitFreeGbAtStart, Get-TcsSystemCommitFreeGb,
+    Get-TcsRunnerPreflightValue, Get-TcsDriveFreeGb
