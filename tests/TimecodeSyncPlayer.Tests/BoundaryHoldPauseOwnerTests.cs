@@ -46,10 +46,18 @@ public sealed class BoundaryHoldPauseOwnerTests
         Tick(h, clock, 3);   // 250ms 超で信号断（停止モード）→ 一時停止
         h.IsPaused.Should().BeTrue("前提: 信号断のポリシーが止めている");
 
-        h.SupplyHeldLtc(40.0);   // 範囲外の保持 → 境界ホールド
+        // LTC が 2 フレームだけ走って終端（25.0）の先で止まる（有効フレーム 2 枚では信号断は明けない）
+        // → 範囲外の保持 → 境界ホールド。
+        h.SupplyLtc(24.96);
+        h.SupplyLtc(25.04);
+        h.SupplyHeldLtc(25.04);
         h.Operations.Should().Contain(o => o.Name == "clip-end-hold");
 
-        h.SupplyHeldLtc(10.0);   // 範囲内へ → 境界ホールド解除
+        // 止まったまま 2 フレームずつ 2 回戻して保持（Reverse の値そのものと、その保持）→ 端から 2 フレームより
+        // 内側へ → 境界ホールド解除。
+        h.SupplyLtc(24.96);
+        h.SupplyLtc(24.88);
+        h.SupplyHeldLtc(24.88);
         h.Operations.Should().Contain(o => o.Name == "clip-end-release");
 
         h.IsPaused.Should().BeTrue(
@@ -65,13 +73,17 @@ public sealed class BoundaryHoldPauseOwnerTests
 
         h.SupplyLtc(24.9);
         Tick(h, clock, 3);
-        h.SupplyHeldLtc(40.0);
-        h.SupplyHeldLtc(10.0);   // 解除。信号断が持っているので止まったまま
+        h.SupplyLtc(24.96);      // 終端の先で止まる → 境界ホールド（上と同じ列）
+        h.SupplyLtc(25.04);
+        h.SupplyHeldLtc(25.04);
+        h.SupplyLtc(24.96);      // 2 フレームずつ 2 回戻して保持 → 解除。信号断が持っているので止まったまま
+        h.SupplyLtc(24.88);
+        h.SupplyHeldLtc(24.88);
         h.IsPaused.Should().BeTrue("前提: 直した後は止まったまま");
 
-        h.SupplyLtc(10.05);      // 有効フレーム 3 枚（resumeFrames=3）で信号断から復帰
-        h.SupplyLtc(10.10);
-        h.SupplyLtc(10.15);
+        h.SupplyLtc(24.92);      // 止めた位置から走り出す: 有効フレーム 3 枚（resumeFrames=3）で信号断から復帰
+        h.SupplyLtc(24.96);
+        h.SupplyLtc(25.00);
 
         h.IsPaused.Should().BeFalse("信号が戻ったら #2（信号断の復帰）の経路で再開する");
         h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
