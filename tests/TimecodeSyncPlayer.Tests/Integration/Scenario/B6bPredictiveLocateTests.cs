@@ -160,10 +160,11 @@ public class B6bPredictiveLocateTests
         h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(learned, 1e-9,
             "マスターが動いている間は先行量 = c");
 
-        h.SupplyHeldLtc(19.0);                               // 保持（Duplicate）
+        // v0.6.1 段 A: 台本の最後の受理は 18.96。保持は同じ値の繰り返しで表す（状態は層 1 の診断が値から決める）。
+        h.SupplyHeldLtc(18.96);                              // 保持（Duplicate）
         h.SyncService.RelocateLookaheadSeconds.Should().Be(0.0, "マスター停止中は先行量を付けない（D37-g）");
 
-        h.SupplyLtc(19.04);                                  // 値が進む
+        h.SupplyLtc(19.0);                                   // 値が進む（+1 フレーム）
         h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(learned, 1e-9);
     }
 

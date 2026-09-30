@@ -22,7 +22,9 @@ public class ScenarioClockHarnessTests
         h.AddTrack("track-1", timelineIn: 0);
         h.ManualPlay();
 
-        h.SupplyLtc(1);                     // 50_000 に有効フレーム
+        // v0.6.1 段 A: SupplyLtc は時計を 1 フレーム（40ms）進めてから送るため、受信時刻を 50_000 に明示して送る
+        // （確かめたいのは Tick・UTC・QPC が 1 つの軸で進むことと、確定が同じ軸の 250ms で起きること）。
+        h.DeliverLtcFrame(1, receivedAtMilliseconds: clock.MonotonicMilliseconds); // 50_000 に有効フレーム
         h.Tick100Milliseconds(2);           // 50_100 / 50_200: 250ms 未満
         h.IsPaused.Should().BeFalse("250ms の確定前は止まらない");
 
