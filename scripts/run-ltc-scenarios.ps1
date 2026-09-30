@@ -243,6 +243,22 @@ try {
 } catch {
     $problems += ('ffmpeg: ' + $_.Exception.Message)
 }
+# v0.6.0 stage 5b (P1): a 4K CPU decode allocates 1.5-1.7 GB of commit, and GLib aborts the
+# app when an allocation fails near the system commit limit. Do not start a run with less than
+# 4 GB of system commit free (the same rule as the 20 GB free on C: of the release gate); the
+# value at the start goes to run-result.json (commitFreeGbAtStart).
+Import-Module (Join-Path $PSScriptRoot 'LtcRunMetrics.psm1') -Force
+$commitFreeGb = $null
+try {
+    $commitFreeGb = Get-TcsSystemCommitFreeGb
+} catch {
+    $problems += ('system commit free could not be read (Win32_OperatingSystem): ' + $_.Exception.Message)
+}
+[ordered]@{ commitFreeGbAtStart = $commitFreeGb; measuredAt = (Get-Date).ToString('o') } |
+    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ReportDir 'runner-preflight.json') -Encoding UTF8
+if ($null -ne $commitFreeGb -and $commitFreeGb -lt 4) {
+    $problems += ('system commit free is ' + $commitFreeGb + ' GB, under 4 GB: close other programs before the run')
+}
 if ($MaxFrameDeficitSeconds -le 0) { $problems += 'MaxFrameDeficitSeconds must be greater than zero' }
 if ($MaxPositionStallSeconds -le 0) { $problems += 'MaxPositionStallSeconds must be greater than zero' }
 if ($MaxSpoutReceiverGapMilliseconds -le 0) { $problems += 'MaxSpoutReceiverGapMilliseconds must be greater than zero' }
@@ -342,7 +358,8 @@ if ($MediaDir -and (Test-Path -LiteralPath $MediaDir)) {
 }
 
 Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | capture: ' + ($captureCable -join '; ') +
-    '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource + ' ffmpeg=' + $ffmpegText)
+    '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource + ' ffmpeg=' + $ffmpegText +
+    ' commit_free_gb=' + $commitFreeGb)
 if ($problems.Count -gt 0) {
     foreach ($p in $problems) { Write-Output ('PREREQ-ERROR ' + $p) }
     Write-Output ('SUMMARY prereq_failed=' + $problems.Count + ' report=' + $ReportDir)

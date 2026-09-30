@@ -46,6 +46,7 @@ internal sealed class E2EAppRunner : IDisposable
     {
         if (_process.HasExited) return true;
         if (!RequestMainWindowClose()) return false;
+        ExitRequestedUtc ??= DateTime.UtcNow;
         DateTime deadline = DateTime.UtcNow + timeout;
         bool normalPressed = false;
         while (DateTime.UtcNow < deadline)
@@ -65,8 +66,10 @@ internal sealed class E2EAppRunner : IDisposable
                 if (dialog == null) continue;
                 Button? normal = dialog.FindFirstDescendant(cf => cf.ByAutomationId("BtnExitNormal"))?.AsButton();
                 if (normal == null) continue;
+                DateTime pressAt = DateTime.UtcNow;
                 normal.Invoke();
                 normalPressed = true;
+                ExitPressedUtc ??= pressAt;
             }
             catch (Exception)
             {
@@ -75,6 +78,47 @@ internal sealed class E2EAppRunner : IDisposable
         }
         try { return _process.HasExited; }
         catch (InvalidOperationException) { return true; }
+    }
+
+    /// <summary>段 5b: 最初に閉じる要求（WM_CLOSE）を送った時刻（UTC）。</summary>
+    public DateTime? ExitRequestedUtc { get; private set; }
+
+    /// <summary>段 5b: 最初に終了ダイアログの BtnExitNormal を押した時刻（UTC）。</summary>
+    public DateTime? ExitPressedUtc { get; private set; }
+
+    /// <summary>
+    /// 段 5b: 「終了を押してからプロセスが消えるまで」の秒数の記録（journal の app-exit-timing）。
+    /// 起点は BtnExitNormal を押した時刻、押せなかったときは閉じる要求の時刻。終わりは
+    /// <see cref="Process.ExitTime"/>。まだ終わっていなければ seconds は null で、waitedSeconds に
+    /// その時点までの待ち時間（下限）を入れる。集計は scripts\LtcRunMetrics.psm1。
+    /// </summary>
+    public object DescribeExit(string phase)
+    {
+        DateTime? start = ExitPressedUtc ?? ExitRequestedUtc;
+        bool exited;
+        DateTime? exitedUtc = null;
+        try
+        {
+            exited = _process.HasExited;
+            if (exited) exitedUtc = _process.ExitTime.ToUniversalTime();
+        }
+        catch (InvalidOperationException)
+        {
+            exited = true;
+        }
+        double? seconds = start is { } from && exitedUtc is { } to ? Math.Round((to - from).TotalSeconds, 3) : null;
+        double? waitedSeconds = start is { } since && !exited ? Math.Round((DateTime.UtcNow - since).TotalSeconds, 3) : null;
+        return new
+        {
+            phase,
+            exited,
+            pressed = ExitPressedUtc is not null,
+            requestedAtUtc = ExitRequestedUtc,
+            pressedAtUtc = ExitPressedUtc,
+            exitedAtUtc = exitedUtc,
+            seconds,
+            waitedSeconds,
+        };
     }
 
     public static (string ExePath, string? SkipReason) ResolvePrereqs()
