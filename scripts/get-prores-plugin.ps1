@@ -8,14 +8,13 @@
 $ErrorActionPreference = "Stop"
 
 # Pinned version, URL and hashes (single place).
-# v0.1.0 is a provisional value for v0.6.0 stage 1. Replace the tag, the zip
-# name and both SHA-256 values here once the next release to be bundled is fixed.
-$version = "v0.1.0"
+# v0.2.1 is the release bundled with v0.6.0 (fixed 2026-09-30).
+$version = "v0.2.1"
 $zipName = "gst-prores-d3d11-$version-win64-gst1.28.2.zip"
 $zipUrl = "https://github.com/faio1230/gst-prores-d3d11/releases/download/$version/$zipName"
-$expectedZipSha256 = "2119a6ede678fe7ec4bfa4db3778b72a1ba57dd08c9d624e80a2cd03f7331e6b"
+$expectedZipSha256 = "57053c0b4c33c52e53eedf6e6e3f2b61adbc1a7c3605e28e1fde5cd32a13e9b1"
 $dllName = "gstproresd3d11.dll"
-$expectedDllSha256 = "77b0776adbd62363e251623077546a2ea168c7dcb7f6cde72f04707433ff72d4"
+$expectedDllSha256 = "047cde8f434a061e76b1311ea8abfce1643b12a1a871134c3a912d5c3f0077e2"
 $expectedCsoCount = 6
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)

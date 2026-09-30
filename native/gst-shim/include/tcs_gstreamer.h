@@ -235,6 +235,18 @@ TCS_GST_API int tcs_player_set_mute(TcsPlayer* player, int mute);
  * warning ("no CPU decoder was usable"). */
 TCS_GST_API int tcs_player_set_decode_mode(TcsPlayer* player, int mode);
 
+/* v0.6.0: ProRes GPU decode mode (the prores-gpu profile). Only valid before
+ * the first load (the same restriction as tcs_player_set_decode_mode). AUTO
+ * (the default) tries the GPU only when the shim device runs on an NVIDIA
+ * adapter; ON always tries it; OFF never does. The environment variable
+ * TCS_PRORES_GPU (auto / on / off, read once at create) wins over this
+ * setter. Returns TCS_OK; TCS_ERR_GENERIC when already loaded, when mode is
+ * out of range (the value is not changed) or for a NULL player. */
+#define TCS_PRORES_GPU_AUTO 0
+#define TCS_PRORES_GPU_ON   1
+#define TCS_PRORES_GPU_OFF  2
+TCS_GST_API int tcs_player_set_prores_gpu(TcsPlayer* player, int mode);
+
 /* Media-time queries (seconds). TCS_OK or TCS_ERR_NOT_LOADED. */
 TCS_GST_API int tcs_player_get_time_pos(TcsPlayer* player, double* out_sec);
 
