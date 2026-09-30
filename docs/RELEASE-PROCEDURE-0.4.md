@@ -17,6 +17,7 @@
 | 4 | SETUP / verification-checklist が現行 | 段 5 後半の統合後に親が通読 |
 | 5 | リリースノート草案 | `docs/release-0.4-plan.md` 3 節と `CHANGELOG.md` 0.4.0 節 |
 | 6 | 非E2E 全件・ロック規則・grep（mpv / CPU 合成 / ローカルパス） | `dotnet test`、`check-shim-lock-rule.py`、`git grep` |
+| 6b | 制御文字 0 件（2026-09-30 追加、v0.6.0 以降）: `*.md`・`*.txt` は制御文字とタブ、`*.ps1`・`*.psm1` はタブ以外の制御文字 | `pwsh -NoProfile -File scripts\check-control-chars.ps1` が `hits=0`・終了コード 0（`git ls-files` の対象。`package-release.ps1` もビルドの前に呼んで止まる） |
 | 7 | バージョン | `csproj` の `Version` が `0.4.0`、起動ログが `v0.4.0` |
 | 8 | 本番と同じ構成での一式（2026-09-28 追加、v0.5.4 以降） | 出力トレース・計測の環境変数を付けずに固定の一式を 1 回。試験の道具が製品の判断を変えていないことの確認（release-0.5-plan.md「試験と本番の差」） |
 
@@ -24,16 +25,36 @@
 
 ```powershell
 # 先に shim の Release ビルド（package-release.ps1 は native\gst-shim\build-release\tcs_gstreamer.dll を要求する）
-powershell -File native\gst-shim\build-shim.ps1 -Config Release
+pwsh -File native\gst-shim\build-shim.ps1 -Config Release
 # csproj は native\tcs_gstreamer.dll があればそれを bin へコピーするので、Release の shim をそこへ置いてからパッケージする（終わったら消して Debug の shim に戻す）
 Copy-Item native\gst-shim\build-release\tcs_gstreamer.dll native\tcs_gstreamer.dll
-# Release ビルド + zip + setup.exe（Inno Setup、GStreamer ランタイム同梱、VC++ 再配布の連鎖）
-powershell -File scripts\package-release.ps1            # Version は csproj から読む
-#   必要なら -InnoSetupCompiler / -GStreamerRoot / -VcRedistPath を明示
+# v0.6.0 以降: ProRes の GPU 復号プラグイン（gst-prores-d3d11）を native\gst-prores に置く（版と SHA-256 はスクリプトの先頭で固定）
+pwsh -File scripts\get-prores-plugin.ps1
+# Release ビルド + zip + setup.exe（Inno Setup、GStreamer ランタイム同梱、ProRes プラグイン同梱、VC++ 再配布の連鎖）
+pwsh -File scripts\package-release.ps1            # Version は csproj から読む
+#   必要なら -InnoSetupCompiler / -GStreamerRoot / -VcRedistPath / -ProResPluginDir を明示
 # 出力: artifacts\release\（zip、TimecodeSyncPlayer-v0.4.0-setup.exe）
 ```
 
 - 出力の zip と setup.exe の **SHA-256 を `docs/release-0.4-plan.md` に記録**する
+- **ProRes プラグイン（v0.6.0 以降）**: `package-release.ps1` は `-ProResPluginDir`（既定 `native\gst-prores`）を
+  `get-prores-plugin.ps1 -VerifyDir` で照合する（`gstproresd3d11.dll` の SHA-256 は固定値、`prores_*.cso` 6 個は
+  `licenses\SHA256SUMS.txt` の値）。無い・違うときはビルドの前に止まる。配布物では DLL と `.cso` が
+  `gstreamer\lib\gstreamer-1.0\`、LICENSE と README.txt が `gstreamer\share\licenses\gst-prores-d3d11\` に入る
+- **VC++ 再頒布パッケージ（v0.6.0 以降、14.50.35710 以上）**: 最低版・固定の版・SHA-256・入手元の URL は
+  `package-release.ps1` の先頭の 1 か所（`$vcRedistMinVersion`・`$vcRedistPinnedVersion`・`$vcRedistPinnedSha256`・
+  `$vcRedistPinnedUrl`）。インストーラーの `VcRuntimeMissing` にも同じ最低版が `/D` で渡る。
+  キャッシュ `artifacts\cache\vc_redist.x64.exe` が最低版より古い・固定の SHA-256 と違うときは、ビルドの前に止まる。
+  `-VcRedistPath` で渡したファイルは署名と最低版だけを見る（SHA-256 はログに出す）
+  - 2026-09-30 の確認: `https://aka.ms/vs/17/release/vc_redist.x64.exe` は **14.44.35211**（VS 2022 の系列）を返すので使わない。
+    `https://aka.ms/vc14/vc_redist.x64.exe` は `https://aka.ms/vs/18/release/vc_redist.x64.exe` へ転送され、
+    **14.51.36247.0**（SHA-256 `843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C`、Microsoft の署名）を返す。
+    固定の URL はその転送先の版ごとの URL（`download.visualstudio.microsoft.com/download/pr/…/VC_redist.x64.exe`）
+  - **キャッシュの更新の手順**: (1) `curl -sSIL https://aka.ms/vc14/vc_redist.x64.exe` の `Location` で転送先の版ごとの URL を
+    確かめる。(2) そのファイルを落とし、`(Get-Item <exe>).VersionInfo.ProductVersion`・`Get-FileHash`・
+    `Get-AuthenticodeSignature`（Valid、Microsoft Corporation）を確かめる。(3) `package-release.ps1` の先頭の固定値
+    （URL・版・SHA-256）を書き換えてコミットする。(4) 古いキャッシュを `vc_redist.x64.exe.<版>-stale` に改名して退避し、
+    `package-release.ps1` を実行する（固定の URL から落として版と SHA-256 を照合する）
 - 配布物に `libmpv-2.dll` / `mpv-2.dll` が含まれていないこと、`tcs_gstreamer.dll` と GStreamer のプラグイン閉包が含まれていることを確認する（`Expand-Archive` して一覧）
 - 別のディレクトリに展開して起動し、**素材 2 本（うち音声付き AAC 44.1kHz を 1 本。`scripts\make-e2e-media.ps1` の `test_720p30_aac44k.mp4`）の再生と Spout 送信、LTC 同期 1 本（V3 ハーネスではなく手動でよい）**を確認する。ログの `=== TimecodeSyncPlayer v0.4.0 起動 ===` を見る
 
@@ -41,7 +62,7 @@ powershell -File scripts\package-release.ps1            # Version は csproj か
 
 - 配布物は **公開前に**別マシンのクリーン環境（GStreamer 未導入、setup.exe のみ）で確認する。検証用のビルドを GitHub のリリースに出さない（v0.4.1 で一度だけ例外にした）
 - 受け渡しは同じアカウントのプライベートネットワーク経由（`docs/local/LOCAL-PATHS.md` の「検証機」。公開文書にホスト名を書かない）
-- 見るもの: exe の FileVersion、`logs	cs-gst-YYYYMMDD.log` の `load.summary`（profile と total_ms）、`all video profiles failed` が 0、**音声付き素材（44.1kHz と 48kHz、映像トラック先頭）**と現場の実素材、残プロセス 0
+- 見るもの: exe の FileVersion、`logs\tcs-gst-YYYYMMDD.log` の `load.summary`（profile と total_ms）、`all video profiles failed` が 0、**音声付き素材（44.1kHz と 48kHz、映像トラック先頭）**と現場の実素材、残プロセス 0
 - LTC 同期は検証機で `scripts\run-ltc-scenarios.ps1 -AppExe <インストール先の exe>` を 1 回実行する（前提検査、素材生成、テスト、ログと証跡の複製、要約まで行う。D18 により同梱 gstreamer を環境変数なしで認識する。実素材で回す場合は `-MediaDir <素材フォルダ>` を足す）
 - 合格してから 2 節へ進む
 - **版番号は直ってから上げる（2026-09-17、利用者の方針）**: 検証機との往復の途中ビルドは csproj の `Version` を変えない。ビルドの識別は `ProductVersion` の `+<コミット SHA>` と配布物の SHA-256 で行い、記録にはその 2 つを書く。完了条件がすべて合格してから次の版番号に上げ、CHANGELOG・リリースノートをまとめてタグと公開を行う

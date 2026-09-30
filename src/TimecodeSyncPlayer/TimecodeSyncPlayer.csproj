@@ -9,7 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <PlatformTarget>x64</PlatformTarget>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>0.5.5</Version>
+    <Version>0.6.0</Version>
     <AssemblyVersion>0.5.0.0</AssemblyVersion>
     <FileVersion>0.5.0.0</FileVersion>
     <Product>TimecodeSyncPlayer</Product>
@@ -43,6 +43,13 @@
              Condition="!Exists('..\..\native\tcs_gstreamer.dll') And Exists('..\..\native\gst-shim\build-debug\tcs_gstreamer.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>tcs_gstreamer.dll</Link>
+    </Content>
+    <!-- v0.6.0: scripts\get-prores-plugin.ps1 が置く ProRes の GPU 復号プラグイン（DLL と .cso）。
+         同梱でないとき GstNativeLibraryResolver が GST_PLUGIN_PATH に足す。
+         licenses\（LICENSE・README.txt・SHA256SUMS.txt）は bin に入れない（配布物へは package-release.ps1 が置く）。 -->
+    <Content Include="..\..\native\gst-prores\*.dll;..\..\native\gst-prores\*.cso" Condition="Exists('..\..\native\gst-prores')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>gst-extra-plugins\%(Filename)%(Extension)</Link>
     </Content>
   </ItemGroup>
 

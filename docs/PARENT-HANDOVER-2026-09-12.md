@@ -1,6 +1,34 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
-> **2026-09-30 13:25 更新（TSP-Opus）**: **v0.5.4 を安定版（Latest）で公開した**（13:18、タグ `v0.5.4`、main = `feeadc8`、ProductVersion `0.5.4+b3da57a`、zip `CCE46407…E8F7` / setup.exe `BB054C11…07DA`、digest 一致）。
+> **2026-09-30 22:14 更新（TSP-Opus）**: **v0.6.0 は候補 1 が検証機で 2 件不合格（S-4、A 切替 1 本目）。S-4 を直した候補 2（`0.5.4+944b0b1`）を作成済み、まだ送っていない。** 詳細は `docs/STATUS.md` の先頭と設計書 `design/v0.6.0-prores-gpu.md` 8-2。
+>
+> - **後任がすること**: (1) TSP-TestMachine から候補 1 の一式の残り（A の 2 本目、PR1〜PR3、内蔵 AMD、PR4、色の比較の数値）と A-1 のトレースの zip を受ける。(2) トレースで、公開不足 0.598 秒が後ろ向きのシーク 2 本（21:24:09.123・09.576）の着地の間に集中していることを確かめ、TSP-Fable に報告。(3) 候補 2 を Taildrop（`artifacts\release` の 3 ファイル）して、検証機の固定の一式をやり直す（実インストールから）。A 2 本は「乱れが無ければ合格（D1 の効果は示さない）、同じ型なら同じ扱い、別の型なら止めて報告」。(4) 全条件合格なら版を 0.6.0 に上げて Pre-release で公開（GOAL 3 節）
+> - **色の比較**: 検証機で計算し、数値と caps の行だけを返してもらう（本番素材は検証機から出さない。スクリプト `compare-bgra.ps1` は送付済み）。しきい値は M5 と PR1 の分布で決める
+> - **hotfix v0.5.5**: `hotfix/0.5.5-boundary-hold`（`4389c7c`、`timecode-sync-player-hotfix055`）。出すかは朝に利用者が決める。出すなら版を 0.5.5 に上げて候補 → 検証機の一式 1 回 → 公開。検証機は v0.6.0 と重ならないよう 1 本ずつ
+> - **v0.6.1**: 設計書 `design/v0.6.1-jump-confirm.md` は承認済み（D1 は M の流れの帯、D2 は fps の疑わしい Duplicate を確認に数えない、T1・T1b は実機の列）。実装は v0.6.0 を公開して main に統合した後、main から `v0.6.1` を切って
+> - **負債（v0.6.2 の候補）**: instant-rate の変更が flush シークの直後に効かないことがある（glib.CRITICAL、推定）、境界の保持の不感帯（案 B）、起動の lateMs を配布ビルドで取る口、インストーラーの昇格（release-0.6-plan「v0.6.x の負債」）
+> - **担当**: サブエージェント s4-fix（`timecode-sync-player-v053` の `agent-a-v060-s4`、取り込み済み）と hotfix055 は止まっている。開発機の一式の記録は `artifacts\analysis-data` の `v060-4dea278-*`（D1 の数え方のスクリプトは親の scratchpad、数え方は v0.6.1 設計書 7-0）
+
+> **2026-09-30 18:53 更新（TSP-Opus、交代）**: **v0.6.0 の候補 1（2026-09-30 18:51、検証機へ送付）**: ProductVersion `0.5.4+e086e2e`（版は据え置き）。zip `9F48BD26…E970` / setup.exe `8AA8B76A…797F` / テストのソース `tcs-v060-e086e2e.tar`（`0EF42231…CEB8`、ランナーの既定の変更を含む）。置き場は `timecode-sync-player-v06` の `artifacts\release`。開発機: 固定の一式（標準 ×2・重い素材・ProRes ×2 が各 24/0、L-1 ×2 合格、ProRes は GPU 142 件・CPU 0・不一致 0）、展開した配布物で ProRes 4K が同梱の GStreamer（Bundled）で `prores-gpu`・`same=1`。検証機への依頼: (1) 実インストール（VC++ の版と再頒布の有無、初回起動）→ (2) 固定の一式（M5 は `prores-gpu`）→ (3) ProRes の追加（PR1〜PR3 を GPU、内蔵 AMD で `prores-cpu`、色の差、PR4 のアルファ）。依頼文は `docs/prompts/2026-09-30-v060-testmachine-request-draft.md` を元に送った。
+>
+> - **後任がすること**: 検証機（TSP-TestMachine）の結果を受ける（Taildrop で結果 JSON と 3 行の所見。開発機の Tailscale の GUI が起動していると `~/Downloads` に保存される）。合否は設計書 8 節と GOAL 1 節の v0.6.0 の行。全条件合格なら RELEASE-PROCEDURE（版を 0.6.0 に、`ApplicationVersionTests`、CHANGELOG の日付、リリースノートの検証の欄、Release の shim、`check-control-chars.ps1` 0、配布物の時刻と SHA）→ main へ `--no-ff`（refs を明示）→ タグ → `gh release create v0.6.0 --prerelease --latest=false`。README の入手先は v0.5.x のまま。事後報告は TSP-Fable へ。続けて v0.6.1（設計書 9 節の束）の設計書
+> - **この下の 17:32 の更新の「一式（進行中）」と「一式の後にすぐ取り込むもの」は済んだ**（一式は 18:24 に終了し全回合格、L-1 は長い素材で回し直して合格、担当 B の `a544160` は取り込み済み）
+> - 担当 A・B はどちらも完了して止まっている
+
+> **2026-09-30 17:32 更新（TSP-Opus、交代の準備）**: **v0.6.0 は段 1〜5b を `v0.6.0` に取り込み済み（`13f2e1d`）。開発機の固定の一式を再走中。候補を作って検証機へ送るところまでが次。** 後任が最初に読むもの: この更新 → `docs/STATUS.md` → `docs/design/v0.6.0-prores-gpu.md`（承認済み。7 節の段、8 節の検証、10b 節の潰す一覧）→ `docs/GOAL-v0.6.md` 3 節の「v0.6.x の運転」。
+>
+> - **開発機の一式（進行中）**: 17:31 に切り離したプロセスで起動（駆動 `docs/prompts/2026-09-30-v060-dev-suite.ps1.txt` の写しを scratchpad から実行）。進捗は `artifacts\analysis-data\v060-dev-suite-progress.txt`（`Get-Content -Tail`）。回: 標準 ×2（24 項目、`LtcScenarioE2ETests&!~L1_&!~L3_&!~U1_`）、重い素材 M1,M3,M4、ProRes M5,M6,M3 と M5,M6,M1（`artifacts\media-heavy` の M5 = ProRes 4K59.94 タグ付き、M6 = 1080p59.94、M7 = 4K タグ無し）、L-1 ×2。1 回目の標準（16:03）は駆動が `-Filter` 無しで L-3 に入り 80 分走ったので止めた（L-3 の途中のログは `v060-13f2e1d-std1\L3-interrupted`、L-3 以外の 9 シナリオは有効）。**開始 10 分後に各回の `scenarios` を見て L-3 が無いことを確かめる**
+> - **合否**: v0.5.4 の開発機の一式（候補 4: 標準 24/0、重い素材 24/0）から落ちた項目なし、`prores` の内訳で ProRes が `prores-gpu`、`adapterMismatch` 0、`commitFreeGbAtStart` ≥ 4、`cDriveFreeGbAtStart` ≥ 20。合格したら候補（版は据え置き `0.5.4+<SHA>`）を RELEASE-PROCEDURE の 1 節で作る（Release の shim を native に置く、`check-control-chars.ps1` が 0）
+> - **検証機への依頼**: 下書きは `docs/prompts/2026-09-30-v060-testmachine-request-draft.md`（実インストール → 一式 → ProRes の追加の回）。**送る前に**: ランナーの既定から L1_/L3_ を外す変更（担当 B に依頼中、段 5b の追加）を取り込み、検証機のランナーにも同じ変更を入れる（TSP-TestMachine にパッチ）。検証機は準備済み: M1〜M7 は v0.5.4 と同じ（M5 はハードリンク）、ProRes のサブフォルダは PR1〜PR4、`TCS_FFMPEG` は 8.0.1、PowerShell 7.6.6
+> - **一式の後にすぐ取り込むもの**: 担当 B の `agent-b-v060` の `a544160`（と報告 `13caf68`）。ランナーの既定から L-1・L-3 を外し、`-IncludeL1`・`-IncludeL3` を足し、明示の `-Filter` が L-3 を含みうるときも事前確認で止める（終了コード 2）。**一式の途中で取り込まない**（駆動が回ごとに v06 のランナーを呼ぶので、途中で変わる）。取り込んだら非E2E と、括弧の書式 `(A|B)&C` が効くことを最初の回の `dotnet-test.log` の件数で確かめ、検証機のランナーへのパッチを TSP-TestMachine に送ってから候補の依頼
+> - **担当**: 担当 A（`timecode-sync-player-v053`、`agent-a-v060`）は完了して止まっている。担当 B（`timecode-sync-player-v054b`、`agent-b-v060`）はランナーの既定の変更中（**ビルド・試験は禁止**と伝えた。一式が終わってから親が取り込み、非E2E を回す）
+> - **夜間の規則**: 利用者の承認済み（GOAL 3 節「v0.6.x の運転」）。全条件合格なら Pre-release で公開（`--latest=false`）、続けて v0.6.1。方針の外は利用者に（夜間は止めて朝に）
+> - **今回の教訓（メモリにある）**: ランナーは既定で L-3 を含む（2 回目）／裏の実行は 10 分で切れるので進捗はファイルに／文書の Python の書き換えで `\` が制御文字に化ける（8 進・16 進も）／実機を回すツリーでは担当のビルドを止めてから／空振りで `-?` を使わない
+
+
+> **2026-09-30 13:22 更新（TSP-Opus）**: v0.5.4 公開済み、**v0.6.0 設計中**（ブランチ `v0.6.0` を main `45505e1` から、作業ツリー `timecode-sync-player-v06`）。TSP-Fable の指示: 設計書 `docs/design/v0.6.0-prores-gpu.md` → レビュー依頼 → 実装はサブエージェント。実機は親だけが 1 本ずつ
+
+> **2026-09-30 13:19 更新（TSP-Opus）**: **v0.5.4 を安定版（Latest）で公開した**（13:18、タグ `v0.5.4`、main = `feeadc8`、ProductVersion `0.5.4+b3da57a`、zip `CCE46407…E8F7` / setup.exe `BB054C11…07DA`、digest 一致）。
 > 公開までの残り (1)〜(6) は完了: K4 は閉じた（検証機の C-1 は M1＝4K ProRes の途中、終端側は開発機の重い素材 4K 59.94 の C-1 で候補 3・4 とも 20/20、予算超え 0）。リリースノートの検証の欄を埋め、版を 0.5.4 に、README の入手先を Latest に、配布物の README.txt の beta を外した。
 > 公開した zip は候補 4 の zip と 104 ファイル中 99 が同一、違う 5 つは版の表記だけ。展開した配布物で C-1 1 本合格。次は v0.6.0（STATUS の先頭）。
 
@@ -95,7 +123,7 @@ elease\TimecodeSyncPlayer-v0.5.3-1751a96-*`（zip `4183E477…` / setup.exe `B13
 >
 > **規則（今回増えたもの、メモリにもある）**: 性能の合否は RTX だけ、AMD は AMD 製 GPU の相性問題の検出だけ／改善は推奨素材で判断し、
 > ProRes・長 GOP のための仕組みを同期の中心に足さない／合否の一式は固定・無効な回は事前確認で止める・設計が固まる前に候補を送らない／
-> 試験データは作業ツリーの `artifactsnalysis-data` に置いて解析後に消す（`scripts/clean-artifacts.ps1`）。
+> 試験データは作業ツリーの `artifacts\analysis-data` に置いて解析後に消す（`scripts/clean-artifacts.ps1`）。
 
 > **2026-09-19 22:55 更新（50 回目、TSP-Opus）**: **v0.4.7 を公開した。目標「v0.4.7 まで自律的に進める」は完了。**
 > タグ `v0.4.7`、main = `b50a180`。zip `FA0ADAEB…C9A3` / setup.exe `EF68372C…06B1`（digest 一致）。
@@ -705,7 +733,7 @@ un-v3-accuracy.ps1 -Backends gst -Label <名前>` が開発機で完走した
 > **2026-09-18 06:35 更新（32 回目、親の交代）**: 4 代目（Fable 5.1）はトークン上限のため **TSP-Opus セッションへ交代**。現在地:
 > - **main `47ce202`（push 済み）**: 製品欠陥 D12〜D35 統合済み。版は **0.4.2 のまま**（版上げ `6b88a8d`/`9d14ccf` は agent-a 経由で main に入ったが `23958c4` で revert 済み。**0.4.3 に上げるときは `git revert 23958c4`** で戻し、CHANGELOG 0.4.3 節は統合済み、`docs/release-notes/v0.4.3.md` の「（親が記入）」検証機欄を埋める）。
 > - **進行中（`w5:p3`、agent-a、実機使用中）**: **D35-b**（`948b154`: 境界ホールド中は明示着地を抑止、解除時に保留シークと保持着地ラッチを解除）。統合後 main で S-3 が 3/3 回帰した件（D33 の境界ホールドと D35 の明示着地の干渉）の修正。非E2E → 実機 S-1〜S-5・R-1〜R-4（生成素材）、S-3 × `-SegmentSeconds 8`、4K 3 本の R 系を回して報告する指示済み。watcher `bx57rdrvn`（scratchpad/watch.sh）。
-> - **次の手順**: p3 の報告 → 親が trx を確認 → agent-a を main に統合（`git merge --no-ff agent-a`）→ ビルド・非E2E（`--filter "Category!=E2E"`、現在 1890）・`scripts/check-shim-lock-rule.py` → `w5:p6`（agent-b、新セッション、待機中）に統合後 main の実機確認（シナリオ 22 + LTC ループ 14 + S-3 seg8）→ 合格なら **候補 6** を作る: `docs/RELEASE-PROCEDURE-0.4.md` 1 節の手順（shim Release → `native	cs_gstreamer.dll` にコピー → `scripts\package-release.ps1` → コピーを削除）で出た `artifacts
+> - **次の手順**: p3 の報告 → 親が trx を確認 → agent-a を main に統合（`git merge --no-ff agent-a`）→ ビルド・非E2E（`--filter "Category!=E2E"`、現在 1890）・`scripts/check-shim-lock-rule.py` → `w5:p6`（agent-b、新セッション、待機中）に統合後 main の実機確認（シナリオ 22 + LTC ループ 14 + S-3 seg8）→ 合格なら **候補 6** を作る: `docs/RELEASE-PROCEDURE-0.4.md` 1 節の手順（shim Release → `native\tcs_gstreamer.dll` にコピー → `scripts\package-release.ps1` → コピーを削除）で出た `artifacts
 elease\TimecodeSyncPlayer-v0.4.2-setup.exe` を `…-v0.4.2-<SHA7>-setup.exe` に改名して SHA-256 を取り、`tailscale file cp <exe> <検証機>:` で送付 → 検証機 `TSP-TestMachine`（SendMessage、`bridge:session_016QeXVsVpChftrXPhWDthmY`）に「SHA-256、含まれる修正、tests は main <SHA> でビルド、-Media M1,M4,M6 / M1,M3,M5 / M2,M1,M4 各 -MediaInOffsetSeconds 5、出力トレース有効、報告項目（候補 5 との trx 差分、0x0 ロード 0 件、高速ロード無し、トレース保存失敗 0 件、R-1〜R-4 の hold-pause 超過）」を依頼。
 > - **検証機の候補 5 通し**: a 32 / b 36 / c 35（/36）。失敗 5 本のうち 3 本は D34、残りは S-3 の 2 フレーム超過（テスト側の許容 ±2 フレームを統合済み）と R-1（D35）。候補 6 で 36/36 近傍・`0x0@` 0 件なら **0.4.3 へ**（revert を戻し、`docs/RELEASE-PROCEDURE-0.4.md` 2 節でタグ・`gh release create v0.4.3 --prerelease`、日本語ノート。公開は利用者に一報）。残る間欠は M2 長 GOP の S-1（既知の制限）のみ。
 > - **検証機からの Taildrop は `~/Downloads` に届く**（パッチは `agent-t` ブランチで `git am -3` → main へ統合 → push。証跡 zip は scratchpad へ展開）。検証機のメッセージには数値と証跡だけを求め、判定は親が書く。
@@ -886,15 +914,15 @@ T3・T4・T5・T6・T7・T8・T9・T10・T11、V11（decodeMode）、配布物�
 
 | 物 | 場所 |
 | --- | --- |
-| `vendor/`（Spout2 ほか） | `E:	cs-archiveuild-depsendor` → 各作業ツリーの `vendor/` へ複写済み |
-| `SpoutDX.dll` / `libmpv-2.dll` | `E:	cs-archiveuild-deps
+| `vendor/`（Spout2 ほか） | `E:\tcs-archive\build-deps\vendor` → 各作業ツリーの `vendor/` へ複写済み |
+| `SpoutDX.dll` / `libmpv-2.dll` | `E:\tcs-archive\build-deps
 ative-dll` → 各作業ツリーの `native/` へ複写済み |
 | **`tcs_gstreamer.dll`** | **保全していない。各作業ツリーで自分のソースから建てる**（他ツリーの DLL を流用しない） |
-| V1 素材セット | `E:	cs-archive\media1-set1` |
-| **H.264 4K60 素材**（V11-e で生成） | `E:	cs-archive\media11-extra1_h264_4k60.mp4` |
-| 測定の証跡（`TestResults`） | `E:	cs-archive	estresults\<旧作業ツリー名>` |
+| V1 素材セット | `E:\tcs-archive\media\v1-set\v1` |
+| **H.264 4K60 素材**（V11-e で生成） | `E:\tcs-archive\media\v11-extra\v1_h264_4k60.mp4` |
+| 測定の証跡（`TestResults`） | `E:\tcs-archive\testresults\<旧作業ツリー名>` |
 
-**文書中の旧パス `...-wt-integrate-20260912rtifacts\media1` は失効している。** 素材は E: を使うこと。
+**文書中の旧パス `...-wt-integrate-20260912\artifacts\media\v1` は失効している。** 素材は E: を使うこと。
 
 ## 3.5 素材・DLL・実機ハーネスの置き場（2026-09-16 14:50 追記）
 
@@ -905,19 +933,19 @@ gitignore なので、**作業ツリーごとに実体が要る**。
 
 | もの | 置き場 | main | wt-a | wt-b |
 | --- | --- | :-: | :-: | :-: |
-| アプリ（Debug ビルド） | `<worktree>\src\TimecodeSyncPlayerin\Debug
+| アプリ（Debug ビルド） | `<worktree>\src\TimecodeSyncPlayer\bin\Debug
 et8.0-windows\TimecodeSyncPlayer.exe` | あり | あり | あり |
 | shim | `<worktree>
-ative\gst-shimuild-debug	cs_gstreamer.dll`（`build-shim.ps1 -Config Debug` で生成。csproj が bin へコピー） | あり | あり | あり |
+ative\gst-shim\build-debug\tcs_gstreamer.dll`（`build-shim.ps1 -Config Debug` で生成。csproj が bin へコピー） | あり | あり | あり |
 | `SpoutDX.dll` / `libmpv-2.dll` | `<worktree>
 ative\` | あり | あり | あり |
-| Spout のソース（shim のビルドに必須） | `<worktree>endor\Spout2` | あり | あり | あり |
-| **E2E 用の素材 6 本** | `<worktree>rtifacts\media\`（`test_1080p60.mp4` ほか） | あり | **無し** | あり |
-| **V1 のコーデック素材 23 ファイル** | **`E:	cs-archive\media1-set1`（522MB）**。使う作業ツリーの `artifacts\media1` へコピーする | 無し | 無し | 無し |
-| V11 の追加素材（4K H.264） | `E:	cs-archive\media11-extra`（12MB） | 無し | 無し | 無し |
-| GStreamer ランタイム | `C:\Program Files\gstreamer.0\msvc_x86_64`（環境変数 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 設定済み） | 共通 | | |
-| ffmpeg / ffprobe | `C:\Program Filesfmpegin` | 共通 | | |
-| 過去の測定の証跡 | `E:	cs-archive	estresults\<worktree 名>\` | | | |
+| Spout のソース（shim のビルドに必須） | `<worktree>\vendor\Spout2` | あり | あり | あり |
+| **E2E 用の素材 6 本** | `<worktree>\artifacts\media\`（`test_1080p60.mp4` ほか） | あり | **無し** | あり |
+| **V1 のコーデック素材 23 ファイル** | **`E:\tcs-archive\media\v1-set\v1`（522MB）**。使う作業ツリーの `artifacts\media\v1` へコピーする | 無し | 無し | 無し |
+| V11 の追加素材（4K H.264） | `E:\tcs-archive\media\v11-extra`（12MB） | 無し | 無し | 無し |
+| GStreamer ランタイム | `C:\Program Files\gstreamer\1.0\msvc_x86_64`（環境変数 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 設定済み） | 共通 | | |
+| ffmpeg / ffprobe | `C:\Program Files\ffmpeg\bin` | 共通 | | |
+| 過去の測定の証跡 | `E:\tcs-archive\testresults\<worktree 名>\` | | | |
 
 **C: の空きは 19GB しかない。** 素材をコピーするときは使う作業ツリー 1 つだけにすること。
 
@@ -925,13 +953,13 @@ ative\` | あり | あり | あり |
 
 ```powershell
 # E2E 用の素材 6 本（wt-a に無い。ffmpeg が要る）
-powershell -File scripts\make-e2e-media.ps1            # <repo>rtifacts\media へ出す
+powershell -File scripts\make-e2e-media.ps1            # <repo>\artifacts\media へ出す
 
 # V1 のコーデック素材（生成はしない。アーカイブからコピーする）
-robocopy E:	cs-archive\media1-set1 <repo>rtifacts\media1 /E
+robocopy E:\tcs-archive\media\v1-set\v1 <repo>\artifacts\media\v1 /E
 
-# shim（vendor\Spout2 が無いと CMake が失敗する。無ければ E:	cs-archiveuild-depsendor から取る）
-powershell -File native\gst-shimuild-shim.ps1 -Config Debug
+# shim（vendor\Spout2 が無いと CMake が失敗する。無ければ E:\tcs-archive\build-deps\vendor から取る）
+powershell -File native\gst-shim\build-shim.ps1 -Config Debug
 ```
 
 ### 実機ハーネスの呼び方（既定は全部リポジトリ相対。2026-09-16 に直した）
@@ -941,9 +969,9 @@ powershell -File native\gst-shimuild-shim.ps1 -Config Debug
 powershell -File scripts
 un-v3-accuracy.ps1 -Backends gst -Label <名前> [-Repeats 3] `
   [-LtcFps 24|25|29.97|30] [-LtcFpsMode auto|fixed] [-SyncCorrectionMode smooth|jump]
-#   出力先: <repo>\TestResults3\<名前>-ltc<fps>-gst[-n]#   アプリは同じ作業ツリーの Debug ビルドを自動で使う（TIMECODE_SYNC_PLAYER_E2E_APP_PATH 未設定時）
+#   出力先: <repo>\TestResults\v3\<名前>-ltc<fps>-gst[-n]#   アプリは同じ作業ツリーの Debug ビルドを自動で使う（TIMECODE_SYNC_PLAYER_E2E_APP_PATH 未設定時）
 
-# V1 / V11（コーデック行列）。-MediaDir 未指定なら <repo>rtifacts\media1 を見る
+# V1 / V11（コーデック行列）。-MediaDir 未指定なら <repo>\artifacts\media\v1 を見る
 powershell -File scripts\GpuOutputProbeHarness\Run-V1Matrix.ps1 [-MediaDir ...] [-DecodeMode software] [-Only ...]
 
 # 単発の実機 run
@@ -1080,7 +1108,7 @@ python scripts\GpuOutputProbeHarness\v1_matrix_summary.py <TestResults\v1> 8 48 
    一時停止待ちなどのタイムアウト。他ツリーの DLL は流用せず `build-shim.ps1 -Config Debug` → `dotnet build` で bin を更新する
 6. **E2E を複数まとめて回すとき `TIMECODE_ACCURACY_REPORT_DIR` を共有すると 2 本目が即失敗し、アプリが孤児になって出力パイプを掴む**（親が 3 時間止まった原因）。
    run ごとに別ディレクトリか、変数を設定しない。孤児は自分が起動した PID だけ止める
-7. **実機ハーネスに他ツリーの素材を相対パス（`..	imecode-sync-playerrtifacts\media\...`）で渡すと、アプリが解決できず素材なしで起動し、ハーネスは終了を待ち続けて 1 時間止まる**
+7. **実機ハーネスに他ツリーの素材を相対パス（`..\timecode-sync-player\artifacts\media\...`）で渡すと、アプリが解決できず素材なしで起動し、ハーネスは終了を待ち続けて 1 時間止まる**
    （D10 の 1080p run、2026-09-16 20:56〜21:54。アプリログ `loadfile 失敗 err=all video profiles failed`）。素材は自分の作業ツリーに置き（`scripts\make-e2e-media.ps1`）、作業ツリー内のパスで渡す。
    親は 1 時間監視の watcher が切れてから気づいた。**ハーネスの `-Seconds` を過ぎても runner が返らないときは、まずアプリログの loadfile を見る**
 8. ~~**`Invoke-AppGpuTrial.ps1 -SeekAtSeconds` はランナーが返らない**~~ **H1 で修正（`666b0f8`、main 統合済み）**: SeekBar は 0..1 の正規化値なので 15 を渡すと UIA の SetValue が例外になり、終了シーケンスが飛んでアプリが残っていた。今は起動前に値域を検証し、mark ごとに try/catch、finally で所有アプリを必ず閉じ、`-OverallTimeoutSeconds`（既定 Seconds+90）で打ち切る。旧記述:（2026-09-16 21:57 の run、素材読込は成功・アプリは一時停止のまま・`harness.jsonl` 空のまま 38 分）。

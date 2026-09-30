@@ -1,6 +1,7 @@
+#requires -Version 7.0
 # Reference performance comparison: mpv backend vs GStreamer backend.
 # Conditions are recorded in the output. Run from the worktree root.
-#   powershell -File native/gst-shim/perf-compare.ps1 [-Media <path>] [-Seconds 15]
+#   pwsh -File native/gst-shim/perf-compare.ps1 [-Media <path>] [-Seconds 15]
 param(
     [string]$Media = "artifacts/media/test_720p60_long.mp4",
     [int]$Seconds = 15

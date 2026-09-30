@@ -1,7 +1,8 @@
+#requires -Version 7.0
 # Fetch the pinned Spout2 SDK sources used to build tcs_gstreamer.dll.
 # Tag 2.007.017 / commit f49e2f469f8cb25f559a6eaa61a3f5b8173fc100
 # Usage (from the repository root):
-#   powershell -File native/gst-shim/get-spout.ps1
+#   pwsh -File native/gst-shim/get-spout.ps1
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
 $dest = Join-Path $repoRoot "vendor/Spout2"

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using FluentAssertions;
@@ -5,6 +6,7 @@ using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.Core.Exceptions;
 using TimecodeSyncPlayer.Tests.Helpers;
+using Xunit.Abstractions;
 
 namespace TimecodeSyncPlayer.Tests.E2E;
 
@@ -12,6 +14,10 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 [Collection("E2E")]
 public sealed class SystemScenarioE2ETests
 {
+    private readonly ITestOutputHelper _output;
+
+    public SystemScenarioE2ETests(ITestOutputHelper output) => _output = output;
+
     [Fact]
     public void ProjectRoundTrip_RestoresPlaylistOrderOffsetModeAndPlayback()
     {
@@ -30,6 +36,7 @@ public sealed class SystemScenarioE2ETests
             EnsurePaused(app);
 
             SelectPlaylistItem(playlist, 1, Path.GetFileNameWithoutExtension(alternateCopy));
+            WaitForMoveButtonEnabled(app, playlist, "BtnMoveTrackUp");
             app.Button("BtnMoveTrackUp").Invoke();
             E2EAssert.WaitUntil(
                 () => playlist.Items[0].Name.Contains(Path.GetFileNameWithoutExtension(alternateCopy), StringComparison.Ordinal),
@@ -210,6 +217,67 @@ public sealed class SystemScenarioE2ETests
                 return false;
             }
         }, TimeSpan.FromSeconds(8));
+    }
+
+    /// <summary>
+    /// 行を選んだ直後の「上へ」「下へ」は、WPF のコマンドの有効化（CanExecute の再評価）が非同期なので、
+    /// ボタンが有効になるまで最大 3 秒待つ。有効になれば待った時間を出力に書く（テストのタイミングの証拠）。
+    /// 待っても無効なら、一覧の行・選択・ボタンの状態を書いて失敗する（v0.5.4 K2: 長さの更新で行が置き換わり
+    /// 選択が外れる件の漏れの疑い。検証機の v0.5.5 で 10 回中 4 回 ElementNotEnabledException）。
+    /// </summary>
+    private void WaitForMoveButtonEnabled(E2EAppRunner app, ListBox playlist, string buttonId)
+    {
+        var waited = Stopwatch.StartNew();
+        TimeSpan timeout = TimeSpan.FromSeconds(3);
+        while (true)
+        {
+            if (ReadIsEnabled(app, buttonId) == true)
+            {
+                _output.WriteLine($"{buttonId}: enabled after {waited.ElapsedMilliseconds} ms");
+                return;
+            }
+            if (waited.Elapsed >= timeout)
+                break;
+            Thread.Sleep(50);
+        }
+
+        var state = new List<string> { $"waited={waited.ElapsedMilliseconds} ms" };
+        try
+        {
+            AutomationElement[] items = playlist.Items;
+            int selected = 0;
+            for (int i = 0; i < items.Length; i++)
+            {
+                bool? isSelected = items[i].Patterns.SelectionItem.PatternOrDefault?.IsSelected.ValueOrDefault;
+                if (isSelected == true) selected++;
+                state.Add($"item[{i}] name=\"{items[i].Name}\" isSelected={isSelected?.ToString() ?? "n/a"}");
+            }
+            int? selectionCount = playlist.Patterns.Selection.PatternOrDefault?.Selection.ValueOrDefault?.Length;
+            state.Add($"items={items.Length} selectedItems={selected} selectionPattern={selectionCount?.ToString() ?? "n/a"}");
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or COMException)
+        {
+            state.Add($"playlist read failed: {ex.Message}");
+        }
+        state.Add($"BtnMoveTrackUp.IsEnabled={ReadIsEnabled(app, "BtnMoveTrackUp")?.ToString() ?? "n/a"}");
+        state.Add($"BtnMoveTrackDown.IsEnabled={ReadIsEnabled(app, "BtnMoveTrackDown")?.ToString() ?? "n/a"}");
+
+        string message = $"K2 の疑い（待っても無効）: {buttonId} が {timeout.TotalSeconds:0} 秒待っても有効にならない。" +
+            Environment.NewLine + string.Join(Environment.NewLine, state);
+        _output.WriteLine(message);
+        throw new InvalidOperationException(message);
+    }
+
+    private static bool? ReadIsEnabled(E2EAppRunner app, string automationId)
+    {
+        try
+        {
+            return app.Button(automationId).IsEnabled;
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or COMException or NullReferenceException)
+        {
+            return null;
+        }
     }
 
     private static void AddPlaylistFiles(E2EAppRunner app, params string[] paths) =>

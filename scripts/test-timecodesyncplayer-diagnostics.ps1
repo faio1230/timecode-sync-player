@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Validates TimecodeSyncPlayer diagnostics report sections with a synthetic log.
 
 [CmdletBinding()]
@@ -46,7 +47,7 @@ try {
         throw "Diagnostics report was not created."
     }
 
-    $content = Get-Content -Encoding UTF8 -LiteralPath $report.FullName -Raw
+    $content = Get-Content -LiteralPath $report.FullName -Raw
     $required = @(
         "Verdict: **OK**",
         "## LTC Input Health",

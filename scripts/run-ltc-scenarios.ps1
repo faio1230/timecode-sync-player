@@ -1,24 +1,33 @@
+#requires -Version 7.0
 # Run the LTC E2E scenarios against one app (installed or a local Debug build)
 # with a single command, and leave the evidence in one report directory.
 #
-#   powershell -File scripts\run-ltc-scenarios.ps1 -AppExe <path to TimecodeSyncPlayer.exe>
-#   powershell -File scripts\run-ltc-scenarios.ps1 -Filter "FullyQualifiedName~NoSuchTest"   # dry run
-#   powershell -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-Media M1,M3,M5] [-KeepProject]
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe <path to TimecodeSyncPlayer.exe>
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -Filter "FullyQualifiedName~NoSuchTest"   # dry run
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-Media M1,M3,M5] [-KeepProject]
 #       (-Media picks tracks by symbol: M<n> is the n-th video of the folder in name order;
 #        -MediaInOffsetSeconds N starts every track N seconds into its video)
 #       (the project .tsp is generated under the report directory, never in the
 #        media folder, and is removed after the run unless -KeepProject is set)
 #   U-1 (LtcScenarioE2ETests.U1_...) requires a gap-free project: pass -GapSeconds 0
 #   (with a gapped project U-1 reports preflight-invalid instead of judging).
-#   powershell -File scripts\run-ltc-scenarios.ps1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
+#   Default filter (v0.6.0 stage 5b): LtcHardwareLoopE2ETests and LtcScenarioE2ETests
+#   WITHOUT L-1 (L1_, continuous follow) and L-3 (L3_, ProductionDay, 12 hours):
+#       (FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests)&FullyQualifiedName!~L1_&FullyQualifiedName!~L3_
+#   -IncludeL1 / -IncludeL3 add them back to the default filter. An explicit -Filter is
+#   used as given, except that a -Filter that may run L-3 (naming L3_, or taking in the
+#   whole class without "&FullyQualifiedName!~L3_") stops in the prerequisites unless
+#   -IncludeL3 is set too. The prerequisites print the final filter and whether it takes in
+#   L-1 / L-3 (yes = named, possible = through a wider term, no).
+#   Run L-1 alone with -IncludeL1 or -Filter "FullyQualifiedName~L1_".
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -IncludeL1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
 #       (L-1 continuous-follow audit: seconds / tracks / window length / settling
 #        exclusion via -FollowSettlingSeconds / follow-start gate bound via
-#        -FollowStartGateSeconds; the default filter includes L-1. To run only the
-#        previous 22 scenarios:
-#        -Filter 'FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_')
+#        -FollowStartGateSeconds; the -Follow* values only matter with L-1 in the filter)
 #       -SegmentSeconds N raises the per-track used length above the 20 s default;
 #       L-1 needs >= 34 s used per track (60 s follow rounds down to used - 4).
 #       -TrackSegmentSeconds '25,25,25' sets the used length per track instead.
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -IncludeL3   # also the 12-hour L-3 production day
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg, .NET SDK, the
 # target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
@@ -27,16 +36,17 @@
 #
 # Exit codes: 0 = no failures, 1 = test failures, 2 = prerequisite failure.
 #
-# NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
-# repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page, so
-# non-ASCII comments break parsing. Backslash- and control-character traps of
-# ".ps1" are checked by an empty run before use.
+# NOTE: backslash- and control-character traps of ".ps1" are checked without running
+# the script (Parser.ParseFile, scripts\check-control-chars.ps1). Never "-?" as a dry run.
 [CmdletBinding()]
 param(
     [string]$AppExe = '',
     [string]$ReportDir = '',
     [int]$Cycles = 0,
     [string]$Filter = '',
+    # L-1 (continuous follow) and L-3 (12-hour production day) run only when asked for.
+    [switch]$IncludeL1,
+    [switch]$IncludeL3,
     [string]$MediaDir = '',
     [string[]]$Media = @(),
     [double]$MediaInOffsetSeconds = 0,
@@ -124,14 +134,8 @@ $ReportDir = (Resolve-Path -LiteralPath $ReportDir).Path
 # Raw reports can contain media paths. If the report is inside any Git worktree,
 # require Git to ignore the directory before any evidence is written there.
 $reportFull = [IO.Path]::GetFullPath($ReportDir)
-$previousPreference = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-try {
-    $reportGitRootText = (& git -C $ReportDir rev-parse --show-toplevel 2>$null | Select-Object -First 1)
-    $reportGitRootExit = $LASTEXITCODE
-} finally {
-    $ErrorActionPreference = $previousPreference
-}
+$reportGitRootText = (& git -C $ReportDir rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+$reportGitRootExit = $LASTEXITCODE
 if ($reportGitRootExit -eq 0 -and $reportGitRootText) {
     $reportGitRoot = [IO.Path]::GetFullPath([string]$reportGitRootText).TrimEnd([char]'\')
     if ([string]::Equals($reportFull.TrimEnd([char]'\'), $reportGitRoot,
@@ -149,9 +153,10 @@ Write-Output "app=$AppExe"
 Write-Output "report=$ReportDir"
 
 # ---- hard links (D23) ------------------------------------------------------
-# D23(a): Windows PowerShell 5.1 wildcard-expands the -Target of
-# New-Item -ItemType HardLink, so media names containing brackets fail.
-# Call kernel32 directly and report GetLastError on failure.
+# D23(a): Windows PowerShell 5.1 wildcard-expanded the -Target of
+# New-Item -ItemType HardLink, so media names containing brackets failed.
+# PowerShell 7 takes the target literally, but kernel32 is still called directly:
+# it reports GetLastError on failure, and D23-b needs GetFileInformationByHandle.
 if (-not ('Tcs.HardLink' -as [type])) {
     Add-Type -Namespace Tcs -Name HardLink -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
@@ -239,7 +244,42 @@ Remove-LinkedMediaArtifacts
 # ---- prerequisites ---------------------------------------------------------
 $problems = @()
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $problems += 'dotnet is not on PATH' }
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { $problems += 'ffmpeg is not on PATH' }
+# The ffmpeg make-e2e-media.ps1 will use (TCS_FFMPEG, its default -FfmpegDir, PATH;
+# scripts\TcsFfmpeg.psm1). Its version is the first line of make-e2e-media.log.
+Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
+$ffmpegText = ''
+try {
+    $ffmpegResolved = Resolve-TcsFfmpeg -FfmpegDir (Join-Path $env:ProgramFiles 'ffmpeg\bin')
+    $ffmpegText = $ffmpegResolved.VersionLine + ' (' + $ffmpegResolved.Source + ')'
+} catch {
+    $problems += ('ffmpeg: ' + $_.Exception.Message)
+}
+# v0.6.0 stage 5b (P1): a 4K CPU decode allocates 1.5-1.7 GB of commit, and GLib aborts the
+# app when an allocation fails near the system commit limit. Do not start a run with less than
+# 4 GB of system commit free (the same rule as the 20 GB free on C: of the release gate); the
+# value at the start goes to run-result.json (commitFreeGbAtStart). The 20 GB free on C: is
+# checked here the same way (cDriveFreeGbAtStart).
+Import-Module (Join-Path $PSScriptRoot 'LtcRunMetrics.psm1') -Force
+$commitFreeGb = $null
+try {
+    $commitFreeGb = Get-TcsSystemCommitFreeGb
+} catch {
+    $problems += ('system commit free could not be read (Win32_OperatingSystem): ' + $_.Exception.Message)
+}
+$cDriveFreeGb = $null
+try {
+    $cDriveFreeGb = Get-TcsDriveFreeGb 'C:\'
+} catch {
+    $problems += ('free space on C: could not be read: ' + $_.Exception.Message)
+}
+[ordered]@{ commitFreeGbAtStart = $commitFreeGb; cDriveFreeGbAtStart = $cDriveFreeGb; measuredAt = (Get-Date).ToString('o') } |
+    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ReportDir 'runner-preflight.json') -Encoding UTF8
+if ($null -ne $commitFreeGb -and $commitFreeGb -lt 4) {
+    $problems += ('system commit free is ' + $commitFreeGb + ' GB, under 4 GB: close other programs before the run')
+}
+if ($null -ne $cDriveFreeGb -and $cDriveFreeGb -lt 20) {
+    $problems += ('free space on C: is ' + $cDriveFreeGb + ' GB, under 20 GB: clean artifacts before the run')
+}
 if ($MaxFrameDeficitSeconds -le 0) { $problems += 'MaxFrameDeficitSeconds must be greater than zero' }
 if ($MaxPositionStallSeconds -le 0) { $problems += 'MaxPositionStallSeconds must be greater than zero' }
 if ($MaxSpoutReceiverGapMilliseconds -le 0) { $problems += 'MaxSpoutReceiverGapMilliseconds must be greater than zero' }
@@ -338,8 +378,112 @@ if ($MediaDir -and (Test-Path -LiteralPath $MediaDir)) {
     }
 }
 
+# ---- filter (v0.6.0 stage 5b) ----------------------------------------------
+# L-1 (L1_) and L-3 (L3_, ProductionDay: 12 hours) are left out of the default filter and
+# come back only with -IncludeL1 / -IncludeL3. A default run once took in L-3 and kept the
+# machine for 80 minutes before it was stopped.
+# RealProjectGapE2ETests is not in the default filter either: it assumes a fixture project
+# whose timeline starts at one hour (it sends 01:00:xx), so against the project generated
+# from -MediaDir its checks do not apply. Pass -Filter explicitly to run it.
+$filterGiven = -not [string]::IsNullOrWhiteSpace($Filter)
+if (-not $filterGiven) {
+    $Filter = '(FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests)'
+    if (-not $IncludeL1) { $Filter += '&FullyQualifiedName!~L1_' }
+    if (-not $IncludeL3) { $Filter += '&FullyQualifiedName!~L3_' }
+}
+
+# Whether a filter takes in L-1 / L-3. The filter is evaluated against the test's
+# FullyQualifiedName, Name and Category (the dotnet test --filter syntax: "~" contains, "="
+# equals, "!" negates, "&" before "|", parentheses). A term on another property, or of a form
+# not read here, counts as matching, so the answer errs towards "may run".
+#   'no'       - the filter does not select the test
+#   'yes'      - it selects the test and a positive term names it (L3_, ProductionDay, ...)
+#   'possible' - it selects the test through a wider term (the whole class, a category, ...)
+$ltcL1Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L1_Single_ContinuousFollow_DoesNotStall';
+    Name = 'L1_Single_ContinuousFollow_DoesNotStall'; Categories = @('E2E'); NamePattern = 'L1_|ContinuousFollow' }
+$ltcL3Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow';
+    Name = 'L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow'; Categories = @('E2E'); NamePattern = 'L3_|ProductionDay' }
+
+function Test-LtcFilterTerm([string]$Term, [hashtable]$Test) {
+    if ($Term -notmatch '^\s*([A-Za-z]+)\s*(!~|!=|~|=)\s*(.*?)\s*$') { return $true }
+    $property = $matches[1]; $operator = $matches[2]; $value = $matches[3]
+    $candidates = switch ($property) {
+        'FullyQualifiedName' { @($Test.Fqn) }
+        'DisplayName' { @($Test.Fqn) }
+        'Name' { @($Test.Name) }
+        'Category' { @($Test.Categories) }
+        'TestCategory' { @($Test.Categories) }
+        default { $null }
+    }
+    if ($null -eq $candidates) { return $true }
+    $hit = @($candidates | Where-Object {
+        if ($operator.EndsWith('~')) { $_.IndexOf($value, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+        else { [string]::Equals($_, $value, [StringComparison]::OrdinalIgnoreCase) }
+    }).Count -gt 0
+    if ($operator.StartsWith('!')) { return -not $hit }
+    return $hit
+}
+
+function Test-LtcFilterSelects([string]$FilterText, [hashtable]$Test) {
+    $tokens = @([regex]::Matches($FilterText, '[()&|]|[^()&|]+') | ForEach-Object { $_.Value } |
+        Where-Object { $_.Trim() })
+    $state = @{ At = 0 }
+    $peek = { if ($state.At -lt $tokens.Count) { $tokens[$state.At].Trim() } else { $null } }
+    $parseOr = $null
+    $parsePrimary = {
+        $token = & $peek
+        $state.At++
+        if ($token -eq '(') {
+            $inner = & $parseOr
+            if ((& $peek) -eq ')') { $state.At++ }
+            return $inner
+        }
+        return (Test-LtcFilterTerm $token $Test)
+    }
+    $parseAnd = {
+        $value = & $parsePrimary
+        while ((& $peek) -eq '&') { $state.At++; $right = & $parsePrimary; $value = $value -and $right }
+        return $value
+    }
+    $parseOr = {
+        $value = & $parseAnd
+        while ((& $peek) -eq '|') { $state.At++; $right = & $parseAnd; $value = $value -or $right }
+        return $value
+    }
+    return [bool](& $parseOr)
+}
+
+function Get-LtcFilterInclusion([string]$FilterText, [hashtable]$Test) {
+    if (-not (Test-LtcFilterSelects $FilterText $Test)) { return 'no' }
+    $positive = @($FilterText -split '[&|()]' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '!' })
+    if (@($positive | Where-Object { $_ -match $Test.NamePattern }).Count -gt 0) { return 'yes' }
+    return 'possible'
+}
+
+# The reason to stop, or $null: an explicit -Filter that selects L-3 (named or through a wider
+# term) without -IncludeL3. A filter like "FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_"
+# once ran into L-3 for 15 minutes.
+function Get-LtcFilterStopReason([string]$FilterText, [bool]$FilterGiven, [bool]$AllowL3, [string]$L3) {
+    if (-not $FilterGiven -or $AllowL3 -or $L3 -eq 'no') { return $null }
+    return ('the -Filter may run L-3 (L3_ProductionDay, 12 hours; l3=' + $L3 + '). Either add ' +
+        "'&FullyQualifiedName!~L3_' to the -Filter, or pass -IncludeL3 to run it")
+}
+
+if ($filterGiven) {
+    $filterL1 = Get-LtcFilterInclusion $Filter $ltcL1Test
+    $filterL3 = Get-LtcFilterInclusion $Filter $ltcL3Test
+} else {
+    # The default filter takes in the whole scenario class, so the switches decide.
+    $filterL1 = if ($IncludeL1) { 'yes' } else { 'no' }
+    $filterL3 = if ($IncludeL3) { 'yes' } else { 'no' }
+}
+$filterStop = Get-LtcFilterStopReason $Filter $filterGiven ([bool]$IncludeL3) $filterL3
+if ($filterStop) { $problems += $filterStop }
+
 Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | capture: ' + ($captureCable -join '; ') +
-    '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource)
+    '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource + ' ffmpeg=' + $ffmpegText +
+    ' commit_free_gb=' + $commitFreeGb + ' c_free_gb=' + $cDriveFreeGb)
+Write-Output ('prereqs: filter=' + $Filter + ' given=' + $filterGiven + ' l1=' + $filterL1 + ' l3=' + $filterL3)
 if ($problems.Count -gt 0) {
     foreach ($p in $problems) { Write-Output ('PREREQ-ERROR ' + $p) }
     Write-Output ('SUMMARY prereq_failed=' + $problems.Count + ' report=' + $ReportDir)
@@ -437,12 +581,7 @@ if ($MediaDir) {
 }
 
 # ---- filter and environment ------------------------------------------------
-if ([string]::IsNullOrWhiteSpace($Filter)) {
-    # RealProjectGapE2ETests is not in the default filter: it assumes a fixture project whose
-    # timeline starts at one hour (it sends 01:00:xx), so against the project generated from
-    # -MediaDir its checks do not apply. Pass -Filter explicitly to run it.
-    $Filter = 'FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests'
-}
+# The filter itself is decided in the prerequisites (L-1 / L-3 rule).
 Write-Output "filter=$Filter"
 
 $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe
@@ -523,17 +662,12 @@ Write-Output ('l2: spout=' + $env:TCS_L2_ENABLE_SPOUT +
     ' max_handle_growth_per_hour=' + $env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR)
 
 # ---- build and run ---------------------------------------------------------
-# D23-c: Windows PowerShell 5.1 turns every stderr line of a native command into
-# an ErrorRecord; with $ErrorActionPreference = 'Stop' the first one (xUnit writes
-# "[FAIL]" lines to stderr) aborts the runner after dotnet exits, so the evidence
-# copy and the SUMMARY line are skipped. Native output is also decoded with the
-# console code page, which garbles the UTF-8 text of dotnet. Run native commands
-# with 'Continue', decode as UTF-8, and write ErrorRecords as plain text.
+# D23-c: native output is decoded with [Console]::OutputEncoding, which is still
+# the console code page under PowerShell 7 and garbles the UTF-8 text of dotnet.
+# Decode as UTF-8 and write the stderr lines (ErrorRecords) as plain text.
 function Invoke-NativeToLog([scriptblock]$Command, [string]$LogPath) {
-    $previousPreference = $ErrorActionPreference
     $previousEncoding = $null
     try { $previousEncoding = [Console]::OutputEncoding } catch { }
-    $ErrorActionPreference = 'Continue'
     try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
     try {
         & $Command 2>&1 | ForEach-Object {
@@ -541,7 +675,6 @@ function Invoke-NativeToLog([scriptblock]$Command, [string]$LogPath) {
         } | Out-File -FilePath $LogPath -Encoding utf8
         return $LASTEXITCODE
     } finally {
-        $ErrorActionPreference = $previousPreference
         if ($previousEncoding) {
             try { [Console]::OutputEncoding = $previousEncoding } catch { }
         }

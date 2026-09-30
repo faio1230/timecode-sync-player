@@ -2739,6 +2739,8 @@ public sealed partial class LtcScenarioE2ETests
 
             _exited = exited;
             Journal.Write("app-exit", details: new { exited, exitCode });
+            // 段 5b: 終了を押してからプロセスが消えるまでの秒数（ランナーが run-result.json の appExit に集計）。
+            Journal.Write("app-exit-timing", details: App.DescribeExit("verify"));
             exited.Should().BeTrue("この run でアプリが正常終了する");
             exitCode.Should().Be(0);
 
@@ -2770,6 +2772,14 @@ public sealed partial class LtcScenarioE2ETests
             if (!_exited)
             {
                 try { App?.ExitNormally(TimeSpan.FromSeconds(10)); } catch { /* Dispose が kill する */ }
+                // 段 5b: VerifyAndExit の 15 秒で終わらなかった回と、事前確認だけで抜けた回の終了の秒数。
+                // まだ終わっていなければ、この後の Dispose が kill する（waitedSeconds が下限）。
+                try
+                {
+                    if (App?.ExitRequestedUtc is not null)
+                        Journal.Write("app-exit-timing", details: App.DescribeExit("dispose"));
+                }
+                catch { /* 記録の失敗で破棄を止めない */ }
             }
 
             App?.Dispose();
@@ -2780,17 +2790,28 @@ public sealed partial class LtcScenarioE2ETests
 
         private IEnumerable<string> RunLogLines() => RunLogLinesSince(_startedAt);
 
-        private IEnumerable<string> RunLogLinesSince(DateTime sinceLocal)
-        {
-            string logDir = Path.Combine(Path.GetDirectoryName(_exePath)!, "logs");
-            if (!Directory.Exists(logDir)) yield break;
-            FileInfo? newest = new DirectoryInfo(logDir).GetFiles("timecodesyncplayer-*.log")
-                .OrderByDescending(file => file.LastWriteTimeUtc)
-                .FirstOrDefault();
-            if (newest is null) yield break;
+        private IEnumerable<string> RunLogLinesSince(DateTime sinceLocal) =>
+            ReadLogLinesSince(Path.Combine(Path.GetDirectoryName(_exePath)!, "logs"), sinceLocal);
+    }
 
+    /// <summary>
+    /// アプリのログ（&lt;exe&gt;\logs\timecodesyncplayer-*.log）から、行の時刻が sinceLocal 以降の行を返す。
+    /// Serilog は日次でファイルを切り替える（rollingInterval Day）ので、0 時をまたぐ回の行は前日と当日の
+    /// 2 ファイルに分かれる。以前は最後に書かれた 1 ファイルだけを読み、前日のファイルの行を落としていた
+    /// （検証機の v0.5.5 の R-5 で、23:59:59 の着地の行を落として landingSeeks=0 と誤判定）。
+    /// sinceLocal の日付の 0 時以降に書かれたファイルをすべて、名前（日付）の昇順に読む。
+    /// </summary>
+    internal static IEnumerable<string> ReadLogLinesSince(string logDir, DateTime sinceLocal)
+    {
+        if (!Directory.Exists(logDir)) yield break;
+        IEnumerable<FileInfo> files = new DirectoryInfo(logDir).GetFiles("timecodesyncplayer-*.log")
+            .Where(file => file.LastWriteTime >= sinceLocal.Date)
+            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase);
+
+        foreach (FileInfo file in files)
+        {
             string text;
-            using (var stream = new FileStream(newest.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             using (var reader = new StreamReader(stream))
                 text = reader.ReadToEnd();
 

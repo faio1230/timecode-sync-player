@@ -8,6 +8,7 @@
 #include "tcs_gop_policy.h"
 #include "tcs_load_policy.h"
 #include "tcs_position_policy.h"
+#include "tcs_prores_gpu_policy.h"
 #include "tcs_time_mapping.h"
 #include "tcs_video_profiles.h"
 #include "tcs_hap.h"
@@ -401,14 +402,18 @@ run_delivery_policy_tests ()
         "D10: invalid PTS falls back unchanged");
   }
 
-  /* V11: decode profile order (pure). 4 GPU profiles then 5 CPU profiles,
-   * mirroring the shim's table shape (9 profiles + decodebin fallback).
+  /* V11: decode profile order (pure). 5 GPU profiles then 5 CPU profiles,
+   * mirroring the shim's table shape (10 profiles + decodebin fallback).
+   * v0.6.0 added prores-gpu as the last GPU profile (index 4): only the count
+   * and the indices changed; the ordering rules themselves are unchanged
+   * (hardware = last-good + table order + fallback; software = CPU + fallback
+   * + GPU).
    * `order` is sized profile_count + 2 and carries a sentinel just past the
    * documented maximum (profile_count + 1): the function must never write
    * past that, and build_pipeline appends nothing itself. */
   {
-    const int software_flags[9] = { 0, 0, 0, 0, 1, 1, 1, 1, 1 };
-    const int profile_count = 9;
+    const int software_flags[10] = { 0, 0, 0, 0, 0, 1, 1, 1, 1, 1 };
+    const int profile_count = 10;
     const int sentinel = 0x5A5A5A5A;
     int order[profile_count + 2];
     int n;
@@ -430,15 +435,15 @@ run_delivery_policy_tests ()
     check (n == profile_count + 1, "decode order: hardware count");
     check (order[0] == 0 && order[1] == 1 && order[2] == 2 && order[3] == 3 &&
            order[4] == 4 && order[5] == 5 && order[6] == 6 && order[7] == 7 &&
-           order[8] == 8 && order[9] == TCS_DECODE_PROFILE_FALLBACK,
+           order[8] == 8 && order[9] == 9 && order[10] == TCS_DECODE_PROFILE_FALLBACK,
         "decode order: hardware is table order + fallback");
     check (fallback_count (order, n) == 1, "decode order: hardware fallback once");
     check (order[profile_count + 1] == sentinel, "decode order: hardware sentinel");
 
     /* hardware, cached CPU profile: cache first, fallback last. */
     fresh ();
-    n = tcs_decode_profile_order (0, 0, 6, software_flags, profile_count, order);
-    check (n == profile_count + 1 && order[0] == 6 &&
+    n = tcs_decode_profile_order (0, 0, 7, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 7 &&
            order[profile_count] == TCS_DECODE_PROFILE_FALLBACK,
         "decode order: hardware keeps last-good first");
     check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
@@ -448,18 +453,19 @@ run_delivery_policy_tests ()
     fresh ();
     n = tcs_decode_profile_order (0, 1, 0, software_flags, profile_count, order);
     check (n == profile_count + 1, "decode order: software count");
-    check (order[0] == 4 && order[1] == 5 && order[2] == 6 && order[3] == 7 &&
-           order[4] == 8 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
-           order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3,
+    check (order[0] == 5 && order[1] == 6 && order[2] == 7 && order[3] == 8 &&
+           order[4] == 9 && order[5] == TCS_DECODE_PROFILE_FALLBACK &&
+           order[6] == 0 && order[7] == 1 && order[8] == 2 && order[9] == 3 &&
+           order[10] == 4,
         "decode order: software is CPU + decodebin + GPU");
     check (fallback_count (order, n) == 1, "decode order: software fallback once");
     check (order[profile_count + 1] == sentinel, "decode order: software sentinel");
 
     /* software, cached CPU profile: cache first, no duplicate. */
     fresh ();
-    n = tcs_decode_profile_order (0, 1, 5, software_flags, profile_count, order);
-    check (n == profile_count + 1 && order[0] == 5 && order[1] == 4 &&
-           order[2] == 6 && order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
+    n = tcs_decode_profile_order (0, 1, 6, software_flags, profile_count, order);
+    check (n == profile_count + 1 && order[0] == 6 && order[1] == 5 &&
+           order[2] == 7 && order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0,
         "decode order: software keeps a CPU last-good first");
     check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
         "decode order: software last-good fallback once + sentinel");
@@ -467,9 +473,9 @@ run_delivery_policy_tests ()
     /* software, cached GPU profile: the GPU cache stays in the GPU block. */
     fresh ();
     n = tcs_decode_profile_order (0, 1, 2, software_flags, profile_count, order);
-    check (n == profile_count + 1 && order[0] == 4 &&
+    check (n == profile_count + 1 && order[0] == 5 &&
            order[5] == TCS_DECODE_PROFILE_FALLBACK && order[6] == 0 &&
-           order[7] == 1 && order[8] == 2 && order[9] == 3,
+           order[7] == 1 && order[8] == 2 && order[9] == 3 && order[10] == 4,
         "decode order: software does not promote a GPU last-good");
     check (fallback_count (order, n) == 1 && order[profile_count + 1] == sentinel,
         "decode order: software GPU-cache fallback once + sentinel");
@@ -481,7 +487,7 @@ run_delivery_policy_tests ()
         "decode order: decodebin is fallback only");
     check (order[1] == sentinel, "decode order: decodebin sentinel");
     fresh ();
-    n = tcs_decode_profile_order (1, 1, 6, software_flags, profile_count, order);
+    n = tcs_decode_profile_order (1, 1, 7, software_flags, profile_count, order);
     check (n == 1 && order[0] == TCS_DECODE_PROFILE_FALLBACK && order[1] == sentinel,
         "decode order: decodebin ignores mode and cache");
   }
@@ -491,15 +497,26 @@ run_delivery_policy_tests ()
    * conv became a d3d11 converter would lose d3d11upload (and the software
    * search order). CPU conversion for V11-h is a separate post-upload element. */
   {
-    check (TCS_VIDEO_PROFILE_COUNT == 9, "profiles: table has 9 entries");
+    /* v0.6.0: prores-gpu is the 5th GPU profile (index 4); CPU is 5..9. */
+    check (TCS_VIDEO_PROFILE_COUNT == 10, "profiles: table has 10 entries");
     int flags_ok = 1;
     for (int i = 0; i < TCS_VIDEO_PROFILE_COUNT; i++)
-      flags_ok = flags_ok && (tcs_video_profile_is_software (i) == (i >= 4 ? 1 : 0));
+      flags_ok = flags_ok && (tcs_video_profile_is_software (i) == (i >= 5 ? 1 : 0));
     check (flags_ok == 1, "profiles: software flags are the CPU profiles only");
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 5; i++)
       check (strstr (kTcsVideoProfiles[i].conv, "d3d11") != nullptr,
           "profiles: GPU profiles convert on the GPU");
-    for (int i = 4; i < TCS_VIDEO_PROFILE_COUNT; i++)
+    check (strcmp (kTcsVideoProfiles[4].name, "prores-gpu") == 0 &&
+           strcmp (kTcsVideoProfiles[4].media, "video/x-prores") == 0 &&
+           kTcsVideoProfiles[4].parse == nullptr &&
+           strcmp (kTcsVideoProfiles[4].dec, "proresd3d11dec") == 0,
+        "profiles: prores-gpu is the last GPU profile");
+    int luid_ok = 1;
+    for (int i = 0; i < TCS_VIDEO_PROFILE_COUNT; i++)
+      luid_ok = luid_ok && (tcs_video_profile_sets_adapter_luid (i) == (i == 4 ? 1 : 0));
+    check (luid_ok == 1 && tcs_video_profile_sets_adapter_luid (-1) == 0,
+        "profiles: only prores-gpu gets adapter-luid written (skips D16-b)");
+    for (int i = 5; i < TCS_VIDEO_PROFILE_COUNT; i++)
       check (strstr (kTcsVideoProfiles[i].conv, "d3d11") == nullptr,
           "profiles: CPU profiles keep a CPU converter (upload must be built)");
   }
@@ -737,6 +754,75 @@ run_gop_warn_measure (int argc, char** argv)
   tcs_player_destroy (p);
   check (st.active == 1, "gop-warn: probe active");
   return failures ? 1 : 0;
+}
+
+/* v0.6.0 stage 2: the ProRes GPU gate (design 3-3) and the decoder adapter
+ * mismatch rule, pinned without a GPU. The mode values are the C ABI shared
+ * with the app (0/1/2). */
+static void
+run_prores_gpu_policy_tests ()
+{
+  check (TCS_PRORES_GPU_AUTO == 0 && TCS_PRORES_GPU_ON == 1 && TCS_PRORES_GPU_OFF == 2,
+      "prores-gpu: ABI mode values are auto=0 on=1 off=2");
+  const unsigned vendors[] = { 0x10DEu, 0x1002u, 0x8086u, 0x1414u, 0u };
+  const char* vnames[] = { "nvidia", "amd", "intel", "microsoft(warp)", "unknown(0)" };
+  char what[160];
+  for (int v = 0; v < 5; v++) {
+    const bool nvidia = vendors[v] == 0x10DEu;
+    snprintf (what, sizeof (what), "prores-gpu gate: auto + %s -> %s", vnames[v],
+        nvidia ? "allowed" : "blocked");
+    check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_AUTO, vendors[v]) == (nvidia ? 1 : 0), what);
+    snprintf (what, sizeof (what), "prores-gpu gate: on + %s -> allowed", vnames[v]);
+    check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_ON, vendors[v]) == 1, what);
+    snprintf (what, sizeof (what), "prores-gpu gate: off + %s -> blocked", vnames[v]);
+    check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_OFF, vendors[v]) == 0, what);
+    snprintf (what, sizeof (what), "prores-gpu gate: on + %s unverified=%d", vnames[v],
+        nvidia ? 0 : 1);
+    check (tcs_prores_gpu_unverified (TCS_PRORES_GPU_ON, vendors[v]) == (nvidia ? 0 : 1), what);
+    check (tcs_prores_gpu_unverified (TCS_PRORES_GPU_AUTO, vendors[v]) == 0 &&
+           tcs_prores_gpu_unverified (TCS_PRORES_GPU_OFF, vendors[v]) == 0,
+        "prores-gpu gate: only mode=on is logged as unverified");
+  }
+  check (tcs_prores_gpu_allowed (3, 0x10DEu) == 0 && tcs_prores_gpu_allowed (-1, 0x10DEu) == 0,
+      "prores-gpu gate: an out-of-range mode never allows");
+  /* skip reasons (load.skip reason=...) */
+  check (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0x10DEu) == nullptr,
+      "prores-gpu skip: auto + nvidia -> no skip");
+  check (strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0x1002u), "prores-gpu-vendor") == 0 &&
+         strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0u), "prores-gpu-vendor") == 0,
+      "prores-gpu skip: auto + other/unknown vendor -> prores-gpu-vendor");
+  check (strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_OFF, 0x10DEu), "prores-gpu-off") == 0 &&
+         strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_OFF, 0u), "prores-gpu-off") == 0,
+      "prores-gpu skip: off -> prores-gpu-off (any vendor)");
+  check (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_ON, 0u) == nullptr,
+      "prores-gpu skip: on -> no skip (unknown vendor too)");
+  /* TCS_PRORES_GPU values */
+  check (tcs_prores_gpu_mode_parse ("auto") == TCS_PRORES_GPU_AUTO &&
+         tcs_prores_gpu_mode_parse ("ON") == TCS_PRORES_GPU_ON &&
+         tcs_prores_gpu_mode_parse ("Off") == TCS_PRORES_GPU_OFF,
+      "prores-gpu env: auto/on/off parse case-insensitively");
+  check (tcs_prores_gpu_mode_parse ("") == -1 && tcs_prores_gpu_mode_parse (nullptr) == -1 &&
+         tcs_prores_gpu_mode_parse ("1") == -1 && tcs_prores_gpu_mode_parse ("onn") == -1 &&
+         tcs_prores_gpu_mode_parse ("of") == -1 && tcs_prores_gpu_mode_parse (" on") == -1,
+      "prores-gpu env: other values are invalid (-1)");
+  check (strcmp (tcs_prores_gpu_mode_name (TCS_PRORES_GPU_AUTO), "auto") == 0 &&
+         strcmp (tcs_prores_gpu_mode_name (TCS_PRORES_GPU_ON), "on") == 0 &&
+         strcmp (tcs_prores_gpu_mode_name (TCS_PRORES_GPU_OFF), "off") == 0,
+      "prores-gpu: mode names");
+  /* decoder-adapter-mismatch (same: 1 on the shim device, 0 elsewhere, -1 unseen) */
+  const long long want = 0x1178cLL;
+  check (tcs_prores_gpu_adapter_mismatch (1, 1, want, want) == 0,
+      "prores-gpu mismatch: same device + same LUID -> ok");
+  check (tcs_prores_gpu_adapter_mismatch (0, 1, want, want) == 1,
+      "prores-gpu mismatch: output off the shim device -> fail");
+  check (tcs_prores_gpu_adapter_mismatch (0, 0, want, want) == 1,
+      "prores-gpu mismatch: same=0 fails without a frame too");
+  check (tcs_prores_gpu_adapter_mismatch (1, 1, 0x2222LL, want) == 1,
+      "prores-gpu mismatch: read-back LUID differs after a frame -> fail");
+  check (tcs_prores_gpu_adapter_mismatch (-1, 0, 0x2222LL, want) == 0,
+      "prores-gpu mismatch: no frame and no probe -> left to the D34 gate");
+  check (tcs_prores_gpu_adapter_mismatch (-1, 1, want, want) == 0,
+      "prores-gpu mismatch: probe unseen, LUID equal -> ok");
 }
 
 /* v0.5.0: HAP の解析と Snappy 展開（純粋なデータ処理。実データで固定する）。
@@ -1799,6 +1885,7 @@ main (int argc, char** argv)
     run_gop_policy_tests ();
     run_position_policy_tests ();
     run_hap_tests ();
+    run_prores_gpu_policy_tests ();
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
@@ -1806,6 +1893,7 @@ main (int argc, char** argv)
   run_gop_policy_tests ();
   run_position_policy_tests ();
   run_hap_tests ();
+  run_prores_gpu_policy_tests ();
   if (strcmp (argv[1], "--gop-warn") == 0) {
     int rc = run_gop_warn_measure (argc, argv);
     printf ("RESULT failures=%d\n", failures);

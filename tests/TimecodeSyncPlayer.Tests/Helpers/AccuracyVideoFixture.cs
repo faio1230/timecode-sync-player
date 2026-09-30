@@ -36,6 +36,13 @@ internal static class AccuracyVideoFixture
         Directory.CreateDirectory(directory);
         var clips = new List<AccuracyClip>();
         var playlist = new PlaylistState();
+        // 段 5b: 素材は毎回ここで新しく作るので、使った ffmpeg の版を試験の成果物（journal と
+        // サイドカー ffmpeg-version.txt）に残し、6 未満なら警告を 1 行出す。
+        FfmpegResolution tool = FfmpegTool.Current;
+        string versionLine = FfmpegTool.VersionLine;
+        progress?.Invoke($"ffmpeg-version: {versionLine} ({tool.FfmpegSource}; ffprobe {tool.FfprobeSource})");
+        if (FfmpegTool.OldVersionWarning(versionLine, FfmpegTool.Major) is { } warning)
+            progress?.Invoke(warning);
         int id = 0;
         foreach (var spec in ResolveClipSpecs())
         {
@@ -57,6 +64,7 @@ internal static class AccuracyVideoFixture
                 TimeSpan.FromSeconds(clip.FrameCount * (double)clip.FpsDenominator / clip.FpsNumerator),
                 TimeSpan.Zero, (double)clip.FpsNumerator / clip.FpsDenominator, true));
         }
+        FfmpegTool.WriteSidecar(directory, clips.Select(clip => Path.GetFileName(clip.Path)), versionLine);
         string projectPath = Path.Combine(directory, "accuracy.tsp");
         await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Continue, GapBehavior.Black,
             new CanvasData { Width = 1920, Height = 1080, DefaultFit = "fit-height" });
@@ -138,7 +146,7 @@ internal static class AccuracyVideoFixture
     {
         string rate = $"{clip.FpsNumerator}/{clip.FpsDenominator}";
         string keyframeInterval = clip.KeyframeIntervalFrames.ToString(CultureInfo.InvariantCulture);
-        using var process = NewProcess("ffmpeg", "-hide_banner", "-loglevel", "error", "-n",
+        using var process = NewProcess(FfmpegTool.Ffmpeg, "-hide_banner", "-loglevel", "error", "-n",
             "-f", "lavfi", "-i", $"testsrc2=size=1920x1080:rate={rate}",
             "-f", "rawvideo", "-pixel_format", "gray", "-video_size", "768x32", "-framerate", rate, "-i", "pipe:0",
             "-filter_complex", "[0:v][1:v]overlay=32:32:shortest=1", "-an", "-frames:v", clip.FrameCount.ToString(CultureInfo.InvariantCulture),
@@ -171,7 +179,7 @@ internal static class AccuracyVideoFixture
 
     private static async Task VerifyAsync(AccuracyClip clip)
     {
-        using var probe = NewProcess("ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+        using var probe = NewProcess(FfmpegTool.Ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames",
             "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate,nb_read_frames,start_time", "-of", "json", clip.Path);
         probe.Start();
         Task<string> probeError = probe.StandardError.ReadToEndAsync();
@@ -198,7 +206,7 @@ internal static class AccuracyVideoFixture
         await VerifyKeyframesAsync(clip, timeout.Token);
 
         // Read every encoded frame. This decoder does not call the generator or app marker decoder.
-        using var decoder = NewProcess("ffmpeg", "-hide_banner", "-loglevel", "error", "-i", clip.Path,
+        using var decoder = NewProcess(FfmpegTool.Ffmpeg, "-hide_banner", "-loglevel", "error", "-i", clip.Path,
             "-vf", "crop=768:32:32:32", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1");
         decoder.Start();
         Task<string> errors = decoder.StandardError.ReadToEndAsync();
@@ -245,7 +253,7 @@ internal static class AccuracyVideoFixture
     /// </summary>
     private static async Task VerifyKeyframesAsync(AccuracyClip clip, CancellationToken token)
     {
-        using var probe = NewProcess("ffprobe", "-v", "error", "-select_streams", "v:0",
+        using var probe = NewProcess(FfmpegTool.Ffprobe, "-v", "error", "-select_streams", "v:0",
             "-skip_frame", "nokey", "-show_entries", "frame=key_frame,pts_time", "-of", "csv=p=0", clip.Path);
         probe.Start();
         Task<string> error = probe.StandardError.ReadToEndAsync();

@@ -16,11 +16,13 @@
    **検証機で通るまで既定はオフ。**
 2. **配布**: プラグインのソースは持ち込まない。タグ付きリリースの DLL をバイナリの依存として扱い、
    `package-release.ps1` で `lib\gstreamer-1.0` に同梱する（LGPL の DLL 単体の同梱は可）。
-   サードパーティ表記にライセンス文と入手元（URL とタグ）を足す。`docs/SETUP.md` の「素材の推奨」で ProRes を推奨側へ戻す。
+   サードパーティ表記にライセンス文と入手元（URL とタグ）を足す。`docs/SETUP.md` の「素材の推奨」で ProRes を推奨側へ戻す。**利用者の決定（2026-09-30）: 戻すのは v0.6.0 ではなく、RTX で固定の一式が合格した版で「NVIDIA では推奨」として。v0.6.0 では `CodecAdvice` も SETUP も ProRes は「可」のまま**。
 3. **プラグイン側の前準備**（Gst-ProRes セッションに依頼済み）: タグ付きリリース、`adapter-luid` プロパティの追加、
    `d3d11colorconvert → BGRA` の交渉の確認。**TSP 側の設計はこの結果を待ってから始める。**
 
 ## プラグイン側の前準備の結果（2026-09-25、Gst-ProRes セッションから）
+
+> 同梱する版は **v0.2.1（`ab67d69`、2026-09-30 公開。zip `gst-prores-d3d11-v0.2.1-win64-gst1.28.2.zip` SHA-256 `57053c0b4c33c52e53eedf6e6e3f2b61adbc1a7c3605e28e1fde5cd32a13e9b1`、`gstproresd3d11.dll` SHA-256 `047cde8f434a061e76b1311ea8abfce1643b12a1a871134c3a912d5c3f0077e2`）に差し替え**（TSP-Fable の決定 2026-09-30。利用者の決定「修正してもらった版を 0.6.0 から入れる」の延長。v0.2.1 の変更は 2 つ: 出力 caps の colorimetry の未指定の欄を GStreamer の既定値で埋める（480/576 は bt601、720 以上は bt709）、全 vfunc で C++ の例外を捕まえて要素のエラーに変える。段 1 の結果に関わる部分は変わらない）。その前の確定: v0.2.0（`16dc1eb`、2026-09-30 公開。zip `gst-prores-d3d11-v0.2.0-win64-gst1.28.2.zip` SHA-256 `b49fdd041021e1d7a9bd1ed3548f7609ff8d901ad3f56d5bf3c8fa4f8efd8ff8`、`gstproresd3d11.dll` SHA-256 `ee8dc3f7631ff077e9acd6c12c9584cdd05e91a954582da911020736abba34f3`） に確定**（変更は「壊れたフレームがあっても止まらない」（Issue #1）。要素名・`adapter-luid`・`shader-directory`・`.cso`（6 個、v0.1.0 とバイト同一）・出力 caps・DLL 名・CRT の下限 14.50.35710 は変わらない）。当初の記述: 同梱する版は次版（タグ確定待ち）（2026-09-30、利用者の決定。TSP-Fable 経由の原文「Gst-ProRes には伝えたんですが、今修正してもらって v2.0 を 0.6.0 から入れたいです」）。以下の v0.1.0 の値は、v0.6.0 の段 1（shim に通して確かめる段）の暫定値として残す。次版の zip 名・SHA-256・タグと変更点は Gst-ProRes から届き次第この節と設計書 `design/v0.6.0-prores-gpu.md` の 2-1 に入れる
 
 - **リリース**: タグ `v0.1.0`（commit `0a4f19b`）、https://github.com/faio1230/gst-prores-d3d11/releases/tag/v0.1.0
   - zip `gst-prores-d3d11-v0.1.0-win64-gst1.28.2.zip`（SHA-256 `2119a6ede678fe7ec4bfa4db3778b72a1ba57dd08c9d624e80a2cd03f7331e6b`）
@@ -71,6 +73,14 @@ v0.6.0（新しい復号経路 = 機能の追加）。v0.5.2（状態の整理�
 - 背景: 開発機は 5.1 のみ（7 は未導入）。gst-prores-d3d11 のビルドは 7 が要るので、v0.6.0 で両方の前提が揃う。
   開発機への 7 の導入は利用者が行う。
 - 合格の条件への追加: v0.6.0 の固定の一式と重い素材セットを **pwsh で起動したランナー**で通す。
+
+## v0.6.x の負債（2026-09-30 起票）
+
+- インストーラーの昇格: VC++ が古い PC では vc_redist の `/quiet` が UAC を出す（インストーラーは `PrivilegesRequired=lowest`）。`PrivilegesRequiredOverridesAllowed=dialog` か、VC++ が古いときだけ昇格を求める形にする（優先度低、TSP-Fable の判定。利用者に諮る事項ではない）
+- instant-rate の変更が flush シークの直後に効かないことがある（推定）。`glib.CRITICAL gst_segment_do_seek` の行、shim は TRUE を成功とみなす。詳細と確かめ方は `design/v0.6.0-prores-gpu.md` 8-2（v0.6.2 の候補）
+- 境界の保持の不感帯: 範囲外の保持中に位置が端の外（端 + 2 フレーム〜許容 6 フレーム）にあると、境界の保持も同期の判定も動かない。S-4 の直し（案 A）で記録の欠けは埋めたが、不感帯そのものは残る。案 B（境界の保持が自分で端へ戻す）を §10-0 の L 系と一緒に（TSP-Fable の判定）
+- 試験基盤: E2E のログの読み方の日次の切り替え（2026-10-01、v0.5.5 の検証機の R-5 で発見）。`LtcScenarioE2ETests` は `ReadLogLinesSince` で直した（`cbdefca`、取り込み `9a436d6`）。同じ「最後に書かれた 1 ファイルだけを読む」形が `CanvasTestCardE2ETests.cs:44-48`・`ExitDialogE2ETests.cs:46-50`・`GStreamerBackendE2ETests.cs:478` に残る（`VolumeControlE2ETests.cs:188` は列挙だけ、未確認）。どれも短い単発のテストで 0 時をまたぐ見込みは低いので、直すときは同じ関数を通す（優先度低）
+- 起動の遅れの口: `ui.heartbeat` は Debug の行で、配布ビルドでは取れない。環境変数で起動の最初の N 秒だけ Information にする口を v0.6.2（起動の停止の直し）の設計で足す
 
 ## 将来の項目（版未定。v0.7.0 の UI 刷新か v0.8.0 のトランジションと合わせて判断）
 
@@ -136,3 +146,6 @@ v0.5.4 ではアプリ側で門の比較相手を目標と配信 PTS に替え�
 - L-2 の UI オートメーションの時間切れ（2026-09-28 02:38、1 回）との関係: その回の時間切れは、プレイヤーの生成と素材の読み込みの後（`app-started` の後）に起きていて、
   この 1.1 秒の区間とは時刻がずれる。再発したら `ui.heartbeat` の途切れと突き合わせる
 
+## v0.6.0 の候補 1（2026-09-30 18:51、検証機へ送付）
+
+- **v0.6.0 の候補 1（2026-09-30 18:51、検証機へ送付）**: ProductVersion `0.5.4+e086e2e`（版は据え置き）。zip `9F48BD26…E970` / setup.exe `8AA8B76A…797F` / テストのソース `tcs-v060-e086e2e.tar`（`0EF42231…CEB8`、ランナーの既定の変更を含む）。置き場は `timecode-sync-player-v06` の `artifacts\release`。開発機: 固定の一式（標準 ×2・重い素材・ProRes ×2 が各 24/0、L-1 ×2 合格、ProRes は GPU 142 件・CPU 0・不一致 0）、展開した配布物で ProRes 4K が同梱の GStreamer（Bundled）で `prores-gpu`・`same=1`。検証機への依頼: (1) 実インストール（VC++ の版と再頒布の有無、初回起動）→ (2) 固定の一式（M5 は `prores-gpu`）→ (3) ProRes の追加（PR1〜PR3 を GPU、内蔵 AMD で `prores-cpu`、色の差、PR4 のアルファ）。依頼文は `docs/prompts/2026-09-30-v060-testmachine-request-draft.md` を元に送った

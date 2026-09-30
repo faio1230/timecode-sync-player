@@ -21,7 +21,7 @@ GPU 内完結経路を検証する。
 ## ビルド
 
 ```powershell
-powershell -File native/gst-shim/proto/build-proto.ps1 -Config Debug
+pwsh -File native/gst-shim/proto/build-proto.ps1 -Config Debug
 # 出力: native/gst-shim/proto/build-debug/tcs-gst-proto.exe
 ```
 

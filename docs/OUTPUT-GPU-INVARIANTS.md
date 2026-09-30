@@ -49,6 +49,9 @@ T5（2026-09-15）で `tcs_player_set_rate_instant` を追加した。paused を
 送信可否を決め、`gst_element_seek`（`GST_SEEK_FLAG_INSTANT_RATE_CHANGE`、非フラッシュ）は
 **ロックの外**で呼ぶ。API（UI）スレッド専用で、ストリーミングスレッドは取らない。
 `STATE_MUTEX_HOLDERS` に登録済み。
+v0.6.0 段 2（2026-09-30）で `tcs_player_set_prores_gpu` を追加した。`tcs_player_set_decode_mode` と同じ形で、
+**GStreamer 呼び出しを一切せず**（制御スレッド専用の scalar 書き込みとログ 1 行。最初の load の前だけ有効）、
+ストリーミングスレッドから呼ばれ得ない。`STATE_MUTEX_HOLDERS` に登録済み。
 
 負の対照として、D2 修正前の main に対しては既知の 2 箇所を検出して FAIL することを確認済み。
 

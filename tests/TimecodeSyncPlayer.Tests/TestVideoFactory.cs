@@ -4,19 +4,24 @@ using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
-/// <summary>ffmpeg でテスト用動画を生成するヘルパー。アプリドメイン単位で一度だけ生成する。</summary>
+/// <summary>
+/// ffmpeg でテスト用動画を生成するヘルパー。アプリドメイン単位で一度だけ生成する。
+/// 段 5b: ffmpeg は <see cref="FfmpegTool"/>（TCS_FFMPEG → 既定のフォルダ → PATH）で解決し、
+/// 作った素材の版を素材のフォルダの ffmpeg-version.txt に記録する（6 未満なら警告を標準エラーへ 1 行）。
+/// </summary>
 internal static class TestVideoFactory
 {
     private static string? _videoPath;
     private static readonly Dictionary<string, string> _variantPaths = [];
     private static readonly object _lock = new();
+    private static bool _oldVersionWarned;
 
-    /// <summary>ffmpeg が PATH にあるかを確認する。</summary>
+    /// <summary>ffmpeg（<see cref="FfmpegTool"/> の解決）が起動できるかを確認する。</summary>
     public static bool FfmpegAvailable()
     {
         try
         {
-            var psi = new ProcessStartInfo("ffmpeg", "-nostdin -version")
+            var psi = new ProcessStartInfo(FfmpegTool.Ffmpeg, "-nostdin -version")
             {
                 UseShellExecute        = false,
                 RedirectStandardOutput = true,
@@ -52,7 +57,7 @@ internal static class TestVideoFactory
             // 既存ファイルを削除してから生成
             if (File.Exists(path)) File.Delete(path);
 
-            var psi = new ProcessStartInfo("ffmpeg",
+            var psi = new ProcessStartInfo(FfmpegTool.Ffmpeg,
                 $"-nostdin -y -f lavfi -i testsrc=duration=20:size=1280x720:rate=30 -c:v libx264 -t 20 \"{path}\"")
             {
                 UseShellExecute        = false,
@@ -75,6 +80,7 @@ internal static class TestVideoFactory
                 throw new InvalidOperationException(
                     $"ffmpeg でテスト動画の生成に失敗しました (exit={p.ExitCode})。");
 
+            RecordVersion(dir, path);
             _videoPath = path;
             return _videoPath;
         }
@@ -97,7 +103,7 @@ internal static class TestVideoFactory
 
             if (File.Exists(path)) File.Delete(path);
 
-            var psi = new ProcessStartInfo("ffmpeg",
+            var psi = new ProcessStartInfo(FfmpegTool.Ffmpeg,
                 $"-nostdin -y -f lavfi -i smptebars=duration=20:size=1280x720:rate=30 -c:v libx264 -t 20 \"{path}\"")
             {
                 UseShellExecute        = false,
@@ -120,8 +126,21 @@ internal static class TestVideoFactory
                 throw new InvalidOperationException(
                     $"ffmpeg でテスト動画variantの生成に失敗しました (exit={p.ExitCode})。");
 
+            RecordVersion(dir, path);
             _variantPaths[name] = path;
             return path;
+        }
+    }
+
+    /// <summary>段 5b: 作った素材の ffmpeg の版をサイドカーへ。6 未満なら警告を 1 回だけ標準エラーへ。</summary>
+    private static void RecordVersion(string directory, string path)
+    {
+        string versionLine = FfmpegTool.VersionLine;
+        FfmpegTool.WriteSidecar(directory, [Path.GetFileName(path)], versionLine);
+        if (!_oldVersionWarned && FfmpegTool.OldVersionWarning(versionLine, FfmpegTool.Major) is { } warning)
+        {
+            _oldVersionWarned = true;
+            Console.Error.WriteLine(warning);
         }
     }
 

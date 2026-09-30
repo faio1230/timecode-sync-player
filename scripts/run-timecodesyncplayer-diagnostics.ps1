@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # TimecodeSyncPlayer diagnostics runner.
 # Runs build/tests, analyzes the latest TimecodeSyncPlayer log, and writes a Markdown report.
 
@@ -206,7 +207,7 @@ function Read-LogSummaryCounts {
     }
 
     $inSection = $false
-    foreach ($line in (Get-Content -Encoding UTF8 -LiteralPath $Path)) {
+    foreach ($line in (Get-Content -LiteralPath $Path)) {
         if ($line -match "^## Log Summary\s*$") {
             $inSection = $true
             continue
@@ -1085,7 +1086,7 @@ if ($SkipE2E) {
 $resolvedLogPath = Get-LatestLogPath -ExplicitLogPath $LogPath -DefaultLogDirectories $logDirectories
 $logLines = @()
 if ($null -ne $resolvedLogPath) {
-    $logLines = @(Get-Content -Encoding UTF8 -LiteralPath $resolvedLogPath)
+    $logLines = @(Get-Content -LiteralPath $resolvedLogPath)
 }
 $ranCommand = @($commands | Where-Object { -not $_.Skipped }).Count -gt 0
 $logLines = @(Select-LogLinesForRun -Lines $logLines -Started $startedAt -FilterToRun $ranCommand)

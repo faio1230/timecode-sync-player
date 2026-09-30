@@ -1,4 +1,5 @@
-﻿<#
+﻿#requires -Version 7.0
+<#
 .SYNOPSIS
   run-ltc-scenarios.ps1 の 1 回ぶんの ReportDir から、機械で差分を取れる結果 JSON（run-result.json）を作る。
   あわせて保持の規則を当てる（合格した回の出力トレースを消す、途中で止めた回の media ハードリンクを消す）。
@@ -10,6 +11,12 @@
     0x0 ロード件数（D34）、高速ロード件数（Gst loadfile が -FastLoadMs 未満）、トレース保存失敗件数、
     ERR/FTL、Preview stalled、R-1〜R-4 の hold-pause（一時停止までの遅れ）と上限超過、
     L-1 / L-2 の要約（l1-summary / l2-summary から主要な値）。
+    v0.6.0 段 5b の追加（scripts\LtcRunMetrics.psm1）:
+    commitFreeGbAtStart（ランナーの開始時のシステムのコミットの空き、runner-preflight.json）、
+    cDriveFreeGbAtStart（ランナーの開始時の C: の空き、runner-preflight.json）、
+    appExit（終了を押してからプロセスが消えるまでの秒数。回数・中央・最大と、15 秒を超えた回の終了の段のログ行）、
+    prores（ProRes のロードの profile の内訳 prores-gpu / prores-cpu と decoder-adapter-mismatch の発火の回数。
+    この回の trx の開始より前のログ行は数えない）。
   所見（3 行）は人が書くので、ここでは作らない。
 
   保持（-Prune のとき）:
@@ -17,7 +24,7 @@
     - ReportDir\media（実素材へのハードリンク）が残っていれば消す（ハードリンクなので実素材は消えない）
 
 .EXAMPLE
-  powershell -File scripts\ltc-run-report.ps1 -ReportDir <結果置き場>\<候補>\std-pass-a-rtx-<日時> -Prune
+  pwsh -File scripts\ltc-run-report.ps1 -ReportDir <結果置き場>\<候補>\std-pass-a-rtx-<日時> -Prune
 #>
 param(
     [Parameter(Mandatory = $true)][string]$ReportDir,
@@ -31,6 +38,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $ReportDir -PathType Container)) { throw "ReportDir not found: $ReportDir" }
+Import-Module (Join-Path $PSScriptRoot 'LtcRunMetrics.psm1') -Force
 
 # ハードリンクの名前の数（run-ltc-scenarios.ps1 と同じ実装）。
 if (-not ('Tcs.HardLink' -as [type])) {
@@ -99,7 +107,7 @@ $passed = 0; $failed = 0; $skipped = 0
 $failures = @(); $invalid = @(); $skips = @()
 $trx = Get-ChildItem -LiteralPath $ReportDir -Filter '*.trx' -File | Select-Object -First 1
 if ($trx) {
-    [xml]$doc = Get-Content -LiteralPath $trx.FullName -Encoding UTF8
+    [xml]$doc = Get-Content -LiteralPath $trx.FullName
     foreach ($r in @($doc.TestRun.Results.UnitTestResult)) {
         $name = ($r.testName -split '\.')[-1]
         $message = ''
@@ -121,6 +129,7 @@ if ($trx) {
 $appLogDir = Join-Path $ReportDir 'app-logs'
 $appLines = @()
 $shimLines = @()
+$shimLinesByScenario = @{}
 if (Test-Path -LiteralPath $appLogDir) {
     foreach ($f in Get-ChildItem -LiteralPath $appLogDir -File -Recurse) {
         if ($f.Name -like 'timecodesyncplayer-*.log') { $appLines += [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8) }
@@ -128,7 +137,9 @@ if (Test-Path -LiteralPath $appLogDir) {
     }
 }
 foreach ($f in Get-ChildItem -LiteralPath (Join-Path $ReportDir 'scenarios') -Filter 'tcs-gst-raw.log' -File -Recurse -ErrorAction SilentlyContinue) {
-    $shimLines += [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)
+    $rawLines = [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)
+    $shimLines += $rawLines
+    $shimLinesByScenario[(Split-Path (Split-Path $f.FullName -Parent) -Leaf)] = $rawLines
 }
 $zeroCaps = @($shimLines | Where-Object { $_ -match 'loaded .* 0x0@' }).Count
 $fastLoads = @($appLines | Where-Object { $_ -match 'Gst loadfile .*elapsedMs=([\d.]+)' -and [double]$matches[1] -lt $FastLoadMs }).Count
@@ -137,13 +148,14 @@ $errFtl = @($appLines | Where-Object { $_ -match '\[(ERR|FTL)\]' }).Count
 $previewStalled = @($appLines | Where-Object { $_ -match 'Preview stalled:' }).Count
 
 # ---- harness ----------------------------------------------------------------
-$holdPause = @(); $l1 = @(); $l2 = @(); $preflightOk = 0; $preflightWarnings = @()
+$holdPause = @(); $l1 = @(); $l2 = @(); $preflightOk = 0; $preflightWarnings = @(); $appExitEvents = @()
 foreach ($h in Get-ChildItem -LiteralPath (Join-Path $ReportDir 'scenarios') -Filter 'harness.jsonl' -File -Recurse -ErrorAction SilentlyContinue) {
     $scenario = Split-Path (Split-Path $h.FullName -Parent) -Leaf
     $testId = ($scenario -split '-')[0..1] -join '-'
     foreach ($e in Read-JsonLines $h.FullName) {
         switch ($e.event) {
             'preflight-ok' { $preflightOk++ }
+            'app-exit-timing' { $appExitEvents += [pscustomobject]@{ test = $testId; scenario = $scenario; details = $e.details } }
             'preflight-warning' { $preflightWarnings += [ordered]@{ test = $testId; track = [string]$e.details.track; reason = [string]$e.details.reason } }
             'preflight-invalid' {
                 $invalid += [ordered]@{ test = $testId; reason = [string]$e.details.reason }
@@ -179,6 +191,14 @@ $invalidPrefixes = @($invalid | ForEach-Object { ($_.test -replace '-', '') + '_
 $skips = @($skips | Where-Object { $n = $_.test; -not ($invalidPrefixes | Where-Object { $n.StartsWith($_) }) })
 $skipped = $skips.Count
 
+# ---- 段 5b の追加 ---------------------------------------------------------------
+$runStartUtc = if ($trx) { Get-TcsRunStartUtc $trx.FullName } else { $null }
+$commitFreeGbAtStart = Get-TcsCommitFreeGbAtStart $ReportDir
+$cDriveFreeGbAtStart = Get-TcsRunnerPreflightValue $ReportDir 'cDriveFreeGbAtStart'
+$appExit = Get-TcsAppExitSummary -Events $appExitEvents -AppLines $appLines -ShimLines @($shimLines | Where-Object { $_ -match '\] destroy: ' }) `
+    -ShimLinesByScenario $shimLinesByScenario
+$prores = Get-TcsProResLoadSummary -ShimLines $shimLines -SinceUtc $runStartUtc
+
 $result = [ordered]@{
     schema = 'ltc-run-result/1'
     label = (Split-Path $ReportDir -Leaf)
@@ -205,12 +225,19 @@ $result = [ordered]@{
     holdPauseOver = @($holdPause | Where-Object { $_.over }).Count
     l1 = $l1
     l2 = $l2
+    commitFreeGbAtStart = $commitFreeGbAtStart
+    cDriveFreeGbAtStart = $cDriveFreeGbAtStart
+    appExit = $appExit
+    prores = $prores
 }
 
 $outPath = Join-Path $ReportDir 'run-result.json'
 $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $outPath -Encoding UTF8
 Write-Output ('RESULT ' + $outPath + ' passed=' + $passed + ' failed=' + $failed + ' invalid=' + $invalid.Count +
     ' skipped=' + $skipped + ' zero_caps=' + $zeroCaps + ' fast_loads=' + $fastLoads + ' trace_save_fail=' + $traceSaveFailures)
+Write-Output ('RESULT-5B commit_free_gb=' + $commitFreeGbAtStart + ' c_free_gb=' + $cDriveFreeGbAtStart + ' app_exit_count=' + $appExit.count +
+    ' app_exit_median_s=' + $appExit.medianSeconds + ' app_exit_max_s=' + $appExit.maxSeconds + ' app_exit_over15s=' + @($appExit.over15s).Count +
+    ' prores_gpu=' + $prores.gpu + ' prores_cpu=' + $prores.cpu + ' adapter_mismatch=' + $prores.adapterMismatch)
 
 if ($Prune) {
     # media はハードリンクだけを消す（runner の D23-b と同じ: 名前が 1 つしかないファイルは実体なので残す）。

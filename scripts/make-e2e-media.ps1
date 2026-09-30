@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Generate the test clips the E2E suite expects under artifacts/media (gitignored).
 #
 # GStreamerBackendE2ETests and friends look for fixed file names. When they are
@@ -5,18 +6,14 @@
 # goal ("all E2E pass" before switching the default backend) needs these clips,
 # and every worktree needs its own copy because artifacts/ is gitignored.
 #
-#   powershell -File scripts\make-e2e-media.ps1
-#   powershell -File scripts\make-e2e-media.ps1 -OutDir D:\media -Force
-#   powershell -File scripts\make-e2e-media.ps1 -IncludeA1Repro   # also the 4K ProRes/AV1 clips
+#   pwsh -File scripts\make-e2e-media.ps1
+#   pwsh -File scripts\make-e2e-media.ps1 -OutDir D:\media -Force
+#   pwsh -File scripts\make-e2e-media.ps1 -IncludeA1Repro   # also the 4K ProRes/AV1 clips
 #
 # Requires ffmpeg (default C:\Program Files\ffmpeg\bin).
-#
-# NOTE: keep this file ASCII-only and BOM-less, like the other scripts in this
-# repo. Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI code page, so
-# non-ASCII comments break parsing.
 [CmdletBinding()]
 param(
-    [string]$OutDir = '',
+    [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media'),
     [string]$FfmpegDir = 'C:\Program Files\ffmpeg\bin',
     [switch]$Force,
     # 4K ProRes / AV1 clips for reproducing A1. Off by default since v0.5.1: ProRes
@@ -25,54 +22,41 @@ param(
     [switch]$IncludeA1Repro
 )
 $ErrorActionPreference = 'Stop'
-# Windows PowerShell 5.1 leaves $PSScriptRoot empty inside param() defaults when the
-# script is started with powershell -File, so the default is resolved here.
-if ([string]::IsNullOrWhiteSpace($OutDir)) {
-    $OutDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media'
-}
 
-# Resolve one concrete ffmpeg.exe and call it by full path. -FfmpegDir used to be
-# APPENDED to PATH, so an older ffmpeg earlier on PATH won: ImageMagick ships
-# ffmpeg 4.2.3 in its install directory, which has no libsvtav1, and the 4K AV1
-# fixture died with "Unknown encoder 'libsvtav1'" while a 2023 build with both
-# libsvtav1 and prores_ks sat in C:\Program Files\ffmpeg\bin (seen 2026-09-19).
-# -FfmpegDir now wins outright, and the build actually used is printed.
-$script:FfmpegExe = ''
-$ffmpegCandidate = Join-Path $FfmpegDir 'ffmpeg.exe'
-if (Test-Path -LiteralPath $ffmpegCandidate) {
-    $script:FfmpegExe = (Get-Item -LiteralPath $ffmpegCandidate).FullName
-} else {
-    $ffmpegOnPath = Get-Command ffmpeg -ErrorAction SilentlyContinue
-    if ($ffmpegOnPath) { $script:FfmpegExe = $ffmpegOnPath.Source }
-}
-if ([string]::IsNullOrWhiteSpace($script:FfmpegExe)) {
-    throw 'ffmpeg not found (pass -FfmpegDir)'
-}
-Write-Output ('ffmpeg: ' + $script:FfmpegExe)
+# Resolve one concrete ffmpeg.exe and call it by full path (scripts\TcsFfmpeg.psm1):
+# TCS_FFMPEG, then -FfmpegDir, then PATH. -FfmpegDir used to be APPENDED to PATH,
+# so an older ffmpeg earlier on PATH won: ImageMagick ships ffmpeg 4.2.3 in its
+# install directory, which has no libsvtav1, and the 4K AV1 fixture died with
+# "Unknown encoder 'libsvtav1'" (seen 2026-09-19). The version line of the build
+# actually used is the first line of the output (v0.6.0 stage 5b) and is written
+# per file to ffmpeg-version.txt in the media folder.
+Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
+$script:Ffmpeg = Resolve-TcsFfmpeg -FfmpegDir $FfmpegDir
+$script:FfmpegExe = $script:Ffmpeg.Ffmpeg
+Get-TcsFfmpegLogLines $script:Ffmpeg | ForEach-Object { Write-Output $_ }
+$script:MadeNames = New-Object System.Collections.Generic.List[string]
+$script:ExistingNames = New-Object System.Collections.Generic.List[string]
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
-# Windows PowerShell 5.1 turns each stderr line of a native command into an
-# ErrorRecord, and with $ErrorActionPreference = 'Stop' the first one aborts the
-# script while ffmpeg is still writing. libsvtav1 prints "Svt[info]" banners to
-# stderr regardless of -v error, so the AV1 fixture aborted the whole runner and
-# left a zero-byte file behind that later runs skipped as "exists". Run ffmpeg
-# with 'Continue', judge by the exit code, and remove the output on failure.
+# libsvtav1 prints "Svt[info]" banners to stderr regardless of -v error. Judge
+# ffmpeg by the exit code and remove the output on failure, so an interrupted
+# encode never leaves a zero-byte file that later runs skip as "exists".
 $env:SVT_LOG = '1'
 function Invoke-Ffmpeg([string[]]$FfArgs, [string]$OutputPath, [string]$Name) {
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $messages = @(& $script:FfmpegExe @FfArgs 2>&1 | ForEach-Object { [string]$_ })
-        $code = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previous
+    # Only a new file is made by this ffmpeg; the < 6 warning is for new files only, once.
+    if ($script:MadeNames.Count -eq 0) {
+        $warning = Get-TcsFfmpegOldVersionWarning $script:Ffmpeg
+        if ($warning) { Write-Warning $warning }
     }
+    $messages = @(& $script:FfmpegExe @FfArgs 2>&1 | ForEach-Object { [string]$_ })
+    $code = $LASTEXITCODE
     if ($code -ne 0) {
         $messages | Select-Object -Last 20 | ForEach-Object { Write-Output ('ffmpeg: ' + $_) }
         if (Test-Path -LiteralPath $OutputPath) { Remove-Item -LiteralPath $OutputPath -Force }
         throw ('ffmpeg failed: ' + $Name + ' (exit ' + $code + ')')
     }
+    $script:MadeNames.Add((Split-Path -Leaf $OutputPath))
 }
 
 # An existing fixture is reused only when it is not empty (a zero-byte file is
@@ -102,6 +86,7 @@ foreach ($s in $specs) {
     $path = Join-Path $OutDir $s.Name
     if ((Test-Fixture $path) -and -not $Force) {
         Write-Output ('skip (exists): ' + $s.Name)
+        $script:ExistingNames.Add($s.Name)
         continue
     }
     $src = 'testsrc2=size=' + $s.W + 'x' + $s.H + ':rate=' + $s.Fps + ':duration=' + $s.Sec
@@ -124,6 +109,7 @@ foreach ($s in $audioSpecs) {
     $path = Join-Path $OutDir $s.Name
     if ((Test-Fixture $path) -and -not $Force) {
         Write-Output ('skip (exists): ' + $s.Name)
+        $script:ExistingNames.Add($s.Name)
         continue
     }
     $video = 'testsrc2=size=1280x720:rate=30:duration=20'
@@ -154,6 +140,7 @@ foreach ($s in $scenarioSpecs) {
     $path = Join-Path $OutDir $s.Name
     if ((Test-Fixture $path) -and -not $Force) {
         Write-Output ('skip (exists): ' + $s.Name)
+        $script:ExistingNames.Add($s.Name)
         continue
     }
     $filters = 'color=c=' + $s.Base + ':s=1280x720:r=30:d=20'
@@ -198,6 +185,7 @@ foreach ($s in $scenario4kSpecs) {
     $path = Join-Path $OutDir $s.Name
     if ((Test-Fixture $path) -and -not $Force) {
         Write-Output ('skip (exists): ' + $s.Name)
+        $script:ExistingNames.Add($s.Name)
         continue
     }
     $tailStart = $s.Sec - 1
@@ -212,6 +200,11 @@ foreach ($s in $scenario4kSpecs) {
     Write-Output ('making: ' + $s.Name + ' (' + $s.W + 'x' + $s.H + '@' + $s.Fps + ', colour fixture)')
     Invoke-Ffmpeg $ffargs $path $s.Name
 }
+
+$sidecar = Update-TcsFfmpegSidecar -Directory $OutDir -Ffmpeg $script:Ffmpeg `
+    -MadeNames $script:MadeNames.ToArray() -ExistingNames $script:ExistingNames.ToArray()
+Write-Output ('ffmpeg-version sidecar: ' + $sidecar + ' (made ' + $script:MadeNames.Count +
+    ', reused ' + $script:ExistingNames.Count + ')')
 
 Write-Output '--- result ---'
 Get-ChildItem $OutDir -File |

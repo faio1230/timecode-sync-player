@@ -254,6 +254,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <TextBlock Text="FPS:" Foreground="#BBBBBB"
                                Grid.Row="0" Grid.Column="0"
@@ -320,6 +321,25 @@
                                    AutomationProperties.AutomationId="SyncOffsetHintText"
                                    Foreground="#888888" FontSize="11"/>
                     </StackPanel>
+                    <!-- v0.6.0: 幅が足りないときは「再起動の後に反映」を下の行へ折り返す -->
+                    <WrapPanel Grid.Row="4" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="ProRes の GPU 復号:" Foreground="#BBBBBB"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="ProResGpuCombo"
+                                  AutomationProperties.AutomationId="ProResGpuCombo"
+                                  Width="80" Height="28"
+                                  ToolTip="自動: NVIDIA の GPU でだけ使う。有効: どの GPU でも使う（NVIDIA 以外は未検証）。無効: CPU で復号。GPU の復号に 1 回失敗すると、その起動の間は CPU で復号する"
+                                  SelectedIndex="{Binding Sync.ProResGpuModeIndex, Mode=TwoWay}">
+                            <ComboBoxItem Content="自動" Tag="auto"/>
+                            <ComboBoxItem Content="有効" Tag="on"/>
+                            <ComboBoxItem Content="無効" Tag="off"/>
+                        </ComboBox>
+                        <TextBlock x:Name="ProResGpuRestartNoticeText"
+                                   AutomationProperties.AutomationId="ProResGpuRestartNoticeText"
+                                   Foreground="#FFB300" FontSize="11"
+                                   VerticalAlignment="Center" Margin="8,0,0,0"
+                                   Text="{Binding Sync.ProResGpuRestartNotice}"/>
+                    </WrapPanel>
                 </Grid>
 
                 <UniformGrid Grid.Row="3" Rows="1" Columns="3" Margin="0,0,0,8">

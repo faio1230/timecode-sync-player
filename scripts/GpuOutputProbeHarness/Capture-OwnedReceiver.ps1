@@ -1,3 +1,4 @@
+#requires -Version 7.0
 # Optional visual-validation helper. Never called by the performance runner.
 [CmdletBinding(DefaultParameterSetName='Capture')]
 param(

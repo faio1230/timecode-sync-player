@@ -106,11 +106,106 @@ public class GstBackendStateTests
         native.SetDecodeModeCalls.Should().BeEmpty();
     }
 
-    private static async Task<AppSettingsManager> CreateSettingsManager(string decodeMode)
+    [Theory]
+    [InlineData("auto", GstNative.ProResGpuAuto)]
+    [InlineData("on", GstNative.ProResGpuOn)]
+    [InlineData("off", GstNative.ProResGpuOff)]
+    [InlineData("OFF", GstNative.ProResGpuOff)]
+    [InlineData("bogus", GstNative.ProResGpuAuto)]
+    public async Task ProResGpu_IsForwardedToShimAtPlayerCreate(string value, int expected)
+    {
+        // v0.6.0: decodeMode と違い、既定の auto でも必ず渡す（shim のログの source=setting で確かめる）。
+        AppSettingsManager manager = await CreateSettingsManagerFromJson("{\"proResGpu\":\"" + value + "\"}");
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native, manager);
+
+        state.EnsurePlayer().Should().BeTrue();
+
+        native.SetProResGpuCalls.Should().Equal(expected);
+    }
+
+    [Fact]
+    public async Task ProResGpu_WithoutKey_ForwardsAuto()
+    {
+        AppSettingsManager manager = await CreateSettingsManager("hardware");
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native, manager);
+
+        state.EnsurePlayer();
+
+        native.SetProResGpuCalls.Should().Equal(GstNative.ProResGpuAuto);
+        state.AppliedProResGpu.Should().Be(ProResGpuMode.Auto);
+    }
+
+    [Fact]
+    public void ProResGpu_MissingSettingsManager_ForwardsAuto()
+    {
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native);
+
+        state.AppliedProResGpu.Should().BeNull("プレイヤー作成の前は何も渡していない");
+        state.EnsurePlayer();
+
+        native.SetProResGpuCalls.Should().Equal(GstNative.ProResGpuAuto);
+    }
+
+    [Fact]
+    public async Task ProResGpu_IsForwardedAgainWhenPlayerIsRecreated()
+    {
+        // GPU 復旧の作り直し（RecreatePlayer）でも、同じ経路（EnsurePlayer）で掛かる。
+        AppSettingsManager manager = await CreateSettingsManagerFromJson("{\"proResGpu\":\"off\"}");
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native, manager);
+        state.EnsurePlayer().Should().BeTrue();
+
+        state.RecreatePlayer(new IntPtr(0x99)).Should().BeTrue();
+
+        native.PlayerCreateCalls.Should().Be(2);
+        native.SetProResGpuCalls.Should().Equal(GstNative.ProResGpuOff, GstNative.ProResGpuOff);
+        state.AppliedProResGpu.Should().Be(ProResGpuMode.Off);
+    }
+
+    [Fact]
+    public async Task ProResGpu_RecreateAfterSettingChange_KeepsTheStartupValue()
+    {
+        // UI で変えた値は次の起動まで shim に渡さない（「再起動の後に反映」と挙動を合わせる。
+        // 本番中の GPU 復旧で復号の方式が黙って変わらないようにする）。
+        AppSettingsManager manager = await CreateSettingsManagerFromJson("{\"proResGpu\":\"on\"}");
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9) };
+        var state = new GstBackendState(native, manager);
+        state.EnsurePlayer().Should().BeTrue();
+
+        await manager.UpdateAsync(settings => settings with { ProResGpu = "off" });
+        state.RecreatePlayer(new IntPtr(0x99)).Should().BeTrue();
+
+        manager.Current.ProResGpu.Should().Be("off");
+        native.SetProResGpuCalls.Should().Equal(GstNative.ProResGpuOn, GstNative.ProResGpuOn);
+        state.AppliedProResGpu.Should().Be(ProResGpuMode.On);
+    }
+
+    [Fact]
+    public async Task ProResGpu_FailureReturnCode_DoesNotStopPlayerCreate()
+    {
+        AppSettingsManager manager = await CreateSettingsManagerFromJson("{\"proResGpu\":\"on\"}");
+        var native = new FakeGstNative { PlayerCreateResult = new IntPtr(9), SetProResGpuResult = -1 };
+        var state = new GstBackendState(native, manager);
+        state.AttachRenderCallback(_ => { }, IntPtr.Zero);
+
+        state.EnsurePlayer().Should().BeTrue("失敗は警告だけで起動は止めない");
+
+        state.Player.Should().Be(new IntPtr(9));
+        native.SetProResGpuCalls.Should().Equal(GstNative.ProResGpuOn);
+        native.LastFrameCallback.Should().NotBeNull("失敗の後も通知の登録まで進む");
+    }
+
+    private static Task<AppSettingsManager> CreateSettingsManager(string decodeMode) =>
+        CreateSettingsManagerFromJson("{\"decodeMode\":\"" + decodeMode + "\"}");
+
+    private static async Task<AppSettingsManager> CreateSettingsManagerFromJson(string json)
     {
         string path = Path.Combine(
             Path.GetTempPath(), "tcs-decode-mode-" + Guid.NewGuid().ToString("N") + ".json");
-        await File.WriteAllTextAsync(path, "{\"decodeMode\":\"" + decodeMode + "\"}");
+        await File.WriteAllTextAsync(path, json);
         var manager = new AppSettingsManager(path);
         await manager.LoadAsync();
         return manager;
