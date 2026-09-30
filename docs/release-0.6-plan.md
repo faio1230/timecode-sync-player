@@ -77,6 +77,8 @@ v0.6.0（新しい復号経路 = 機能の追加）。v0.5.2（状態の整理�
 ## v0.6.x の負債（2026-09-30 起票）
 
 - インストーラーの昇格: VC++ が古い PC では vc_redist の `/quiet` が UAC を出す（インストーラーは `PrivilegesRequired=lowest`）。`PrivilegesRequiredOverridesAllowed=dialog` か、VC++ が古いときだけ昇格を求める形にする（優先度低、TSP-Fable の判定。利用者に諮る事項ではない）
+- instant-rate の変更が flush シークの直後に効かないことがある（推定）。`glib.CRITICAL gst_segment_do_seek` の行、shim は TRUE を成功とみなす。詳細と確かめ方は `design/v0.6.0-prores-gpu.md` 8-2（v0.6.2 の候補）
+- 境界の保持の不感帯: 範囲外の保持中に位置が端の外（端 + 2 フレーム〜許容 6 フレーム）にあると、境界の保持も同期の判定も動かない。S-4 の直し（案 A）で記録の欠けは埋めたが、不感帯そのものは残る。案 B（境界の保持が自分で端へ戻す）を §10-0 の L 系と一緒に（TSP-Fable の判定）
 - 起動の遅れの口: `ui.heartbeat` は Debug の行で、配布ビルドでは取れない。環境変数で起動の最初の N 秒だけ Information にする口を v0.6.2（起動の停止の直し）の設計で足す
 
 ## 将来の項目（版未定。v0.7.0 の UI 刷新か v0.8.0 のトランジションと合わせて判断）
