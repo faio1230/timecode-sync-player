@@ -7,8 +7,12 @@ namespace TimecodeSyncPlayer;
 /// </summary>
 internal sealed class LtcInputState
 {
-    /// <summary>最後に受理したフレーム（同期に使う実効値・生値・フレーム終端）。</summary>
-    internal readonly record struct AcceptedFrame(double EffectiveSeconds, double RawSeconds, long FrameEndTimestamp);
+    /// <summary>
+    /// 最後に受理したフレーム（同期に使う実効値・生値・フレーム終端）。v0.6.1 D1: 受信時刻はフレーム終端が無いとき
+    /// （サンプル時計の無い経路）の経過時間に使う。
+    /// </summary>
+    internal readonly record struct AcceptedFrame(
+        double EffectiveSeconds, double RawSeconds, long FrameEndTimestamp, long ReceivedAt = 0);
 
     /// <summary>同期要求の再送用の保留（評価が Deferred のときだけ持つ）。</summary>
     internal readonly record struct PendingSync(double EffectiveSeconds, double RawSeconds, long FrameEndTimestamp);
@@ -83,6 +87,14 @@ internal sealed class LtcInputState
         return HeldRunLength;
     }
 
+    /// <summary>v0.6.1（3-5 節 (iii)）: 這う前進。数える保持の連続の長さを保ったまま、同値の比べる相手を新しい値へ移す。</summary>
+    public int MoveHeldRunTo(double seconds)
+    {
+        if (HeldRunLength > 0)
+            _heldRunSeconds = seconds;
+        return HeldRunLength;
+    }
+
     /// <summary>監視の開始・停止で、受けたフレームの記録と 1 回適用のラッチを捨てる（移す前の ClearFrameHistory）。</summary>
     public void ClearFrameHistory()
     {
@@ -148,9 +160,9 @@ internal sealed class LtcInputState
     public void MarkHeldLossLanding(double seconds) => HeldLossLandingSeconds = seconds;
 
     /// <summary>最後に受理したフレームを覚え、同期へ適用した最後の値も同じ実効値にする。</summary>
-    public void AcceptFrame(double effectiveSeconds, double rawSeconds, long frameEndTimestamp)
+    public void AcceptFrame(double effectiveSeconds, double rawSeconds, long frameEndTimestamp, long receivedAt = 0)
     {
-        Accepted = new AcceptedFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
+        Accepted = new AcceptedFrame(effectiveSeconds, rawSeconds, frameEndTimestamp, receivedAt);
         LastAppliedLtcSeconds = effectiveSeconds;
     }
 

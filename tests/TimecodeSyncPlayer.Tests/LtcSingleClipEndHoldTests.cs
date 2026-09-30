@@ -113,6 +113,9 @@ public sealed class LtcSingleClipEndHoldTests
         h.IsPaused.Should().BeTrue();
         h.Operations.Clear();
 
+        // v0.6.1: 40 の保持は 40ms ごとに届く。1 枚目は確認の窓の外なので保留の置き換え、2 枚目（同値）で確定し、
+        // 損失中の保持値の変更として境界ホールドが成立する（窓の外の同値は確認を経るまで適用しない、3-5 の (iv-b)）。
+        h.SupplyHeldLtc(40.0);
         h.SupplyHeldLtc(40.0);   // 40 保持 → 境界ホールド成立
 
         h.Operations.Should().Contain(o => o.Name == "clip-end-hold");

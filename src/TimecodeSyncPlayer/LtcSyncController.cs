@@ -73,6 +73,9 @@ internal sealed class LtcSyncController
     private readonly TimecodeSyncService _syncService;
     private readonly LtcFrameProcessor _frames;
     private readonly LtcSignalLossPolicy _signalLoss;
+
+    /// <summary>v0.6.1: 這う前進の上限に使う freewheel（信号断の確認と同じ timeout）。</summary>
+    private readonly double _freewheelSeconds;
     private readonly LtcSignalLossMonitoringState _monitoring = new();
     private readonly LtcSyncEffects _effects;
     private readonly Func<SingleModeSyncCoordinator> _single;
@@ -105,6 +108,7 @@ internal sealed class LtcSyncController
         _syncService = syncService;
         _frames = frames;
         _signalLoss = new(TimeSpan.FromMilliseconds(timeoutMilliseconds), resumeFrames);
+        _freewheelSeconds = timeoutMilliseconds / 1000.0;
         _effects = effects;
         _single = single;
         _continue = continueOnTrack;
@@ -584,36 +588,103 @@ internal sealed class LtcSyncController
             LogFrameDiagnostics(sourceFrame, processed, mode);
         double rawSeconds = processed.ResolvedSeconds;
         long frameEndTimestamp = sourceFrame?.FrameEndTimestamp ?? 0;
-        // v0.5.4（規則 4 の入口の数え方）: 入口に数える保持の連続を、すべてのフレームで数える。Jump の保留・
-        // 別の値・fps の疑わしい Duplicate が挟まったら数え直す（RunThrough の入口と停止モードの U8 で共有）。
-        int heldRun = _input.ObserveHeldRun(
-            IsCountedHeldFrame(processed, sourceFrame, mode) ? rawSeconds : null,
-            (LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04) * 0.5);
-        // D30: 未確認 Jump の確認。直後の 1 フレームが同値の Duplicate か +1 フレームなら、
-        // その値を確認済み Jump として適用する（保持損失からの復帰も確認後に行う）。
+        // v0.6.1（docs/design/v0.6.1-jump-confirm.md 3-5 節「帯で受理する」）: 層 2 の分類（受理するか）は、直前のフレーム
+        // ではなく受理済みの値 A とその時刻からの経過 e に対して行う。層 1 の診断（直前のフレームとの比較）はログのまま残し、
+        // 保留した Jump の確認の規則（IsConfirmedBy）にだけ使う。
+        TimecodeFrameDiagnosticStatus layer1Status = processed.Diagnostic.Status;
+        double layer2Fps = processed.ResolvedFps > 0 ? processed.ResolvedFps : LastTimecodeFps;
+        Layer2Class? layer2 =
+            layer1Status is TimecodeFrameDiagnosticStatus.Normal or TimecodeFrameDiagnosticStatus.Duplicate
+                or TimecodeFrameDiagnosticStatus.Reverse or TimecodeFrameDiagnosticStatus.Jump
+                ? ClassifyAgainstAcceptedStream(rawSeconds, frameEndTimestamp, receivedAtMilliseconds, layer2Fps)
+                : null;
+        if (layer2 is { } layer2Class)
+        {
+            Log.Debug(
+                "LTC frame layer2 class={Layer2} layer1={Layer1} ltc={Ltc:F3} accepted={Accepted:F3}",
+                layer2Class, layer1Status, rawSeconds, _input.Accepted?.RawSeconds ?? double.NaN);
+            TimecodeFrameDiagnosticStatus mapped = layer2Class switch
+            {
+                Layer2Class.Duplicate => TimecodeFrameDiagnosticStatus.Duplicate,
+                Layer2Class.Normal => TimecodeFrameDiagnosticStatus.Normal,
+                Layer2Class.Reverse => TimecodeFrameDiagnosticStatus.Reverse,
+                _ => TimecodeFrameDiagnosticStatus.Jump,
+            };
+            if (layer2Class == Layer2Class.Creep)
+                mapped = TimecodeFrameDiagnosticStatus.Duplicate;    // 這う前進は下の専用の経路で扱う（枝へは流さない）
+            processed = processed with
+            {
+                Diagnostic = processed.Diagnostic with { Status = mapped },
+                ShouldApplySync = TimecodeSyncFrameGate.ShouldApplySync(mapped),
+            };
+        }
+        TimecodeFrameDiagnosticStatus status = processed.Diagnostic.Status;
+        double sameValueSeconds = (LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04) * 0.5;
+        // 受理されない値（Reverse・Jump の保留）は、数える保持の連続を変えない（未受理の値はマスターの状態を変えない、3-4 の (a)）。
+        // 這う前進は、連続の長さを保ったまま比べる値だけを移す。
+        int heldRun = layer2 switch
+        {
+            Layer2Class.Reverse or Layer2Class.Jump => _input.HeldRunLength,
+            Layer2Class.Creep => _input.MoveHeldRunTo(rawSeconds),
+            _ => _input.ObserveHeldRun(IsCountedHeldFrame(processed, sourceFrame, mode) ? rawSeconds : null, sameValueSeconds),
+        };
+        // D30: 未確認 Jump の確認。v0.6.1: まず A に対して分類し、A の流れ（(i)〜(iii)）へ戻っていれば保留を捨てる（化けた値の
+        // 次の正しい値を確定した Jump として受け直さない）。A の流れの外（(iv)）なら今どおり、保留した値との関係（層 1 の状態）で確かめる。
         if (_input.PendingJumpSeconds is double pendingJump)
         {
-            _input.ClearPendingJumpSeconds();
-            bool withinWindow = JumpConfirmationPolicy.IsWithinConfirmationWindow(
-                _input.PendingJumpFrameEndTimestamp, frameEndTimestamp,
-                _input.PendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps);
-            if (withinWindow &&
-                JumpConfirmationPolicy.IsConfirmedBy(
-                    pendingJump, rawSeconds, LastTimecodeFps, processed.Diagnostic.Status))
+            if (layer2 is Layer2Class.Duplicate or Layer2Class.Normal or Layer2Class.Creep)
             {
-                ApplyConfirmedJump(processed.Diagnostic.Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds, heldRun);
-                return;
-            }
-            if (!withinWindow)
-            {
-                // D31: 窓はサンプル時計（FrameEndTimestamp）優先。壁時計（受信時刻）は参考値として出す。
+                _input.DiscardPendingJump();
                 Log.Information(
-                    "Timecode sync: dropping out-of-window pending Jump frame ltc={Ltc:F3} next={Next:F3} streamMs={StreamMs:F1} wallMs={WallMs}",
-                    pendingJump, rawSeconds,
-                    JumpConfirmationPolicy.SampleClockDifferenceMilliseconds(
-                        _input.PendingJumpFrameEndTimestamp, frameEndTimestamp) ?? -1.0,
-                    receivedAtMilliseconds - _input.PendingJumpReceivedAt);
+                    "Timecode sync: pending Jump frame discarded: returned to the accepted stream pending={Pending:F3} ltc={Ltc:F3} accepted={Accepted:F3} class={Class}",
+                    pendingJump, rawSeconds, _input.Accepted?.RawSeconds ?? double.NaN, layer2);
             }
+            else
+            {
+                _input.ClearPendingJumpSeconds();
+                bool withinWindow = JumpConfirmationPolicy.IsWithinConfirmationWindow(
+                    _input.PendingJumpFrameEndTimestamp, frameEndTimestamp,
+                    _input.PendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps);
+                if (withinWindow &&
+                    JumpConfirmationPolicy.IsConfirmedBy(pendingJump, rawSeconds, LastTimecodeFps, layer1Status))
+                {
+                    // 確定した値で数え直す（確認のフレームが保留した値の Duplicate なら、その値の 1 枚目）。
+                    LtcFrameProcessingResult layer1Processed =
+                        processed with { Diagnostic = processed.Diagnostic with { Status = layer1Status } };
+                    int confirmedHeldRun = layer2 is not null
+                        ? _input.ObserveHeldRun(
+                            IsCountedHeldFrame(layer1Processed, sourceFrame, mode) ? rawSeconds : null, sameValueSeconds)
+                        : heldRun;
+                    ApplyConfirmedJump(layer1Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds, confirmedHeldRun);
+                    return;
+                }
+                if (!withinWindow)
+                {
+                    // D31: 窓はサンプル時計（FrameEndTimestamp）優先。壁時計（受信時刻）は参考値として出す。
+                    Log.Information(
+                        "Timecode sync: dropping out-of-window pending Jump frame ltc={Ltc:F3} next={Next:F3} streamMs={StreamMs:F1} wallMs={WallMs}",
+                        pendingJump, rawSeconds,
+                        JumpConfirmationPolicy.SampleClockDifferenceMilliseconds(
+                            _input.PendingJumpFrameEndTimestamp, frameEndTimestamp) ?? -1.0,
+                        receivedAtMilliseconds - _input.PendingJumpReceivedAt);
+                }
+            }
+        }
+
+        // v0.6.1 (iii) 這う前進: A を raw に更新し時刻も付け直すが、M は raw で止まる（外挿しない＝同期の要求を出さず、
+        // 保留の同期も捨てる）。保持の状態は切らない。映像との差が許容を超えるときだけ、保持の目標を raw にして
+        // 1 回合わせる（規則 4 の入口の合わせと同じ経路）。
+        if (layer2 == Layer2Class.Creep)
+        {
+            double creepEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
+                _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
+            _input.AcceptFrame(creepEffectiveSeconds, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
+            _input.MarkHeldEffective(creepEffectiveSeconds);
+            _input.DiscardPendingSync();
+            _lastContinueFrame = null;
+            Log.Debug("LTC frame layer2: creeping advance accepted ltc={Ltc:F3} heldRun={HeldRun}", rawSeconds, heldRun);
+            AlignOnRunThroughHoldEntry();
+            return;
         }
 
         bool applyOnce;
@@ -724,7 +795,7 @@ internal sealed class LtcSyncController
         // 同期判断・シーク・クリップ切替・ギャップ出入りが同じ量だけずれる。
         // T2: サンプル時計が有効なら、ここでフレーム終端からの経過（age）を足す。
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, applyOnce ? "jump" : "frame");
-        _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
+        _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
         if (applyOnce)
         {
             // 通常時は診断 Jump・保持値の変更を信号回復の有効フレームに数えない
@@ -771,10 +842,50 @@ internal sealed class LtcSyncController
         _input.ClearHeldLossLanding();
         _lastContinueFrame = null;
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
-        _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp);
+        _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
         Log.Information("Timecode sync: applying the confirmed Jump frame once ltc={Ltc:F3}", rawSeconds);
         RequestSyncEffective(effectiveSeconds);
         ApplyCorrection(effectiveSeconds);
+    }
+
+    /// <summary>v0.6.1: 層 2 の分類（docs/design/v0.6.1-jump-confirm.md 3-5 節の表）。</summary>
+    internal enum Layer2Class
+    {
+        Duplicate,
+        Normal,
+        Creep,
+        Reverse,
+        Jump,
+    }
+
+    /// <summary>
+    /// v0.6.1（3-5 節の表）: 受理済みの値 A と、その時刻からの経過 e に対する層 2 の分類。差はフレーム数。
+    /// しきい値は診断と同じ ±0.5・2.5 フレーム、這う前進の上限は信号断の確認と同じ freewheel（新しい定数は足さない）。
+    /// (i) raw−A が ±0.5 → Duplicate。(ii) raw−A &gt; +0.5 かつ raw−(A+e) が ±2.5 → Normal。
+    /// (iii) raw−A &gt; +0.5 で (ii) でなく raw−A ≤ min(e, 250ms)+2.5 → 這う前進。
+    /// (iv-a) −2.5 ≤ raw−A &lt; −0.5 → Reverse。(iv-b) それ以外 → Jump。受理値が無ければ null（層 1 のまま）。
+    /// </summary>
+    private Layer2Class? ClassifyAgainstAcceptedStream(
+        double rawSeconds, long frameEndTimestamp, long receivedAtMilliseconds, double fps)
+    {
+        if (_input.Accepted is not { } accepted || fps <= 0 || !double.IsFinite(rawSeconds))
+            return null;
+
+        double elapsedSeconds = Math.Max(0.0,
+            (JumpConfirmationPolicy.SampleClockDifferenceMilliseconds(accepted.FrameEndTimestamp, frameEndTimestamp)
+             ?? receivedAtMilliseconds - accepted.ReceivedAt) / 1000.0);
+        double fromAccepted = (rawSeconds - accepted.RawSeconds) * fps;
+        double fromStream = (rawSeconds - (accepted.RawSeconds + elapsedSeconds)) * fps;
+        double creepLimit = Math.Min(elapsedSeconds, _freewheelSeconds) * fps + 2.5;
+        if (fromAccepted >= -0.5 && fromAccepted < 0.5)
+            return Layer2Class.Duplicate;
+        if (fromAccepted >= 0.5 && Math.Abs(fromStream) <= 2.5)
+            return Layer2Class.Normal;
+        if (fromAccepted >= 0.5 && fromAccepted <= creepLimit)
+            return Layer2Class.Creep;
+        if (fromAccepted < -0.5 && fromAccepted >= -2.5)
+            return Layer2Class.Reverse;
+        return Layer2Class.Jump;
     }
 
     /// <summary>
