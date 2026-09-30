@@ -2,12 +2,18 @@
 [CmdletBinding()]
 param(
     [string]$AppPath,
-    [string]$FfmpegPath = "ffmpeg",
+    # Folder of ffmpeg.exe. Order: TCS_FFMPEG (full path), then -FfmpegDir, then PATH
+    # (scripts\TcsFfmpeg.psm1).
+    [string]$FfmpegDir = "",
     [ValidateRange(20, 30)]
     [int]$DurationSeconds = 25
 )
 
 $ErrorActionPreference = "Stop"
+
+Import-Module (Join-Path $PSScriptRoot "TcsFfmpeg.psm1") -Force
+$ffmpeg = Resolve-TcsFfmpeg -FfmpegDir $FfmpegDir
+Get-TcsFfmpegLogLines $ffmpeg | ForEach-Object { Write-Host $_ }
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($AppPath)) {
@@ -18,11 +24,6 @@ if (-not (Test-Path -LiteralPath $AppPath -PathType Leaf)) {
     throw "TimecodeSyncPlayer.exe was not found: $AppPath`nBuild the Debug configuration first or pass -AppPath."
 }
 
-$ffmpegCommand = Get-Command $FfmpegPath -ErrorAction SilentlyContinue
-if (-not $ffmpegCommand) {
-    throw "ffmpeg was not found: $FfmpegPath"
-}
-
 $captureDirectory = Join-Path $env:TEMP ("timecode-sync-player-capture-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $captureDirectory | Out-Null
 $videoPath = Join-Path $captureDirectory "smpte-timecode.mp4"
@@ -30,7 +31,9 @@ $settingsPath = Join-Path $captureDirectory "settings.json"
 
 $filter = "drawtext=fontfile='C\:/Windows/Fonts/consola.ttf':timecode='00\:00\:00\:00':rate=25:x=(w-tw)/2:y=h-90:fontsize=48:fontcolor=white:box=1:boxcolor=black@0.65"
 Write-Host "Generating the capture video: $videoPath"
-& $ffmpegCommand.Source `
+$oldVersionWarning = Get-TcsFfmpegOldVersionWarning $ffmpeg
+if ($oldVersionWarning) { Write-Warning $oldVersionWarning }
+& $ffmpeg.Ffmpeg `
     -hide_banner -loglevel error -y `
     -f lavfi -i "smptehdbars=size=1280x720:rate=25" `
     -vf $filter `
@@ -40,6 +43,7 @@ Write-Host "Generating the capture video: $videoPath"
 if ($LASTEXITCODE -ne 0) {
     throw "ffmpeg failed with exit code $LASTEXITCODE."
 }
+Update-TcsFfmpegSidecar -Directory $captureDirectory -Ffmpeg $ffmpeg -MadeNames @("smpte-timecode.mp4") | Out-Null
 
 @"
 {

@@ -2739,6 +2739,8 @@ public sealed partial class LtcScenarioE2ETests
 
             _exited = exited;
             Journal.Write("app-exit", details: new { exited, exitCode });
+            // 段 5b: 終了を押してからプロセスが消えるまでの秒数（ランナーが run-result.json の appExit に集計）。
+            Journal.Write("app-exit-timing", details: App.DescribeExit("verify"));
             exited.Should().BeTrue("この run でアプリが正常終了する");
             exitCode.Should().Be(0);
 
@@ -2770,6 +2772,14 @@ public sealed partial class LtcScenarioE2ETests
             if (!_exited)
             {
                 try { App?.ExitNormally(TimeSpan.FromSeconds(10)); } catch { /* Dispose が kill する */ }
+                // 段 5b: VerifyAndExit の 15 秒で終わらなかった回と、事前確認だけで抜けた回の終了の秒数。
+                // まだ終わっていなければ、この後の Dispose が kill する（waitedSeconds が下限）。
+                try
+                {
+                    if (App?.ExitRequestedUtc is not null)
+                        Journal.Write("app-exit-timing", details: App.DescribeExit("dispose"));
+                }
+                catch { /* 記録の失敗で破棄を止めない */ }
             }
 
             App?.Dispose();
