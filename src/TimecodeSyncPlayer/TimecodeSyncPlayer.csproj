@@ -45,8 +45,9 @@
       <Link>tcs_gstreamer.dll</Link>
     </Content>
     <!-- v0.6.0: scripts\get-prores-plugin.ps1 が置く ProRes の GPU 復号プラグイン（DLL と .cso）。
-         同梱でないとき GstNativeLibraryResolver が GST_PLUGIN_PATH に足す。 -->
-    <Content Include="..\..\native\gst-prores\*" Condition="Exists('..\..\native\gst-prores')">
+         同梱でないとき GstNativeLibraryResolver が GST_PLUGIN_PATH に足す。
+         licenses\（LICENSE・README.txt・SHA256SUMS.txt）は bin に入れない（配布物へは package-release.ps1 が置く）。 -->
+    <Content Include="..\..\native\gst-prores\*.dll;..\..\native\gst-prores\*.cso" Condition="Exists('..\..\native\gst-prores')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>gst-extra-plugins\%(Filename)%(Extension)</Link>
     </Content>

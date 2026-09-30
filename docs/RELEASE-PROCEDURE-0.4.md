@@ -27,13 +27,33 @@
 powershell -File native\gst-shim\build-shim.ps1 -Config Release
 # csproj は native\tcs_gstreamer.dll があればそれを bin へコピーするので、Release の shim をそこへ置いてからパッケージする（終わったら消して Debug の shim に戻す）
 Copy-Item native\gst-shim\build-release\tcs_gstreamer.dll native\tcs_gstreamer.dll
-# Release ビルド + zip + setup.exe（Inno Setup、GStreamer ランタイム同梱、VC++ 再配布の連鎖）
+# v0.6.0 以降: ProRes の GPU 復号プラグイン（gst-prores-d3d11）を native\gst-prores に置く（版と SHA-256 はスクリプトの先頭で固定）
+powershell -File scripts\get-prores-plugin.ps1
+# Release ビルド + zip + setup.exe（Inno Setup、GStreamer ランタイム同梱、ProRes プラグイン同梱、VC++ 再配布の連鎖）
 powershell -File scripts\package-release.ps1            # Version は csproj から読む
-#   必要なら -InnoSetupCompiler / -GStreamerRoot / -VcRedistPath を明示
+#   必要なら -InnoSetupCompiler / -GStreamerRoot / -VcRedistPath / -ProResPluginDir を明示
 # 出力: artifacts\release\（zip、TimecodeSyncPlayer-v0.4.0-setup.exe）
 ```
 
 - 出力の zip と setup.exe の **SHA-256 を `docs/release-0.4-plan.md` に記録**する
+- **ProRes プラグイン（v0.6.0 以降）**: `package-release.ps1` は `-ProResPluginDir`（既定 `native\gst-prores`）を
+  `get-prores-plugin.ps1 -VerifyDir` で照合する（`gstproresd3d11.dll` の SHA-256 は固定値、`prores_*.cso` 6 個は
+  `licenses\SHA256SUMS.txt` の値）。無い・違うときはビルドの前に止まる。配布物では DLL と `.cso` が
+  `gstreamer\lib\gstreamer-1.0\`、LICENSE と README.txt が `gstreamer\share\licenses\gst-prores-d3d11\` に入る
+- **VC++ 再頒布パッケージ（v0.6.0 以降、14.50.35710 以上）**: 最低版・固定の版・SHA-256・入手元の URL は
+  `package-release.ps1` の先頭の 1 か所（`$vcRedistMinVersion`・`$vcRedistPinnedVersion`・`$vcRedistPinnedSha256`・
+  `$vcRedistPinnedUrl`）。インストーラーの `VcRuntimeMissing` にも同じ最低版が `/D` で渡る。
+  キャッシュ `artifacts\cache\vc_redist.x64.exe` が最低版より古い・固定の SHA-256 と違うときは、ビルドの前に止まる。
+  `-VcRedistPath` で渡したファイルは署名と最低版だけを見る（SHA-256 はログに出す）
+  - 2026-09-30 の確認: `https://aka.ms/vs/17/release/vc_redist.x64.exe` は **14.44.35211**（VS 2022 の系列）を返すので使わない。
+    `https://aka.ms/vc14/vc_redist.x64.exe` は `https://aka.ms/vs/18/release/vc_redist.x64.exe` へ転送され、
+    **14.51.36247.0**（SHA-256 `843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C`、Microsoft の署名）を返す。
+    固定の URL はその転送先の版ごとの URL（`download.visualstudio.microsoft.com/download/pr/…/VC_redist.x64.exe`）
+  - **キャッシュの更新の手順**: (1) `curl -sSIL https://aka.ms/vc14/vc_redist.x64.exe` の `Location` で転送先の版ごとの URL を
+    確かめる。(2) そのファイルを落とし、`(Get-Item <exe>).VersionInfo.ProductVersion`・`Get-FileHash`・
+    `Get-AuthenticodeSignature`（Valid、Microsoft Corporation）を確かめる。(3) `package-release.ps1` の先頭の固定値
+    （URL・版・SHA-256）を書き換えてコミットする。(4) 古いキャッシュを `vc_redist.x64.exe.<版>-stale` に改名して退避し、
+    `package-release.ps1` を実行する（固定の URL から落として版と SHA-256 を照合する）
 - 配布物に `libmpv-2.dll` / `mpv-2.dll` が含まれていないこと、`tcs_gstreamer.dll` と GStreamer のプラグイン閉包が含まれていることを確認する（`Expand-Archive` して一覧）
 - 別のディレクトリに展開して起動し、**素材 2 本（うち音声付き AAC 44.1kHz を 1 本。`scripts\make-e2e-media.ps1` の `test_720p30_aac44k.mp4`）の再生と Spout 送信、LTC 同期 1 本（V3 ハーネスではなく手動でよい）**を確認する。ログの `=== TimecodeSyncPlayer v0.4.0 起動 ===` を見る
 
