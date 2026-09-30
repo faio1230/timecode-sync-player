@@ -73,6 +73,18 @@ public sealed class LtcHeldValueChangeTests
         h.SupplyHeldLtc(heldSeconds);
     }
 
+    /// <summary>
+    /// 止めた位置を変える実機の列: 1 倍速の逆再生（1 フレームずつ戻る Reverse）で to まで戻る。to の値は届いた
+    /// 最後の 1 枚で、ここではまだ保持ではない（次の同値から保持として届く）。
+    /// </summary>
+    private static void ReverseTo(SyncScenarioHarness h, double fromSeconds, double toSeconds)
+    {
+        int from = (int)Math.Round(fromSeconds * 25.0);
+        int to = (int)Math.Round(toSeconds * 25.0);
+        for (int frame = from - 1; frame >= to; frame--)
+            h.SupplyLtc(frame / 25.0);
+    }
+
     private static IReadOnlyList<double> SeekTargets(SyncScenarioHarness h) =>
         h.Operations.Where(o => o.Name == "seek").Select(o => o.Value ?? double.NaN).ToList();
 
@@ -92,6 +104,7 @@ public sealed class LtcHeldValueChangeTests
         h.Operations.Clear();
         clock.Advance(TimeSpan.FromMilliseconds(600));
 
+        ReverseTo(h, 20.0, 8.0);   // 止めた位置を 8.0 へ戻す（逆再生の Reverse はどれも着地させない）
         h.SupplyHeldLtc(8.0);
         SeekTargets(h).Should().Equal(new[] { 8.0 }, "保持値が変わったら新しい値へ 1 回だけ着地する");
 
@@ -137,6 +150,7 @@ public sealed class LtcHeldValueChangeTests
         // ファイルロードの安定待ち（1 秒）を明けて、変化フレームの同期要求がシークまで届くようにする。
         clock.Advance(TimeSpan.FromSeconds(1.2));
 
+        ReverseTo(h, 20.0, 8.0);   // 止めた位置を 8.0 へ戻す
         h.SupplyHeldLtc(8.0);
         h.Tick100Milliseconds(3);   // D37-a: ゲートの窓（3 サンプル）が開くまで保留を再送する
         List<LogEvent> events = capture.Snapshot();
