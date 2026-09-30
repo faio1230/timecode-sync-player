@@ -618,6 +618,7 @@ internal sealed class LtcSyncController
                 ShouldApplySync = TimecodeSyncFrameGate.ShouldApplySync(mapped),
             };
         }
+        bool confirmedIntoHold = false;
         TimecodeFrameDiagnosticStatus status = processed.Diagnostic.Status;
         double sameValueSeconds = (LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04) * 0.5;
         // 受理されない値（Reverse・Jump の保留）は、数える保持の連続を変えない（未受理の値はマスターの状態を変えない、3-4 の (a)）。
@@ -655,8 +656,32 @@ internal sealed class LtcSyncController
                         ? _input.ObserveHeldRun(
                             IsCountedHeldFrame(layer1Processed, sourceFrame, mode) ? rawSeconds : null, sameValueSeconds)
                         : heldRun;
-                    ApplyConfirmedJump(layer1Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds, confirmedHeldRun);
-                    return;
+                    if (!(_signalLoss.IsLost && layer1Status == TimecodeFrameDiagnosticStatus.Duplicate))
+                    {
+                        ApplyConfirmedJump(layer1Status, rawSeconds, frameEndTimestamp, receivedAtMilliseconds, confirmedHeldRun);
+                        return;
+                    }
+
+                    // v0.6.1 β (C): 損失中に、確認のフレームが同値の Duplicate（止まったまま位置が変わった）なら、新しい値を
+                    // 受理し、今の保持値の変更の経路（D31-b の入口、下の Duplicate の枝）へ渡す。着地先（Continue の写像・ギャップ・
+                    // Single の境界ホールド・保留の同期の要求）はその経路に任せる。信号断は明けない（再生を走らせない）。
+                    _input.AcceptFrame(
+                        SyncOffsetPolicy.Apply(rawSeconds,
+                            _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds),
+                        rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
+                    Log.Information(
+                        "Timecode sync: confirmed Jump to a held value during loss; landing as a held value change without resuming ltc={Ltc:F3}",
+                        rawSeconds);
+                    // 前の保持の着地の記録は、新しい値の保持値の変更の基準にしない（確定した Jump と同じく下ろす）。
+                    _input.ClearHeldLossLanding();
+                    layer2 = Layer2Class.Duplicate;
+                    heldRun = confirmedHeldRun;
+                    confirmedIntoHold = true;
+                    processed = processed with
+                    {
+                        Diagnostic = processed.Diagnostic with { Status = TimecodeFrameDiagnosticStatus.Duplicate },
+                        ShouldApplySync = false,
+                    };
                 }
                 if (!withinWindow)
                 {
@@ -711,7 +736,8 @@ internal sealed class LtcSyncController
                 double heldEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
-                heldValueChangedDuringLoss = IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
+                // v0.6.1 β (C): 損失中に確定した保持値は、保持値の変更（D31-b の入口）として扱う。
+                heldValueChangedDuringLoss = confirmedIntoHold || IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
                 holdEntry = _input.LastHeldEffectiveSeconds is not null &&
                     SyncRules.IsMasterStopped(heldRun, minimumHeldFrames: 2) &&
                     _input.HeldLossLandingSeconds is null;

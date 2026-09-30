@@ -202,6 +202,10 @@ internal sealed class LtcSignalLossPolicy
 
         ObservePlaybackState(context);
         _lastHeldFrameAtMilliseconds = receivedAtMilliseconds;
+        // v0.6.1 β (C): 損失のまま保持値が変わることがあるので、損失中に保持のフレームが届いたら理由を「停止」に戻す
+        // （無音の後に保持が届いた、または理由が信号断へ下がった後も保持が続いている）。
+        if (_isLost && _reason == LtcSignalLossReason.SignalLoss)
+            _reason = LtcSignalLossReason.TimecodeHeld;
         // U8: 続いた保持を数える（2 枚続いたら確認を待たずに確定する。v0.5.4 B6b: Jump の有無は問わない）。
         _consecutiveHeldFrames = heldRunLength ?? _consecutiveHeldFrames + 1;
     }
