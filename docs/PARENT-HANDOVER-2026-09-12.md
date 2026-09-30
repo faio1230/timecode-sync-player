@@ -917,7 +917,7 @@ ative\` | あり | あり | あり |
 | **E2E 用の素材 6 本** | `<worktree>\artifacts\media\`（`test_1080p60.mp4` ほか） | あり | **無し** | あり |
 | **V1 のコーデック素材 23 ファイル** | **`E:\tcs-archive\media\v1-set\v1`（522MB）**。使う作業ツリーの `artifacts\media\v1` へコピーする | 無し | 無し | 無し |
 | V11 の追加素材（4K H.264） | `E:\tcs-archive\media\v11-extra`（12MB） | 無し | 無し | 無し |
-| GStreamer ランタイム | `C:\Program Files\gstreamer.0\msvc_x86_64`（環境変数 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 設定済み） | 共通 | | |
+| GStreamer ランタイム | `C:\Program Files\gstreamer\1.0\msvc_x86_64`（環境変数 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 設定済み） | 共通 | | |
 | ffmpeg / ffprobe | `C:\Program Files\ffmpeg\bin` | 共通 | | |
 | 過去の測定の証跡 | `E:\tcs-archive\testresults\<worktree 名>\` | | | |
 
