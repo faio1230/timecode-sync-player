@@ -108,7 +108,7 @@ C# 側の `TCS_FFMPEG` は単体の試験（偽の ffmpeg.exe のフォルダ）
 
 ### 集計の確かめ
 
-- 自己試験 `pwsh -NoProfile -File scripts\test-ltc-run-metrics.ps1`: 18 項目すべて ok（`ALL OK`）。偽の成果物での出力:
+- 自己試験 `pwsh -NoProfile -File scripts\test-ltc-run-metrics.ps1`: 19 項目すべて ok（`ALL OK`。初版で「18」と書いたのは数え違い。10 節の追加の後は 20 項目）。偽の成果物での出力:
 
 ```json
 {
@@ -199,3 +199,42 @@ C# 側の `TCS_FFMPEG` は単体の試験（偽の ffmpeg.exe のフォルダ）
     このブランチでは直していない（`v0.6.0` 側で直っているので、取り込みで解消する想定。取り込みの後に 1 回実行して 0 件を確かめること）
   - scratchpad に SETUP.md の写しを置き、3 行目にタブ、5 行目に 0x08 を入れて検査 → `tab-copy.md:3: 0x09`・`tab-copy.md:5: 0x08`、終了コード 1。
     タブを含む `.ps1` は 0 件（タブは許す）
+
+## 10. 追加 2 点（親の判断を受けて）
+
+親の判断: 7 節の 1（取り込み後に親が 0 件を確かめる）・2（既存の項目の意味は変えない、負債として親が記録）・
+5（今のまま）。以下はその後の追加。実機・ランナー本体・E2E は回していない。
+
+| SHA | 件名 |
+| --- | --- |
+| `fce28db` | test: ランナーの事前確認に C: の空き 20 GB を足す（v0.6.0 段 5b の追加 A） |
+| `55ac480` | test: TestVideoFactory も試験の ffmpeg の解決と版の記録にそろえる（v0.6.0 段 5b の追加 B） |
+| （この追記） | docs: 段 5b の報告に追加 2 点を追記 |
+
+### A. C: の空き 20 GB（`fce28db`）
+
+- `run-ltc-scenarios.ps1` の事前確認で `[IO.DriveInfo]::new('C:\').AvailableFreeSpace` を GB で見る。20 GB 未満なら
+  `PREREQ-ERROR free space on C: is <N> GB, under 20 GB: clean artifacts before the run`（終了コード 2、コミットの空きと同じ書き方）。
+  `prereqs:` の行に `c_free_gb=`
+- 値は `runner-preflight.json` の `cDriveFreeGbAtStart` と、`run-result.json` の `cDriveFreeGbAtStart`（追加だけ）。`RESULT-5B` の行に `c_free_gb=`
+- `LtcRunMetrics.psm1` に `Get-TcsDriveFreeGb`・`Get-TcsRunnerPreflightValue`
+- 自己試験に 1 項目（`cDriveFreeGbAtStart from runner-preflight.json`）。20 項目すべて ok
+- 関数を単体で呼んだ値（15:50 ごろ、開発機）: C: の空き 47.16 GB、コミットの空き 18.51 GB（どちらも始められる側）
+- 構文: 全 `.ps1`・`.psm1` 37 本 errors=0、制御文字 0、裸の LF 0
+
+### B. TestVideoFactory（`55ac480`）
+
+- `FfmpegTool`（試験のヘルパー）の順を `TCS_FFMPEG` → 既定のフォルダ（`%ProgramFiles%\ffmpeg\bin`、スクリプトの `-FfmpegDir` の既定と同じ）→ PATH にした。
+  `AccuracyVideoFixture` も同じヘルパーなので同じ順になる
+- `TestVideoFactory` は `FfmpegAvailable`・`GetOrCreate`・`GetOrCreateVariant` の ffmpeg を `FfmpegTool` から取り、作った素材の版を
+  素材のフォルダ（`TestTempPaths.Root`）の `ffmpeg-version.txt` に同じ形で書く。6 未満なら警告を標準エラーへ 1 回
+  （このクラスには journal が無いため）
+- `FfmpegToolTests`: 既定のフォルダが PATH より勝つ試験を足し、`TCS_FFMPEG` が既定のフォルダにも勝つことを確かめる形にした
+- 非E2E: **2853 件合格、失敗 0、スキップ 0**。`TestVideoFactoryTests`（非E2E、実際にエンコードする）の後のサイドカー:
+  `test_clip.mp4 | ffmpeg version N-109850-g78f46065d8-20230212 …`、`test_clip_alt.mp4 | 同じ`
+- **挙動の変化（親が知っておくこと）**: `TCS_FFMPEG` が無いとき、試験の ffmpeg は PATH の先頭から既定のフォルダへ変わる。
+  - 開発機: 4.2.3（ImageMagick 同梱）→ 2023 版（N-109850、major 6）
+  - 検証機（設計書 7 節の事実による。確かめていない）: scoop の 8.0.1 → `Program Files` の n5.0（major 5 なので警告が出る）。
+    設計書の補足 (b) のとおり、検証機の既定のフォルダを 8.0.1 へ向けるか、検証機で `TCS_FFMPEG` を 8.0.1 に設定しないと、
+    検証機の試験は今より古い ffmpeg で素材を作る
+  - 設計書の補足 (a): 切り替えの直後に両機で非E2E と E2E を 1 回ずつ回し、参照フレームの判定などの既存の合否の基準がそのまま通るかを見る（親の実機の手順）
