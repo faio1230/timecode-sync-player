@@ -11,15 +11,21 @@
 #        media folder, and is removed after the run unless -KeepProject is set)
 #   U-1 (LtcScenarioE2ETests.U1_...) requires a gap-free project: pass -GapSeconds 0
 #   (with a gapped project U-1 reports preflight-invalid instead of judging).
-#   pwsh -File scripts\run-ltc-scenarios.ps1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
+#   Default filter (v0.6.0 stage 5b): LtcHardwareLoopE2ETests and LtcScenarioE2ETests
+#   WITHOUT L-1 (L1_, continuous follow) and L-3 (L3_, ProductionDay, 12 hours):
+#       (FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests)&FullyQualifiedName!~L1_&FullyQualifiedName!~L3_
+#   -IncludeL1 / -IncludeL3 add them back to the default filter. An explicit -Filter is
+#   used as given, except that a -Filter naming L3_ (or ProductionDay) stops in the
+#   prerequisites unless -IncludeL3 is set too. The prerequisites print the final filter
+#   and whether it takes in L-1 / L-3 (yes / no / possible for a class-wide filter).
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -IncludeL1 -FollowSeconds 60 -FollowTracks A,B,C -FollowWindowSeconds 2
 #       (L-1 continuous-follow audit: seconds / tracks / window length / settling
 #        exclusion via -FollowSettlingSeconds / follow-start gate bound via
-#        -FollowStartGateSeconds; the default filter includes L-1. To run only the
-#        previous 22 scenarios:
-#        -Filter 'FullyQualifiedName~LtcScenarioE2ETests&FullyQualifiedName!~L1_')
+#        -FollowStartGateSeconds; the -Follow* values only matter with L-1 in the filter)
 #       -SegmentSeconds N raises the per-track used length above the 20 s default;
 #       L-1 needs >= 34 s used per track (60 s follow rounds down to used - 4).
 #       -TrackSegmentSeconds '25,25,25' sets the used length per track instead.
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -IncludeL3   # also the 12-hour L-3 production day
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg, .NET SDK, the
 # target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
@@ -28,14 +34,17 @@
 #
 # Exit codes: 0 = no failures, 1 = test failures, 2 = prerequisite failure.
 #
-# NOTE: backslash- and control-character traps of ".ps1" are checked by an empty
-# run before use.
+# NOTE: backslash- and control-character traps of ".ps1" are checked without running
+# the script (Parser.ParseFile, scripts\check-control-chars.ps1). Never "-?" as a dry run.
 [CmdletBinding()]
 param(
     [string]$AppExe = '',
     [string]$ReportDir = '',
     [int]$Cycles = 0,
     [string]$Filter = '',
+    # L-1 (continuous follow) and L-3 (12-hour production day) run only when asked for.
+    [switch]$IncludeL1,
+    [switch]$IncludeL3,
     [string]$MediaDir = '',
     [string[]]$Media = @(),
     [double]$MediaInOffsetSeconds = 0,
@@ -367,9 +376,48 @@ if ($MediaDir -and (Test-Path -LiteralPath $MediaDir)) {
     }
 }
 
+# ---- filter (v0.6.0 stage 5b) ----------------------------------------------
+# L-1 (L1_) and L-3 (L3_, ProductionDay: 12 hours) are left out of the default filter and
+# come back only with -IncludeL1 / -IncludeL3. A default run once took in L-3 and kept the
+# machine for 80 minutes before it was stopped.
+# RealProjectGapE2ETests is not in the default filter either: it assumes a fixture project
+# whose timeline starts at one hour (it sends 01:00:xx), so against the project generated
+# from -MediaDir its checks do not apply. Pass -Filter explicitly to run it.
+$filterGiven = -not [string]::IsNullOrWhiteSpace($Filter)
+if (-not $filterGiven) {
+    $Filter = '(FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests)'
+    if (-not $IncludeL1) { $Filter += '&FullyQualifiedName!~L1_' }
+    if (-not $IncludeL3) { $Filter += '&FullyQualifiedName!~L3_' }
+}
+
+# Whether a filter takes in L-1 / L-3: 'yes' when a positive term names it, 'no' when a
+# negative term excludes it (or nothing could match it), 'possible' when a positive term takes
+# in the whole scenario class (or a category) without excluding it. A reading of the terms,
+# not an evaluation of the filter.
+function Get-LtcFilterInclusion([string]$FilterText, [string]$NamePattern) {
+    $terms = @($FilterText -split '[&|()]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $positive = @($terms | Where-Object { $_ -notmatch '!' })
+    if (@($positive | Where-Object { $_ -match $NamePattern }).Count -gt 0) { return 'yes' }
+    if (@($terms | Where-Object { $_ -match '!' -and $_ -match $NamePattern }).Count -gt 0) { return 'no' }
+    if (@($positive | Where-Object { $_ -match '~LtcScenarioE2ETests\s*$|Category' }).Count -gt 0) { return 'possible' }
+    return 'no'
+}
+if ($filterGiven) {
+    $filterL1 = Get-LtcFilterInclusion $Filter 'L1_|ContinuousFollow'
+    $filterL3 = Get-LtcFilterInclusion $Filter 'L3_|ProductionDay'
+} else {
+    # The default filter takes in the whole scenario class, so the switches decide.
+    $filterL1 = if ($IncludeL1) { 'yes' } else { 'no' }
+    $filterL3 = if ($IncludeL3) { 'yes' } else { 'no' }
+}
+if ($filterGiven -and $filterL3 -eq 'yes' -and -not $IncludeL3) {
+    $problems += 'the -Filter names L-3 (L3_, 12 hours): pass -IncludeL3 as well to run it'
+}
+
 Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | capture: ' + ($captureCable -join '; ') +
     '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource + ' ffmpeg=' + $ffmpegText +
     ' commit_free_gb=' + $commitFreeGb + ' c_free_gb=' + $cDriveFreeGb)
+Write-Output ('prereqs: filter=' + $Filter + ' given=' + $filterGiven + ' l1=' + $filterL1 + ' l3=' + $filterL3)
 if ($problems.Count -gt 0) {
     foreach ($p in $problems) { Write-Output ('PREREQ-ERROR ' + $p) }
     Write-Output ('SUMMARY prereq_failed=' + $problems.Count + ' report=' + $ReportDir)
@@ -467,12 +515,7 @@ if ($MediaDir) {
 }
 
 # ---- filter and environment ------------------------------------------------
-if ([string]::IsNullOrWhiteSpace($Filter)) {
-    # RealProjectGapE2ETests is not in the default filter: it assumes a fixture project whose
-    # timeline starts at one hour (it sends 01:00:xx), so against the project generated from
-    # -MediaDir its checks do not apply. Pass -Filter explicitly to run it.
-    $Filter = 'FullyQualifiedName~LtcHardwareLoopE2ETests|FullyQualifiedName~LtcScenarioE2ETests'
-}
+# The filter itself is decided in the prerequisites (L-1 / L-3 rule).
 Write-Output "filter=$Filter"
 
 $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe
