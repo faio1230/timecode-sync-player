@@ -37,6 +37,24 @@ The official runtime also contains plugins that TimecodeSyncPlayer does not load
 nvcodec and GPL components such as x264-based encoders). Those plugins and their DLLs are not
 bundled. This list is a record of the measured loading behavior; it is not a legal assessment.
 
+## gst-prores-d3d11 v0.2.1
+
+A GStreamer plugin that decodes Apple ProRes on the GPU with Direct3D 11 (`proresd3d11dec`). The
+unmodified binaries of the v0.2.1 release are **included** in the TimecodeSyncPlayer release
+packages under `gstreamer\lib\gstreamer-1.0`: `gstproresd3d11.dll` and the six compiled shaders
+`prores_*.cso` (`prores_alpha.cso`, `prores_idct_unorm.cso`, `prores_pack_alpha.cso`,
+`prores_rgb.cso`, `prores_rgb_alpha.cso`, `prores_vld.cso`). TimecodeSyncPlayer loads the plugin
+through GStreamer at runtime and does not link to it.
+
+- Project: [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11), release tag
+  [v0.2.1](https://github.com/faio1230/gst-prores-d3d11/releases/tag/v0.2.1)
+- License: GNU Lesser General Public License v2.1 or later (SPDX: LGPL-2.1-or-later)
+- License text and the release README: bundled under `gstreamer\share\licenses\gst-prores-d3d11\`
+  (`LICENSE`, `README.txt`)
+- Source code: the v0.2.1 tag of the upstream repository,
+  [github.com/faio1230/gst-prores-d3d11/tree/v0.2.1](https://github.com/faio1230/gst-prores-d3d11/tree/v0.2.1)
+- Runtime requirement: Microsoft Visual C++ Redistributable (x64) 14.50 or later (see below)
+
 ## SpoutDX / Spout2
 
 `SpoutDX.dll` is included in the TimecodeSyncPlayer release packages. `tcs_gstreamer.dll`
@@ -70,15 +88,15 @@ The current upstream license is reproduced below.
 > IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 > OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-## Microsoft Visual C++ 2015-2022 Redistributable (x64)
+## Microsoft Visual C++ 2015-2026 Redistributable (x64)
 
 The installer chains Microsoft's redistributable package (`vc_redist.x64.exe`) when the Visual C++
-runtime is not already installed, so the runtime is registered by Microsoft's own installer instead
-of being copied as DLLs. The zip distribution does not include it; users install it themselves when
-it is missing.
+runtime is not already installed or is older than 14.50.35710 (required by gst-prores-d3d11), so
+the runtime is registered by Microsoft's own installer instead of being copied as DLLs. The zip
+distribution does not include it; users install it themselves when it is missing or older.
 
 - Project: Microsoft Visual C++ Redistributable
-- Download: [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+- Download: [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)
 - License terms: [Microsoft Software License Terms](https://visualstudio.microsoft.com/license-terms/)
 
 ## NAudio 2.2.1
