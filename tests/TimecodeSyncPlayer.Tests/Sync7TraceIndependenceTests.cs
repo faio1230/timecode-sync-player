@@ -36,12 +36,21 @@ public class Sync7TraceIndependenceTests
         return (h, clock);
     }
 
-    private static void SupplySteadyLtc(SyncScenarioHarness h, ManualTimeProvider clock, double seconds)
+    /// <summary>
+    /// v0.6.1 段 A: 走っている LTC（40ms ごとに +1 フレーム、25fps のフレーム境界）を 600ms ぶん送る。再生も同じだけ
+    /// 進め、配信した PTS と照会位置は LTC からそれぞれ一定の差に置く（同じ値を繰り返すと保持になり、判定しない）。
+    /// </summary>
+    private static void SupplyRunningLtc(
+        SyncScenarioHarness h, ManualTimeProvider clock, int startFrame,
+        double deliveredOffsetSeconds, double queryOffsetSeconds)
     {
-        for (int i = 0; i < 6; i++)
+        for (int frame = startFrame + 1; frame <= startFrame + 15; frame++)
         {
-            clock.Advance(TimeSpan.FromMilliseconds(100));
-            h.SupplyLtc(seconds);
+            clock.Advance(TimeSpan.FromMilliseconds(40));
+            double ltc = frame / 25.0;
+            h.AdvancePlayback(ltc + deliveredOffsetSeconds);
+            h.Playback.SetPositionWithoutDelivery(ltc + queryOffsetSeconds);
+            h.SupplyLtc(ltc);
         }
     }
 
@@ -51,16 +60,15 @@ public class Sync7TraceIndependenceTests
     public void QueryAheadButDeliveredOnTarget_DoesNotRelocate_WithoutTrace(SyncMode mode)
     {
         (SyncScenarioHarness h, ManualTimeProvider clock) = Arrange(mode);
-        h.SupplyLtc(19.983);
-        h.AdvancePlayback(19.983, renderedFrames: 2);        // 配信 19.983（目標と一致）
-        h.SupplyLtc(19.983);
-        h.Playback.SetPositionWithoutDelivery(20.483);        // 照会位置だけ 0.5 秒先行（tol 0.24 の外）
+        h.SupplyLtc(20.0);
+        h.AdvancePlayback(20.0, renderedFrames: 2);          // 配信 20.0（目標と一致）
+        h.Playback.SetPositionWithoutDelivery(20.5);          // 照会位置だけ 0.5 秒先行（tol 0.24 の外）
         h.Operations.Clear();
 
-        SupplySteadyLtc(h, clock, 19.983);
+        SupplyRunningLtc(h, clock, startFrame: 500, deliveredOffsetSeconds: 0.0, queryOffsetSeconds: 0.5);
 
         h.Operations.Should().NotContain(o => o.Name == "seek",
-            "誤差は配信 PTS（19.983）で測る。照会位置（20.483）のずれでは relocate しない");
+            "誤差は配信 PTS（LTC と一致）で測る。照会位置（0.5 秒先行）のずれでは relocate しない");
     }
 
     [Theory]
@@ -74,7 +82,7 @@ public class Sync7TraceIndependenceTests
         h.Playback.SetPositionWithoutDelivery(20.0);          // 照会位置は目標と一致
         h.Operations.Clear();
 
-        SupplySteadyLtc(h, clock, 20.0);
+        SupplyRunningLtc(h, clock, startFrame: 500, deliveredOffsetSeconds: -0.5, queryOffsetSeconds: 0.0);
 
         h.Operations.Should().Contain(o => o.Name == "seek",
             "誤差は配信 PTS（19.5）で測る。照会位置が目標と一致していても relocate する");
