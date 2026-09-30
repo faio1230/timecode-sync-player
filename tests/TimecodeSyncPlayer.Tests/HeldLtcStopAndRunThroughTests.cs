@@ -74,11 +74,16 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.ChangeMode(SyncMode.Single);
         h.ManualPlay();
 
-        // 受理済みの値は 1.04 まで。保持値 1.08 は Duplicate として届いている。
-        h.Controller.ReceiveProcessedFrame(Processed(1.00, TimecodeFrameDiagnosticStatus.Normal), 10_000);
-        h.Controller.ReceiveProcessedFrame(Processed(1.04, TimecodeFrameDiagnosticStatus.Normal), 10_040);
-        h.Controller.ReceiveProcessedFrame(Processed(1.08, TimecodeFrameDiagnosticStatus.Duplicate), 10_120);
-        h.Controller.ReceiveProcessedFrame(Processed(1.08, TimecodeFrameDiagnosticStatus.Duplicate), 10_200);
+        // 1.08 で止まり、保持値 1.08 が Duplicate として届いている。
+        // v0.6.1 段 A: 実時間の LTC の口（ReceiveFrame）で 40ms ごとに送る。実機の診断では、1.04 の次の 1.08 は
+        // +1 フレームの Normal（受理される）で、同じ値の続きが Duplicate になる。以前の台本は 1.08 を最初から
+        // Duplicate と付けて渡し、受理値を 1.04 に留めていた（実機の入力では作れない）。
+        h.DeliverLtcFrame(1.00, receivedAtMilliseconds: 10_000);
+        h.DeliverLtcFrame(1.04, receivedAtMilliseconds: 10_040);
+        h.DeliverLtcFrame(1.08, receivedAtMilliseconds: 10_080);
+        h.DeliverLtcFrame(1.08, receivedAtMilliseconds: 10_120);
+        h.DeliverLtcFrame(1.08, receivedAtMilliseconds: 10_160);
+        h.DeliverLtcFrame(1.08, receivedAtMilliseconds: 10_200);
         h.Operations.Clear();
 
         Tick(h, clock, 3);
@@ -90,12 +95,6 @@ public sealed class HeldLtcStopAndRunThroughTests
                 "着地目標は保持として届いた値（1.08）で、直前の受理値（1.04）ではない");
         h.DisplayStates[^1].PauseReason.Should().Be("タイムコード停止で停止中");
     }
-
-    private static LtcFrameProcessingResult Processed(double seconds, TimecodeFrameDiagnosticStatus status) =>
-        new("scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
-            new TimecodeFrameDiagnosticResult(status, 0, 0),
-            ShouldApplySync: status is TimecodeFrameDiagnosticStatus.Normal or TimecodeFrameDiagnosticStatus.Initial,
-            ShouldLogFps: false);
 
     [Fact]
     public void StopMode_HeldDuplicate_LandingTargetDoesNotAddSampleClockAge()
