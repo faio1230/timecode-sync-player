@@ -4,7 +4,8 @@
 >
 > - **公開済み（2026-10-01）**: v0.5.5（03:23、Latest だった）、v0.6.0（07:06、Pre-release のまま）、v0.5.6（15:55、K2 の hotfix、タグは hotfix 側の `f827ad8`）、**v0.6.1（21:55、Latest、タグ = main の `83071ff`、ProductVersion `0.6.1+dd5d25f`、setup `9fa8010b…`・zip `37b8631f…`）**。v0.6.1 は検証機で全項目合格（標準 3 通り各 38/0、L-1 6/6、A 2/2、ProRes RTX・AMD、C-1 ×3 黒 0、ProjectRoundTrip 0/10）、推奨素材の範囲内の既知の不具合 0 件
 > - **方針（TSP-Fable、利用者の決定「Latest にしよう」の延長）**: 0.5 系は以後 hotfix も原則出さない（重大な現場の不具合が 0.6 系で直らない場合だけ検討）
-> - **次の束 v0.6.2**: 門 14 と行の無い定数 2 つ（`design/v0.6.0-prores-gpu.md` 8 節の版の表）、起動直後の約 1 秒の停止の直し、instant-rate の CRITICAL の整理（出ない順序にするか行を抑えるか）、配布ビルドで起動の lateMs を取る口。あわせて負債: 境界の保持の不感帯（案 B）、RunThrough の入口の合わせの要否（優先度低）、インストーラーの昇格、E2E のログの読み方の残り、ProRes のシークの着地の分布、C-1 の黒の区間の renderCallbacks・fencePending の多さ（`design/v0.6.1-jump-confirm.md` 12-1）
+> - **計画の変更（2026-10-01 22:1x、利用者の指示、TSP-Fable 経由）**: **v0.6.2 = gst-prores-d3d11 の次版の取り込みだけ**（同期の変更は入れない。原因を分けるため）。Gst-ProRes の回答（次版のタグ・変更点・TSP 側に要る作業）を待って着手: get-prores-plugin.ps1 の版と SHA、THIRD-PARTY-NOTICES、変わる点があれば `design/v0.6.0-prores-gpu.md` の該当節、必要なら色の比較。検証は開発機の ProRes の回 2 本＋検証機の固定の一式 1 回（ProRes 2 通り・PR1〜PR4）。合格すれば --latest。下の束は **v0.6.3** へ送る（Auto fps の束は v0.6.4）
+> - **次の束 v0.6.3**（もとの v0.6.2）: 門 14 と行の無い定数 2 つ（`design/v0.6.0-prores-gpu.md` 8 節の版の表）、起動直後の約 1 秒の停止の直し、instant-rate の CRITICAL の整理（出ない順序にするか行を抑えるか）、配布ビルドで起動の lateMs を取る口。あわせて負債: 境界の保持の不感帯（案 B）、RunThrough の入口の合わせの要否（優先度低）、インストーラーの昇格、E2E のログの読み方の残り、ProRes のシークの着地の分布、C-1 の黒の区間の renderCallbacks・fencePending の多さ（`design/v0.6.1-jump-confirm.md` 12-1）
 > - **v0.6.1 の設計の正**: `design/v0.6.1-jump-confirm.md`（3-5 の確定の表、9-5 の直しの経緯、7-2 の発火回数の基準、12 節の棚卸し）
 > - **担当**: s4-fix（Agent のサブエージェント、`timecode-sync-player-v053`）は待機中。保留の B のパッチ（(ii) 2 枚で保持を抜ける）は親の scratch
 
