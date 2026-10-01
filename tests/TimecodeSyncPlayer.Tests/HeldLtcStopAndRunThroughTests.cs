@@ -231,11 +231,11 @@ public sealed class HeldLtcStopAndRunThroughTests
         // v0.5.4 B6b（追補 3 で書き換え）: 旧は「不足が 1 秒未満（既定のシーク所要）なのでシークせず
         // 速度補正 0.9」。既定の 1.0 秒は削除し、学習前の閾値は tol。ランスルーで走った行き過ぎ
         // （0.3〜0.4 秒）は、値が進み出したら規則 4 の復帰（2〜3 に戻る）で 1 回 relocate する。
-        // v0.6.1（3-5 節の (iii)、承認済みの期待の変更）: 以前は進み出した 2.08 を Normal として受理し、先行量つきで 2.16 へ
-        // relocate した。保持 2.04 から 300ms 後の +1 フレームは這う前進で、M は 2.08 で止まり、映像との差が許容を超えるので
-        // 保持の目標を 2.08 にして 1 回合わせる。続く 2.12・2.16 は等速の流れ（(ii)）で、その後は varispeed で追う。
+        // v0.6.1: 保持 2.04 から 300ms 後の 2.08 は這う前進（3-5 の (iii)）。ランスルーでは這う前進で合わせず（M を止めるだけ）、
+        // 続く 2.12・2.16 の等速の流れ（(ii)）で規則 3 が 1 回 relocate する（段 B の途中で一度 2.08 への合わせにしたが、
+        // TSP-Fable の判断でランスルーの這う前進は合わせない形に戻した）。
         h.Operations.Where(o => o.Name == "seek").Should().ContainSingle()
-            .Which.Value!.Value.Should().BeApproximately(2.08, 0.01, "這う前進の値へ 1 回合わせる");
+            .Which.Value!.Value.Should().BeApproximately(2.16, 0.05, "進み出した LTC へ 1 回 relocate する");
     }
 
     [Fact]

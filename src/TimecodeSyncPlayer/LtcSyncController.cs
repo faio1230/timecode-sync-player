@@ -711,8 +711,7 @@ internal sealed class LtcSyncController
         }
 
         // v0.6.1 (iii) 這う前進: A を raw に更新し時刻も付け直すが、M は raw で止まる（外挿しない＝同期の要求を出さず、
-        // 保留の同期も捨てる）。保持の状態は切らない。映像との差が許容を超えるときだけ、保持の目標を raw にして
-        // 1 回合わせる（規則 4 の入口の合わせと同じ経路）。
+        // 保留の同期も捨てる）。保持の状態は切らない。
         if (layer2 == Layer2Class.Creep)
         {
             double creepEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
@@ -727,7 +726,15 @@ internal sealed class LtcSyncController
             // v0.6.1 β (A): 損失からの復帰の有効フレームは、到着と前進で数える（這う前進も 1 枚に数える）。
             if (_signalLoss.IsLost)
                 ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
-            AlignOnRunThroughHoldEntry();
+            // v0.6.1（レビューの直し、TSP-Fable の判断）: (iii) の合わせはモードで分ける。停止モードで信号断が止めている間は、
+            // 止めたまま新しい保持値へ 1 回着地する（ReapplyHeldValueOnPause、1 フレーム精度。再生は走らせない）。
+            // ランスルー（と止めていない間）は合わせない（A と時刻を更新し、M を止めるだけ）。保持の外の 1 枚で保持着地の記録
+            // （HeldLossLanding）を立てないので、走行中の遅れた 1 枚で規則 4 の入口の合わせが消えない。
+            if (_signalLoss.IsPauseOwned)
+            {
+                ReapplyHeldValueOnPause();
+                _input.MarkLastApplied(_input.LastHeldEffectiveSeconds);
+            }
             return;
         }
 
