@@ -1,7 +1,12 @@
 using FluentAssertions;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
+using TimecodeSyncPlayer.Tests.Integration;
 
 namespace TimecodeSyncPlayer.Tests;
 
+[Collection("Serilog global logger")]
 public class ExitCoordinatorTests
 {
     [Fact]
@@ -206,5 +211,72 @@ public class ExitCoordinatorTests
 
         log.Should().ContainInOrder("heartbeat end reason=closing ticks=0 maxLateMs=0.0 elapsedMs=500.0", "stage stopAcceptingNewWork");
         log.Count(l => l.StartsWith("heartbeat end")).Should().Be(1);
+    }
+
+    /// <summary>Information 以上のログの本文を、手順の記録と同じ列へ順に足す（終わりで元のロガーへ戻す）。</summary>
+    private sealed class OrderedLogCapture : ILogEventSink, IDisposable
+    {
+        private readonly ILogger _previous = Log.Logger;
+        private readonly List<string> _lines;
+
+        public OrderedLogCapture(List<string> lines)
+        {
+            _lines = lines;
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo.Sink(this).CreateLogger();
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            lock (_lines) _lines.Add("log " + logEvent.MessageTemplate.Text);
+        }
+
+        public void Dispose() => Log.Logger = _previous;
+    }
+
+    private const string Layer2SummaryTemplate =
+        "LTC layer2 summary: creepingAdvances={CreepingAdvances} returnedToAcceptedStream={ReturnedToAcceptedStream} source={Source}";
+
+    // v0.6.1（レビューの 7 の配線）: 実際の終了は終了の手順を通り、MainWindow.Dispose を通らない。層 2 の件数の行は手順の入口
+    // （最初の段の前）で 1 回出し、Dispose からの 2 回目は出さない。MainWindow は shutdownStarting と Dispose の両方から
+    // LogLayer2SummaryAtExit を呼ぶ（OnShutdownStarting）。
+    [Fact]
+    public void NormalExit_LogsTheLayer2SummaryOnceBeforeTheFirstStage()
+    {
+        var log = new List<string>();
+        using var capture = new OrderedLogCapture(log);
+        var controller = new SyncScenarioHarness().Controller;
+        var disposer = new MainWindowResourceDisposer(
+            () => { }, () => { }, () => { }, () => { }, () => { }, () => { }, () => { },
+            stopAcceptingNewWork: () => { lock (log) log.Add("stage stopAcceptingNewWork"); });
+        var coordinator = new ExitCoordinator(new FakeExitDialogHost(), disposer,
+            action => { action(); return Task.CompletedTask; }, () => { }, () => { },
+            shutdownStarting: controller.LogLayer2SummaryAtExit);
+
+        coordinator.OnClosingRequested();
+        log.Should().NotContain("log " + Layer2SummaryTemplate, "確認の段階ではまだ終了が決まっていない");
+        coordinator.NormalExitRequested();
+        controller.LogLayer2SummaryAtExit();   // Dispose からの 2 回目（出ない）
+
+        log.Should().ContainInOrder("log " + Layer2SummaryTemplate, "stage stopAcceptingNewWork");
+        log.Count(l => l == "log " + Layer2SummaryTemplate).Should().Be(1);
+    }
+
+    [Fact]
+    public void ForceExit_LogsTheLayer2SummaryOnce()
+    {
+        var log = new List<string>();
+        using var capture = new OrderedLogCapture(log);
+        var controller = new SyncScenarioHarness().Controller;
+        var coordinator = new ExitCoordinator(new FakeExitDialogHost(), CreateNoOpDisposer(),
+            action => { action(); return Task.CompletedTask; },
+            forceExit: () => { lock (log) log.Add("force-exit"); }, () => { },
+            shutdownStarting: controller.LogLayer2SummaryAtExit);
+
+        coordinator.OnClosingRequested();
+        coordinator.ForceRequested();
+        controller.LogLayer2SummaryAtExit();   // Dispose からの 2 回目（出ない）
+
+        log.Should().ContainInOrder("log " + Layer2SummaryTemplate, "force-exit");
+        log.Count(l => l == "log " + Layer2SummaryTemplate).Should().Be(1);
     }
 }

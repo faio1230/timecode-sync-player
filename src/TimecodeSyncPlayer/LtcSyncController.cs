@@ -77,6 +77,7 @@ internal sealed class LtcSyncController
     /// <summary>v0.6.1（レビューの 7）: 層 2 の分類の件数（起動からの累計。<see cref="LogLayer2Summary"/> で出す）。</summary>
     private long _creepingAdvanceCount;
     private long _returnedToAcceptedStreamCount;
+    private bool _exitSummaryLogged;
 
     /// <summary>
     /// v0.6.1: 這う前進の上限に使う freewheel（規則 1。既定の 250ms で固定し、利用者の信号断の時間の設定には連動させない）。
@@ -551,6 +552,18 @@ internal sealed class LtcSyncController
         Log.Information(
             "LTC layer2 summary: creepingAdvances={CreepingAdvances} returnedToAcceptedStream={ReturnedToAcceptedStream} source={Source}",
             _creepingAdvanceCount, _returnedToAcceptedStreamCount, source);
+
+    /// <summary>
+    /// v0.6.1（レビューの 7 の配線）: アプリの終了で、層 2 の分類の件数を 1 回だけ出す。終了の手順の入口（ExitCoordinator の
+    /// shutdownStarting）と MainWindow.Dispose の両方から呼ばれ得るので、2 回目以降は何もしない。
+    /// </summary>
+    public void LogLayer2SummaryAtExit()
+    {
+        if (_exitSummaryLogged)
+            return;
+        _exitSummaryLogged = true;
+        LogLayer2Summary("app-exit");
+    }
 
     public void MonitoringChanged()
     {
