@@ -639,7 +639,6 @@ internal sealed class LtcSyncController
                 _signalLoss.ObserveFrameArrival(receivedAtMilliseconds, SignalContext());
         }
         bool confirmedIntoHold = false;
-        TimecodeFrameDiagnosticStatus status = processed.Diagnostic.Status;
         double sameValueSeconds = (LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04) * 0.5;
         // 受理されない値（Reverse・Jump の保留）は、数える保持の連続を変えない（未受理の値はマスターの状態を変えない、3-4 の (a)）。
         // 這う前進は、連続の長さを保ったまま比べる値だけを移す。
@@ -950,16 +949,22 @@ internal sealed class LtcSyncController
              ?? receivedAtMilliseconds - accepted.ReceivedAt) / 1000.0);
         double fromAccepted = (rawSeconds - accepted.RawSeconds) * fps;
         double fromStream = (rawSeconds - (accepted.RawSeconds + elapsedSeconds)) * fps;
-        double creepLimit = Math.Min(elapsedSeconds, FreewheelSeconds) * fps + 2.5;
-        if (fromAccepted >= -0.5 && fromAccepted < 0.5)
+        double beyondFreewheel = fromAccepted - Math.Min(elapsedSeconds, FreewheelSeconds) * fps;
+        // しきい値は診断の分類の関数 1 つ（TimecodeFrameDiagnostics.Classify）で決める。
+        TimecodeFrameDiagnosticStatus fromAcceptedClass = TimecodeFrameDiagnostics.Classify(fromAccepted);
+        if (fromAcceptedClass == TimecodeFrameDiagnosticStatus.Duplicate)
             return Layer2Class.Duplicate;
-        if (fromAccepted >= 0.5 && Math.Abs(fromStream) <= 2.5)
-            return Layer2Class.Normal;
-        if (fromAccepted >= 0.5 && fromAccepted <= creepLimit)
-            return Layer2Class.Creep;
-        if (fromAccepted < -0.5 && fromAccepted >= -2.5)
+        if (fromAcceptedClass == TimecodeFrameDiagnosticStatus.Reverse)
             return Layer2Class.Reverse;
+        bool ahead = fromAcceptedClass == TimecodeFrameDiagnosticStatus.Normal || fromAccepted > 0;
+        if (ahead && TimecodeFrameDiagnostics.Classify(fromStream) != TimecodeFrameDiagnosticStatus.Jump)
+            return Layer2Class.Normal;
+        if (ahead && !IsJumpAhead(beyondFreewheel))
+            return Layer2Class.Creep;
         return Layer2Class.Jump;
+
+        static bool IsJumpAhead(double deltaFrames) =>
+            deltaFrames > 0 && TimecodeFrameDiagnostics.Classify(deltaFrames) == TimecodeFrameDiagnosticStatus.Jump;
     }
 
     /// <summary>
