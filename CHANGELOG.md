@@ -2,6 +2,52 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.6.1 - 2026-10-0X
+
+Stable (Latest). Fixes the position re-alignment seeks that followed one another after the LTC signal was disturbed.
+Includes 0.6.0 (ProRes GPU decoding) and the 0.5.6 fix. Settings and projects are unchanged from 0.5.6.
+
+### Fixed
+
+- Right after the LTC signal is disturbed (a few corrupt values mixed in), the player no longer takes the next
+  correct value as a new jump and re-aligns backward. Values are now judged against the accepted timecode stream,
+  not only against the previous frame. On heavy video (4K or 60p, H.264 or ProRes) this removes the chained
+  re-alignment seeks that stalled the picture for up to about 0.6 s.
+- When LTC stops and then crawls forward a frame at a time (a sender that slows down instead of stopping), the player
+  treats it as stopped: Stop mode stays paused and lands once on each new value; Run-through keeps running and does
+  not re-align on every step.
+- Run-through: while LTC was stopped, the one-time alignment to a changed held value repeated on every frame and could
+  seek backward several times. It is now applied once.
+
+### Changed
+
+- When LTC stops and later resumes from the same position, recovery from signal loss takes one more frame (about
+  33-40 ms). The first frame after the stop is no longer counted as a recovered frame.
+- Run-through: while LTC is stopped (or not advancing), the video keeps running, and the position is re-aligned once
+  when LTC comes back. In 0.5.x small re-alignments repeated while LTC was stopped and the picture stuttered. The
+  longer LTC stays stopped, the larger the jump back when it returns (about 2.6 s after a 3 s stop).
+  This also supports cueing with LTC for only the first second and then running without LTC: re-aligning while LTC is
+  stopped would make the picture stutter in that use.
+- Stop mode: when LTC stops and then only corrupt values keep arriving, the pause reason stays "timecode stopped"
+  ("タイムコード停止で停止中"). In 0.6.0 it changed to "signal lost" ("信号断で停止中") about 0.3 s after the last held
+  frame. Playback stays paused in both.
+- A summary line with the counts of crawling-forward frames and discarded pending jumps is logged at Information when
+  LTC monitoring stops and when the app exits (diagnostics only).
+
+### Known issues
+
+- None within the recommended media.
+
+### Known intermittent issues
+
+- Once on the 0.5.5 test machine, the picture went black for about 1.5 s after a large LTC jump and the backward
+  re-alignment. Not seen in the 0.6.0 candidate 2 and 0.6.1 candidate tests (5+ runs) or in 200+ plays of the same
+  sequence. A re-alignment seek within one track keeps showing the last picture until the new frame arrives and does
+  not draw black (checked in code); black is drawn in cases such as a gap set to black or right after GPU recovery. The logs
+  of that run are being checked; another window over the test's screen capture is suspected.
+- GStreamer can log a `gst_segment_do_seek: assertion` CRITICAL when a speed change follows a seek immediately
+  (diagnostic only; the speed change takes effect, checked on the development machine).
+
 ## 0.6.0 - 2026-10-01
 
 Pre-release. ProRes can be decoded on the GPU (gst-prores-d3d11 v0.2.1 bundled), on by default on NVIDIA GPUs.
