@@ -37,22 +37,22 @@ The official runtime also contains plugins that TimecodeSyncPlayer does not load
 nvcodec and GPL components such as x264-based encoders). Those plugins and their DLLs are not
 bundled. This list is a record of the measured loading behavior; it is not a legal assessment.
 
-## gst-prores-d3d11 v0.2.1
+## gst-prores-d3d11 v0.2.3
 
 A GStreamer plugin that decodes Apple ProRes on the GPU with Direct3D 11 (`proresd3d11dec`). The
-unmodified binaries of the v0.2.1 release are **included** in the TimecodeSyncPlayer release
+unmodified binaries of the v0.2.3 release are **included** in the TimecodeSyncPlayer release
 packages under `gstreamer\lib\gstreamer-1.0`: `gstproresd3d11.dll` and the six compiled shaders
 `prores_*.cso` (`prores_alpha.cso`, `prores_idct_unorm.cso`, `prores_pack_alpha.cso`,
 `prores_rgb.cso`, `prores_rgb_alpha.cso`, `prores_vld.cso`). TimecodeSyncPlayer loads the plugin
 through GStreamer at runtime and does not link to it.
 
 - Project: [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11), release tag
-  [v0.2.1](https://github.com/faio1230/gst-prores-d3d11/releases/tag/v0.2.1)
+  [v0.2.3](https://github.com/faio1230/gst-prores-d3d11/releases/tag/v0.2.3)
 - License: GNU Lesser General Public License v2.1 or later (SPDX: LGPL-2.1-or-later)
 - License text and the release README: bundled under `gstreamer\share\licenses\gst-prores-d3d11\`
   (`LICENSE`, `README.txt`)
-- Source code: the v0.2.1 tag of the upstream repository,
-  [github.com/faio1230/gst-prores-d3d11/tree/v0.2.1](https://github.com/faio1230/gst-prores-d3d11/tree/v0.2.1)
+- Source code: the v0.2.3 tag of the upstream repository,
+  [github.com/faio1230/gst-prores-d3d11/tree/v0.2.3](https://github.com/faio1230/gst-prores-d3d11/tree/v0.2.3)
 - Runtime requirement: Microsoft Visual C++ Redistributable (x64) 14.50 or later (see below)
 
 ## SpoutDX / Spout2
