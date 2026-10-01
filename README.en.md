@@ -12,12 +12,15 @@ video clips in a playlist.
 
 ## Download
 
-**Download the installer or zip from [GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases).**
+**Download the installer or zip from the [latest stable release (Latest) on GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases/latest).**
+
+- The stable release is the latest v0.6.x (from v0.6.1). Releases marked "Pre-release" are still being verified;
+  do not use them for a show.
 
 - For most users, the per-user installer `TimecodeSyncPlayer-v<version>-setup.exe` is recommended and
   does not require administrator privileges.
 - Choose `TimecodeSyncPlayer-v<version>-win-x64.zip` for a portable extracted copy.
-- `<version>` is the latest release (for example `v0.4.5`).
+- `<version>` is the latest stable release (for example `v0.6.2`).
 - The GStreamer 1.28.2 runtime is included; no separate GStreamer installation is required.
 - Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show. How the material is
   exported makes a large difference to sync stability.
@@ -32,6 +35,12 @@ video clips in a playlist.
 - Spout2 output for VJ tool integration
 - Playlist and project save/load workflows
 - Pure C# LTC decoder and GStreamer-based GPU output
+  (H.264 is recommended and decoded on the GPU. VP9, AV1, H.265 and others also load but are not recommended,
+  and a warning is shown when they are loaded. See the [field preparation guide](docs/USER-MANUAL.md) (Japanese)
+  for the recommendation per format)
+- GPU decoding of HAP (Hap / Hap Alpha / Hap Q) (since v0.5.0)
+- GPU decoding of ProRes on NVIDIA GPUs (since v0.6.0, by
+  [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11); other GPUs decode ProRes on the CPU)
 
 ## Requirements
 
@@ -40,9 +49,12 @@ video clips in a playlist.
   On a system without it, the app says so at startup and disables playback only
   (the app stays open; there is no fallback to CPU compositing)
 - [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) for release packages
-- **Microsoft Visual C++ 2015-2022 Redistributable (x64)**
-  The setup installs it automatically. For the zip, install it manually when missing
-  ([vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe)).
+- **Microsoft Visual C++ 2015-2022 Redistributable (x64) 14.50 or later**
+  (required by the ProRes GPU decoding plugin). The setup installs it only when it is missing or older,
+  and then asks once for administrator approval (UAC) during installation. For the zip, install it
+  manually when it is missing or older ([vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)).
+- ProRes GPU decoding is verified on NVIDIA (RTX class) GPUs. Other GPUs decode ProRes on the CPU by default
+  (switchable with the "ProRes の GPU 復号" (ProRes GPU decoding) selector in the app; the UI is in Japanese).
 - An audio input device carrying LTC
 
 `SpoutDX.dll` is included in release packages and is only needed when using Spout output.
@@ -60,8 +72,8 @@ reinstallation. Delete that file manually to remove the preferences completely.
 ## Using the zip
 
 1. Extract `TimecodeSyncPlayer-v<version>-win-x64.zip` to a writable folder.
-2. If the Visual C++ 2015-2022 Redistributable (x64) is missing, run
-   [vc_redist.x64.exe](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+2. If the Visual C++ 2015-2022 Redistributable (x64) 14.50 or later is not installed, run
+   [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe).
 3. Start `TimecodeSyncPlayer.exe`.
 
 The GStreamer runtime is included. See the [setup guide](docs/SETUP.md) for details.
@@ -98,6 +110,12 @@ source. See the [setup guide](docs/SETUP.md) for details.
 - [Settings reference](docs/settings.md)
 - [Manual verification checklist](docs/verification-checklist.md)
 
+## Related projects
+
+- **[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)** — a GStreamer plugin that decodes ProRes on
+  the GPU with Direct3D 11 (by the same developer, LGPL-2.1 or later). It is bundled with TimecodeSyncPlayer
+  releases.
+
 ## Hardware LTC loop E2E tests
 
 The hardware E2E suite sends LTC to `CABLE Input` and captures it from `CABLE Output` through
@@ -113,7 +131,8 @@ Hardware tests skip automatically when prerequisites are unavailable.
 ## License
 
 TimecodeSyncPlayer is available under the [MIT License](LICENSE). Distribution-specific third-party
-terms are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+terms (including the bundled GStreamer runtime and gst-prores-d3d11) are listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Credits
 
