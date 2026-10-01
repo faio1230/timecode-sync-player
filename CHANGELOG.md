@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.5.6 - 2026-10-0X
+## 0.5.6 - 2026-10-01
 
 Stable (Latest) bug-fix release of the 0.5 line.
 
