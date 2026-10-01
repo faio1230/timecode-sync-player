@@ -649,12 +649,22 @@ internal sealed class LtcSyncController
                 bool withinWindow = JumpConfirmationPolicy.IsWithinConfirmationWindow(
                     _input.PendingJumpFrameEndTimestamp, frameEndTimestamp,
                     _input.PendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps);
-                if (withinWindow &&
+                // v0.6.1 D2: 同値の Duplicate の確認は、規則 4 の入口と同じ述語（fps の疑わしいものは数えない）で数える。
+                LtcFrameProcessingResult layer1Processed =
+                    processed with { Diagnostic = processed.Diagnostic with { Status = layer1Status } };
+                bool countedDuplicate = IsCountedHeldFrame(layer1Processed, sourceFrame, mode);
+                if (withinWindow && layer1Status == TimecodeFrameDiagnosticStatus.Duplicate && !countedDuplicate &&
                     JumpConfirmationPolicy.IsConfirmedBy(pendingJump, rawSeconds, LastTimecodeFps, layer1Status))
                 {
+                    Log.Information(
+                        "Timecode sync: jump confirmation: fps-suspect duplicate not counted pending={Pending:F3} ltc={Ltc:F3} detectedFps={DetectedFps:F3}",
+                        pendingJump, rawSeconds, sourceFrame?.Fps ?? double.NaN);
+                }
+                if (withinWindow &&
+                    JumpConfirmationPolicy.IsConfirmedBy(
+                        pendingJump, rawSeconds, LastTimecodeFps, layer1Status, countedDuplicate))
+                {
                     // 確定した値で数え直す（確認のフレームが保留した値の Duplicate なら、その値の 1 枚目）。
-                    LtcFrameProcessingResult layer1Processed =
-                        processed with { Diagnostic = processed.Diagnostic with { Status = layer1Status } };
                     int confirmedHeldRun = layer2 is not null
                         ? _input.ObserveHeldRun(
                             IsCountedHeldFrame(layer1Processed, sourceFrame, mode) ? rawSeconds : null, sameValueSeconds)
@@ -938,9 +948,8 @@ internal sealed class LtcSyncController
     /// </summary>
     private static bool IsCountedHeldFrame(
         LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame, TimecodeFpsMode mode) =>
-        processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
-        !(sourceFrame != null &&
-          JumpConfirmationPolicy.IsDetectedFpsSuspect(mode, sourceFrame.Fps, processed.ResolvedFps));
+        JumpConfirmationPolicy.IsCountedDuplicate(
+            processed.Diagnostic.Status, mode, sourceFrame?.Fps, processed.ResolvedFps);
 
     /// <summary>
     /// D30 / v0.5.4 B7: 未確認の Jump を保留する理由（ログ用。判定はどれも同じで、次の 1 フレームの値の連続性）。
