@@ -1,5 +1,16 @@
 # 現在地（2026-09-30）
 
+> **2026-10-02 04:0x 更新（TSP-Opus、交代）**: **v0.6.2 は gst-prores-d3d11 v0.2.3 の候補 `0.6.1+f6aa196` で検証機の固定の一式をやり直し中（04:05〜04:20 開始、07:00〜07:30 終了の見込み）。** 合格なら版 0.6.2 → main → タグ → `--latest`。作業ツリーは `timecode-sync-player-v06`（ブランチ `v0.6.2`、push 済み、最新 `3ab0e93`）。
+>
+> - **版の経緯**: v0.2.2（候補 `5ee2081`）で検証機の一式を回したが、利用者の指示で **v0.2.3 を同梱**に変更（v0.2.2 の qos=false の不備の修正だけ、既定の動作は同じ）。v0.2.3 への差し替えは `f6aa196`（取得スクリプト zip `5e3926f6…`・DLL `1ded64c4…`、.cso 6 個は v0.2.1 と同一を照合、THIRD-PARTY-NOTICES・SETUP・設計書・ノート・CHANGELOG）。開発機: 非E2E 2893/0、ProRes 2 本 各 24/0（GPU 142・CPU 0・不一致 0）
+> - **候補 `0.6.1+f6aa196`**（手元は `artifacts\release` に SHA 入りの名前）: setup `665d7d24dbdec3fc182cb793b5b1dd7539a64991409a69f401b914cceb3544cd`、zip `3c3fb9489d507ff9254eb46b5b63bba453556abea076d27ae2b01c95c8b65289`、tar `ad4df2fc…`。公開済み v0.6.1 との差: プラグインの DLL（047cde8f → 1ded64c4）とその README、CHANGELOG、THIRD-PARTY-NOTICES、exe・dll（版の表記）。shim `e6901eab…` と .cso は同じ。検証機は 3 ファイルの SHA-256 一致を確認済み
+> - **合否の扱い（TSP-Fable の判定）**: 全合格が条件。ただし (1) **参照の採取の失敗**（「参照 ref_… の位置が目標 ±1 フレームに入らない」）は v0.6.1 でも同率で出る既存の試験の間欠なので件数だけ数えて合否に入れない（v0.2.1 / v0.2.2 の交互の比較 6 回: QoS の破棄 0、最初のフレームの PTS − 目標は 0〜+1 で版で同じ、recapture-failed 2 対 4）、(2) **R-5「A の停止位置が保持値」**は試験側の許容の計算（`OneFrame` が `Tracks[0]` の丸めた fps から）による偽の失敗なので件数だけ。それ以外の失敗は検証機が止めて報告する
+> - **検証機に頼んで数える行（ファイル名つき）**: ProRes の GPU・CPU・不一致（run-result）、layer2 summary（timecodesyncplayer-*.log、シナリオごと、7-2 の基準: 保持の無いシナリオ 0、保持 1 回につき ≤ 2、保留の捨ては化けた値が届いたときだけ）、`gst_segment_do_seek: assertion`（**scenarios\*\tcs-gst-raw.log**、回ごと。v0.6.1 は一式 172 行、v0.2.2 の一式は 153 行）、reference-stale・recapture-failed（harness）。R-5・R-1 各 10 回の結果も届く（R-5 は 6/10 まで全合格）
+> - **公開の手順の残り**: 結果を報告の zip で照合 → 条件の充足を TSP-Fable へ → 「公開可」→ 版 0.6.2（csproj・ApplicationVersionTests）・CHANGELOG の日付（`## 0.6.2 - 2026-10-0X`）・ノートの検証の欄（`release-notes/v0.6.2.md` の「（公開のときに書く）」。参照の採取の失敗は両版で同率・QoS の破棄 0、R-5 は試験側の許容、assertion は shim のログの数）→ 検査（制御文字・ローカルパス・作品名）・非E2E → **出力名に SHA を入れてパッケージ**（v0.6.1 の公開物を上書きしない）→ 候補 f6aa196 の zip と比較（違いは版の表記を含むファイルだけ。shim e6901eab・DLL 1ded64c4 が同じこと）→ main へ --no-ff（main は 0.6 系。CHANGELOG は版の順）→ タグ v0.6.2（main の統合コミット）→ `gh release create v0.6.2 --latest`（本文はノート）→ 事後報告（README の日英の更新 `2953890`・`257e1e7` を含む、TSP-Fable が承認済み）
+> - **公開の後**: 担当（s4-fix、`timecode-sync-player-v053`、待機中）に試験の許容の直し: 位置の許容を A のトラックの実の fps（30000/1001 を丸めない）から作る、harness の scenario-start の frameRate を実の値で記録（期待の値は変えない、製品は変えない）。その後 v0.6.3 の設計へ（材料は `design/v0.6.3-materials.md`: 5 節 切替の直後の同期シーク 3 本の連鎖【優先度高、本命】先行量 c ≈ 0.36 秒が実際の着地より大きく後ろ向きにも足される読み、6 節 一時停止中のシークの位置の 1 フレームの食い違い【優先度中】、1〜4 節 門 14（外すと 11 赤、読み込み中のシークを抑える役が残る）・行の無い定数・起動の停止・lateMs の口・instant-rate の CRITICAL）
+> - **訂正済み（2026-10-01 夜）**: v0.6.1 のノート・Release 本文の「CRITICAL 一式で 0 回」→ shim のログに一式で 172 行。v0.5.5 のノート・Release 本文に R-1 の偽の失敗の追記
+
+
 > **2026-10-02 01:1x 更新（TSP-Opus、交代の前）**: **v0.6.2（gst-prores-d3d11 v0.2.2 の取り込み）は検証機の一式の途中。** 合格なら Latest で公開する。作業ツリーは `timecode-sync-player-v06`（ブランチ `v0.6.2`、push 済み）。
 >
 > - **v0.6.2 の中身**: ProRes の GPU 復号のプラグインを v0.2.1 → v0.2.2（zip `acd3d411…`、DLL `1ea80359…`、.cso 6 個は v0.2.1 とバイト同一を照合）。同期のコードは v0.6.1 と同じ。v0.2.2 の変更（QoS で締切を過ぎたフレームを復号の前に捨てる）は、TSP の appsink が qos を出さない（既定 false、GST_DEBUG で qos の行 0）ので働かない＝挙動は変わらない。設計書 `design/v0.6.2-prores-plugin-022.md`。README の日英の更新（`2953890`・`257e1e7`、TSP-Fable が承認済み）、ノート `release-notes/v0.6.2.md` と CHANGELOG の 0.6.2 の節（日付と検証の欄は公開のとき）
