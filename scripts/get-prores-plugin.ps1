@@ -18,13 +18,13 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Pinned version, URL and hashes (single place).
-# v0.2.2 is the release bundled with v0.6.2 (fixed 2026-10-01). v0.2.1 was bundled with v0.6.0 and v0.6.1.
-$version = "v0.2.2"
+# v0.2.3 is the release bundled with v0.6.2 (fixed 2026-10-02). v0.2.1 was bundled with v0.6.0 and v0.6.1.
+$version = "v0.2.3"
 $zipName = "gst-prores-d3d11-$version-win64-gst1.28.2.zip"
 $zipUrl = "https://github.com/faio1230/gst-prores-d3d11/releases/download/$version/$zipName"
-$expectedZipSha256 = "acd3d41139fa7242fd43d0dcd503691fe2e71cffbac05d99a567e09466f2b347"
+$expectedZipSha256 = "5e3926f6caf1ff01bdbab6a6de3f994fc86f4e173865b0f1aee942bcfaef9769"
 $dllName = "gstproresd3d11.dll"
-$expectedDllSha256 = "1ea80359e30994b7d8292c904d3ddbe91de30aca0e90ba84d62b92c670bfcff9"
+$expectedDllSha256 = "1ded64c41bfe9709e188acc071c654147c17c2b7113d25e0105a6f5f120e2a8f"
 $expectedCsoCount = 6
 $licenseFiles = @("LICENSE", "README.txt", "SHA256SUMS.txt")
 $licensesDirName = "licenses"
