@@ -181,14 +181,14 @@ public sealed class SystemScenarioE2ETests
         }
     }
 
-    private static (string ExePath, string VideoPath) RequirePrerequisites()
+    internal static (string ExePath, string VideoPath) RequirePrerequisites()
     {
         (string exePath, string? reason) = E2EAppRunner.ResolvePrereqs();
         reason.Should().BeNull("V9 is a mandatory no-Skip E2E gate");
         return (exePath, TestVideoFactory.GetOrCreate());
     }
 
-    private static ListBox Playlist(E2EAppRunner app) =>
+    internal static ListBox Playlist(E2EAppRunner app) =>
         app.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList"))!.AsListBox();
 
     /// <summary>
@@ -197,7 +197,7 @@ public sealed class SystemScenarioE2ETests
     /// 項目が作り直されることがあるため、毎回 Items[index] を取り直して実在と期待名の反映を待ち、
     /// ScrollIntoView → Focus の後に Select する。Select 自体も同じ条件で再試行する。
     /// </summary>
-    private static void SelectPlaylistItem(ListBox playlist, int index, string expectedNamePart)
+    internal static void SelectPlaylistItem(ListBox playlist, int index, string expectedNamePart)
     {
         E2EAssert.WaitUntil(() =>
         {
@@ -280,7 +280,7 @@ public sealed class SystemScenarioE2ETests
         }
     }
 
-    private static void AddPlaylistFiles(E2EAppRunner app, params string[] paths) =>
+    internal static void AddPlaylistFiles(E2EAppRunner app, params string[] paths) =>
         InvokeFileDialog(app, "BtnAddToPlaylist", paths);
 
     private static void InvokeFileDialog(
@@ -397,7 +397,7 @@ public sealed class SystemScenarioE2ETests
             .FindFirstDescendant(cf => cf.ByAutomationId("FullscreenOutputWindow"))
             ?.AsWindow();
 
-    private static string CreateDialogFileCopy(string sourcePath, string suffix)
+    internal static string CreateDialogFileCopy(string sourcePath, string suffix)
     {
         string directory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
         Directory.CreateDirectory(directory);
@@ -417,7 +417,7 @@ public sealed class SystemScenarioE2ETests
         return path;
     }
 
-    private static void DeleteDialogFile(string path)
+    internal static void DeleteDialogFile(string path)
     {
         if (File.Exists(path))
             File.Delete(path);
@@ -459,7 +459,7 @@ public sealed class SystemScenarioE2ETests
             : int.Parse(parts[0]) * 3600 + int.Parse(parts[1]) * 60 + double.Parse(parts[2]);
     }
 
-    private static double DurationSeconds(E2EAppRunner app)
+    internal static double DurationSeconds(E2EAppRunner app)
     {
         string[] sides = app.Text("TimeLabel").Split('/');
         if (sides.Length < 2)
