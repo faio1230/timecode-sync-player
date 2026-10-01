@@ -1000,7 +1000,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             () => _vm.Playlist.AddFilesAsync(dlg.FileNames, CancellationToken.None),
             ex => Log.Error(ex, "AddFilesAsync failed"),
             () => MessageBox.Show("ファイルの追加に失敗しました。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error),
-            SyncPlaylistSelection,
+            SyncPlaylistSelectionAfterAdd,
             UpdatePlaylistTimelineDisplay,
             () => _playlist.Current != null,
             () => LoadCurrentPlaylistTrack());
@@ -1458,6 +1458,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         ApplyPlaylistSelectionIndex(_playlist.CurrentIndex);
         UpdateCurrentTrackLabel();
+    }
+
+    // 追加の完了では、長さの読み取り中に利用者が選んだ行を再生中の行で上書きしない（K2）。
+    private void SyncPlaylistSelectionAfterAdd()
+    {
+        if (PlaylistAddSelectionPolicy.ShouldSyncSelection(PlaylistList.SelectedIndex))
+            SyncPlaylistSelection();
+        else
+            UpdateCurrentTrackLabel();
     }
 
     private void ApplyPlaylistSelectionIndex(int index)
