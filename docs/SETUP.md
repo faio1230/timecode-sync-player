@@ -278,7 +278,7 @@ Preference の「同期補正」で選べます（既定は **Smooth**）。
 
 ### ProRes の GPU 復号（v0.6.0）
 
-- ProRes の素材は、GStreamer のプラグイン gst-prores-d3d11（v0.2.1、同梱）で GPU で復号します。NVIDIA（RTX 級）で検証しました
+- ProRes の素材は、GStreamer のプラグイン gst-prores-d3d11（v0.2.2、同梱）で GPU で復号します。NVIDIA（RTX 級）で検証しました
 - どちらで開いたかは、画面のメタデータ行のデコーダ名で分かります: `V:proresd3d11dec` なら GPU、`V:avdec_prores` なら CPU
 - GPU の復号に失敗したとき（プラグインが読めない、アダプタが合わないなど）は、CPU の復号に切り替えて開きます。**1 回失敗すると、その起動の間は ProRes を CPU で復号します**（GPU の復旧かアプリの再起動で、GPU をまた試します）。理由は `logs\tcs-gst-*.log` の `load.skip` / `load.fail` / `load.attempt` の行に出ます
 - ProRes 4444 / 4444 XQ（アルファ付きを含む）も GPU で復号します。アルファは合成で使わず、不透明で出します（v0.5.x と同じ）
