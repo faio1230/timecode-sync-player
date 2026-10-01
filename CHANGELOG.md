@@ -2,6 +2,31 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.5.6 - 2026-10-0X
+
+Stable (Latest) bug-fix release of the 0.5 line.
+
+### Fixed
+
+- Selecting a playlist row right after adding files (until their lengths have been read; a few seconds or more,
+  growing with the number of files) could move the selection back to the playing row (the first row when added to an
+  empty list) when the reading finished, so "Up", "Down" and "Delete" acted on the playing row. Present in 0.5.5 and
+  earlier.
+
+### Changed
+
+- When files are added to a playlist that already has a selected row, the selection is no longer moved back to the
+  playing row when reading finishes. With no row selected, it still follows the playing row as before.
+
+### Known issues
+
+- Right after the LTC signal is disturbed, position re-alignment seeks can follow one another and stall heavy video
+  (4K or 60p, H.264 or ProRes) for up to about 0.6 s. Same as 0.5.4; fixed in 0.6.1.
+- Once on the test machine, the picture went black for about 1.5 s after a large LTC jump and the backward
+  re-alignment that followed. It did not recur in 4 reruns, and the same sequence played 200+ times without black
+  elsewhere. Same code as 0.5.4; the cause is still being isolated (another window over the test's screen capture is
+  not ruled out). Followed up in 0.6.x.
+
 ## 0.5.5 - 2026-10-01
 
 Stable (Latest) bug-fix release of the 0.5 line.
