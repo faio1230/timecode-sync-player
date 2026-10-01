@@ -738,6 +738,12 @@ internal sealed class LtcSyncController
                 rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
             _input.DiscardPendingSync();
             _lastContinueFrame = null;
+            // v0.6.1 案 1（TSP-Fable の判断）: 這う前進は保持値の変更ではない。保持の着地の記録（D31-b の比べる基準）があれば
+            // 新しい値へ移し、続く同じ値の Duplicate で保持値の変更を適用しない（ランスルーは合わせない）。停止モードで信号断が
+            // 止めている間は、今どおり止めたまま新しい値へ 1 回着地する（下の D31-b の枝が基準を付け直す）ので触らない。
+            if (_input.HeldLossLandingSeconds is not null && !_signalLoss.IsPauseOwned)
+                _input.MarkHeldLossLanding(SyncOffsetPolicy.Apply(rawSeconds,
+                    _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds));
             _creepingAdvanceCount++;
             Log.Debug("LTC frame layer2: creeping advance accepted ltc={Ltc:F3} heldRun={HeldRun}", rawSeconds, heldRun);
             // v0.6.1 β (A)（TSP-Fable の判断 (b)）: 損失からの復帰の有効フレームは (ii) の等速だけで数え、這う前進は数えない

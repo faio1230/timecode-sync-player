@@ -151,6 +151,42 @@ public class CreepingAdvanceTests
         Seeks(h).Should().HaveCountLessThanOrEqualTo(1, "止まった値へ後ろ向きに何度も戻さない");
     }
 
+    /// <summary>
+    /// v0.6.1 案 1（TSP-Fable の判断）: 這う前進は保持値の変更ではない。ランスルーの損失中に這う前進を受理したら、保持の着地の
+    /// 記録（D31-b の比べる基準）も新しい値へ移す。続く同じ値の Duplicate で「保持値の変更」を適用せず、映像を戻さない
+    /// （ランスルーの這う前進では合わせない、の続き）。
+    /// </summary>
+    [Fact]
+    public void RunThrough_CreepingAdvanceDuringLoss_IsNotAHeldValueChange()
+    {
+        ScenarioClock clock = NewClock();
+        SyncScenarioHarness h = Arrange(clock, LtcSignalLossMode.RunThrough);
+        Follow(h, clock);
+        for (int i = 0; i < 10; i++)
+        {
+            Frame(h, clock, 10.0);   // 保持（入口の合わせ、続けて保持が理由の損失）
+            h.AdvanceMilliseconds(FrameMs);
+        }
+        h.Controller.SignalLossLatchSnapshot()["lost"].Should().BeTrue("前提: 保持が理由の損失");
+        for (int i = 0; i < 4; i++)
+            h.AdvanceMilliseconds(FrameMs);
+        h.Operations.Clear();
+        using var capture = new LogCapture();
+
+        Frame(h, clock, 10.0 + 1.0 / 30.0);   // 這う前進
+        h.AdvanceMilliseconds(FrameMs);
+        for (int i = 0; i < 60; i++)   // 約 2 秒、同じ値の Duplicate が続く。映像は 1.0 で走る
+        {
+            Frame(h, clock, 10.0 + 1.0 / 30.0);
+            h.AdvanceMilliseconds(FrameMs);
+        }
+
+        int applies = capture.Count("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}");
+        _output.WriteLine($"heldValueChangeApplies={applies} seeks=[{string.Join(", ", Seeks(h).Select(v => v.ToString("F3")))}]");
+        applies.Should().Be(0, "這う前進の後の同じ値の Duplicate は保持値の変更ではない");
+        Seeks(h).Should().BeEmpty("ランスルーの保持の間は合わせない");
+    }
+
     [Fact]
     public void RunThrough_LateFrameWhileRunning_DoesNotSuppressTheNextHoldEntry()
     {
