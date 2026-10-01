@@ -43,8 +43,9 @@ Includes 0.6.0 (ProRes GPU decoding) and the 0.5.6 fix. Settings and projects ar
 - Once on the 0.5.5 test machine, the picture went black for about 1.5 s after a large LTC jump and the backward
   re-alignment. Not seen in the 0.6.0 candidate 2 and 0.6.1 candidate tests (5+ runs) or in 200+ plays of the same
   sequence. A re-alignment seek within one track keeps showing the last picture until the new frame arrives and does
-  not draw black (checked in code); black is drawn in cases such as a gap set to black or right after GPU recovery. The logs
-  of that run are being checked; another window over the test's screen capture is suspected.
+  not draw black (checked in code). The app log of that run shows none of the paths that draw black (a gap set to
+  black, GPU recovery, a test setting) and shows new frames being drawn during that time (checked). Another window
+  over the test's screen capture is suspected.
 - GStreamer can log a `gst_segment_do_seek: assertion` CRITICAL when a speed change follows a seek immediately
   (diagnostic only; the speed change takes effect, checked on the development machine).
 
