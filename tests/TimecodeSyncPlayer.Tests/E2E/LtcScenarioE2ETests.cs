@@ -1083,8 +1083,12 @@ public sealed partial class LtcScenarioE2ETests
         scenario.WaitUntil(() => scenario.IsPaused(), 2, "読み込みの後も一時停止のまま");
 
         // 4) 保持値の位置（範囲外なら端）に着地する。着地は尺と fps が分かった後の保持のフレームで出る。
-        double fpsB = scenario.FrameRateOf(scenario.B);
-        double landingTolerance = heldInsideB ? scenario.OneFrameOf(scenario.B) : SingleModeClamp.BoundaryHoldTolerance(fpsB);
+        double fpsB = scenario.B.FrameRate > 0 ? scenario.B.FrameRate : 30.0;
+        // 境界ホールドの許容は、これまでの fps（B の記録、無ければ 30）と実の fps の小さい方で作る（狭めない）。
+        double boundaryFpsB = Math.Min(fpsB, scenario.FrameRateOf(scenario.B));
+        double landingTolerance = heldInsideB
+            ? Math.Max(1.0 / fpsB, scenario.OneFrameOf(scenario.B))
+            : SingleModeClamp.BoundaryHoldTolerance(boundaryFpsB);
         scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedB) <= landingTolerance, 10,
             $"B の位置が保持値の着地先 {expectedB:F3} 付近");
         double landedPosition = scenario.Position();
@@ -1460,8 +1464,12 @@ public sealed partial class LtcScenarioE2ETests
         public double FrameRateOf(TrackInfo track) =>
             _measuredFps.TryGetValue(track.Index, out double fps) ? fps : track.FrameRate;
 
-        /// <summary>判定の対象のトラックの 1 フレーム（位置の許容）。</summary>
-        public double OneFrameOf(TrackInfo track) => FramePositionTolerance.OneFrame(FrameRateOf(track));
+        /// <summary>
+        /// 判定の対象のトラックの 1 フレーム（位置の許容）。これまでの値（OneFrame）より狭めない: 狭める向き（60fps の素材で
+        /// 1/30 → 1/60）は、v0.6.3 の 6 節（+1 フレームの食い違いの整理）で見直すまで今の判定を変えないため。
+        /// </summary>
+        public double OneFrameOf(TrackInfo track) => FramePositionTolerance.OneFrameAtLeast(FrameRateOf(track), OneFrame);
+
 
         /// <summary>信号断モードが停止（SetSignalLossMode(true)）か。既定のコンボ index 0 はランスルー。</summary>
         public bool SignalLossStop { get; private set; }
@@ -2396,7 +2404,9 @@ public sealed partial class LtcScenarioE2ETests
                     double? landingLatencySeconds = LandingLatencySecondsSince(holdStartLocal);
                     double jumpDistanceSeconds = Math.Abs(ltcTarget - previousLtc);
                     // アプリの SyncDecisionEngine.ToleranceSeconds と同じ（映像と LTC の大きい方の 1 フレーム）。
-                    double syncToleranceSeconds = Math.Max(FramePositionTolerance.FrameSeconds(FrameRateOf(track)), 1.0 / LtcFps);
+                    // 実の fps で広がる向きだけを足す（これまでの OneFrame より狭めない）。
+                    double syncToleranceSeconds = Math.Max(
+                        Math.Max(OneFrame, FramePositionTolerance.FrameSeconds(FrameRateOf(track))), 1.0 / LtcFps);
                     bool latencyOverBudget =
                         double.IsFinite(jumpDistanceSeconds) &&
                         jumpDistanceSeconds > 4 * syncToleranceSeconds &&

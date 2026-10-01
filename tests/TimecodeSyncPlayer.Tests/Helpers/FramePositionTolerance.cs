@@ -28,6 +28,13 @@ internal static class FramePositionTolerance
     /// <summary>位置の許容（1 フレーム + 丸めの余裕）。</summary>
     public static double OneFrame(double fps) => FrameSeconds(fps) + EpsilonSeconds;
 
+    /// <summary>
+    /// 位置の許容を、これまでの値より狭めない形で作る: max(これまでの値, 実の 1 フレーム + 丸めの余裕)。
+    /// 29.97・25・24 では広がり、30fps 以上ではこれまでどおり（狭める向きは別に決める）。
+    /// </summary>
+    public static double OneFrameAtLeast(double fps, double previousSeconds) =>
+        Math.Max(previousSeconds, OneFrame(fps));
+
     public static bool IsWithinOneFrame(double observedSeconds, double expectedSeconds, double fps) =>
         double.IsFinite(observedSeconds) && Math.Abs(observedSeconds - expectedSeconds) <= OneFrame(fps);
 

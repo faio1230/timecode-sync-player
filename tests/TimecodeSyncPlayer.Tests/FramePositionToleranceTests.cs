@@ -40,6 +40,31 @@ public sealed class FramePositionToleranceTests
         FramePositionTolerance.IsWithinOneFrame(40.0 + 2.0 / fps, 40.0, fps).Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData(59.94)]
+    [InlineData(60.0)]
+    [InlineData(30.0)]
+    public void AtLeast_DoesNotNarrowBelowThePreviousThirtyFpsTolerance(double fps)
+    {
+        // これまでの許容（1/30）より狭めない。60fps の素材でも 1/30 のまま（狭める向きは v0.6.3 の 6 節で見直す）。
+        FramePositionTolerance.OneFrameAtLeast(fps, 1.0 / 30.0).Should().BeGreaterThanOrEqualTo(1.0 / 30.0);
+        if (fps > 30.0)
+            FramePositionTolerance.OneFrameAtLeast(fps, 1.0 / 30.0).Should().Be(1.0 / 30.0);
+    }
+
+    [Theory]
+    [InlineData(29.970)]
+    [InlineData(25.0)]
+    [InlineData(24.0)]
+    public void AtLeast_WidensToTheRealFrameBelowThirtyFps(double fps)
+    {
+        double tolerance = FramePositionTolerance.OneFrameAtLeast(fps, 1.0 / 30.0);
+        tolerance.Should().Be(FramePositionTolerance.OneFrame(fps));
+        tolerance.Should().BeGreaterThan(1.0 / 30.0);
+        (1.0 / fps <= tolerance).Should().BeTrue("その素材の 1 フレームのずれは許容する");
+        (2.0 / fps <= tolerance).Should().BeFalse("2 フレームのずれは許容しない");
+    }
+
     [Fact]
     public void UnknownFps_FallsBackToThirty()
     {
