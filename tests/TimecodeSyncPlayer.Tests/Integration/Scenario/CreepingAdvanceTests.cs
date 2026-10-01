@@ -2,6 +2,7 @@ using FluentAssertions;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
+using Xunit.Abstractions;
 
 namespace TimecodeSyncPlayer.Tests.Integration;
 
@@ -15,6 +16,10 @@ namespace TimecodeSyncPlayer.Tests.Integration;
 [Collection("Serilog global logger")]
 public class CreepingAdvanceTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public CreepingAdvanceTests(ITestOutputHelper output) => _output = output;
+
     private const int FrameMs = 33;
 
     private static SyncScenarioHarness Arrange(ScenarioClock clock, LtcSignalLossMode lossMode)
@@ -175,6 +180,87 @@ public class CreepingAdvanceTests
         finally
         {
             Log.Logger = previous;
+        }
+    }
+
+    /// <summary>
+    /// レビューの 6: 0.25 倍速の送出（133ms ごとに 1 歩）を停止モードで。毎フレームが這う前進になる間も、保持の枝の処理を
+    /// 通し、損失からの復帰と U8 の再停止の往復（signal-loss-resume と signal-loss-pause の繰り返し）が出ない。
+    /// </summary>
+    [Fact]
+    public void StopMode_QuarterSpeedSender_DoesNotOscillateBetweenResumeAndPause()
+    {
+        ScenarioClock clock = NewClock();
+        SyncScenarioHarness h = Arrange(clock, LtcSignalLossMode.Stop);
+        Follow(h, clock);
+        h.Operations.Clear();
+
+        long origin = clock.MonotonicMilliseconds;
+        var oscillation = new List<string>();
+        double value = 10.0;
+        for (int step = 0; step < 30; step++)   // 約 4 秒
+        {
+            value += 1.0 / 30.0;
+            int before = h.Operations.Count;
+            Frame(h, clock, value);
+            NoteLossOperations(h, before, $"{clock.MonotonicMilliseconds - origin}ms frame {value:F3}", oscillation);
+            for (int i = 0; i < 4; i++)
+            {
+                before = h.Operations.Count;
+                h.AdvanceMilliseconds(FrameMs + (i == 0 ? 1 : 0));   // 133ms
+                NoteLossOperations(h, before, $"{clock.MonotonicMilliseconds - origin}ms tick", oscillation);
+            }
+        }
+
+        int resumes = h.Operations.Count(o => o.Name == "signal-loss-resume");
+        int pauses = h.Operations.Count(o => o.Name == "signal-loss-pause");
+        _output.WriteLine($"resume={resumes} pause={pauses}");
+        foreach (string line in oscillation)
+            _output.WriteLine(line);
+        (resumes + pauses).Should().BeLessThanOrEqualTo(1,
+            $"遅い送出の間に復帰と再停止を往復しない（resume={resumes} pause={pauses}）");
+    }
+
+    /// <summary>
+    /// v0.6.1 β (A)（TSP-Fable の判断 (b)）: 無音の損失の後、止まった位置から等速で再開すると、1 枚目は這う前進（e が大きい）で
+    /// 復帰の有効フレームに数えない。3 枚では復帰せず、4 枚目（等速の 3 枚目）で復帰する。
+    /// </summary>
+    [Fact]
+    public void StopMode_ResumeFromSilence_FirstFrameIsCreepAndRecoversOnTheFourthFrame()
+    {
+        ScenarioClock clock = NewClock();
+        SyncScenarioHarness h = Arrange(clock, LtcSignalLossMode.Stop);
+        Follow(h, clock);
+        for (int i = 0; i < 12; i++)
+            h.AdvanceMilliseconds(FrameMs);   // 約 400ms の無音（信号断で一時停止）
+        h.IsPaused.Should().BeTrue("前提: 無音の損失で一時停止");
+        h.Operations.Clear();
+
+        double value = 10.0;
+        for (int step = 1; step <= 3; step++)
+        {
+            value += 1.0 / 30.0;
+            Frame(h, clock, value);
+            h.AdvanceMilliseconds(FrameMs);
+        }
+        h.Operations.Should().NotContain(o => o.Name == "signal-loss-resume",
+            "1 枚目は這う前進で数えず、等速の 2 枚では復帰しない");
+        h.IsPaused.Should().BeTrue();
+
+        value += 1.0 / 30.0;
+        Frame(h, clock, value);
+
+        h.Operations.Count(o => o.Name == "signal-loss-resume").Should().Be(1, "4 枚目（等速の 3 枚目）で復帰する");
+        h.IsPaused.Should().BeFalse();
+    }
+
+    /// <summary>直前の数から増えた損失の停止・復帰を、時刻と契機（フレームか歩みか）付きで記録する（再現の調べ用）。</summary>
+    private static void NoteLossOperations(SyncScenarioHarness h, int before, string when, List<string> lines)
+    {
+        foreach (ScenarioPlaybackOperation op in h.Operations.Skip(before))
+        {
+            if (op.Name is "signal-loss-resume" or "signal-loss-pause")
+                lines.Add($"{when}: {op.Name}");
         }
     }
 }

@@ -165,9 +165,11 @@ public sealed class HeldLtcStopAndRunThroughTests
         h.IsPaused.Should().BeTrue();
         h.Operations.Clear();
 
+        // v0.6.1 β (A): 止まった位置からの再開の 1 枚目は這う前進で、復帰の有効フレームに数えない（等速の 3 枚で復帰するので 4 枚送る）。
         Raw(h, 2, 2, 10_300);
         Raw(h, 2, 3, 10_340);
         Raw(h, 2, 4, 10_420);
+        Raw(h, 2, 5, 10_460);
 
         h.Operations.Should().Contain(o => o.Name == "signal-loss-resume");
         h.IsPaused.Should().BeFalse();

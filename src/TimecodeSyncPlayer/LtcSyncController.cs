@@ -740,9 +740,9 @@ internal sealed class LtcSyncController
             _lastContinueFrame = null;
             _creepingAdvanceCount++;
             Log.Debug("LTC frame layer2: creeping advance accepted ltc={Ltc:F3} heldRun={HeldRun}", rawSeconds, heldRun);
-            // v0.6.1 β (A): 損失からの復帰の有効フレームは、到着と前進で数える（這う前進も 1 枚に数える）。
-            if (_signalLoss.IsLost)
-                ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
+            // v0.6.1 β (A)（TSP-Fable の判断 (b)）: 損失からの復帰の有効フレームは (ii) の等速だけで数え、這う前進は数えない
+            // （遅い送出で復帰と再停止を往復しない。停止モードは止めたまま歩ごとに着地する）。止まった位置からの再開の 1 枚目は
+            // 這う前進なので、復帰は 1 フレーム遅れる。
         }
 
         bool applyOnce;
