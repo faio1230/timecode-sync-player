@@ -867,7 +867,7 @@ public sealed partial class LtcScenarioE2ETests
         // タイマー間隔 100ms と UIA 読みの遅れを含めた上限（+1 フレーム + タイマー + 読み）。
         pauseLatencySeconds.Should().BeLessThanOrEqualTo(timeoutSeconds + scenario.OneFrame + 0.35,
             $"{timeoutSeconds:F2}s + 1 フレーム以内の一時停止（観測 {pauseLatencySeconds * 1000.0:F0}ms）");
-        scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedPosition) <= scenario.OneFrame,
+        scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedPosition) <= scenario.OneFrameOf(scenario.A),
             timeoutSeconds + scenario.OneFrame + 1.0, "停止位置が保持値");
         double stoppedPosition = scenario.Position();
         // hold-pause は一時停止を検出した瞬間の値で、保持値への明示着地より前を拾う。
@@ -881,7 +881,7 @@ public sealed partial class LtcScenarioE2ETests
             secondsAfterPause = (DateTime.Now - pausedAt).TotalSeconds,
         });
         Thread.Sleep(1500);
-        Math.Abs(scenario.Position() - stoppedPosition).Should().BeLessThanOrEqualTo(scenario.OneFrame,
+        Math.Abs(scenario.Position() - stoppedPosition).Should().BeLessThanOrEqualTo(scenario.OneFrameOf(scenario.A),
             "保持中は停止位置が動かない");
         scenario.WaitTrackPicture("r1-hold", scenario.A, 2, "保持中は A の本文");
     });
@@ -925,7 +925,7 @@ public sealed partial class LtcScenarioE2ETests
         // 保持値への明示着地が済むまで、R-1 の判定と同じ幅（1 フレーム）と同じ時間だけ様子を見る。
         // ここでは判定しないので、着地しないまま時間切れになっても送出の再開へ進む。
         DateTime landingDeadline = pausedAt.AddSeconds(timeoutSeconds + scenario.OneFrame + 1.0);
-        while (Math.Abs(scenario.Position() - expectedPosition) > scenario.OneFrame
+        while (Math.Abs(scenario.Position() - expectedPosition) > scenario.OneFrameOf(scenario.A)
             && DateTime.Now < landingDeadline)
         {
             Thread.Sleep(50);
@@ -938,7 +938,7 @@ public sealed partial class LtcScenarioE2ETests
             position = landedPosition,
             overshoot = landedPosition - expectedPosition,
             secondsAfterPause = (DateTime.Now - pausedAt).TotalSeconds,
-            landed = Math.Abs(landedPosition - expectedPosition) <= scenario.OneFrame,
+            landed = Math.Abs(landedPosition - expectedPosition) <= scenario.OneFrameOf(scenario.A),
         });
 
         scenario.Play(target, 8.0);
@@ -1065,7 +1065,7 @@ public sealed partial class LtcScenarioE2ETests
             position = scenario.Position(),
             ltc = scenario.LtcSeconds(),
         });
-        scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedA) <= scenario.OneFrame,
+        scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedA) <= scenario.OneFrameOf(scenario.A),
             timeoutSeconds + scenario.OneFrame + 1.0, "A の停止位置が保持値");
         scenario.Journal.Write("hold-landed", details: new
         {
@@ -1083,8 +1083,8 @@ public sealed partial class LtcScenarioE2ETests
         scenario.WaitUntil(() => scenario.IsPaused(), 2, "読み込みの後も一時停止のまま");
 
         // 4) 保持値の位置（範囲外なら端）に着地する。着地は尺と fps が分かった後の保持のフレームで出る。
-        double fpsB = scenario.B.FrameRate > 0 ? scenario.B.FrameRate : 30.0;
-        double landingTolerance = heldInsideB ? 1.0 / fpsB : SingleModeClamp.BoundaryHoldTolerance(fpsB);
+        double fpsB = scenario.FrameRateOf(scenario.B);
+        double landingTolerance = heldInsideB ? scenario.OneFrameOf(scenario.B) : SingleModeClamp.BoundaryHoldTolerance(fpsB);
         scenario.WaitUntil(() => Math.Abs(scenario.Position() - expectedB) <= landingTolerance, 10,
             $"B の位置が保持値の着地先 {expectedB:F3} 付近");
         double landedPosition = scenario.Position();
@@ -1399,9 +1399,11 @@ public sealed partial class LtcScenarioE2ETests
         return scenario.Journal.JournalPath;
     }
 
+    /// <param name="FrameRate">プロジェクトの frameRate。無ければ 30（生成したプロジェクトは frameRate を書かない）。</param>
+    /// <param name="RecordedFrameRate">プロジェクトに記録された frameRate（無ければ null。30 の補いを入れない）。</param>
     private sealed record TrackInfo(
         int Index, string Symbol, TimeSpan TimelineOffset, TimeSpan MediaIn, TimeSpan MediaOut,
-        TimeSpan Duration, double FrameRate)
+        TimeSpan Duration, double FrameRate, double? RecordedFrameRate)
     {
         public double Start => TimelineOffset.TotalSeconds;
         public double End => Start + (MediaOut - MediaIn).TotalSeconds;
@@ -1445,7 +1447,21 @@ public sealed partial class LtcScenarioE2ETests
         public TrackInfo A => Tracks[0];
         public TrackInfo B => Tracks[1];
         public TrackInfo C => Tracks[2];
+        /// <summary>先頭トラックのプロジェクトの frameRate（無ければ 30）の 1 フレーム。時間の上限と末尾の参照の目標にだけ使う（位置の許容は <see cref="OneFrameOf"/>）。</summary>
         public double OneFrame => 1.0 / (Tracks[0].FrameRate > 0 ? Tracks[0].FrameRate : 30.0);
+
+        /// <summary>参照の採取で各トラックを読み込んだときに、アプリのメタデータ行から読んだ実の fps（トラックの番号ごと）。</summary>
+        private readonly Dictionary<int, double> _measuredFps = new();
+
+        /// <summary>
+        /// トラックの実の fps。参照の採取で読んだ値（アプリの表示、29.97 は 29.970）を優先し、無ければプロジェクトの
+        /// frameRate（無ければ 30）。位置もこの表示の fps でフレーム番号から秒にしているので、許容と位置の単位がそろう。
+        /// </summary>
+        public double FrameRateOf(TrackInfo track) =>
+            _measuredFps.TryGetValue(track.Index, out double fps) ? fps : track.FrameRate;
+
+        /// <summary>判定の対象のトラックの 1 フレーム（位置の許容）。</summary>
+        public double OneFrameOf(TrackInfo track) => FramePositionTolerance.OneFrame(FrameRateOf(track));
 
         /// <summary>信号断モードが停止（SetSignalLossMode(true)）か。既定のコンボ index 0 はランスルー。</summary>
         public bool SignalLossStop { get; private set; }
@@ -1501,7 +1517,9 @@ public sealed partial class LtcScenarioE2ETests
                 scenario.Journal.Write("scenario-start", details: new
                 {
                     testId, continueMode, blackGap, isDefaultProject, ltcFps = LtcFps,
-                    tracks = tracks.Select(t => new { t.Symbol, t.Start, t.End, t.Used, t.MediaIn, t.MediaOut, t.Duration, t.FrameRate }),
+                    // frameRate はプロジェクトの記録（無ければ null）。実の fps はアプリの起動の後に分かるので、
+                    // 参照の採取で読み込んだときに track-frame-rate で残す。
+                    tracks = tracks.Select(t => new { t.Symbol, t.Start, t.End, t.Used, t.MediaIn, t.MediaOut, t.Duration, FrameRate = t.RecordedFrameRate }),
                 });
                 // 事前確認 1: 重い処理と重なっていない（重なった回は UIA の読みが遅れて無効になる）。
                 string? busy = ScenarioPreflight.CheckMachineIdle();
@@ -1560,7 +1578,7 @@ public sealed partial class LtcScenarioE2ETests
                     : IsMediaSymbol(track.Name) ? track.Name!.ToUpperInvariant() : $"M{index + 1}";
                 TimeSpan mediaOut = track.MediaOut ?? track.MediaDuration;
                 tracks.Add(new TrackInfo(index, symbol, track.TimelineOffset, track.MediaIn, mediaOut,
-                    track.MediaDuration, track.FrameRate ?? 30.0));
+                    track.MediaDuration, track.FrameRate ?? 30.0, track.FrameRate));
             }
 
             return tracks;
@@ -1653,6 +1671,15 @@ public sealed partial class LtcScenarioE2ETests
                 Seek(track.MediaIn.TotalSeconds);
                 FrameSignature head = CaptureReferenceAfterSeek(track, "head", track.MediaIn.TotalSeconds, previous);
                 References.Add(track.Symbol, "head", $"ref_{track.Symbol}_head", head);
+                if (FramePositionTolerance.TryParseMetaLineFps(App.Text("MetaLineText"), out double measuredFps))
+                    _measuredFps[track.Index] = measuredFps;
+                Journal.Write("track-frame-rate", details: new
+                {
+                    symbol = track.Symbol,
+                    recorded = track.RecordedFrameRate,
+                    measured = _measuredFps.TryGetValue(track.Index, out double fps) ? fps : (double?)null,
+                    oneFrame = OneFrameOf(track),
+                });
 
                 double tail = Math.Max(0, track.MediaOut.TotalSeconds - OneFrame);
                 Seek(tail);
@@ -2146,8 +2173,7 @@ public sealed partial class LtcScenarioE2ETests
 
         public double MediaFps()
         {
-            Match rate = Regex.Match(App.Text("MetaLineText"), @"(\d+(?:\.\d+)?)\s*fps");
-            if (rate.Success) return double.Parse(rate.Groups[1].Value, CultureInfo.InvariantCulture);
+            if (FramePositionTolerance.TryParseMetaLineFps(App.Text("MetaLineText"), out double fps)) return fps;
             return Tracks[0].FrameRate;
         }
 
@@ -2342,7 +2368,7 @@ public sealed partial class LtcScenarioE2ETests
             Signal.PlayHeld(ltcTarget, LtcFps, TimeSpan.FromSeconds(sendSeconds));
             bool runThrough = !SignalLossStop;
             double landingTolerance = PositionToleranceSeconds;
-            double frameAllowance = OneFrame;
+            double frameAllowance = OneFrameOf(track);
 
             var jumpSamples = new List<FrameSignature>();
             var follow = new List<(double Elapsed, double Expected, double Observed)>();
@@ -2370,7 +2396,7 @@ public sealed partial class LtcScenarioE2ETests
                     double? landingLatencySeconds = LandingLatencySecondsSince(holdStartLocal);
                     double jumpDistanceSeconds = Math.Abs(ltcTarget - previousLtc);
                     // アプリの SyncDecisionEngine.ToleranceSeconds と同じ（映像と LTC の大きい方の 1 フレーム）。
-                    double syncToleranceSeconds = Math.Max(OneFrame, 1.0 / LtcFps);
+                    double syncToleranceSeconds = Math.Max(FramePositionTolerance.FrameSeconds(FrameRateOf(track)), 1.0 / LtcFps);
                     bool latencyOverBudget =
                         double.IsFinite(jumpDistanceSeconds) &&
                         jumpDistanceSeconds > 4 * syncToleranceSeconds &&
