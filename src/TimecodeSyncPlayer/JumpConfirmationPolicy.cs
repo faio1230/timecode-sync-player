@@ -25,16 +25,31 @@ internal static class JumpConfirmationPolicy
         return Math.Round(detectedFps) != Math.Round(resolvedFps);
     }
 
-    /// <summary>未確認 Jump の次フレームが値の連続を示すか（同値の Duplicate か +1 フレーム）。</summary>
+    /// <summary>
+    /// v0.6.1 D2: 数える Duplicate か（保持の証拠・Jump の確認）。Duplicate で、Fixed fps モードでデコーダ推定 fps が解決 fps と
+    /// 食い違わない（音が化けた最中の 1 枚を証拠にしない）。規則 4 の入口の数え方と Jump の確認で同じ述語を使う。
+    /// 推定 fps が無い（null）なら疑わない。
+    /// </summary>
+    public static bool IsCountedDuplicate(
+        TimecodeFrameDiagnosticStatus status, TimecodeFpsMode mode, double? detectedFps, double resolvedFps) =>
+        status == TimecodeFrameDiagnosticStatus.Duplicate &&
+        !(detectedFps is double detected && IsDetectedFpsSuspect(mode, detected, resolvedFps));
+
+    /// <summary>
+    /// 未確認 Jump の次フレームが値の連続を示すか（同値の Duplicate か +1 フレーム）。
+    /// v0.6.1 D2: 同値の Duplicate は、数える Duplicate（<paramref name="countedDuplicate"/>、<see cref="IsCountedDuplicate"/>）の
+    /// ときだけ確認になる（fps の疑わしい Duplicate では確定しない）。
+    /// </summary>
     public static bool IsConfirmedBy(
-        double pendingSeconds, double currentSeconds, double fps, TimecodeFrameDiagnosticStatus status)
+        double pendingSeconds, double currentSeconds, double fps, TimecodeFrameDiagnosticStatus status,
+        bool countedDuplicate = true)
     {
         if (status == TimecodeFrameDiagnosticStatus.Jump)
             return false;
         double frameSeconds = fps > 0 ? 1.0 / fps : 0.04;
         double delta = currentSeconds - pendingSeconds;
         if (status == TimecodeFrameDiagnosticStatus.Duplicate)
-            return Math.Abs(delta) <= frameSeconds * 0.5;
+            return countedDuplicate && Math.Abs(delta) <= frameSeconds * 0.5;
         return delta >= frameSeconds * 0.5 && delta <= frameSeconds * 1.5;
     }
 

@@ -168,6 +168,7 @@ internal sealed class LtcSignalLossPolicy
             _lastHeldFrameAtMilliseconds = null;
             _consecutiveHeldFrames = 0;
             _reason = LtcSignalLossReason.None;
+            _heldReasonFromArrivalOnly = false;
             _consecutiveResumeFrames = 0;
             return LtcSignalLossAction.None;
         }
@@ -184,6 +185,7 @@ internal sealed class LtcSignalLossPolicy
 
         _isLost = false;
         _reason = LtcSignalLossReason.None;
+        _heldReasonFromArrivalOnly = false;
         _consecutiveResumeFrames = 0;
         _manualResumeSuppressesPause = false;
         _consecutiveHeldFrames = 0;
@@ -217,10 +219,9 @@ internal sealed class LtcSignalLossPolicy
         // v0.6.1 β (C): 損失のまま保持値が変わることがあるので、損失中に保持のフレームが届いたら理由を「停止」に戻す
         // （無音の後に保持が届いた、または理由が信号断へ下がった後も保持が続いている）。
         if (_isLost && _reason == LtcSignalLossReason.SignalLoss)
-        {
             _reason = LtcSignalLossReason.TimecodeHeld;
-            _heldReasonFromArrivalOnly = false;
-        }
+        // v0.6.1 (D): 保持の到着があったので、理由の「停止」は保持から付いている。
+        _heldReasonFromArrivalOnly = false;
         // U8: 続いた保持を数える（2 枚続いたら確認を待たずに確定する。v0.5.4 B6b: Jump の有無は問わない）。
         _consecutiveHeldFrames = heldRunLength ?? _consecutiveHeldFrames + 1;
     }
@@ -291,6 +292,7 @@ internal sealed class LtcSignalLossPolicy
 
         _isLost = false;
         _reason = LtcSignalLossReason.None;
+        _heldReasonFromArrivalOnly = false;
         _lastValidFrameAtMilliseconds = receivedAtMilliseconds;
         _lastHeldFrameAtMilliseconds = null;
         _consecutiveResumeFrames = 0;
@@ -325,9 +327,15 @@ internal sealed class LtcSignalLossPolicy
 
             // D27: 保持フレームが途切れたら理由を信号断へ下げる（無音になった後の Jump を
             // 保持からの復帰として数えないため）。
-            if (_reason == LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(nowMilliseconds) &&
-                !WasArrivingRecently(nowMilliseconds))
-                _reason = LtcSignalLossReason.SignalLoss;
+            // v0.6.1 (D): 保持が途切れても受理しないフレームの到着が続く間は、理由は「停止」のまま（LTC は来ている）だが、
+            // 保持の到着ではないので、保持の直後の即時の復帰には数えない。
+            if (_reason == LtcSignalLossReason.TimecodeHeld && !WasHeldRecently(nowMilliseconds))
+            {
+                if (WasArrivingRecently(nowMilliseconds))
+                    _heldReasonFromArrivalOnly = true;
+                else
+                    _reason = LtcSignalLossReason.SignalLoss;
+            }
 
             return EvaluatePause(context);
         }
@@ -343,6 +351,7 @@ internal sealed class LtcSignalLossPolicy
             _isLost = true;
             _consecutiveResumeFrames = 0;
             _reason = LtcSignalLossReason.TimecodeHeld;
+            _heldReasonFromArrivalOnly = false;
             _consecutiveHeldFrames = 0;
             Log.Debug("sync.gate signal-loss-confirm elapsedMs={ElapsedMs:F1} reason={Reason}",
                 ElapsedMilliseconds(_lastValidFrameAtMilliseconds ?? _lastHeldFrameAtMilliseconds ?? nowMilliseconds,

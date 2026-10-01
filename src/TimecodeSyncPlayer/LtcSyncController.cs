@@ -74,8 +74,14 @@ internal sealed class LtcSyncController
     private readonly LtcFrameProcessor _frames;
     private readonly LtcSignalLossPolicy _signalLoss;
 
-    /// <summary>v0.6.1: 這う前進の上限に使う freewheel（信号断の確認と同じ timeout）。</summary>
-    private readonly double _freewheelSeconds;
+    /// <summary>v0.6.1（レビューの 7）: 層 2 の分類の件数（起動からの累計。<see cref="LogLayer2Summary"/> で出す）。</summary>
+    private long _creepingAdvanceCount;
+    private long _returnedToAcceptedStreamCount;
+
+    /// <summary>
+    /// v0.6.1: 這う前進の上限に使う freewheel（規則 1。既定の 250ms で固定し、利用者の信号断の時間の設定には連動させない）。
+    /// </summary>
+    private const double FreewheelSeconds = AppSettings.DefaultLtcSignalLossTimeoutMs / 1000.0;
     private readonly LtcSignalLossMonitoringState _monitoring = new();
     private readonly LtcSyncEffects _effects;
     private readonly Func<SingleModeSyncCoordinator> _single;
@@ -108,7 +114,6 @@ internal sealed class LtcSyncController
         _syncService = syncService;
         _frames = frames;
         _signalLoss = new(TimeSpan.FromMilliseconds(timeoutMilliseconds), resumeFrames);
-        _freewheelSeconds = timeoutMilliseconds / 1000.0;
         _effects = effects;
         _single = single;
         _continue = continueOnTrack;
@@ -537,9 +542,21 @@ internal sealed class LtcSyncController
         OnLifecycle(SyncLifecycleEvent.FpsModeChanged);
     }
 
+    /// <summary>
+    /// v0.6.1（レビューの 7）: 層 2 の分類の件数（(iii) の這う前進の受理と、A の流れへ戻って捨てた保留）を Information で 1 行出す。
+    /// 毎フレームの行は Debug（這う前進）なので、配布ビルド（Information 以上）でも監視の停止・アプリの終了の時点の件数を数えられる。
+    /// 件数は起動からの累計。
+    /// </summary>
+    public void LogLayer2Summary(string source) =>
+        Log.Information(
+            "LTC layer2 summary: creepingAdvances={CreepingAdvances} returnedToAcceptedStream={ReturnedToAcceptedStream} source={Source}",
+            _creepingAdvanceCount, _returnedToAcceptedStreamCount, source);
+
     public void MonitoringChanged()
     {
         bool monitoring = _effects.GetContext().IsMonitoring;
+        if (!monitoring)
+            LogLayer2Summary("monitoring-stopped");
         SyncLifecycleEvent evt = monitoring
             ? SyncLifecycleEvent.MonitoringStarted
             : SyncLifecycleEvent.MonitoringStopped;
@@ -622,7 +639,6 @@ internal sealed class LtcSyncController
                 _signalLoss.ObserveFrameArrival(receivedAtMilliseconds, SignalContext());
         }
         bool confirmedIntoHold = false;
-        TimecodeFrameDiagnosticStatus status = processed.Diagnostic.Status;
         double sameValueSeconds = (LastTimecodeFps > 0 ? 1.0 / LastTimecodeFps : 0.04) * 0.5;
         // 受理されない値（Reverse・Jump の保留）は、数える保持の連続を変えない（未受理の値はマスターの状態を変えない、3-4 の (a)）。
         // 這う前進は、連続の長さを保ったまま比べる値だけを移す。
@@ -639,6 +655,7 @@ internal sealed class LtcSyncController
             if (layer2 is Layer2Class.Duplicate or Layer2Class.Normal or Layer2Class.Creep)
             {
                 _input.DiscardPendingJump();
+                _returnedToAcceptedStreamCount++;
                 Log.Information(
                     "Timecode sync: pending Jump frame discarded: returned to the accepted stream pending={Pending:F3} ltc={Ltc:F3} accepted={Accepted:F3} class={Class}",
                     pendingJump, rawSeconds, _input.Accepted?.RawSeconds ?? double.NaN, layer2);
@@ -649,12 +666,22 @@ internal sealed class LtcSyncController
                 bool withinWindow = JumpConfirmationPolicy.IsWithinConfirmationWindow(
                     _input.PendingJumpFrameEndTimestamp, frameEndTimestamp,
                     _input.PendingJumpReceivedAt, receivedAtMilliseconds, LastTimecodeFps);
-                if (withinWindow &&
+                // v0.6.1 D2: 同値の Duplicate の確認は、規則 4 の入口と同じ述語（fps の疑わしいものは数えない）で数える。
+                LtcFrameProcessingResult layer1Processed =
+                    processed with { Diagnostic = processed.Diagnostic with { Status = layer1Status } };
+                bool countedDuplicate = IsCountedHeldFrame(layer1Processed, sourceFrame, mode);
+                if (withinWindow && layer1Status == TimecodeFrameDiagnosticStatus.Duplicate && !countedDuplicate &&
                     JumpConfirmationPolicy.IsConfirmedBy(pendingJump, rawSeconds, LastTimecodeFps, layer1Status))
                 {
+                    Log.Information(
+                        "Timecode sync: jump confirmation: fps-suspect duplicate not counted pending={Pending:F3} ltc={Ltc:F3} detectedFps={DetectedFps:F3}",
+                        pendingJump, rawSeconds, sourceFrame?.Fps ?? double.NaN);
+                }
+                if (withinWindow &&
+                    JumpConfirmationPolicy.IsConfirmedBy(
+                        pendingJump, rawSeconds, LastTimecodeFps, layer1Status, countedDuplicate))
+                {
                     // 確定した値で数え直す（確認のフレームが保留した値の Duplicate なら、その値の 1 枚目）。
-                    LtcFrameProcessingResult layer1Processed =
-                        processed with { Diagnostic = processed.Diagnostic with { Status = layer1Status } };
                     int confirmedHeldRun = layer2 is not null
                         ? _input.ObserveHeldRun(
                             IsCountedHeldFrame(layer1Processed, sourceFrame, mode) ? rawSeconds : null, sameValueSeconds)
@@ -700,24 +727,28 @@ internal sealed class LtcSyncController
         }
 
         // v0.6.1 (iii) 這う前進: A を raw に更新し時刻も付け直すが、M は raw で止まる（外挿しない＝同期の要求を出さず、
-        // 保留の同期も捨てる）。保持の状態は切らない。映像との差が許容を超えるときだけ、保持の目標を raw にして
-        // 1 回合わせる（規則 4 の入口の合わせと同じ経路）。
-        if (layer2 == Layer2Class.Creep)
+        // 保留の同期も捨てる）。保持の状態は切らない。この後は保持（Duplicate）の枝で扱い、境界ホールドの評価・着地の観測・
+        // 読み込みの解除の再適用を飛ばさない（遅い送出で毎フレームが這う前進のときも同じ処理を通す）。
+        bool creepingAdvance = layer2 == Layer2Class.Creep;
+        if (creepingAdvance)
         {
-            double creepEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
-                _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
-            _input.AcceptFrame(creepEffectiveSeconds, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
-            _input.MarkHeldEffective(creepEffectiveSeconds);
-            // v0.6.1 (D): 這う前進の受理は保持の到着（止まりかけの送出の 1 歩）。
-            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
+            _input.AcceptFrame(
+                SyncOffsetPolicy.Apply(rawSeconds,
+                    _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds),
+                rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
             _input.DiscardPendingSync();
             _lastContinueFrame = null;
+            // v0.6.1 案 1（TSP-Fable の判断）: 這う前進は保持値の変更ではない。保持の着地の記録（D31-b の比べる基準）があれば
+            // 新しい値へ移し、続く同じ値の Duplicate で保持値の変更を適用しない（ランスルーは合わせない）。停止モードで信号断が
+            // 止めている間は、今どおり止めたまま新しい値へ 1 回着地する（下の D31-b の枝が基準を付け直す）ので触らない。
+            if (_input.HeldLossLandingSeconds is not null && !_signalLoss.IsPauseOwned)
+                _input.MarkHeldLossLanding(SyncOffsetPolicy.Apply(rawSeconds,
+                    _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds));
+            _creepingAdvanceCount++;
             Log.Debug("LTC frame layer2: creeping advance accepted ltc={Ltc:F3} heldRun={HeldRun}", rawSeconds, heldRun);
-            // v0.6.1 β (A): 損失からの復帰の有効フレームは、到着と前進で数える（這う前進も 1 枚に数える）。
-            if (_signalLoss.IsLost)
-                ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
-            AlignOnRunThroughHoldEntry();
-            return;
+            // v0.6.1 β (A)（TSP-Fable の判断 (b)）: 損失からの復帰の有効フレームは (ii) の等速だけで数え、這う前進は数えない
+            // （遅い送出で復帰と再停止を往復しない。停止モードは止めたまま歩ごとに着地する）。止まった位置からの再開の 1 枚目は
+            // 這う前進なので、復帰は 1 フレーム遅れる。
         }
 
         bool applyOnce;
@@ -746,8 +777,13 @@ internal sealed class LtcSyncController
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 // v0.6.1 β (C): 損失中に確定した保持値は、保持値の変更（D31-b の入口）として扱う。
-                heldValueChangedDuringLoss = confirmedIntoHold || IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
-                holdEntry = _input.LastHeldEffectiveSeconds is not null &&
+                // v0.6.1（レビューの直し）: (iii) の合わせはモードで分ける。停止モードで信号断が止めている間は、止めたまま新しい
+                // 保持値へ 1 回着地する（下の D31-b の枝の ReapplyHeldValueOnPause、1 フレーム精度。再生は走らせない）。
+                // ランスルー（と止めていない間）は合わせない。保持の外の 1 枚は合わせの経路を通らないので、保持着地の記録
+                // （HeldLossLanding）を立てない（走行中の遅れた 1 枚で規則 4 の入口の合わせが消えない）。
+                heldValueChangedDuringLoss = confirmedIntoHold ||
+                    (creepingAdvance ? _signalLoss.IsPauseOwned : IsHeldValueChangedDuringLoss(heldEffectiveSeconds));
+                holdEntry = !creepingAdvance && _input.LastHeldEffectiveSeconds is not null &&
                     SyncRules.IsMasterStopped(heldRun, minimumHeldFrames: 2) &&
                     _input.HeldLossLandingSeconds is null;
                 _input.MarkHeldEffective(heldEffectiveSeconds);
@@ -788,6 +824,11 @@ internal sealed class LtcSyncController
                     _lastContinueFrame = null;
                     return;
                 }
+                // v0.6.1 案 2（TSP-Fable の判断）: ランスルーでも、適用した保持値を保持の着地の記録（D31-b の比べる基準）に
+                // 付け直す（名前どおり 1 回。停止モードは ReapplyHeldValueOnPause が付け直す）。付け直さないと、同じ保持値の
+                // Duplicate のたびに変化と判定して適用を繰り返し、1.0 で走る映像を止まった値へ何度も後ろ向きに戻す。
+                if (heldValueChangedDuringLoss && _input.LastHeldEffectiveSeconds is double appliedHeld)
+                    _input.MarkHeldLossLanding(appliedHeld);
                 applyOnce = true;
                 applyReason = "held value change";
             }
@@ -903,7 +944,7 @@ internal sealed class LtcSyncController
 
     /// <summary>
     /// v0.6.1（3-5 節の表）: 受理済みの値 A と、その時刻からの経過 e に対する層 2 の分類。差はフレーム数。
-    /// しきい値は診断と同じ ±0.5・2.5 フレーム、這う前進の上限は信号断の確認と同じ freewheel（新しい定数は足さない）。
+    /// しきい値は診断と同じ ±0.5・2.5 フレーム、這う前進の上限は既定の freewheel 250ms（新しい値は足さない）。
     /// (i) raw−A が ±0.5 → Duplicate。(ii) raw−A &gt; +0.5 かつ raw−(A+e) が ±2.5 → Normal。
     /// (iii) raw−A &gt; +0.5 で (ii) でなく raw−A ≤ min(e, 250ms)+2.5 → 這う前進。
     /// (iv-a) −2.5 ≤ raw−A &lt; −0.5 → Reverse。(iv-b) それ以外 → Jump。受理値が無ければ null（層 1 のまま）。
@@ -919,16 +960,22 @@ internal sealed class LtcSyncController
              ?? receivedAtMilliseconds - accepted.ReceivedAt) / 1000.0);
         double fromAccepted = (rawSeconds - accepted.RawSeconds) * fps;
         double fromStream = (rawSeconds - (accepted.RawSeconds + elapsedSeconds)) * fps;
-        double creepLimit = Math.Min(elapsedSeconds, _freewheelSeconds) * fps + 2.5;
-        if (fromAccepted >= -0.5 && fromAccepted < 0.5)
+        double beyondFreewheel = fromAccepted - Math.Min(elapsedSeconds, FreewheelSeconds) * fps;
+        // しきい値は診断の分類の関数 1 つ（TimecodeFrameDiagnostics.Classify）で決める。
+        TimecodeFrameDiagnosticStatus fromAcceptedClass = TimecodeFrameDiagnostics.Classify(fromAccepted);
+        if (fromAcceptedClass == TimecodeFrameDiagnosticStatus.Duplicate)
             return Layer2Class.Duplicate;
-        if (fromAccepted >= 0.5 && Math.Abs(fromStream) <= 2.5)
-            return Layer2Class.Normal;
-        if (fromAccepted >= 0.5 && fromAccepted <= creepLimit)
-            return Layer2Class.Creep;
-        if (fromAccepted < -0.5 && fromAccepted >= -2.5)
+        if (fromAcceptedClass == TimecodeFrameDiagnosticStatus.Reverse)
             return Layer2Class.Reverse;
+        bool ahead = fromAcceptedClass == TimecodeFrameDiagnosticStatus.Normal || fromAccepted > 0;
+        if (ahead && TimecodeFrameDiagnostics.Classify(fromStream) != TimecodeFrameDiagnosticStatus.Jump)
+            return Layer2Class.Normal;
+        if (ahead && !IsJumpAhead(beyondFreewheel))
+            return Layer2Class.Creep;
         return Layer2Class.Jump;
+
+        static bool IsJumpAhead(double deltaFrames) =>
+            deltaFrames > 0 && TimecodeFrameDiagnostics.Classify(deltaFrames) == TimecodeFrameDiagnosticStatus.Jump;
     }
 
     /// <summary>
@@ -938,9 +985,8 @@ internal sealed class LtcSyncController
     /// </summary>
     private static bool IsCountedHeldFrame(
         LtcFrameProcessingResult processed, LtcFrameReceivedEventArgs? sourceFrame, TimecodeFpsMode mode) =>
-        processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
-        !(sourceFrame != null &&
-          JumpConfirmationPolicy.IsDetectedFpsSuspect(mode, sourceFrame.Fps, processed.ResolvedFps));
+        JumpConfirmationPolicy.IsCountedDuplicate(
+            processed.Diagnostic.Status, mode, sourceFrame?.Fps, processed.ResolvedFps);
 
     /// <summary>
     /// D30 / v0.5.4 B7: 未確認の Jump を保留する理由（ログ用。判定はどれも同じで、次の 1 フレームの値の連続性）。

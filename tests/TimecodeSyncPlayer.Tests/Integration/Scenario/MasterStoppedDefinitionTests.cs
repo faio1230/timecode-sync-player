@@ -63,9 +63,11 @@ public class MasterStoppedDefinitionTests
         Follow(h, clock);
         h.Operations.Clear();
 
-        // 化けた値（Jump の保留）と、同じ値の 24fps の Duplicate 1 枚（保留した Jump の確認になる）。保持値の記録
-        // （D27-d）は立つが、数える保持ではないのでマスターは動いている扱い。確認した Jump の適用はゲートで保留され、
-        // UI タイマーが送り直した評価で relocate する。その目標は M + c になる（次のフレームはまだ来ない）。
+        // 化けた値（Jump の保留）と、同じ値の 24fps の Duplicate 1 枚。保持値の記録（D27-d）は立つが、数える保持では
+        // ないのでマスターは動いている扱い（先行量を 0 にしない）。
+        // v0.6.1 D2（承認済みの期待の変更）: 以前はこの Duplicate が保留した Jump の確認になり、化けた値 8.5 + c へ relocate
+        // していた（v0.5.4 の候補 1 の A の 2 回目と同じ型の誤り）。fps の疑わしい Duplicate は確認に数えないので、確定せず
+        // relocate は出ない。先行量の検査（主題）は残し、本物の Jump での目標 M + c は下の別のテストで確かめる。
         Frame(h, clock, 8.5);
         h.AdvanceMilliseconds(FrameMs);
         Frame(h, clock, 8.5, detectedFps: 24.0);
@@ -74,8 +76,51 @@ public class MasterStoppedDefinitionTests
             "fps の疑わしい Duplicate 1 枚はマスター停止ではない（先行量を 0 にしない）");
         for (int i = 0; i < 4; i++)
             h.AdvanceMilliseconds(FrameMs);
-        Seeks(h).Should().ContainSingle("前提: 離れた値への relocate が 1 本出る")
-            .Which.Should().BeApproximately(8.5 + SeekCost, 1e-6, "目標は M + c");
+        Seeks(h).Should().BeEmpty("化けた値と fps の疑わしい Duplicate では確定せず、relocate しない（D2）");
+    }
+
+    /// <summary>
+    /// v0.6.1 D2: 本物の Jump（離れた値と、疑わしくない確認の +1 フレーム）では今どおり確定し、マスターが動いている間の
+    /// relocate の目標は M + c になる（先行量の検査が意味を持つ行）。
+    /// </summary>
+    [Fact]
+    public void Fixed30_RealJump_RelocatesToTheMasterPlusTheLookahead()
+    {
+        ScenarioClock clock = NewClock();
+        SyncScenarioHarness h = Arrange(clock, TimecodeFpsMode.Fixed30);
+        Follow(h, clock);
+        h.Operations.Clear();
+
+        Frame(h, clock, 8.5);
+        h.AdvanceMilliseconds(FrameMs);
+        Frame(h, clock, 8.5 + 1.0 / 30.0);
+
+        h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(SeekCost, 1e-9, "マスターは動いている");
+        for (int i = 0; i < 4; i++)
+            h.AdvanceMilliseconds(FrameMs);
+        Seeks(h).Should().ContainSingle("本物の Jump では relocate が 1 本出る")
+            .Which.Should().BeApproximately(8.5 + 1.0 / 30.0 + SeekCost, 1e-6, "目標は M + c");
+    }
+
+    /// <summary>
+    /// v0.6.1 T4（設計書 5 節）: 化けた値 8.5 と、24fps の同値の Duplicate（Fixed30）。fps の疑わしい Duplicate は Jump の
+    /// 確認に数えないので、確定せず、シークは 0 本（規則 4 の入口の数え方と同じ述語）。
+    /// </summary>
+    [Fact]
+    public void T4_Fixed30_GarbledValueWithAnFpsSuspectDuplicate_IsNotConfirmed()
+    {
+        ScenarioClock clock = NewClock();
+        SyncScenarioHarness h = Arrange(clock, TimecodeFpsMode.Fixed30);
+        Follow(h, clock);
+        h.Operations.Clear();
+
+        Frame(h, clock, 8.5);
+        h.AdvanceMilliseconds(FrameMs);
+        Frame(h, clock, 8.5, detectedFps: 24.0);
+        for (int i = 0; i < 10; i++)
+            h.AdvanceMilliseconds(FrameMs);
+
+        Seeks(h).Should().BeEmpty("化けた値への確定も relocate も無い");
     }
 
     [Theory]

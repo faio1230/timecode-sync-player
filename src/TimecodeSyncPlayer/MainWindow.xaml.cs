@@ -2656,6 +2656,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (_disposed) return;
         _disposed = true;
         StopUiHeartbeat("closing");
+        // v0.6.1: 層 2 の分類の件数（這う前進・保留の捨て）をアプリの終了時に 1 行（配布ビルドでも数えられるように）。
+        _ltcSyncController.LogLayer2Summary("app-exit");
         GetResourceDisposer().DisposeAll();
     }
 

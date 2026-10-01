@@ -242,8 +242,8 @@ internal sealed class LatchLifetimeScenario
                 JumpTo(29.0);
                 break;
             case LifecycleEvent.SignalRecovered:
-                // 有効フレーム 3 枚（resumeFrames=3）。
-                for (int i = 0; i < 3; i++)
+                // 有効フレーム 3 枚（resumeFrames=3）。v0.6.1 β (A): 無音の後の 1 枚目は這う前進で数えないので 4 枚送る。
+                for (int i = 0; i < 4; i++)
                     NextNormalFrame();
                 break;
             case LifecycleEvent.JumpRecovery:
