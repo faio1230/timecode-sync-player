@@ -115,6 +115,42 @@ public class CreepingAdvanceTests
         Seeks(h).Should().BeEmpty("ランスルーの這う前進では合わせない（M を止めるだけ）");
     }
 
+    /// <summary>
+    /// v0.6.1 案 2（TSP-Fable の判断）: ランスルーの損失中に保持値が変わったときの「保持値の変更」（D31-b）の 1 回適用は、
+    /// 名前どおり 1 回。適用した値を保持の着地の記録（比べる基準）に付け直し、同じ保持値の Duplicate が続いても繰り返さない
+    /// （繰り返すと、1.0 で走る映像を止まった値へ何度も後ろ向きに戻す。A-1 型の T1 の 2 本）。
+    /// </summary>
+    [Fact]
+    public void RunThrough_HeldValueChangeDuringLoss_IsAppliedOnlyOnce()
+    {
+        ScenarioClock clock = NewClock();
+        SyncScenarioHarness h = Arrange(clock, LtcSignalLossMode.RunThrough);
+        Follow(h, clock);
+        for (int i = 0; i < 10; i++)
+        {
+            Frame(h, clock, 10.0);   // 保持（入口の合わせ、続けて保持が理由の損失）
+            h.AdvanceMilliseconds(FrameMs);
+        }
+        h.Controller.SignalLossLatchSnapshot()["lost"].Should().BeTrue("前提: 保持が理由の損失");
+        for (int i = 0; i < 4; i++)
+            h.AdvanceMilliseconds(FrameMs);
+        Frame(h, clock, 10.0 + 1.0 / 30.0);   // 止まった値が 1 フレーム進む（這う前進）
+        h.AdvanceMilliseconds(FrameMs);
+        h.Operations.Clear();
+        using var capture = new LogCapture();
+
+        for (int i = 0; i < 60; i++)   // 約 2 秒、新しい保持値の Duplicate が続く。映像は 1.0 で走る
+        {
+            Frame(h, clock, 10.0 + 1.0 / 30.0);
+            h.AdvanceMilliseconds(FrameMs);
+        }
+
+        int applies = capture.Count("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}");
+        _output.WriteLine($"heldValueChangeApplies={applies} seeks=[{string.Join(", ", Seeks(h).Select(v => v.ToString("F3")))}]");
+        applies.Should().BeLessThanOrEqualTo(1, "同じ保持値の変更の適用は 1 回");
+        Seeks(h).Should().HaveCountLessThanOrEqualTo(1, "止まった値へ後ろ向きに何度も戻さない");
+    }
+
     [Fact]
     public void RunThrough_LateFrameWhileRunning_DoesNotSuppressTheNextHoldEntry()
     {
@@ -143,6 +179,24 @@ public class CreepingAdvanceTests
     {
         public List<LogEvent> Events { get; } = new();
         public void Emit(LogEvent logEvent) { lock (Events) Events.Add(logEvent); }
+    }
+
+    /// <summary>Information 以上のログを受け、テンプレートごとの件数を数える（終わりで元のロガーへ戻す）。</summary>
+    private sealed class LogCapture : IDisposable
+    {
+        private readonly ILogger _previous = Log.Logger;
+        private readonly ListSink _sink = new();
+
+        public LogCapture() =>
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo.Sink(_sink).CreateLogger();
+
+        public int Count(string template)
+        {
+            lock (_sink.Events)
+                return _sink.Events.Count(e => e.MessageTemplate.Text == template);
+        }
+
+        public void Dispose() => Log.Logger = _previous;
     }
 
     /// <summary>

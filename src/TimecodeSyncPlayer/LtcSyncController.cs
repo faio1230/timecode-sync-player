@@ -818,6 +818,11 @@ internal sealed class LtcSyncController
                     _lastContinueFrame = null;
                     return;
                 }
+                // v0.6.1 案 2（TSP-Fable の判断）: ランスルーでも、適用した保持値を保持の着地の記録（D31-b の比べる基準）に
+                // 付け直す（名前どおり 1 回。停止モードは ReapplyHeldValueOnPause が付け直す）。付け直さないと、同じ保持値の
+                // Duplicate のたびに変化と判定して適用を繰り返し、1.0 で走る映像を止まった値へ何度も後ろ向きに戻す。
+                if (heldValueChangedDuringLoss && _input.LastHeldEffectiveSeconds is double appliedHeld)
+                    _input.MarkHeldLossLanding(appliedHeld);
                 applyOnce = true;
                 applyReason = "held value change";
             }
