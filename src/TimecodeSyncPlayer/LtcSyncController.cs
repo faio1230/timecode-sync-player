@@ -74,8 +74,10 @@ internal sealed class LtcSyncController
     private readonly LtcFrameProcessor _frames;
     private readonly LtcSignalLossPolicy _signalLoss;
 
-    /// <summary>v0.6.1: 這う前進の上限に使う freewheel（信号断の確認と同じ timeout）。</summary>
-    private readonly double _freewheelSeconds;
+    /// <summary>
+    /// v0.6.1: 這う前進の上限に使う freewheel（規則 1。既定の 250ms で固定し、利用者の信号断の時間の設定には連動させない）。
+    /// </summary>
+    private const double FreewheelSeconds = AppSettings.DefaultLtcSignalLossTimeoutMs / 1000.0;
     private readonly LtcSignalLossMonitoringState _monitoring = new();
     private readonly LtcSyncEffects _effects;
     private readonly Func<SingleModeSyncCoordinator> _single;
@@ -108,7 +110,6 @@ internal sealed class LtcSyncController
         _syncService = syncService;
         _frames = frames;
         _signalLoss = new(TimeSpan.FromMilliseconds(timeoutMilliseconds), resumeFrames);
-        _freewheelSeconds = timeoutMilliseconds / 1000.0;
         _effects = effects;
         _single = single;
         _continue = continueOnTrack;
@@ -913,7 +914,7 @@ internal sealed class LtcSyncController
 
     /// <summary>
     /// v0.6.1（3-5 節の表）: 受理済みの値 A と、その時刻からの経過 e に対する層 2 の分類。差はフレーム数。
-    /// しきい値は診断と同じ ±0.5・2.5 フレーム、這う前進の上限は信号断の確認と同じ freewheel（新しい定数は足さない）。
+    /// しきい値は診断と同じ ±0.5・2.5 フレーム、這う前進の上限は既定の freewheel 250ms（新しい値は足さない）。
     /// (i) raw−A が ±0.5 → Duplicate。(ii) raw−A &gt; +0.5 かつ raw−(A+e) が ±2.5 → Normal。
     /// (iii) raw−A &gt; +0.5 で (ii) でなく raw−A ≤ min(e, 250ms)+2.5 → 這う前進。
     /// (iv-a) −2.5 ≤ raw−A &lt; −0.5 → Reverse。(iv-b) それ以外 → Jump。受理値が無ければ null（層 1 のまま）。
@@ -929,7 +930,7 @@ internal sealed class LtcSyncController
              ?? receivedAtMilliseconds - accepted.ReceivedAt) / 1000.0);
         double fromAccepted = (rawSeconds - accepted.RawSeconds) * fps;
         double fromStream = (rawSeconds - (accepted.RawSeconds + elapsedSeconds)) * fps;
-        double creepLimit = Math.Min(elapsedSeconds, _freewheelSeconds) * fps + 2.5;
+        double creepLimit = Math.Min(elapsedSeconds, FreewheelSeconds) * fps + 2.5;
         if (fromAccepted >= -0.5 && fromAccepted < 0.5)
             return Layer2Class.Duplicate;
         if (fromAccepted >= 0.5 && Math.Abs(fromStream) <= 2.5)
