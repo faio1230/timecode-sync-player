@@ -2664,8 +2664,18 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         if (_disposed) return;
         _disposed = true;
-        StopUiHeartbeat("closing");
+        OnShutdownStarting();
         GetResourceDisposer().DisposeAll();
+    }
+
+    /// <summary>
+    /// 終了の開始の通知（終了の手順の入口と Dispose の両方から呼ぶ。どちらも 1 回だけ効く）: 生存記録を閉じ、
+    /// v0.6.1 の層 2 の分類の件数（這う前進・保留の捨て）を 1 行出す（配布ビルドでも数えられるように）。
+    /// </summary>
+    private void OnShutdownStarting()
+    {
+        StopUiHeartbeat("closing");
+        _ltcSyncController.LogLayer2SummaryAtExit();
     }
 
     // ── 起動直後の UI スレッドの生存記録（v0.5.4、記録だけ） ──────────────
@@ -2744,8 +2754,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             runOffUiThread: action => Task.Run(action),
             forceExit: ForceExitProcess,
             shutdownCompleted: () => Dispatcher.BeginInvoke(new Action(Close)),
-            // 終了の手順は Dispose を通らない。生存記録は手順の入口で閉じる（行の途切れ = 止まった、と読めるように）。
-            shutdownStarting: () => StopUiHeartbeat("closing"));
+            // 終了の手順は Dispose を通らない。生存記録と層 2 の件数の行は手順の入口で出す（行の途切れ = 止まった、と読めるように）。
+            shutdownStarting: OnShutdownStarting);
         _exitDialogHost.CancelRequested += _exitCoordinator.CancelRequested;
         _exitDialogHost.NormalExitRequested += _exitCoordinator.NormalExitRequested;
         _exitDialogHost.ForceExitRequested += _exitCoordinator.ForceRequested;

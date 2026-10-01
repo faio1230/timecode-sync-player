@@ -61,7 +61,8 @@ public sealed class UserPauseOwnerTests
         SyncScenarioHarness h = s.Harness;
         h.GapBehavior = GapBehavior.Black;
 
-        s.Frame(35.0);   // ギャップへ入る（Black はギャップが pause を持つ）
+        s.Frame(35.0);   // ギャップへ入る（Jump とその確認の +1 フレーム。Black はギャップが pause を持つ）
+        s.Frame(35.04);
         h.IsGapActive.Should().BeTrue("前提: ギャップの中");
         h.IsPaused.Should().BeTrue("前提: ギャップが止めている");
 

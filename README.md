@@ -14,7 +14,7 @@ Windows上でLTC（Linear Timecode）音声を受信し、プレイリスト内�
 
 **インストーラーとzipは[GitHub Releases の最新の安定版（Latest）](https://github.com/faio1230/timecode-sync-player/releases/latest)からダウンロードできます。**
 
-- 安定版は v0.5.x の最新です。「Pre-release」の版は検証中の版なので、本番には使わないでください。
+- 安定版は v0.6.x の最新です（v0.6.1 から）。「Pre-release」の版は検証中の版なので、本番には使わないでください。
 
 - 通常は、管理者権限不要のインストーラー`TimecodeSyncPlayer-v<版>-setup.exe`を推奨します。
 - 展開して使う場合は`TimecodeSyncPlayer-v<版>-win-x64.zip`を選択してください。

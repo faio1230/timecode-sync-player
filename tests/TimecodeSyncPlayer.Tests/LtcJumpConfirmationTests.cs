@@ -165,8 +165,12 @@ public sealed class LtcJumpConfirmationTests
         Convert.ToDouble(((ScalarValue)drop.Properties["WallMs"]).Value).Should().BeApproximately(100.0, 1.0);
         events.Should().NotContain(e => e.MessageTemplate.Text.Contains("applying the confirmed Jump frame once"),
             "サンプル時計が 600ms 空いた保留は確認に使わない");
-        events.Should().Contain(e => IsApplyOnceWithReason(e, "held value change"),
-            "拒否された次のフレームは既存の保持値の変更として処理される");
+        // v0.6.1（3-5 節の (iv-b)、承認済みの期待の変更）: 以前は拒否された次のフレームを「保持値の変更」として 1 回適用して
+        // いた（D31-b の v0.5.x の特例）。受理済みの流れの外の値は、確認を経るまで適用しない（規則 3）ので、新しい保留になる。
+        events.Should().NotContain(e => IsApplyOnceWithReason(e, "held value change"),
+            "窓の外の同値は確認を経るまで適用しない");
+        events.Count(e => e.MessageTemplate.Text.Contains("holding unconfirmed Jump frame")).Should().Be(2,
+            "拒否された次のフレームは新しい未確認の Jump として保留される");
     }
 
     [Fact]

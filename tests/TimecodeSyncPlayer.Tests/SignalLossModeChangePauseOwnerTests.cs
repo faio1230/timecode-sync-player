@@ -64,7 +64,11 @@ public sealed class SignalLossModeChangePauseOwnerTests
         Tick(h, clock, 3);
         h.IsPaused.Should().BeTrue("前提: 信号断のポリシーが止めている");
 
-        h.SupplyHeldLtc(40.0);   // 範囲外の保持 → 境界ホールド（SetEndHold(true)）
+        // LTC が 2 フレームだけ走って終端（25.0）の先で止まる（有効フレーム 2 枚では信号断は明けない）
+        // → 範囲外の保持 → 境界ホールド（SetEndHold(true)）。
+        h.SupplyLtc(24.96);
+        h.SupplyLtc(25.04);
+        h.SupplyHeldLtc(25.04);
         h.Single.LatchSnapshot()["clipBoundaryHeld"].Should().BeTrue("前提: 境界ホールドが止めている");
         h.Operations.Clear();
 

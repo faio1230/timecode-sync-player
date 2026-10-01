@@ -160,10 +160,11 @@ public class B6bPredictiveLocateTests
         h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(learned, 1e-9,
             "マスターが動いている間は先行量 = c");
 
-        h.SupplyHeldLtc(19.0);                               // 保持（Duplicate）
+        // v0.6.1 段 A: 台本の最後の受理は 18.96。保持は同じ値の繰り返しで表す（状態は層 1 の診断が値から決める）。
+        h.SupplyHeldLtc(18.96);                              // 保持（Duplicate）
         h.SyncService.RelocateLookaheadSeconds.Should().Be(0.0, "マスター停止中は先行量を付けない（D37-g）");
 
-        h.SupplyLtc(19.04);                                  // 値が進む
+        h.SupplyLtc(19.0);                                   // 値が進む（+1 フレーム）
         h.SyncService.RelocateLookaheadSeconds.Should().BeApproximately(learned, 1e-9);
     }
 
@@ -208,7 +209,7 @@ public class B6bPredictiveLocateTests
         (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
         h.AddTrack("A", 0, 120);
         h.ManualPlay();
-        h.AdvancePlayback(9.9);                             // 0.1 秒遅れて追従（varispeed が掛かる）
+        h.AdvancePlayback(9.9);
         h.Ltc.Normal(10.0, TimeSpan.FromSeconds(1));
         h.Ltc.Normal(14.0, TimeSpan.FromSeconds(2));       // 3 秒前へ飛ぶ（relocate）
         long start = clock.MonotonicMilliseconds;
@@ -219,6 +220,10 @@ public class B6bPredictiveLocateTests
         {
             h.AdvanceMilliseconds(40);
             long t = clock.MonotonicMilliseconds - start;
+            // v0.6.1 段 B: 最初のフレームで読み込み（LTC の位置から再生）になるので、読み込みの後に再生を 0.1 秒遅らせて
+            // 追従させる（varispeed が掛かる）。以前は、まとめて届いた最初のフレームの時刻の粗さで遅れが生じていた。
+            if (t == 200)
+                h.AdvancePlayback(h.PlaybackSeconds - 0.1);
             if (t <= 900)
             {
                 rateBeforeJump = h.Playback.Rate;

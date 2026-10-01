@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using TimecodeSyncPlayer.Contracts;
 
@@ -39,6 +40,16 @@ internal sealed class SyncScenarioHarness
 
     private long _monotonicMilliseconds = 10_000;
 
+    /// <summary>v0.6.1 段 A: 実時間の LTC の口がフレーム終端に付ける QPC（無ければ 0 = 受信時刻で判定）。</summary>
+    private readonly Func<long>? _frameEndQpc;
+
+    /// <summary>
+    /// v0.6.1 段 A: ltc-frame の記録に層 1 の診断の状態を書くための写し。Controller の LtcFrameProcessor と同じ値
+    /// （受けた後の LastLtcSeconds と LastTimecodeFps）で同じ診断を回す。SyncModeChanged で Controller と同じく消す。
+    /// Controller.ReceiveFrame を直接呼んだフレームは写しに入らない（その後の記録の状態だけがずれうる）。
+    /// </summary>
+    private readonly TimecodeFrameDiagnostics _diagnosticsMirror = new();
+
     /// <summary>
     /// v0.5.4 C1: ScenarioClock があるときは同じ時計の単調ミリ秒を返す。旧 ctor では従来どおり
     /// Tick100Milliseconds が進める内部値（10_000 起点）を使う。
@@ -62,12 +73,10 @@ internal sealed class SyncScenarioHarness
         // C3: LTC の台本。開始時刻は harness の単調ミリ秒に揃える（Controller は構築後なので遅延参照）。
         // Controller はコンストラクタの後半で代入される（この経路はフレーム発行時＝代入後にしか
         // 呼ばれないため null 免除で参照する）。
+        // v0.6.1 段 A: 台本のフレームも実時間の LTC の口（ReceiveFrame）を通す。台本の状態は捨て、値と fps だけを
+        // 渡す（状態は層 1 の診断が値から決める）。時刻は台本の予定時刻（時計はすでにそこまで進んでいる）。
         Ltc = new LtcScript(
-            (frame, at) =>
-            {
-                Controller!.ReceiveProcessedFrame(frame, at);
-                RecordEvent("ltc-frame", frame.ResolvedSeconds, frame.Diagnostic.Status.ToString(), at);
-            },
+            (frame, at) => DeliverLtcFrame(frame.Seconds, frame.Fps, receivedAtMilliseconds: at),
             startMilliseconds: scenarioClock?.MonotonicMilliseconds ?? _monotonicMilliseconds);
         // C2: 仮想時計が進むと偽プレイヤーの位置・着地・ロード・尺の到着も進む。
         if (scenarioClock is not null)
@@ -77,6 +86,7 @@ internal sealed class SyncScenarioHarness
             scenarioClock.Advanced += delta => Ltc.AdvanceTime(delta);
         TimeProvider? effectiveTimeProvider = scenarioClock ?? timeProvider;
         Func<long>? effectiveGetQpc = scenarioClock is null ? getQpc : () => scenarioClock.Qpc;
+        _frameEndQpc = effectiveGetQpc;
         _gap = scenarioClock is null ? new GapFreezeHandler() : new GapFreezeHandler(scenarioClock);
 
         // D37-a: ゲートの窓・変化量の判定に使う時計。ManualTimeProvider があれば同じ時計に
@@ -401,23 +411,60 @@ internal sealed class SyncScenarioHarness
         return track;
     }
 
-    public void SupplyLtc(double seconds) =>
-        SupplyLtc(seconds, TimecodeFrameDiagnosticStatus.Normal, shouldApplySync: true);
+    /// <summary>v0.6.1 段 A: 値を 1 フレームとして実時間の LTC の口へ送る（1 呼び出し＝1 フレームぶん時刻が進む）。</summary>
+    public void SupplyLtc(double seconds) => DeliverLtcFrame(seconds);
 
     /// <summary>
-    /// D31-b: 解読は続いているが値が進まない保持（Duplicate）として供給する。進行の時計を
-    /// 進めないため、タイムアウト後は信号停止（保持）の判定へ伝わる。
+    /// D31-b: 解読は続いているが値が進まない保持（Duplicate）として供給する。
+    /// v0.6.1 段 A: 状態は渡さない（同じ値を続けて送れば、層 1 の診断が Duplicate と決める）。口は SupplyLtc と同じ。
     /// </summary>
-    public void SupplyHeldLtc(double seconds) =>
-        SupplyLtc(seconds, TimecodeFrameDiagnosticStatus.Duplicate, shouldApplySync: false);
+    public void SupplyHeldLtc(double seconds) => DeliverLtcFrame(seconds);
 
-    private void SupplyLtc(double seconds, TimecodeFrameDiagnosticStatus status, bool shouldApplySync)
+    /// <summary>v0.6.1 段 A: ハーネスの LTC の fps（Fixed ならその fps、Auto は 25）。</summary>
+    public double LtcFps => FpsMode.ToFps() is > 0 and var fps ? fps : 25.0;
+
+    /// <summary>
+    /// v0.6.1 段 A: 実時間の LTC の口（テストから LTC を入れる唯一の口）。秒を LtcTimecode にし、ハーネスの時計の受信時刻と
+    /// フレーム終端を付けて <see cref="LtcSyncController.ReceiveFrame"/> に渡す。状態は層 1 の診断が値から決める。
+    /// 受信時刻を渡さないときは、ハーネスの時計を 1 フレームぶん進めてから送る（1 呼び出し＝1 フレーム。Tick は呼ばない）。
+    /// </summary>
+    public void DeliverLtcFrame(
+        double seconds, double? fps = null, double? detectedFps = null, long? receivedAtMilliseconds = null)
     {
-        Controller.ReceiveProcessedFrame(new LtcFrameProcessingResult(
-            "scenario", $"{seconds:F3} s", seconds, 25, "fps: 25",
-            new TimecodeFrameDiagnosticResult(status, 0, 0),
-            ShouldApplySync: shouldApplySync, ShouldLogFps: false), MonotonicMilliseconds);
-        RecordEvent("ltc-frame", seconds, status.ToString());
+        double ltcFps = fps is > 0 ? fps.Value : LtcFps;
+        if (receivedAtMilliseconds is null)
+            AdvanceClockWithoutTick((int)Math.Round(1000.0 / ltcFps));
+        long receivedAt = receivedAtMilliseconds ?? MonotonicMilliseconds;
+        int nominal = (int)Math.Round(ltcFps);
+        int frame = (int)Math.Round(seconds * ltcFps);
+        var timecode = new LtcTimecode(
+            frame / (nominal * 3600), (frame / (nominal * 60)) % 60, (frame / nominal) % 60, frame % nominal, false);
+        // 台本の予定時刻で届くフレームは、フレーム終端もその時刻の QPC にする（実機と同じく、まとめて処理される
+        // フレームの終端は処理の時刻より前にある）。時計を進め終えた時刻の QPC にすると、フレームの間隔が消える。
+        long frameEnd = receivedAtMilliseconds is long at && _scenarioClock is not null
+            ? _scenarioClock.QpcBase + at * Stopwatch.Frequency / 1000
+            : _frameEndQpc?.Invoke() ?? 0;
+        Controller.ReceiveFrame(
+            new LtcFrameReceivedEventArgs(timecode, detectedFps ?? ltcFps, seconds, frameEnd, frameEnd), receivedAt);
+        // 層 1 の診断の状態（LtcFrameProcessor と同じく、fps が決まる前は Initial）。
+        TimecodeFrameDiagnosticStatus status = Controller.LastTimecodeFps > 0
+            ? _diagnosticsMirror.Analyze(Controller.LastLtcSeconds, Controller.LastTimecodeFps).Status
+            : TimecodeFrameDiagnosticStatus.Initial;
+        RecordEvent("ltc-frame", seconds, status.ToString(), receivedAt);
+    }
+
+    /// <summary>v0.6.1 段 A: 時計だけを進める（偽プレイヤー・台本は進むが、UI タイマーの Tick は呼ばない）。</summary>
+    private void AdvanceClockWithoutTick(int milliseconds)
+    {
+        if (_scenarioClock is null)
+        {
+            _monotonicMilliseconds += milliseconds;
+            Ltc.AdvanceTime(TimeSpan.FromMilliseconds(milliseconds));
+        }
+        else
+        {
+            _scenarioClock.AdvanceMilliseconds(milliseconds);
+        }
     }
 
     /// <summary>
@@ -541,6 +588,7 @@ internal sealed class SyncScenarioHarness
     {
         Mode = mode;
         Controller.SyncModeChanged();
+        _diagnosticsMirror.Reset();
     }
 
     public void SetSyncEnabled(bool enabled)

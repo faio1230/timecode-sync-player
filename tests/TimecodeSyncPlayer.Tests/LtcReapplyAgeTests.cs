@@ -75,10 +75,15 @@ public sealed class LtcReapplyAgeTests
             op.Value.HasValue && Math.Abs(op.Value.Value - 7.0) < 0.2);
         AgeWarnings(capture.Snapshot()).Should().BeEmpty("再適用は age 警告を出さない");
 
-        // 次の有効フレーム（1 フレーム進んだ Normal）で同期が適用される。
+        // v0.6.1（3-5 節の (iii)、承認済みの期待の変更）: 以前は 1.5 秒後の +1 フレームを Normal として受理し、同期を適用した。
+        // 受理済みの値から見れば這う前進で、M は 7.04 で止まる（外挿しない）。古い値の同期の要求（sync.apply）は出さず、
+        // 映像との差が許容を超えるときだけ (iii) の 1 回の合わせで追う（ここはギャップの中なので合わせる先が無い）。
         int before = SyncApplyCount(capture.Snapshot());
         harness.SupplyLtcFrame(7.04, frameEndTimestamp: qpc);
-        SyncApplyCount(capture.Snapshot()).Should().BeGreaterThan(before);
+        List<LogEvent> events = capture.Snapshot();
+        SyncApplyCount(events).Should().Be(before, "這う前進では M を外挿した同期の要求を出さない");
+        events.Count(e => e.MessageTemplate.Text.Contains("creeping advance accepted")).Should().Be(1,
+            "1.5 秒後の +1 フレームは這う前進として受理する");
     }
 
     [Fact]

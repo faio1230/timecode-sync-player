@@ -76,11 +76,16 @@ public sealed class LtcSyncControllerTests
         h.DisplayStates[^1].FormatText.Should().Be("NO SIGNAL");
         h.Operations.Should().NotContain(o => o.Name == "seek" || o.Name == "signal-loss-resume");
         h.Tick100Milliseconds();
+        // v0.6.1（3-5 節の表と β の (A)、承認済みの期待の変更）: 誤値（70）の後の 1.04 は、受理済みの 1.00 から見れば
+        // 這う前進（A の流れ）で、70 の保留は捨てる。β (A) の (b): 這う前進は復帰の有効フレームに数えないので、有効フレームは
+        // 等速の 1.08・1.12・1.16 の 3 枚（以前は 1.04 を 70 との差で Jump とし、1.08 の確認の後の 3 枚で 1.20 に復帰していた）。
         h.SupplyLtc(1.04);
         h.SupplyLtc(1.08);
         h.DisplayStates[^1].FormatText.Should().Be("NO SIGNAL", "the diagnostic jump must not count toward recovery");
         h.IsPaused.Should().BeTrue();
         h.SupplyLtc(1.12);
+        h.IsPaused.Should().BeTrue("the creeping 1.04 is not a valid frame, so 1.08 and 1.12 are only two");
+        h.SupplyLtc(1.16);
         h.IsPaused.Should().BeFalse();
     }
 
@@ -94,10 +99,14 @@ public sealed class LtcSyncControllerTests
         h.SupplyLtc(1);
         h.Tick100Milliseconds(3);
         h.Operations.Clear();
+        // 無音の後に別の位置（9）から再開する LTC は、1 枚目が Jump、次の +1 フレーム（9.04）がその確認になる。
+        // v0.6.1（β の (B)、承認済みの期待の変更）: 確定した Jump の確認のフレームも復帰の有効フレームに 1 枚数える
+        // （以前は数えず、復帰は 9.16 だった）。有効フレームは 9.04・9.08・9.12 の 3 枚。
         h.SupplyLtc(9);
         h.SupplyLtc(9.04);
-        h.Operations.Should().BeEmpty();
         h.SupplyLtc(9.08);
+        h.Operations.Should().BeEmpty();
+        h.SupplyLtc(9.12);
         h.Operations.FindIndex(o => o.Name == "signal-loss-resume").Should().Be(0);
         h.Operations.FindIndex(o => o.Name == "loadfile").Should().BeGreaterThan(0);
         h.DisplayStates[^1].PauseReason.Should().BeEmpty();

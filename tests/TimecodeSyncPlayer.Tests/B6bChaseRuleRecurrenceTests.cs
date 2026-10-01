@@ -128,14 +128,21 @@ public class B6bChaseRuleRecurrenceTests
         var harness = new TimecodeSyncPlayer.Tests.Integration.SyncScenarioHarness(enableCorrection: true);
         harness.AddTrack("clip1", 0);
         harness.ManualPlay();
+        // v0.6.1 段 A: LTC は実時間どおり 40ms ごとに +1 フレーム送る（同じ値の 2 枚は保持になり、補正を評価しない）。
+        // 読み込みに 100ms かかり、その間も LTC は進む（着地待ちの間は評価しない）。着地は読み込みの開始位置 1.0 で、
+        // 着地を観測したサンプルの残差は +120ms、次のサンプルは配信も 1 フレーム進んで +100ms。
+        harness.Playback.LoadDurationSeconds = 0.1;
         harness.SupplyLtc(1.0);                                   // clip1 へ切替（読み込み）
-        harness.AdvancePlayback(1.1, renderedFrames: 2);
+        harness.SupplyLtc(1.04);                                  // 着地待ち
+        harness.SupplyLtc(1.08);                                  // 着地待ち
+        harness.Playback.AdvanceTime(TimeSpan.FromMilliseconds(100));   // 読み込みの着地（配信 1.0）
 
-        harness.SupplyLtc(1.2);                                   // 着地を観測したサンプル（残差 +100ms）
+        harness.SupplyLtc(1.12);                                  // 着地を観測したサンプル（残差 +120ms）
 
         harness.AppliedRates.Should().BeEmpty("relocate・読み込みの着地の直後の 1 サンプルは varispeed しない");
 
-        harness.SupplyLtc(1.2);                                   // 次のサンプル
+        harness.AdvancePlayback(1.06);
+        harness.SupplyLtc(1.16);                                  // 次のサンプル（残差 +100ms）
 
         harness.AppliedRates.Should().ContainSingle().Which.Should().BeApproximately(1.10, 1e-9);
     }

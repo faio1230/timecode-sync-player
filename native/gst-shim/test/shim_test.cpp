@@ -14,6 +14,7 @@
 #include "tcs_hap.h"
 #include "tcs_hap_vectors.h"
 #include <gst/gstversion.h>
+#include <glib.h>
 #include <d3d11.h>
 #include <d3d11_4.h>
 #include <dxgi.h>
@@ -26,6 +27,7 @@
 #include <vector>
 #include <atomic>
 #include <algorithm>
+#include <cmath>
 
 
 
@@ -1875,6 +1877,151 @@ run_seek_method_check (int argc, char** argv)
   return failures;
 }
 
+/* --instant-rate-after-seek <file> [iters]: reproduce the instant-rate change
+ * sent right after a flushing seek (docs/design/v0.6.0-prores-gpu.md 8-2, the
+ * debt "instant-rate ... gst_segment_do_seek: assertion 'segment->format ==
+ * format' failed"). For each case the player first runs at `from` (instant
+ * change while playing), then a flushing seek goes out (its segment rate is the
+ * player's rate = `from`), then after `delay_ms` the instant change to `to`.
+ * Reported per case: the GLib CRITICALs counted around the change (domain
+ * handler chained to the shim's), the call's return, and the effective rate
+ * measured from leased frame PTS over two 1-second windows after the landing.
+ * A mismatch is an effective rate that stays near `from` while the call
+ * returned TCS_OK (the shim records `to`). Informational: no PASS/FAIL on the
+ * mismatch itself, only on the harness working. */
+static std::atomic<int> g_segment_criticals{0};
+static std::atomic<int> g_other_criticals{0};
+static GLogFunc g_ir_prev_handler = nullptr;
+static gpointer g_ir_prev_data = nullptr;
+
+static void
+ir_count_criticals (const gchar* domain, GLogLevelFlags level, const gchar* message,
+                    gpointer /*user*/)
+{
+  if (level & G_LOG_LEVEL_CRITICAL) {
+    if (message && strstr (message, "segment->format == format"))
+      g_segment_criticals++;
+    else
+      g_other_criticals++;
+  }
+  if (g_ir_prev_handler)
+    g_ir_prev_handler (domain, level, message, g_ir_prev_data);
+  else
+    g_log_default_handler (domain, level, message, nullptr);
+}
+
+/* PTS (s) of the newest frame of `gen`, polling up to 200ms; NAN if none. */
+static double
+ir_sample_pts (TcsPlayer* p, uint64_t gen, double* out_wall)
+{
+  TcsFrameInfo info = {};
+  for (int k = 0; k < 100; k++) {
+    if (tcs_player_acquire (p, gen, &info)) {
+      *out_wall = std::chrono::duration<double> (
+          std::chrono::steady_clock::now ().time_since_epoch ()).count ();
+      double pts = info.pts_ns / 1e9;
+      tcs_player_release (p);
+      return pts;
+    }
+    std::this_thread::sleep_for (std::chrono::milliseconds (2));
+  }
+  return NAN;
+}
+
+/* Effective rate over `window_ms`: delta of leased PTS over delta of wall time. */
+static double
+ir_effective_rate (TcsPlayer* p, uint64_t gen, int window_ms)
+{
+  double w1 = 0, w2 = 0;
+  double a = ir_sample_pts (p, gen, &w1);
+  std::this_thread::sleep_for (std::chrono::milliseconds (window_ms));
+  double b = ir_sample_pts (p, gen, &w2);
+  if (std::isnan (a) || std::isnan (b) || w2 <= w1)
+    return NAN;
+  return (b - a) / (w2 - w1);
+}
+
+static int
+run_instant_rate_after_seek (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --instant-rate-after-seek <file> [iters]\n");
+    return 2;
+  }
+#if !GST_CHECK_VERSION(1,18,0)
+  printf ("  instant rate change needs GStreamer 1.18+\n");
+  return 2;
+#else
+  const char* file = argv[2];
+  int iters = argc > 3 ? atoi (argv[3]) : 3;
+  if (iters < 1)
+    iters = 1;
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimInstantRate", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) return 1;
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  /* The shim installed its default handler during load (gst_init_once); chain to it. */
+  g_ir_prev_handler = g_log_set_default_handler (ir_count_criticals, nullptr);
+  double dur = 0;
+  tcs_player_get_duration (p, &dur);
+  char decoder[128] = "";
+  tcs_player_decoder_name (p, decoder, sizeof (decoder));
+  printf ("  media duration=%.3fs decoder=%s\n", dur, decoder);
+  std::this_thread::sleep_for (std::chrono::milliseconds (500));
+
+  struct Case { double from, to; };
+  const Case cases[] = { {0.9, 1.0}, {1.0, 0.9} };
+  const int delays_ms[] = { 0, 1, 5, 20, 100, 300 };
+  int harness_ok = 0, harness_runs = 0;
+  int crit_runs = 0, crit_mismatch = 0, clean_runs = 0, clean_mismatch = 0;
+  for (int it = 0; it < iters; it++) {
+    for (const Case& c : cases) {
+      for (int d : delays_ms) {
+        harness_runs++;
+        /* the target plus about 3 s of measuring stays clear of the end (20 s ProRes clips too) */
+        double target = dur > 8.0 ? 1.0 + std::fmod (0.37 * (harness_runs * 7), dur - 6.0) : 0.5;
+        /* run at `from` (flushing speed change, so the seek below carries it as the segment rate) */
+        tcs_player_set_speed (p, c.from);
+        std::this_thread::sleep_for (std::chrono::milliseconds (400));
+        int seg_before = g_segment_criticals.load ();
+        int other_before = g_other_criticals.load ();
+        uint64_t gen = tcs_player_seek (p, target);
+        if (d > 0)
+          std::this_thread::sleep_for (std::chrono::milliseconds (d));
+        int irc = tcs_player_set_rate_instant (p, c.to);
+        std::this_thread::sleep_for (std::chrono::milliseconds (500));
+        int seg = g_segment_criticals.load () - seg_before;
+        int other = g_other_criticals.load () - other_before;
+        double r1 = ir_effective_rate (p, gen, 1000);
+        double r2 = ir_effective_rate (p, gen, 1000);
+        bool measured = gen != 0 && !std::isnan (r1) && !std::isnan (r2);
+        if (measured) harness_ok++;
+        /* mismatch: closer to `from` than to `to` while the call said OK */
+        bool mismatch = measured && irc == TCS_OK &&
+            std::fabs (r1 - c.from) < std::fabs (r1 - c.to);
+        if (seg > 0) { crit_runs++; if (mismatch) crit_mismatch++; }
+        else { clean_runs++; if (mismatch) clean_mismatch++; }
+        printf ("  run it=%d from=%.2f to=%.2f delay=%3dms gen=%llu rc=%d segCritical=%d otherCritical=%d "
+                "rate1=%.4f rate2=%.4f mismatch=%d\n",
+            it, c.from, c.to, d, (unsigned long long) gen, irc, seg, other, r1, r2, mismatch ? 1 : 0);
+      }
+    }
+  }
+  tcs_player_set_speed (p, 1.0);
+  g_log_set_default_handler (g_ir_prev_handler, g_ir_prev_data);
+  tcs_player_destroy (p);
+  printf ("  SUMMARY runs=%d measured=%d criticalRuns=%d criticalMismatch=%d cleanRuns=%d cleanMismatch=%d\n",
+      harness_runs, harness_ok, crit_runs, crit_mismatch, clean_runs, clean_mismatch);
+  check (harness_ok == harness_runs, "every run measured an effective rate");
+  return failures;
+#endif
+}
+
 int
 main (int argc, char** argv)
 {
@@ -1908,6 +2055,11 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--ring-epoch") == 0) {
     int rc = run_ring_epoch_tests (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--instant-rate-after-seek") == 0) {
+    run_instant_rate_after_seek (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }

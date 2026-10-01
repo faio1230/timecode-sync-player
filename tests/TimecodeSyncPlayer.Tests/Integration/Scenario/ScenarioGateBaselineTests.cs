@@ -110,8 +110,11 @@ public class ScenarioGateBaselineTests
         (counts.SyncSeeks + counts.LandingSeeks).Should().BeInRange(19, 20,
             "保持ごとに 1 回だけ目標へ寄る（同期のシークか停止の着地のどちらか）");
         counts.Timeouts.Should().Be(0, "段 0 は全シナリオで時間切れ 0");
-        sink.Count("signal-loss-confirm").Should().BeGreaterThanOrEqualTo(20,
-            "20 回の保持それぞれで損失を確定している（sync.gate を仮想時刻つきで拾えている）");
+        // v0.6.1（β の (C)、承認済みの期待の変更）: 以前は保持から保持への確定した Jump のたびに信号断を一度明けて再生を
+        // 走らせ、保持が続くと損失を確定し直していた（20 回）。確認のフレームが同値の Duplicate なら保持のまま新しい値へ
+        // 着地し、信号断は明けないので、損失の確定は最初の 1 回だけ（保持ごとの着地は上の総数で見る）。
+        sink.Count("signal-loss-confirm").Should().Be(1,
+            "保持から保持への移動では信号断を明けない（sync.gate を仮想時刻つきで拾えている）");
     }
 
     [Fact]

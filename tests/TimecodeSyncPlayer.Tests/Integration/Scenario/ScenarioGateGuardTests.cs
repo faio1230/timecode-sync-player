@@ -86,7 +86,8 @@ public sealed class ScenarioGateGuardTests
         h.AdvancePlayback(3.0);
 
         h.Ltc.Normal(3.0, TimeSpan.FromMilliseconds(200));
-        h.Ltc.Duplicate(3.0, TimeSpan.FromMilliseconds(400));    // 250ms を過ぎて損失が確定する保持
+        // v0.6.1 段 A: 保持は直前の Normal の終わりの値（3.16）の繰り返し（3.0 だと 4 フレーム戻る Jump になる）。
+        h.Ltc.Duplicate(3.16, TimeSpan.FromMilliseconds(400));   // 250ms を過ぎて損失が確定する保持
         h.Ltc.Jump(10.0);                                        // 保持の後（>250ms）に届いた Jump
         h.Ltc.Duplicate(10.0, TimeSpan.FromMilliseconds(400));   // 着地を観測できる保持
         h.Ltc.Silence(TimeSpan.FromMilliseconds(400));           // 保持フレームが途切れ、理由が信号断へ下がる
@@ -109,7 +110,9 @@ public sealed class ScenarioGateGuardTests
     [Fact]
     public void G3_MisdecodedJumpBurst_ProducesAtMostOneSeek()
     {
-        double[] burstValues = [8.0, 9.5, 11.0, 12.5, 14.0];
+        // v0.6.1 段 A: 誤値もフレームの格子の上の値にする（LTC はフレーム単位。9.5・12.5 は 25fps の格子に無く、
+        // 実の口でフレームへ丸められて確認の +1 フレームと食い違っていた）。
+        double[] burstValues = [8.0, 9.52, 11.0, 12.52, 14.0];
         for (int burstLength = 2; burstLength <= 5; burstLength++)
         {
             (SyncScenarioHarness h, ScenarioClock clock) = Arrange();
@@ -437,7 +440,8 @@ public sealed class ScenarioGateGuardTests
 
         h.Ltc.Normal(1.0, TimeSpan.FromMilliseconds(200));
         RunFor(h, clock, 600);   // 初回の自動ロード（SwitchTrack）と解除直後のデバウンスを明ける
-        h.Ltc.Normal(1.5, TimeSpan.FromMilliseconds(200), atMilliseconds: clock.MonotonicMilliseconds);
+        // v0.6.1 段 B: 値は 25fps の格子に乗せる（1.5 は 37.5 フレームで、丸めで同値・2 フレーム飛びが混ざる）。
+        h.Ltc.Normal(1.52, TimeSpan.FromMilliseconds(200), atMilliseconds: clock.MonotonicMilliseconds);
         RunFor(h, clock, 200);   // 小さな値でゲートを温める
         h.Ltc.Silence(TimeSpan.FromMilliseconds(300));   // 窓を空にし、デバウンスの要らない場面にする
         RunFor(h, clock, 300);
@@ -446,7 +450,10 @@ public sealed class ScenarioGateGuardTests
         h.AdvanceMilliseconds(10);   // 1 フレーム目（+ Tick の再評価で 2 観測）
         ScenarioMetrics.SeekCount(h).Should().Be(0, "窓が埋まる前（1 フレーム目）ではシークしない（門 13）");
         h.AdvanceMilliseconds(40);   // 2 フレーム目（+ Tick で 3 観測目）
-        h.AdvanceMilliseconds(200);
+        // v0.6.1 段 B: 40ms ごとに進める（1 回で 200ms 進めると、その間のフレームがまとめて届き、フレーム終端からの
+        // 経過（サンプル時計の age）が付いて目標が先へずれる）。
+        for (int i = 0; i < 5; i++)
+            h.AdvanceMilliseconds(40);
         Report("G13", h, sink);
         ScenarioMetrics.SyncSeekCount(h).Should().Be(1, "窓（250ms・3 サンプル）が埋まってから 1 回だけシークする");
         Seeks(h).Single().Value.Should().BeInRange(10.0, 10.2);
