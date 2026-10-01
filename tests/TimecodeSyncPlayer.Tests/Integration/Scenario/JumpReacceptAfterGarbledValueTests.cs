@@ -2,6 +2,7 @@ using FluentAssertions;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
+using Xunit.Abstractions;
 
 namespace TimecodeSyncPlayer.Tests.Integration;
 
@@ -23,6 +24,10 @@ namespace TimecodeSyncPlayer.Tests.Integration;
 [Collection("Serilog global logger")]
 public class JumpReacceptAfterGarbledValueTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public JumpReacceptAfterGarbledValueTests(ITestOutputHelper output) => _output = output;
+
     private const int FrameMs = 33;
     private const double ToleranceSeconds = 0.24;
 
@@ -163,13 +168,14 @@ public class JumpReacceptAfterGarbledValueTests
     }
 
     /// <summary>台本を送り、送出が戻った流れ（最後の値から 30fps の Normal）を 1 秒続ける。</summary>
-    private static void Play(SyncScenarioHarness h, ScenarioClock clock, Row[] rows, List<double> pausedDuring)
+    private static void Play(
+        SyncScenarioHarness h, ScenarioClock clock, Row[] rows, List<double> pausedDuring,
+        LoggerCapture capture, long origin, List<string> holdExits)
     {
-        long origin = clock.MonotonicMilliseconds;
         foreach (Row row in rows)
         {
             AdvanceTo(h, clock, origin + row.Ms);
-            Frame(h, clock, row.Seconds, row.DetectedFps);
+            ObservedFrame(h, clock, row.Seconds, row.DetectedFps, capture, origin, holdExits);
             if (h.IsPaused)
                 pausedDuring.Add(row.Seconds);
         }
@@ -177,36 +183,71 @@ public class JumpReacceptAfterGarbledValueTests
         for (int i = 1; i <= 30; i++)
         {
             AdvanceTo(h, clock, clock.MonotonicMilliseconds + FrameMs);
-            Frame(h, clock, last + i / 30.0);
+            ObservedFrame(h, clock, last + i / 30.0, 30.0, capture, origin, holdExits);
         }
+    }
+
+    /// <summary>
+    /// 1 枚を送り、そのフレームで保持（規則 4: マスターが止まっている）に入った・抜けた、またはシークが出たなら、
+    /// 時刻・値・層 2 の分類を記録する（再現の調べ用）。
+    /// </summary>
+    private static void ObservedFrame(
+        SyncScenarioHarness h, ScenarioClock clock, double seconds, double detectedFps,
+        LoggerCapture capture, long origin, List<string> holdExits)
+    {
+        bool heldBefore = MasterStopped(h);
+        int logBefore = capture.Snapshot().Count;
+        int eventsBefore = h.Events.Count;
+        Frame(h, clock, seconds, detectedFps);
+        bool heldAfter = MasterStopped(h);
+        bool seeked = h.Events.Skip(eventsBefore).Any(e => e.Kind == "seek");
+        string? change = (heldBefore, heldAfter) switch
+        {
+            (true, false) => "exit",
+            (false, true) => "enter",
+            _ => null,
+        };
+        if (change is null && !seeked)
+            return;
+        string layer2 = capture.Snapshot().Skip(logBefore)
+            .Where(e => e.MessageTemplate.Text.StartsWith("LTC frame layer2 class", StringComparison.Ordinal))
+            .Select(e => e.Properties.TryGetValue("Layer2", out LogEventPropertyValue? v) ? v.ToString() : "?")
+            .LastOrDefault() ?? "-";
+        string what = string.Join("+", new[] { change, seeked ? "seek" : null }.Where(x => x is not null));
+        holdExits.Add($"{clock.MonotonicMilliseconds - origin}ms {seconds:F3} {what} class={layer2} stopped={heldAfter}");
     }
 
     private static double Ltc(LogEvent e) =>
         e.Properties.TryGetValue("Ltc", out LogEventPropertyValue? value) && value is ScalarValue { Value: double v }
             ? v : double.NaN;
 
-    /// <summary>シークの目標と、その直前の歩みで観測した再生位置との差（負 = 後ろ向き）。</summary>
-    private static List<(double Target, double Delta)> SeeksWithDelta(SyncScenarioHarness h, int fromEvent)
+    private static bool MasterStopped(SyncScenarioHarness h) => h.SyncService.MasterStoppedSource?.Invoke() ?? false;
+
+    /// <summary>シークの目標と、その直前の歩みで観測した再生位置との差（負 = 後ろ向き）と、台本の 0 からの時刻。</summary>
+    private static List<(double Target, double Delta, long AtMs)> SeeksWithDelta(SyncScenarioHarness h, int fromEvent, long origin)
     {
-        var result = new List<(double, double)>();
+        var result = new List<(double, double, long)>();
         double position = double.NaN;
         foreach (ScenarioEvent e in h.Events.Skip(fromEvent))
         {
             if (e.Kind == "tick" && e.Value is double p)
                 position = p;
             else if (e.Kind == "seek" && e.Value is double target)
-                result.Add((target, target - position));
+                result.Add((target, target - position, e.AtMilliseconds - origin));
         }
         return result;
     }
 
     private sealed record Outcome(
-        List<double> Confirmed, List<double> Applied, List<(double Target, double Delta)> Seeks,
-        List<double> PausedDuring, double FinalDifference, bool FinallyPaused)
+        List<double> Confirmed, List<double> Applied, List<(double Target, double Delta, long AtMs)> Seeks,
+        List<double> PausedDuring, double FinalDifference, bool FinallyPaused, List<string> RelocateReasons,
+        List<string> HoldExits)
     {
         public string Summary =>
             $"confirmed=[{string.Join(", ", Confirmed.Select(v => v.ToString("F3")))}] " +
-            $"seeks=[{string.Join(", ", Seeks.Select(s => $"{s.Target:F3}({s.Delta:+0.000;-0.000})"))}] " +
+            $"relocate=[{string.Join(", ", RelocateReasons)}] " +
+            $"seeks=[{string.Join(", ", Seeks.Select(s => $"{s.AtMs}ms {s.Target:F3}({s.Delta:+0.000;-0.000})"))}] " +
+            $"holdTrace=[{string.Join(", ", HoldExits)}] " +
             $"finalDifference={FinalDifference:+0.000;-0.000} pausedDuring={PausedDuring.Count} finallyPaused={FinallyPaused}";
     }
 
@@ -221,16 +262,29 @@ public class JumpReacceptAfterGarbledValueTests
         int fromEvent = h.Events.Count;
         int fromLog = capture.Snapshot().Count;
         var pausedDuring = new List<double>();
+        var holdExits = new List<string>();
+        long origin = clock.MonotonicMilliseconds;
 
-        Play(h, clock, rows, pausedDuring);
+        Play(h, clock, rows, pausedDuring, capture, origin, holdExits);
 
         List<LogEvent> after = capture.Snapshot().Skip(fromLog).ToList();
         List<double> confirmed = after
             .Where(e => e.MessageTemplate.Text.Contains("applying the confirmed Jump frame")).Select(Ltc).ToList();
         List<double> applied = after
             .Where(e => e.MessageTemplate.Text.StartsWith("sync.apply", StringComparison.Ordinal)).Select(Ltc).ToList();
-        return new Outcome(confirmed, applied, SeeksWithDelta(h, fromEvent), pausedDuring,
-            h.PlaybackSeconds - h.Controller.LastLtcSeconds, h.IsPaused);
+        List<string> reasons = after
+            .Where(e => e.MessageTemplate.Text.StartsWith("sync.gate relocate", StringComparison.Ordinal))
+            .Select(e => e.Properties.TryGetValue("Reason", out LogEventPropertyValue? r) ? r.ToString().Trim('"') : "?")
+            .ToList();
+        return new Outcome(confirmed, applied, SeeksWithDelta(h, fromEvent, origin), pausedDuring,
+            h.PlaybackSeconds - h.Controller.LastLtcSeconds, h.IsPaused, reasons, holdExits);
+    }
+
+    /// <summary>結果（確定・relocate の理由・シークの時刻と差・保持に入った／抜けた枠とシークを出した枠の時刻と分類）をテストの出力に書く。</summary>
+    private Outcome Reported(Outcome outcome)
+    {
+        _output.WriteLine(outcome.Summary);
+        return outcome;
     }
 
     private static void AssertApproved(Outcome outcome, double firstRealResume, double[] garbled)
@@ -250,12 +304,12 @@ public class JumpReacceptAfterGarbledValueTests
     /// <summary>T1: r1 の列（Fixed30、RunThrough）。今は正しい値の受け直しで確定した Jump が 4 回出る。</summary>
     [Fact]
     public void T1_R1_Fixed30_GarbledValues_DoNotReacceptTheAcceptedStream() =>
-        AssertApproved(Run(R1, 72.200, TimecodeFpsMode.Fixed30, videoFps: 30), 72.733, R1Garbled);
+        AssertApproved(Reported(Run(R1, 72.200, TimecodeFpsMode.Fixed30, videoFps: 30)), 72.733, R1Garbled);
 
     /// <summary>T1b: A-1 の列（Fixed30、M5 = ProRes 4K60 の再生中）。今は受け直し 2 回と後ろ向きのシーク 2 本。</summary>
     [Fact]
     public void T1b_A1_Fixed30_GarbledValues_DoNotReacceptTheAcceptedStream() =>
-        AssertApproved(Run(A1, 118.400, TimecodeFpsMode.Fixed30, videoFps: 60), 118.967, A1Garbled);
+        AssertApproved(Reported(Run(A1, 118.400, TimecodeFpsMode.Fixed30, videoFps: 60)), 118.967, A1Garbled);
 
     /// <summary>
     /// T1c: A-2 の列（Fixed30、M7 = H.264 1080p60）。確定は fps の疑わしくない同値の Duplicate なので D2 では止まらず、
@@ -263,12 +317,12 @@ public class JumpReacceptAfterGarbledValueTests
     /// </summary>
     [Fact]
     public void T1c_A2_Fixed30_GarbledValues_DoNotReacceptTheAcceptedStream() =>
-        AssertApproved(Run(A2, 163.600, TimecodeFpsMode.Fixed30, videoFps: 60), 164.233, A2Garbled);
+        AssertApproved(Reported(Run(A2, 163.600, TimecodeFpsMode.Fixed30, videoFps: 60)), 164.233, A2Garbled);
 
     /// <summary>T2: T1 の型を Auto で（層 2 の分類は fps モードに依らない）。</summary>
     [Fact]
     public void T2_R1_Auto_GarbledValues_DoNotReacceptTheAcceptedStream() =>
-        AssertApproved(Run(R1, 72.200, TimecodeFpsMode.Auto, videoFps: 30), 72.733, R1Garbled);
+        AssertApproved(Reported(Run(R1, 72.200, TimecodeFpsMode.Auto, videoFps: 30)), 72.733, R1Garbled);
 
     /// <summary>
     /// T1d: r1 の列を停止モード（Stop）で。送出が止まっている間は保持の損失で映像が止まり、送出が戻ったら復帰して
@@ -277,7 +331,7 @@ public class JumpReacceptAfterGarbledValueTests
     [Fact]
     public void T1d_R1_StopMode_HoldsWhileStalled_ThenOneForwardRelocateOnResume()
     {
-        Outcome outcome = Run(R1, 72.200, TimecodeFpsMode.Fixed30, videoFps: 30, LtcSignalLossMode.Stop);
+        Outcome outcome = Reported(Run(R1, 72.200, TimecodeFpsMode.Fixed30, videoFps: 30, LtcSignalLossMode.Stop));
 
         AssertApproved(outcome, 72.733, R1Garbled);
         outcome.PausedDuring.Should().NotBeEmpty("送出が止まっている間は保持の損失で映像が止まる。" + outcome.Summary);
@@ -302,7 +356,7 @@ public class JumpReacceptAfterGarbledValueTests
         double c = b + bFramesAfterA / 30.0;
         Row[] rows = [new(0, 33344.000), new(FrameMs, b), new(2 * FrameMs, c)];
 
-        Outcome outcome = Run(rows, a, fpsMode, videoFps: 30);
+        Outcome outcome = Reported(Run(rows, a, fpsMode, videoFps: 30));
 
         outcome.Confirmed.Should().BeEmpty("B は A から見れば連続（確定した Jump ではない）。" + outcome.Summary);
         outcome.Seeks.Should().BeEmpty("A の流れに戻っただけなのでシークしない。" + outcome.Summary);
