@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.6.2 - 2026-10-0X
+## 0.6.2 - 2026-10-02
 
 Stable (Latest). Updates the bundled ProRes GPU decoding plugin. Everything else is as in 0.6.1.
 
@@ -17,6 +17,12 @@ Stable (Latest). Updates the bundled ProRes GPU decoding plugin. Everything else
 ### Known issues
 
 - None within the recommended media (same as 0.6.1).
+
+### Known intermittent issues (in addition to 0.6.1)
+
+- When the LTC signal is disturbed and judged as stopped, RunThrough re-aligns once to the stopped position, and the
+  picture can stall for about 0.5 s around that landing. This is the expected reaction under the sync rules (seen once
+  on the test machine, from a disturbance in the test's audio path: 0.517 s).
 
 ## 0.6.1 - 2026-10-01
 
