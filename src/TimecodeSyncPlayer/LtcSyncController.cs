@@ -711,31 +711,21 @@ internal sealed class LtcSyncController
         }
 
         // v0.6.1 (iii) 這う前進: A を raw に更新し時刻も付け直すが、M は raw で止まる（外挿しない＝同期の要求を出さず、
-        // 保留の同期も捨てる）。保持の状態は切らない。
-        if (layer2 == Layer2Class.Creep)
+        // 保留の同期も捨てる）。保持の状態は切らない。この後は保持（Duplicate）の枝で扱い、境界ホールドの評価・着地の観測・
+        // 読み込みの解除の再適用を飛ばさない（遅い送出で毎フレームが這う前進のときも同じ処理を通す）。
+        bool creepingAdvance = layer2 == Layer2Class.Creep;
+        if (creepingAdvance)
         {
-            double creepEffectiveSeconds = SyncOffsetPolicy.Apply(rawSeconds,
-                _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
-            _input.AcceptFrame(creepEffectiveSeconds, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
-            _input.MarkHeldEffective(creepEffectiveSeconds);
-            // v0.6.1 (D): 這う前進の受理は保持の到着（止まりかけの送出の 1 歩）。
-            _signalLoss.ObserveHeldFrame(receivedAtMilliseconds, SignalContext(), heldRun);
+            _input.AcceptFrame(
+                SyncOffsetPolicy.Apply(rawSeconds,
+                    _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds),
+                rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
             _input.DiscardPendingSync();
             _lastContinueFrame = null;
             Log.Debug("LTC frame layer2: creeping advance accepted ltc={Ltc:F3} heldRun={HeldRun}", rawSeconds, heldRun);
             // v0.6.1 β (A): 損失からの復帰の有効フレームは、到着と前進で数える（這う前進も 1 枚に数える）。
             if (_signalLoss.IsLost)
                 ApplySignalLossAction(_signalLoss.ObserveValidFrame(receivedAtMilliseconds, SignalContext()));
-            // v0.6.1（レビューの直し、TSP-Fable の判断）: (iii) の合わせはモードで分ける。停止モードで信号断が止めている間は、
-            // 止めたまま新しい保持値へ 1 回着地する（ReapplyHeldValueOnPause、1 フレーム精度。再生は走らせない）。
-            // ランスルー（と止めていない間）は合わせない（A と時刻を更新し、M を止めるだけ）。保持の外の 1 枚で保持着地の記録
-            // （HeldLossLanding）を立てないので、走行中の遅れた 1 枚で規則 4 の入口の合わせが消えない。
-            if (_signalLoss.IsPauseOwned)
-            {
-                ReapplyHeldValueOnPause();
-                _input.MarkLastApplied(_input.LastHeldEffectiveSeconds);
-            }
-            return;
         }
 
         bool applyOnce;
@@ -764,8 +754,13 @@ internal sealed class LtcSyncController
                     _effects.GetSyncOffsetMilliseconds?.Invoke() ?? SyncOffsetPolicy.DefaultMilliseconds);
                 // D31-b: 損失中の保持値の変化は、着地済みの値（無ければ直前の保持値）と比べる。
                 // v0.6.1 β (C): 損失中に確定した保持値は、保持値の変更（D31-b の入口）として扱う。
-                heldValueChangedDuringLoss = confirmedIntoHold || IsHeldValueChangedDuringLoss(heldEffectiveSeconds);
-                holdEntry = _input.LastHeldEffectiveSeconds is not null &&
+                // v0.6.1（レビューの直し）: (iii) の合わせはモードで分ける。停止モードで信号断が止めている間は、止めたまま新しい
+                // 保持値へ 1 回着地する（下の D31-b の枝の ReapplyHeldValueOnPause、1 フレーム精度。再生は走らせない）。
+                // ランスルー（と止めていない間）は合わせない。保持の外の 1 枚は合わせの経路を通らないので、保持着地の記録
+                // （HeldLossLanding）を立てない（走行中の遅れた 1 枚で規則 4 の入口の合わせが消えない）。
+                heldValueChangedDuringLoss = confirmedIntoHold ||
+                    (creepingAdvance ? _signalLoss.IsPauseOwned : IsHeldValueChangedDuringLoss(heldEffectiveSeconds));
+                holdEntry = !creepingAdvance && _input.LastHeldEffectiveSeconds is not null &&
                     SyncRules.IsMasterStopped(heldRun, minimumHeldFrames: 2) &&
                     _input.HeldLossLandingSeconds is null;
                 _input.MarkHeldEffective(heldEffectiveSeconds);
