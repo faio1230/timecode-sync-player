@@ -2,6 +2,21 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.6.2 - 2026-10-0X
+
+Stable (Latest). Updates the bundled ProRes GPU decoding plugin. Everything else is as in 0.6.1.
+
+### Changed
+
+- gst-prores-d3d11 updated from v0.2.1 to v0.2.2. Its only change drops frames that are past their deadline before
+  GPU decoding when the GPU cannot keep up (a QoS improvement). It takes effect only when the playback sink sends
+  QoS upstream; TimecodeSyncPlayer's sink does not, so playback behavior is unchanged (checked on the development
+  machine: sink settings and no QoS events during playback). Image output, formats and shaders are the same as v0.2.1.
+
+### Known issues
+
+- None within the recommended media (same as 0.6.1).
+
 ## 0.6.1 - 2026-10-01
 
 Stable (Latest). Fixes the position re-alignment seeks that followed one another after the LTC signal was disturbed.
