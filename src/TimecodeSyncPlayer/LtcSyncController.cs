@@ -74,6 +74,10 @@ internal sealed class LtcSyncController
     private readonly LtcFrameProcessor _frames;
     private readonly LtcSignalLossPolicy _signalLoss;
 
+    /// <summary>v0.6.1（レビューの 7）: 層 2 の分類の件数（起動からの累計。<see cref="LogLayer2Summary"/> で出す）。</summary>
+    private long _creepingAdvanceCount;
+    private long _returnedToAcceptedStreamCount;
+
     /// <summary>
     /// v0.6.1: 這う前進の上限に使う freewheel（規則 1。既定の 250ms で固定し、利用者の信号断の時間の設定には連動させない）。
     /// </summary>
@@ -538,9 +542,21 @@ internal sealed class LtcSyncController
         OnLifecycle(SyncLifecycleEvent.FpsModeChanged);
     }
 
+    /// <summary>
+    /// v0.6.1（レビューの 7）: 層 2 の分類の件数（(iii) の這う前進の受理と、A の流れへ戻って捨てた保留）を Information で 1 行出す。
+    /// 毎フレームの行は Debug（這う前進）なので、配布ビルド（Information 以上）でも監視の停止・アプリの終了の時点の件数を数えられる。
+    /// 件数は起動からの累計。
+    /// </summary>
+    public void LogLayer2Summary(string source) =>
+        Log.Information(
+            "LTC layer2 summary: creepingAdvances={CreepingAdvances} returnedToAcceptedStream={ReturnedToAcceptedStream} source={Source}",
+            _creepingAdvanceCount, _returnedToAcceptedStreamCount, source);
+
     public void MonitoringChanged()
     {
         bool monitoring = _effects.GetContext().IsMonitoring;
+        if (!monitoring)
+            LogLayer2Summary("monitoring-stopped");
         SyncLifecycleEvent evt = monitoring
             ? SyncLifecycleEvent.MonitoringStarted
             : SyncLifecycleEvent.MonitoringStopped;
@@ -640,6 +656,7 @@ internal sealed class LtcSyncController
             if (layer2 is Layer2Class.Duplicate or Layer2Class.Normal or Layer2Class.Creep)
             {
                 _input.DiscardPendingJump();
+                _returnedToAcceptedStreamCount++;
                 Log.Information(
                     "Timecode sync: pending Jump frame discarded: returned to the accepted stream pending={Pending:F3} ltc={Ltc:F3} accepted={Accepted:F3} class={Class}",
                     pendingJump, rawSeconds, _input.Accepted?.RawSeconds ?? double.NaN, layer2);
@@ -722,6 +739,7 @@ internal sealed class LtcSyncController
                 rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
             _input.DiscardPendingSync();
             _lastContinueFrame = null;
+            _creepingAdvanceCount++;
             Log.Debug("LTC frame layer2: creeping advance accepted ltc={Ltc:F3} heldRun={HeldRun}", rawSeconds, heldRun);
             // v0.6.1 β (A): 損失からの復帰の有効フレームは、到着と前進で数える（這う前進も 1 枚に数える）。
             if (_signalLoss.IsLost)

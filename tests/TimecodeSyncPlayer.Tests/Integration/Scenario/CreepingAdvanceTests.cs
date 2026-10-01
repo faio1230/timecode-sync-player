@@ -1,4 +1,7 @@
 using FluentAssertions;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace TimecodeSyncPlayer.Tests.Integration;
 
@@ -9,6 +12,7 @@ namespace TimecodeSyncPlayer.Tests.Integration;
 /// - ランスルー（と止めていない間）: 合わせない
 /// - 保持の外の 1 枚（走行中の遅れた 1 枚）は保持着地の記録を立てない（規則 4 の入口の合わせを消さない）
 /// </summary>
+[Collection("Serilog global logger")]
 public class CreepingAdvanceTests
 {
     private const int FrameMs = 33;
@@ -128,5 +132,49 @@ public class CreepingAdvanceTests
 
         Seeks(h).Should().ContainSingle("保持の外の這う前進は保持着地の記録を立てないので、入口の合わせが出る")
             .Which.Should().BeApproximately(10.0 + 1.0 / 30.0, 1e-6);
+    }
+
+    private sealed class ListSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = new();
+        public void Emit(LogEvent logEvent) { lock (Events) Events.Add(logEvent); }
+    }
+
+    /// <summary>
+    /// レビューの 7: 這う前進と保留の捨ての件数を、監視の停止のときに Information で 1 行出す（配布ビルドでも数えられる）。
+    /// </summary>
+    [Fact]
+    public void Layer2Summary_IsLoggedOnceAtInformationWhenMonitoringStops()
+    {
+        ILogger previous = Log.Logger;
+        var sink = new ListSink();
+        Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo.Sink(sink).CreateLogger();
+        try
+        {
+            ScenarioClock clock = NewClock();
+            SyncScenarioHarness h = Arrange(clock, LtcSignalLossMode.RunThrough);
+            Follow(h, clock);
+            for (int i = 0; i < 6; i++)
+                h.AdvanceMilliseconds(FrameMs);
+            Frame(h, clock, 10.0 + 1.0 / 30.0);   // 這う前進 1 件
+            h.AdvanceMilliseconds(FrameMs);
+            Frame(h, clock, 55.5);                // 化けた値（保留）
+            h.AdvanceMilliseconds(FrameMs);
+            Frame(h, clock, 10.0 + 2.0 / 30.0);   // A の流れへ戻る（保留の捨て 1 件）
+
+            h.IsMonitoring = false;
+
+            List<LogEvent> summaries;
+            lock (sink.Events)
+                summaries = sink.Events.Where(e => e.MessageTemplate.Text.StartsWith("LTC layer2 summary", StringComparison.Ordinal)).ToList();
+            summaries.Should().ContainSingle();
+            summaries[0].Level.Should().Be(LogEventLevel.Information);
+            summaries[0].Properties["CreepingAdvances"].ToString().Should().Be("1");
+            summaries[0].Properties["ReturnedToAcceptedStream"].ToString().Should().Be("1");
+        }
+        finally
+        {
+            Log.Logger = previous;
+        }
     }
 }
