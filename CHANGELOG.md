@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.6.1 - 2026-10-0X
+## 0.6.1 - 2026-10-01
 
 Stable (Latest). Fixes the position re-alignment seeks that followed one another after the LTC signal was disturbed.
 Includes 0.6.0 (ProRes GPU decoding) and the 0.5.6 fix. Settings and projects are unchanged from 0.5.6.
