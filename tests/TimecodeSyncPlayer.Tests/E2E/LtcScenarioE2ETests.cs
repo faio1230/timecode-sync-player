@@ -1644,7 +1644,7 @@ public sealed partial class LtcScenarioE2ETests
         /// <summary>
         /// 参照フレーム: 各トラックを読み込み、一時停止で MediaIn と MediaOut-1 フレームへ
         /// シークして画面を読み戻す（2.5 節）。同期 OFF・LTC 送信前に行う。
-        /// シーク後は位置が目標 ±1 フレームに入るまで最大 6 秒待つ（絵の変化は早期退出の条件で、
+        /// シーク後は位置が目標の 0〜+1 フレームに入るまで最大 6 秒待つ（絵の変化は早期退出の条件で、
         /// 前の採取と同じ絵でも位置が入れば採用する）。3 秒経っても位置が動かなければ同じ目標へ
         /// 1 回だけ再シークする。
         /// </summary>
@@ -1705,7 +1705,7 @@ public sealed partial class LtcScenarioE2ETests
         }
 
         /// <summary>
-        /// シーク後の参照採取。位置が目標 ±1 フレームに入ったら完了（必須）。絵の変化は待ちを早く
+        /// シーク後の参照採取。位置が目標の 0〜+1 フレームに入ったら完了（必須）。絵の変化は待ちを早く
         /// 抜けるだけの条件で、前の採取と同じ絵でも位置が入れば採用し reference-same を残す
         /// （現場素材の黒フェードアウト→フェードインのように正当に同じ絵になる場合がある）。
         /// 6 秒待っても位置が目標に入らないときだけ失敗する（4K の CPU デコードでは shim の
@@ -1739,7 +1739,7 @@ public sealed partial class LtcScenarioE2ETests
                             attempt,
                             target = Math.Round(target, 3),
                             observed = JsonNumber(observed),
-                            note = "絵は前の採取と同じだが位置が目標 ±1 フレームに入ったため採用",
+                            note = "絵は前の採取と同じだが位置が目標の 0〜+1 フレームに入ったため採用",
                         });
                     return signature;
                 }
