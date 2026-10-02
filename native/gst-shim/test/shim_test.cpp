@@ -1887,8 +1887,9 @@ run_seek_method_check (int argc, char** argv)
  * handler chained to the shim's), the call's return, and the effective rate
  * measured from leased frame PTS over two 1-second windows after the landing.
  * A mismatch is an effective rate that stays near `from` while the call
- * returned TCS_OK (the shim records `to`). Informational: no PASS/FAIL on the
- * mismatch itself, only on the harness working. */
+ * returned TCS_OK (the shim records `to`). v0.6.3 段 6: PASS/FAIL now also covers
+ * the assertion count (0), the mismatch (0) and the call's return (TCS_OK).
+ * 180 runs = 15 iters (2 cases x 6 delays each). */
 static std::atomic<int> g_segment_criticals{0};
 static std::atomic<int> g_other_criticals{0};
 static GLogFunc g_ir_prev_handler = nullptr;
@@ -1979,6 +1980,7 @@ run_instant_rate_after_seek (int argc, char** argv)
   const int delays_ms[] = { 0, 1, 5, 20, 100, 300 };
   int harness_ok = 0, harness_runs = 0;
   int crit_runs = 0, crit_mismatch = 0, clean_runs = 0, clean_mismatch = 0;
+  int rejected = 0;
   for (int it = 0; it < iters; it++) {
     for (const Case& c : cases) {
       for (int d : delays_ms) {
@@ -2001,6 +2003,7 @@ run_instant_rate_after_seek (int argc, char** argv)
         double r2 = ir_effective_rate (p, gen, 1000);
         bool measured = gen != 0 && !std::isnan (r1) && !std::isnan (r2);
         if (measured) harness_ok++;
+        if (irc != TCS_OK) rejected++;
         /* mismatch: closer to `from` than to `to` while the call said OK */
         bool mismatch = measured && irc == TCS_OK &&
             std::fabs (r1 - c.from) < std::fabs (r1 - c.to);
@@ -2015,9 +2018,83 @@ run_instant_rate_after_seek (int argc, char** argv)
   tcs_player_set_speed (p, 1.0);
   g_log_set_default_handler (g_ir_prev_handler, g_ir_prev_data);
   tcs_player_destroy (p);
-  printf ("  SUMMARY runs=%d measured=%d criticalRuns=%d criticalMismatch=%d cleanRuns=%d cleanMismatch=%d\n",
-      harness_runs, harness_ok, crit_runs, crit_mismatch, clean_runs, clean_mismatch);
+  printf ("  SUMMARY runs=%d measured=%d criticalRuns=%d criticalMismatch=%d cleanRuns=%d cleanMismatch=%d "
+          "rejected=%d segCriticalTotal=%d\n",
+      harness_runs, harness_ok, crit_runs, crit_mismatch, clean_runs, clean_mismatch,
+      rejected, g_segment_criticals.load ());
   check (harness_ok == harness_runs, "every run measured an effective rate");
+  /* v0.6.3 段 6（設計書 6 節・11 節の (b)）: flush の segment が届くまで shim が instant-rate を
+   * 保留するので、assertion の行は 0、速度は指示どおり、呼び出しは成功のまま。 */
+  check (g_segment_criticals.load () == 0, "no gst_segment_do_seek assertion around the instant change");
+  check (crit_mismatch + clean_mismatch == 0, "the effective rate follows the instant change");
+  check (rejected == 0, "every instant change returned TCS_OK");
+  return failures;
+#endif
+}
+
+/* --instant-rate-past-audio <file> [iters]: v0.6.3 段 6 の続き。音声が映像より短い素材で、
+ * 音声の尺の外へ flush シークした直後に instant-rate を送る。shim は flush の segment が
+ * 届くまで instant-rate を保留するが、音声の尺の外では音声の sink に新しい segment が
+ * 来ないことがある。そこで待ち続けず（音声を待つ理由が無いと状態で判定して）速度が
+ * すぐ効くことを確かめる。各回: 0.9 で再生 → 音声の尺の外へシーク → 1.0 の instant →
+ * 0.5 秒後から 1 秒の窓で実効の速度を測る。1.0 に近ければ合格（保留が待ち続けると 0.9 のまま）。 */
+static int
+run_instant_rate_past_audio (int argc, char** argv)
+{
+  if (argc < 4) {
+    printf ("usage: tcs-shim-test --instant-rate-past-audio <file> <audio_end_s> [iters]\n");
+    return 2;
+  }
+#if !GST_CHECK_VERSION(1,18,0)
+  printf ("  instant rate change needs GStreamer 1.18+\n");
+  return 2;
+#else
+  const char* file = argv[2];
+  double audio_end = atof (argv[3]);
+  int iters = argc > 4 ? atoi (argv[4]) : 10;
+  if (iters < 1)
+    iters = 1;
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimInstantRatePastAudio", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) return 1;
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  double dur = 0;
+  tcs_player_get_duration (p, &dur);
+  printf ("  media duration=%.3fs audio_end=%.3fs iters=%d\n", dur, audio_end, iters);
+  if (dur < audio_end + 4.0) {
+    printf ("  need >= 4s of video after the audio end\n");
+    tcs_player_destroy (p);
+    return 1;
+  }
+  std::this_thread::sleep_for (std::chrono::milliseconds (500));
+  int measured = 0, slow = 0, rejected = 0;
+  for (int i = 0; i < iters; i++) {
+    /* 音声の尺の外（音声の終わり + 0.5 秒 〜 尺 − 3 秒） */
+    double span = dur - 3.0 - (audio_end + 0.5);
+    double target = audio_end + 0.5 + std::fmod (0.37 * (i + 1), span > 0.1 ? span : 0.1);
+    tcs_player_set_speed (p, 0.9);
+    std::this_thread::sleep_for (std::chrono::milliseconds (400));
+    uint64_t gen = tcs_player_seek (p, target);
+    int irc = tcs_player_set_rate_instant (p, 1.0);
+    if (irc != TCS_OK) rejected++;
+    std::this_thread::sleep_for (std::chrono::milliseconds (500));
+    double r = ir_effective_rate (p, gen, 1000);
+    bool ok = !std::isnan (r);
+    if (ok) measured++;
+    if (ok && std::fabs (r - 0.9) < std::fabs (r - 1.0)) slow++;
+    printf ("  run %2d: target=%.3f gen=%llu rc=%d rate=%.4f %s\n", i, target,
+        (unsigned long long) gen, irc, r, ok && std::fabs (r - 0.9) < std::fabs (r - 1.0) ? "SLOW(0.9)" : "");
+  }
+  tcs_player_set_speed (p, 1.0);
+  tcs_player_destroy (p);
+  printf ("  SUMMARY iters=%d measured=%d stillOldRate=%d rejected=%d\n", iters, measured, slow, rejected);
+  check (measured == iters, "every run measured an effective rate");
+  check (rejected == 0, "every instant change returned TCS_OK");
+  check (slow == 0, "the instant change takes effect past the audio end (no wait for an audio segment)");
   return failures;
 #endif
 }
@@ -2211,6 +2288,11 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--paused-seek-one-frame") == 0) {
     run_paused_seek_one_frame (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--instant-rate-past-audio") == 0) {
+    run_instant_rate_past_audio (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }
