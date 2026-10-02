@@ -2,6 +2,41 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.6.3 - 2026-10-0X
+
+Stable (Latest) candidate. RunThrough no longer rewinds to the stopped position when the LTC stops, and a paused seek
+no longer ends one frame past the target. Settings and projects are unchanged from 0.6.2.
+
+### Changed
+
+- In RunThrough, when the LTC is judged as stopped, the picture keeps running instead of jumping back to the stopped
+  position, and it is aligned once when the LTC comes back. Up to 0.6.2 it jumped back once at the moment of the stop
+  (a disturbed LTC that looked stopped for a moment could stall the picture for about 0.2 to 0.5 s each time). Stop mode
+  is unchanged (aligns once to the stopped position and pauses).
+- In Single, an LTC that stops outside the clip still stops the picture at the clip edge (in RunThrough too, with one
+  seek to the edge).
+
+### Fixed
+
+- A seek while paused could rarely end on the frame after the target, with the position display one frame ahead. The
+  short run used to show the frame while paused let a second frame through (about 3% on the development machine). Only
+  the first frame is delivered now.
+- Fewer GStreamer CRITICAL lines (`gst_segment_do_seek: assertion`) after a rate change sent right after a
+  re-alignment seek: the rate change now waits until the seek's segment has arrived. (Test machine set: N to M lines;
+  written at release. Lines from the order used when entering a gap freeze remain.) The rate was already applied as
+  requested in 0.6.2; only the diagnostic lines change.
+- The one-time re-apply of the last accepted timecode after a file load is now decided by the LTC state instead of a
+  1.5 s time limit: if the LTC moves after the load, it is dropped; if the LTC stays stopped, it is applied once.
+
+### Known issues
+
+- None within the recommended media (same as 0.6.2).
+
+### Known intermittent issues
+
+- As listed for 0.6.1. The 0.6.2 entry "RunThrough re-aligns once to the stopped position and the picture can stall
+  for about 0.5 s" no longer applies (see Changed).
+
 ## 0.6.2 - 2026-10-02
 
 Stable (Latest). Updates the bundled ProRes GPU decoding plugin. Everything else is as in 0.6.1.
