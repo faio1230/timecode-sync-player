@@ -152,6 +152,11 @@ internal sealed class LtcSignalLossPolicy
         _consecutiveResumeFrames = 0;
     }
 
+    /// <summary>
+    /// v0.6.3 (ii)（観測だけ。判定には使わない）: 損失中に、復帰の有効フレームを数え始めた（マスターが動き出した）か。
+    /// </summary>
+    public bool IsRecovering => _isLost && _consecutiveResumeFrames > 0;
+
     public LtcSignalLossAction ObserveValidFrame(long receivedAtMilliseconds, LtcSignalLossContext context)
     {
         if (!context.IsMonitoring)

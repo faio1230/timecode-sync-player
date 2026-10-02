@@ -283,8 +283,16 @@ public sealed class TimecodeSyncService
     /// <summary>v0.6.3 (ii)（観測）: 境界の経路の端へのシーク（reason boundary）の数（起動からの累計）。</summary>
     internal long BoundarySeeks => _boundarySeeks;
 
-    /// <summary>v0.6.3 (ii)（観測）: いまマスターが止まっているか（relocate の行と要約に出す）。</summary>
+    /// <summary>v0.6.3 (ii)（観測）: いまマスターが止まっているか（relocate の行に出す。規則の判定と同じ MasterStoppedSource）。</summary>
     internal bool IsMasterStoppedForObservation => !IsMasterMoving;
+
+    /// <summary>
+    /// v0.6.3 (ii)（観測だけ。判定には使わない）: backwardSeeksWhileStopped を数えるときの「止まっている」。保持（数える保持の連続）
+    /// の間と、損失中で復帰の有効フレームをまだ数えていない間。損失からの復帰（有効フレームを数えている間）に出る規則 3 の
+    /// 1 本は (ii) の仕様どおりなので数えない（MasterStoppedSource は損失が明けるまで真のまま）。コントローラが配線する
+    /// （未配線は MasterStoppedSource と同じ）。
+    /// </summary>
+    public Func<bool>? MasterStoppedForBackwardCountSource { get; set; }
 
     // v0.5.4 B6b（追補 4）の計測: 着地後の残差と連続 relocate を実機のログから数える（門ではない）。
     private string _lastRelocateReason = "";
@@ -305,7 +313,8 @@ public sealed class TimecodeSyncService
         // v0.6.3 (ii)（観測）: マスター停止中の後ろ向きの relocate と、境界の経路の端へのシークを数える（記録だけ）。
         if (reason == "boundary")
             _boundarySeeks++;
-        else if (!IsMasterMoving && double.IsFinite(_lastObservedPlaybackSeconds) &&
+        else if ((MasterStoppedForBackwardCountSource?.Invoke() ?? !IsMasterMoving) &&
+                 double.IsFinite(_lastObservedPlaybackSeconds) &&
                  targetSeconds < _lastObservedPlaybackSeconds - 0.001)
             _backwardSeeksWhileStopped++;
         Serilog.Log.Debug(
