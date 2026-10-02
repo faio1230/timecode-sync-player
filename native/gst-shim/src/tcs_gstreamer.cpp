@@ -3121,8 +3121,14 @@ rate_hold_tick (TcsPlayer* p)
       reason = "segment";
     else if (expect == 0)
       reason = "expectation-cleared";   /* 失敗したシーク・D25 の打ち切り */
-    else if (waited_ms > 5000)
-      reason = "timeout";               /* sample_is_pre_seek と同じ 5 秒の打ち切り */
+    else if (waited_ms >= pump_budget_ms)
+      /* 新しい定数は足さない。上限は一時停止中のシークのポンプと同じ pump_budget_ms
+       * （アプリは TCS_PUMP_BUDGET_MS で「着地の時間切れ − 0.5 秒」= 2.5 秒を渡す）。
+       * その時間で segment が届かないシークは、アプリの側でも着地の時間切れになるので、
+       * 保留をそれより長く続ける理由が無い。開発機では、音声の尺の外へのシークでも音声の
+       * sink に segment は届いた（待ちは最大 16ms、shim_test --instant-rate-past-audio）ので、
+       * ここに来るのは segment が来ない異常の時だけの見込み。 */
+      reason = "timeout";
     if (!reason)
       return;
     p->rate_hold = false;
