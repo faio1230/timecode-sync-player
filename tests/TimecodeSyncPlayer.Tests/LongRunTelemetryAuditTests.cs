@@ -52,6 +52,46 @@ public sealed class LongRunTelemetryAuditTests
     }
 
     [Fact]
+    public void PlaybackContinuity_DoesNotCountAWindowThatStartedBeforeTheOrigin()
+    {
+        // v0.6.4 9-2: 起点（l2-audit-origin）の前に始まり後に終わる窓は、起点の前の準備の区間を含むので数えない。
+        // 窓の始まり = 行の時刻 − elapsed。数えなかった窓は excluded に足し、値を残す。
+        LongRunPerfSample[] samples =
+        [
+            Perf(1.2, updates: 30, published: 30),  // 窓 -0.8〜1.2: 起点をまたぐ。30 枚不足（1.0 s）でも数えない
+            Perf(3.2, updates: 60, published: 90),
+            Perf(5.2, updates: 54, published: 144), // 起点の後に始まる窓の不足（0.2 s）はこれまでどおり数える
+        ];
+
+        PlaybackContinuitySummary summary = PlaybackContinuityAudit.Summarize(samples, originSeconds: 0.0);
+
+        summary.TotalSamples.Should().Be(3);
+        summary.AuditedSamples.Should().Be(2);
+        summary.ExcludedSamples.Should().Be(1);
+        summary.MaxDeficitSeconds.Should().BeApproximately(0.2, 0.001);
+        summary.DeficitAtLeast100Ms.Should().Be(1);
+        summary.DeficitAtLeast500Ms.Should().Be(0);
+        summary.PreOriginWindows.Should().ContainSingle();
+        LongRunPerfWindow window = summary.PreOriginWindows[0];
+        window.StartSeconds.Should().BeApproximately(-0.8, 1e-9);
+        window.EndSeconds.Should().BeApproximately(1.2, 1e-9);
+        window.FrameUpdates.Should().Be(30);
+        window.ExpectedFrames.Should().BeApproximately(60.0, 1e-9);
+    }
+
+    [Fact]
+    public void PlaybackContinuity_AWindowStartingAtTheOriginIsCounted()
+    {
+        LongRunPerfSample[] samples = [Perf(2.0, updates: 42, published: 42)];
+
+        PlaybackContinuitySummary summary = PlaybackContinuityAudit.Summarize(samples, originSeconds: 0.0);
+
+        summary.AuditedSamples.Should().Be(1);
+        summary.PreOriginWindows.Should().BeEmpty();
+        summary.MaxDeficitSeconds.Should().BeApproximately(0.6, 0.001);
+    }
+
+    [Fact]
     public void PlaybackContinuity_MeasuresGpuPublicationRateBetweenPerfSamples()
     {
         LongRunPerfSample[] samples =
