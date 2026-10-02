@@ -95,8 +95,9 @@ public sealed class VolumeControlE2ETests
                     () => app.Button("BtnMute").Name == "MUTE ON" && ReadAudioSettings(settingsPath).IsMuted,
                     TimeSpan.FromSeconds(5));
 
-                string logPath = GetLatestApplicationLogPath(exe);
-                long logOffset = new FileInfo(logPath).Length;
+                // v0.6.4 段 4: 開始の時刻以降のすべての日のファイルを読む（0 時をまたぐ回で前日の行を落とさない）。
+                string logDir = AppLogReader.LogDirectoryForExe(exe);
+                DateTime logSince = DateTime.Now;
                 signalPlayer!.Play(
                     new LtcTimecode(0, 0, 3, 12, false),
                     Fps,
@@ -106,7 +107,7 @@ public sealed class VolumeControlE2ETests
                     app.Button("BtnToggleSync").Invoke();
 
                 E2EAssert.WaitUntil(
-                    () => ReadLogSince(logPath, logOffset).Contains(
+                    () => AppLogReader.ReadTextSince(logDir, logSince).Contains(
                         "Project restore pause released by on-track sync",
                         StringComparison.Ordinal),
                     TimeSpan.FromSeconds(3));
@@ -118,7 +119,7 @@ public sealed class VolumeControlE2ETests
                 AssertMutePreserved(app, settingsPath);
 
                 E2EAssert.WaitUntil(
-                    () => ReadLogSince(logPath, logOffset).Contains(
+                    () => AppLogReader.ReadTextSince(logDir, logSince).Contains(
                         "switching to track volume-track-2",
                         StringComparison.Ordinal),
                     TimeSpan.FromSeconds(6));
@@ -178,28 +179,6 @@ public sealed class VolumeControlE2ETests
     {
         app.Button("BtnMute").Name.Should().Be("MUTE ON");
         ReadAudioSettings(settingsPath).IsMuted.Should().BeTrue();
-    }
-
-    private static string GetLatestApplicationLogPath(string exePath)
-    {
-        // ログは実際に起動した exe の隣に出るため、解決済み exe パスから導出する
-        // （TIMECODE_SYNC_PLAYER_E2E_APP_PATH 上書きや src ツリーfallback でも正しく追える）
-        string logDirectory = Path.Combine(Path.GetDirectoryName(exePath)!, "logs");
-        return Directory.EnumerateFiles(logDirectory, "timecodesyncplayer-*.log")
-            .OrderByDescending(File.GetLastWriteTimeUtc)
-            .First();
-    }
-
-    private static string ReadLogSince(string path, long offset)
-    {
-        using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
-        stream.Position = Math.Min(offset, stream.Length);
-        using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
     }
 
     private static (bool IsMuted, double Volume) ReadAudioSettings(string path)

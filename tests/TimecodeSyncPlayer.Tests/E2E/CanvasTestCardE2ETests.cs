@@ -37,38 +37,19 @@ public sealed class CanvasTestCardE2ETests
              + int.Parse(parts[2]);
     }
 
-    private static string NewestLogPath(string exeDir)
-    {
-        string logDir = Path.Combine(exeDir, "logs");
-        DirectoryInfo di = new(logDir);
-        if (!di.Exists) return Path.Combine(logDir, "timecodesyncplayer-.log");
-        FileInfo? newest = di.GetFiles("timecodesyncplayer-*.log")
-            .OrderByDescending(f => f.LastWriteTimeUtc)
-            .FirstOrDefault();
-        return newest?.FullName ?? Path.Combine(logDir, "timecodesyncplayer-.log");
-    }
-
-    private static string ReadLogFrom(string logPath, long offset)
-    {
-        if (!File.Exists(logPath)) return "";
-        using var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        if (offset > fs.Length) offset = 0;
-        fs.Seek(offset, SeekOrigin.Begin);
-        using var sr = new StreamReader(fs);
-        return sr.ReadToEnd();
-    }
-
-    private static void WaitForLogAfter(string logPath, long offset, string needle, TimeSpan timeout)
+    // v0.6.4 段 4: 最新の 1 ファイルの末尾からではなく、開始の時刻以降のすべての日のファイルを読む
+    // （0 時をまたぐ回で前日のファイルの行を落とさない。AppLogReader）。
+    private static void WaitForLogAfter(string logDir, DateTime sinceLocal, string needle, TimeSpan timeout)
     {
         DateTime deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            if (ReadLogFrom(logPath, offset).Contains(needle, StringComparison.Ordinal))
+            if (AppLogReader.ReadTextSince(logDir, sinceLocal).Contains(needle, StringComparison.Ordinal))
                 return;
             Thread.Sleep(200);
         }
-        ReadLogFrom(logPath, offset).Should().Contain(needle,
-            $"アプリログ（{logPath} の offset {offset} 以降）に '{needle}' が記録されるはず");
+        AppLogReader.ReadTextSince(logDir, sinceLocal).Should().Contain(needle,
+            $"アプリログ（{logDir} の {sinceLocal:HH:mm:ss.fff} 以降）に '{needle}' が記録されるはず");
     }
 
     [SkippableFact(Timeout = 120_000)]
@@ -145,14 +126,13 @@ public sealed class CanvasTestCardE2ETests
             await ProjectSerializer.SaveAsync(projectPath, playlist, SyncMode.Single, GapBehavior.Black,
                 new CanvasData { Width = 3840, Height = 2160, DefaultFit = FitHeight.FitId });
 
-            string exeDir = Path.GetDirectoryName(exePath)!;
-            string logPath = NewestLogPath(exeDir);
-            long logOffset = File.Exists(logPath) ? new FileInfo(logPath).Length : 0;
+            string logDir = AppLogReader.LogDirectoryForExe(exePath);
+            DateTime logSince = DateTime.Now;
 
             runner = E2EAppRunner.Start(
                 exePath, $"--load-project \"{projectPath}\"", settingsPath, pausePlaybackIfNeeded: true);
 
-            WaitForLogAfter(logPath, logOffset, "canvas=3840x2160", TimeSpan.FromSeconds(20));
+            WaitForLogAfter(logDir, logSince, "canvas=3840x2160", TimeSpan.FromSeconds(20));
         }
         finally
         {
