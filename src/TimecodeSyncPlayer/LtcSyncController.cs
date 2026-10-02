@@ -136,6 +136,11 @@ internal sealed class LtcSyncController
         // 数えない）。保持値の記録（D27-d、化けた 1 枚でも立つ）では判定しない。
         _syncService.MasterStoppedSource = () =>
             SyncRules.IsMasterStopped(_input.HeldRunLength, minimumHeldFrames: 1) || _signalLoss.IsLost;
+        // v0.6.3 (ii)（観測だけ）: Sync hold summary の backwardSeeksWhileStopped は、損失からの復帰（有効フレームを数えている間）の
+        // relocate を数えない（復帰の 1 回は仕様どおり）。
+        _syncService.MasterStoppedForBackwardCountSource = () =>
+            SyncRules.IsMasterStopped(_input.HeldRunLength, minimumHeldFrames: 1) ||
+            (_signalLoss.IsLost && !_signalLoss.IsRecovering);
         _syncService.LifecycleRaised += OnSyncServiceLifecycle;
     }
 
