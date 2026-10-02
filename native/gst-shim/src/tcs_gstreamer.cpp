@@ -300,6 +300,13 @@ static std::atomic<int> test_hold_budget{test_hold_frame_lock_ms > 0 ? 40 : 0};
 static int test_hold_seek_lock_ms = env_int ("TCS_TEST_HOLD_SEEK_LOCK_MS", 0);
 static std::atomic<int> test_seek_hold_budget{test_hold_seek_lock_ms > 0 ? 8 : 0};
 
+/* v0.6.3 段 5 の試験用フック: 一時停止中のシークのポンプで、bus スレッドの tick が
+ * 新しい世代のフレームを見つけてから PAUSED へ戻すまでを、この ms だけ遅らせる
+ * （実機で見た「1 枚目の後 約 19ms、tick が来なかった」を決定的に作る）。shim_test の
+ * --paused-seek-one-frame だけが使う。製品（アプリ・LTC シナリオ・E2E）はこの変数を設定せず、
+ * 既定の 0 では tick は何も待たない（製品の既定で効かない）。 */
+static int test_pump_tick_delay_ms = env_int ("TCS_TEST_PUMP_TICK_DELAY_MS", 0);
+
 /* C1(b) measurement switch: seek method. auto keeps the container default
  * (tsdemux -> KEY_UNIT|SNAP_BEFORE, others -> ACCURATE). accurate/keyunit
  * force one method for the comparison. Unknown values fall back to auto with
@@ -574,6 +581,13 @@ struct TcsPlayer {
   uint64_t pump_frames_at_arm = 0;       /* frame_lock (D24 diagnostics) */
   bool pump_muted = false;               /* frame_lock */
   uint64_t pump_faults = 0;              /* frame_lock (diagnostics) */
+  ULONGLONG pump_test_seen_ms = 0;       /* frame_lock (TCS_TEST_PUMP_TICK_DELAY_MS) */
+  /* v0.6.3 段 5: ポンプの配信の門。ポンプの世代の 1 枚目を配信した時点で on_new_sample が
+   * 閉じ、PAUSED が効くまでに届いた同じ世代のフレームを配信しない。pump_active とは別に持つ
+   * （pump_active は tick が PAUSED を出す前に false にするので、門を兼ねると間に合わない）。
+   * 開くのは次の pump_arm・再開（set_paused(0)）・teardown。 */
+  bool pump_gate_closed = false;         /* frame_lock */
+  uint64_t pump_held = 0;                /* frame_lock (diagnostics) */
 
   /* 0.4.5-C long-GOP detector. gop_lock is a leaf lock: only the pad probe
    * (streaming thread), the getter and teardown's reset take it; it is never
@@ -1681,6 +1695,20 @@ on_new_sample (GstAppSink* sink, gpointer user)
             (double) ((uint64_t) arrival.QuadPart - p->gate_armed_qpc) * ms_per_tick);
       }
     }
+    /* v0.6.3 段 5: 一時停止中のシークのポンプは 1 枚だけ配信する。1 枚目を配信した後
+     * （pump_gate_closed）、PAUSED が効くまでに届いた同じ世代のフレームは配信しない。
+     * 以前は tick が PAUSED を出すまで配信を続けたので、tick が 1 枚目の後 1 フレーム以上
+     * 来ないと 2 枚目（+1 → +2）が配信され、一時停止中の位置と絵が 1 枚先へずれた
+     * （開発機 156 回中 6 回、検証機 1,247 回中 39 回。docs/design/v0.6.3-chase-cleanup.md 12 節）。
+     * 状態の変更（PAUSED）はこれまでどおり tick がロックの外で出す（I13）。ここは捨てるだけ。 */
+    if (!gated && p->pump_gate_closed && p->paused && p->generation == p->pump_generation) {
+      gated = true;
+      p->pump_held++;
+      LOG ("pump: held a frame after the paused-seek frame gen=%llu pts_ms=%.2f "
+          "pump_active=%d held=%llu",
+          (unsigned long long) p->generation, (double) pts / 1e6, p->pump_active ? 1 : 0,
+          (unsigned long long) p->pump_held);
+    }
     /* v0.5.0: 展開済み（ロックの外）の HAP を GPU で BGRA のテクスチャにし、以降は復号済みの
      * フレームと同じ扱いにする（リングへのコピーは共通の経路）。context は shim のものを使うので、
      * frame_lock の中で行う。 */
@@ -1719,6 +1747,10 @@ on_new_sample (GstAppSink* sink, gpointer user)
       if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
       p->latest_gen = p->generation;
       p->latest_pts_ns = pts;
+      /* 段 5: ポンプの世代の 1 枚目。配信と同じロックの中で門を閉じる（tick が pump_active を
+       * false にするより必ず前。順序の理由は pump_preroll_tick のコメント）。 */
+      if (p->pump_active && p->generation == p->pump_generation)
+        p->pump_gate_closed = true;
       /* D25: the fence value must be strictly increasing for the lifetime of
        * the shared fence. frames_decoded restarts at 0 on every load while
        * the ring/fence persist, so a post-load seq reused an already-completed
@@ -2826,6 +2858,11 @@ pump_arm (TcsPlayer* p, uint64_t generation)
       p->pump_armed_ms = GetTickCount64 ();
       p->pump_deadline = p->pump_armed_ms + pump_budget_ms;
       p->pump_frames_at_arm = p->frames_decoded;
+      p->pump_test_seen_ms = 0;
+      /* 段 5: この世代のフレームを arm の前に配信済みなら（S-load の開始シークは
+       * load_priming の PLAYING 中に出るので、プライム中に届いていることがある）、門は最初から
+       * 閉じる。それ以外は 1 枚目の配信で on_new_sample が閉じる。 */
+      p->pump_gate_closed = p->frames_decoded > 0 && p->latest_gen == generation;
       if (!p->pump_muted) {
         /* No audible output while the pipeline runs for the preroll: the user
          * still believes playback is paused (same idea as load_priming). */
@@ -2860,16 +2897,27 @@ pump_preroll_tick (TcsPlayer* p)
         p->pump_pending.store (false, std::memory_order_relaxed);
         return;
       }
-      for (const TcsPlayer::FrameSlot& f : p->frames) {
-        if (f.generation == p->pump_generation) {
-          has_frame = true;
-          break;
-        }
-      }
+      /* 段 5: 「1 枚目を配信した」は配信の門で判定する。以前は p->frames を走査していたが、
+       * GPU worker の acquire はフレームを p->frames から取り出すので、tick より先に取られた
+       * 1 枚目は見えず、tick は次の 1 枚が積まれるまで止まらなかった（その 1 枚が 2 枚目の配信）。
+       * 門が閉じた後は 2 枚目が積まれないので、走査のままだと期限まで PLAYING が続く。 */
+      has_frame = p->pump_gate_closed;
       if (!has_frame && GetTickCount64 () >= p->pump_deadline)
         timed_out = true;
       if (!has_frame && !timed_out)
         return;
+      if (has_frame && test_pump_tick_delay_ms > 0) {
+        ULONGLONG now = GetTickCount64 ();
+        if (p->pump_test_seen_ms == 0)
+          p->pump_test_seen_ms = now;
+        if (now - p->pump_test_seen_ms < (ULONGLONG) test_pump_tick_delay_ms)
+          return;
+      }
+      /* 段 5 の順序: 配信の門は 1 枚目の配信と同じ frame_lock の中で on_new_sample が既に
+       * 閉じている（has_frame はその門を見た結果）。ここで pump_active=false にしても、下の
+       * set_state(PAUSED) は I13 によりロックの外で出し、しかも PAUSED は非同期に効くので、
+       * その間もパイプラインは PLAYING のままフレームを出す。門は pump_active に依らず
+       * 閉じたままなので、その間のフレームは配信されない。 */
       p->pump_active = false;
       p->pump_pending.store (false, std::memory_order_relaxed);
       if (p->pump_muted) {
@@ -2927,6 +2975,7 @@ pump_reset_locked (TcsPlayer* p)
 {
   p->pump_active = false;
   p->pump_muted = false;
+  p->pump_gate_closed = false;
   p->pump_pending.store (false, std::memory_order_relaxed);
 }
 
@@ -4040,6 +4089,8 @@ tcs_player_set_paused (TcsPlayer* player, int paused)
           player->pump_active = false;
           player->pump_pending.store (false, std::memory_order_relaxed);
         }
+        /* 段 5: 再開は再生なので、ポンプの配信の門を開ける。 */
+        player->pump_gate_closed = false;
         if (player->pump_muted) {
           player->pump_muted = false;
           apply_volume_locked (player);
