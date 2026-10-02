@@ -41,6 +41,12 @@ git clone https://github.com/faio1230/timecode-sync-player.git
 cd timecode-sync-player
 ```
 
+コミットする場合は、クローンの後に共有の pre-commit フックを入れてください（制御文字と、公開しない文字列を止めます。公開しない文字列は gitignore 済みの `docs/local/forbidden-patterns.txt` に 1 行 1 つの正規表現で書きます）:
+
+```powershell
+Copy-Item scripts\hooks\pre-commit .git\hooks\pre-commit
+```
+
 主なディレクトリ構成:
 
 ```
