@@ -87,7 +87,12 @@ param(
     [switch]$PreflightOnly,
     # Keep output-trace even for a passed run (default: delete it when failed=0 and invalid=0).
     [switch]$KeepTrace,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    # v0.6.4: by default today's app logs (timecodesyncplayer-<today>*.log) are MOVED (never deleted) to
+    # artifacts\analysis-data\logs-<yyyyMMdd>-<HHmmss>\ before the run, so the tests do not read a log
+    # that grew over earlier runs of the day (25.9 -> 48.5 MB made the test setup about 2.2 s slower,
+    # design 9-2). -KeepAppLogs leaves them in place.
+    [switch]$KeepAppLogs
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -660,6 +665,47 @@ Write-Output ('l2: spout=' + $env:TCS_L2_ENABLE_SPOUT +
     ' health_sample_seconds=' + $env:TCS_L2_HEALTH_SAMPLE_SECONDS +
     ' max_private_growth_mb_per_hour=' + $env:TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR +
     ' max_handle_growth_per_hour=' + $env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR)
+
+# ---- archive today's app logs (v0.6.4) --------------------------------------
+# The E2E waits read the app log of the run from its start time; a log that grew over earlier runs
+# of the day made every wait slower (design 9-2). Move today's timecodesyncplayer-*.log out of the
+# log folders the run writes to (the folder next to the app exe, and without -AppExe the test output
+# folder). Move, never delete. A file that cannot be moved (open in a running app) is left in place
+# with a warning; the run itself is not stopped.
+if (-not $KeepAppLogs) {
+    $archiveStamp = Get-Date
+    $archiveDir = Join-Path $repoRoot ('artifacts\analysis-data\logs-' + $archiveStamp.ToString('yyyyMMdd-HHmmss'))
+    $archiveSources = @(@{ Dir = (Join-Path $appDir 'logs'); Sub = 'app' })
+    if (-not $appExeGiven) {
+        $archiveTestBin = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\bin\Debug\net8.0-windows\logs'
+        if (-not [string]::Equals([IO.Path]::GetFullPath($archiveTestBin),
+                [IO.Path]::GetFullPath($archiveSources[0].Dir), [StringComparison]::OrdinalIgnoreCase)) {
+            $archiveSources += @{ Dir = $archiveTestBin; Sub = 'test-bin' }
+        }
+    }
+    $todayPattern = 'timecodesyncplayer-' + $archiveStamp.ToString('yyyyMMdd') + '*.log'
+    $movedLogs = 0
+    $movedBytes = 0
+    foreach ($source in $archiveSources) {
+        if (-not (Test-Path -LiteralPath $source.Dir)) { continue }
+        foreach ($log in @(Get-ChildItem -LiteralPath $source.Dir -File -Filter $todayPattern -ErrorAction SilentlyContinue)) {
+            $dest = Join-Path $archiveDir $source.Sub
+            try {
+                New-Item -ItemType Directory -Force -Path $dest | Out-Null
+                $size = $log.Length
+                Move-Item -LiteralPath $log.FullName -Destination (Join-Path $dest $log.Name) -ErrorAction Stop
+                $movedLogs++
+                $movedBytes += $size
+            } catch {
+                Write-Warning ('app log not moved (in use?): ' + $log.FullName + ' : ' + $_.Exception.Message)
+            }
+        }
+    }
+    Write-Output ('app_log_archive=' + $(if ($movedLogs -gt 0) { $archiveDir } else { '(none)' }) +
+        ' moved=' + $movedLogs + ' mb=' + [Math]::Round($movedBytes / 1MB, 1).ToString([Globalization.CultureInfo]::InvariantCulture))
+} else {
+    Write-Output 'app_log_archive=(kept: -KeepAppLogs)'
+}
 
 # ---- build and run ---------------------------------------------------------
 # D23-c: native output is decoded with [Console]::OutputEncoding, which is still

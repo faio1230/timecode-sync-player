@@ -2824,10 +2824,24 @@ public sealed partial class LtcScenarioE2ETests
 
         // ---- log access ----
 
+        // v0.6.4（設計書 9-2）: この run のアプリのログは、run の開始からの続きの読み（AppLogTail）で読む。
+        // 待ち（WaitForMetadataSince・LoadedTrackIndex の WaitUntil）のたびにファイル全体を読み直すと、
+        // その日に育ったログ（48.5 MB）で待ちが遅くなった。読む行は全体の読みと同じ（AppLogReaderTests）。
+        private AppLogTail? _runLogTail;
+
+        private AppLogTail RunLogTail() =>
+            _runLogTail ??= new AppLogTail(Path.Combine(Path.GetDirectoryName(_exePath)!, "logs"), _startedAt);
+
         private IEnumerable<string> RunLogLines() => RunLogLinesSince(_startedAt);
 
-        private IEnumerable<string> RunLogLinesSince(DateTime sinceLocal) =>
-            ReadLogLinesSince(Path.Combine(Path.GetDirectoryName(_exePath)!, "logs"), sinceLocal);
+        private IEnumerable<string> RunLogLinesSince(DateTime sinceLocal)
+        {
+            AppLogTail tail = RunLogTail();
+            if (sinceLocal < tail.SinceLocal)
+                return ReadLogLinesSince(Path.Combine(Path.GetDirectoryName(_exePath)!, "logs"), sinceLocal);
+            tail.ReadNew();
+            return tail.LinesSince(sinceLocal);
+        }
     }
 
     /// <summary>

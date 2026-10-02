@@ -323,8 +323,10 @@ public sealed partial class LtcScenarioE2ETests
         ExternalSpoutReceiverSummary? spoutReceiverSummary = spoutReceiver?.Stop();
 
         IReadOnlyList<LongRunInterval> exclusions = L2BuildContinuityExclusions(transitions, totalSeconds);
+        // v0.6.4 9-2: perf の時刻は起点（l2-audit-origin の startedAt）からの秒。起点の前に始まる窓は
+        // 準備の区間を含むので数えず、excludedSamples に足して preOriginWindows に値を残す。
         PlaybackContinuitySummary playbackContinuity =
-            PlaybackContinuityAudit.Summarize(perf, exclusions);
+            PlaybackContinuityAudit.Summarize(perf, exclusions, originSeconds: 0.0);
         PositionContinuitySummary positionContinuity =
             PositionContinuityAudit.Summarize(progressSamples);
         double resourceWarmupSeconds = totalSeconds >= 3600.0 ? 1800.0 : 0.0;
@@ -365,6 +367,13 @@ public sealed partial class LtcScenarioE2ETests
             playbackContinuity.TotalSamples,
             playbackContinuity.AuditedSamples,
             playbackContinuity.ExcludedSamples,
+            preOriginWindows = playbackContinuity.PreOriginWindows.Select(window => new
+            {
+                startSeconds = Math.Round(window.StartSeconds, 3),
+                endSeconds = Math.Round(window.EndSeconds, 3),
+                window.FrameUpdates,
+                expectedFrames = Math.Round(window.ExpectedFrames, 1),
+            }),
             playbackContinuity.ZeroUpdateSegments,
             playbackContinuity.DeficitAtLeast100Ms,
             playbackContinuity.DeficitAtLeast250Ms,
