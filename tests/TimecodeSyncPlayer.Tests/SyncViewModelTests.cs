@@ -41,6 +41,43 @@ public class SyncViewModelTests
     }
 
     [Fact]
+    public void LtcFpsAutoNote_ShownOnlyWhileAutoIsSelected()
+    {
+        var vm = new SyncViewModel(new FakeLtcMonitor());
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.LtcFpsModeIndex = 0;
+        vm.ShowLtcFpsAutoNote.Should().BeTrue("Auto の間は注記を出す");
+
+        changed.Clear();
+        vm.LtcFpsModeIndex = 2;
+        vm.LtcFpsMode.Should().Be(TimecodeFpsMode.Fixed25);
+        vm.ShowLtcFpsAutoNote.Should().BeFalse("固定にしたら注記は消える");
+        changed.Should().Contain(nameof(SyncViewModel.ShowLtcFpsAutoNote));
+
+        vm.LtcFpsModeIndex = 0;
+        vm.ShowLtcFpsAutoNote.Should().BeTrue();
+    }
+
+    [Fact]
+    public void LtcFpsAutoNote_YieldsTheRowToTheCorrectionStatus()
+    {
+        var vm = new SyncViewModel(new FakeLtcMonitor());
+        vm.LtcFpsModeIndex = 0;
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        vm.SyncCorrectionStatus = "Smooth 補正なし（効かない）";
+
+        vm.ShowLtcFpsAutoNote.Should().BeFalse("同じ行に重ねているので補正の状態を優先する");
+        changed.Should().Contain(nameof(SyncViewModel.ShowLtcFpsAutoNote));
+
+        vm.SyncCorrectionStatus = "";
+        vm.ShowLtcFpsAutoNote.Should().BeTrue();
+    }
+
+    [Fact]
     public void StopLtcCommand_StopsMonitor()
     {
         var monitor = new FakeLtcMonitor();

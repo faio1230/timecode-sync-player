@@ -159,6 +159,7 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
             _ltcFpsModeIndex = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(LtcFpsMode));
+            OnPropertyChanged(nameof(ShowLtcFpsAutoNote));
         }
     }
 
@@ -171,6 +172,13 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
         _ltcFpsModeIndex >= 0 && _ltcFpsModeIndex < FpsModes.Length
             ? FpsModes[_ltcFpsModeIndex]
             : TimecodeFpsMode.Auto;
+
+    /// <summary>
+    /// v0.6.4: Auto の間だけ「Auto は確認用です。本番は固定にしてください」を出す。
+    /// 補正の状態と同じ行に重ねて置くので、補正の状態が出ている間はそちらを優先して隠す（行の高さを変えない）。
+    /// </summary>
+    public bool ShowLtcFpsAutoNote =>
+        LtcFpsMode == TimecodeFpsMode.Auto && string.IsNullOrEmpty(_syncCorrectionStatus);
 
     // 0=Smooth, 1=Jump
     private int _syncCorrectionModeIndex;
@@ -229,6 +237,7 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
         {
             _syncCorrectionStatus = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowLtcFpsAutoNote));
         }
     }
 
