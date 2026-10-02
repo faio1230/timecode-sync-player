@@ -156,6 +156,28 @@ public class TimecodeSyncSeekStateTests
         state.LearnedSeekDurationSeconds.Should().BeNull();
     }
 
+    // v0.6.3 段 2（設計書 1 節の (a)）: 読み込みの着地（目標なし）の遅れはシークの所要ではないので学習しない
+    // （規則 3: c はシークの所要の学習値、学習前は 0）。その後の目標のあるシークの着地は今どおり学習する。
+    [Fact]
+    public void LoadLanding_IsNotLearned_ButTheNextSeekLandingIs()
+    {
+        var state = new TimecodeSyncSeekState();
+
+        state.BeginLoadWait(T0);
+        state.ObserveLandingSample(Sample(5.0, 5, 5, 5.0), toleranceSeconds: 0.1, T0.AddMilliseconds(200));
+
+        state.HasPendingSeek.Should().BeFalse("前提: 読み込みの世代の最初の配信で着地した");
+        state.LastLanding.Should().NotBeNull();
+        state.LastLanding!.Value.DelaySeconds.Should().BeApproximately(0.2, 1e-9, "前提: 読み込みの着地の遅れは 0.2 秒");
+        state.LearnedSeekDurationSeconds.Should().BeNull("読み込みの着地の遅れは c に学習しない");
+
+        DateTime seekAt = T0.AddSeconds(1);
+        state.BeginSeek(10.0, seekAt);
+        state.ObserveLandingSample(Sample(10.0, 6, 6, 10.05), toleranceSeconds: 0.1, seekAt.AddMilliseconds(300));
+
+        state.LearnedSeekDurationSeconds.Should().BeApproximately(0.3, 1e-9, "目標のあるシークの着地は学習する");
+    }
+
     [Fact]
     public void SettledSeek_SecondSampleUsesMovingAverage()
     {
