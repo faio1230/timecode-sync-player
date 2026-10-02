@@ -98,6 +98,8 @@ public sealed class VolumeControlE2ETests
                 // v0.6.4 段 4: 開始の時刻以降のすべての日のファイルを読む（0 時をまたぐ回で前日の行を落とさない）。
                 string logDir = AppLogReader.LogDirectoryForExe(exe);
                 DateTime logSince = DateTime.Now;
+                // v0.6.4（設計書 9-2）: 待ちのたびに全体を読み直さず、続きを読む（AppLogTail）。
+                var logTail = new AppLogTail(logDir, logSince);
                 signalPlayer!.Play(
                     new LtcTimecode(0, 0, 3, 12, false),
                     Fps,
@@ -107,7 +109,7 @@ public sealed class VolumeControlE2ETests
                     app.Button("BtnToggleSync").Invoke();
 
                 E2EAssert.WaitUntil(
-                    () => AppLogReader.ReadTextSince(logDir, logSince).Contains(
+                    () => logTail.ReadText().Contains(
                         "Project restore pause released by on-track sync",
                         StringComparison.Ordinal),
                     TimeSpan.FromSeconds(3));
@@ -119,7 +121,7 @@ public sealed class VolumeControlE2ETests
                 AssertMutePreserved(app, settingsPath);
 
                 E2EAssert.WaitUntil(
-                    () => AppLogReader.ReadTextSince(logDir, logSince).Contains(
+                    () => logTail.ReadText().Contains(
                         "switching to track volume-track-2",
                         StringComparison.Ordinal),
                     TimeSpan.FromSeconds(6));
