@@ -149,4 +149,38 @@ public class SyncHoldSummaryDefinitionTests
         Field(line, "heldJumpLandings").Should().Be(0);
         Field(line, "otherBackwardWhileStopped").Should().Be(0);
     }
+
+    /// <summary>
+    /// (C) の印が残らないこと（TSP-Fable の追加）: 損失中に Duplicate で確定した Jump の先（8.0）に映像が既に居て、(C) の合わせの relocate が
+    /// 出ない（停止モードは 1 フレーム以内で着地を省く、RunThrough は許容内で同期のシークを出さない）。その後の無関係な relocate（利用者の
+    /// 手動シーク）は heldJumpLandings に数えない。
+    /// </summary>
+    [Theory]
+    [InlineData(LtcSignalLossMode.RunThrough)]
+    [InlineData(LtcSignalLossMode.Stop)]
+    public void HeldJumpNote_WithoutARelocate_DoesNotLeakIntoTheNextRelocate(LtcSignalLossMode lossMode)
+    {
+        using var sink = new SummarySink();
+        ScenarioClock clock = NewClock();
+        var h = new SyncScenarioHarness(scenarioClock: clock, enableCorrection: true) { SignalLossMode = lossMode };
+        h.AddTrack("A", 0, 120);
+        h.ManualPlay();
+        h.AdvancePlayback(10.0);
+        h.Ltc.Normal(10.0, TimeSpan.FromSeconds(3));
+        h.Ltc.Duplicate(13.0, TimeSpan.FromSeconds(1));    // 保持（損失）
+        long jumpAt = h.Ltc.NextMilliseconds;
+        h.Ltc.Duplicate(8.0, TimeSpan.FromSeconds(1));     // 損失中に 8.0 へ飛んで、Duplicate で確定（(C)）
+        while (clock.MonotonicMilliseconds < jumpAt)
+            h.AdvanceMilliseconds(40);
+        h.AdvancePlayback(8.0);                             // 映像は既に 8.0 に居る（(C) の合わせの relocate が出ない）
+        int seeksBefore = h.Operations.Count(o => o.Name == "seek");
+        RunScript(h, clock);
+        h.Operations.Count(o => o.Name == "seek").Should().Be(seeksBefore, "前提: (C) の合わせの relocate は出ない");
+
+        h.BeginSeekBarInteraction();
+        h.EndSeekBarInteraction(3.0);                       // 無関係な relocate（利用者の手動シーク）
+        string line = Summary(h, sink);
+
+        Field(line, "heldJumpLandings").Should().Be(0, "(C) の印は、relocate が出なかったときもその場で消え、次の無関係な relocate に付かない");
+    }
 }

@@ -882,6 +882,9 @@ internal sealed class LtcSyncController
                 if (_signalLoss.IsPauseOwned)
                 {
                     ReapplyHeldValueOnPause();
+                    // v0.6.4 2-1（観測だけ）: (C) の合わせの relocate が出なかった（1 フレーム以内で省いた等）ときも、印をこの場で消す
+                    // （次の無関係な relocate を (C) に数えない）。出たときは NoteRelocateIssued が既に消費している。
+                    _syncService.ClearHeldJumpLandingNote();
                     _input.MarkLastApplied(_input.LastHeldEffectiveSeconds);
                     _lastContinueFrame = null;
                     return;
@@ -940,6 +943,11 @@ internal sealed class LtcSyncController
             // （ObserveValidFrame を呼ばない）。保持損失からの復帰は上の D27-b の経路。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
             RequestSyncEffective(effectiveSeconds);
+            // v0.6.4 2-1（観測だけ）: (C) の合わせの relocate が出なかった（許容内）ときは、印をこの場で消す（次の無関係な relocate を
+            // (C) に数えない）。要求が保留（門 13 の窓など）になったときは、UI タイマーの再送で出る relocate のために印を残し、保留が
+            // 終わった時点で消す（Tick）。
+            if (_input.Pending is null)
+                _syncService.ClearHeldJumpLandingNote();
             ApplyCorrection(effectiveSeconds);
             return;
         }
@@ -1390,6 +1398,10 @@ internal sealed class LtcSyncController
             else
                 RequestSyncEffective(pending.EffectiveSeconds);
         }
+        // v0.6.4 2-1（観測だけ）: 保留の要求が無い（relocate が出た、出ずに済んだ、這う前進などで捨てられた）なら (C) の印を消す。
+        // 出たときは NoteRelocateIssued が既に消費している。
+        if (_input.Pending is null)
+            _syncService.ClearHeldJumpLandingNote();
     }
 
     private LtcSignalLossContext SignalContext()
