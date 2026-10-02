@@ -2022,6 +2022,157 @@ run_instant_rate_after_seek (int argc, char** argv)
 #endif
 }
 
+/* --paused-seek-one-frame <file> [iters] [consumer]: v0.6.3 段 5
+ * (docs/design/v0.6.3-chase-cleanup.md 4・12 節). 一時停止中のシークのポンプは新しい世代の
+ * フレームを 1 枚だけ配信し、PAUSED に戻った後にも 2 枚目を出さないこと。開発機で 156 回中 6 回、
+ * 検証機で 1,247 回中 39 回、PAUSED の前に 2 枚目（+1 → +2）が配信され、shim は 2 枚目の PTS を
+ * 位置として返していた。
+ * 各回: 一時停止のまま、格子の点をわずかに越える目標（アプリの「比 × 本当の尺」と同じ形）へ
+ * シークし、その世代の配信の通知を数える。1 枚目から 300ms 後と 600ms 後に数え、
+ * 300ms までに 2 枚以上なら「2 枚」、300ms の後に増えたら「PAUSED の後の配信」とする。
+ * consumer=1 は GPU worker の代わりに別スレッドが 1ms ごとに acquire/release する（実機の形）。
+ * 2 枚目の発生は tick の遅れ次第なので、決定的に赤を見るときは
+ * TCS_TEST_PUMP_TICK_DELAY_MS=50 を付けて回す。 */
+static std::atomic<uint64_t> g_osf_gen{0};
+static std::atomic<int> g_osf_count{0};
+static std::atomic<bool> g_osf_consumer_run{false};
+
+static void
+on_frame_osf (void* user, uint64_t generation, uint64_t seq)
+{
+  on_frame (user, generation, seq);
+  if (generation != 0 && generation == g_osf_gen.load ())
+    g_osf_count++;
+}
+
+static int
+run_paused_seek_one_frame (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --paused-seek-one-frame <file> [iters] [consumer]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+  int iters = argc > 3 ? atoi (argv[3]) : 200;
+  if (iters < 1)
+    iters = 1;
+  bool consumer = argc > 4 && atoi (argv[4]) != 0;
+  unsigned budget_ms = pump_budget_ms_env ();
+  const char* tick_delay = getenv ("TCS_TEST_PUMP_TICK_DELAY_MS");
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimPausedSeekOneFrame", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+  tcs_player_set_frame_callback (p, on_frame_osf, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  std::this_thread::sleep_for (std::chrono::milliseconds (500));
+  double dur = 0, fps = 0;
+  tcs_player_get_duration (p, &dur);
+  tcs_player_get_fps (p, &fps);
+  double frame_s = fps > 0.0 ? 1.0 / fps : 0.04;
+  printf ("  media duration=%.3fs fps=%.3f iters=%d consumer=%d tick_delay_ms=%s budget_ms=%u\n",
+      dur, fps, iters, consumer ? 1 : 0, tick_delay ? tick_delay : "-", budget_ms);
+  if (dur < 4.0) {
+    printf ("  media too short (need >= 4s)\n");
+    tcs_player_destroy (p);
+    return 1;
+  }
+
+  tcs_player_set_paused (p, 1);
+  std::this_thread::sleep_for (std::chrono::milliseconds (300));
+  TcsFrameInfo info = {};
+  if (tcs_player_acquire (p, tcs_player_get_generation (p), &info) == 1)
+    tcs_player_release (p);
+
+  std::thread consumer_thread;
+  if (consumer) {
+    g_osf_consumer_run = true;
+    consumer_thread = std::thread ([p] () {
+      while (g_osf_consumer_run.load ()) {
+        TcsFrameInfo ci = {};
+        if (tcs_player_acquire (p, g_osf_gen.load (), &ci) == 1)
+          tcs_player_release (p);
+        std::this_thread::sleep_for (std::chrono::milliseconds (1));
+      }
+    });
+  }
+
+  int no_frame = 0, multi = 0, after_paused = 0, invalid = 0, max_count = 0;
+  int first_delta_hist[5] = {};   /* first frame - target: <0, 0, +1, +2, >+2 frames */
+  int pos_mismatch = 0;
+  for (int i = 0; i < iters; i++) {
+    /* 格子の点 + 0.4ms（アプリの目標は比 × 本当の尺で格子をわずかに越える。12 節） */
+    double t = 1.0 + std::fmod (0.7371 * (i + 1), dur - 3.0);
+    double target = std::floor (t / frame_s) * frame_s + 0.0004;
+    uint64_t expect_gen = tcs_player_get_generation (p) + 1;
+    g_osf_count = 0;
+    g_osf_gen = expect_gen;
+    auto t0 = std::chrono::steady_clock::now ();
+    uint64_t gen = tcs_player_seek (p, target);
+    if (gen != expect_gen) {
+      invalid++;
+      printf ("  run %3d: generation mismatch expect=%llu got=%llu (skipped)\n",
+          i, (unsigned long long) expect_gen, (unsigned long long) gen);
+      std::this_thread::sleep_for (std::chrono::milliseconds (600));
+      continue;
+    }
+    bool got = false;
+    while (std::chrono::duration<double, std::milli> (
+               std::chrono::steady_clock::now () - t0).count () < budget_ms + 250.0) {
+      if (g_osf_count.load () > 0) { got = true; break; }
+      std::this_thread::sleep_for (std::chrono::milliseconds (1));
+    }
+    if (!got) {
+      no_frame++;
+      printf ("  run %3d: target=%.4f NO FRAME\n", i, target);
+      continue;
+    }
+    double first_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - t0).count ();
+    std::this_thread::sleep_for (std::chrono::milliseconds (300));
+    int n300 = g_osf_count.load ();
+    double pos = -1.0;
+    tcs_player_get_time_pos (p, &pos);
+    std::this_thread::sleep_for (std::chrono::milliseconds (300));
+    int n600 = g_osf_count.load ();
+    double delta_f = (pos - target) / frame_s;
+    int bucket = delta_f < -0.5 ? 0 : delta_f < 0.5 ? 1 : delta_f < 1.5 ? 2 : delta_f < 2.5 ? 3 : 4;
+    first_delta_hist[bucket]++;
+    if (n600 > max_count)
+      max_count = n600;
+    if (n300 > 1)
+      multi++;
+    if (n600 > n300)
+      after_paused++;
+    /* 1 枚だけなら位置（配信した最後の PTS）は目標の次のフレームまで（0〜+1 フレーム） */
+    if (n600 == 1 && (delta_f < -0.5 || delta_f > 1.5))
+      pos_mismatch++;
+    if (n300 > 1 || n600 > n300 || i < 3 || (i % 50) == 0)
+      printf ("  run %3d: target=%.4f first=%.1fms frames@300ms=%d frames@600ms=%d "
+              "pos=%.4f delta=%+.2f f\n",
+          i, target, first_ms, n300, n600, pos, delta_f);
+  }
+
+  if (consumer) {
+    g_osf_consumer_run = false;
+    consumer_thread.join ();
+  }
+  tcs_player_destroy (p);
+  int measured = iters - invalid - no_frame;
+  printf ("  SUMMARY iters=%d measured=%d noFrame=%d invalid=%d twoOrMore=%d afterPaused=%d "
+          "maxFrames=%d posOutside0to1=%d firstDelta[<0,0,+1,+2,>+2]=%d,%d,%d,%d,%d\n",
+      iters, measured, no_frame, invalid, multi, after_paused, max_count, pos_mismatch,
+      first_delta_hist[0], first_delta_hist[1], first_delta_hist[2], first_delta_hist[3],
+      first_delta_hist[4]);
+  check (no_frame == 0, "every paused seek delivered a frame");
+  check (multi == 0, "every paused seek delivered exactly one frame before PAUSED");
+  check (after_paused == 0, "no frame of the seek generation after PAUSED");
+  return failures;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -2055,6 +2206,11 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--ring-epoch") == 0) {
     int rc = run_ring_epoch_tests (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--paused-seek-one-frame") == 0) {
+    run_paused_seek_one_frame (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }

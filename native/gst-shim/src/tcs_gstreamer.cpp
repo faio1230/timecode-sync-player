@@ -300,6 +300,13 @@ static std::atomic<int> test_hold_budget{test_hold_frame_lock_ms > 0 ? 40 : 0};
 static int test_hold_seek_lock_ms = env_int ("TCS_TEST_HOLD_SEEK_LOCK_MS", 0);
 static std::atomic<int> test_seek_hold_budget{test_hold_seek_lock_ms > 0 ? 8 : 0};
 
+/* v0.6.3 段 5 の試験用フック: 一時停止中のシークのポンプで、bus スレッドの tick が
+ * 新しい世代のフレームを見つけてから PAUSED へ戻すまでを、この ms だけ遅らせる
+ * （実機で見た「1 枚目の後 約 19ms、tick が来なかった」を決定的に作る）。shim_test の
+ * --paused-seek-one-frame だけが使う。製品（アプリ・LTC シナリオ・E2E）はこの変数を設定せず、
+ * 既定の 0 では tick は何も待たない（製品の既定で効かない）。 */
+static int test_pump_tick_delay_ms = env_int ("TCS_TEST_PUMP_TICK_DELAY_MS", 0);
+
 /* C1(b) measurement switch: seek method. auto keeps the container default
  * (tsdemux -> KEY_UNIT|SNAP_BEFORE, others -> ACCURATE). accurate/keyunit
  * force one method for the comparison. Unknown values fall back to auto with
@@ -574,6 +581,7 @@ struct TcsPlayer {
   uint64_t pump_frames_at_arm = 0;       /* frame_lock (D24 diagnostics) */
   bool pump_muted = false;               /* frame_lock */
   uint64_t pump_faults = 0;              /* frame_lock (diagnostics) */
+  ULONGLONG pump_test_seen_ms = 0;       /* frame_lock (TCS_TEST_PUMP_TICK_DELAY_MS) */
 
   /* 0.4.5-C long-GOP detector. gop_lock is a leaf lock: only the pad probe
    * (streaming thread), the getter and teardown's reset take it; it is never
@@ -2826,6 +2834,7 @@ pump_arm (TcsPlayer* p, uint64_t generation)
       p->pump_armed_ms = GetTickCount64 ();
       p->pump_deadline = p->pump_armed_ms + pump_budget_ms;
       p->pump_frames_at_arm = p->frames_decoded;
+      p->pump_test_seen_ms = 0;
       if (!p->pump_muted) {
         /* No audible output while the pipeline runs for the preroll: the user
          * still believes playback is paused (same idea as load_priming). */
@@ -2870,6 +2879,13 @@ pump_preroll_tick (TcsPlayer* p)
         timed_out = true;
       if (!has_frame && !timed_out)
         return;
+      if (has_frame && test_pump_tick_delay_ms > 0) {
+        ULONGLONG now = GetTickCount64 ();
+        if (p->pump_test_seen_ms == 0)
+          p->pump_test_seen_ms = now;
+        if (now - p->pump_test_seen_ms < (ULONGLONG) test_pump_tick_delay_ms)
+          return;
+      }
       p->pump_active = false;
       p->pump_pending.store (false, std::memory_order_relaxed);
       if (p->pump_muted) {

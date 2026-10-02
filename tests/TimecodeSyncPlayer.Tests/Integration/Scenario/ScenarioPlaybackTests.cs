@@ -206,6 +206,30 @@ public class ScenarioPlaybackTests
     }
 
     [Fact]
+    public void PausedSeek_DeliversExactlyOneFrameOfTheSeekGeneration()
+    {
+        // v0.6.3 段 5: 一時停止中のシークのポンプは新しい世代のフレームを 1 枚だけ配信し、
+        // 配信した位置はその 1 枚のまま動かない（shim 側の主張は shim_test の
+        // --paused-seek-one-frame。この偽の再生 API は同じ契約の模擬であることを固定する）。
+        var playback = new ScenarioPlayback(positionSeconds: 2, durationSeconds: 30, fps: 25);
+        playback.Load("clip.mp4", 2.0, paused: true);
+        playback.SeekLandingDelaySeconds = 0.1;
+        int landingsBefore = playback.LandingCount;
+
+        playback.Seek(10.0);
+        playback.AdvanceTime(TimeSpan.FromMilliseconds(100));
+        ulong seekGeneration = playback.CurrentGeneration;
+        playback.DeliveredGeneration.Should().Be(seekGeneration);
+        playback.DeliveredSeconds.Should().BeApproximately(10.0, 1e-9);
+
+        playback.AdvanceTime(TimeSpan.FromMilliseconds(500));
+        playback.DeliveredGeneration.Should().Be(seekGeneration);
+        playback.DeliveredSeconds.Should().BeApproximately(10.0, 1e-9,
+            "一時停止中は 2 枚目を配信しない（位置は 1 枚目の PTS のまま）");
+        playback.LandingCount.Should().Be(landingsBefore + 1);
+    }
+
+    [Fact]
     public void ConsecutiveSeeks_OnlyTheLatestGenerationIsDelivered()
     {
         // (c) 連続したシーク（g の後に g+1）: 前のシークの着地は、新しい着地待ちの配信にならない。
