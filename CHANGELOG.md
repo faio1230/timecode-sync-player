@@ -23,7 +23,8 @@ no longer ends one frame past the target. Settings and projects are unchanged fr
   the first frame is delivered now.
 - Fewer GStreamer CRITICAL lines (`gst_segment_do_seek: assertion`) after a rate change sent right after a
   re-alignment seek: the rate change now waits until the seek's segment has arrived. (Test machine set: N to M lines;
-  written at release. Lines from the order used when entering a gap freeze remain.) Even with these lines the rate was applied
+  written at release. The remaining lines come from the GStreamer demuxer re-sending a
+  rate-change event from before the re-alignment seek, not from the rate change the app sends after it.) Even with these lines the rate was applied
   as requested (all 180 runs of the development-machine test with the same shim as 0.6.1 and 0.6.2; see the 0.6.1
   notes); only the diagnostic lines change.
 - The one-time re-apply of the last accepted timecode after a file load is now decided by the LTC state instead of a
