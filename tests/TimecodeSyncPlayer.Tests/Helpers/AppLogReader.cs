@@ -22,7 +22,11 @@ internal static class AppLogReader
     public static string LogDirectoryForExe(string exePath) =>
         LogDirectoryForExeDirectory(Path.GetDirectoryName(exePath)!);
 
-    /// <summary>行の時刻が sinceLocal 以降の行を、日付の古いファイルから順に返す。</summary>
+    /// <summary>
+    /// 行の時刻が sinceLocal 以降（同じ時刻を含む）の行を、日付の古いファイルから順に返す。
+    /// 行の時刻のオフセット（+09:00 など）は読まずにローカルとして解釈する。ログを書いた機械で読む前提
+    /// （開始の時刻も同じ機械の DateTime.Now）。
+    /// </summary>
     public static IEnumerable<string> ReadLinesSince(string logDirectory, DateTime sinceLocal)
     {
         if (!Directory.Exists(logDirectory)) yield break;
