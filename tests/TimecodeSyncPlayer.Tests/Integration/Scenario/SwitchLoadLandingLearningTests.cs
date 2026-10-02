@@ -179,4 +179,51 @@ public class SwitchLoadLandingLearningTests
         outcome.Relocates.Count.Should().BeLessThanOrEqualTo(2, outcome.Summary);
         Math.Abs(outcome.FinalError).Should().BeLessThanOrEqualTo(ToleranceSeconds, outcome.Summary);
     }
+
+    /// <summary>
+    /// T3（13 節の 1080p の悪化、TSP-Fable の判断）: 4K 相当の素材（シークの着地 0.33 秒を学習済み）から 1080p の素材へ切り替えるとき、
+    /// 切替のロード位置に前の素材の c を足さない（c はシークの所要の学習値で、素材ごと。ロードで捨てて学習前は 0）。
+    /// 足すと、着地の速い 1080p で 0.33 秒先へ読み込んで行き過ぎ、後ろ向きの relocate が出る。
+    /// </summary>
+    [Fact]
+    public void T3_SwitchLoadPosition_DoesNotCarryThePreviousMaterialsSeekCost()
+    {
+        var clock = new ScenarioClock(new DateTimeOffset(2026, 10, 2, 0, 0, 0, TimeSpan.Zero),
+            monotonicMilliseconds: BaseMilliseconds);
+        var h = new SyncScenarioHarness(scenarioClock: clock, enableCorrection: true)
+        {
+            SignalLossMode = LtcSignalLossMode.RunThrough,
+        };
+        h.AddTrack("M4K", 0, 10);
+        h.AddTrack("M1080", 10, 10);
+        h.ManualPlay();
+        h.AdvancePlayback(2.0);
+        long start = clock.MonotonicMilliseconds;
+        using var sink = new LineSink(() => clock.MonotonicMilliseconds - start);
+        h.Playback.SeekLandingDelaySeconds = 0.33;            // 4K 相当: シークの着地 0.33 秒
+        h.Ltc.Normal(2.0, TimeSpan.FromSeconds(2));
+        h.Ltc.Normal(6.0, TimeSpan.FromSeconds(6));           // 2 秒先へ飛ぶ（relocate して c = 0.33 を学習する）
+        long end = h.Ltc.NextMilliseconds;
+        double? learnedBeforeSwitch = null;
+        while (clock.MonotonicMilliseconds < end)
+        {
+            if (!h.Operations.Any(o => o.Name.StartsWith("loadfile", StringComparison.Ordinal) && o.Text == "C:/M1080.mp4"))
+                learnedBeforeSwitch = h.SeekState.LearnedSeekDurationSeconds;
+            h.AdvanceMilliseconds(40);
+        }
+
+        ScenarioPlaybackOperation switchLoad = h.Operations.Single(
+            o => o.Name.StartsWith("loadfile", StringComparison.Ordinal) && o.Text == "C:/M1080.mp4");
+        string switching = sink.Lines.Single(l => l.Contains("switching to track \"M1080\"", StringComparison.Ordinal));
+        double mediaPos = double.Parse(
+            System.Text.RegularExpressions.Regex.Match(switching, @"at media position (-?[\d.]+)s").Groups[1].Value,
+            System.Globalization.CultureInfo.InvariantCulture);
+        _output.WriteLine($"learnedBeforeSwitch={learnedBeforeSwitch:F3} mediaPos={mediaPos:F3} loadPosition={switchLoad.Value:F3}");
+        foreach (string line in sink.Lines)
+            _output.WriteLine("  " + line);
+
+        learnedBeforeSwitch.Should().BeApproximately(0.33, 0.05, "前提: 前の素材でシークの所要 c を学習した");
+        switchLoad.Value.Should().BeApproximately(mediaPos, 1e-6,
+            "切替のロード位置は素材位置そのもの（D7-a の補償は既定 0）。前の素材の c を足さない");
+    }
 }
