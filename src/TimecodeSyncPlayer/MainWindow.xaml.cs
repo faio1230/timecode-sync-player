@@ -2980,8 +2980,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         RenderUpdateSchedulerStats renderStats = _renderSession.ConsumeUpdateStats();
 
+        // renderedFrames は WPF の描画（CPU 合成の名残）の数で、GPU 経路では常に 0（v0.6.3 設計書 17-2）。
+        // 既存の解析のスクリプトが読むので残す。
+        // composedSourceFrames（v0.6.4 段 3、行末に追加）は、GPU 経路で出力（OutputEngine の GPU worker）が
+        // 新しいソースフレーム（世代と通番の組が前回と違うもの）を合成して公開した数（この窓の間）。
+        // 同じフレームの再合成（Held・Present だけの tick）とギャップ中の黒・Freeze は数えない。
+        // 窓の間に 0 なら、出力は新しい絵を 1 枚も描いていない（黒・止まりの判定に使う数）。
         Log.Information(
-            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderReschedules={RenderReschedules} missedReschedules={MissedReschedules} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} gpuPublishedFrames={GpuPublishedFrames} gstRingOutsideFrames={GstRingOutsideFrames} frameBoundary=full-resolution-bitmap",
+            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderReschedules={RenderReschedules} missedReschedules={MissedReschedules} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} gpuPublishedFrames={GpuPublishedFrames} gstRingOutsideFrames={GstRingOutsideFrames} frameBoundary=full-resolution-bitmap composedSourceFrames={ComposedSourceFrames}",
             snapshot.Elapsed.TotalSeconds, _fps, snapshot.PlaybackRate,
             snapshot.DisplayedFps, snapshot.TickCount, renderStats.Requests,
             renderStats.CoalescedRequests, renderStats.Reschedules, renderStats.MissedReschedules,
@@ -2990,7 +2996,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             snapshot.MaxRenderMs, snapshot.AvgBitmapMs, snapshot.MaxBitmapMs,
             snapshot.AvgSpoutMs, snapshot.MaxSpoutMs, snapshot.Width,
             snapshot.Height, snapshot.SpoutEnabled, _outputEngine?.PublishedFrameCount ?? 0,
-            _outputEngine?.GstRingOutsideFrames ?? 0);
+            _outputEngine?.GstRingOutsideFrames ?? 0, _outputEngine?.TakeComposedSourceFrames() ?? 0);
 
         // 0.4.8: 前の絵を出し続けた tick の内訳。「送信は続いているのに中身が変わらない」を、理由
         // （shim のコピー完了待ち＝fencePending / 新しいフレームが来ない＝noNewFrame）付きで残す。
