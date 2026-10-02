@@ -1887,8 +1887,9 @@ run_seek_method_check (int argc, char** argv)
  * handler chained to the shim's), the call's return, and the effective rate
  * measured from leased frame PTS over two 1-second windows after the landing.
  * A mismatch is an effective rate that stays near `from` while the call
- * returned TCS_OK (the shim records `to`). Informational: no PASS/FAIL on the
- * mismatch itself, only on the harness working. */
+ * returned TCS_OK (the shim records `to`). v0.6.3 段 6: PASS/FAIL now also covers
+ * the assertion count (0), the mismatch (0) and the call's return (TCS_OK).
+ * 180 runs = 15 iters (2 cases x 6 delays each). */
 static std::atomic<int> g_segment_criticals{0};
 static std::atomic<int> g_other_criticals{0};
 static GLogFunc g_ir_prev_handler = nullptr;
@@ -1979,6 +1980,7 @@ run_instant_rate_after_seek (int argc, char** argv)
   const int delays_ms[] = { 0, 1, 5, 20, 100, 300 };
   int harness_ok = 0, harness_runs = 0;
   int crit_runs = 0, crit_mismatch = 0, clean_runs = 0, clean_mismatch = 0;
+  int rejected = 0;
   for (int it = 0; it < iters; it++) {
     for (const Case& c : cases) {
       for (int d : delays_ms) {
@@ -2001,6 +2003,7 @@ run_instant_rate_after_seek (int argc, char** argv)
         double r2 = ir_effective_rate (p, gen, 1000);
         bool measured = gen != 0 && !std::isnan (r1) && !std::isnan (r2);
         if (measured) harness_ok++;
+        if (irc != TCS_OK) rejected++;
         /* mismatch: closer to `from` than to `to` while the call said OK */
         bool mismatch = measured && irc == TCS_OK &&
             std::fabs (r1 - c.from) < std::fabs (r1 - c.to);
@@ -2015,9 +2018,16 @@ run_instant_rate_after_seek (int argc, char** argv)
   tcs_player_set_speed (p, 1.0);
   g_log_set_default_handler (g_ir_prev_handler, g_ir_prev_data);
   tcs_player_destroy (p);
-  printf ("  SUMMARY runs=%d measured=%d criticalRuns=%d criticalMismatch=%d cleanRuns=%d cleanMismatch=%d\n",
-      harness_runs, harness_ok, crit_runs, crit_mismatch, clean_runs, clean_mismatch);
+  printf ("  SUMMARY runs=%d measured=%d criticalRuns=%d criticalMismatch=%d cleanRuns=%d cleanMismatch=%d "
+          "rejected=%d segCriticalTotal=%d\n",
+      harness_runs, harness_ok, crit_runs, crit_mismatch, clean_runs, clean_mismatch,
+      rejected, g_segment_criticals.load ());
   check (harness_ok == harness_runs, "every run measured an effective rate");
+  /* v0.6.3 段 6（設計書 6 節・11 節の (b)）: flush の segment が届くまで shim が instant-rate を
+   * 保留するので、assertion の行は 0、速度は指示どおり、呼び出しは成功のまま。 */
+  check (g_segment_criticals.load () == 0, "no gst_segment_do_seek assertion around the instant change");
+  check (crit_mismatch + clean_mismatch == 0, "the effective rate follows the instant change");
+  check (rejected == 0, "every instant change returned TCS_OK");
   return failures;
 #endif
 }
