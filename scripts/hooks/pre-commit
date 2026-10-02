@@ -1,5 +1,6 @@
 #!/bin/sh
 # 共有の pre-commit フック（クローンの後に .git/hooks/pre-commit へ複製して使う。docs/SETUP.md）
+# docs/local/forbidden-patterns.txt が無い環境（新しいクローン・検証機）では 2. を飛ばして素通りする（制御文字の 1. は常に効く）。
 #
 # 1. 制御文字: 追加された行に、タブ・CR・LF 以外の 0x00-0x1F と 0x7F があれば止める
 #    （scripts/check-control-chars.ps1 と同じ対象。\a が BEL に化けるなどを防ぐ）。
