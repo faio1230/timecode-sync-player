@@ -1,5 +1,13 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-10-02 19:1x 更新（TSP-Opus）**: **v0.6.3 を Latest で公開（19:1x）。** タグ v0.6.3 = main の統合 `96ab6de`（リリースのコミット `4d5b866`、ProductVersion `0.6.3+4d5b866`）。setup `a8848e0fcc5bcb16e6525e7bb1c64f6550ad1e4ee536956e1d7ce13e77281f25`、zip `8361c3e9a85b55abad887524e5a560f8680a6964260bb969800a03aeeea79b72`（置き場は v06 の `artifacts\release-v063-4d5b866`）。検証した候補 `0.6.2+44cc043` と版の表記の 5 ファイルだけの差（shim `251627d3`・プラグイン `1ded64c4` は同じ）。事後報告は TSP-Fable へ送付済み
+>
+> - **v0.6.3 の中身**: (ii) RunThrough は止まった位置へ戻さず走り続け LTC の復帰で 1 回合わせる（利用者の決定）／一時停止中のシークは 1 枚だけ配信（shim）／flush の直後の instant-rate を segment まで保留（shim）／ロード解除の再適用を期限 1.5 秒でなく規則 4 で／観測の行（lookaheadMs・cSource・reason・masterStopped、File load landing、UI heartbeat summary、Sync hold summary）。設計の正は `docs/design/v0.6.3-chase-cleanup.md`（11〜18 節が決定・経緯・検証）
+> - **検証機の一式**: 全合格（標準 3 通り 38/0、L-1 6/6、A 2/2 で公開不足 ≤ 0.017 秒・入口の合わせ 0、ProRes RTX/AMD 38/0、reference-stale 0、ProjectRoundTrip 10/10、K2、非E2E 2939、C-2 の黒 0/5）。assertion は同じ中身で 141 → 126 行
+> - **訂正済み（公開時）**: v0.6.1 のノート・CHANGELOG の 0.6.1 の節・v0.6.1 の Release 本文に「実際の v0.6.1・v0.6.2 は止まった瞬間に 1 回合わせていた、v0.6.3 で無くした」
+> - **v0.6.4 の材料**（`docs/design/v0.6.3-chase-cleanup.md` と `v0.6.3-materials.md`）: assertion の型 1・型 2（qtdemux の sticky の押し直し、送る側を変えるか GStreamer 側、shim_test のモードで再現可）／C-2 の黒（戻らない黒か未確定、lease・出力トレースつきの診断回）／backwardSeeksWhileStopped の定義（(C) と確定した Jump の後の切替の合わせを含む）／renderedFrames の要約の欠陥／起動の止まり約 0.8 秒／長 GOP の所要の予測は入れない決定／試験の許容を「目標の次のフレームまで」に揃える件／Auto fps の束（v0.6.4 の本来の束）
+> - **担当**: s4-fix（v053）、v063-pump（v063c）、v063-c-debug-lap（測定）はどれも待機。作業ツリー v063c・v053 は v0.6.3 の担当ブランチのまま（片付けてよい）
+
 > **2026-10-02 15:3x 更新（TSP-Opus）**: **v0.6.3 の候補 `0.6.2+44cc043` を検証機へ送付、固定の一式を依頼済み。** setup `a23cde578e33623935b752f8d38a62ef8cc2bdf29e274db086c4958981af1ec5`、zip `c7277c716cf022dbd73ad399dec4b9b0637d198eb74100fe2fb3017b468c8133`、tar `83faceb357489842a69e92288490ef1012766916cb776a67c004d1422d092ff9`（置き場は v06 の `artifacts\cand-v063-44cc043`）。中の shim は Release `251627d3…`、プラグイン `1ded64c4`。開発機: 非E2E 2939/0、check-shim-lock-rule PASS
 >
 > - **候補へ進んだ条件（TSP-Fable）**: (1) C-2 の黒の率は本番構成で前後 10 回ずつ交互に前 0/10・後 0/10、一式を含め前 0/12・後 1/12 で「同程度」（戻らない黒かは未確定、設計書 17-2）。(2) assertion の型 1・型 2 は qtdemux が flush の後に古い INSTANT_RATE_CHANGE の sticky を押し直すのが出どころで、v0.6.4 の材料（17-4）。段 6 の保留は残す。(3) ノート・CHANGELOG はレビュー済み（残る行の文を 17-4 の事実に合わせた）
