@@ -1,5 +1,7 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-10-02 21:4x（TSP-Opus）**: v0.6.4（観測と試験基盤の整理、設計書 `docs/design/v0.6.4-observability.md`、ブランチ `v0.6.4`）の段 1〜3 を取り込み済み。開発機のディスクの空きが 20 GB を切ったので `timecode-sync-player-v05rtifactsnalysis-data`（09-28 の v0.5.4 の候補の比較、2.9 GB、レビュー済み）を消した（空き 22 GB）。一式の前に空きを確かめる
+
 > **2026-10-02 19:1x 更新（TSP-Opus）**: **v0.6.3 を Latest で公開（19:1x）。** タグ v0.6.3 = main の統合 `96ab6de`（リリースのコミット `4d5b866`、ProductVersion `0.6.3+4d5b866`）。setup `a8848e0fcc5bcb16e6525e7bb1c64f6550ad1e4ee536956e1d7ce13e77281f25`、zip `8361c3e9a85b55abad887524e5a560f8680a6964260bb969800a03aeeea79b72`（置き場は v06 の `artifacts\release-v063-4d5b866`）。検証した候補 `0.6.2+44cc043` と版の表記の 5 ファイルだけの差（shim `251627d3`・プラグイン `1ded64c4` は同じ）。事後報告は TSP-Fable へ送付済み
 >
 > - **v0.6.3 の中身**: (ii) RunThrough は止まった位置へ戻さず走り続け LTC の復帰で 1 回合わせる（利用者の決定）／一時停止中のシークは 1 枚だけ配信（shim）／flush の直後の instant-rate を segment まで保留（shim）／ロード解除の再適用を期限 1.5 秒でなく規則 4 で／観測の行（lookaheadMs・cSource・reason・masterStopped、File load landing、UI heartbeat summary、Sync hold summary）。設計の正は `docs/design/v0.6.3-chase-cleanup.md`（11〜18 節が決定・経緯・検証）
