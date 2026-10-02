@@ -2537,6 +2537,12 @@ public sealed partial class LtcScenarioE2ETests
                 nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(signature),
                 best = Describe(match),
             });
+            // v0.6.4 設計書 3-1（#12）: 試験だけの口（TCS_TEST_C2_KEEP_SAMPLING=1）。C-2 の hold の判定が失敗するときだけ、
+            // 判定の前に数秒採取を続けて黒が戻るかを記録する。既定では何もしない。合否は下の判定がこれまでどおり決める。
+            bool holdFails = (blackJudgment && signature.IsBlack) ||
+                             (match.IsMatch && !match.MatchesTrack(track.Symbol));
+            if (HoldKeepSampling.ShouldRun(HoldKeepSampling.IsEnabled(Environment.GetEnvironmentVariable), name, holdFails))
+                KeepSamplingAfterHoldFailure(name, track.Symbol);
             if (blackJudgment)
                 signature.IsBlack.Should().BeFalse($"{name}: トラックの保持中に黒にならない");
             if (SkipAmbiguousReference(name, track.Symbol, null))
@@ -2546,6 +2552,50 @@ public sealed partial class LtcScenarioE2ETests
             else if (match.IsMatch)
                 match.MatchesTrack(track.Symbol).Should().BeTrue(
                     $"{name}: 参照に一致するなら {track.Symbol} の参照であること（実際: {Describe(match)}）");
+        }
+
+        /// <summary>
+        /// v0.6.4 設計書 3-1（#12）: hold の判定の失敗の後、<see cref="HoldKeepSampling.Duration"/> の間
+        /// <see cref="HoldKeepSampling.Interval"/> ごとに絵を測り（PNG は残さない）、各サンプルの経過秒・黒か・
+        /// 参照と一致か・位置を hold-keep-sample に、まとめを hold-keep-sampling に残す。判定には使わない。
+        /// </summary>
+        private void KeepSamplingAfterHoldFailure(string name, string symbol)
+        {
+            var clock = Stopwatch.StartNew();
+            int index = 0;
+            IReadOnlyList<(double At, bool IsBlack, bool Matches)> samples = HoldKeepSampling.Collect(
+                take: () =>
+                {
+                    double at = clock.Elapsed.TotalSeconds;
+                    FrameSignature sample = LtcScenarioFrameProbe.Measure(App);
+                    ReferenceMatch sampleMatch = References.Match(sample);
+                    bool matches = sampleMatch.IsMatch && sampleMatch.MatchesTrack(symbol);
+                    double position = Position();
+                    Journal.Write("hold-keep-sample", details: new
+                    {
+                        name,
+                        index = ++index,
+                        elapsedSeconds = Math.Round(at, 3),
+                        isBlack = sample.IsBlack,
+                        blackFraction = Math.Round(sample.BlackFraction, 4),
+                        nearestKnownColor = LtcScenarioFrameProbe.DescribeNearestKnownColor(sample),
+                        matchesTrack = matches,
+                        best = Describe(sampleMatch),
+                        observedPosition = position,
+                    });
+                    return (at, sample.IsBlack, matches);
+                },
+                elapsedSeconds: () => clock.Elapsed.TotalSeconds,
+                sleep: Thread.Sleep);
+            Journal.Write("hold-keep-sampling", details: new
+            {
+                name,
+                symbol,
+                samples = samples.Count,
+                blackSamples = samples.Count(sample => sample.IsBlack),
+                firstNonBlackSeconds = samples.Where(sample => !sample.IsBlack).Select(sample => (double?)Math.Round(sample.At, 3)).FirstOrDefault(),
+                firstMatchSeconds = samples.Where(sample => sample.Matches).Select(sample => (double?)Math.Round(sample.At, 3)).FirstOrDefault(),
+            });
         }
 
         public void CheckGap(string name, double ltcTarget)
