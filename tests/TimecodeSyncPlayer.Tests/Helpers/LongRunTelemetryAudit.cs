@@ -28,6 +28,13 @@ internal readonly record struct LongRunPerfSample(
     long GstRingOutsideFrames,
     bool SpoutEnabled);
 
+/// <summary>Playback perf の 1 窓（起点からの秒）。監査で数えなかった窓を値ごと残すために使う。</summary>
+internal readonly record struct LongRunPerfWindow(
+    double StartSeconds,
+    double EndSeconds,
+    int FrameUpdates,
+    double ExpectedFrames);
+
 internal sealed record PlaybackContinuitySummary(
     int TotalSamples,
     int AuditedSamples,
@@ -46,19 +53,26 @@ internal sealed record PlaybackContinuitySummary(
     int GpuDeficitAtLeast500Ms,
     double MaxGpuDeficitSeconds,
     double TotalGpuDeficitSeconds,
-    int PerfSpoutDisabledSamples);
+    int PerfSpoutDisabledSamples,
+    IReadOnlyList<LongRunPerfWindow> PreOriginWindows);
 
 /// <summary>
 /// 2 秒単位のアプリ内計測から、期待フレーム数に対する不足とログ自体の欠落を調べる。
 /// 不足秒は集計窓内の「不足フレーム数 / 期待fps」であり、連続フリーズ時間の断定値ではない。
+/// v0.6.4 9-2: originSeconds を渡すと、起点より前に始まる窓（始まり = 行の時刻 − elapsed）は数えない。
+/// 起点の前の準備の区間を含み、準備の長さで窓の位相がずれると不足が入る・入らないが変わるため。
+/// 数えなかった窓は ExcludedSamples に足し、値を PreOriginWindows に残す。
 /// </summary>
 internal static class PlaybackContinuityAudit
 {
     public static PlaybackContinuitySummary Summarize(
         IReadOnlyList<LongRunPerfSample> samples,
         IReadOnlyList<LongRunInterval>? exclusions = null,
-        double telemetryGapSeconds = 5.0)
+        double telemetryGapSeconds = 5.0,
+        double originSeconds = double.NegativeInfinity)
     {
+        if (double.IsNaN(originSeconds))
+            throw new ArgumentOutOfRangeException(nameof(originSeconds));
         ArgumentNullException.ThrowIfNull(samples);
         if (!double.IsFinite(telemetryGapSeconds) || telemetryGapSeconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(telemetryGapSeconds));
@@ -67,9 +81,16 @@ internal static class PlaybackContinuityAudit
         LongRunPerfSample[] ordered = samples.OrderBy(sample => sample.AtSeconds).ToArray();
         var audited = new List<LongRunPerfSample>(ordered.Length);
         var deficits = new List<double>(ordered.Length);
+        var preOrigin = new List<LongRunPerfWindow>();
         foreach (LongRunPerfSample sample in ordered)
         {
             double start = sample.AtSeconds - Math.Max(0.0, sample.SpanSeconds);
+            if (start < originSeconds)
+            {
+                preOrigin.Add(new LongRunPerfWindow(
+                    start, sample.AtSeconds, sample.FrameUpdates, sample.ExpectedFps * sample.SpanSeconds));
+                continue;
+            }
             if (ignored.Any(interval => interval.Overlaps(start, sample.AtSeconds)))
                 continue;
             if (!double.IsFinite(sample.ExpectedFps) || sample.ExpectedFps <= 0 ||
@@ -132,7 +153,8 @@ internal static class PlaybackContinuityAudit
             gpuDeficits.Count(value => value >= 0.500),
             gpuDeficits.Count == 0 ? 0.0 : gpuDeficits.Max(),
             gpuDeficits.Sum(),
-            audited.Count(sample => !sample.SpoutEnabled));
+            audited.Count(sample => !sample.SpoutEnabled),
+            preOrigin);
     }
 }
 
