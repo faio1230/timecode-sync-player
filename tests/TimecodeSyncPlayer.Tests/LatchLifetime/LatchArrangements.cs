@@ -73,8 +73,15 @@ internal static class LatchArrangements
             // v0.6.1 段 A: 保持（同値の Duplicate が 40ms ごとに 2 枚）でラッチを立てる（規則 4 の入口の 1 回の合わせ、
             // RunThrough）。以前の台本は「値の変わった Duplicate」（最後の適用値から 3 秒離れた値を Duplicate として送る）で、
             // 実機の診断では値が変われば Duplicate にならない。
-            s.Frame(s.LastLtc, TimecodeFrameDiagnosticStatus.Duplicate);
-            s.Frame(s.LastLtc, TimecodeFrameDiagnosticStatus.Duplicate);
+            // v0.6.3 (ii)（承認済みの配置の変更）: 旧の配置は「RunThrough で同値の Duplicate 2 枚 → 規則 4 の入口の合わせが
+            // MarkHeldReapplied」でラッチを立てていた。RunThrough は保持の入口で止まった値へ合わせなくなったので、入口では
+            // heldReapplyDone が立たない（起きなくなったこと）。規則 4 で残る 1 回の合わせ（(C): 損失中に止まった値が飛び、
+            // Duplicate で確定した Jump）でラッチを立てる。保持で損失に入り、3 秒先へ飛んで、同じ値の 2 枚目で確定する。
+            // 表の期待は 1 行も変えない。
+            s.HeldPastTimeout();
+            double moved = s.LastLtc + 3.0;
+            s.Frame(moved, TimecodeFrameDiagnosticStatus.Jump);
+            s.Frame(moved, TimecodeFrameDiagnosticStatus.Duplicate);
         }
         else if (latch == PendingJump)
         {

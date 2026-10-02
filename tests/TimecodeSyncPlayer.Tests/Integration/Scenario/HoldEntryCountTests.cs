@@ -99,37 +99,34 @@ public class HoldEntryCountTests
     [Fact]
     public void Fixed30_GarbledSequence_FpsSuspectDuplicate_DoesNotAlignBackwardOnTheHoldEntry()
     {
-        using var capture = new LoggerCapture();
         ScenarioClock clock = NewClock();
         SyncScenarioHarness h = Arrange(clock, TimecodeFpsMode.Fixed30, LtcSignalLossMode.RunThrough);
         Follow(h, clock);
 
         GarbledSequence(h, clock, lastDetectedFps: 24.0);
 
-        capture.Count("entry alignment seek issued").Should().Be(0,
-            "確認フレームと、化けた値を挟んだ fps の疑わしい Duplicate は、連続した保持の 2 枚ではない");
-        h.Operations.Should().NotContain(o => o.Name == "seek", "古い保持値へ後ろ向きに合わせない");
+        // v0.6.3 (ii)（承認済み）: 入口の合わせの行はもう出ないので、行を数える主張は空振りになる。この台本ではシーク 0 で見る。
+        h.Operations.Should().NotContain(o => o.Name == "seek",
+            "確認フレームと、化けた値を挟んだ fps の疑わしい Duplicate は、連続した保持の 2 枚ではない（古い保持値へ後ろ向きに合わせない）");
     }
 
     [Fact]
     public void Auto_GarbledSequence_DuplicateAfterPendingJumps_DoesNotAlignBackwardOnTheHoldEntry()
     {
-        using var capture = new LoggerCapture();
         ScenarioClock clock = NewClock();
         SyncScenarioHarness h = Arrange(clock, TimecodeFpsMode.Auto, LtcSignalLossMode.RunThrough);
         Follow(h, clock);
 
         GarbledSequence(h, clock, lastDetectedFps: 30.0);
 
-        capture.Count("entry alignment seek issued").Should().Be(0,
-            "間に Jump の保留が挟まった 2 枚は、連続した保持の 2 枚ではない（fps の判定が効かない Auto でも弾く）");
-        h.Operations.Should().NotContain(o => o.Name == "seek", "古い保持値へ後ろ向きに合わせない");
+        // v0.6.3 (ii)（承認済み）: 入口の合わせの行はもう出ないので、行を数える主張は空振りになる。この台本ではシーク 0 で見る。
+        h.Operations.Should().NotContain(o => o.Name == "seek",
+            "間に Jump の保留が挟まった 2 枚は、連続した保持の 2 枚ではない（fps の判定が効かない Auto でも弾く。古い保持値へ後ろ向きに合わせない）");
     }
 
     [Fact]
-    public void Fixed30_ConsecutiveHold_SecondIsFpsSuspect_IsNotCounted_ThenARealPairAligns()
+    public void Fixed30_ConsecutiveHold_SecondIsFpsSuspect_IsNotCounted_ThenARealPairDoesNotAlign()
     {
-        using var capture = new LoggerCapture();
         ScenarioClock clock = NewClock();
         SyncScenarioHarness h = Arrange(clock, TimecodeFpsMode.Fixed30, LtcSignalLossMode.RunThrough);
         Follow(h, clock);
@@ -139,20 +136,20 @@ public class HoldEntryCountTests
         Frame(h, clock, 8.0);
         h.AdvanceMilliseconds(FrameMs);
         Frame(h, clock, 8.0, detectedFps: 24.0);
-        capture.Count("entry alignment seek issued").Should().Be(0, "fps の疑わしい Duplicate は入口の 2 枚に数えない");
+        h.Operations.Should().NotContain(o => o.Name == "seek", "fps の疑わしい Duplicate は入口の 2 枚に数えない（この台本ではシーク 0）");
 
         h.AdvanceMilliseconds(FrameMs);
         Frame(h, clock, 8.0);
         h.AdvanceMilliseconds(FrameMs);
         Frame(h, clock, 8.0);
-        capture.Count("entry alignment seek issued").Should().Be(1, "疑わしくない連続した同値の 2 枚で入口の合わせが出る");
-        h.Operations.Should().Contain(o => o.Name == "seek" && Math.Abs((o.Value ?? double.NaN) - 8.0) < 1e-6);
+        // v0.6.3 (ii)（承認済みの期待の変更）: RunThrough では本物の保持（疑わしくない連続した同値の 2 枚）でも、止まった値へ
+        // 合わせない（以前は 8.0 へ 1 本合わせていた）。
+        h.Operations.Should().NotContain(o => o.Name == "seek", "RunThrough は保持の入口で止まった値へ合わせない");
     }
 
     [Fact]
-    public void RunThrough_RealHold_ConsecutiveSameValueDuplicates_StillAlignOnTheHoldEntry()
+    public void RunThrough_RealHold_ConsecutiveSameValueDuplicates_DoNotAlignOnTheHoldEntry()
     {
-        using var capture = new LoggerCapture();
         ScenarioClock clock = NewClock();
         SyncScenarioHarness h = Arrange(clock, TimecodeFpsMode.Fixed30, LtcSignalLossMode.RunThrough);
         Follow(h, clock);
@@ -164,9 +161,9 @@ public class HoldEntryCountTests
         h.AdvanceMilliseconds(FrameMs);
         Frame(h, clock, 8.0);
 
-        capture.Count("entry alignment seek issued").Should().Be(1, "本物の保持（連続した同値の 2 枚）では今どおり合わせる");
-        h.Operations.Should().ContainSingle(o => o.Name == "seek")
-            .Which.Value.Should().BeApproximately(8.0, 1e-6);
+        // v0.6.3 (ii)（承認済みの期待の変更）: 本物の保持でも、RunThrough は止まった値（8.0）へ戻さず走り続ける（以前は 1 本）。
+        h.Operations.Should().NotContain(o => o.Name == "seek", "RunThrough は保持の入口で止まった値へ合わせない");
+        h.IsPaused.Should().BeFalse("RunThrough は保持の間も走る");
     }
 
     [Fact]

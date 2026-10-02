@@ -158,10 +158,11 @@ internal sealed class ContinueOnTrackCoordinator
             }
             // v0.6.3 段 1（観測）: 先行量（lookaheadMs）とその出所（cSource）を配布ビルドでも数えられるように出す。
             Log.Information(
-                "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success} lookaheadMs={LookaheadMs:F1} cSource={CSource}",
+                "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success} lookaheadMs={LookaheadMs:F1} cSource={CSource} reason={Reason} masterStopped={MasterStopped}",
                 ltcSeconds, playbackSeconds, seekPlan.TargetSeconds,
                 decision.DeltaSeconds, decision.ToleranceSeconds, success,
-                _syncService.RelocateLookaheadSeconds * 1000.0, _syncService.RelocateLookaheadSource);
+                _syncService.RelocateLookaheadSeconds * 1000.0, _syncService.RelocateLookaheadSource,
+                "sync", _syncService.IsMasterStoppedForObservation);
             return success
                 ? new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, playbackSeconds, "seek-issued")
                 : ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "seek-failed");
