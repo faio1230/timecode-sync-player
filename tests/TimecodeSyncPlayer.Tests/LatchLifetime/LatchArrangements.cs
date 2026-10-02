@@ -138,8 +138,11 @@ internal static class LatchArrangements
         {
             // 読み込みの後、再生と描画が進んだフレームで解除する（TimecodeSyncService.cs:481-485）。
             h.BeginManualFileLoad();
-            // v0.6.1 段 A: LTC は 40ms ごとに +1 フレーム進む（以前は 200ms ぶんの +0.2 秒を 1 枚で送っていた）。
-            s.FollowFrames(5);
+            // v0.6.3 段 4（規則 4）: Normal のフレームは回収待ちの解除を捨てる（マスターが動いたので再適用は要らない）ため、
+            // 配置では Normal を送らず、再生と描画だけを進めて UI タイマーの着地の観測で解除する（回収待ちが立ったまま残る）。
+            h.AdvancePlayback(h.PlaybackSeconds + 0.2, 5);
+            s.Clock.Advance(TimeSpan.FromMilliseconds(200));
+            h.Tick100Milliseconds();
         }
         else if (latch == PendingSeek || latch == PositionUntrusted)
         {

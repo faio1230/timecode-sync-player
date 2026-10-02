@@ -572,10 +572,10 @@ public class TimecodeSyncServiceTests
     }
 
     [Fact]
-    public void PollFileLoadRelease_DropsStaleRelease()
+    public void PollFileLoadRelease_WithoutNormalFrames_CollectsOnceRegardlessOfAge()
     {
-        // D35: ロード直後の 1 回だけを対象にし、数秒前に解除された値を保持開始時に
-        // 再適用して同期を壊さない。
+        // v0.6.3 段 4（規則 4、旧 D35 の期限 1.5 秒の置き換え）: 解除の後に Normal が無ければ（マスターが止まっている）、
+        // 年齢に依らず保持で 1 回だけ回収する。古い解除の再適用を塞ぐのは、Normal での破棄（下のテスト）。
         var engine = new MockSyncDecisionEngine();
         var seekState = new MockTimecodeSyncSeekState();
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 18, 0, 0, 0, TimeSpan.Zero));
@@ -586,8 +586,28 @@ public class TimecodeSyncServiceTests
 
         clock.Advance(TimeSpan.FromSeconds(1.5) + TimeSpan.FromTicks(1));
 
-        service.PollFileLoadRelease(12.0, 3).Should().BeFalse("古い解除は再適用しない");
+        service.PollFileLoadRelease(12.0, 3).Should().BeTrue("Normal が無いまま保持になったら、年齢に依らず 1 回だけ回収する");
+        service.PollFileLoadRelease(12.0, 3).Should().BeFalse("回収は 1 回だけ");
         service.HasPendingFileLoadRelease.Should().BeFalse();
+    }
+
+    [Fact]
+    public void DiscardPendingFileLoadRelease_ClearsThePendingRelease_SoTheNextPollIsFalse()
+    {
+        // v0.6.3 段 4（規則 4）: マスターが動いた（Normal・確定した Jump）ら、回収待ちの解除を捨てる。
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 18, 0, 0, 0, TimeSpan.Zero));
+        var service = new TimecodeSyncService(engine, seekState, clock);
+        service.BeginFileLoad(startPositionSeconds: 12.0, renderedFrameCount: 3);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        service.TryMarkFileLoaded(12.0, 3).Should().BeTrue();
+        service.HasPendingFileLoadRelease.Should().BeTrue("前提: 回収待ちの解除がある");
+
+        service.DiscardPendingFileLoadRelease();
+
+        service.HasPendingFileLoadRelease.Should().BeFalse();
+        service.PollFileLoadRelease(12.0, 3).Should().BeFalse("捨てた解除は回収しない");
     }
 
     [Fact]

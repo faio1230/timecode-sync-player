@@ -40,9 +40,6 @@ public sealed class TimecodeSyncService
     private bool _lastLoggedDefaultTimecodeFps;
 
     private const double SeekDebounceMs = 250.0;
-    // D35: 解除を回収できる鮮度。ロード直後の 1 回だけを対象にし、数秒前の値を保持開始時に
-    // 再適用して同期を壊さない（古い解除は破棄する）。
-    private static readonly TimeSpan FileLoadReleasePendingMaxAge = TimeSpan.FromSeconds(1.5);
 
     /// <summary>
     /// T9: 粗い同期シークを発行した時点の通知（<see cref="ReportSeekSent"/> と同じ）。
@@ -600,19 +597,29 @@ public sealed class TimecodeSyncService
 
         if (_fileLoad.HasPendingRelease)
         {
-            DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+            // v0.6.3 段 4（規則 4、旧 D35 の期限 1.5 秒の置き換え）: 解除の後にマスターが動けば（Normal のフレーム）
+            // DiscardPendingFileLoadRelease が捨てるので、ここに残るのは解除から保持まで Normal が無かった場合だけ
+            // （マスターが止まっている）。その保持で 1 回だけ回収する（停止した値への 1 回の合わせ）。
             _fileLoad.CollectRelease();
-            // D35: 解除直後の 1 回だけ回収する。鮮度を過ぎた解除（保持開始の数秒前に
-            // 解除された古い値）は再適用せず破棄する。
-            if (now - _fileLoad.ReleasedAt <= FileLoadReleasePendingMaxAge)
-                return true;
-            Serilog.Log.Information(
-                "Timecode sync: dropping stale file load release ageMs={AgeMs:F0}",
-                (now - _fileLoad.ReleasedAt).TotalMilliseconds);
-            return false;
+            return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// v0.6.3 段 4（規則 4）: マスターが動いた（Normal のフレームを受理した）ので、ロード解除の再適用は要らない
+    /// （通常の同期、規則 2・3 が位置を合わせる）。回収待ちの解除を捨てる。旧 D35 の期限 1.5 秒が塞いでいた型
+    /// （ロードの後に Normal が続いた数秒後、保持の始まりで古い解除を再適用する）を、時間ではなくマスターの状態で塞ぐ。
+    /// </summary>
+    internal void DiscardPendingFileLoadRelease()
+    {
+        if (!_fileLoad.HasPendingRelease)
+            return;
+        _fileLoad.ClearReleasePending();
+        Serilog.Log.Debug(
+            "sync.gate load-release-discard reason=normal-frame ageMs={AgeMs:F0}",
+            (_timeProvider.GetUtcNow().UtcDateTime - _fileLoad.ReleasedAt).TotalMilliseconds);
     }
 
     public ITimecodeSyncSeekState SeekState => _seekState;
