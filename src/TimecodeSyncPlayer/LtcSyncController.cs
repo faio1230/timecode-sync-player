@@ -810,7 +810,18 @@ internal sealed class LtcSyncController
                 // 終端ホールド／解除を評価する（境界へのシークは通常フレーム側が行う）。
                 LtcSyncContext heldState = _effects.GetContext();
                 if (heldState.Mode == SyncMode.Single && heldState.SyncEnabled && heldState.IsMonitoring)
+                {
+                    // v0.6.3 (ii)（設計書 14-4）: RunThrough は保持の入口で止まった値へ合わせないので、範囲外の LTC をクリップの端で
+                    // 止める（D33・D29、S-4）ための端へのシークを、入口の合わせから分離した境界の経路で出す。停止モードは今どおり
+                    // 保持値への着地（ReapplyHeldValueOnPause、端へ収める）が受け持つ。
+                    // 尺と映像 fps が分かるまでは判定しない（TryGetHeldLandingTarget と同じ条件。読み込みの直後に端が素材の
+                    // 終わりちょうどになり、EOF へシークするのを避ける。S-4 の回帰の修正）。
+                    if (heldState.SignalLossMode == LtcSignalLossMode.RunThrough &&
+                        SeekBarUpdateState.IsUsableDuration(heldState.DurationSeconds) &&
+                        SyncDecisionEngine.IsUsableFps(heldState.VideoFps))
+                        _single().EnsureBoundarySeekForHeldOutside(heldEffectiveSeconds);
                     _single().ApplyClipBoundaryHoldOnly(heldEffectiveSeconds);
+                }
             }
             // v0.5.4 B7（Jump の確認の一様化、§10-0）: Jump はすべて未確認にして、次の 1 フレームの
             // 値の連続性（同値の Duplicate か +1 フレーム）だけで確かめる（誤値 1 枚で状態を動かさない。D30）。
@@ -829,8 +840,11 @@ internal sealed class LtcSyncController
             // 新しい保持値へ 1 回だけ着地する（D27 の着地を遷移時から変化時へ拡張）。ランスルーは
             // 同期の 1 回適用に同じ変化の判定を使う（同値の連続では発行しない）。
             // D35: 無音損失で一時停止した後に初めて保持値が届いた場合も、同じ明示着地の対象にする。
+            // v0.6.3 (ii): RunThrough では、確定していない保持値の変化（D31-b の RunThrough 側）で止まった値へ合わせない。
+            // (C)（損失中に Duplicate で確定した Jump ＝ マスターの位置の変更）の 1 回は残す。停止モードは変えない。
             else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
-                     (heldValueChangedDuringLoss || ShouldLandOnFirstHeldValueDuringPause()))
+                     (heldValueChangedDuringLoss || ShouldLandOnFirstHeldValueDuringPause()) &&
+                     (confirmedIntoHold || _effects.GetContext().SignalLossMode != LtcSignalLossMode.RunThrough))
             {
                 _input.MarkHeldReapplied();
                 if (_signalLoss.IsPauseOwned)
@@ -848,21 +862,14 @@ internal sealed class LtcSyncController
                 applyOnce = true;
                 applyReason = "held value change";
             }
-            // v0.5.4 B6b（規則 4）: ランスルーのマスター停止の入口で、停止した値へ 1 回だけ合わせる
-            // （規則 3 と同じ判定: |e| > tol なら relocate、以内なら何もしない）。以後は合わせた位置から
-            // 1.0 で走る（varispeed は B4 が止め、この保持では relocate しない）。
-            else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
-                     holdEntry && _effects.GetContext().SignalLossMode == LtcSignalLossMode.RunThrough)
-            {
-                AlignOnRunThroughHoldEntry();
-                _input.MarkHeldReapplied();
-                _input.MarkLastApplied(_input.LastHeldEffectiveSeconds);
-                _lastContinueFrame = null;
-                return;
-            }
+            // v0.6.3 (ii)（設計書 14-4、利用者の決定）: RunThrough のマスター停止の入口で、止まった値へ合わせない
+            // （旧 v0.5.4 B6b の入口の合わせ）。映像は 1.0 で走り続け、LTC が戻ったとき（確定した Jump・等速）に規則 3 で
+            // 1 回だけ合わせる。範囲外の LTC の端へのシーク（S-4）は上の境界の経路が出す。
             // D20-b: 保持（Duplicate）でも、保持値が最後に適用した値から tolerance 超
             // ずれているときだけ 1 回適用する（定常の Duplicate ゲートは維持）。
+            // v0.6.3 (ii): RunThrough では保持中は合わせない（D20-b の RunThrough 側も外す）。停止モードは変えない。
             else if (processed.Diagnostic.Status == TimecodeFrameDiagnosticStatus.Duplicate &&
+                     _effects.GetContext().SignalLossMode != LtcSignalLossMode.RunThrough &&
                      IsHeldValueFarFromLastApplied(rawSeconds, frameEndTimestamp))
             {
                 _input.MarkHeldReapplied();
@@ -1513,47 +1520,6 @@ internal sealed class LtcSyncController
             _syncService.ReportSeekSent(target, "held-landing");
             Log.Information(
                 "LTC timecode held: landing seek issued target={Target:F3} ltc={Ltc:F3}", target, heldSeconds);
-        }
-    }
-
-    /// <summary>
-    /// v0.5.4 B6b（規則 4）: ランスルーのマスター停止（保持）の入口で、停止した値へ 1 回だけ合わせる。
-    /// 判定は規則 3 と同じ（|e| &gt; tol なら relocate、以内なら何もしない）。停止モードの
-    /// <see cref="ReapplyHeldValueOnPause"/> と同じ着地先（写像・クリップの範囲・境界ホールド）を使い、
-    /// この保持で合わせた値を保持着地の記録に残す（同じ保持では繰り返さない）。
-    /// </summary>
-    private void AlignOnRunThroughHoldEntry()
-    {
-        if (_input.LastHeldEffectiveSeconds is not double heldSeconds || _effects.SeekTo == null)
-            return;
-        // 規則 3: 着地を待っている間は判定しない（出ているシークが relocate）。保持着地の記録を
-        // 残さないので、着地した後の次の保持フレームがこの入口の判定をする。
-        if (_syncService.IsWaitingForLanding)
-            return;
-        LtcSyncContext state = _effects.GetContext();
-        if (!TryGetHeldLandingTarget(heldSeconds, state, out double target))
-            return;
-        if (_effects.GetPlaybackSeconds?.Invoke() is not double playback || !double.IsFinite(playback))
-            return;
-        double toleranceSeconds = SyncDecisionEngine.ToleranceSeconds(state.VideoFps, LastTimecodeFps);
-        if (Math.Abs(playback - target) <= toleranceSeconds)
-        {
-            Log.Debug(
-                "LTC timecode held (run-through): entry alignment not needed position={Position:F3} target={Target:F3}",
-                playback, target);
-            return;
-        }
-        if (_effects.SeekTo(target))
-        {
-            _syncService.ReportSeekSent(target, "hold-entry");
-            // v0.6.0 S-4: 目標がクリップの端へ収めた値なら、端へのシークを出した記録をコーディネーターに残す
-            // （同期シークの NoteBoundarySeek と同じ形）。記録が無いと、境界の保持は位置が端の ±2 映像フレーム以内の
-            // 瞬間を読めたときしか入らず、60fps で着地が即時だと窓を過ぎて出口の先へ走り続けた。
-            if (state.Mode == SyncMode.Single && target != heldSeconds)
-                _single().NoteHoldEntryBoundarySeek(target);
-            Log.Information(
-                "LTC timecode held (run-through): entry alignment seek issued target={Target:F3} ltc={Ltc:F3} position={Position:F3}",
-                target, heldSeconds, playback);
         }
     }
 
