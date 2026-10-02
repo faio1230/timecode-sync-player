@@ -136,4 +136,50 @@ public class FileLoadReleaseRule4Tests
         sink.Count(ReapplyLine).Should().Be(1,
             "解除から保持まで マスターが動いていないので、保持で 1 回だけ再適用する（規則 4、期限は使わない）");
     }
+
+    /// <summary>
+    /// 規則 4（親の判断 2026-10-02）: 解除の後に確定した Jump が来たら、マスターが動き、規則 3 の relocate が位置を合わせるので、
+    /// Normal と同じく回収待ちの解除を捨てる。続く保持で再適用しない。
+    /// </summary>
+    [Theory]
+    [InlineData(LtcSignalLossMode.RunThrough)]
+    [InlineData(LtcSignalLossMode.Stop)]
+    public void ConfirmedJumpAfterTheRelease_DiscardsTheReapply(LtcSignalLossMode lossMode)
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(lossMode);
+        long start = clock.MonotonicMilliseconds;
+        using var sink = new LineSink(() => clock.MonotonicMilliseconds - start);
+        h.Ltc.Normal(5.0, TimeSpan.FromMilliseconds(40));   // 1 枚で読み込み（解除）
+        h.Ltc.Jump(8.0);                                    // 離れた値
+        h.Ltc.Normal(8.04, TimeSpan.FromMilliseconds(40));  // 確認の +1 フレーム（確定した Jump）
+        h.Ltc.Duplicate(8.04, TimeSpan.FromSeconds(1.0));   // 保持
+        Play(h, clock, sink);
+
+        sink.Count("File load landing").Should().BeGreaterThanOrEqualTo(1, "前提: 読み込んで解除された");
+        sink.Count(ReapplyLine).Should().Be(0, "確定した Jump でマスターが動いたので、保持で解除の再適用を出さない（規則 4）");
+    }
+
+    /// <summary>
+    /// D35 の取り違えを避ける型: 1 枚で読み込み → 無音 → 前に受理した値と違う値で保持。損失中に Duplicate で確定した Jump
+    /// （β (C)）が保持値の変更として 1 回合わせる（Stop は held-landing、RunThrough は held value change の relocate）。
+    /// 回収待ちの解除はこの確定した Jump で捨て、再適用で 2 回目を出さない（合わせは規則 4 の入口の 1 回だけ）。
+    /// </summary>
+    [Theory]
+    [InlineData(LtcSignalLossMode.RunThrough)]
+    [InlineData(LtcSignalLossMode.Stop)]
+    public void HeldAtADifferentValueAfterSilence_AlignsOnceToTheHeldValue_WithoutAReapply(LtcSignalLossMode lossMode)
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(lossMode);
+        long start = clock.MonotonicMilliseconds;
+        using var sink = new LineSink(() => clock.MonotonicMilliseconds - start);
+        h.Ltc.Normal(5.0, TimeSpan.FromMilliseconds(40));   // 1 枚で読み込み（解除）
+        h.Ltc.Silence(TimeSpan.FromSeconds(2.0));
+        h.Ltc.Duplicate(8.0, TimeSpan.FromSeconds(1.5));    // 前に受理した 5.0 と違う値で保持
+        Play(h, clock, sink);
+
+        List<double> seeks = h.Operations.Where(o => o.Name == "seek").Select(o => o.Value ?? double.NaN).ToList();
+        _output.WriteLine("seeks=" + string.Join(", ", seeks.Select(v => v.ToString("F3"))));
+        sink.Count(ReapplyLine).Should().Be(0, "保持値への合わせは規則 4 の入口の 1 回だけ。解除の再適用で 2 回目を出さない");
+        seeks.Should().ContainSingle("保持値へ 1 回だけ合わせる").Which.Should().BeApproximately(8.0, 1e-6);
+    }
 }
