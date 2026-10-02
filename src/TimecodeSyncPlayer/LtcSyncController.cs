@@ -577,12 +577,14 @@ internal sealed class LtcSyncController
     /// <summary>
     /// v0.6.3 (ii)（観測）: 保持の入口の回数、マスター停止中の後ろ向きの relocate の数、境界の経路の端へのシークの数を
     /// Information で 1 行出す（layer2 summary と同じ時点・同じ形。配布ビルドでも数えられる）。起動からの累計。
+    /// v0.6.4 段 3: 行末の smoothIneffective は Smooth の「効いていない」の検出の発火数（起動からの累計、数えるだけ）。
     /// </summary>
     public void LogSyncHoldSummary(string source) =>
         Log.Information(
-            "Sync hold summary: holdEntries={HoldEntries} backwardSeeksWhileStopped={BackwardSeeksWhileStopped} boundarySeeks={BoundarySeeks} source={Source} heldJumpLandings={HeldJumpLandings} heldJumpBackwardWhileStopped={HeldJumpBackwardWhileStopped} otherBackwardWhileStopped={OtherBackwardWhileStopped}",
+            "Sync hold summary: holdEntries={HoldEntries} backwardSeeksWhileStopped={BackwardSeeksWhileStopped} boundarySeeks={BoundarySeeks} source={Source} heldJumpLandings={HeldJumpLandings} heldJumpBackwardWhileStopped={HeldJumpBackwardWhileStopped} otherBackwardWhileStopped={OtherBackwardWhileStopped} smoothIneffective={SmoothIneffective}",
             _holdEntryCount, _syncService.BackwardSeeksWhileStopped, _syncService.BoundarySeeks, source,
-            _syncService.HeldJumpLandings, _syncService.HeldJumpBackwardWhileStopped, _syncService.OtherBackwardWhileStopped);
+            _syncService.HeldJumpLandings, _syncService.HeldJumpBackwardWhileStopped, _syncService.OtherBackwardWhileStopped,
+            _correction.IneffectiveDetections);
 
     public void MonitoringChanged()
     {

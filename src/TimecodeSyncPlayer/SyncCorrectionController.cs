@@ -114,6 +114,12 @@ internal sealed class SyncCorrectionController
     public bool SmoothDisabled => _smoothDisabled;
 
     /// <summary>
+    /// v0.6.4 段 3（設計書 3-3）: 「効いていない」の検出（smooth-ineffective）が発火した回数。起動からの累計で、
+    /// <see cref="Reset"/> では消さない（Sync hold summary の smoothIneffective）。数えるだけで判定には使わない。
+    /// </summary>
+    public int IneffectiveDetections { get; private set; }
+
+    /// <summary>
     /// 0.4.5-A フェーズ 1: 状態を変えずに「出したとしたら」の Smooth レートだけを計算する
     /// （shadow 記録用。<see cref="Evaluate"/> は呼ばないので _rateActive / _smoothDisabled に
     /// 触れない）。式は Smooth と同じ（戻りバンド・渡された不感帯・上限 ±0.10）。
@@ -240,6 +246,7 @@ internal sealed class SyncCorrectionController
             _smoothDisabled = true;
             _rateActive = false;
             ClearWindow();
+            IneffectiveDetections++;
             return SyncCorrectionDecision.RateChange(1.0, "smooth-ineffective");
         }
 
