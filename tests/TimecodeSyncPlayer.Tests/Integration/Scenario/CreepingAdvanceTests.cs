@@ -198,7 +198,11 @@ public class CreepingAdvanceTests
             h.AdvanceMilliseconds(FrameMs);
         Frame(h, clock, 10.0 + 1.0 / 30.0);
         h.AdvanceMilliseconds(FrameMs);
-        // 送出はその値で止まる（同値の保持）。映像は先へ走っているので、規則 4 の入口で 1 回合わせる。
+        // v0.6.3 (ii)（承認済みの期待の変更）: 主題は「保持の外の這う前進は保持着地の記録（HeldLossLanding）を立てない」。
+        // 以前はその結果として次の保持の入口の合わせが出ることで見ていたが、RunThrough は入口で合わせなくなったので、
+        // 記録そのもの（LatchSnapshot の heldLossLanding）で見る。
+        h.Controller.LatchSnapshot()["heldLossLanding"].Should().BeFalse("保持の外の這う前進は保持着地の記録を立てない");
+        // 送出はその値で止まる（同値の保持）。映像は先へ走っているが、RunThrough は止まった値へ合わせない。
         for (int i = 0; i < 6; i++)
             h.AdvanceMilliseconds(FrameMs);
         h.Operations.Clear();
@@ -207,8 +211,8 @@ public class CreepingAdvanceTests
         Frame(h, clock, 10.0 + 1.0 / 30.0);
         h.AdvanceMilliseconds(FrameMs);
 
-        Seeks(h).Should().ContainSingle("保持の外の這う前進は保持着地の記録を立てないので、入口の合わせが出る")
-            .Which.Should().BeApproximately(10.0 + 1.0 / 30.0, 1e-6);
+        h.Controller.LatchSnapshot()["heldLossLanding"].Should().BeFalse("RunThrough の保持の入口でも記録を立てない");
+        Seeks(h).Should().BeEmpty("RunThrough は保持の入口で止まった値へ合わせない");
     }
 
     private sealed class ListSink : ILogEventSink

@@ -80,8 +80,10 @@ public class SingleBoundaryHoldAfterHoldEntryTests
         List<ScenarioEvent> seeksAfterLoad = h.Events.Skip(eventsBefore)
             .Where(e => e.Kind is "landing-seek" or "sync-seek").ToList();
         seeksAfterLoad.Should().NotBeEmpty();
-        seeksAfterLoad[0].Kind.Should().Be("landing-seek", "前提: 読み込みの後の最初のシークは規則 4 の入口の合わせ");
-        seeksAfterLoad[0].Value.Should().BeApproximately(ClipOut, 1e-6, "前提: 入口の合わせの目標は出口");
+        // v0.6.3 (ii)（承認済みの期待の変更）: 端へのシークは、規則 4 の入口の合わせ（コントローラ、landing-seek）から分離した
+        // 境界の経路（コーディネーター、sync-seek、reason boundary）が出す。境界の保持と位置の主張は変えない。
+        seeksAfterLoad[0].Kind.Should().Be("sync-seek", "前提: 読み込みの後の最初のシークは境界の経路の端へのシーク");
+        seeksAfterLoad[0].Value.Should().BeApproximately(ClipOut, 1e-6, "前提: 端へのシークの目標は出口");
         return h;
     }
 
