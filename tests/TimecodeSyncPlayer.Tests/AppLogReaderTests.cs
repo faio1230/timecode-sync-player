@@ -51,6 +51,19 @@ public class AppLogReaderTests : IDisposable
     }
 
     [Fact]
+    public void ReadLinesSince_LineAtExactlyTheStartTime_IsReturned()
+    {
+        // 開始の時刻とミリ秒まで同じ行も返す（読み飛ばすのは開始より前の行だけ）。
+        DateTime exact = new(2026, 10, 2, 23, 59, 59, 400);
+
+        List<string> lines = AppLogReader.ReadLinesSince(_logDir, exact)
+            .Select(line => line.TrimEnd('\r')).ToList();
+
+        lines.Should().StartWith("2026-10-02 23:59:59.400 +09:00 [INF] 終了手順: 新規受付停止");
+        lines.Should().HaveCount(4);
+    }
+
+    [Fact]
     public void ReadLinesSince_AcrossMidnight_ReturnsBothDaysInOrder()
     {
         List<string> lines = AppLogReader.ReadLinesSince(_logDir, RunStarted)

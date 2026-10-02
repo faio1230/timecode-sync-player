@@ -217,6 +217,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         OutputBackendState outputBackendState,
         IServiceProvider services)
     {
+        _startupTiming.Mark(StartupTimingPoint.MainWindowConstructor, DateTime.UtcNow);
         StartUiHeartbeat();
         _ltcMonitor = ltcMonitor;
         _playlist = playlist;
@@ -270,12 +271,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GStreamerRebindRequested = OnGStreamerRebindRequested,
                 SourceFrameReady = OnSourceFrameReady,
             });
+            _startupTiming.Mark(StartupTimingPoint.OutputEngineCreated, DateTime.UtcNow);
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
             // shim は合成デバイスのアダプター LUID だけを使い、自前デバイス +
             // 共有テクスチャリング（NT ハンドル + 共有フェンス）でリースを直接ソースにする。
             // 合成デバイスの context は shim から触らない。
-            if (_outputEngine.WaitForDevice(TimeSpan.FromSeconds(5)))
+            _startupTiming.Mark(StartupTimingPoint.WaitForDeviceStart, DateTime.UtcNow);
+            bool deviceReady = _outputEngine.WaitForDevice(TimeSpan.FromSeconds(5));
+            _startupTiming.Mark(StartupTimingPoint.WaitForDeviceEnd, DateTime.UtcNow);
+            if (deviceReady)
                 _gstBackendState.SetExternalDevice(_outputEngine.DevicePointer);
             else
                 Log.Error("OutputEngine: デバイス初期化がタイムアウトし、GStreamer shim へ Adopt できません");
@@ -590,7 +595,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly AppSettingsManager _settingsManager;
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
-        => CreateWindowLoadedCoordinator().Initialize();
+    {
+        _startupTiming.Mark(StartupTimingPoint.WindowLoaded, DateTime.UtcNow);
+        CreateWindowLoadedCoordinator().Initialize();
+    }
 
     private WindowLoadedCoordinator CreateWindowLoadedCoordinator() =>
         _windowLoadedCoordinator ??= new(new WindowLoadedEffects(
@@ -856,7 +864,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             setButtonEnabled: enabled => BtnSpout.IsEnabled = enabled,
             setToggleLabel: label => _vm.Sync.SpoutToggleLabel = label);
         var sessionInitializer = new WindowLoadedSessionInitializer(
-            initializePlayback: () => _gstPlaybackApi.Initialize(),
+            initializePlayback: () =>
+            {
+                _startupTiming.Mark(StartupTimingPoint.PlayerInitializeStart, DateTime.UtcNow);
+                PlaybackResult result = _gstPlaybackApi.Initialize();
+                _startupTiming.Mark(StartupTimingPoint.PlayerInitializeEnd, DateTime.UtcNow);
+                return result;
+            },
             applyAudioSettings: _audioControlCoordinator.ApplyStartup,
             createRenderContext: () => _renderSession.Create(_gstBackendState.Player),
             // GPU 構成では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
@@ -2691,6 +2705,24 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 summary.FirstLateMs, summary.MaxLateMs, summary.Ticks, summary.ElapsedMs, summary.Reason));
     private DispatcherTimer? _uiHeartbeatTimer;
 
+    // v0.6.4 段 6（設計書 3-2、#15）: 起動の区間の要約 `Startup timing: …`（起動 1 回に 1 行、観測だけ）。
+    // 各点はプロセスの開始からの ms。Window_Loaded と ui.heartbeat の seq=1 の両方が済んだ時点で書く。
+    private readonly StartupTimingRecorder _startupTiming =
+        new(ProcessStartUtc(), fields => Log.Information("Startup timing: {Fields:l}", fields));
+
+    private static DateTime ProcessStartUtc()
+    {
+        try
+        {
+            using Process self = Process.GetCurrentProcess();
+            return self.StartTime.ToUniversalTime();
+        }
+        catch (Exception)
+        {
+            return DateTime.UtcNow;
+        }
+    }
+
     private void StartUiHeartbeat()
     {
         _uiHeartbeat.Start(Stopwatch.GetElapsedTime(0));
@@ -2701,7 +2733,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void OnUiHeartbeatTick(object? sender, EventArgs e)
     {
-        if (!_uiHeartbeat.Tick(Stopwatch.GetElapsedTime(0)))
+        bool keep = _uiHeartbeat.Tick(Stopwatch.GetElapsedTime(0));
+        if (!double.IsNaN(_uiHeartbeat.FirstLateMs))
+            _startupTiming.FirstHeartbeat(DateTime.UtcNow, _uiHeartbeat.FirstLateMs);
+        if (!keep)
             DiscardUiHeartbeatTimer();
     }
 
