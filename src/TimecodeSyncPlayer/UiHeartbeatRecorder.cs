@@ -38,6 +38,9 @@ internal sealed class UiHeartbeatRecorder
 
     public bool IsActive => _active;
 
+    /// <summary>v0.6.4 段 6: seq=1 の遅れ（まだ tick が無ければ NaN）。Startup timing の行が読む。</summary>
+    public double FirstLateMs => _firstLateMs;
+
     /// <summary>区間を始める（1 回だけ）。</summary>
     public void Start(TimeSpan now)
     {
