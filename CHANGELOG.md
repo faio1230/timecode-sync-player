@@ -11,20 +11,21 @@ no longer ends one frame past the target. Settings and projects are unchanged fr
 
 - In RunThrough, when the LTC is judged as stopped, the picture keeps running instead of jumping back to the stopped
   position, and it is aligned once when the LTC comes back. Up to 0.6.2 it jumped back once at the moment of the stop
-  (a disturbed LTC that looked stopped for a moment could stall the picture for about 0.2 to 0.5 s each time). Stop mode
+  (a disturbed LTC that looked stopped for a moment could stall the picture for about 0.5 s; a known intermittent issue in 0.6.2). Stop mode
   is unchanged (aligns once to the stopped position and pauses).
-- In Single, an LTC that stops outside the clip still stops the picture at the clip edge (in RunThrough too, with one
-  seek to the edge).
+- In Single, an LTC that stops outside the clip still stops the picture at the clip edge (in RunThrough too: one seek to the edge, then
+  paused at the edge).
 
 ### Fixed
 
 - A seek while paused could rarely end on the frame after the target, with the position display one frame ahead. The
-  short run used to show the frame while paused let a second frame through (about 3% on the development machine). Only
+  short run used to show the frame while paused let a second frame through (39 of 1,247 paused seeks on the test machine). Only
   the first frame is delivered now.
 - Fewer GStreamer CRITICAL lines (`gst_segment_do_seek: assertion`) after a rate change sent right after a
   re-alignment seek: the rate change now waits until the seek's segment has arrived. (Test machine set: N to M lines;
-  written at release. Lines from the order used when entering a gap freeze remain.) The rate was already applied as
-  requested in 0.6.2; only the diagnostic lines change.
+  written at release. Lines from the order used when entering a gap freeze remain.) Even with these lines the rate was applied
+  as requested (all 180 runs of the development-machine test with the same shim as 0.6.1 and 0.6.2; see the 0.6.1
+  notes); only the diagnostic lines change.
 - The one-time re-apply of the last accepted timecode after a file load is now decided by the LTC state instead of a
   1.5 s time limit: if the LTC moves after the load, it is dropped; if the LTC stays stopped, it is applied once.
 
