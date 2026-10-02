@@ -24,8 +24,7 @@ Settings and projects are unchanged from 0.6.3.
   - `Playback perf`: `composedSourceFrames` at the end (new frames used by the GPU compositor).
   - `Startup timing`: one line per launch with the start and end of each startup stage in ms since launch.
 - Test infrastructure: the app log is read across the day boundary and continued from the last read position, the scenario runner moves the
-  day's app log aside before a set, the L-2 audit no longer counts windows that start before its origin, and reference capture accepts
-  the target to +1 frame, and the position tolerance follows the media's actual frame length (narrower at 60 fps).
+  day's app log aside before a set, and the L-2 audit no longer counts windows that start before its origin.
 
 ### Known issues
 
