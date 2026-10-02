@@ -166,12 +166,13 @@ public sealed class GStreamerBackendE2ETests
             // 判定は決定的に: 切替で読まれたトラックの並び 1,2,3,2,1,0 をこの run のログ行だけで確認する。
             // 先頭の 0（初回ロード）は開始状態なので期待に含めない。
             int[] expectedIndices = [1, 2, 3, 2, 1, 0];
-            List<int> actualIndices = LoadedTrackIndices(exePath, runStartedLocal);
+            var loadTail = new AppLogTail(AppLogReader.LogDirectoryForExe(exePath), runStartedLocal);
+            List<int> actualIndices = LoadedTrackIndices(loadTail.ReadText());
             DateTime sequenceDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
             while (!ContainsInOrder(actualIndices, expectedIndices) && DateTime.UtcNow < sequenceDeadline)
             {
                 Thread.Sleep(200);
-                actualIndices = LoadedTrackIndices(exePath, runStartedLocal);
+                actualIndices = LoadedTrackIndices(loadTail.ReadText());
             }
 
             runner.Process.HasExited.Should().BeFalse("切り替え反復後もアプリは動作継続している");
@@ -375,12 +376,13 @@ public sealed class GStreamerBackendE2ETests
 
     private static string WaitForLog(string exePath, string needle, DateTime sinceLocal, TimeSpan timeout)
     {
-        string exeDir = Path.GetDirectoryName(exePath)!;
+        // v0.6.4（設計書 9-2）: 待ちのたびに全体を読み直さず、続きを読む（AppLogTail）。
+        var tail = new AppLogTail(AppLogReader.LogDirectoryForExe(exePath), sinceLocal);
         DateTime deadline = DateTime.UtcNow + timeout;
         string scoped = "";
         while (DateTime.UtcNow < deadline)
         {
-            scoped = AppLogReader.ReadTextSince(AppLogReader.LogDirectoryForExeDirectory(exeDir), sinceLocal);
+            scoped = tail.ReadText();
             if (scoped.Contains(needle, StringComparison.Ordinal)) return scoped;
             Thread.Sleep(400);
         }
@@ -400,11 +402,13 @@ public sealed class GStreamerBackendE2ETests
     /// </summary>
     private static void WaitForGpuPublishedFrame(string exePath, DateTime sinceLocal, TimeSpan timeout)
     {
+        var tail = new AppLogTail(AppLogReader.LogDirectoryForExe(exePath), sinceLocal);
         DateTime deadline = DateTime.UtcNow + timeout;
         long published = 0;
         while (DateTime.UtcNow < deadline)
         {
-            published = GpuPublishSamples(exePath, sinceLocal)
+            tail.ReadNew();
+            published = GpuPublishSamples(tail.Lines)
                 .Where(sample => sample.At >= sinceLocal)
                 .Select(sample => sample.Published)
                 .DefaultIfEmpty(0)
@@ -420,18 +424,13 @@ public sealed class GStreamerBackendE2ETests
     /// sinceLocal 以降のログ行だけから「Playlist track loaded index=」の並び（読み込み順）を取る。
     /// ログは run をまたいで追記されるため、過去 run の並びを判定に使わない。
     /// </summary>
-    private static List<int> LoadedTrackIndices(string exePath, DateTime sinceLocal)
+    /// <param name="text">AppLogTail で読んだ行（開始の時刻以降の行だけ）。</param>
+    private static List<int> LoadedTrackIndices(string text)
     {
-        string text = AppLogReader.ReadTextSince(AppLogReader.LogDirectoryForExe(exePath), sinceLocal);
         var indices = new List<int>();
         foreach (string line in text.Split('\n'))
         {
             if (!line.Contains("Playlist track loaded index=", StringComparison.Ordinal)) continue;
-            Match t = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
-            if (!t.Success ||
-                !DateTime.TryParse(t.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime at) ||
-                at < sinceLocal)
-                continue;
             Match m = Regex.Match(line, @"Playlist track loaded index=(\d+)");
             if (m.Success) indices.Add(int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture));
         }
@@ -452,10 +451,13 @@ public sealed class GStreamerBackendE2ETests
     }
 
     /// <summary>Playback perf 行から GPU 合成の公開フレーム数を時系列で取り出す（ローカル時刻）。</summary>
-    private static List<(DateTime At, long Published)> GpuPublishSamples(string exePath, DateTime sinceLocal)
+    private static List<(DateTime At, long Published)> GpuPublishSamples(string exePath, DateTime sinceLocal) =>
+        GpuPublishSamples(AppLogReader.ReadLinesSince(AppLogReader.LogDirectoryForExe(exePath), sinceLocal));
+
+    private static List<(DateTime At, long Published)> GpuPublishSamples(IEnumerable<string> lines)
     {
         var samples = new List<(DateTime, long)>();
-        foreach (string line in AppLogReader.ReadLinesSince(AppLogReader.LogDirectoryForExe(exePath), sinceLocal))
+        foreach (string line in lines)
         {
             if (!line.Contains("Playback perf", StringComparison.Ordinal)) continue;
             Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");

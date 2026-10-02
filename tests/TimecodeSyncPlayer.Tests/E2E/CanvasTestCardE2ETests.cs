@@ -39,16 +39,18 @@ public sealed class CanvasTestCardE2ETests
 
     // v0.6.4 段 4: 最新の 1 ファイルの末尾からではなく、開始の時刻以降のすべての日のファイルを読む
     // （0 時をまたぐ回で前日のファイルの行を落とさない。AppLogReader）。
+    // v0.6.4（設計書 9-2）: 待ちのたびに全体を読み直さず、前回読んだ位置からの続きを読む（AppLogTail）。
     private static void WaitForLogAfter(string logDir, DateTime sinceLocal, string needle, TimeSpan timeout)
     {
+        var tail = new AppLogTail(logDir, sinceLocal);
         DateTime deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            if (AppLogReader.ReadTextSince(logDir, sinceLocal).Contains(needle, StringComparison.Ordinal))
+            if (tail.ReadText().Contains(needle, StringComparison.Ordinal))
                 return;
             Thread.Sleep(200);
         }
-        AppLogReader.ReadTextSince(logDir, sinceLocal).Should().Contain(needle,
+        tail.ReadText().Should().Contain(needle,
             $"アプリログ（{logDir} の {sinceLocal:HH:mm:ss.fff} 以降）に '{needle}' が記録されるはず");
     }
 
