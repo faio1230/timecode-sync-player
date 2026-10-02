@@ -717,6 +717,9 @@ internal sealed class LtcSyncController
                         rawSeconds);
                     // 前の保持の着地の記録は、新しい値の保持値の変更の基準にしない（確定した Jump と同じく下ろす）。
                     _input.ClearHeldLossLanding();
+                    // v0.6.3 段 4（規則 4）: 確定した Jump は新しい保持値への 1 回の合わせ（D31-b の入口）を出すので、ロード解除の
+                    // 再適用で 2 回目を出さない（回収待ちを捨てる）。
+                    _syncService.DiscardPendingFileLoadRelease();
                     layer2 = Layer2Class.Duplicate;
                     heldRun = confirmedHeldRun;
                     confirmedIntoHold = true;
@@ -939,6 +942,9 @@ internal sealed class LtcSyncController
         _input.ClearHeldReapplied();
         // D31-b: 確認済みの適用で損失が明けた（または新しい値へ動いた）ので、損失中の着地値は捨てる。
         _input.ClearHeldLossLanding();
+        // v0.6.3 段 4（規則 4、親の判断）: 確定した Jump でマスターが動き、規則 3 の relocate が位置を合わせるので、Normal と同じく
+        // ロード解除の再適用は要らない（回収待ちを捨てる）。
+        _syncService.DiscardPendingFileLoadRelease();
         _lastContinueFrame = null;
         double effectiveSeconds = EffectiveSeconds(rawSeconds, frameEndTimestamp, "jump");
         _input.AcceptFrame(effectiveSeconds, rawSeconds, frameEndTimestamp, receivedAtMilliseconds);
