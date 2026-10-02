@@ -29,10 +29,11 @@ internal static class FramePositionTolerance
     public static double OneFrame(double fps) => FrameSeconds(fps) + EpsilonSeconds;
 
     /// <summary>
-    /// 判定の対象のトラックの位置の許容（実の 1 フレーム + 丸めの余裕）。v0.6.4 2-4 (b) で下限（先頭トラックの
-    /// 1 フレーム、既定 1/30）を外した。60fps の素材では 1/30 → 1/60 + 1µs に狭まる。29.97・25・24 は変わらない。
+    /// 位置の許容を、これまでの値より狭めない形で作る: max(これまでの値, 実の 1 フレーム + 丸めの余裕)。
+    /// 29.97・25・24 では広がり、30fps 以上ではこれまでどおり（狭める向きは別に決める）。
     /// </summary>
-    public static double ForTrack(double fps) => OneFrame(fps);
+    public static double OneFrameAtLeast(double fps, double previousSeconds) =>
+        Math.Max(previousSeconds, OneFrame(fps));
 
     public static bool IsWithinOneFrame(double observedSeconds, double expectedSeconds, double fps) =>
         double.IsFinite(observedSeconds) && Math.Abs(observedSeconds - expectedSeconds) <= OneFrame(fps);

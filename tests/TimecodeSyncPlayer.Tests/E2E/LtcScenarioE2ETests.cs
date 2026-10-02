@@ -1465,10 +1465,10 @@ public sealed partial class LtcScenarioE2ETests
             _measuredFps.TryGetValue(track.Index, out double fps) ? fps : track.FrameRate;
 
         /// <summary>
-        /// 判定の対象のトラックの 1 フレーム（位置の許容）。実の 1 フレーム + 1µs（v0.6.4 2-4 (b) で下限 OneFrame を外した。
-        /// 60fps の素材では 1/30 → 1/60 + 1µs）。
+        /// 判定の対象のトラックの 1 フレーム（位置の許容）。これまでの値（OneFrame）より狭めない: 狭める向き（60fps の素材で
+        /// 1/30 → 1/60）は、v0.6.3 の 6 節（+1 フレームの食い違いの整理）で見直すまで今の判定を変えないため。
         /// </summary>
-        public double OneFrameOf(TrackInfo track) => FramePositionTolerance.ForTrack(FrameRateOf(track));
+        public double OneFrameOf(TrackInfo track) => FramePositionTolerance.OneFrameAtLeast(FrameRateOf(track), OneFrame);
 
 
         /// <summary>信号断モードが停止（SetSignalLossMode(true)）か。既定のコンボ index 0 はランスルー。</summary>
