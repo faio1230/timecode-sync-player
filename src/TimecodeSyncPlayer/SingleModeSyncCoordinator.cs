@@ -93,11 +93,12 @@ internal sealed class SingleModeSyncCoordinator
         }
         // v0.6.3 段 1（観測）: 先行量（lookaheadMs）とその出所（cSource）を配布ビルドでも数えられるように出す。
         Log.Information(
-            "Timecode sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} videoFps={VideoFps:F3} timecodeFps={TimecodeFps:F3} defaultVideoFps={DefaultVideoFps} defaultTimecodeFps={DefaultTimecodeFps} success={Success} lookaheadMs={LookaheadMs:F1} cSource={CSource}",
+            "Timecode sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} videoFps={VideoFps:F3} timecodeFps={TimecodeFps:F3} defaultVideoFps={DefaultVideoFps} defaultTimecodeFps={DefaultTimecodeFps} success={Success} lookaheadMs={LookaheadMs:F1} cSource={CSource} reason={Reason} masterStopped={MasterStopped}",
             ltcSeconds, playbackSeconds, decision.TargetSeconds, decision.DeltaSeconds,
             decision.ToleranceSeconds, decision.VideoFpsUsed, decision.TimecodeFpsUsed,
             decision.UsedDefaultVideoFps, decision.UsedDefaultTimecodeFps, success,
-            _syncService.RelocateLookaheadSeconds * 1000.0, _syncService.RelocateLookaheadSource);
+            _syncService.RelocateLookaheadSeconds * 1000.0, _syncService.RelocateLookaheadSource,
+            "sync", _syncService.IsMasterStoppedForObservation);
         return success ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
     }
 

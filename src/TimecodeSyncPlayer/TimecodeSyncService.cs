@@ -264,10 +264,27 @@ public sealed class TimecodeSyncService
     public void ObserveLandingState(in PlaybackPositionSample sample, double toleranceSeconds)
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+        if (double.IsFinite(sample.Seconds))
+            _lastObservedPlaybackSeconds = sample.Seconds;
         _seekState.ObserveLandingSample(sample, toleranceSeconds, now);
         NoteRelocateLanding(toleranceSeconds);
         TryReleaseFileLoadAfterLanding(now);
     }
+
+    // v0.6.3 (ii)（観測）: マスターが止まっている間に出した relocate のうち後ろ向きのもの、境界の経路の端へのシーク、
+    // 最後に観測した再生位置（後ろ向きの判定に使う）。起動からの累計。Sync hold summary の行で出す。
+    private long _backwardSeeksWhileStopped;
+    private long _boundarySeeks;
+    private double _lastObservedPlaybackSeconds = double.NaN;
+
+    /// <summary>v0.6.3 (ii)（観測）: マスターが止まっている間に出した後ろ向きの relocate の数（起動からの累計）。</summary>
+    internal long BackwardSeeksWhileStopped => _backwardSeeksWhileStopped;
+
+    /// <summary>v0.6.3 (ii)（観測）: 境界の経路の端へのシーク（reason boundary）の数（起動からの累計）。</summary>
+    internal long BoundarySeeks => _boundarySeeks;
+
+    /// <summary>v0.6.3 (ii)（観測）: いまマスターが止まっているか（relocate の行と要約に出す）。</summary>
+    internal bool IsMasterStoppedForObservation => !IsMasterMoving;
 
     // v0.5.4 B6b（追補 4）の計測: 着地後の残差と連続 relocate を実機のログから数える（門ではない）。
     private string _lastRelocateReason = "";
@@ -285,6 +302,12 @@ public sealed class TimecodeSyncService
     {
         bool afterOutsideLanding = _landedSinceLastRelocate && _lastLandingOutsideThreshold;
         bool chained = afterOutsideLanding && string.Equals(reason, _lastRelocateReason, StringComparison.Ordinal);
+        // v0.6.3 (ii)（観測）: マスター停止中の後ろ向きの relocate と、境界の経路の端へのシークを数える（記録だけ）。
+        if (reason == "boundary")
+            _boundarySeeks++;
+        else if (!IsMasterMoving && double.IsFinite(_lastObservedPlaybackSeconds) &&
+                 targetSeconds < _lastObservedPlaybackSeconds - 0.001)
+            _backwardSeeksWhileStopped++;
         Serilog.Log.Debug(
             "sync.gate relocate reason={Reason:l} target={Target:F3} chained={Chained} afterOutsideLanding={AfterOutsideLanding} previousReason={PreviousReason:l} lookaheadMs={LookaheadMs:F1}",
             reason, targetSeconds, chained, afterOutsideLanding, _lastRelocateReason, RelocateLookaheadSeconds * 1000.0);

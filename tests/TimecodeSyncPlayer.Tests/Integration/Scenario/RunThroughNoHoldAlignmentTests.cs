@@ -1,4 +1,7 @@
 using FluentAssertions;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using Xunit.Abstractions;
 
 namespace TimecodeSyncPlayer.Tests.Integration;
@@ -261,5 +264,45 @@ public class RunThroughNoHoldAlignmentTests
         seeks.Should().ContainSingle("出口へのシークは 1 本").Which.Should().BeApproximately(clipOut, 1e-6);
         relocates.Should().ContainSingle().Which.Should().Contain("reason=boundary",
             "端へのシークは入口の合わせではなく、範囲外の LTC をクリップの端で止める境界の経路が出す");
+        h.SyncService.BoundarySeeks.Should().Be(1, "観測: 境界の経路の端へのシークは 1 本（Sync hold summary の boundarySeeks）");
+        h.SyncService.BackwardSeeksWhileStopped.Should().Be(0, "観測: RunThrough でマスター停止中の後ろ向きの relocate は 0");
+    }
+
+    private sealed class SummarySink : ILogEventSink, IDisposable
+    {
+        private readonly ILogger _previous = Log.Logger;
+        private readonly int _owner = Environment.CurrentManagedThreadId;
+        public List<LogEvent> Events { get; } = new();
+        public SummarySink() => Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo.Sink(this).CreateLogger();
+        public void Emit(LogEvent e)
+        {
+            if (Environment.CurrentManagedThreadId == _owner && e.MessageTemplate.Text.StartsWith("Sync hold summary", StringComparison.Ordinal))
+                lock (Events) Events.Add(e);
+        }
+        public void Dispose() => Log.Logger = _previous;
+    }
+
+    /// <summary>
+    /// 観測（14-4 の案 A）: 監視の停止で "Sync hold summary" を Information で 1 行。RunThrough の保持は入口 1 回、マスター停止中の
+    /// 後ろ向きの relocate 0。停止モードは保持値への着地（後ろ向き 1、今のまま）。
+    /// </summary>
+    [Theory]
+    [InlineData(LtcSignalLossMode.RunThrough, 0)]
+    [InlineData(LtcSignalLossMode.Stop, 1)]
+    public void SyncHoldSummary_IsLoggedWhenMonitoringStops(LtcSignalLossMode lossMode, int expectedBackward)
+    {
+        using var sink = new SummarySink();
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(lossMode);
+        FollowThenHold(h, clock, out _);
+
+        h.IsMonitoring = false;
+
+        List<LogEvent> summaries;
+        lock (sink.Events) summaries = sink.Events.ToList();
+        summaries.Should().ContainSingle();
+        _output.WriteLine(summaries[0].RenderMessage());
+        summaries[0].Properties["HoldEntries"].ToString().Should().Be("1");
+        summaries[0].Properties["BackwardSeeksWhileStopped"].ToString().Should().Be(expectedBackward.ToString());
+        summaries[0].Properties["BoundarySeeks"].ToString().Should().Be("0");
     }
 }

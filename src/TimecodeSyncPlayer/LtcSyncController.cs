@@ -77,6 +77,9 @@ internal sealed class LtcSyncController
     /// <summary>v0.6.1（レビューの 7）: 層 2 の分類の件数（起動からの累計。<see cref="LogLayer2Summary"/> で出す）。</summary>
     private long _creepingAdvanceCount;
     private long _returnedToAcceptedStreamCount;
+    // v0.6.3 (ii)（観測）: 規則 4 の保持の入口に入った回数（起動からの累計）と、いまの保持を数えたか。
+    private long _holdEntryCount;
+    private bool _holdEntryCounted;
     private bool _exitSummaryLogged;
 
     /// <summary>
@@ -563,13 +566,26 @@ internal sealed class LtcSyncController
             return;
         _exitSummaryLogged = true;
         LogLayer2Summary("app-exit");
+        LogSyncHoldSummary("app-exit");
     }
+
+    /// <summary>
+    /// v0.6.3 (ii)（観測）: 保持の入口の回数、マスター停止中の後ろ向きの relocate の数、境界の経路の端へのシークの数を
+    /// Information で 1 行出す（layer2 summary と同じ時点・同じ形。配布ビルドでも数えられる）。起動からの累計。
+    /// </summary>
+    public void LogSyncHoldSummary(string source) =>
+        Log.Information(
+            "Sync hold summary: holdEntries={HoldEntries} backwardSeeksWhileStopped={BackwardSeeksWhileStopped} boundarySeeks={BoundarySeeks} source={Source}",
+            _holdEntryCount, _syncService.BackwardSeeksWhileStopped, _syncService.BoundarySeeks, source);
 
     public void MonitoringChanged()
     {
         bool monitoring = _effects.GetContext().IsMonitoring;
         if (!monitoring)
+        {
             LogLayer2Summary("monitoring-stopped");
+            LogSyncHoldSummary("monitoring-stopped");
+        }
         SyncLifecycleEvent evt = monitoring
             ? SyncLifecycleEvent.MonitoringStarted
             : SyncLifecycleEvent.MonitoringStopped;
@@ -803,6 +819,12 @@ internal sealed class LtcSyncController
                     SyncRules.IsMasterStopped(heldRun, minimumHeldFrames: 2) &&
                     _input.HeldLossLandingSeconds is null;
                 _input.MarkHeldEffective(heldEffectiveSeconds);
+                // v0.6.3 (ii)（観測）: 規則 4 の保持の入口（数える保持 2 枚）を、保持ごとに 1 回数える。
+                if (holdEntry && !_holdEntryCounted)
+                {
+                    _holdEntryCount++;
+                    _holdEntryCounted = true;
+                }
                 // D38 (a): 保持の Duplicate でも、保留中のシークが着地していれば観測して
                 // 位置の信頼を戻す（シークは出さない）。
                 ObservePendingSeekLanding();
@@ -886,6 +908,7 @@ internal sealed class LtcSyncController
         {
             // D27-d: 値が進むフレームが来たら保持は明けたので、着地目標の保持値を捨てる。
             _input.OnNormalFrame();
+            _holdEntryCounted = false;
             // v0.6.3 段 4（規則 4）: マスターが動いたので、ロード解除の再適用（停止中の 1 回）は要らない。
             _syncService.DiscardPendingFileLoadRelease();
             applyOnce = false;
