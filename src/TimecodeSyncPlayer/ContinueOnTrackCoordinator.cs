@@ -156,10 +156,12 @@ internal sealed class ContinueOnTrackCoordinator
                 // v0.5.4 段 B2 の計測: 着地から 500ms 以内の同期シーク（旧 門 9 が隠していた量）。
                 _syncService.NotePostLandingSeekIssued(seekPlan.TargetSeconds);
             }
+            // v0.6.3 段 1（観測）: 先行量（lookaheadMs）とその出所（cSource）を配布ビルドでも数えられるように出す。
             Log.Information(
-                "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success}",
+                "Continue mode: sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} success={Success} lookaheadMs={LookaheadMs:F1} cSource={CSource}",
                 ltcSeconds, playbackSeconds, seekPlan.TargetSeconds,
-                decision.DeltaSeconds, decision.ToleranceSeconds, success);
+                decision.DeltaSeconds, decision.ToleranceSeconds, success,
+                _syncService.RelocateLookaheadSeconds * 1000.0, _syncService.RelocateLookaheadSource);
             return success
                 ? new ContinueFrameContext(SyncRequestResult.Complete, false, mediaPos, playbackSeconds, "seek-issued")
                 : ContinueFrameContext.Blocked(SyncRequestResult.Deferred, "seek-failed");
