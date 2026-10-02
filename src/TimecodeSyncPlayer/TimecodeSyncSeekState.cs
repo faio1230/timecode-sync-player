@@ -301,7 +301,10 @@ internal sealed class TimecodeSyncSeekState : ITimecodeSyncSeekState
             : (now - _sentAt).TotalSeconds;
         // D37-b / v0.5.4 B6b: シークの所要 c を学習する。源は B1 の着地の遅れ（new-landing の delayMs）と
         // 同じ値（シークの発行 → その世代の配信フレームが着地の窓に入った観測）。着地ごとに移動平均。
-        if (_sentAt != DateTime.MinValue)
+        // v0.6.3 段 2（設計書 1 節の (a)）: 学習するのは目標のある着地（シーク）だけ。読み込みの着地（目標なし）の遅れは
+        // シークの所要ではない（規則 3: c はシークの所要の学習値、学習前は 0）。v0.5.4 段 B3 で読み込みも着地の事象に
+        // 通した副作用で、切替の直後の c が読み込みの遅れになり、+・−・− の relocate が 3 本出ていた。
+        if (hasTarget && _sentAt != DateTime.MinValue)
             LearnSeekDuration(_newLandingDelaySeconds);
         _lastLandingAt = now;
         _lastLanding = new TimecodeSyncLandingRecord(
