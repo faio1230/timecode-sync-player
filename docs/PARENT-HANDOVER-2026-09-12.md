@@ -1,6 +1,6 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
-> **2026-10-02 16:3x 更新（TSP-Opus）**: **v0.6.3 の候補 `0.6.2+44cc043` を検証機へ送付、固定の一式を依頼済み。** setup `a23cde578e33623935b752f8d38a62ef8cc2bdf29e274db086c4958981af1ec5`、zip `c7277c716cf022dbd73ad399dec4b9b0637d198eb74100fe2fb3017b468c8133`、tar `83faceb357489842a69e92288490ef1012766916cb776a67c004d1422d092ff9`（置き場は v06 の `artifacts\cand-v063-44cc043`）。中の shim は Release `251627d3…`、プラグイン `1ded64c4`。開発機: 非E2E 2939/0、check-shim-lock-rule PASS
+> **2026-10-02 15:3x 更新（TSP-Opus）**: **v0.6.3 の候補 `0.6.2+44cc043` を検証機へ送付、固定の一式を依頼済み。** setup `a23cde578e33623935b752f8d38a62ef8cc2bdf29e274db086c4958981af1ec5`、zip `c7277c716cf022dbd73ad399dec4b9b0637d198eb74100fe2fb3017b468c8133`、tar `83faceb357489842a69e92288490ef1012766916cb776a67c004d1422d092ff9`（置き場は v06 の `artifacts\cand-v063-44cc043`）。中の shim は Release `251627d3…`、プラグイン `1ded64c4`。開発機: 非E2E 2939/0、check-shim-lock-rule PASS
 >
 > - **候補へ進んだ条件（TSP-Fable）**: (1) C-2 の黒の率は本番構成で前後 10 回ずつ交互に前 0/10・後 0/10、一式を含め前 0/12・後 1/12 で「同程度」（戻らない黒かは未確定、設計書 17-2）。(2) assertion の型 1・型 2 は qtdemux が flush の後に古い INSTANT_RATE_CHANGE の sticky を押し直すのが出どころで、v0.6.4 の材料（17-4）。段 6 の保留は残す。(3) ノート・CHANGELOG はレビュー済み（残る行の文を 17-4 の事実に合わせた）
 > - **検証機の一式で数えるもの**: assertion（tcs-gst-raw.log、v0.6.2 は 147）、pump: held、Sync hold summary（RunThrough で backwardSeeksWhileStopped 0）、dropping stale（0）、UI heartbeat、C-2 の黒（出ても止めずに記録、TSP-Fable へ報告して率の規則を当てる）、A の公開不足。止める規則は C-2 の黒以外すべて（前回の件数だけの例外は使わない）
