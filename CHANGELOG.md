@@ -2,9 +2,9 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.6.3 - 2026-10-0X
+## 0.6.3 - 2026-10-02
 
-Stable (Latest) candidate. RunThrough no longer rewinds to the stopped position when the LTC stops, and a paused seek
+Stable (Latest). RunThrough no longer rewinds to the stopped position when the LTC stops, and a paused seek
 no longer ends one frame past the target. Settings and projects are unchanged from 0.6.2.
 
 ### Changed
@@ -22,8 +22,8 @@ no longer ends one frame past the target. Settings and projects are unchanged fr
   short run used to show the frame while paused let a second frame through (39 of 1,247 paused seeks on the test machine). Only
   the first frame is delivered now.
 - Fewer GStreamer CRITICAL lines (`gst_segment_do_seek: assertion`) after a rate change sent right after a
-  re-alignment seek: the rate change now waits until the seek's segment has arrived. (Test machine set: N to M lines;
-  written at release. The remaining lines come from the GStreamer demuxer re-sending a
+  re-alignment seek: the rate change now waits until the seek's segment has arrived. (Development machine: 60 to 70% fewer;
+  test machine set: 141 to 126 lines, up or down per run; both in the shim log `tcs-gst-raw.log`. The remaining lines come from the GStreamer demuxer re-sending a
   rate-change event from before the re-alignment seek, not from the rate change the app sends after it.) Even with these lines the rate was applied
   as requested (all 180 runs of the development-machine test with the same shim as 0.6.1 and 0.6.2; see the 0.6.1
   notes); only the diagnostic lines change.
@@ -87,6 +87,8 @@ Includes 0.6.0 (ProRes GPU decoding) and the 0.5.6 fix. Settings and projects ar
   longer LTC stays stopped, the larger the jump back when it returns (about 2.6 s after a 3 s stop).
   This also supports cueing with LTC for only the first second and then running without LTC: re-aligning while LTC is
   stopped would make the picture stutter in that use.
+  Correction (at the 0.6.3 release, 2026-10-02): 0.6.1 and 0.6.2 actually re-aligned once to the stopped position at
+  the moment the LTC was judged as stopped. 0.6.3 removed it.
 - Stop mode: when LTC stops and then only corrupt values keep arriving, the pause reason stays "timecode stopped"
   ("タイムコード停止で停止中"). In 0.6.0 it changed to "signal lost" ("信号断で停止中") about 0.3 s after the last held
   frame. Playback stays paused in both.
