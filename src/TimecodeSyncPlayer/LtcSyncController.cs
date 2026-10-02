@@ -580,8 +580,9 @@ internal sealed class LtcSyncController
     /// </summary>
     public void LogSyncHoldSummary(string source) =>
         Log.Information(
-            "Sync hold summary: holdEntries={HoldEntries} backwardSeeksWhileStopped={BackwardSeeksWhileStopped} boundarySeeks={BoundarySeeks} source={Source}",
-            _holdEntryCount, _syncService.BackwardSeeksWhileStopped, _syncService.BoundarySeeks, source);
+            "Sync hold summary: holdEntries={HoldEntries} backwardSeeksWhileStopped={BackwardSeeksWhileStopped} boundarySeeks={BoundarySeeks} source={Source} heldJumpLandings={HeldJumpLandings} heldJumpBackwardWhileStopped={HeldJumpBackwardWhileStopped} otherBackwardWhileStopped={OtherBackwardWhileStopped}",
+            _holdEntryCount, _syncService.BackwardSeeksWhileStopped, _syncService.BoundarySeeks, source,
+            _syncService.HeldJumpLandings, _syncService.HeldJumpBackwardWhileStopped, _syncService.OtherBackwardWhileStopped);
 
     public void MonitoringChanged()
     {
@@ -744,6 +745,8 @@ internal sealed class LtcSyncController
                     layer2 = Layer2Class.Duplicate;
                     heldRun = confirmedHeldRun;
                     confirmedIntoHold = true;
+                    // v0.6.4 2-1（観測だけ）: この保持値の変更の合わせ（D31-b の入口）を (C) として数える。
+                    _syncService.NoteHeldJumpLanding();
                     processed = processed with
                     {
                         Diagnostic = processed.Diagnostic with { Status = TimecodeFrameDiagnosticStatus.Duplicate },
@@ -913,6 +916,7 @@ internal sealed class LtcSyncController
         {
             // D27-d: 値が進むフレームが来たら保持は明けたので、着地目標の保持値を捨てる。
             _input.OnNormalFrame();
+            _syncService.ClearHeldJumpLandingNote();
             _holdEntryCounted = false;
             // v0.6.3 段 4（規則 4）: マスターが動いたので、ロード解除の再適用（停止中の 1 回）は要らない。
             _syncService.DiscardPendingFileLoadRelease();
@@ -952,6 +956,8 @@ internal sealed class LtcSyncController
     {
         // U8: 確認済みの Jump の適用を先に記録する（確認フレームが保持なら、その保持が Jump 後の 1 枚目）。
         _signalLoss.ObserveAppliedJump(receivedAtMilliseconds, SignalContext());
+        // v0.6.4 2-1（観測だけ）: 確定した Jump でマスターが動いたので、(C) の印は下ろす（この Jump の relocate は (C) ではない）。
+        _syncService.ClearHeldJumpLandingNote();
 
         if (status == TimecodeFrameDiagnosticStatus.Duplicate)
         {
