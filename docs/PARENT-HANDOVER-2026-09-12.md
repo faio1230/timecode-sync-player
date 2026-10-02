@@ -1,5 +1,14 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-10-02 13:1x 更新（TSP-Opus）**: **v0.6.2 は 08:48 に Latest で公開済み。v0.6.3 はブランチ `v0.6.3`（作業ツリー `timecode-sync-player-v06`、最新 `303d7f8`）に段 1・4・5・6・(ii) を取り込み済み（非E2E 2938/0）。開発機の固定の一式の前後比較（前 = main、後 = v0.6.3）を測定の担当 v063-c-debug-lap が実行中。** 正は `docs/design/v0.6.3-chase-cleanup.md`（11〜15 節が決定と経緯）
+>
+> - **取り込み済み**: 段 1 観測（relocate の lookaheadMs・cSource・reason・masterStopped、File load landing、UI heartbeat summary、Sync hold summary）／段 5 ポンプの 1 枚（shim、shim_test 54/200 → 0）／段 6 instant-rate を segment まで保留（shim、assertion 156 → 0、打ち切りは既存の pump_budget_ms）／段 4 ロード解除の期限 1.5 秒を規則 4 で置き換え（Normal・確定した Jump で捨てる）／**(ii) RunThrough は保持中に止まった値へ合わせず、LTC の復帰で 1 回合わせる（利用者の決定）**、S-4 は境界の経路（RunThrough だけ）で保つ。規則 3・規則 4 の文言は `v0.5.4-gate-unification.md` 10-1 で直した
+> - **見送り**: 本命だった「切替の直後の 3 本の連鎖」は 4K 長 GOP のシークの所要の揺れが本体で、予測は入れない（利用者の決定）。(a)＋持ち越し停止は測る前に固定した基準の (1)(3) を欠いて見送り（15 節）。門 14 は外さない（役は c の過大の間引き）
+> - **残り**: 一式の前後比較の結果 → ノート（振る舞いの変化「RunThrough は止まった位置へ戻さず走り続ける」、v0.6.2 の既知の間欠「入口の合わせで 0.5 秒前後止まる」の行は削除）・CHANGELOG → 候補 → 検証機の固定の一式（`pump: held` と assertion の行も数える）→ TSP-Fable に条件 → 公開。段 7（起動の停止）は一式の firstLateMs を見て諮る。試験の許容を「目標の次のフレームまで」に揃える件（12 節の (4)）は未着手
+> - **担当**: s4-fix（`timecode-sync-player-v053`）、v063-pump（`timecode-sync-player-v063c`）は待機。v063-c-debug-lap が一式。`timecode-sync-player-v063b`（carry、見送り）は消してよい
+> - **検証機**: 待機。v0.6.3 の材料の集計（M4 のロード、+2 フレーム）は済み
+
+
 > **2026-10-02 08:5x 更新（TSP-Opus）**: **v0.6.2 を Latest で公開（08:48）。** タグ v0.6.2 = main の統合 `5e8ae70`（リリースのコミット `3f86d59`、ProductVersion `0.6.2+3f86d59`）。setup `3e493e081f13e916fb0a0eb27e3c10cabb5baca611f8153add5e8054ee2f2981`、zip `b42775ccb68c9b561adee96ff74b64441f8ded300b52052d5f29c144af925ca8`（置き場は `timecode-sync-player-v06\artifacts\release-v062-3f86d59`）。候補 f6aa196 の zip と比べて違いは版の表記の 5 ファイルだけ（shim e6901eab・プラグイン 1ded64c4・.cso 同じ）。事後報告は TSP-Fable へ送付済み
 >
 > - **一式（検証機、04:15〜08:41、親は報告の zip の集計を照合）**: 標準 a/b/c 各 38/0、L-1 6/6、A-1 合格（限度内の 0.432 s が 1 区間）、A-2 は 1 回目 0.517 s（試験の音声経路の LTC の乱れと同時の RunThrough の入口の合わせ、TSP-Fable の承認で件数だけ）→ やり直しは乱れ無しで合格（0.013 s）、ProRes RTX GPU 183・AMD CPU 76・不一致 0、PR4 GPU/CPU 可、ProjectRoundTrip 10/10、K2 1/1、非E2E 2893。参照の採取の失敗 0、R-1/R-5 の 1 フレーム 0、assertion 147
