@@ -64,12 +64,11 @@ internal sealed class ContinueOnTrackCoordinator
             SeekLatencyCompensator compensator = _syncService.LatencyCompensator;
             compensator.SelectTrack(track.Id);
             double compensationSeconds = compensator.CompensationForTrack(track.Id);
-            // v0.5.4 B6b（規則 3 の予測ロケート）: 先行量 c があればそれを使う（D7-a の補償より優先。
-            // 経路で分けない 1 つの c）。無ければ従来どおり D7-a の補償（既定 0）。
-            double lookaheadSeconds = _syncService.RelocateLookaheadSeconds;
-            double loadPosition = lookaheadSeconds > 0.0
-                ? RelocateTarget(track, mediaPos)
-                : mediaPos + compensationSeconds;
+            // v0.6.3（設計書 13 節、TSP-Fable の判断）: 切替のロード位置に先行量 c を足さない。c はいま読み込んでいる素材の
+            // シークの所要の学習値で、別の素材のロード位置には当てはまらない（4K の 0.33 秒を 1080p へ持ち越すと、
+            // 着地の速い素材で行き過ぎて後ろ向きの relocate が出た）。c はこのロードで捨てて学習前は 0（規則 3）。
+            // ロード位置は D7-a の補償（トラック単位の学習、既定 0）だけで決める。
+            double loadPosition = mediaPos + compensationSeconds;
             Log.Information(
                 "Continue mode: switching to track {TrackName} at media position {Pos:F3}s compensation={CompensationMs:F1}ms",
                 track.Name, mediaPos, compensationSeconds * 1000.0);
