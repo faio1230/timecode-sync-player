@@ -275,10 +275,37 @@ public sealed class TimecodeSyncService
     // 最後に観測した再生位置（後ろ向きの判定に使う）。起動からの累計。Sync hold summary の行で出す。
     private long _backwardSeeksWhileStopped;
     private long _boundarySeeks;
+    // v0.6.4 2-1（#14、観測）: (C) の合わせ（総数と、そのうちマスター停止中の後ろ向き）と、それ以外でマスター停止中に出た後ろ向き。
+    private long _heldJumpLandings;
+    private long _heldJumpBackwardWhileStopped;
+    private long _otherBackwardWhileStopped;
+    // 次の relocate が (C) の合わせか（コントローラが (C) を受けたときに立て、次の relocate で消費する。Normal・確定した Jump で下ろす）。
+    private bool _heldJumpLandingNoted;
     private double _lastObservedPlaybackSeconds = double.NaN;
 
-    /// <summary>v0.6.3 (ii)（観測）: マスターが止まっている間に出した後ろ向きの relocate の数（起動からの累計）。</summary>
+    /// <summary>
+    /// v0.6.3 (ii)（観測）: マスターが止まっている間に出した後ろ向きの relocate の数（起動からの累計）。
+    /// v0.6.4 2-1（#14）: 止まった判定から出る後ろ向き（停止モードの止まった値への着地、held-landing。旧の hold-entry も）だけを数える。
+    /// </summary>
     internal long BackwardSeeksWhileStopped => _backwardSeeksWhileStopped;
+
+    /// <summary>v0.6.4 2-1（観測）: (C)（損失中に Duplicate で確定した Jump）の合わせの数（向きを問わない、起動からの累計）。</summary>
+    internal long HeldJumpLandings => _heldJumpLandings;
+
+    /// <summary>v0.6.4 2-1（観測）: (C) の合わせのうち、マスター停止中の後ろ向きのもの。</summary>
+    internal long HeldJumpBackwardWhileStopped => _heldJumpBackwardWhileStopped;
+
+    /// <summary>
+    /// v0.6.4 2-1（観測）: マスター停止中の後ろ向きのうち、止まった判定からでも (C) でもないもの（確定した Jump の後の切替の合わせなど）。
+    /// 構成上 BackwardSeeksWhileStopped + HeldJumpBackwardWhileStopped + OtherBackwardWhileStopped が v0.6.3 の backwardSeeksWhileStopped と一致する。
+    /// </summary>
+    internal long OtherBackwardWhileStopped => _otherBackwardWhileStopped;
+
+    /// <summary>v0.6.4 2-1（観測）: 次の relocate が (C) の合わせであることを覚える（コントローラが (C) を受けたときに呼ぶ）。</summary>
+    internal void NoteHeldJumpLanding() => _heldJumpLandingNoted = true;
+
+    /// <summary>v0.6.4 2-1（観測）: (C) の印を下ろす（マスターが動いた: Normal・確定した Jump）。</summary>
+    internal void ClearHeldJumpLandingNote() => _heldJumpLandingNoted = false;
 
     /// <summary>v0.6.3 (ii)（観測）: 境界の経路の端へのシーク（reason boundary）の数（起動からの累計）。</summary>
     internal long BoundarySeeks => _boundarySeeks;
@@ -311,12 +338,27 @@ public sealed class TimecodeSyncService
         bool afterOutsideLanding = _landedSinceLastRelocate && _lastLandingOutsideThreshold;
         bool chained = afterOutsideLanding && string.Equals(reason, _lastRelocateReason, StringComparison.Ordinal);
         // v0.6.3 (ii)（観測）: マスター停止中の後ろ向きの relocate と、境界の経路の端へのシークを数える（記録だけ）。
+        // v0.6.4 2-1（#14）: 停止中の後ろ向きを、止まった判定から（held-landing・旧 hold-entry）・(C)・残りに分けて数える。
+        bool heldJump = _heldJumpLandingNoted;
+        _heldJumpLandingNoted = false;
+        bool backwardWhileStopped = (MasterStoppedForBackwardCountSource?.Invoke() ?? !IsMasterMoving) &&
+            double.IsFinite(_lastObservedPlaybackSeconds) &&
+            targetSeconds < _lastObservedPlaybackSeconds - 0.001;
         if (reason == "boundary")
             _boundarySeeks++;
-        else if ((MasterStoppedForBackwardCountSource?.Invoke() ?? !IsMasterMoving) &&
-                 double.IsFinite(_lastObservedPlaybackSeconds) &&
-                 targetSeconds < _lastObservedPlaybackSeconds - 0.001)
-            _backwardSeeksWhileStopped++;
+        else if (heldJump)
+        {
+            _heldJumpLandings++;
+            if (backwardWhileStopped)
+                _heldJumpBackwardWhileStopped++;
+        }
+        else if (backwardWhileStopped)
+        {
+            if (reason is "held-landing" or "hold-entry")
+                _backwardSeeksWhileStopped++;
+            else
+                _otherBackwardWhileStopped++;
+        }
         Serilog.Log.Debug(
             "sync.gate relocate reason={Reason:l} target={Target:F3} chained={Chained} afterOutsideLanding={AfterOutsideLanding} previousReason={PreviousReason:l} lookaheadMs={LookaheadMs:F1}",
             reason, targetSeconds, chained, afterOutsideLanding, _lastRelocateReason, RelocateLookaheadSeconds * 1000.0);

@@ -121,7 +121,8 @@ public class HoldEntryCountTests
 
         // v0.6.3 (ii)（承認済み）: 入口の合わせの行はもう出ないので、行を数える主張は空振りになる。この台本ではシーク 0 で見る。
         h.Operations.Should().NotContain(o => o.Name == "seek",
-            "間に Jump の保留が挟まった 2 枚は、連続した保持の 2 枚ではない（fps の判定が効かない Auto でも弾く。古い保持値へ後ろ向きに合わせない）");
+            "間に Jump の保留が挟まった 2 枚は、連続した保持の 2 枚ではない（fps の判定が効かない Auto でも弾く。古い保持値へ後ろ向きに合わせない）。" +
+            "Auto の化けた 1 枚（同値の Duplicate）の見分けは入れない（利用者の決定 2026-10-02、docs/design/v0.6.4-inventory.md 2 節）");
     }
 
     [Fact]
