@@ -1,5 +1,7 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-10-02 22:0x（TSP-Opus）**: pre-commit のフックに制御文字の検査を足した（共有版は `scripts/hooks/pre-commit`、公開しない文字列は gitignore の `docs/local/forbidden-patterns.txt` から読む。SETUP 2 節）。その確かめの途中、最初の版（grep -P がロケールで素通り）で v06 のツリーに BEL 入りの試しのコミット `f88cbcd` ができ、push の前に `git reset --soft HEAD~1` で取り消した（ツリーは origin/v0.6.4 の 75d1d81 と一致を確認）。**reset は利用者の規則（stash・reset・clean・discard を使わない）の外だった**。以後、試しは使い捨ての repo だけで行い、取り消しは revert で
+
 > **2026-10-02 21:4x（TSP-Opus）**: v0.6.4（観測と試験基盤の整理、設計書 `docs/design/v0.6.4-observability.md`、ブランチ `v0.6.4`）の段 1〜3 を取り込み済み。開発機のディスクの空きが 20 GB を切ったので `timecode-sync-player-v05\artifacts\analysis-data`（09-28 の v0.5.4 の候補の比較、2.9 GB、レビュー済み）を消した（空き 22 GB）。一式の前に空きを確かめる
 
 > **2026-10-02 19:1x 更新（TSP-Opus）**: **v0.6.3 を Latest で公開（19:1x）。** タグ v0.6.3 = main の統合 `96ab6de`（リリースのコミット `4d5b866`、ProductVersion `0.6.3+4d5b866`）。setup `a8848e0fcc5bcb16e6525e7bb1c64f6550ad1e4ee536956e1d7ce13e77281f25`、zip `8361c3e9a85b55abad887524e5a560f8680a6964260bb969800a03aeeea79b72`（置き場は v06 の `artifacts\release-v063-4d5b866`）。検証した候補 `0.6.2+44cc043` と版の表記の 5 ファイルだけの差（shim `251627d3`・プラグイン `1ded64c4` は同じ）。事後報告は TSP-Fable へ送付済み
