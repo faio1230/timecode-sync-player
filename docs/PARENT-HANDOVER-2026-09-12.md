@@ -1,6 +1,6 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
-> **2026-10-02 13:1x 更新（TSP-Opus）**: **v0.6.2 は 08:48 に Latest で公開済み。v0.6.3 はブランチ `v0.6.3`（作業ツリー `timecode-sync-player-v06`、最新 `303d7f8`）に段 1・4・5・6・(ii) を取り込み済み（非E2E 2938/0）。開発機の固定の一式の前後比較（前 = main、後 = v0.6.3）を測定の担当 v063-c-debug-lap が実行中。** 正は `docs/design/v0.6.3-chase-cleanup.md`（11〜15 節が決定と経緯）
+> **2026-10-02 12:4x 更新（TSP-Opus）**: **v0.6.2 は 08:48 に Latest で公開済み。v0.6.3 はブランチ `v0.6.3`（作業ツリー `timecode-sync-player-v06`、最新 `303d7f8`）に段 1・4・5・6・(ii) を取り込み済み（非E2E 2938/0）。開発機の固定の一式の前後比較（前 = main、後 = v0.6.3）を測定の担当 v063-c-debug-lap が実行中。** 正は `docs/design/v0.6.3-chase-cleanup.md`（11〜15 節が決定と経緯）
 >
 > - **取り込み済み**: 段 1 観測（relocate の lookaheadMs・cSource・reason・masterStopped、File load landing、UI heartbeat summary、Sync hold summary）／段 5 ポンプの 1 枚（shim、shim_test 54/200 → 0）／段 6 instant-rate を segment まで保留（shim、assertion 156 → 0、打ち切りは既存の pump_budget_ms）／段 4 ロード解除の期限 1.5 秒を規則 4 で置き換え（Normal・確定した Jump で捨てる）／**(ii) RunThrough は保持中に止まった値へ合わせず、LTC の復帰で 1 回合わせる（利用者の決定）**、S-4 は境界の経路（RunThrough だけ）で保つ。規則 3・規則 4 の文言は `v0.5.4-gate-unification.md` 10-1 で直した
 > - **見送り**: 本命だった「切替の直後の 3 本の連鎖」は 4K 長 GOP のシークの所要の揺れが本体で、予測は入れない（利用者の決定）。(a)＋持ち越し停止は測る前に固定した基準の (1)(3) を欠いて見送り（15 節）。門 14 は外さない（役は c の過大の間引き）
