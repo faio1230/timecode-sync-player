@@ -305,4 +305,25 @@ public class RunThroughNoHoldAlignmentTests
         summaries[0].Properties["BackwardSeeksWhileStopped"].ToString().Should().Be(expectedBackward.ToString());
         summaries[0].Properties["BoundarySeeks"].ToString().Should().Be("0");
     }
+
+    /// <summary>
+    /// 観測の数え方（TSP-Fable の承認）: 損失（保持）からの等速の復帰で出る規則 3 の 1 本は (ii) の仕様どおりなので、
+    /// backwardSeeksWhileStopped に数えない。復帰の最初のフレームでは信号断の損失がまだ明けておらず（有効フレームを数えている間）、
+    /// マスター停止の判定（MasterStoppedSource）は真のままだが、保持（数える保持の連続）はもう終わっている（開発機の R-4 の型）。
+    /// </summary>
+    [Fact]
+    public void SyncHoldSummary_RecoveryRelocate_IsNotCountedAsBackwardWhileStopped()
+    {
+        (SyncScenarioHarness h, ScenarioClock clock) = Arrange(LtcSignalLossMode.RunThrough);
+        List<Seek> duringHold = FollowThenHold(h, clock, out long origin);
+        h.Ltc.Normal(13.04, TimeSpan.FromSeconds(3));       // 等速で復帰（映像は走り続けて先にいる）
+        List<Seek> recovery = RunUntil(h, clock, h.Ltc.NextMilliseconds, origin);
+        Report("hold", duringHold, h);
+        Report("recovery", recovery, h);
+
+        duringHold.Should().BeEmpty("前提: 保持の間はシークしない");
+        recovery.Should().ContainSingle("前提: 復帰で規則 3 の後ろ向きの 1 本").Which.Delta.Should().BeLessThan(0);
+        h.SyncService.BackwardSeeksWhileStopped.Should().Be(0,
+            "復帰の 1 本は (ii) の仕様どおりで、マスター停止中（保持中）の後ろ向きのシークではない");
+    }
 }
