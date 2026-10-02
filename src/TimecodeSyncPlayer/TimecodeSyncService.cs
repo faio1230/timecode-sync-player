@@ -215,6 +215,18 @@ public sealed class TimecodeSyncService
         IsMasterMoving ? _seekState.LearnedSeekDurationSeconds ?? _seekCostHintSeconds : 0.0;
 
     /// <summary>
+    /// v0.6.3 段 1（観測）: 先行量 c の出所。learned（着地の学習値）・hint（スキャンの見積もり）・none（どちらも無い）。
+    /// マスターが止まっている間に先行量を 0 にすることとは別（それは lookaheadMs の側に出る）。
+    /// </summary>
+    public string RelocateLookaheadSource =>
+        _seekState.LearnedSeekDurationSeconds is not null ? "learned"
+            : _seekCostHintSeconds > 0.0 ? "hint"
+            : "none";
+
+    /// <summary>v0.6.3 段 1（観測）: 読み込んでいるトラックの名前（ロードの着地の行に出す）。MainWindow が配線する。</summary>
+    public Func<string?>? LoadedTrackLabelSource { get; set; }
+
+    /// <summary>
     /// v0.5.4 B6b-16/23: relocate（シーク）・読み込みの着地を観測した直後の 1 サンプルだけ
     /// true を返す（消費する）。呼び出し側（補正の入口）はこのサンプルで varispeed しない。
     /// </summary>
@@ -265,6 +277,8 @@ public sealed class TimecodeSyncService
     private bool _landedSinceLastRelocate;
     private bool _lastLandingOutsideThreshold;
     private TimecodeSyncLandingRecord? _lastNotedLanding;
+    // v0.6.3 段 1（観測）: 直近の読み込みの入口（ロードの着地の行に出す）。
+    private string _lastFileLoadSource = "";
     private TimecodeSyncLandingRecord? _residualPendingLanding;
 
     /// <summary>
@@ -290,7 +304,14 @@ public sealed class TimecodeSyncService
             return;
         _lastNotedLanding = landing;
         if (!double.IsFinite(landing.TargetSeconds))
-            return;   // 読み込みの着地（目標なし）は relocate ではない
+        {
+            // 読み込みの着地（目標なし）は relocate ではない。v0.6.3 段 1（観測）: 遅れ（読み込みの発行 → その世代の
+            // 最初の配信）を配布ビルドでも数えられるように Information で 1 行出す。
+            Serilog.Log.Information(
+                "File load landing: delayMs={DelayMs:F1} track={Track} source={Source}",
+                landing.DelaySeconds * 1000.0, LoadedTrackLabelSource?.Invoke() ?? "", _lastFileLoadSource);
+            return;
+        }
         _landedSinceLastRelocate = true;
         if (IsMasterStoppedRelocate(_lastRelocateReason))
         {
@@ -426,6 +447,7 @@ public sealed class TimecodeSyncService
         double startPositionSeconds, long renderedFrameCount, long loadIssuedQpc, string source = "load")
     {
         SyncLifecycle.Record(SyncLifecycleEvent.FileLoad, source);
+        _lastFileLoadSource = source;
         _latencyCompensator.MarkLoadSent(loadIssuedQpc);
         _fileLoadEpoch++;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
@@ -448,6 +470,7 @@ public sealed class TimecodeSyncService
     internal void BeginGapFreezeLoad(string source)
     {
         SyncLifecycle.Record(SyncLifecycleEvent.GapFreezeLoad, source);
+        _lastFileLoadSource = source;
         _fileLoadEpoch++;
         _fileLoad.ClearReleasePending();
         // v0.5.4 段 B: 開始位置つきの読み込みなので、その読み込みの世代の着地待ちに入る

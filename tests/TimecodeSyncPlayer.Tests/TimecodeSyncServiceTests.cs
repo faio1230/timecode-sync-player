@@ -743,4 +743,20 @@ public class TimecodeSyncServiceTests
             value is ScalarValue scalar && scalar.Value?.ToString() == "path-guard");
         lifecycleRows.Should().Be(1, "できごと GapFreezeLoad を source つきで 1 行残す");
     }
+
+    // v0.6.3 段 1（観測）: relocate の行に出す先行量の出所。学習値 > スキャンの見積もり > なし。
+    [Fact]
+    public void RelocateLookaheadSource_IsLearnedThenHintThenNone()
+    {
+        var engine = new MockSyncDecisionEngine();
+        var seekState = new MockTimecodeSyncSeekState();
+        var service = new TimecodeSyncService(engine, seekState);
+
+        service.RelocateLookaheadSource.Should().Be("none");
+        service.SetSeekCostHintSeconds(0.2);
+        service.RelocateLookaheadSource.Should().Be("hint");
+        seekState.LearnedSeekDurationSeconds = 0.3;
+        service.RelocateLookaheadSource.Should().Be("learned");
+        service.RelocateLookaheadSeconds.Should().BeApproximately(0.3, 1e-9);
+    }
 }

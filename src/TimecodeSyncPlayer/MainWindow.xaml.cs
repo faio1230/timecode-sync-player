@@ -221,6 +221,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _ltcMonitor = ltcMonitor;
         _playlist = playlist;
         _syncService = syncService;
+        // v0.6.3 段 1（観測）: ロードの着地の行に、読み込んでいるトラックの名前を出す。
+        _syncService.LoadedTrackLabelSource = () => _playlist.Tracks.FirstOrDefault(t => t.Id == _loadedTrackId)?.Name;
         _gapPlaybackCommandExecutor = gapPlaybackCommandExecutor;
         _gapFreezeHandler = gapFreezeHandler;
         _settingsManager = settingsManager;
@@ -2681,8 +2683,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // ── 起動直後の UI スレッドの生存記録（v0.5.4、記録だけ） ──────────────
     // 起動から 30 秒、100ms ごとに Debug で 1 行。区間の後はタイマーを捨てる。
     // 優先度 Normal: Background の描画更新や OnTick に埋もれず、UI スレッドが回っているかを見る。
+    // v0.6.3 段 1: 区間の終わりに要約を Information で 1 行（配布ビルドでも起動の直後の停止を数えられるように）。
     private readonly UiHeartbeatRecorder _uiHeartbeat =
-        new(fields => Log.Debug("ui.heartbeat {Fields}", fields));
+        new(fields => Log.Debug("ui.heartbeat {Fields}", fields),
+            summary => Log.Information(
+                "UI heartbeat summary: firstLateMs={FirstLateMs:F1} maxLateMs={MaxLateMs:F1} ticks={Ticks} elapsedMs={ElapsedMs:F1} reason={Reason}",
+                summary.FirstLateMs, summary.MaxLateMs, summary.Ticks, summary.ElapsedMs, summary.Reason));
     private DispatcherTimer? _uiHeartbeatTimer;
 
     private void StartUiHeartbeat()
