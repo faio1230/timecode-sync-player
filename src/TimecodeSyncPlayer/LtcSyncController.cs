@@ -876,6 +876,8 @@ internal sealed class LtcSyncController
         {
             // D27-d: 値が進むフレームが来たら保持は明けたので、着地目標の保持値を捨てる。
             _input.OnNormalFrame();
+            // v0.6.3 段 4（規則 4）: マスターが動いたので、ロード解除の再適用（停止中の 1 回）は要らない。
+            _syncService.DiscardPendingFileLoadRelease();
             applyOnce = false;
             applyReason = "";
         }
