@@ -91,11 +91,14 @@ internal sealed class SingleModeSyncCoordinator
             _syncService.NotePostLandingSeekIssued(decision.TargetSeconds);
             NoteBoundarySeek(decision.TargetSeconds, state);
         }
+        // v0.6.3 段 1（観測）: 先行量（lookaheadMs）とその出所（cSource）を配布ビルドでも数えられるように出す。
         Log.Information(
-            "Timecode sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} videoFps={VideoFps:F3} timecodeFps={TimecodeFps:F3} defaultVideoFps={DefaultVideoFps} defaultTimecodeFps={DefaultTimecodeFps} success={Success}",
+            "Timecode sync seek ltc={Ltc:F3} playback={Playback:F3} target={Target:F3} delta={Delta:F3} tolerance={Tolerance:F4} videoFps={VideoFps:F3} timecodeFps={TimecodeFps:F3} defaultVideoFps={DefaultVideoFps} defaultTimecodeFps={DefaultTimecodeFps} success={Success} lookaheadMs={LookaheadMs:F1} cSource={CSource} reason={Reason} masterStopped={MasterStopped}",
             ltcSeconds, playbackSeconds, decision.TargetSeconds, decision.DeltaSeconds,
             decision.ToleranceSeconds, decision.VideoFpsUsed, decision.TimecodeFpsUsed,
-            decision.UsedDefaultVideoFps, decision.UsedDefaultTimecodeFps, success);
+            decision.UsedDefaultVideoFps, decision.UsedDefaultTimecodeFps, success,
+            _syncService.RelocateLookaheadSeconds * 1000.0, _syncService.RelocateLookaheadSource,
+            "sync", _syncService.IsMasterStoppedForObservation);
         return success ? SyncRequestResult.Complete : SyncRequestResult.Deferred;
     }
 
@@ -251,12 +254,46 @@ internal sealed class SingleModeSyncCoordinator
         seek.Epoch == _syncService.FileLoadEpoch;
 
     /// <summary>
-    /// v0.6.0 S-4: 規則 4 の入口の合わせ（LtcSyncController）がクリップの端へ収めた目標へシークしたことを覚える。
-    /// 記録の形は同期シークの <see cref="NoteBoundarySeek"/> と同じ（端と、いまの読み込み番号）。
-    /// 端の判定はクリップの範囲と fps だけを使うので、位置は照会せず目標を渡す。
+    /// v0.6.3 (ii)（設計書 14-4、S-4 の保全）: 範囲外の LTC はクリップの端で止める（D33・D29）。RunThrough の保持の入口の合わせを
+    /// 外したので、保持（Duplicate）の間に端へのシークを出す経路をここに分離した。保持値がクリップの外で、境界の保持に入って
+    /// おらず、着地待ちでなく、同じ読み込みで端へのシークをまだ出していないときに、端（ClampToClip）へ 1 回だけシークし、
+    /// 同期シークと同じ形（端と FileLoadEpoch）で記録する。端の ±2 映像フレームに居れば出さない。尺と fps が分かるまでは
+    /// 判定しない（端が素材の終わりちょうどになるのを避ける。S-4 の回帰の修正と同じ条件）。
     /// </summary>
-    internal void NoteHoldEntryBoundarySeek(double targetSeconds) =>
-        NoteBoundarySeek(targetSeconds, _effects.BuildPlaybackState(targetSeconds));
+    internal void EnsureBoundarySeekForHeldOutside(double heldSeconds)
+    {
+        if (!double.IsFinite(heldSeconds) || _boundary.IsHeld || _syncService.IsWaitingForLanding)
+            return;
+        SyncPositionRead read = _effects.ReadPosition();
+        if (!read.Succeeded)
+            return;
+        double playbackSeconds = read.PlaybackSeconds;
+        SyncPlaybackState state = _effects.BuildPlaybackState(playbackSeconds);
+        if (!state.SyncEnabled || !state.HasCurrentTrack)
+            return;
+        (double clipIn, double clipOut) = SyncDecisionEngine.ClipRange(
+            state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds);
+        if (!double.IsFinite(clipOut) || !SeekBarUpdateState.IsUsableDuration(clipOut - clipIn) ||
+            !SyncDecisionEngine.IsUsableFps(state.VideoFps))
+            return;
+        double edge = heldSeconds < clipIn ? clipIn : heldSeconds > clipOut ? clipOut : double.NaN;
+        if (!double.IsFinite(edge))
+            return;
+        double tolerance = 2.0 / state.VideoFps;
+        if (BoundarySeekSentTo(edge, tolerance))
+            return;
+        double target = SyncDecisionEngine.ClampToClip(
+            heldSeconds, state.MediaInSeconds, state.MediaOutSeconds, state.DurationSeconds, state.VideoFps);
+        if (Math.Abs(playbackSeconds - target) <= tolerance)
+            return;
+        if (!_effects.SeekTo(target))
+            return;
+        _syncService.ReportSeekSent(target, "boundary");
+        NoteBoundarySeek(target, state);
+        Log.Information(
+            "Single mode: boundary seek for held LTC outside the clip target={Target:F3} ltc={Ltc:F3} playback={Playback:F3} clip=[{In:F3},{Out:F3}]",
+            target, heldSeconds, playbackSeconds, clipIn, clipOut);
+    }
 
     /// <summary>端へのシーク（範囲外 LTC の着地先）を出したことを覚える。</summary>
     private void NoteBoundarySeek(double targetSeconds, SyncPlaybackState state)

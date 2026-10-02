@@ -1,5 +1,22 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-10-02 15:3x 更新（TSP-Opus）**: **v0.6.3 の候補 `0.6.2+44cc043` を検証機へ送付、固定の一式を依頼済み。** setup `a23cde578e33623935b752f8d38a62ef8cc2bdf29e274db086c4958981af1ec5`、zip `c7277c716cf022dbd73ad399dec4b9b0637d198eb74100fe2fb3017b468c8133`、tar `83faceb357489842a69e92288490ef1012766916cb776a67c004d1422d092ff9`（置き場は v06 の `artifacts\cand-v063-44cc043`）。中の shim は Release `251627d3…`、プラグイン `1ded64c4`。開発機: 非E2E 2939/0、check-shim-lock-rule PASS
+>
+> - **候補へ進んだ条件（TSP-Fable）**: (1) C-2 の黒の率は本番構成で前後 10 回ずつ交互に前 0/10・後 0/10、一式を含め前 0/12・後 1/12 で「同程度」（戻らない黒かは未確定、設計書 17-2）。(2) assertion の型 1・型 2 は qtdemux が flush の後に古い INSTANT_RATE_CHANGE の sticky を押し直すのが出どころで、v0.6.4 の材料（17-4）。段 6 の保留は残す。(3) ノート・CHANGELOG はレビュー済み（残る行の文を 17-4 の事実に合わせた）
+> - **検証機の一式で数えるもの**: assertion（tcs-gst-raw.log、v0.6.2 は 147）、pump: held、Sync hold summary（RunThrough で backwardSeeksWhileStopped 0）、dropping stale（0）、UI heartbeat、C-2 の黒（出ても止めずに記録、TSP-Fable へ報告して率の規則を当てる）、A の公開不足。止める規則は C-2 の黒以外すべて（前回の件数だけの例外は使わない）
+> - **公開の手順の残り**: 結果 → 条件 1〜6 の表を TSP-Fable へ → 「公開可」→ 版 0.6.3（csproj・ApplicationVersionTests）・CHANGELOG の日付と N → M・ノートの見出し（候補 → 安定版）と検証の欄 → 案 A の訂正 3 か所（v0.6.1 のノート 18 行目の後、CHANGELOG の 0.6.1 の 22 行目、v0.6.1 の Release 本文。日付つき）→ 検査 → パッケージ（出力名に SHA、native\tcs_gstreamer.dll を Release に差し替えてから。Debug は `artifacts\tcs_gstreamer.debug-fa276805.bak`）→ 候補 44cc043 と比較 → main へ --no-ff → タグ → `--latest` → 事後報告
+> - **v0.6.4 の材料**: assertion の型 1・型 2（送る側を変えるか GStreamer 側）、長 GOP のシークの所要（入れない決定）、C-2 の黒の lease ログつき診断、renderedFrames の要約の欠陥、起動の停止（約 0.8 秒）
+
+
+> **2026-10-02 12:4x 更新（TSP-Opus）**: **v0.6.2 は 08:48 に Latest で公開済み。v0.6.3 はブランチ `v0.6.3`（作業ツリー `timecode-sync-player-v06`、最新 `303d7f8`）に段 1・4・5・6・(ii) を取り込み済み（非E2E 2938/0）。開発機の固定の一式の前後比較（前 = main、後 = v0.6.3）を測定の担当 v063-c-debug-lap が実行中。** 正は `docs/design/v0.6.3-chase-cleanup.md`（11〜15 節が決定と経緯）
+>
+> - **取り込み済み**: 段 1 観測（relocate の lookaheadMs・cSource・reason・masterStopped、File load landing、UI heartbeat summary、Sync hold summary）／段 5 ポンプの 1 枚（shim、shim_test 54/200 → 0）／段 6 instant-rate を segment まで保留（shim、assertion 156 → 0、打ち切りは既存の pump_budget_ms）／段 4 ロード解除の期限 1.5 秒を規則 4 で置き換え（Normal・確定した Jump で捨てる）／**(ii) RunThrough は保持中に止まった値へ合わせず、LTC の復帰で 1 回合わせる（利用者の決定）**、S-4 は境界の経路（RunThrough だけ）で保つ。規則 3・規則 4 の文言は `v0.5.4-gate-unification.md` 10-1 で直した
+> - **見送り**: 本命だった「切替の直後の 3 本の連鎖」は 4K 長 GOP のシークの所要の揺れが本体で、予測は入れない（利用者の決定）。(a)＋持ち越し停止は測る前に固定した基準の (1)(3) を欠いて見送り（15 節）。門 14 は外さない（役は c の過大の間引き）
+> - **残り**: 一式の前後比較の結果 → ノート（振る舞いの変化「RunThrough は止まった位置へ戻さず走り続ける」、v0.6.2 の既知の間欠「入口の合わせで 0.5 秒前後止まる」の行は削除）・CHANGELOG → 候補 → 検証機の固定の一式（`pump: held` と assertion の行も数える）→ TSP-Fable に条件 → 公開。段 7（起動の停止）は一式の firstLateMs を見て諮る。試験の許容を「目標の次のフレームまで」に揃える件（12 節の (4)）は未着手
+> - **担当**: s4-fix（`timecode-sync-player-v053`）、v063-pump（`timecode-sync-player-v063c`）は待機。v063-c-debug-lap が一式。`timecode-sync-player-v063b`（carry、見送り）は消してよい
+> - **検証機**: 待機。v0.6.3 の材料の集計（M4 のロード、+2 フレーム）は済み
+
+
 > **2026-10-02 08:5x 更新（TSP-Opus）**: **v0.6.2 を Latest で公開（08:48）。** タグ v0.6.2 = main の統合 `5e8ae70`（リリースのコミット `3f86d59`、ProductVersion `0.6.2+3f86d59`）。setup `3e493e081f13e916fb0a0eb27e3c10cabb5baca611f8153add5e8054ee2f2981`、zip `b42775ccb68c9b561adee96ff74b64441f8ded300b52052d5f29c144af925ca8`（置き場は `timecode-sync-player-v06\artifacts\release-v062-3f86d59`）。候補 f6aa196 の zip と比べて違いは版の表記の 5 ファイルだけ（shim e6901eab・プラグイン 1ded64c4・.cso 同じ）。事後報告は TSP-Fable へ送付済み
 >
 > - **一式（検証機、04:15〜08:41、親は報告の zip の集計を照合）**: 標準 a/b/c 各 38/0、L-1 6/6、A-1 合格（限度内の 0.432 s が 1 区間）、A-2 は 1 回目 0.517 s（試験の音声経路の LTC の乱れと同時の RunThrough の入口の合わせ、TSP-Fable の承認で件数だけ）→ やり直しは乱れ無しで合格（0.013 s）、ProRes RTX GPU 183・AMD CPU 76・不一致 0、PR4 GPU/CPU 可、ProjectRoundTrip 10/10、K2 1/1、非E2E 2893。参照の採取の失敗 0、R-1/R-5 の 1 フレーム 0、assertion 147

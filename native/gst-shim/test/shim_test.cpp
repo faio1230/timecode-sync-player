@@ -1887,8 +1887,9 @@ run_seek_method_check (int argc, char** argv)
  * handler chained to the shim's), the call's return, and the effective rate
  * measured from leased frame PTS over two 1-second windows after the landing.
  * A mismatch is an effective rate that stays near `from` while the call
- * returned TCS_OK (the shim records `to`). Informational: no PASS/FAIL on the
- * mismatch itself, only on the harness working. */
+ * returned TCS_OK (the shim records `to`). v0.6.3 段 6: PASS/FAIL now also covers
+ * the assertion count (0), the mismatch (0) and the call's return (TCS_OK).
+ * 180 runs = 15 iters (2 cases x 6 delays each). */
 static std::atomic<int> g_segment_criticals{0};
 static std::atomic<int> g_other_criticals{0};
 static GLogFunc g_ir_prev_handler = nullptr;
@@ -1979,6 +1980,7 @@ run_instant_rate_after_seek (int argc, char** argv)
   const int delays_ms[] = { 0, 1, 5, 20, 100, 300 };
   int harness_ok = 0, harness_runs = 0;
   int crit_runs = 0, crit_mismatch = 0, clean_runs = 0, clean_mismatch = 0;
+  int rejected = 0;
   for (int it = 0; it < iters; it++) {
     for (const Case& c : cases) {
       for (int d : delays_ms) {
@@ -2001,6 +2003,7 @@ run_instant_rate_after_seek (int argc, char** argv)
         double r2 = ir_effective_rate (p, gen, 1000);
         bool measured = gen != 0 && !std::isnan (r1) && !std::isnan (r2);
         if (measured) harness_ok++;
+        if (irc != TCS_OK) rejected++;
         /* mismatch: closer to `from` than to `to` while the call said OK */
         bool mismatch = measured && irc == TCS_OK &&
             std::fabs (r1 - c.from) < std::fabs (r1 - c.to);
@@ -2015,11 +2018,404 @@ run_instant_rate_after_seek (int argc, char** argv)
   tcs_player_set_speed (p, 1.0);
   g_log_set_default_handler (g_ir_prev_handler, g_ir_prev_data);
   tcs_player_destroy (p);
-  printf ("  SUMMARY runs=%d measured=%d criticalRuns=%d criticalMismatch=%d cleanRuns=%d cleanMismatch=%d\n",
-      harness_runs, harness_ok, crit_runs, crit_mismatch, clean_runs, clean_mismatch);
+  printf ("  SUMMARY runs=%d measured=%d criticalRuns=%d criticalMismatch=%d cleanRuns=%d cleanMismatch=%d "
+          "rejected=%d segCriticalTotal=%d\n",
+      harness_runs, harness_ok, crit_runs, crit_mismatch, clean_runs, clean_mismatch,
+      rejected, g_segment_criticals.load ());
   check (harness_ok == harness_runs, "every run measured an effective rate");
+  /* v0.6.3 段 6（設計書 6 節・11 節の (b)）: flush の segment が届くまで shim が instant-rate を
+   * 保留するので、assertion の行は 0、速度は指示どおり、呼び出しは成功のまま。 */
+  check (g_segment_criticals.load () == 0, "no gst_segment_do_seek assertion around the instant change");
+  check (crit_mismatch + clean_mismatch == 0, "the effective rate follows the instant change");
+  check (rejected == 0, "every instant change returned TCS_OK");
   return failures;
 #endif
+}
+
+/* --instant-rate-past-audio <file> [iters]: v0.6.3 段 6 の続き。音声が映像より短い素材で、
+ * 音声の尺の外へ flush シークした直後に instant-rate を送る。shim は flush の segment が
+ * 届くまで instant-rate を保留するが、音声の尺の外では音声の sink に新しい segment が
+ * 来ないことがある。そこで待ち続けず（音声を待つ理由が無いと状態で判定して）速度が
+ * すぐ効くことを確かめる。各回: 0.9 で再生 → 音声の尺の外へシーク → 1.0 の instant →
+ * 0.5 秒後から 1 秒の窓で実効の速度を測る。1.0 に近ければ合格（保留が待ち続けると 0.9 のまま）。 */
+static int
+run_instant_rate_past_audio (int argc, char** argv)
+{
+  if (argc < 4) {
+    printf ("usage: tcs-shim-test --instant-rate-past-audio <file> <audio_end_s> [iters]\n");
+    return 2;
+  }
+#if !GST_CHECK_VERSION(1,18,0)
+  printf ("  instant rate change needs GStreamer 1.18+\n");
+  return 2;
+#else
+  const char* file = argv[2];
+  double audio_end = atof (argv[3]);
+  int iters = argc > 4 ? atoi (argv[4]) : 10;
+  if (iters < 1)
+    iters = 1;
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimInstantRatePastAudio", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) return 1;
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  double dur = 0;
+  tcs_player_get_duration (p, &dur);
+  printf ("  media duration=%.3fs audio_end=%.3fs iters=%d\n", dur, audio_end, iters);
+  if (dur < audio_end + 4.0) {
+    printf ("  need >= 4s of video after the audio end\n");
+    tcs_player_destroy (p);
+    return 1;
+  }
+  std::this_thread::sleep_for (std::chrono::milliseconds (500));
+  int measured = 0, slow = 0, rejected = 0;
+  for (int i = 0; i < iters; i++) {
+    /* 音声の尺の外（音声の終わり + 0.5 秒 〜 尺 − 3 秒） */
+    double span = dur - 3.0 - (audio_end + 0.5);
+    double target = audio_end + 0.5 + std::fmod (0.37 * (i + 1), span > 0.1 ? span : 0.1);
+    tcs_player_set_speed (p, 0.9);
+    std::this_thread::sleep_for (std::chrono::milliseconds (400));
+    uint64_t gen = tcs_player_seek (p, target);
+    int irc = tcs_player_set_rate_instant (p, 1.0);
+    if (irc != TCS_OK) rejected++;
+    std::this_thread::sleep_for (std::chrono::milliseconds (500));
+    double r = ir_effective_rate (p, gen, 1000);
+    bool ok = !std::isnan (r);
+    if (ok) measured++;
+    if (ok && std::fabs (r - 0.9) < std::fabs (r - 1.0)) slow++;
+    printf ("  run %2d: target=%.3f gen=%llu rc=%d rate=%.4f %s\n", i, target,
+        (unsigned long long) gen, irc, r, ok && std::fabs (r - 0.9) < std::fabs (r - 1.0) ? "SLOW(0.9)" : "");
+  }
+  tcs_player_set_speed (p, 1.0);
+  tcs_player_destroy (p);
+  printf ("  SUMMARY iters=%d measured=%d stillOldRate=%d rejected=%d\n", iters, measured, slow, rejected);
+  check (measured == iters, "every run measured an effective rate");
+  check (rejected == 0, "every instant change returned TCS_OK");
+  check (slow == 0, "the instant change takes effect past the audio end (no wait for an audio segment)");
+  return failures;
+#endif
+}
+
+/* --instant-rate-before-seek <file> [iters]: v0.6.3 段 6 の型 (1)。一式で残った assertion の
+ * 順を再現する: instant-rate を送った 0〜5ms 後に flush シーク。
+ *   paused=1: rate(1.0) → 一時停止 → 一時停止中のシーク（ポンプが PLAYING にする）。
+ *             アプリのギャップの Freeze の入口と同じ順（F-4・S-2）
+ *   paused=0: rate(1.0) → 再生中のシーク
+ * 各回の前に 1.04 を instant で入れておく（Smooth の補正中の形）。assertion の行が 0、
+ * 速度が指示どおり（一時停止の回は再開した後に測る）、呼び出しが TCS_OK であること。
+ * v0.6.4 の材料、赤のまま（設計書 17 節。型 (1) は v0.6.3 では直さない）。直す前の数: 42 回で
+ * assertion 116 行、速度の食い違い 0。手で回すモードだけ（既定の実行・CI・非E2E には入らない）。 */
+static int
+run_instant_rate_before_seek (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --instant-rate-before-seek <file> [iters]\n");
+    return 2;
+  }
+#if !GST_CHECK_VERSION(1,18,0)
+  printf ("  instant rate change needs GStreamer 1.18+\n");
+  return 2;
+#else
+  const char* file = argv[2];
+  int iters = argc > 3 ? atoi (argv[3]) : 5;
+  if (iters < 1)
+    iters = 1;
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimInstantRateBeforeSeek", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) return 1;
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  g_ir_prev_handler = g_log_set_default_handler (ir_count_criticals, nullptr);
+  double dur = 0;
+  tcs_player_get_duration (p, &dur);
+  printf ("  media duration=%.3fs iters=%d\n", dur, iters);
+  std::this_thread::sleep_for (std::chrono::milliseconds (500));
+
+  const int delays_ms[] = { 0, 1, 2, 5, 20, 40, 400 };
+  int runs = 0, measured = 0, mismatch = 0, rejected = 0;
+  int crit_paused = 0, crit_playing = 0;
+  for (int it = 0; it < iters; it++) {
+    for (int paused = 0; paused <= 1; paused++) {
+      for (int d : delays_ms) {
+        runs++;
+        double target = dur > 8.0 ? 1.0 + std::fmod (0.37 * (runs * 7), dur - 6.0) : 0.5;
+        tcs_player_set_paused (p, 0);
+        tcs_player_set_rate_instant (p, 1.04);
+        std::this_thread::sleep_for (std::chrono::milliseconds (400));
+        int seg_before = g_segment_criticals.load ();
+        int irc = tcs_player_set_rate_instant (p, 1.0);
+        if (irc != TCS_OK) rejected++;
+        if (d > 0)
+          std::this_thread::sleep_for (std::chrono::milliseconds (d));
+        if (paused)
+          tcs_player_set_paused (p, 1);
+        uint64_t gen = tcs_player_seek (p, target);
+        std::this_thread::sleep_for (std::chrono::milliseconds (400));
+        if (paused) {
+          TcsFrameInfo info = {};
+          if (tcs_player_acquire (p, gen, &info) == 1)
+            tcs_player_release (p);
+          tcs_player_set_paused (p, 0);
+          std::this_thread::sleep_for (std::chrono::milliseconds (300));
+        }
+        int seg = g_segment_criticals.load () - seg_before;
+        double r = ir_effective_rate (p, gen, 1000);
+        bool ok = !std::isnan (r);
+        if (ok) measured++;
+        bool mm = ok && std::fabs (r - 1.04) < std::fabs (r - 1.0);
+        if (mm) mismatch++;
+        if (paused) crit_paused += seg; else crit_playing += seg;
+        printf ("  run %3d paused=%d delay=%dms gen=%llu rc=%d segCritical=%d rate=%.4f%s\n",
+            runs, paused, d, (unsigned long long) gen, irc, seg, r, mm ? " MISMATCH" : "");
+      }
+    }
+  }
+  tcs_player_set_rate_instant (p, 1.0);
+  g_log_set_default_handler (g_ir_prev_handler, g_ir_prev_data);
+  tcs_player_destroy (p);
+  printf ("  SUMMARY runs=%d measured=%d segCriticalPaused=%d segCriticalPlaying=%d mismatch=%d rejected=%d\n",
+      runs, measured, crit_paused, crit_playing, mismatch, rejected);
+  check (measured == runs, "every run measured an effective rate");
+  check (rejected == 0, "every instant change returned TCS_OK");
+  check (mismatch == 0, "the effective rate follows the last instant change");
+  check (crit_paused + crit_playing == 0, "no gst_segment_do_seek assertion when a flush seek follows an instant change");
+  return failures;
+#endif
+}
+
+/* --instant-rate-held-after-seek <file> [iters]: v0.6.3 段 6 の型 (2)（設計書 17 節）。L-1 で
+ * 残った順を再現する: 再生中に instant（1.04）→ d ms 後に再生中の flush シーク → すぐ 1.0 の
+ * instant（segment の前なので shim が保留し、segment の後に送る）。L-1 の例は d=43ms。
+ * assertion の行が 0、速度が 1.0、呼び出しが TCS_OK であること。
+ * v0.6.4 の材料、赤のまま（設計書 17 節）。直す前の数: 21 回で 21 回・84 行。保留した instant を
+ * segment の後の最初のバッファまで待たせても 14 回・52 行で 0 にならなかった。GST_DEBUG では
+ * 出どころは保留した 1.0 ではなく、flush シークの前に送った 1.04（seqnum 307）の
+ * INSTANT_RATE_CHANGE を qtdemux が新しい SEGMENT の直後に押し直したもの（型 (1) と同じ仕組み）。
+ * 手で回すモードだけ（既定の実行・CI・非E2E には入らない）。 */
+static int
+run_instant_rate_held_after_seek (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --instant-rate-held-after-seek <file> [iters]\n");
+    return 2;
+  }
+#if !GST_CHECK_VERSION(1,18,0)
+  printf ("  instant rate change needs GStreamer 1.18+\n");
+  return 2;
+#else
+  const char* file = argv[2];
+  int iters = argc > 3 ? atoi (argv[3]) : 5;
+  if (iters < 1)
+    iters = 1;
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimInstantRateHeldAfterSeek", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) return 1;
+  tcs_player_set_frame_callback (p, on_frame, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  g_ir_prev_handler = g_log_set_default_handler (ir_count_criticals, nullptr);
+  double dur = 0;
+  tcs_player_get_duration (p, &dur);
+  printf ("  media duration=%.3fs iters=%d\n", dur, iters);
+  std::this_thread::sleep_for (std::chrono::milliseconds (500));
+
+  const int delays_ms[] = { 0, 10, 20, 30, 43, 60, 400 };
+  int runs = 0, measured = 0, mismatch = 0, rejected = 0, crit = 0, crit_runs = 0;
+  for (int it = 0; it < iters; it++) {
+    for (int d : delays_ms) {
+      runs++;
+      double target = dur > 8.0 ? 1.0 + std::fmod (0.37 * (runs * 7), dur - 6.0) : 0.5;
+      tcs_player_set_rate_instant (p, 1.0);
+      std::this_thread::sleep_for (std::chrono::milliseconds (400));
+      int seg_before = g_segment_criticals.load ();
+      tcs_player_set_rate_instant (p, 1.04);
+      if (d > 0)
+        std::this_thread::sleep_for (std::chrono::milliseconds (d));
+      uint64_t gen = tcs_player_seek (p, target);
+      int irc = tcs_player_set_rate_instant (p, 1.0);
+      if (irc != TCS_OK) rejected++;
+      std::this_thread::sleep_for (std::chrono::milliseconds (500));
+      int seg = g_segment_criticals.load () - seg_before;
+      double r = ir_effective_rate (p, gen, 1000);
+      bool ok = !std::isnan (r);
+      if (ok) measured++;
+      bool mm = ok && std::fabs (r - 1.04) < std::fabs (r - 1.0);
+      if (mm) mismatch++;
+      crit += seg;
+      if (seg > 0) crit_runs++;
+      printf ("  run %3d delay=%dms gen=%llu rc=%d segCritical=%d rate=%.4f%s\n",
+          runs, d, (unsigned long long) gen, irc, seg, r, mm ? " MISMATCH" : "");
+    }
+  }
+  g_log_set_default_handler (g_ir_prev_handler, g_ir_prev_data);
+  tcs_player_destroy (p);
+  printf ("  SUMMARY runs=%d measured=%d criticalRuns=%d segCritical=%d mismatch=%d rejected=%d\n",
+      runs, measured, crit_runs, crit, mismatch, rejected);
+  check (measured == runs, "every run measured an effective rate");
+  check (rejected == 0, "every instant change returned TCS_OK");
+  check (mismatch == 0, "the effective rate follows the held instant change (1.0)");
+  check (crit == 0, "no gst_segment_do_seek assertion around the held instant change");
+  return failures;
+#endif
+}
+
+/* --paused-seek-one-frame <file> [iters] [consumer]: v0.6.3 段 5
+ * (docs/design/v0.6.3-chase-cleanup.md 4・12 節). 一時停止中のシークのポンプは新しい世代の
+ * フレームを 1 枚だけ配信し、PAUSED に戻った後にも 2 枚目を出さないこと。開発機で 156 回中 6 回、
+ * 検証機で 1,247 回中 39 回、PAUSED の前に 2 枚目（+1 → +2）が配信され、shim は 2 枚目の PTS を
+ * 位置として返していた。
+ * 各回: 一時停止のまま、格子の点をわずかに越える目標（アプリの「比 × 本当の尺」と同じ形）へ
+ * シークし、その世代の配信の通知を数える。1 枚目から 300ms 後と 600ms 後に数え、
+ * 300ms までに 2 枚以上なら「2 枚」、300ms の後に増えたら「PAUSED の後の配信」とする。
+ * consumer=1 は GPU worker の代わりに別スレッドが 1ms ごとに acquire/release する（実機の形）。
+ * 2 枚目の発生は tick の遅れ次第なので、決定的に赤を見るときは
+ * TCS_TEST_PUMP_TICK_DELAY_MS=50 を付けて回す。 */
+static std::atomic<uint64_t> g_osf_gen{0};
+static std::atomic<int> g_osf_count{0};
+static std::atomic<bool> g_osf_consumer_run{false};
+
+static void
+on_frame_osf (void* user, uint64_t generation, uint64_t seq)
+{
+  on_frame (user, generation, seq);
+  if (generation != 0 && generation == g_osf_gen.load ())
+    g_osf_count++;
+}
+
+static int
+run_paused_seek_one_frame (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --paused-seek-one-frame <file> [iters] [consumer]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+  int iters = argc > 3 ? atoi (argv[3]) : 200;
+  if (iters < 1)
+    iters = 1;
+  bool consumer = argc > 4 && atoi (argv[4]) != 0;
+  unsigned budget_ms = pump_budget_ms_env ();
+  const char* tick_delay = getenv ("TCS_TEST_PUMP_TICK_DELAY_MS");
+
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimPausedSeekOneFrame", nullptr, err, sizeof (err));
+  check (p != nullptr, "create (internal device)");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+  tcs_player_set_frame_callback (p, on_frame_osf, nullptr);
+  int rc = tcs_player_load (p, file, -1.0, 0, err, sizeof (err));
+  check (rc == TCS_OK, "load playing");
+  if (rc != TCS_OK) { printf ("  err=%s\n", err); tcs_player_destroy (p); return 1; }
+  std::this_thread::sleep_for (std::chrono::milliseconds (500));
+  double dur = 0, fps = 0;
+  tcs_player_get_duration (p, &dur);
+  tcs_player_get_fps (p, &fps);
+  double frame_s = fps > 0.0 ? 1.0 / fps : 0.04;
+  printf ("  media duration=%.3fs fps=%.3f iters=%d consumer=%d tick_delay_ms=%s budget_ms=%u\n",
+      dur, fps, iters, consumer ? 1 : 0, tick_delay ? tick_delay : "-", budget_ms);
+  if (dur < 4.0) {
+    printf ("  media too short (need >= 4s)\n");
+    tcs_player_destroy (p);
+    return 1;
+  }
+
+  tcs_player_set_paused (p, 1);
+  std::this_thread::sleep_for (std::chrono::milliseconds (300));
+  TcsFrameInfo info = {};
+  if (tcs_player_acquire (p, tcs_player_get_generation (p), &info) == 1)
+    tcs_player_release (p);
+
+  std::thread consumer_thread;
+  if (consumer) {
+    g_osf_consumer_run = true;
+    consumer_thread = std::thread ([p] () {
+      while (g_osf_consumer_run.load ()) {
+        TcsFrameInfo ci = {};
+        if (tcs_player_acquire (p, g_osf_gen.load (), &ci) == 1)
+          tcs_player_release (p);
+        std::this_thread::sleep_for (std::chrono::milliseconds (1));
+      }
+    });
+  }
+
+  int no_frame = 0, multi = 0, after_paused = 0, invalid = 0, max_count = 0;
+  int first_delta_hist[5] = {};   /* first frame - target: <0, 0, +1, +2, >+2 frames */
+  int pos_mismatch = 0;
+  for (int i = 0; i < iters; i++) {
+    /* 格子の点 + 0.4ms（アプリの目標は比 × 本当の尺で格子をわずかに越える。12 節） */
+    double t = 1.0 + std::fmod (0.7371 * (i + 1), dur - 3.0);
+    double target = std::floor (t / frame_s) * frame_s + 0.0004;
+    uint64_t expect_gen = tcs_player_get_generation (p) + 1;
+    g_osf_count = 0;
+    g_osf_gen = expect_gen;
+    auto t0 = std::chrono::steady_clock::now ();
+    uint64_t gen = tcs_player_seek (p, target);
+    if (gen != expect_gen) {
+      invalid++;
+      printf ("  run %3d: generation mismatch expect=%llu got=%llu (skipped)\n",
+          i, (unsigned long long) expect_gen, (unsigned long long) gen);
+      std::this_thread::sleep_for (std::chrono::milliseconds (600));
+      continue;
+    }
+    bool got = false;
+    while (std::chrono::duration<double, std::milli> (
+               std::chrono::steady_clock::now () - t0).count () < budget_ms + 250.0) {
+      if (g_osf_count.load () > 0) { got = true; break; }
+      std::this_thread::sleep_for (std::chrono::milliseconds (1));
+    }
+    if (!got) {
+      no_frame++;
+      printf ("  run %3d: target=%.4f NO FRAME\n", i, target);
+      continue;
+    }
+    double first_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - t0).count ();
+    std::this_thread::sleep_for (std::chrono::milliseconds (300));
+    int n300 = g_osf_count.load ();
+    double pos = -1.0;
+    tcs_player_get_time_pos (p, &pos);
+    std::this_thread::sleep_for (std::chrono::milliseconds (300));
+    int n600 = g_osf_count.load ();
+    double delta_f = (pos - target) / frame_s;
+    int bucket = delta_f < -0.5 ? 0 : delta_f < 0.5 ? 1 : delta_f < 1.5 ? 2 : delta_f < 2.5 ? 3 : 4;
+    first_delta_hist[bucket]++;
+    if (n600 > max_count)
+      max_count = n600;
+    if (n300 > 1)
+      multi++;
+    if (n600 > n300)
+      after_paused++;
+    /* 1 枚だけなら位置（配信した最後の PTS）は目標の次のフレームまで（0〜+1 フレーム） */
+    if (n600 == 1 && (delta_f < -0.5 || delta_f > 1.5))
+      pos_mismatch++;
+    if (n300 > 1 || n600 > n300 || i < 3 || (i % 50) == 0)
+      printf ("  run %3d: target=%.4f first=%.1fms frames@300ms=%d frames@600ms=%d "
+              "pos=%.4f delta=%+.2f f\n",
+          i, target, first_ms, n300, n600, pos, delta_f);
+  }
+
+  if (consumer) {
+    g_osf_consumer_run = false;
+    consumer_thread.join ();
+  }
+  tcs_player_destroy (p);
+  int measured = iters - invalid - no_frame;
+  printf ("  SUMMARY iters=%d measured=%d noFrame=%d invalid=%d twoOrMore=%d afterPaused=%d "
+          "maxFrames=%d posOutside0to1=%d firstDelta[<0,0,+1,+2,>+2]=%d,%d,%d,%d,%d\n",
+      iters, measured, no_frame, invalid, multi, after_paused, max_count, pos_mismatch,
+      first_delta_hist[0], first_delta_hist[1], first_delta_hist[2], first_delta_hist[3],
+      first_delta_hist[4]);
+  check (no_frame == 0, "every paused seek delivered a frame");
+  check (multi == 0, "every paused seek delivered exactly one frame before PAUSED");
+  check (after_paused == 0, "no frame of the seek generation after PAUSED");
+  return failures;
 }
 
 int
@@ -2055,6 +2451,26 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--ring-epoch") == 0) {
     int rc = run_ring_epoch_tests (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--paused-seek-one-frame") == 0) {
+    run_paused_seek_one_frame (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--instant-rate-held-after-seek") == 0) {
+    run_instant_rate_held_after_seek (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--instant-rate-before-seek") == 0) {
+    run_instant_rate_before_seek (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--instant-rate-past-audio") == 0) {
+    run_instant_rate_past_audio (argc, argv);
     printf ("RESULT failures=%d\n", failures);
     return failures == 0 ? 0 : 1;
   }

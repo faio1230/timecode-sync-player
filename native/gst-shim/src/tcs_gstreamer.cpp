@@ -300,6 +300,13 @@ static std::atomic<int> test_hold_budget{test_hold_frame_lock_ms > 0 ? 40 : 0};
 static int test_hold_seek_lock_ms = env_int ("TCS_TEST_HOLD_SEEK_LOCK_MS", 0);
 static std::atomic<int> test_seek_hold_budget{test_hold_seek_lock_ms > 0 ? 8 : 0};
 
+/* v0.6.3 段 5 の試験用フック: 一時停止中のシークのポンプで、bus スレッドの tick が
+ * 新しい世代のフレームを見つけてから PAUSED へ戻すまでを、この ms だけ遅らせる
+ * （実機で見た「1 枚目の後 約 19ms、tick が来なかった」を決定的に作る）。shim_test の
+ * --paused-seek-one-frame だけが使う。製品（アプリ・LTC シナリオ・E2E）はこの変数を設定せず、
+ * 既定の 0 では tick は何も待たない（製品の既定で効かない）。 */
+static int test_pump_tick_delay_ms = env_int ("TCS_TEST_PUMP_TICK_DELAY_MS", 0);
+
 /* C1(b) measurement switch: seek method. auto keeps the container default
  * (tsdemux -> KEY_UNIT|SNAP_BEFORE, others -> ACCURATE). accurate/keyunit
  * force one method for the comparison. Unknown values fall back to auto with
@@ -574,6 +581,30 @@ struct TcsPlayer {
   uint64_t pump_frames_at_arm = 0;       /* frame_lock (D24 diagnostics) */
   bool pump_muted = false;               /* frame_lock */
   uint64_t pump_faults = 0;              /* frame_lock (diagnostics) */
+  ULONGLONG pump_test_seen_ms = 0;       /* frame_lock (TCS_TEST_PUMP_TICK_DELAY_MS) */
+  /* v0.6.3 段 5: ポンプの配信の門。ポンプの世代の 1 枚目を配信した時点で on_new_sample が
+   * 閉じ、PAUSED が効くまでに届いた同じ世代のフレームを配信しない。pump_active とは別に持つ
+   * （pump_active は tick が PAUSED を出す前に false にするので、門を兼ねると間に合わない）。
+   * 開くのは次の pump_arm・再開（set_paused(0)）・teardown。 */
+  bool pump_gate_closed = false;         /* frame_lock */
+  uint64_t pump_held = 0;                /* frame_lock (diagnostics) */
+
+  /* v0.6.3 段 6: flush シークの segment が appsink の pad に届く前の instant-rate は保留し、
+   * 届いた後に bus スレッドが送る（rate_hold_tick）。segment の前に送ると、新しい segment を
+   * まだ持たない要素で gst_segment_do_seek の assertion（segment->format == format）が出ていた。
+   * 保留中に来た 2 つ目以降は値だけ差し替える（最後の値を適用する）。 */
+  bool rate_hold = false;                /* frame_lock */
+  double rate_hold_value = 1.0;          /* frame_lock */
+  double rate_hold_prev = 1.0;           /* frame_lock: the rate before the hold (rejection) */
+  uint64_t rate_hold_boundary = 0;       /* frame_lock: the flush seek's expected boundary */
+  ULONGLONG rate_hold_ms = 0;            /* frame_lock */
+  uint32_t rate_hold_calls = 0;          /* frame_lock (diagnostics) */
+  /* 段 6: 音声の sink の pad を通った SEGMENT の数と、flush シークが待つ値（0 = 待たない）。
+   * appsink の segment だけでは足りなかった（映像の segment の後、音声の segment の前に
+   * 送った回で assertion が残った。開発機の shim_test）。 */
+  std::atomic<uint64_t> audio_segments{0};
+  std::atomic<uint64_t> audio_segment_expect{0};
+  std::atomic<bool> audio_segment_probe{false};
 
   /* 0.4.5-C long-GOP detector. gop_lock is a leaf lock: only the pad probe
    * (streaming thread), the getter and teardown's reset take it; it is never
@@ -1146,6 +1177,18 @@ on_audio_sink_probe (GstPad*, GstPadProbeInfo*, gpointer user)
   return GST_PAD_PROBE_OK;
 }
 
+/* v0.6.3 段 6: 音声の sink の pad を通った SEGMENT を数える（ストリーミングのスレッド、
+ * ロックなし）。保留した instant-rate はこの数が flush シークの期待に届いてから送る。 */
+static GstPadProbeReturn
+on_audio_segment_probe (GstPad*, GstPadProbeInfo* info, gpointer user)
+{
+  TcsPlayer* p = (TcsPlayer*) user;
+  GstEvent* ev = GST_PAD_PROBE_INFO_EVENT (info);
+  if (ev && GST_EVENT_TYPE (ev) == GST_EVENT_SEGMENT)
+    p->audio_segments.fetch_add (1, std::memory_order_acq_rel);
+  return GST_PAD_PROBE_OK;
+}
+
 /* Method 2 (clock rebase) helper: the real basesink inside the audio chain
  * (autoaudiosink is a bin; its child is wasapi2sink/directsoundsink/...). */
 static GstElement*
@@ -1681,6 +1724,20 @@ on_new_sample (GstAppSink* sink, gpointer user)
             (double) ((uint64_t) arrival.QuadPart - p->gate_armed_qpc) * ms_per_tick);
       }
     }
+    /* v0.6.3 段 5: 一時停止中のシークのポンプは 1 枚だけ配信する。1 枚目を配信した後
+     * （pump_gate_closed）、PAUSED が効くまでに届いた同じ世代のフレームは配信しない。
+     * 以前は tick が PAUSED を出すまで配信を続けたので、tick が 1 枚目の後 1 フレーム以上
+     * 来ないと 2 枚目（+1 → +2）が配信され、一時停止中の位置と絵が 1 枚先へずれた
+     * （開発機 156 回中 6 回、検証機 1,247 回中 39 回。docs/design/v0.6.3-chase-cleanup.md 12 節）。
+     * 状態の変更（PAUSED）はこれまでどおり tick がロックの外で出す（I13）。ここは捨てるだけ。 */
+    if (!gated && p->pump_gate_closed && p->paused && p->generation == p->pump_generation) {
+      gated = true;
+      p->pump_held++;
+      LOG ("pump: held a frame after the paused-seek frame gen=%llu pts_ms=%.2f "
+          "pump_active=%d held=%llu",
+          (unsigned long long) p->generation, (double) pts / 1e6, p->pump_active ? 1 : 0,
+          (unsigned long long) p->pump_held);
+    }
     /* v0.5.0: 展開済み（ロックの外）の HAP を GPU で BGRA のテクスチャにし、以降は復号済みの
      * フレームと同じ扱いにする（リングへのコピーは共通の経路）。context は shim のものを使うので、
      * frame_lock の中で行う。 */
@@ -1719,6 +1776,10 @@ on_new_sample (GstAppSink* sink, gpointer user)
       if (cdn > 0 && cdd > 0) p->fps = (double) cdn / (double) cdd;
       p->latest_gen = p->generation;
       p->latest_pts_ns = pts;
+      /* 段 5: ポンプの世代の 1 枚目。配信と同じロックの中で門を閉じる（tick が pump_active を
+       * false にするより必ず前。順序の理由は pump_preroll_tick のコメント）。 */
+      if (p->pump_active && p->generation == p->pump_generation)
+        p->pump_gate_closed = true;
       /* D25: the fence value must be strictly increasing for the lifetime of
        * the shared fence. frames_decoded restarts at 0 on every load while
        * the ring/fence persist, so a post-load seq reused an already-completed
@@ -2709,6 +2770,9 @@ build_audio_chain (TcsPlayer* p, gboolean need_audio_decode)
   if (asinkpad) {
     gst_pad_add_probe (asinkpad, GST_PAD_PROBE_TYPE_BUFFER,
         on_audio_sink_probe, p, nullptr);
+    gst_pad_add_probe (asinkpad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+        on_audio_segment_probe, p, nullptr);
+    p->audio_segment_probe.store (true, std::memory_order_release);
     gst_object_unref (asinkpad);
   }
   return TRUE;
@@ -2826,6 +2890,11 @@ pump_arm (TcsPlayer* p, uint64_t generation)
       p->pump_armed_ms = GetTickCount64 ();
       p->pump_deadline = p->pump_armed_ms + pump_budget_ms;
       p->pump_frames_at_arm = p->frames_decoded;
+      p->pump_test_seen_ms = 0;
+      /* 段 5: この世代のフレームを arm の前に配信済みなら（S-load の開始シークは
+       * load_priming の PLAYING 中に出るので、プライム中に届いていることがある）、門は最初から
+       * 閉じる。それ以外は 1 枚目の配信で on_new_sample が閉じる。 */
+      p->pump_gate_closed = p->frames_decoded > 0 && p->latest_gen == generation;
       if (!p->pump_muted) {
         /* No audible output while the pipeline runs for the preroll: the user
          * still believes playback is paused (same idea as load_priming). */
@@ -2860,16 +2929,27 @@ pump_preroll_tick (TcsPlayer* p)
         p->pump_pending.store (false, std::memory_order_relaxed);
         return;
       }
-      for (const TcsPlayer::FrameSlot& f : p->frames) {
-        if (f.generation == p->pump_generation) {
-          has_frame = true;
-          break;
-        }
-      }
+      /* 段 5: 「1 枚目を配信した」は配信の門で判定する。以前は p->frames を走査していたが、
+       * GPU worker の acquire はフレームを p->frames から取り出すので、tick より先に取られた
+       * 1 枚目は見えず、tick は次の 1 枚が積まれるまで止まらなかった（その 1 枚が 2 枚目の配信）。
+       * 門が閉じた後は 2 枚目が積まれないので、走査のままだと期限まで PLAYING が続く。 */
+      has_frame = p->pump_gate_closed;
       if (!has_frame && GetTickCount64 () >= p->pump_deadline)
         timed_out = true;
       if (!has_frame && !timed_out)
         return;
+      if (has_frame && test_pump_tick_delay_ms > 0) {
+        ULONGLONG now = GetTickCount64 ();
+        if (p->pump_test_seen_ms == 0)
+          p->pump_test_seen_ms = now;
+        if (now - p->pump_test_seen_ms < (ULONGLONG) test_pump_tick_delay_ms)
+          return;
+      }
+      /* 段 5 の順序: 配信の門は 1 枚目の配信と同じ frame_lock の中で on_new_sample が既に
+       * 閉じている（has_frame はその門を見た結果）。ここで pump_active=false にしても、下の
+       * set_state(PAUSED) は I13 によりロックの外で出し、しかも PAUSED は非同期に効くので、
+       * その間もパイプラインは PLAYING のままフレームを出す。門は pump_active に依らず
+       * 閉じたままなので、その間のフレームは配信されない。 */
       p->pump_active = false;
       p->pump_pending.store (false, std::memory_order_relaxed);
       if (p->pump_muted) {
@@ -2927,6 +3007,7 @@ pump_reset_locked (TcsPlayer* p)
 {
   p->pump_active = false;
   p->pump_muted = false;
+  p->pump_gate_closed = false;
   p->pump_pending.store (false, std::memory_order_relaxed);
 }
 
@@ -3003,11 +3084,99 @@ handle_bus_message (TcsPlayer* p, GstMessage* msg)
   }
 }
 
+/* v0.6.3 段 6: 保留した instant-rate を、その flush シークの segment が appsink の pad と
+ * 音声の sink の pad の両方を通った後に送る。bus スレッドから送り、segment を数えるプローブ（on_appsink_flush_probe、
+ * ストリーミングのスレッド）からは送らない: プローブはストリーミングのスレッドで動き、
+ * GStreamer の手引きは「データのプローブで状態を変えるなど止まりうる操作をしない
+ * （デッドロックの元。bus などで別のスレッドへ渡す）」としている。パイプラインへの seek は
+ * bin を通って全 sink から上流へ送られ、その途中の要素がストリーミングのロックを取りうる
+ * ので、そのロックを持つスレッドの上では送らない。判断は frame_lock の中、送るのは
+ * ロックの外（I13）。 */
+static void
+rate_hold_tick (TcsPlayer* p)
+{
+#if GST_CHECK_VERSION(1,18,0)
+  GstElement* pipeline = nullptr;
+  double rate = 1.0, prev = 1.0;
+  uint64_t boundary = 0, seen = 0;
+  uint32_t calls = 0;
+  ULONGLONG waited_ms = 0;
+  const char* reason = nullptr;
+  {
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    if (!p->rate_hold)
+      return;
+    uint64_t expect = p->seek_boundary_expect.load (std::memory_order_acquire);
+    seen = p->flush_boundary.load (std::memory_order_acquire);
+    waited_ms = GetTickCount64 () - p->rate_hold_ms;
+    if (expect != 0 && expect > p->rate_hold_boundary) {
+      /* 保留の後に次の flush シークが出た。その segment を待ってから送る（新しい segment の
+       * 前に送れば同じ assertion になる）。 */
+      p->rate_hold_boundary = expect;
+    }
+    uint64_t aexpect = p->audio_segment_expect.load (std::memory_order_acquire);
+    bool audio_ok = aexpect == 0 ||
+        p->audio_segments.load (std::memory_order_acquire) >= aexpect;
+    if (seen >= p->rate_hold_boundary && audio_ok)
+      reason = "segment";
+    else if (expect == 0)
+      reason = "expectation-cleared";   /* 失敗したシーク・D25 の打ち切り */
+    else if (waited_ms >= pump_budget_ms)
+      /* 新しい定数は足さない。上限は一時停止中のシークのポンプと同じ pump_budget_ms
+       * （アプリは TCS_PUMP_BUDGET_MS で「着地の時間切れ − 0.5 秒」= 2.5 秒を渡す）。
+       * その時間で segment が届かないシークは、アプリの側でも着地の時間切れになるので、
+       * 保留をそれより長く続ける理由が無い。開発機では、音声の尺の外へのシークでも音声の
+       * sink に segment は届いた（待ちは最大 16ms、shim_test --instant-rate-past-audio）ので、
+       * ここに来るのは segment が来ない異常の時だけの見込み。 */
+      reason = "timeout";
+    if (!reason)
+      return;
+    p->rate_hold = false;
+    if (p->paused) {
+      /* 一時停止中の非 flush のシークは未定義（set_rate_instant と同じ）。値は player->rate に
+       * 入っているので、次のシークが持ち出す。 */
+      LOG ("seek: rate.instant hold dropped (paused) rate=%.6f calls=%u",
+          p->rate_hold_value, p->rate_hold_calls);
+      return;
+    }
+    /* set_rate_instant と同じく、instant-rate は TS の segment の書き換えを使わない。
+     * 保留中は flush シークの segment の書き換えを生かすため、ここで初めて外す。 */
+    p->rebase_armed = false;
+    p->rebase_seek_seqnum = 0;
+    rate = p->rate_hold_value;
+    prev = p->rate_hold_prev;
+    boundary = p->rate_hold_boundary;
+    calls = p->rate_hold_calls;
+    pipeline = p->pipeline;
+  }
+  if (!pipeline)
+    return;
+  gboolean ok = gst_element_seek (pipeline, rate, GST_FORMAT_TIME,
+      GST_SEEK_FLAG_INSTANT_RATE_CHANGE,
+      GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE,
+      GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+  LOG ("seek: rate.instant applied after the seek's %s rate=%.6f boundary=%llu seen=%llu "
+      "waited_ms=%llu calls=%u ok=%d",
+      reason, rate, (unsigned long long) boundary, (unsigned long long) seen,
+      (unsigned long long) waited_ms, calls, ok ? 1 : 0);
+  if (!ok) {
+    /* 0.4.6 と同じ考え: 受け付けられなかった値を player->rate に残さない。 */
+    std::lock_guard<std::mutex> g (p->frame_lock);
+    if (!p->rate_hold && p->rate == rate)
+      p->rate = prev;
+    p->last_error = "instant rate change rejected after the seek's segment";
+  }
+#else
+  (void) p;
+#endif
+}
+
 static void
 bus_loop (TcsPlayer* p)
 {
   while (p->bus_running.load ()) {
     pump_preroll_tick (p);
+    rate_hold_tick (p);
     GstBus* bus = p->pipeline ? gst_element_get_bus (p->pipeline) : nullptr;
     if (bus) {
       GstMessage* msg = gst_bus_timed_pop_filtered (bus, 2 * GST_MSECOND,
@@ -3071,6 +3240,8 @@ teardown_pipeline (TcsPlayer* p, const char* diag = nullptr)
     p->av_log_left = 0;
     p->pending_play_restart = false;
     pump_reset_locked (p);
+    /* 段 6: 保留中の instant-rate は古いパイプラインのもの。新しいパイプラインは 1.0 で始まる。 */
+    p->rate_hold = false;
   }
 
   /* 0.4.5-C: invalidate probe contexts before the old pipeline goes away and
@@ -3129,6 +3300,10 @@ teardown_pipeline (TcsPlayer* p, const char* diag = nullptr)
   p->adecodebin = nullptr;
   p->video_rewrite_installed = false;
   p->audio_rewrite_sink = nullptr;
+  /* 段 6: 音声の segment の数は pad と一緒に消える。次のパイプラインで数え直す。 */
+  p->audio_segment_probe.store (false, std::memory_order_release);
+  p->audio_segment_expect.store (0, std::memory_order_release);
+  p->audio_segments.store (0, std::memory_order_release);
 }
 
 /* A seek prepared under frame_lock. The event/parameters are sent by
@@ -3178,6 +3353,11 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
     uint64_t seen = p->flush_boundary.load (std::memory_order_acquire);
     p->seek_boundary_expect.store (seen + 1, std::memory_order_release);
     p->seek_expect_ms.store (GetTickCount64 (), std::memory_order_relaxed);
+    /* 段 6: 同じ考えで音声の sink の segment も「見た数 + 1」を待つ（instant-rate の保留だけが使う）。 */
+    p->audio_segment_expect.store (
+        p->audio_segment_probe.load (std::memory_order_acquire)
+            ? p->audio_segments.load (std::memory_order_acquire) + 1 : 0,
+        std::memory_order_release);
   }
   /* frames of the previous generation must never reach the compositor */
   for (TcsPlayer::FrameSlot& slot : p->frames)
@@ -3286,6 +3466,7 @@ seek_send (TcsPlayer* p, const SeekRequest& req)
     p->last_error = msg;
     /* D25: no segment will arrive for a failed seek; stop filtering. */
     p->seek_boundary_expect.store (0, std::memory_order_release);
+    p->audio_segment_expect.store (0, std::memory_order_release);
     LOG ("%s", msg);
   }
   return ok != FALSE;
@@ -4040,6 +4221,8 @@ tcs_player_set_paused (TcsPlayer* player, int paused)
           player->pump_active = false;
           player->pump_pending.store (false, std::memory_order_relaxed);
         }
+        /* 段 5: 再開は再生なので、ポンプの配信の門を開ける。 */
+        player->pump_gate_closed = false;
         if (player->pump_muted) {
           player->pump_muted = false;
           apply_volume_locked (player);
@@ -4221,6 +4404,38 @@ tcs_player_set_rate_instant (TcsPlayer* player, double rate)
     std::lock_guard<std::mutex> g (player->frame_lock);
     /* A non-flushing seek in PAUSED is undefined; refuse instead of guessing. */
     if (player->paused) return TCS_ERR_GENERIC;
+    pipeline = player->pipeline;
+    if (!pipeline) return TCS_ERR_NOT_LOADED;
+    /* v0.6.3 段 6: 直前の flush シークの segment がまだ appsink の pad
+     * （seek_boundary_expect > flush_boundary）か音声の sink の pad に届いていない、
+     * または既に保留中なら、送らずに保留する。
+     * 値は最後のものに差し替え、bus スレッドの rate_hold_tick が segment の後に送る。
+     * player->rate はここで書く（保留中に出る次のシークも、この値を segment に持つ）。
+     * 送った後に拒否されたら rate_hold_tick が保留前の値へ戻す（0.4.6 と同じ考え）。 */
+    uint64_t expect = player->seek_boundary_expect.load (std::memory_order_acquire);
+    uint64_t seen = player->flush_boundary.load (std::memory_order_acquire);
+    uint64_t aexpect = player->audio_segment_expect.load (std::memory_order_acquire);
+    bool audio_pending = aexpect != 0 &&
+        player->audio_segments.load (std::memory_order_acquire) < aexpect;
+    if (player->rate_hold || (expect != 0 && seen < expect) || audio_pending) {
+      if (!player->rate_hold) {
+        player->rate_hold = true;
+        player->rate_hold_prev = player->rate;
+        player->rate_hold_boundary = expect;
+        player->rate_hold_ms = GetTickCount64 ();
+        player->rate_hold_calls = 0;
+      } else if (expect > player->rate_hold_boundary) {
+        player->rate_hold_boundary = expect;
+      }
+      player->rate_hold_value = rate;
+      player->rate_hold_calls++;
+      player->rate = rate;
+      LOG ("seek: rate.instant held until the seek's segment rate=%.6f boundary=%llu "
+          "seen=%llu calls=%u",
+          rate, (unsigned long long) player->rate_hold_boundary, (unsigned long long) seen,
+          player->rate_hold_calls);
+      return TCS_OK;
+    }
     /* 0.4.6: player->rate is written only after GStreamer accepted the change
      * (below). It used to be written here, before the call: a rejected change
      * left the new rate stored, and the next ordinary seek (seek_prepare_locked
@@ -4230,9 +4445,7 @@ tcs_player_set_rate_instant (TcsPlayer* player, double rate)
      * rebase rewrite does not apply to it (same reasoning as set_speed). */
     player->rebase_armed = false;
     player->rebase_seek_seqnum = 0;
-    pipeline = player->pipeline;
   }
-  if (!pipeline) return TCS_ERR_NOT_LOADED;
   LOG ("seek: send begin (rate.instant) rate=%.6f", rate);
   gboolean ok = gst_element_seek (pipeline, rate, GST_FORMAT_TIME,
       GST_SEEK_FLAG_INSTANT_RATE_CHANGE,

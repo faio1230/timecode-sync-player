@@ -40,9 +40,6 @@ public sealed class TimecodeSyncService
     private bool _lastLoggedDefaultTimecodeFps;
 
     private const double SeekDebounceMs = 250.0;
-    // D35: 解除を回収できる鮮度。ロード直後の 1 回だけを対象にし、数秒前の値を保持開始時に
-    // 再適用して同期を壊さない（古い解除は破棄する）。
-    private static readonly TimeSpan FileLoadReleasePendingMaxAge = TimeSpan.FromSeconds(1.5);
 
     /// <summary>
     /// T9: 粗い同期シークを発行した時点の通知（<see cref="ReportSeekSent"/> と同じ）。
@@ -215,6 +212,18 @@ public sealed class TimecodeSyncService
         IsMasterMoving ? _seekState.LearnedSeekDurationSeconds ?? _seekCostHintSeconds : 0.0;
 
     /// <summary>
+    /// v0.6.3 段 1（観測）: 先行量 c の出所。learned（着地の学習値）・hint（スキャンの見積もり）・none（どちらも無い）。
+    /// マスターが止まっている間に先行量を 0 にすることとは別（それは lookaheadMs の側に出る）。
+    /// </summary>
+    public string RelocateLookaheadSource =>
+        _seekState.LearnedSeekDurationSeconds is not null ? "learned"
+            : _seekCostHintSeconds > 0.0 ? "hint"
+            : "none";
+
+    /// <summary>v0.6.3 段 1（観測）: 読み込んでいるトラックの名前（ロードの着地の行に出す）。MainWindow が配線する。</summary>
+    public Func<string?>? LoadedTrackLabelSource { get; set; }
+
+    /// <summary>
     /// v0.5.4 B6b-16/23: relocate（シーク）・読み込みの着地を観測した直後の 1 サンプルだけ
     /// true を返す（消費する）。呼び出し側（補正の入口）はこのサンプルで varispeed しない。
     /// </summary>
@@ -255,16 +264,43 @@ public sealed class TimecodeSyncService
     public void ObserveLandingState(in PlaybackPositionSample sample, double toleranceSeconds)
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+        if (double.IsFinite(sample.Seconds))
+            _lastObservedPlaybackSeconds = sample.Seconds;
         _seekState.ObserveLandingSample(sample, toleranceSeconds, now);
         NoteRelocateLanding(toleranceSeconds);
         TryReleaseFileLoadAfterLanding(now);
     }
+
+    // v0.6.3 (ii)（観測）: マスターが止まっている間に出した relocate のうち後ろ向きのもの、境界の経路の端へのシーク、
+    // 最後に観測した再生位置（後ろ向きの判定に使う）。起動からの累計。Sync hold summary の行で出す。
+    private long _backwardSeeksWhileStopped;
+    private long _boundarySeeks;
+    private double _lastObservedPlaybackSeconds = double.NaN;
+
+    /// <summary>v0.6.3 (ii)（観測）: マスターが止まっている間に出した後ろ向きの relocate の数（起動からの累計）。</summary>
+    internal long BackwardSeeksWhileStopped => _backwardSeeksWhileStopped;
+
+    /// <summary>v0.6.3 (ii)（観測）: 境界の経路の端へのシーク（reason boundary）の数（起動からの累計）。</summary>
+    internal long BoundarySeeks => _boundarySeeks;
+
+    /// <summary>v0.6.3 (ii)（観測）: いまマスターが止まっているか（relocate の行に出す。規則の判定と同じ MasterStoppedSource）。</summary>
+    internal bool IsMasterStoppedForObservation => !IsMasterMoving;
+
+    /// <summary>
+    /// v0.6.3 (ii)（観測だけ。判定には使わない）: backwardSeeksWhileStopped を数えるときの「止まっている」。保持（数える保持の連続）
+    /// の間と、損失中で復帰の有効フレームをまだ数えていない間。損失からの復帰（有効フレームを数えている間）に出る規則 3 の
+    /// 1 本は (ii) の仕様どおりなので数えない（MasterStoppedSource は損失が明けるまで真のまま）。コントローラが配線する
+    /// （未配線は MasterStoppedSource と同じ）。
+    /// </summary>
+    public Func<bool>? MasterStoppedForBackwardCountSource { get; set; }
 
     // v0.5.4 B6b（追補 4）の計測: 着地後の残差と連続 relocate を実機のログから数える（門ではない）。
     private string _lastRelocateReason = "";
     private bool _landedSinceLastRelocate;
     private bool _lastLandingOutsideThreshold;
     private TimecodeSyncLandingRecord? _lastNotedLanding;
+    // v0.6.3 段 1（観測）: 直近の読み込みの入口（ロードの着地の行に出す）。
+    private string _lastFileLoadSource = "";
     private TimecodeSyncLandingRecord? _residualPendingLanding;
 
     /// <summary>
@@ -274,6 +310,13 @@ public sealed class TimecodeSyncService
     {
         bool afterOutsideLanding = _landedSinceLastRelocate && _lastLandingOutsideThreshold;
         bool chained = afterOutsideLanding && string.Equals(reason, _lastRelocateReason, StringComparison.Ordinal);
+        // v0.6.3 (ii)（観測）: マスター停止中の後ろ向きの relocate と、境界の経路の端へのシークを数える（記録だけ）。
+        if (reason == "boundary")
+            _boundarySeeks++;
+        else if ((MasterStoppedForBackwardCountSource?.Invoke() ?? !IsMasterMoving) &&
+                 double.IsFinite(_lastObservedPlaybackSeconds) &&
+                 targetSeconds < _lastObservedPlaybackSeconds - 0.001)
+            _backwardSeeksWhileStopped++;
         Serilog.Log.Debug(
             "sync.gate relocate reason={Reason:l} target={Target:F3} chained={Chained} afterOutsideLanding={AfterOutsideLanding} previousReason={PreviousReason:l} lookaheadMs={LookaheadMs:F1}",
             reason, targetSeconds, chained, afterOutsideLanding, _lastRelocateReason, RelocateLookaheadSeconds * 1000.0);
@@ -290,7 +333,14 @@ public sealed class TimecodeSyncService
             return;
         _lastNotedLanding = landing;
         if (!double.IsFinite(landing.TargetSeconds))
-            return;   // 読み込みの着地（目標なし）は relocate ではない
+        {
+            // 読み込みの着地（目標なし）は relocate ではない。v0.6.3 段 1（観測）: 遅れ（読み込みの発行 → その世代の
+            // 最初の配信）を配布ビルドでも数えられるように Information で 1 行出す。
+            Serilog.Log.Information(
+                "File load landing: delayMs={DelayMs:F1} track={Track} source={Source}",
+                landing.DelaySeconds * 1000.0, LoadedTrackLabelSource?.Invoke() ?? "", _lastFileLoadSource);
+            return;
+        }
         _landedSinceLastRelocate = true;
         if (IsMasterStoppedRelocate(_lastRelocateReason))
         {
@@ -426,6 +476,7 @@ public sealed class TimecodeSyncService
         double startPositionSeconds, long renderedFrameCount, long loadIssuedQpc, string source = "load")
     {
         SyncLifecycle.Record(SyncLifecycleEvent.FileLoad, source);
+        _lastFileLoadSource = source;
         _latencyCompensator.MarkLoadSent(loadIssuedQpc);
         _fileLoadEpoch++;
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
@@ -448,6 +499,7 @@ public sealed class TimecodeSyncService
     internal void BeginGapFreezeLoad(string source)
     {
         SyncLifecycle.Record(SyncLifecycleEvent.GapFreezeLoad, source);
+        _lastFileLoadSource = source;
         _fileLoadEpoch++;
         _fileLoad.ClearReleasePending();
         // v0.5.4 段 B: 開始位置つきの読み込みなので、その読み込みの世代の着地待ちに入る
@@ -577,19 +629,29 @@ public sealed class TimecodeSyncService
 
         if (_fileLoad.HasPendingRelease)
         {
-            DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+            // v0.6.3 段 4（規則 4、旧 D35 の期限 1.5 秒の置き換え）: 解除の後にマスターが動けば（Normal のフレーム）
+            // DiscardPendingFileLoadRelease が捨てるので、ここに残るのは解除から保持まで Normal が無かった場合だけ
+            // （マスターが止まっている）。その保持で 1 回だけ回収する（停止した値への 1 回の合わせ）。
             _fileLoad.CollectRelease();
-            // D35: 解除直後の 1 回だけ回収する。鮮度を過ぎた解除（保持開始の数秒前に
-            // 解除された古い値）は再適用せず破棄する。
-            if (now - _fileLoad.ReleasedAt <= FileLoadReleasePendingMaxAge)
-                return true;
-            Serilog.Log.Information(
-                "Timecode sync: dropping stale file load release ageMs={AgeMs:F0}",
-                (now - _fileLoad.ReleasedAt).TotalMilliseconds);
-            return false;
+            return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// v0.6.3 段 4（規則 4）: マスターが動いた（Normal のフレームを受理した）ので、ロード解除の再適用は要らない
+    /// （通常の同期、規則 2・3 が位置を合わせる）。回収待ちの解除を捨てる。旧 D35 の期限 1.5 秒が塞いでいた型
+    /// （ロードの後に Normal が続いた数秒後、保持の始まりで古い解除を再適用する）を、時間ではなくマスターの状態で塞ぐ。
+    /// </summary>
+    internal void DiscardPendingFileLoadRelease()
+    {
+        if (!_fileLoad.HasPendingRelease)
+            return;
+        _fileLoad.ClearReleasePending();
+        Serilog.Log.Debug(
+            "sync.gate load-release-discard reason=normal-frame ageMs={AgeMs:F0}",
+            (_timeProvider.GetUtcNow().UtcDateTime - _fileLoad.ReleasedAt).TotalMilliseconds);
     }
 
     public ITimecodeSyncSeekState SeekState => _seekState;

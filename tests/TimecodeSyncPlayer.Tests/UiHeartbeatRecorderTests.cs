@@ -92,4 +92,36 @@ public class UiHeartbeatRecorderTests
             "seq=1 lateMs=20.0",
             "end reason=closing ticks=1 maxLateMs=20.0 elapsedMs=500.0");
     }
+
+    // v0.6.3 段 1: 区間の終わりに要約（seq=1 の遅れ・最大の遅れ・tick の数）を 1 回だけ渡す。
+    [Fact]
+    public void Finish_ReportsTheSummaryOnceWithTheFirstTickLate()
+    {
+        var summaries = new List<UiHeartbeatSummary>();
+        var recorder = new UiHeartbeatRecorder(_ => { }, summaries.Add);
+        recorder.Start(Ms(0));
+        recorder.Tick(Ms(1100));   // seq=1 は 1000ms 遅れ（起動の直後の停止）
+        recorder.Tick(Ms(1210));
+        recorder.Stop(Ms(1300), "closing");
+        recorder.Stop(Ms(1400), "closing");
+
+        summaries.Should().ContainSingle();
+        UiHeartbeatSummary summary = summaries[0];
+        summary.Reason.Should().Be("closing");
+        summary.Ticks.Should().Be(2);
+        summary.FirstLateMs.Should().BeApproximately(1000.0, 1e-6);
+        summary.MaxLateMs.Should().BeApproximately(1000.0, 1e-6);
+        summary.ElapsedMs.Should().BeApproximately(1300.0, 1e-6);
+    }
+
+    [Fact]
+    public void Finish_WithoutTicks_ReportsNaNForTheFirstLate()
+    {
+        var summaries = new List<UiHeartbeatSummary>();
+        var recorder = new UiHeartbeatRecorder(_ => { }, summaries.Add);
+        recorder.Start(Ms(0));
+        recorder.Stop(Ms(50), "closing");
+
+        summaries.Should().ContainSingle().Which.FirstLateMs.Should().Be(double.NaN);
+    }
 }

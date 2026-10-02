@@ -19,16 +19,21 @@ internal sealed class UiHeartbeatRecorder
     public static readonly TimeSpan Window = TimeSpan.FromSeconds(30);
 
     private readonly Action<string> _write;
+    private readonly Action<UiHeartbeatSummary>? _onFinished;
     private TimeSpan _startedAt;
     private TimeSpan _previousTick;
     private long _seq;
     private double _maxLateMs;
+    private double _firstLateMs = double.NaN;
     private bool _active;
     private bool _finished;
 
-    public UiHeartbeatRecorder(Action<string> write)
+    /// <param name="write">1 行ずつの記録（Debug）。</param>
+    /// <param name="finished">v0.6.3 段 1: 区間の終わりの要約（配布ビルドでも出す Information の 1 行用）。</param>
+    public UiHeartbeatRecorder(Action<string> write, Action<UiHeartbeatSummary>? finished = null)
     {
         _write = write;
+        _onFinished = finished;
     }
 
     public bool IsActive => _active;
@@ -51,6 +56,8 @@ internal sealed class UiHeartbeatRecorder
         double lateMs = (now - _previousTick - Interval).TotalMilliseconds;
         _previousTick = now;
         _maxLateMs = Math.Max(_maxLateMs, lateMs);
+        if (_seq == 1)
+            _firstLateMs = lateMs;
         _write("seq=" + _seq + " lateMs=" + Format(lateMs));
         if (now - _startedAt < Window) return true;
         Finish(now, "window");
@@ -68,10 +75,17 @@ internal sealed class UiHeartbeatRecorder
     {
         _active = false;
         _finished = true;
+        double elapsedMs = (now - _startedAt).TotalMilliseconds;
         _write("end reason=" + reason + " ticks=" + _seq + " maxLateMs=" + Format(_maxLateMs) +
-            " elapsedMs=" + Format((now - _startedAt).TotalMilliseconds));
+            " elapsedMs=" + Format(elapsedMs));
+        _onFinished?.Invoke(new UiHeartbeatSummary(reason, _seq, _firstLateMs, _maxLateMs, elapsedMs));
     }
 
     private static string Format(double value) =>
         value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
 }
+
+/// <summary>
+/// v0.6.3 段 1: 起動直後の UI スレッドの生存記録の要約。FirstLateMs は seq=1 の遅れ（tick が 1 度も無ければ NaN）。
+/// </summary>
+internal sealed record UiHeartbeatSummary(string Reason, long Ticks, double FirstLateMs, double MaxLateMs, double ElapsedMs);

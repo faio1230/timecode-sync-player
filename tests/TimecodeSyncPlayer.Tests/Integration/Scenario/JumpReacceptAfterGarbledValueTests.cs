@@ -350,15 +350,30 @@ public class JumpReacceptAfterGarbledValueTests
         return outcome;
     }
 
-    private static void AssertApproved(Outcome outcome, double firstRealResume, double[] garbled)
+    private static void AssertApproved(Outcome outcome, double firstRealResume, double[] garbled, bool runThrough = true)
     {
-        outcome.Seeks.Count(s => s.Delta < -1.0 / 30.0).Should().BeLessThanOrEqualTo(2,
-            "後ろ向きのシークは 2 本まで（規則 4 の入口 ≤ 1 ＋復帰の規則 3 ≤ 1）。" + outcome.Summary);
         outcome.RelocateReasons.Should().HaveCount(outcome.Seeks.Count,
             "シークと relocate の理由を順に対応づける前提。" + outcome.Summary);
-        outcome.BackwardSeeksDuringHold.Should().BeEmpty(
-            "保持（規則 4）の間は、入口の合わせの他に後ろ向きのシークを出さない（D31-b の繰り返し・這う前進で戻さない）。" +
-            outcome.Summary);
+        if (runThrough)
+        {
+            // v0.6.3 (ii)（承認済みの期待の変更、締める向き）: RunThrough は保持の入口で止まった値へ合わせないので、停止判定の直後
+            // （保持の間）の後ろ向きは 0、復帰（最後の保持を抜けた後）は 1 本以内、合計 1 本以内。
+            outcome.Seeks.Count(s => s.Delta < -1.0 / 30.0 &&
+                    outcome.HeldSpans.Any(span => span.From <= s.AtMs && s.AtMs < span.To))
+                .Should().Be(0, "停止判定の直後（保持の間）の後ろ向きのシークは 0。" + outcome.Summary);
+            long lastHoldEnd = outcome.HeldSpans.Count > 0 ? outcome.HeldSpans.Max(span => span.To) : long.MinValue;
+            outcome.Seeks.Count(s => s.AtMs >= lastHoldEnd).Should().BeLessThanOrEqualTo(1,
+                "復帰の relocate は 1 本以内。" + outcome.Summary);
+            outcome.Seeks.Count.Should().BeLessThanOrEqualTo(1, "合計 1 本以内。" + outcome.Summary);
+        }
+        else
+        {
+            outcome.Seeks.Count(s => s.Delta < -1.0 / 30.0).Should().BeLessThanOrEqualTo(2,
+                "後ろ向きのシークは 2 本まで（規則 4 の入口 ≤ 1 ＋復帰の規則 3 ≤ 1）。" + outcome.Summary);
+            outcome.BackwardSeeksDuringHold.Should().BeEmpty(
+                "保持（規則 4）の間は、入口の合わせの他に後ろ向きのシークを出さない（D31-b の繰り返し・這う前進で戻さない）。" +
+                outcome.Summary);
+        }
         outcome.Confirmed.Where(v => v < firstRealResume - 1e-3).Should().BeEmpty(
             "受け直しの確定した Jump は 0（確定しうるのは送出が戻った本物の Jump だけ）。" + outcome.Summary);
         outcome.Applied.Where(v => garbled.Any(g => Math.Abs(v - g) < 0.1)).Should().BeEmpty(
@@ -409,7 +424,7 @@ public class JumpReacceptAfterGarbledValueTests
     {
         Outcome outcome = Reported(Run(R1, 72.200, TimecodeFpsMode.Fixed30, videoFps: 30, LtcSignalLossMode.Stop));
 
-        AssertApproved(outcome, 72.733, R1Garbled);
+        AssertApproved(outcome, 72.733, R1Garbled, runThrough: false);
         outcome.PausedDuring.Should().NotBeEmpty("送出が止まっている間は保持の損失で映像が止まる。" + outcome.Summary);
         outcome.FinallyPaused.Should().BeFalse("送出が戻ったら復帰する。" + outcome.Summary);
         outcome.Seeks.Count(s => s.Delta > 1.0 / 30.0).Should().Be(1,
