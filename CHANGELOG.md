@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.6.4 - (unreleased)
+## 0.6.4 - 2026-10-03
 
 Stable (Latest). Observability and test-infrastructure cleanup. Sync decisions and playback behave as in 0.6.3.
 Settings and projects are unchanged from 0.6.3.
@@ -32,7 +32,10 @@ Settings and projects are unchanged from 0.6.3.
 
 ### Known intermittent issues
 
-- As listed for 0.6.1 (same as 0.6.3).
+- As listed for 0.6.1 (same as 0.6.3). In addition, on the test machine the picture twice stayed ahead of the target
+  (2 to 11 frames) for about 3 s right after a seek while paused (two consecutive runs of the same set). It did not occur in
+  the later 12 runs under the same conditions or in 12 runs of those scenarios alone, on 0.6.3 or 0.6.4; the cause is not
+  identified. Sync during playback is not affected.
 
 ## 0.6.3 - 2026-10-02
 
