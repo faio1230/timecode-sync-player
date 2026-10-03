@@ -2,6 +2,41 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.6.4 - 2026-10-03
+
+Stable (Latest). Observability and test-infrastructure cleanup. Sync decisions and playback behave as in 0.6.3.
+Settings and projects are unchanged from 0.6.3.
+
+### Changed
+
+- No behavior change (the sync rules, gates and constants are the same as 0.6.3).
+- Display: while the LTC FPS is Auto, the correction status area (when it is empty) shows "Auto は確認用です。本番は固定にしてください"
+  (Auto is for checking; fix the fps in production). A correction status, when present, takes priority. The FPS selector has a tooltip
+  asking to fix it to the LTC generator's fps (the item itself still reads "Auto"). The default (Auto) and the settings format are unchanged.
+- `docs/SETUP.md`: the Auto description now notes that in Stop mode with Auto, a disturbed LTC can pause the picture for about 2 frames
+  before one re-alignment (a value from the test layer).
+
+### Observability and tests (no behavior change)
+
+- New log lines and values (recording only):
+  - `Sync hold summary`: backward seeks caused by the stop judgment (`backwardSeeksWhileStopped`) are counted separately from landings
+    of a jump confirmed while holding (`heldJumpBackwardWhileStopped`) and the rest (`otherBackwardWhileStopped`); `smoothIneffective` at the end.
+  - `Playback perf`: `composedSourceFrames` at the end (new frames used by the GPU compositor).
+  - `Startup timing`: one line per launch with the start and end of each startup stage in ms since launch.
+- Test infrastructure: the app log is read across the day boundary and continued from the last read position, the scenario runner moves the
+  day's app log aside before a set, and the L-2 audit no longer counts windows that start before its origin.
+
+### Known issues
+
+- None within the recommended media (same as 0.6.3).
+
+### Known intermittent issues
+
+- As listed for 0.6.1 (same as 0.6.3). In addition, on the test machine the picture twice stayed ahead of the target
+  (2 to 11 frames) for about 3 s right after a seek while paused (two consecutive runs of the same set). It did not occur in
+  the later 12 runs under the same conditions or in 12 runs of those scenarios alone, on 0.6.3 or 0.6.4; the cause is not
+  identified. Sync during playback is not affected.
+
 ## 0.6.3 - 2026-10-02
 
 Stable (Latest). RunThrough no longer rewinds to the stopped position when the LTC stops, and a paused seek

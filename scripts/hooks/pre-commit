@@ -1,0 +1,24 @@
+#!/bin/sh
+# 共有の pre-commit フック（クローンの後に .git/hooks/pre-commit へ複製して使う。docs/SETUP.md）
+# docs/local/forbidden-patterns.txt が無い環境（新しいクローン・検証機）では 2. を飛ばして素通りする（制御文字の 1. は常に効く）。
+#
+# 1. 制御文字: 追加された行に、タブ・CR・LF 以外の 0x00-0x1F と 0x7F があれば止める
+#    （scripts/check-control-chars.ps1 と同じ対象。\a が BEL に化けるなどを防ぐ）。
+#    grep -P はロケールによって動かず素通りするので perl で判定する。
+if ! git diff --cached -U0 --no-color --text | perl -ne 'exit 1 if /^\+/ && /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/'; then
+  echo "pre-commit: 制御文字がコミットに含まれています（scripts/check-control-chars.ps1 で場所を確かめてください）。" >&2
+  git diff --cached -U0 --no-color --text | perl -ne 'print "$.: $_" if /^\+/ && /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/' | cut -c1-120 >&2
+  exit 1
+fi
+
+# 2. 公開しない文字列: 利用者名・ホスト名などの具体の文字列はこのファイルに書かず、
+#    gitignore 済みの docs/local/forbidden-patterns.txt（1 行 1 つの拡張正規表現）から読む。
+# 作業ツリーが複数あっても、主のツリー（.git の親）の docs/local を見る。
+patterns="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)/docs/local/forbidden-patterns.txt"
+if [ -f "$patterns" ]; then
+  if git diff --cached -U0 --no-color | grep -E '^\+' | grep -i -E -f "$patterns" >/dev/null; then
+    echo "pre-commit: 公開しない文字列（ローカルのパス・ホスト名など）がコミットに含まれています。C:\Users\<user> などのプレースホルダーに置き換えてください。" >&2
+    git diff --cached -U0 --no-color | grep -n -i -E -f "$patterns" | cut -c1-120 >&2
+    exit 1
+  fi
+fi

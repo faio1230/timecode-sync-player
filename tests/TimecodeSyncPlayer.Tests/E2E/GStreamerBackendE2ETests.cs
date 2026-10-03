@@ -93,7 +93,7 @@ public sealed class GStreamerBackendE2ETests
             recvLog2.Should().MatchRegex(@"got=[1-9]\d*\s+new=[1-9]\d*\s+rc=0",
                 $"受信側再起動後も接続・受信できるべき。recv2 log:\n{recvLog2}");
             DateTime runStartedLocal = runner.Process.StartTime;
-            List<(DateTime At, long Published)> samples = GpuPublishSamples(exePath)
+            List<(DateTime At, long Published)> samples = GpuPublishSamples(exePath, runStartedLocal)
                 .Where(sample => sample.At >= runStartedLocal)
                 .ToList();
             samples.Should().NotBeEmpty("Playback perf ログが存在する");
@@ -166,12 +166,13 @@ public sealed class GStreamerBackendE2ETests
             // 判定は決定的に: 切替で読まれたトラックの並び 1,2,3,2,1,0 をこの run のログ行だけで確認する。
             // 先頭の 0（初回ロード）は開始状態なので期待に含めない。
             int[] expectedIndices = [1, 2, 3, 2, 1, 0];
-            List<int> actualIndices = LoadedTrackIndices(exePath, runStartedLocal);
+            var loadTail = new AppLogTail(AppLogReader.LogDirectoryForExe(exePath), runStartedLocal);
+            List<int> actualIndices = LoadedTrackIndices(loadTail.ReadText());
             DateTime sequenceDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
             while (!ContainsInOrder(actualIndices, expectedIndices) && DateTime.UtcNow < sequenceDeadline)
             {
                 Thread.Sleep(200);
-                actualIndices = LoadedTrackIndices(exePath, runStartedLocal);
+                actualIndices = LoadedTrackIndices(loadTail.ReadText());
             }
 
             runner.Process.HasExited.Should().BeFalse("切り替え反復後もアプリは動作継続している");
@@ -291,7 +292,7 @@ public sealed class GStreamerBackendE2ETests
     /// <summary>sinceLocal 以降のログ行だけから needle を数える（過去 run の行を拾わない）。</summary>
     private static int CountInLogSince(string exePath, string needle, DateTime sinceLocal)
     {
-        string text = ReadNewestLog(Path.GetDirectoryName(exePath)!);
+        string text = AppLogReader.ReadTextSince(AppLogReader.LogDirectoryForExe(exePath), sinceLocal);
         int count = 0;
         foreach (string line in text.Split('\n'))
         {
@@ -373,32 +374,15 @@ public sealed class GStreamerBackendE2ETests
             ? bin : null;
     }
 
-    /// <summary>
-    /// sinceLocal 以降の行だけを返す。ログは run をまたいで追記されるため、
-    /// 過去 run の同じ文言を拾って偽合格しないようにする。
-    /// </summary>
-    private static IEnumerable<string> LinesSince(string text, DateTime sinceLocal)
-    {
-        foreach (string line in text.Split('\n'))
-        {
-            Match t = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
-            if (!t.Success ||
-                !DateTime.TryParse(t.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime at) ||
-                at < sinceLocal)
-                continue;
-            yield return line;
-        }
-    }
-
     private static string WaitForLog(string exePath, string needle, DateTime sinceLocal, TimeSpan timeout)
     {
-        string exeDir = Path.GetDirectoryName(exePath)!;
+        // v0.6.4（設計書 9-2）: 待ちのたびに全体を読み直さず、続きを読む（AppLogTail）。
+        var tail = new AppLogTail(AppLogReader.LogDirectoryForExe(exePath), sinceLocal);
         DateTime deadline = DateTime.UtcNow + timeout;
         string scoped = "";
         while (DateTime.UtcNow < deadline)
         {
-            string text = ReadNewestLog(exeDir);
-            scoped = string.Join('\n', LinesSince(text, sinceLocal));
+            scoped = tail.ReadText();
             if (scoped.Contains(needle, StringComparison.Ordinal)) return scoped;
             Thread.Sleep(400);
         }
@@ -408,8 +392,7 @@ public sealed class GStreamerBackendE2ETests
 
     private static int CountInLog(string exePath, string needle, DateTime sinceLocal)
     {
-        string text = ReadNewestLog(Path.GetDirectoryName(exePath)!);
-        return LinesSince(text, sinceLocal).Sum(line => Regex.Matches(line, Regex.Escape(needle)).Count);
+        return AppLogReader.ReadLinesSince(AppLogReader.LogDirectoryForExe(exePath), sinceLocal).Sum(line => Regex.Matches(line, Regex.Escape(needle)).Count);
     }
 
     /// <summary>
@@ -419,11 +402,13 @@ public sealed class GStreamerBackendE2ETests
     /// </summary>
     private static void WaitForGpuPublishedFrame(string exePath, DateTime sinceLocal, TimeSpan timeout)
     {
+        var tail = new AppLogTail(AppLogReader.LogDirectoryForExe(exePath), sinceLocal);
         DateTime deadline = DateTime.UtcNow + timeout;
         long published = 0;
         while (DateTime.UtcNow < deadline)
         {
-            published = GpuPublishSamples(exePath)
+            tail.ReadNew();
+            published = GpuPublishSamples(tail.Lines)
                 .Where(sample => sample.At >= sinceLocal)
                 .Select(sample => sample.Published)
                 .DefaultIfEmpty(0)
@@ -439,18 +424,13 @@ public sealed class GStreamerBackendE2ETests
     /// sinceLocal 以降のログ行だけから「Playlist track loaded index=」の並び（読み込み順）を取る。
     /// ログは run をまたいで追記されるため、過去 run の並びを判定に使わない。
     /// </summary>
-    private static List<int> LoadedTrackIndices(string exePath, DateTime sinceLocal)
+    /// <param name="text">AppLogTail で読んだ行（開始の時刻以降の行だけ）。</param>
+    private static List<int> LoadedTrackIndices(string text)
     {
-        string text = ReadNewestLog(Path.GetDirectoryName(exePath)!);
         var indices = new List<int>();
         foreach (string line in text.Split('\n'))
         {
             if (!line.Contains("Playlist track loaded index=", StringComparison.Ordinal)) continue;
-            Match t = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
-            if (!t.Success ||
-                !DateTime.TryParse(t.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime at) ||
-                at < sinceLocal)
-                continue;
             Match m = Regex.Match(line, @"Playlist track loaded index=(\d+)");
             if (m.Success) indices.Add(int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture));
         }
@@ -470,32 +450,14 @@ public sealed class GStreamerBackendE2ETests
         return true;
     }
 
-    private static string ReadNewestLog(string exeDir)
-    {
-        string logDir = Path.Combine(exeDir, "logs");
-        DirectoryInfo di = new(logDir);
-        if (!di.Exists) return "";
-        FileInfo? newest = di.GetFiles("timecodesyncplayer-*.log")
-            .OrderByDescending(f => f.LastWriteTimeUtc)
-            .FirstOrDefault();
-        if (newest is null) return "";
-        using var fs = new FileStream(newest.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var sr = new StreamReader(fs);
-        return sr.ReadToEnd();
-    }
-
-    private static string TailOfLog(string exePath, int lines)
-    {
-        string text = ReadNewestLog(Path.GetDirectoryName(exePath)!);
-        string[] all = text.Split('\n');
-        return string.Join('\n', all.Skip(Math.Max(0, all.Length - lines)));
-    }
-
     /// <summary>Playback perf 行から GPU 合成の公開フレーム数を時系列で取り出す（ローカル時刻）。</summary>
-    private static List<(DateTime At, long Published)> GpuPublishSamples(string exePath)
+    private static List<(DateTime At, long Published)> GpuPublishSamples(string exePath, DateTime sinceLocal) =>
+        GpuPublishSamples(AppLogReader.ReadLinesSince(AppLogReader.LogDirectoryForExe(exePath), sinceLocal));
+
+    private static List<(DateTime At, long Published)> GpuPublishSamples(IEnumerable<string> lines)
     {
         var samples = new List<(DateTime, long)>();
-        foreach (string line in ReadNewestLog(Path.GetDirectoryName(exePath)!).Split('\n'))
+        foreach (string line in lines)
         {
             if (!line.Contains("Playback perf", StringComparison.Ordinal)) continue;
             Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");

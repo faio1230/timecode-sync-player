@@ -17,6 +17,7 @@
             <Setter Property="FontSize"     Value="13"/>
             <Setter Property="Cursor"       Value="Hand"/>
         </Style>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
     </Window.Resources>
 
     <Grid>
@@ -263,6 +264,7 @@
                               Grid.Row="0" Grid.Column="1"
                               AutomationProperties.AutomationId="LtcFpsModeCombo"
                               Height="28"
+                              ToolTip="本番では LTC の発生器と同じ fps に固定してください"
                               SelectedIndex="{Binding Sync.LtcFpsModeIndex, Mode=TwoWay}">
                         <ComboBoxItem Content="Auto" Tag="Auto"/>
                         <ComboBoxItem Content="24 fps" Tag="Fixed24"/>
@@ -282,10 +284,18 @@
                         <ComboBoxItem Content="Jump" Tag="Jump"/>
                     </ComboBox>
                     <StackPanel Grid.Row="1" Grid.ColumnSpan="4">
-                        <TextBlock x:Name="SyncCorrectionStatusText"
-                                   AutomationProperties.AutomationId="SyncCorrectionStatusText"
-                                   Foreground="#FFB300" FontSize="11" Margin="0,4,0,0"
-                                   Text="{Binding Sync.SyncCorrectionStatus}"/>
+                        <!-- v0.6.4: Auto の注記は補正の状態の行に重ねる（行を足さず、下の操作を動かさない） -->
+                        <Grid>
+                            <TextBlock x:Name="SyncCorrectionStatusText"
+                                       AutomationProperties.AutomationId="SyncCorrectionStatusText"
+                                       Foreground="#FFB300" FontSize="11" Margin="0,4,0,0"
+                                       Text="{Binding Sync.SyncCorrectionStatus}"/>
+                            <TextBlock x:Name="LtcFpsAutoNoteText"
+                                       AutomationProperties.AutomationId="LtcFpsAutoNoteText"
+                                       Text="Auto は確認用です。本番は固定にしてください"
+                                       Foreground="#888888" FontSize="11" Margin="0,4,0,0"
+                                       Visibility="{Binding Sync.ShowLtcFpsAutoNote, Converter={StaticResource BoolToVisibility}}"/>
+                        </Grid>
                         <TextBlock x:Name="LongGopWarningText"
                                    AutomationProperties.AutomationId="LongGopWarningText"
                                    Foreground="#D7A24B" FontSize="11" Margin="0,2,0,0"

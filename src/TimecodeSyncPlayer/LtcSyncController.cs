@@ -577,11 +577,14 @@ internal sealed class LtcSyncController
     /// <summary>
     /// v0.6.3 (ii)（観測）: 保持の入口の回数、マスター停止中の後ろ向きの relocate の数、境界の経路の端へのシークの数を
     /// Information で 1 行出す（layer2 summary と同じ時点・同じ形。配布ビルドでも数えられる）。起動からの累計。
+    /// v0.6.4 段 3: 行末の smoothIneffective は Smooth の「効いていない」の検出の発火数（起動からの累計、数えるだけ）。
     /// </summary>
     public void LogSyncHoldSummary(string source) =>
         Log.Information(
-            "Sync hold summary: holdEntries={HoldEntries} backwardSeeksWhileStopped={BackwardSeeksWhileStopped} boundarySeeks={BoundarySeeks} source={Source}",
-            _holdEntryCount, _syncService.BackwardSeeksWhileStopped, _syncService.BoundarySeeks, source);
+            "Sync hold summary: holdEntries={HoldEntries} backwardSeeksWhileStopped={BackwardSeeksWhileStopped} boundarySeeks={BoundarySeeks} source={Source} heldJumpLandings={HeldJumpLandings} heldJumpBackwardWhileStopped={HeldJumpBackwardWhileStopped} otherBackwardWhileStopped={OtherBackwardWhileStopped} smoothIneffective={SmoothIneffective}",
+            _holdEntryCount, _syncService.BackwardSeeksWhileStopped, _syncService.BoundarySeeks, source,
+            _syncService.HeldJumpLandings, _syncService.HeldJumpBackwardWhileStopped, _syncService.OtherBackwardWhileStopped,
+            _correction.IneffectiveDetections);
 
     public void MonitoringChanged()
     {
@@ -744,6 +747,8 @@ internal sealed class LtcSyncController
                     layer2 = Layer2Class.Duplicate;
                     heldRun = confirmedHeldRun;
                     confirmedIntoHold = true;
+                    // v0.6.4 2-1（観測だけ）: この保持値の変更の合わせ（D31-b の入口）を (C) として数える。
+                    _syncService.NoteHeldJumpLanding();
                     processed = processed with
                     {
                         Diagnostic = processed.Diagnostic with { Status = TimecodeFrameDiagnosticStatus.Duplicate },
@@ -877,6 +882,9 @@ internal sealed class LtcSyncController
                 if (_signalLoss.IsPauseOwned)
                 {
                     ReapplyHeldValueOnPause();
+                    // v0.6.4 2-1（観測だけ）: (C) の合わせの relocate が出なかった（1 フレーム以内で省いた等）ときも、印をこの場で消す
+                    // （次の無関係な relocate を (C) に数えない）。出たときは NoteRelocateIssued が既に消費している。
+                    _syncService.ClearHeldJumpLandingNote();
                     _input.MarkLastApplied(_input.LastHeldEffectiveSeconds);
                     _lastContinueFrame = null;
                     return;
@@ -913,6 +921,7 @@ internal sealed class LtcSyncController
         {
             // D27-d: 値が進むフレームが来たら保持は明けたので、着地目標の保持値を捨てる。
             _input.OnNormalFrame();
+            _syncService.ClearHeldJumpLandingNote();
             _holdEntryCounted = false;
             // v0.6.3 段 4（規則 4）: マスターが動いたので、ロード解除の再適用（停止中の 1 回）は要らない。
             _syncService.DiscardPendingFileLoadRelease();
@@ -934,6 +943,11 @@ internal sealed class LtcSyncController
             // （ObserveValidFrame を呼ばない）。保持損失からの復帰は上の D27-b の経路。
             Log.Information("Timecode sync: applying the {Reason} frame once ltc={Ltc:F3}", applyReason, rawSeconds);
             RequestSyncEffective(effectiveSeconds);
+            // v0.6.4 2-1（観測だけ）: (C) の合わせの relocate が出なかった（許容内）ときは、印をこの場で消す（次の無関係な relocate を
+            // (C) に数えない）。要求が保留（門 13 の窓など）になったときは、UI タイマーの再送で出る relocate のために印を残し、保留が
+            // 終わった時点で消す（Tick）。
+            if (_input.Pending is null)
+                _syncService.ClearHeldJumpLandingNote();
             ApplyCorrection(effectiveSeconds);
             return;
         }
@@ -952,6 +966,8 @@ internal sealed class LtcSyncController
     {
         // U8: 確認済みの Jump の適用を先に記録する（確認フレームが保持なら、その保持が Jump 後の 1 枚目）。
         _signalLoss.ObserveAppliedJump(receivedAtMilliseconds, SignalContext());
+        // v0.6.4 2-1（観測だけ）: 確定した Jump でマスターが動いたので、(C) の印は下ろす（この Jump の relocate は (C) ではない）。
+        _syncService.ClearHeldJumpLandingNote();
 
         if (status == TimecodeFrameDiagnosticStatus.Duplicate)
         {
@@ -1382,6 +1398,10 @@ internal sealed class LtcSyncController
             else
                 RequestSyncEffective(pending.EffectiveSeconds);
         }
+        // v0.6.4 2-1（観測だけ）: 保留の要求が無い（relocate が出た、出ずに済んだ、這う前進などで捨てられた）なら (C) の印を消す。
+        // 出たときは NoteRelocateIssued が既に消費している。
+        if (_input.Pending is null)
+            _syncService.ClearHeldJumpLandingNote();
     }
 
     private LtcSignalLossContext SignalContext()

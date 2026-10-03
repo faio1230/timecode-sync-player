@@ -230,6 +230,13 @@ internal sealed class OutputEngine : IDisposable
     internal OutputHoldSnapshot TakeHoldSnapshot() => holdCounter.Take(Stopwatch.GetTimestamp());
     private readonly OutputHoldCounter holdCounter = new();
 
+    /// <summary>
+    /// v0.6.4 段 3: 前回の取り出しから、新しいソースフレームを合成して公開した数（性能ログの
+    /// composedSourceFrames。取り出すと数え直す。定義は ComposedSourceFrameCounter）。
+    /// </summary>
+    internal long TakeComposedSourceFrames() => composedSourceFrames.Take();
+    private readonly ComposedSourceFrameCounter composedSourceFrames = new();
+
     /// <summary>D8: リング外（旧サンプル経路）で拒否したフレーム数。2 秒ごとの統計に出す。</summary>
     internal long GstRingOutsideFrames => gstSource?.RingOutsideFrames ?? 0;
 
@@ -939,6 +946,8 @@ internal sealed class OutputEngine : IDisposable
         bool holdLease = false;
         SourceStatus status = SourceStatus.NotReady;
         double? acquiredPositionSeconds = null;
+        int acquiredGeneration = 0;
+        long acquiredSequence = 0;
 
         if (gstSource != null)
         {
@@ -953,7 +962,11 @@ internal sealed class OutputEngine : IDisposable
             acquired = gst.Image;
             // D26: Freeze 保存は「目標位置のフレーム」だけ許可する（ジャンプ前のフレームを凍結しない）。
             if (status == SourceStatus.Ready && acquired != null)
+            {
                 acquiredPositionSeconds = gst.Stamp.PositionSeconds;
+                acquiredGeneration = gst.Stamp.Generation;
+                acquiredSequence = gst.Stamp.Sequence;
+            }
             if (settings.Trace.IsEnabled)
                 settings.Trace.Record(new("compose.acquire", "GPU", acquireEndedQpc, scheduled,
                     gst.Stamp.Sequence, gst.Stamp.DecodedQpc, status.ToString(),
@@ -1062,6 +1075,11 @@ internal sealed class OutputEngine : IDisposable
                 settings.Trace.Record(new("compose.publish", "GPU", publishedTicks, scheduled, stamp.Id, stamp.GeneratedQpc));
                 current.Pool.Publish(slot, stamp, true);
                 OnComposePublished();
+                // v0.6.4 段 3: 新しいソースフレームを描いて公開した合成だけを数える（ギャップ中は
+                // ComposeLayerPolicy が黒・Held・Freeze を描くので、取得していても数えない）。
+                composedSourceFrames.RecordCompose(
+                    drewSourceFrame: acquired != null && gapMode == OutputGapMode.None,
+                    acquiredGeneration, acquiredSequence);
                 writing = false;
                 settings.Trace.Record(new("compose.visible", "GPU", Stopwatch.GetTimestamp(), scheduled, stamp.Id, stamp.GeneratedQpc));
                 // A1: 計測有効時のみ、公開したフレームの画素マーカーを読み戻して記録する（既定経路は IsEnabled 読みだけ）。

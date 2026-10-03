@@ -39,27 +39,6 @@ public sealed class ExitDialogE2ETests
              + int.Parse(parts[2]);
     }
 
-    private static string NewestLogPath(string exeDir)
-    {
-        string logDir = Path.Combine(exeDir, "logs");
-        DirectoryInfo di = new(logDir);
-        if (!di.Exists) return Path.Combine(logDir, "timecodesyncplayer-.log");
-        FileInfo? newest = di.GetFiles("timecodesyncplayer-*.log")
-            .OrderByDescending(f => f.LastWriteTimeUtc)
-            .FirstOrDefault();
-        return newest?.FullName ?? Path.Combine(logDir, "timecodesyncplayer-.log");
-    }
-
-    private static string ReadLogFrom(string logPath, long offset)
-    {
-        if (!File.Exists(logPath)) return "";
-        using var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        if (offset > fs.Length) offset = 0;
-        fs.Seek(offset, SeekOrigin.Begin);
-        using var sr = new StreamReader(fs);
-        return sr.ReadToEnd();
-    }
-
     private static Button ExitButton(Window dialog, string automationId)
         => dialog.FindFirstDescendant(cf => cf.ByAutomationId(automationId)).AsButton();
 
@@ -119,9 +98,9 @@ public sealed class ExitDialogE2ETests
         {
             string settingsPath = ShippingSettingsPath(workDir);
             string media = TestVideoFactory.GetOrCreate();
-            string exeDir = Path.GetDirectoryName(exePath)!;
-            string logPath = NewestLogPath(exeDir);
-            long logOffset = File.Exists(logPath) ? new FileInfo(logPath).Length : 0;
+            // v0.6.4 段 4: 開始の時刻以降のすべての日のファイルを読む（0 時をまたぐ回で前日の行を落とさない）。
+            string logDir = AppLogReader.LogDirectoryForExe(exePath);
+            DateTime logSince = DateTime.Now;
 
             runner = E2EAppRunner.Start(exePath, $"--open \"{media}\"", settingsPath, pausePlaybackIfNeeded: true);
             E2EAssert.WaitUntil(() => runner.Text("TimeLabel").Contains('/'), TimeSpan.FromSeconds(10));
@@ -133,7 +112,7 @@ public sealed class ExitDialogE2ETests
             runner.Process.WaitForExit(30_000).Should().BeTrue("通常終了は 30 秒以内にプロセスが終わる");
             runner.Process.ExitCode.Should().Be(0);
 
-            string log = ReadLogFrom(logPath, logOffset);
+            string log = AppLogReader.ReadTextSince(logDir, logSince);
             foreach (string step in MainWindowResourceDisposer.StepNames)
                 log.Should().Contain(step, $"ログに終了手順 '{step}' が記録される");
         }

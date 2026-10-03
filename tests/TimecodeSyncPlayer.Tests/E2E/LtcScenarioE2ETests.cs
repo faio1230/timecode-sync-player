@@ -2824,45 +2824,32 @@ public sealed partial class LtcScenarioE2ETests
 
         // ---- log access ----
 
+        // v0.6.4（設計書 9-2）: この run のアプリのログは、run の開始からの続きの読み（AppLogTail）で読む。
+        // 待ち（WaitForMetadataSince・LoadedTrackIndex の WaitUntil）のたびにファイル全体を読み直すと、
+        // その日に育ったログ（48.5 MB）で待ちが遅くなった。読む行は全体の読みと同じ（AppLogReaderTests）。
+        private AppLogTail? _runLogTail;
+
+        private AppLogTail RunLogTail() =>
+            _runLogTail ??= new AppLogTail(Path.Combine(Path.GetDirectoryName(_exePath)!, "logs"), _startedAt);
+
         private IEnumerable<string> RunLogLines() => RunLogLinesSince(_startedAt);
 
-        private IEnumerable<string> RunLogLinesSince(DateTime sinceLocal) =>
-            ReadLogLinesSince(Path.Combine(Path.GetDirectoryName(_exePath)!, "logs"), sinceLocal);
+        private IEnumerable<string> RunLogLinesSince(DateTime sinceLocal)
+        {
+            AppLogTail tail = RunLogTail();
+            if (sinceLocal < tail.SinceLocal)
+                return ReadLogLinesSince(Path.Combine(Path.GetDirectoryName(_exePath)!, "logs"), sinceLocal);
+            tail.ReadNew();
+            return tail.LinesSince(sinceLocal);
+        }
     }
 
     /// <summary>
-    /// アプリのログ（&lt;exe&gt;\logs\timecodesyncplayer-*.log）から、行の時刻が sinceLocal 以降の行を返す。
-    /// Serilog は日次でファイルを切り替える（rollingInterval Day）ので、0 時をまたぐ回の行は前日と当日の
-    /// 2 ファイルに分かれる。以前は最後に書かれた 1 ファイルだけを読み、前日のファイルの行を落としていた
-    /// （検証機の v0.5.5 の R-5 で、23:59:59 の着地の行を落として landingSeeks=0 と誤判定）。
-    /// sinceLocal の日付の 0 時以降に書かれたファイルをすべて、名前（日付）の昇順に読む。
+    /// アプリのログから、行の時刻が sinceLocal 以降の行を返す（0 時をまたぐ回は前日と当日のファイルを読む）。
+    /// v0.6.4 段 4: 本体は E2E の共通の口 <see cref="AppLogReader.ReadLinesSince"/>（ほかの E2E と揃えた）。
     /// </summary>
-    internal static IEnumerable<string> ReadLogLinesSince(string logDir, DateTime sinceLocal)
-    {
-        if (!Directory.Exists(logDir)) yield break;
-        IEnumerable<FileInfo> files = new DirectoryInfo(logDir).GetFiles("timecodesyncplayer-*.log")
-            .Where(file => file.LastWriteTime >= sinceLocal.Date)
-            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase);
-
-        foreach (FileInfo file in files)
-        {
-            string text;
-            using (var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (var reader = new StreamReader(stream))
-                text = reader.ReadToEnd();
-
-            foreach (string line in text.Split('\n'))
-            {
-                Match timestamp = Regex.Match(line, @"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)");
-                if (!timestamp.Success ||
-                    !DateTime.TryParse(timestamp.Groups[1].Value, CultureInfo.InvariantCulture,
-                        DateTimeStyles.None, out DateTime at) ||
-                    at < sinceLocal)
-                    continue;
-                yield return line;
-            }
-        }
-    }
+    internal static IEnumerable<string> ReadLogLinesSince(string logDir, DateTime sinceLocal) =>
+        AppLogReader.ReadLinesSince(logDir, sinceLocal);
 
     private static string FindRepoRoot()
     {

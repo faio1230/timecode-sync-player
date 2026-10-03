@@ -1,5 +1,16 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-10-03 04:1x（TSP-Opus）**: **v0.6.4 の候補を検証機へ送付（04:08、Taildrop）。** 候補 = v0.6.4 `13fc092`（版 0.6.3 のまま、ProductVersion `0.6.3+13fc092`）。setup `2053c508…`、zip `9266f000…`、ソース tar `ff854fe8…`（全桁は `artifacts/release/v064-13fc092/` と TSP-Fable への報告）。shim `251627d3…` とプラグイン v0.2.3 は v0.6.3 の公開物と同一。一式が回ったビルド `80be84b` との差は文書だけ。
+>
+> - **開発機の検証（設計書 8・9 節）**: (a) の一式のやり直し 7/7、(a)+(b) の一式 2 回 14/14（新しい失敗 0、芯は範囲内）、前後の prores2・heavy-a・L-1 の前の測り直しで 8-2 を条件つきで更新、C-2 の診断回 20 本で黒 0（口は取り込まずブランチ `agent-b-v064-c2diag` b38ed7b を残す）。(b) は v0.6.4 に取り込み済み
+> - **途中の事実**: C-1 の 1 回の失敗は生成器の最初のフレームの 1 ビット化け（最初の 1 枚は照合なしで受理。棚卸し #26、v0.6.5 以降の候補「デコーダの妥当性検査」）。テストの揺れ 1 本（棚卸し #27）
+> - **次**: TSP-TestMachine の固定の一式の結果 → 条件 1〜6 の表を TSP-Fable へ → 「公開可」→ 版 0.6.4（csproj・ApplicationVersionTests・CHANGELOG の日付・ノートの検証の欄、C-2 の行は「v0.6.3 の開発機の試験（トレース無し）では 12 回で 1 回」）→ 非E2E → package（native に Release の shim を置き、終わったら Debug に戻す）→ 候補の zip と比較 → main へ --no-ff → タグ → `gh release create --latest` → 事後報告（README の日英）
+> - **規則**: 担当への指示の冒頭に定型の 1 行（stash/reset/clean/discard 禁止）。測定の間は非E2E もビルドも回さない
+
+> **2026-10-02 22:0x（TSP-Opus）**: pre-commit のフックに制御文字の検査を足した（共有版は `scripts/hooks/pre-commit`、公開しない文字列は gitignore の `docs/local/forbidden-patterns.txt` から読む。SETUP 2 節）。その確かめの途中、最初の版（grep -P がロケールで素通り）で v06 のツリーに BEL 入りの試しのコミット `f88cbcd` ができ、push の前に `git reset --soft HEAD~1` で取り消した（ツリーは origin/v0.6.4 の 75d1d81 と一致を確認）。**reset は利用者の規則（stash・reset・clean・discard を使わない）の外だった**。以後、試しは使い捨ての repo だけで行い、取り消しは revert で
+
+> **2026-10-02 21:4x（TSP-Opus）**: v0.6.4（観測と試験基盤の整理、設計書 `docs/design/v0.6.4-observability.md`、ブランチ `v0.6.4`）の段 1〜3 を取り込み済み。開発機のディスクの空きが 20 GB を切ったので `timecode-sync-player-v05\artifacts\analysis-data`（09-28 の v0.5.4 の候補の比較、2.9 GB、レビュー済み）を消した（空き 22 GB）。一式の前に空きを確かめる
+
 > **2026-10-02 19:1x 更新（TSP-Opus）**: **v0.6.3 を Latest で公開（19:1x）。** タグ v0.6.3 = main の統合 `96ab6de`（リリースのコミット `4d5b866`、ProductVersion `0.6.3+4d5b866`）。setup `a8848e0fcc5bcb16e6525e7bb1c64f6550ad1e4ee536956e1d7ce13e77281f25`、zip `8361c3e9a85b55abad887524e5a560f8680a6964260bb969800a03aeeea79b72`（置き場は v06 の `artifacts\release-v063-4d5b866`）。検証した候補 `0.6.2+44cc043` と版の表記の 5 ファイルだけの差（shim `251627d3`・プラグイン `1ded64c4` は同じ）。事後報告は TSP-Fable へ送付済み
 >
 > - **v0.6.3 の中身**: (ii) RunThrough は止まった位置へ戻さず走り続け LTC の復帰で 1 回合わせる（利用者の決定）／一時停止中のシークは 1 枚だけ配信（shim）／flush の直後の instant-rate を segment まで保留（shim）／ロード解除の再適用を期限 1.5 秒でなく規則 4 で／観測の行（lookaheadMs・cSource・reason・masterStopped、File load landing、UI heartbeat summary、Sync hold summary）。設計の正は `docs/design/v0.6.3-chase-cleanup.md`（11〜18 節が決定・経緯・検証）
@@ -1085,6 +1096,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj -c De
 - 直列に 1 本ずつ。OpenCode が GPU 試験中（報告に開始時刻が出る）は親は走らせない。逆も同じ（親の試験中は指示を送らない）。
 - console セッションであること（`query session` に `>console`。RDP 中は不可）。自分が起動した PID だけ終了する。プロセス名での kill は禁止。
 - 新しいネイティブ経路は 1080p 短時間 → 4K の順。ビルドや重い処理を性能試験と同時に走らせない。
+- **測定（LTC シナリオの一式・診断回）の間は、どの担当も非E2E・ビルドも回さない**（測定の数字は同じ機械の負荷で揺れる。2026-10-03 に別の担当の非E2E 4 回が L-1 の最初の 47 秒と重なり、その回を回し直した。TSP-Fable の指示）。担当への指示文の冒頭に定型の 1 行「stash/reset/clean/discard 禁止。一時的に戻すときは複製して戻し、終わったら一致を確認」を入れる
 - 異常（フリーズ兆候、GPU エラー）が出たら試験を止めて状態を保存し、利用者に報告。GPU リセット・ドライバー操作・OS 再起動・WPR/UAC 採取はしない。
 - main への書き込みは統合（ff）のみ。stash・reset・clean・discard は使わない。
 

@@ -217,6 +217,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         OutputBackendState outputBackendState,
         IServiceProvider services)
     {
+        _startupTiming.Mark(StartupTimingPoint.MainWindowConstructor, DateTime.UtcNow);
         StartUiHeartbeat();
         _ltcMonitor = ltcMonitor;
         _playlist = playlist;
@@ -270,12 +271,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 GStreamerRebindRequested = OnGStreamerRebindRequested,
                 SourceFrameReady = OnSourceFrameReady,
             });
+            _startupTiming.Mark(StartupTimingPoint.OutputEngineCreated, DateTime.UtcNow);
             Log.Information("OutputEngine: Gpu backend を開始（OutputBackend={Backend}）", outputBackendState.Decision.Requested);
             _outputEngine.Start();
             // shim は合成デバイスのアダプター LUID だけを使い、自前デバイス +
             // 共有テクスチャリング（NT ハンドル + 共有フェンス）でリースを直接ソースにする。
             // 合成デバイスの context は shim から触らない。
-            if (_outputEngine.WaitForDevice(TimeSpan.FromSeconds(5)))
+            _startupTiming.Mark(StartupTimingPoint.WaitForDeviceStart, DateTime.UtcNow);
+            bool deviceReady = _outputEngine.WaitForDevice(TimeSpan.FromSeconds(5));
+            _startupTiming.Mark(StartupTimingPoint.WaitForDeviceEnd, DateTime.UtcNow);
+            if (deviceReady)
                 _gstBackendState.SetExternalDevice(_outputEngine.DevicePointer);
             else
                 Log.Error("OutputEngine: デバイス初期化がタイムアウトし、GStreamer shim へ Adopt できません");
@@ -590,7 +595,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly AppSettingsManager _settingsManager;
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
-        => CreateWindowLoadedCoordinator().Initialize();
+    {
+        _startupTiming.Mark(StartupTimingPoint.WindowLoaded, DateTime.UtcNow);
+        CreateWindowLoadedCoordinator().Initialize();
+    }
 
     private WindowLoadedCoordinator CreateWindowLoadedCoordinator() =>
         _windowLoadedCoordinator ??= new(new WindowLoadedEffects(
@@ -856,7 +864,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             setButtonEnabled: enabled => BtnSpout.IsEnabled = enabled,
             setToggleLabel: label => _vm.Sync.SpoutToggleLabel = label);
         var sessionInitializer = new WindowLoadedSessionInitializer(
-            initializePlayback: () => _gstPlaybackApi.Initialize(),
+            initializePlayback: () =>
+            {
+                _startupTiming.Mark(StartupTimingPoint.PlayerInitializeStart, DateTime.UtcNow);
+                PlaybackResult result = _gstPlaybackApi.Initialize();
+                _startupTiming.Mark(StartupTimingPoint.PlayerInitializeEnd, DateTime.UtcNow);
+                return result;
+            },
             applyAudioSettings: _audioControlCoordinator.ApplyStartup,
             createRenderContext: () => _renderSession.Create(_gstBackendState.Player),
             // GPU 構成では OutputEngine の SendTexture 経路が送信者を持つため、CPU 側 spoutDX は初期化しない。
@@ -2691,6 +2705,24 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 summary.FirstLateMs, summary.MaxLateMs, summary.Ticks, summary.ElapsedMs, summary.Reason));
     private DispatcherTimer? _uiHeartbeatTimer;
 
+    // v0.6.4 段 6（設計書 3-2、#15）: 起動の区間の要約 `Startup timing: …`（起動 1 回に 1 行、観測だけ）。
+    // 各点はプロセスの開始からの ms。Window_Loaded と ui.heartbeat の seq=1 の両方が済んだ時点で書く。
+    private readonly StartupTimingRecorder _startupTiming =
+        new(ProcessStartUtc(), fields => Log.Information("Startup timing: {Fields:l}", fields));
+
+    private static DateTime ProcessStartUtc()
+    {
+        try
+        {
+            using Process self = Process.GetCurrentProcess();
+            return self.StartTime.ToUniversalTime();
+        }
+        catch (Exception)
+        {
+            return DateTime.UtcNow;
+        }
+    }
+
     private void StartUiHeartbeat()
     {
         _uiHeartbeat.Start(Stopwatch.GetElapsedTime(0));
@@ -2701,7 +2733,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void OnUiHeartbeatTick(object? sender, EventArgs e)
     {
-        if (!_uiHeartbeat.Tick(Stopwatch.GetElapsedTime(0)))
+        bool keep = _uiHeartbeat.Tick(Stopwatch.GetElapsedTime(0));
+        if (!double.IsNaN(_uiHeartbeat.FirstLateMs))
+            _startupTiming.FirstHeartbeat(DateTime.UtcNow, _uiHeartbeat.FirstLateMs);
+        if (!keep)
             DiscardUiHeartbeatTimer();
     }
 
@@ -2980,8 +3015,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         RenderUpdateSchedulerStats renderStats = _renderSession.ConsumeUpdateStats();
 
+        // renderedFrames は WPF の描画（CPU 合成の名残）の数で、GPU 経路では常に 0（v0.6.3 設計書 17-2）。
+        // 既存の解析のスクリプトが読むので残す。
+        // composedSourceFrames（v0.6.4 段 3、行末に追加）は、GPU 経路で出力（OutputEngine の GPU worker）が
+        // 新しいソースフレーム（世代と通番の組が前回と違うもの）を合成して公開した数（この窓の間）。
+        // 同じフレームの再合成（Held・Present だけの tick）とギャップ中の黒・Freeze は数えない。
+        // 窓の間に 0 なら、出力は新しい絵を 1 枚も描いていない（黒・止まりの判定に使う数）。
         Log.Information(
-            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderReschedules={RenderReschedules} missedReschedules={MissedReschedules} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} gpuPublishedFrames={GpuPublishedFrames} gstRingOutsideFrames={GstRingOutsideFrames} frameBoundary=full-resolution-bitmap",
+            "Playback perf elapsed={Elapsed:F2}s expectedFps={ExpectedFps:F3} playbackRate={PlaybackRate:F3} displayedFps={DisplayedFps:F2} ticks={Ticks} renderCallbacks={RenderCallbacks} coalescedRenderCallbacks={CoalescedRenderCallbacks} renderReschedules={RenderReschedules} missedReschedules={MissedReschedules} renderUpdates={RenderUpdates} frameUpdates={FrameUpdates} renderedFrames={RenderedFrames} avgRenderMs={AvgRenderMs:F2} maxRenderMs={MaxRenderMs:F2} avgBitmapMs={AvgBitmapMs:F2} maxBitmapMs={MaxBitmapMs:F2} avgSpoutMs={AvgSpoutMs:F2} maxSpoutMs={MaxSpoutMs:F2} size={Width}x{Height} spoutEnabled={SpoutEnabled} gpuPublishedFrames={GpuPublishedFrames} gstRingOutsideFrames={GstRingOutsideFrames} frameBoundary=full-resolution-bitmap composedSourceFrames={ComposedSourceFrames}",
             snapshot.Elapsed.TotalSeconds, _fps, snapshot.PlaybackRate,
             snapshot.DisplayedFps, snapshot.TickCount, renderStats.Requests,
             renderStats.CoalescedRequests, renderStats.Reschedules, renderStats.MissedReschedules,
@@ -2990,7 +3031,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             snapshot.MaxRenderMs, snapshot.AvgBitmapMs, snapshot.MaxBitmapMs,
             snapshot.AvgSpoutMs, snapshot.MaxSpoutMs, snapshot.Width,
             snapshot.Height, snapshot.SpoutEnabled, _outputEngine?.PublishedFrameCount ?? 0,
-            _outputEngine?.GstRingOutsideFrames ?? 0);
+            _outputEngine?.GstRingOutsideFrames ?? 0, _outputEngine?.TakeComposedSourceFrames() ?? 0);
 
         // 0.4.8: 前の絵を出し続けた tick の内訳。「送信は続いているのに中身が変わらない」を、理由
         // （shim のコピー完了待ち＝fencePending / 新しいフレームが来ない＝noNewFrame）付きで残す。

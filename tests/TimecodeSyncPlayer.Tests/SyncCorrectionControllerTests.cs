@@ -221,6 +221,29 @@ public class SyncCorrectionControllerTests
     }
 
     [Fact]
+    public void IneffectiveDetections_CountsEachFire_AndSurvivesReset()
+    {
+        // v0.6.4 段 3（設計書 3-3）: 「効いていない」の検出の発火を起動からの累計で数える（Sync hold summary の
+        // smoothIneffective）。数えるだけで、検出の挙動は変えない。
+        var controller = new SyncCorrectionController();
+        controller.IneffectiveDetections.Should().Be(0);
+
+        for (int i = 0; i <= 4; i++)
+            Evaluate(controller, 0.120, secondsAfterStart: i * 0.5);
+        controller.SmoothDisabled.Should().BeTrue();
+        controller.IneffectiveDetections.Should().Be(1);
+
+        Evaluate(controller, 0.120, secondsAfterStart: 2.5);   // 止めた後は発火しない
+        controller.IneffectiveDetections.Should().Be(1);
+
+        controller.Reset();
+        controller.IneffectiveDetections.Should().Be(1, "Reset は補正の状態だけを消し、累計は残す");
+        for (int i = 0; i <= 4; i++)
+            Evaluate(controller, 0.120, secondsAfterStart: 10.0 + i * 0.5);
+        controller.IneffectiveDetections.Should().Be(2);
+    }
+
+    [Fact]
     public void Smooth_IneffectiveWithinWindow_DisablesAndFallsBackToRateOne()
     {
         var controller = new SyncCorrectionController();
