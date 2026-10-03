@@ -20,7 +20,7 @@ video clips in a playlist.
 - For most users, the per-user installer `TimecodeSyncPlayer-v<version>-setup.exe` is recommended and
   does not require administrator privileges.
 - Choose `TimecodeSyncPlayer-v<version>-win-x64.zip` for a portable extracted copy.
-- `<version>` is the latest stable release (for example `v0.6.2`).
+- `<version>` is the latest stable release (for example `v0.6.4`).
 - The GStreamer 1.28.2 runtime is included; no separate GStreamer installation is required.
 - Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show. How the material is
   exported makes a large difference to sync stability.
