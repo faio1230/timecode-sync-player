@@ -1,5 +1,10 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-10-03 14:3x（TSP-Opus）**: **利用者が v0.6.4 を実運用で試用中。v0.6.5 は現場の報告か利用者の判断で再開**（利用者「一旦 0.6.4 で使ってみます」、TSP-Fable 経由）。親と担当は待機、新しい作業は始めない。検証機の生ログ・trace は保管のまま。
+>
+> - **現場で何か出たときのログ**: インストール先の `logs` フォルダに、アプリのログ `timecodesyncplayer-YYYYMMDD.log` と shim のログ `tcs-gst-YYYYMMDD.log`（試験の証跡では `tcs-gst-raw.log` の名で複製される）。日付ごとのファイルなので、出た時刻の日のファイルを両方もらう
+> - **見る行**: `Sync hold summary`（終了時、保持・後ろ向きのシーク・境界のシークの数）、`Playback perf`（2 秒ごと、配信・合成のフレーム数と `composedSourceFrames`）、`Startup timing`（起動ごと 1 行）、`UI heartbeat summary`（起動直後の UI の止まり `firstLateMs`）。同期の位置の合わせ直しは配布ビルドでは `Continue mode: sync seek ltc=` と `Timecode sync seek ltc=`（`sync.gate relocate` は Debug だけ）
+
 > **2026-10-03 14:1x（TSP-Opus）**: **v0.6.4 を Latest で公開（14:08）。** タグ v0.6.4 = main の統合 `ce442af`（リリースのコミット `58280f3`、ProductVersion `0.6.4+58280f3`）。setup `21cccee7794969433e7d46b9abf13e2cdffea85082510d47a3ae0b1de9f6930a`、zip `9640472ac8932e5c8cdedd34452e65bbe144d48c678263b4c086f67105582021`。候補（製品 13fc092）の zip とは版の表記のファイル 5 つだけの差、shim `251627d3…`・プラグイン v0.2.3 は v0.6.3 と同一。試験は a3fbd52（2-4 の (a)・(b) は外した）と版のテストだけの差
 >
 > - **途中の判断**: 検証機の L-1 M4 で (a) の下限が格子の線ちょうどの目標で 1 フレーム揺れ → (a)・(b) を外した（棚卸し #28）。A-1 の relocate 80 → v0.6.3 の母数を 3 本にしてばらつき（#29）。reference-stale（std c・AMD で各 1 参照、+2・+11 フレームの先の絵）→ 原因不明の間欠として追加 24 本で再現なし、**利用者の決定で公開**、ノートの既知の間欠に 1 行（#30、v0.6.5 で位置の照会とフレームの PTS を並べる口）
