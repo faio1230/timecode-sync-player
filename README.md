@@ -26,7 +26,7 @@ TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレ�
 - 接続ディスプレイを選べる外部モニターのフルスクリーン出力
 - VJツール連携用のSpout2出力
 - プレイリストとプロジェクトの保存・読み込み
-- 純C#のLTCデコーダーとGStreamerベースのGPU出力
+- 純C#のLTCデコーダとGStreamerベースのGPU出力
 - HAP（Hap / Hap Alpha / Hap Q）のGPUデコード（v0.5.0から）
 - ProResのGPUデコード（v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。NVIDIAのGPUで検証し、推奨します。ほかのGPUは未検証で、既定ではCPUでデコードします）
 
