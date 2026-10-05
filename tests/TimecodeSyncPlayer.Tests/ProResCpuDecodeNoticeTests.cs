@@ -22,7 +22,7 @@ public class ProResCpuDecodeNoticeTests
 
         notice.Next("avdec_prores", ProResGpuMode.Off).Should().NotBeNull();
         notice.Next("avdec_prores", ProResGpuMode.Off).Should().BeNull();
-        notice.Next("AVDEC_PRORES", ProResGpuMode.Off).Should().BeNull("大文字小文字は同じデコーダー");
+        notice.Next("AVDEC_PRORES", ProResGpuMode.Off).Should().BeNull("大文字小文字は同じデコーダ");
     }
 
     [Fact]
