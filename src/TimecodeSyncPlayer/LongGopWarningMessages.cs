@@ -9,7 +9,7 @@ namespace TimecodeSyncPlayer;
 internal static class LongGopWarningMessages
 {
     public const string Recommendation =
-        "キーフレーム間隔が長いため同期が不安定になることがあります（推奨: 1〜2 秒）";
+        "キーフレーム間隔が長いため同期が不安定になることがあります（推奨 1 秒（長くても 2 秒））";
 
     public static string Format(double medianIntervalSeconds) =>
         medianIntervalSeconds > 0

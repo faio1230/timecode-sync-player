@@ -269,7 +269,8 @@
                         <ComboBoxItem Content="Auto" Tag="Auto"/>
                         <ComboBoxItem Content="24 fps" Tag="Fixed24"/>
                         <ComboBoxItem Content="25 fps" Tag="Fixed25"/>
-                        <ComboBoxItem Content="29.97 fps DF" Tag="Fixed29_97"/>
+                        <ComboBoxItem Content="29.97 fps" Tag="Fixed29_97"
+                                      ToolTip="29.97 のノンドロップの信号はこれを選んでください。ドロップフレームは Auto でも判定できます"/>
                         <ComboBoxItem Content="30 fps" Tag="Fixed30"/>
                     </ComboBox>
                     <TextBlock Text="補正:" Foreground="#BBBBBB"

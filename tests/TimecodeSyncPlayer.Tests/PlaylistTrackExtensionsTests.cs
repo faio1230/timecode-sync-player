@@ -102,7 +102,7 @@ public class PlaylistTrackExtensionsTests
         var marked = track with { LongGopWarning = true };
 
         marked.LongGopWarningText.Should().Be("⚠ 長GOP");
-        marked.LongGopWarningTooltip.Should().Contain("推奨: 1〜2 秒");
+        marked.LongGopWarningTooltip.Should().Contain("推奨 1 秒（長くても 2 秒）");
     }
 
     private static PlaylistTrack CreateTrack(

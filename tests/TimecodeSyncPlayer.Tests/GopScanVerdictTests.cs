@@ -27,7 +27,7 @@ public sealed class GopScanVerdictTests
     [Fact]
     public void 中央値では見逃す素材を最大ギャップで捕まえる()
     {
-        // M6: 中央値 0.708 秒は推奨（1〜2 秒）に収まるが、最大は 6.708 秒。
+        // M6: 中央値 0.708 秒は推奨（1 秒、長くても 2 秒）に収まるが、最大は 6.708 秒。
         // その区間へシークすると実際に遅い（実測 2,164ms）。
         GopScanVerdict.Judge(keyframes: 149, maxGapSeconds: 6.708)
             .Should().Be(GopSeekQuality.Warning);
