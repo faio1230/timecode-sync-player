@@ -7,6 +7,7 @@
 ## 1. 前提環境
 
 - Windows 10/11 (x64)
+- 外付け（RTX級）のGPUを前提にします。D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では、再生だけを無効にします（「8. バックエンド設定と環境変数」）
 - .NET 8 SDK
 - PowerShell 7（`pwsh`）。開発・試験のスクリプト（`scripts\`・`native\gst-shim\`）に要ります。v0.6.0 から PowerShell 7 専用で、Windows PowerShell 5.1 では動きません。
   利用者が使うスクリプト（`scripts\inspect-gop.ps1`）は 5.1 のままでも動きます（`powershell -File` と `pwsh -File` のどちらでも可）
@@ -69,6 +70,7 @@ timecode-sync-player/
 |---------|---------|---------|
 | `native/SpoutDX.dll` | Spout 出力を使う場合に必要 | Spout 送信に使います。[Spout2](https://github.com/leadedge/Spout2)のSDK内SpoutDXプロジェクトをビルドして配置します。配布zip／インストーラーには同梱済みです。 |
 | `native/tcs_gstreamer.dll` | **必須** | 動画再生に使います。下記「GStreamer 1.28.2」を参照して`native/gst-shim`からビルドします。 |
+| `native/gst-prores/`（`gstproresd3d11.dll`と`prores_*.cso`6個） | ProResをGPUで復号する場合に必要 | ProResのGPU復号のプラグイン（gst-prores-d3d11）です。`pwsh -File scripts\get-prores-plugin.ps1`を実行すると、版を固定したzipを取得してSHA-256を照合し、`native\gst-prores`に置きます。本体のビルド時に、出力先の`gst-extra-plugins\`へコピーされます。無いときはProResをCPUで復号します。配布zip／インストーラーには同梱済みです。 |
 
 詳細は [native/README.md](../native/README.md) を参照してください。
 
@@ -225,7 +227,7 @@ GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-Y
 
 ### LTC fps モード（24 / 25 / 29.97 / 30）
 
-LTC のフレームレートを Preference の「LTC fps」で選びます（既定 **Auto**）。
+LTC のフレームレートを画面の LTC 欄の「FPS」で選びます（既定 **Auto**）。
 
 **本番では、LTC の発生器と同じ fps に固定（Fixed 24 / 25 / 29.97 / 30）してください。**
 Auto は、つないだ LTC の fps が分からないときに確かめるための補助の設定です。Auto のままだと、
@@ -249,7 +251,7 @@ Auto は受信したフレームから自動判定します。判定結果はロ
 ### 同期補正モード（T5）
 
 LTC 同期の残差（`effectiveLtcSeconds - playbackSeconds`）をデッドゾーンの内側で詰める方法を選びます。
-Preference の「同期補正」で選べます（既定は **Smooth**）。
+LTC 欄の「補正」で選べます（既定は **Smooth**）。
 
 | モード | 挙動 |
 |---|---|
@@ -264,7 +266,7 @@ Preference の「同期補正」で選べます（既定は **Smooth**）。
 ### 同期オフセット（T3、v0.4）
 
 入力側（LTC ケーブル〜オーディオ IF〜デコード）と出力側（HDMI/SDI〜LED プロセッサ〜LED ウォール）の
-遅延を、**映像を先に進める 1 つの値**でまとめて補正します。Preference の「オフセット」スライダーで
+遅延を、**映像を先に進める 1 つの値**でまとめて補正します。LTC 欄の「オフセット」スライダーで
 -1000〜+1000 ms を即時反映で調整できます（`settings.json` の `syncOffsetMs`、既定 `0`）。
 
 | 状況 | 入れる値 |
@@ -293,20 +295,11 @@ Preference の「同期補正」で選べます（既定は **Smooth**）。
 - 4K の CPU 復号は GPU の約 2.3 倍のメモリを使います（開発機の実測: 1.55 GB 対 0.68 GB）。NVIDIA 以外の GPU では既定で CPU になります
 - `decodeMode=software` のときは CPU の復号が先に試されるので、`proResGpu` が `auto`・`on` でも ProRes は CPU で開きます
 - 壊れたフレームがあっても再生は止まりません（そのフレームは捨てるか、そのまま出して続けます）。`tcs-gst-*.log` に `decode.warning` が 1 行と、件数の `decode.warnings` が出ます
-- プラグインは VC++ 再頒布パッケージ 14.50.35710 以上が要ります。インストーラーは古いときだけ入れます（zip の利用者は手で入れてください）。VC++ が 14.50 より古い PC では、インストールの途中で一度だけ管理者の確認（UAC）が出ます。無人でインストールするときは、先に VC++ 再頒布パッケージ（14.50 以上）を入れておいてください。入っていないときは ProRes を CPU で復号します
+- プラグインは VC++ の再頒布パッケージ「Microsoft Visual C++ v14 Redistributable (x64)」の 14.50.35710 以上が要ります。インストーラーは古いときだけ入れます（zip の利用者は手で入れてください）。VC++ が 14.50 より古い PC では、インストールの途中で一度だけ管理者の確認（UAC）が出ます。無人でインストールするときは、先にこの再頒布パッケージ（14.50 以上）を入れておいてください。入っていないときは ProRes を CPU で復号します
 
 ### 環境変数
 
-| 変数 | 用途 |
-|---|---|
-| `TIMECODE_SYNC_PLAYER_SETTINGS_PATH` | `settings.json`の場所を上書き（自動テストの隔離用） |
-| `TIMECODE_SYNC_PLAYER_SPOUT_NAME` | Spout送信者名の上書き。未設定は既定名 |
-| `TIMECODE_SYNC_PLAYER_OUTPUT_TRACE` | 出力トレース（`manifest.json` / `events.jsonl` / `summary.json`）の出力ディレクトリ。未設定は無効。停止時にまとめて書き出すため、強制終了では残りません |
-| `TIMECODE_SYNC_PLAYER_OUTPUT_TRACE_CAPACITY` | 出力トレースのイベント上限（正の整数）。未設定・不正値は既定 `1000000`（60Hz で約 8.3 分）。上限到達で以降は破棄され、最初の 1 件で警告ログ、`summary.json` の `droppedEvents` と `capacity` に記録されます。イベントはメモリに溜めるため、上限を上げると常駐が増えます（実測: 1,000,000 件で約 170MB、60 分 60Hz 相当の約 730 万件で約 1.2GB） |
-| `TIMECODE_SYNC_PLAYER_TEST_CARD` | `1`または`true`で起動時にテストカードをON（動作確認用） |
-| `TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS` | `<秒>[,<秒>...]`。指定時刻に疑似デバイス消失を発生させ、復旧経路を確認する検証用 |
-| `TCS_PRORES_GPU` | `auto` / `on` / `off`。試験用。設定の `proResGpu` より優先します（ログに `source=env`） |
-| `GSTREAMER_1_0_ROOT_MSVC_X86_64` | GStreamerランタイムのルート。既定は`C:\Program Files\gstreamer\1.0\msvc_x86_64` |
+環境変数の一覧（意味・値・既定）は、[settings.md](settings.md)の「Environment variables / 環境変数」にまとめています。
 
 ## 9. トラブルシューティング
 
@@ -328,7 +321,7 @@ Preference の「同期補正」で選べます（既定は **Smooth**）。
 
 | 項目 | 推奨 | 補足 |
 |---|---|---|
-| 映像コーデック | **H.264（High、4:2:0）**を推奨。HEVC も可 | H.264 / HEVC は内蔵 GPU のデコーダ（`d3d11h264dec` / `d3d11h265dec`）で再生する。内蔵 GPU がデコードできないコーデック（AV1 など）は CPU デコードになり、4K60 では素材 fps を満たせない |
-| キーフレーム間隔 | **1〜2 秒**（60fps なら `-g 60〜120`） | LTC 同期のジャンプは accurate シークのため、キーフレームから目標まで復号する。10 秒間隔では着地が 1〜3 秒遅れる |
-| ProRes | **可**（v0.6.0 では「推奨」ではない） | NVIDIA の GPU では GPU で復号します（`proResGpu`）。ほかの GPU では CPU の復号になり、4K では 1.5〜1.7 GB のメモリを使います。NVIDIA での「推奨」への引き上げは、RTX での検証が済んだ版で行います |
+| 映像コーデック | **H.264（High、4:2:0）** を推奨。HEVCは推奨外（同期の安定性を測っていない） | H.264 / HEVCはGPUのデコーダ（`d3d11h264dec` / `d3d11h265dec`）で再生する。AV1は、GPUがAV1の復号に対応していれば`d3d11av1dec`でGPU復号し、対応していなければCPU（`dav1ddec`）の復号になる。CPUの復号では、4K60で素材fpsを満たせない |
+| キーフレーム間隔 | **1秒を目安、長くても2秒**（60fpsなら`-g 60 -keyint_min 30`、30fpsなら`-g 30 -keyint_min 15`） | LTC同期のジャンプはaccurateシークのため、キーフレームから目標まで復号する。10秒間隔では着地が1〜3秒遅れる |
+| ProRes | **NVIDIAのGPUでは推奨**。ほかのGPUでもGPUで復号できるが未検証 | NVIDIAのGPUでは、既定（`proResGpu=auto`）でGPUで復号します。ほかのGPUでは既定でCPUの復号になり、4Kでは1.5〜1.7GBのメモリを使います。`proResGpu=on`にするとGPUで復号しますが、NVIDIA以外では検証していません |
 | 音声 | **48kHz を推奨**（44.1kHz も可） | 再生端末のミックスレートは通常 48kHz のため、変換なしで再生できる。44.1kHz は audioresample で変換して再生する |
