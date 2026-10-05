@@ -260,7 +260,7 @@ CPU デコード素材も GPU 素材と同じリース経路で受け取る（�
 
 ProRes（v0.6.0から）の注:
 
-- プロファイル`prores-gpu`は、GPUの組の最後に置く。試すかどうかは`include/tcs_prores_gpu_policy.h`の門で決める。自動（既定）はshimのデバイスのアダプタがNVIDIA（PCIのベンダーID 0x10DE）のときだけ試し、有効は常に試し（NVIDIA以外は未検証としてログに残す）、無効は試さない。
+- プロファイル`prores-gpu`は、GPUの組の最後に置く。試すかどうかは`include/tcs_prores_gpu_policy.h`のゲートで決める。自動（既定）はshimのデバイスのアダプタがNVIDIA（PCIのベンダーID 0x10DE）のときだけ試し、有効は常に試し（NVIDIA以外は未検証としてログに残す）、無効は試さない。
 - モードは`tcs_player_set_prores_gpu`で最初のロードの前に渡す。環境変数`TCS_PRORES_GPU`（auto / on / off）があればそちらを優先する。
 - `proresd3d11dec`はアダプタごとのd3d11のクラスではないので、shimが自分のデバイスのLUIDを`adapter-luid`に書いてから使う。デコーダの出力がshimのデバイスに無いときは失敗（decoder-adapter-mismatch）とし、CPUの`prores-cpu`へ移る。
 - プラグインのDLL（`gstproresd3d11.dll`）とシェーダー（`prores_*.cso`）は、配布物では同梱のGStreamerのプラグインのフォルダに置く（「配布とセットアップ」）。
