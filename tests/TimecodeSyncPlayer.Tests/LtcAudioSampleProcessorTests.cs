@@ -178,7 +178,10 @@ public class LtcAudioSampleProcessorTests
     {
         const int sampleRate = 48000;
         const int fps = 25;
-        const int chunkSamples = 2400;   // 50ms。25fps の 1 フレーム（40ms）より長い
+        // 100ms。25fps の LTC のフレーム（40ms）2 つより長い。
+        // v0.6.5 B3: 受け始めの最初の 1 つ（1920 サンプル目で終端）は長さを確かめられないので使わない。
+        // 1 回目のコールバックに受け取る LTC のフレーム（3840 サンプル目で終端）が入るよう、50ms から 100ms に広げた。
+        const int chunkSamples = 4800;
         const int frameCount = 8;
         float[] samples = LtcTestSignalGenerator.Generate(
             BuildContinuousFrames(new LtcTimecode(0, 0, 0, 0, false), fps, frameCount), fps, sampleRate);

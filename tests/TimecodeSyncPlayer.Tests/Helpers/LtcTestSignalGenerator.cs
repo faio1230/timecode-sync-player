@@ -181,6 +181,56 @@ internal static class LtcTestSignalGenerator
     }
 
     /// <summary>
+    /// v0.6.5 B3: 任意の長さのビット列（80 ビットに区切らない）をそのまま BMC の波形にする。
+    /// 79 ビット・81 ビットの LTC のフレームや、無音をはさむ列を作るのに使う。
+    /// 遷移の置き方は <see cref="Encoder"/> と同じ（各ビットの境界に遷移、"1" は中央にも遷移）。
+    /// デコーダは "1" をビットの終わりの境界の遷移で確定させるので、最後のビット（同期ワードの bit 79 = "1"）の後に
+    /// 境界の遷移を 1 つ足し、その後ろに半ビットぶん同じレベルを置く（列の最後の LTC のフレームも読めるように）。
+    /// </summary>
+    public static float[] EncodeBitStream(IReadOnlyList<bool> bits, double fps, int sampleRate)
+    {
+        double samplesPerBit = sampleRate / (fps * 80.0);
+        long total = (long)Math.Round((bits.Count + 0.5) * samplesPerBit);
+        var transitions = new List<double>(bits.Count * 2 + 1);
+        for (int b = 0; b < bits.Count; b++)
+        {
+            double boundary = b * samplesPerBit;
+            transitions.Add(boundary);
+            if (bits[b])
+                transitions.Add(boundary + samplesPerBit * 0.5);
+        }
+        transitions.Add(bits.Count * samplesPerBit); // 最後のビットを閉じる境界の遷移
+
+        var samples = new float[total];
+        float level = 1.0f;
+        int cursor = 0;
+        for (long n = 0; n < total; n++)
+        {
+            while (cursor < transitions.Count && transitions[cursor] <= n)
+            {
+                level = -level;
+                cursor++;
+            }
+            samples[n] = level;
+        }
+        return samples;
+    }
+
+    /// <summary>
+    /// v0.6.5 B3: 極性補正ビット（<paramref name="bitIndex"/>）を立てて、80 ビットの中の 0 の数を偶数にする
+    /// （EBU Tech 3097-E 4.5 節の定義）。<paramref name="bits"/> を書き換えて返す。
+    /// </summary>
+    public static bool[] SetPolarityCorrection(bool[] bits, int bitIndex)
+    {
+        bits[bitIndex] = false;
+        int zeros = 0;
+        foreach (bool bit in bits)
+            if (!bit) zeros++;
+        bits[bitIndex] = zeros % 2 != 0;
+        return bits;
+    }
+
+    /// <summary>
     /// 非ドロップフレームのタイムコードを1フレーム進める。連続フレームテスト用。
     /// </summary>
     public static LtcTimecode Increment(LtcTimecode tc, int fps)
