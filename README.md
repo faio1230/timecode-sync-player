@@ -7,7 +7,7 @@
 
 ![TimecodeSyncPlayer スクリーンショット](assets/screenshot.png)
 
-TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレイリストの動画をタイムコードに同期して再生する、ライブショー向けのWindows用ビデオプレイヤーです。
+TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレイリストの動画をタイムコードに同期して再生する、ライブショー向けのWindows用ビデオプレイヤーです。開発コードネームはERYTHEIAです。
 
 ## ダウンロード
 
@@ -28,25 +28,25 @@ TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレ�
 - プレイリストとプロジェクトの保存・読み込み
 - 純C#のLTCデコーダとGStreamerベースのGPU出力
 - HAP（Hap / Hap Alpha / Hap Q）のGPUデコード（v0.5.0から）
-- ProResのGPUデコード（NVIDIAのGPU、v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。ほかのGPUではCPUでデコード）
+- ProResのGPUデコード（v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。NVIDIAのGPUで検証し、推奨します。ほかのGPUは未検証で、既定ではCPUでデコードします）
 
-推奨する素材の形式はH.264です（GPUでデコード）。VP9・AV1・H.265なども読み込めますが推奨外で、読み込み時に警告を出します。形式ごとの推奨は[現場準備ガイド](docs/USER-MANUAL.md)を参照してください。
+推奨する素材の形式はH.264（キーフレーム間隔は1秒を目安、長くても2秒）とProResです。HAPも警告なしで使えます。VP9・AV1・H.265なども読み込めますが推奨外で、読み込み時に警告を出します。形式ごとの推奨は[現場準備ガイド](docs/USER-MANUAL.md)を参照してください。
 
 ## 動作要件
 
-動作には、Windows 10/11 x64、Direct3D 11.4に対応したGPUとドライバ、[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)、LTC音声を入力できるオーディオデバイスが必要です。
+動作には、Windows 10/11 x64、Direct3D 11.4に対応したGPUとドライバ、[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)、LTC音声を入力できるオーディオデバイスが必要です。検証の前提は外付け（RTX級）のGPUです。CPU内蔵のGPUでは、4K60の素材の復号が間に合わないことがあります。
 
 Direct3D 11.4は映像の合成と出力に使います。対応していない環境では、起動時にそのことを知らせ、再生だけを無効にします。アプリは開いたままで、CPUでの合成には切り替えません。
 
 ProResのGPUデコードのプラグインは、Microsoft Visual C++ 2015-2022再頒布可能パッケージ（x64）14.50以上を必要とします。インストーラーは、入っていないか古いときだけ導入し、その途中で一度だけ管理者の確認（UAC）が出ます。zip版では、入っていないか古い場合に[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を手動で実行してください。
 
-ProResのGPUデコードはNVIDIA（RTX級）のGPUで検証しています。ほかのGPUでは既定でCPUでデコードし、画面の「ProResのGPU復号」で切り替えられます。
+ProResのGPUデコードはNVIDIA（RTX級）のGPUで検証し、推奨しています。プラグインはDirect3D 11の汎用のシェーダーで動くので、ほかのGPUでも画面の「ProRes の GPU 復号」をonにすればGPUでデコードできますが、未検証です。既定（auto）ではNVIDIA以外はCPUでデコードし、変更はアプリの再起動後に反映されます。
 
 `SpoutDX.dll`は配布パッケージに含まれていますが、使うのはSpout出力のときだけです。
 
 ## インストーラーの使い方
 
-1. Releasesから`TimecodeSyncPlayer-v<版>-setup.exe`を実行します。ユーザー単位で入るため、管理者権限は要りません。
+1. Releasesから`TimecodeSyncPlayer-v<版>-setup.exe`を実行します。ユーザー単位で入るため、管理者権限は要りません。Visual C++再頒布可能パッケージが入っていないか古いPCでは、その導入のために一度だけ管理者の確認（UAC）が出ます。
 2. スタートメニューからTimecodeSyncPlayerを起動します。
 
 アンインストールでは、アプリ本体、ログ、ショートカットを削除します。ユーザー設定`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`は、再インストール時に復元できるよう意図して残しています。完全に消す場合は手動で削除してください。
@@ -78,7 +78,7 @@ dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 ```
 
-ソースからのビルドには、GStreamer 1.28 MSVC x64のランタイムと`tcs_gstreamer.dll`も必要です（配布パッケージには同梱しています）。Spout出力を使う場合は、x64版の`SpoutDX.dll`を`native`フォルダーに置きます。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
+ソースからのビルドには、GStreamer 1.28.2 MSVC x64のランタイムと`tcs_gstreamer.dll`も必要です（配布パッケージには同梱しています）。ProResのGPUデコードのプラグインは`scripts\get-prores-plugin.ps1`で取得します。Spout出力を使う場合は、x64版の`SpoutDX.dll`を`native`フォルダーに置きます。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
 
 ## ドキュメント
 
