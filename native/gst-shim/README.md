@@ -5,6 +5,14 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 `docs/OUTPUT-GPU-CONTRACT-MAPPING-2026-09-10.md`（合成層側設計・他作業系統の
 文書を読み取り参照）に合わせる。
 
+## 現状（2026-10-05、v0.6.4）
+
+- GStreamer 1.28.2のランタイムは配布物に同梱している（v0.4.0から）。利用者がGStreamerを入れる必要はない。詳しくは末尾の「配布とセットアップ」。
+- ProResは、GPUデコーダ`proresd3d11dec`（GStreamerのプラグインgst-prores-d3d11、D3D11のCompute Shader）で復号できる（v0.6.0から。同梱の版はv0.6.2からv0.2.3）。既定（自動）ではshimのデバイスがNVIDIAのアダプタにあるときだけ使い、ほかはCPU（`avdec_prores`）で復号する。「コーデック分岐」の表。
+- HAP（Hap・Hap Alpha・Hap Q）は、v0.5.0からGPUで展開する。デコーダを通さずに圧縮テクスチャのまま受け、Snappyの展開だけをCPUで行い、BC1/BC3のテクスチャからBGRAへの変換はGPUで行う。「コーデック分岐」の表。
+
+日付が2026-09の節（段階6b、本体のGStreamerSource、MPEG-TSのシーク、検証状況）は、その時点の設計メモとして残している。上の3点と食い違うところは、この節と「コーデック分岐」「配布とセットアップ」を正とする。
+
 ## 出力側の位置づけ（確定契約との対応）
 
 - この shim の出口は **Spout ではない**。出口は `tcs_player_acquire()` の
@@ -179,14 +187,16 @@ GStreamer によるデコードを「合成層へ GPU 画像を供給するソ�
 | 規則6 非ブロッキング | 一致 | acquire/set_generation は短いロックのみ。デコードを待たない |
 | 規則7 診断 | **部分一致** | decoder/gpu_path/frames/generation はあり。世代排除・NotReady・置換・最大同時 lease のカウンタは未実装 |
 | 条件: NV12 テクスチャ | **相違** | 現状 BGRA のみ（d3d11colorconvert）。NV12 直出しは converter 差し替えで可能だが未実装 |
-| 条件: HAP/BC テクスチャ | 未実装 | 専用分岐まで意図的に拒否 |
+| 条件: HAP/BC テクスチャ | 一致（v0.5.0から） | HAPは圧縮テクスチャのまま受け、shimの中でGPUでBGRAへ展開してリングへ載せる（2026-09の時点では未実装で拒否していた） |
 | 条件: 時計 | 一致 | pts_ns を返すのみで GStreamer の running time は露出しない。世代は set_generation/seek で合成層が制御 |
 | リング容量 3 以上のプール | 一致 | BGRA 3 スロット + 共有フェンス。寸法/形式不一致時のみ旧経路へフォールバック |
 
 相違はいずれも「最小 ABI で現段階の接続を成立させる」ためのスコープ判断であり、
-NV12/BC と診断の拡張は今後の課題。
+NV12 と診断の拡張は今後の課題（BC はv0.5.0のHAPの経路で対応した）。
 
 ## 本体 OutputEngine の GStreamerSource（段階 2〜6b、2026-09-12）
+
+（2026-09時点の設計メモ）
 
 本体側 `src/TimecodeSyncPlayer/Output/GStreamerSource.cs` は
 `tcs_player_acquire` / `tcs_player_ring_info` / `tcs_player_release` を
@@ -243,10 +253,23 @@ CPU デコード素材も GPU 素材と同じリース経路で受け取る（�
 | video/x-h265 / x-hevc | hevcparse ! d3d11h265dec ! ... | avdec_h265 ! （同上） |
 | video/x-vp9 | vp9parse ! d3d11vp9dec ! ... | avdec_vp9 ! （同上） |
 | video/x-av1 | av1parse ! d3d11av1dec ! ... | dav1ddec ! （同上） |
-| video/x-prores | —（GPU デコーダなし） | avdec_prores ! videoconvert ! d3d11upload ! BGRA(d3d11mem) |
+| video/x-prores | proresd3d11dec ! d3d11colorconvert ! BGRA(d3d11mem)（v0.6.0から。下の注） | avdec_prores ! videoconvert ! d3d11upload ! BGRA(d3d11mem) |
 | video/x-raw | videoconvert ! d3d11upload ! BGRA(d3d11mem) | 同左 |
-| **video/x-hap** | **拒否**（圧縮テクスチャ直受けの専用分岐を追加する予定。avdec_hap による自動展開をさせない。HAP 自体は今回の範囲外） | — |
+| video/x-hap | queue ! appsink(video/x-hap)（v0.5.0から。デコーダを通さずに受け、shimの中で展開する。下の注） | —（avdec_hapによる自動展開はさせない） |
 | 一致しない video/* | — | 最終退避 `decodebin(sysmem)` → videoconvert ! d3d11upload（CPU デコード） |
+
+ProRes（v0.6.0から）の注:
+
+- プロファイル`prores-gpu`は、GPUの組の最後に置く。試すかどうかは`include/tcs_prores_gpu_policy.h`の門で決める。自動（既定）はshimのデバイスのアダプタがNVIDIA（PCIのベンダーID 0x10DE）のときだけ試し、有効は常に試し（NVIDIA以外は未検証としてログに残す）、無効は試さない。
+- モードは`tcs_player_set_prores_gpu`で最初のロードの前に渡す。環境変数`TCS_PRORES_GPU`（auto / on / off）があればそちらを優先する。
+- `proresd3d11dec`はアダプタごとのd3d11のクラスではないので、shimが自分のデバイスのLUIDを`adapter-luid`に書いてから使う。デコーダの出力がshimのデバイスに無いときは失敗（decoder-adapter-mismatch）とし、CPUの`prores-cpu`へ移る。
+- プラグインのDLL（`gstproresd3d11.dll`）とシェーダー（`prores_*.cso`）は、配布物では同梱のGStreamerのプラグインのフォルダに置く（「配布とセットアップ」）。
+
+HAP（v0.5.0から）の注:
+
+- HAPと分かったファイルは、デコーダを挟まずに`queue ! appsink(video/x-hap)`で受ける。HAPの解析とSnappyの展開はCPUで、`frame_lock`の外で行う。展開したBC1/BC3のテクスチャは、shimのデバイスでGPUがBGRAに変換してリングへ載せる（Hap QはYCoCgからの変換のシェーダーを使う）。
+- 対応はHap・Hap Alpha・Hap Q。Hap 7・Hap HDR・Hap Alpha Onlyは、色の戻し方が違うので読み込みの時点で理由を付けて断る。
+- 起動前に環境変数`TCS_HAP=off`を設定すると、HAPのファイルは読み込みを断る（CPUのデコーダには渡さない）。
 
 コンテナ: mp4/mov/m4v/3gp→qtdemux、mkv→matroskademux、ts→tsdemux、
 mxf→mxfdemux、avi→avidemux、raw ES→直接チェーン、他→decodebin。
@@ -263,6 +286,8 @@ autoaudiosink がデバイスを開けない環境では `fakesink sync=true` �
 音声シンクをスレーブさせる（理由は下記「システムクロックの強制」）。
 
 ## MPEG-TS のシーク（方式 2: シーク後のクロック再基準化、2026-09-12 実装・計測）
+
+（2026-09時点の設計メモ）
 
 `tsdemux` の `GST_SEEK_FLAG_ACCURATE` は、IDR ごとに SPS/PPS を持たない
 H.264 でキーフレーム NAL を特定できず、シークに 1〜4 秒かかる（親計測:
@@ -363,6 +388,8 @@ Spout 受信側の目視検証は proto の recv モード
 
 ## 検証状況（2026-09-11 実測）
 
+（2026-09時点の設計メモ。mpvとの比較やHAPの拒否は当時のもの。ProResとHAPの今の検証の結果は各版のリリースノート `docs/release-notes/` にある）
+
 機材: RTX 3070 / GStreamer 1.28.2 (MSVC x64) / Spout2 2.007.017 / Windows / Debug ビルド。
 
 | 検証 | 結果 |
@@ -381,17 +408,17 @@ Spout 受信側の目視検証は proto の recv モード
 - 長時間連続再生（数時間）と、受信側を殺した瞬間の送信継続の厳密な保証は未検証。
 - Spout 受信の 2 個目プロセスは SDK のフレーム同期の都合でコピー画像が更新されない
   ことがある（proto 送信では再起動後の内容更新を実測済み。製品側は合成層が受信を担う）。
-- video/x-hap は専用分岐の実装まで意図的に拒否。一致しない video/* は
-  `decodebin(sysmem)` → `d3d11upload` の最終退避で CPU デコードする
-  （`.mov` の HAP はプロファイル照合時の caps 検査で拒否）。
+- 当時、video/x-hap は専用分岐の実装まで意図的に拒否していた（v0.5.0でGPUの展開の経路を入れた。「コーデック分岐」の注）。一致しない video/* は
+  `decodebin(sysmem)` → `d3d11upload` の最終退避で CPU デコードする。
 - 4K/120Hz 表示先、複数画面、実デバイス消失時の復旧は shim 単体では未検証
   （本体側の確認は `docs/verification-checklist.md` の GPU 経路を参照）。
 
 ## 配布とセットアップ
 
-- **GStreamer は同梱しない**。利用者側で公式 MSVC x64 ランタイム 1.28.2 を導入する
-  （`GSTREAMER_1_0_ROOT_MSVC_X86_64` か既定 `C:\Program Files\gstreamer\1.0\msvc_x86_64`）。
-- 配布物に含めるのは `tcs_gstreamer.dll`（自作 MIT + Spout2 BSD-2 を静的組み込み）のみ。
+- GStreamerは配布物に同梱する（v0.4.0から）。`scripts/package-release.ps1`が、公式のMSVC x64ランタイム1.28.2から必要なDLL（bin）とプラグイン（`lib\gstreamer-1.0`）、ライセンス文書を、配布物の`gstreamer\`フォルダへ写す。利用者がGStreamerを入れる必要はない。
+- アプリはGStreamerを、環境変数`GSTREAMER_1_0_ROOT_MSVC_X86_64`、配布物の`gstreamer\`、既定のインストール先（`Program Files\gstreamer\1.0\msvc_x86_64`）の順で探す（`GstNativeLibraryResolver`）。開発ではインストールしたランタイムを使う。
+- ProResのGPUデコーダのプラグインgst-prores-d3d11（v0.2.3、LGPL-2.1）は、`scripts/get-prores-plugin.ps1`でDLLのSHA-256と`.cso`の`SHA256SUMS.txt`を照合してから、同梱のGStreamerの`lib\gstreamer-1.0`へDLLとシェーダーを置く。ライセンス文書は`gstreamer\share\licenses\gst-prores-d3d11`。照合できないときはパッケージの作成を止める。
+- shimとして配布物に含めるのは `tcs_gstreamer.dll`（自作 MIT + Spout2 BSD-2 を静的組み込み）。
   ライセンス表記はリポジトリ直下の `THIRD-PARTY-NOTICES.md` を参照。
 - 再現ビルド: `native/gst-shim/get-spout.ps1`（Spout2 をタグ 2.007.017 / コミット固定で取得）
   → `native/gst-shim/build-shim.ps1`。GStreamer SDK は上記ランタイムに同梱の SDK を使用。
