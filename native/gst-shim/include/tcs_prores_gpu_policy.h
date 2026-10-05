@@ -12,8 +12,8 @@
  *
  *   "other" and "unknown" with auto / on are logged as unverified.
  *
- * v0.6.5 (design B2): auto no longer gates on the vendor; it behaves like
- * on, and the two differ only in that TCS_PRORES_GPU wins over the setting.
+ * v0.6.5 (design B2): auto no longer gates on the vendor and behaves the
+ * same as on (TCS_PRORES_GPU, when set, wins over the setting either way).
  * A GPU that cannot open ProRes still falls back to prores-cpu through the
  * D34 gates (caps-missing / preroll-timeout / chain-fail /
  * decoder-adapter-mismatch).
