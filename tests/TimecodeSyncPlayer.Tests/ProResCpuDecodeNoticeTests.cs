@@ -11,7 +11,7 @@ public class ProResCpuDecodeNoticeTests
         var notice = new ProResCpuDecodeNotice();
 
         notice.Next("avdec_prores", ProResGpuMode.Auto)
-            .Should().Be("ProRes: CPU で復号（proResGpu=auto、理由は tcs-gst のログ）");
+            .Should().Be("ProRes: CPU でデコード（proResGpu=auto、理由は tcs-gst のログ）");
     }
 
     [Fact]
@@ -22,7 +22,7 @@ public class ProResCpuDecodeNoticeTests
 
         notice.Next("avdec_prores", ProResGpuMode.Off).Should().NotBeNull();
         notice.Next("avdec_prores", ProResGpuMode.Off).Should().BeNull();
-        notice.Next("AVDEC_PRORES", ProResGpuMode.Off).Should().BeNull("大文字小文字は同じデコーダ");
+        notice.Next("AVDEC_PRORES", ProResGpuMode.Off).Should().BeNull("大文字小文字は同じデコーダー");
     }
 
     [Fact]

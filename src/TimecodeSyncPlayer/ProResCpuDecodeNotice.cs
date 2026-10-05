@@ -22,7 +22,7 @@ internal sealed class ProResCpuDecodeNotice
     internal static string? Message(string? decoderName, ProResGpuMode mode)
     {
         if (!IsProResCpuDecoder(decoderName)) return null;
-        return $"ProRes: CPU で復号（proResGpu={ProResGpuPolicy.Describe(mode)}、理由は tcs-gst のログ）";
+        return $"ProRes: CPU でデコード（proResGpu={ProResGpuPolicy.Describe(mode)}、理由は tcs-gst のログ）";
     }
 
     internal static bool IsProResCpuDecoder(string? decoderName) =>
