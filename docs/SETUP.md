@@ -216,7 +216,7 @@ GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-Y
 |---|---|---|---|
 | `outputBackend` | `1` = Gpu | `1` | 映像出力バックエンド。`0`（Cpu）は v0.3 の設定で、v0.4 は無視して `1`（Gpu）で起動します（警告ログ 1 行、設定ファイルは書き換えません） |
 | `proResGpu` | `auto` / `on` / `off` | `auto` | ProRes の GPU デコード（v0.6.0）。`auto` は NVIDIA の GPU でだけ使い、ほかの GPU では CPU でデコードします。`on` はどの GPU でも使います（NVIDIA 以外は未検証）。`off` は常に CPU。**変更はアプリの再起動の後に反映**（起動時に 1 回だけ読み、GPU の復旧でも起動時の値のまま）。画面の「ProRes の GPU 復号」でも選べます。不正値は `auto` として扱い、警告ログを出します |
-| `decodeMode` | `hardware` / `software` | `hardware` | デコード方式。`software`はCPUデコーダーを優先し、GPUデコーダーは最後の手段として使います（GPUに落ちた場合は警告ログ）。**変更はアプリの再起動が必要です**（プレイヤー生成時に1回だけ読みます）。不正値は`hardware`として扱い、警告ログを出します |
+| `decodeMode` | `hardware` / `software` | `hardware` | デコード方式。`software`はCPUデコーダを優先し、GPUデコーダは最後の手段として使います（GPUに落ちた場合は警告ログ）。**変更はアプリの再起動が必要です**（プレイヤー生成時に1回だけ読みます）。不正値は`hardware`として扱い、警告ログを出します |
 
 - v0.3 の `backend` キーは v0.4 で廃止しました（再生バックエンドは GStreamer 固定）。
   値があっても無視して警告ログを 1 行出し、設定ファイルは書き換えません。
@@ -289,7 +289,7 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
 ### ProRes の GPU デコード（v0.6.0）
 
 - ProRes の素材は、GStreamer のプラグイン gst-prores-d3d11（v0.2.3、同梱）で GPU でデコードします。NVIDIA（RTX 級）で検証しました
-- どちらで開いたかは、画面のメタデータ行のデコーダー名で分かります: `V:proresd3d11dec` なら GPU、`V:avdec_prores` なら CPU
+- どちらで開いたかは、画面のメタデータ行のデコーダ名で分かります: `V:proresd3d11dec` なら GPU、`V:avdec_prores` なら CPU
 - GPU のデコードに失敗したとき（プラグインが読めない、アダプタが合わないなど）は、CPU のデコードに切り替えて開きます。**1 回失敗すると、その起動の間は ProRes を CPU でデコードします**（GPU の復旧かアプリの再起動で、GPU をまた試します）。理由は `logs\tcs-gst-*.log` の `load.skip` / `load.fail` / `load.attempt` の行に出ます
 - ProRes 4444 / 4444 XQ（アルファ付きを含む）も GPU でデコードします。アルファは合成で使わず、不透明で出します（v0.5.x と同じ）
 - 4K の CPU デコードは GPU の約 2.3 倍のメモリを使います（開発機の実測: 1.55 GB 対 0.68 GB）。NVIDIA 以外の GPU では既定で CPU になります
@@ -321,7 +321,7 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
 
 | 項目 | 推奨 | 補足 |
 |---|---|---|
-| 映像コーデック | **H.264（High、4:2:0）** を推奨。HEVCは推奨外（同期の安定性を測っていない） | H.264 / HEVCはGPUのデコーダー（`d3d11h264dec` / `d3d11h265dec`）で再生する。AV1は、GPUがAV1のデコードに対応していれば`d3d11av1dec`でGPUデコードし、対応していなければCPU（`dav1ddec`）のデコードになる。CPUのデコードでは、4K60で素材fpsを満たせない |
+| 映像コーデック | **H.264（High、4:2:0）** を推奨。HEVCは推奨外（同期の安定性を測っていない） | H.264 / HEVCはGPUのデコーダ（`d3d11h264dec` / `d3d11h265dec`）で再生する。AV1は、GPUがAV1のデコードに対応していれば`d3d11av1dec`でGPUデコードし、対応していなければCPU（`dav1ddec`）のデコードになる。CPUのデコードでは、4K60で素材fpsを満たせない |
 | キーフレーム間隔 | **1秒を目安、長くても2秒**（60fpsなら`-g 60 -keyint_min 30`、30fpsなら`-g 30 -keyint_min 15`） | LTC同期のジャンプはaccurateシークのため、キーフレームから目標までデコードする。10秒間隔では着地が1〜3秒遅れる |
 | ProRes | **NVIDIAのGPUでは推奨**。ほかのGPUでもGPUでデコードできるが未検証 | NVIDIAのGPUでは、既定（`proResGpu=auto`）でGPUでデコードします。ほかのGPUでは既定でCPUのデコードになり、4Kでは1.5〜1.7GBのメモリを使います。`proResGpu=on`にするとGPUでデコードしますが、NVIDIA以外では検証していません |
 | 音声 | **48kHz を推奨**（44.1kHz も可） | 再生端末のミックスレートは通常 48kHz のため、変換なしで再生できる。44.1kHz は audioresample で変換して再生する |
