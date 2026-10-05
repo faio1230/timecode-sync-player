@@ -149,7 +149,7 @@ GStreamer shim ─ フレーム通知（コールバック）──────�
 | `RenderSession.cs` | レンダーコンテキスト・専用スレッド・更新 callback・世代を所有し、フレーム通知の駆動と寿命管理だけを行う。画像のコピーはしない |
 | `GapFreezeCaptureOperation.cs` | Freeze 確定の試行を世代・試行 ID で確認してから状態機械を進める（フリーズ画像の保存は GPU 合成層が進入時に `SaveFreeze` で行う） |
 | `RenderThreadExecutor.cs` | レンダーAPIを単一の専用スレッド上で実行する |
-| `LtcDecoder.cs` | libltcに依存しない純C#実装のLTCデコーダー。PCMサンプル列からタイムコードを復元する |
+| `LtcDecoder.cs` | libltcに依存しない純C#実装のLTCデコーダ。PCMサンプル列からタイムコードを復元する |
 | `LtcAudioMonitor.cs` | NAudio WASAPIで音声デバイスを監視し、PCMサンプルを`LtcDecoder`に供給する |
 | `SyncDecisionEngine.cs` | LTC秒と現在の再生位置からシークすべきかどうかを判定するロジック |
 | `TimecodeSyncService.cs` | `SyncDecisionEngine`の判定結果とシーク抑制（デバウンス）・ファイルロード状態を統合管理する |
