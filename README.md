@@ -38,7 +38,7 @@ TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレ�
 
 Direct3D 11.4は映像の合成と出力に使います。対応していない環境では、起動時にそのことを知らせて再生だけを無効にし、アプリは開いたままです。CPUでの合成には切り替えません。
 
-ProResのGPUデコードのプラグインは、Microsoft Visual C++ 2015-2022再頒布可能パッケージ（x64）14.50以上を必要とします。インストーラーは、入っていないか古いときだけ導入し、その途中で一度だけ管理者の確認（UAC）が出ます。zip版では、入っていないか古い場合に[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を手動で実行してください。
+ProResのGPUデコードのプラグインは、Microsoft Visual C++ v14再頒布可能パッケージ（x64）14.50以上（旧称 Microsoft Visual C++ 2015-2022）を必要とします。インストーラーは、入っていないか古いときだけ導入し、その途中で一度だけ管理者の確認（UAC）が出ます。zip版では、入っていないか古い場合に[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を手動で実行してください。
 
 ProResのGPUデコードはNVIDIA（RTX級）のGPUで検証し、推奨しています。プラグインはDirect3D 11の汎用のシェーダーで動くので、ほかのGPUでも画面の「ProRes の GPU 復号」をonにすればGPUでデコードできますが、未検証です。既定（auto）ではNVIDIA以外はCPUでデコードし、変更はアプリの再起動後に反映されます。
 
@@ -54,7 +54,7 @@ ProResのGPUデコードはNVIDIA（RTX級）のGPUで検証し、推奨して�
 ## zipの使い方
 
 1. `TimecodeSyncPlayer-v<版>-win-x64.zip`を、書き込みできるフォルダーへ展開します。
-2. Visual C++ 2015-2022再頒布可能パッケージ（x64）14.50以上が入っていなければ、[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を実行してください。
+2. Microsoft Visual C++ v14再頒布可能パッケージ（x64）14.50以上が入っていなければ、[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を実行してください。
 3. `TimecodeSyncPlayer.exe`を起動します。
 
 GStreamerのランタイムは同梱しています。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
