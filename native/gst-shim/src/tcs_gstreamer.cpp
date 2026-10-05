@@ -3622,13 +3622,12 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       if (reason) {
         LOG ("load.skip path=%s attempt=%d profile=%s reason=%s vendor=0x%04x",
             utf8_path, attempt, g_profiles[idx].name, reason, p->adapter_vendor_id);
-        log_attempt (g_strcmp0 (reason, "prores-gpu-off") == 0
-            ? "skipped-prores-gpu-off" : "skipped-prores-gpu-vendor");
+        log_attempt ("skipped-prores-gpu-off");
         continue;
       }
       if (tcs_prores_gpu_unverified (mode, p->adapter_vendor_id))
-        LOG ("prores-gpu: mode=on on an unverified adapter vendor=0x%04x",
-            p->adapter_vendor_id);
+        LOG ("prores-gpu: mode=%s on an unverified adapter vendor=0x%04x",
+            tcs_prores_gpu_mode_name (mode), p->adapter_vendor_id);
     }
     /* D16: a GPU profile whose decoder is not available on the shim adapter
      * would run on a foreign device (hybrid GPU). Skip it so the order falls

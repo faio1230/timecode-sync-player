@@ -370,7 +370,8 @@ TimecodeSyncPlayer v$Version (Windows x64)
 Requirements
 - Windows 10/11 x64
 - .NET 8 Desktop Runtime
-- Microsoft Visual C++ 2015-2026 Redistributable (x64) 14.50.35710 or later
+- Microsoft Visual C++ v14 Redistributable (x64) 14.50.35710 or later
+  (formerly Microsoft Visual C++ 2015-2022)
   The setup installs or updates it automatically. When using the zip, install it
   manually if it is missing or older: https://aka.ms/vc14/vc_redist.x64.exe
 - An audio input device carrying LTC

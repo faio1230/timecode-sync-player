@@ -1,6 +1,11 @@
 namespace TimecodeSyncPlayer;
 
-/// <summary>ProRes の GPU 復号（v0.6.0）。既定は Auto（shim が NVIDIA のアダプタでだけ使う）。</summary>
+/// <summary>
+/// ProRes の GPU デコード（v0.6.0）。既定は Auto。v0.6.5 から Auto と On はどの GPU でも使う
+/// （NVIDIA 以外は未検証。shim がその旨を 1 行出す）。Off は CPU でデコード。GPU のデコードに
+/// 1 回失敗すると、その起動の間は CPU でデコードする。Auto と On の動きは同じ（どちらも
+/// 環境変数 TCS_PRORES_GPU があればそちらが設定より優先される）。
+/// </summary>
 internal enum ProResGpuMode
 {
     Auto,

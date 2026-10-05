@@ -64,7 +64,7 @@ Source: "{#VcRedistFile}"; DestDir: "{tmp}"; DestName: "vc_redist.x64.exe"; Flag
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 
 [Run]
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Redistributable (x64) {#VcMinMajor}.{#VcMinMinor}.{#VcMinBld} or later..."; Flags: waituntilterminated shellexec; Check: VcRuntimeMissing
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ v14 Redistributable (x64) {#VcMinMajor}.{#VcMinMinor}.{#VcMinBld} or later..."; Flags: waituntilterminated shellexec; Check: VcRuntimeMissing
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
