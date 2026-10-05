@@ -1,5 +1,6 @@
 using FluentAssertions;
 using TimecodeSyncPlayer.Tests.Helpers;
+using Xunit.Abstractions;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -12,6 +13,9 @@ namespace TimecodeSyncPlayer.Tests;
 public class LtcFrameCheckTests
 {
     private const int SampleRate = 48000;
+    private readonly ITestOutputHelper _output;
+
+    public LtcFrameCheckTests(ITestOutputHelper output) => _output = output;
 
     // ── 化けた列が落ちる ──────────────────────────────────────────
 
@@ -239,6 +243,54 @@ public class LtcFrameCheckTests
         s59.Bit27Ones.Should().Be(0);
     }
 
+    public static IEnumerable<object[]> GeneratorFpsCases() =>
+    [
+        [24.0, false],
+        [25.0, false],
+        [30.0, false],
+        [30000.0 / 1001.0, true],
+    ];
+
+    [Theory]
+    [MemberData(nameof(GeneratorFpsCases))]
+    public void TestGenerator_SetsPolarityCorrection_PerStandard(double fps, bool dropFrame)
+    {
+        // v0.6.5 B3: 試験の生成器（E2E の LtcSignalPlayer なども使う Generate の経路）が規格どおりに
+        // 極性補正ビットを立てていること。25fps は bit 59、24・29.97・30fps は bit 27。
+        const int count = 300;
+        var tcs = new List<LtcTimecode> { new(0, 0, 58, 0, dropFrame) };
+        for (int i = 1; i < count; i++)
+            tcs.Add(Next(tcs[^1], fps));
+        float[] samples = LtcTestSignalGenerator.Generate(tcs, fps, SampleRate);
+
+        var stats = new LtcFrameCheckStats();
+        var decoder = new LtcDecoder(SampleRate, fps, stats);
+        // キューは 60 個までなので、0.1 秒ずつ渡して読み出す。
+        var decoded = new List<LtcTimecode>();
+        for (int offset = 0; offset < samples.Length; offset += 4800)
+        {
+            int n = Math.Min(4800, samples.Length - offset);
+            decoder.Write(samples[offset..(offset + n)], n);
+            decoded.AddRange(Drain(decoder));
+        }
+
+        // 受け始めの 1 つ目は使わない。Generate は最後のビットを閉じる遷移を置かないので、終わりの 1 つも確定しない。
+        decoded.Should().Equal(tcs.Skip(1).Take(count - 2));
+        long accepted = stats.Accepted;
+        _output.WriteLine(
+            $"fps={fps:F3} df={dropFrame} accepted={accepted} parityMismatch={stats.ParityMismatch} " +
+            $"bit27Ones={stats.Bit27Ones} ({(double)stats.Bit27Ones / accepted:P1}) " +
+            $"bit59Ones={stats.Bit59Ones} ({(double)stats.Bit59Ones / accepted:P1})");
+
+        stats.ParityMismatch.Should().Be(0);
+        bool use59 = LtcTestSignalGenerator.PolarityCorrectionBit(fps) == 59;
+        use59.Should().Be(Math.Round(fps) == 25);
+        long used = use59 ? stats.Bit59Ones : stats.Bit27Ones;
+        long other = use59 ? stats.Bit27Ones : stats.Bit59Ones;
+        ((double)used / accepted).Should().BeInRange(0.3, 0.7, "補正に使う側は約半数の LTC のフレームで 1");
+        other.Should().Be(0, "補正に使わない側（Binary group flag）は 0 のまま");
+    }
+
     [Fact]
     public void Summary_FormatsAllCounters()
     {
@@ -255,7 +307,7 @@ public class LtcFrameCheckTests
 
     // ── 補助 ──────────────────────────────────────────────────
 
-    private static bool[] Bits(LtcTimecode tc) => LtcTestSignalGenerator.BuildFrameBits(tc);
+    private static bool[] Bits(LtcTimecode tc) => LtcTestSignalGenerator.BuildRawFrameBits(tc);
 
     private static List<bool> Concat(params bool[][] frames) => frames.SelectMany(f => f).ToList();
 

@@ -47,8 +47,20 @@ internal static class LtcTestSignalGenerator
     /// <summary>
     /// 1個の <see cref="LtcTimecode"/> を 80ビットの LTC フレームビット列に変換する。
     /// 配列 index = フレームビット番号（bit0 が LSB ファーストで最初に送出される）。
+    /// v0.6.5 B3: 極性補正ビットを規格どおりに立てる（80 ビットの中の 0 の数を偶数にする）。
+    /// 位置は 25fps で bit 59（EBU Tech 3097-E 3.3 節・4.5 節）、24・29.97・30fps で bit 27（SMPTE 12M）。
+    /// ほかのビット（ユーザーのビット・フラグ）は 0 のまま。
     /// </summary>
-    public static bool[] BuildFrameBits(LtcTimecode tc)
+    public static bool[] BuildFrameBits(LtcTimecode tc, double fps)
+        => SetPolarityCorrection(BuildRawFrameBits(tc), PolarityCorrectionBit(fps));
+
+    /// <summary>極性補正ビットの位置。25fps は bit 59、24・29.97・30fps は bit 27。</summary>
+    public static int PolarityCorrectionBit(double fps) => Math.Round(fps) == 25 ? 59 : 27;
+
+    /// <summary>
+    /// 極性補正ビットを立てない 80 ビット（v0.6.5 B3 の単体テストで、補正の有無や位置を明示して作るため）。
+    /// </summary>
+    public static bool[] BuildRawFrameBits(LtcTimecode tc)
     {
         var bits = new bool[80];
 
@@ -87,7 +99,7 @@ internal static class LtcTestSignalGenerator
     {
         var frames = new List<bool[]>();
         foreach (var tc in timecodes)
-            frames.Add(BuildFrameBits(tc));
+            frames.Add(BuildFrameBits(tc, fps));
         return EncodeFrames(frames, fps, sampleRate, options);
     }
 
