@@ -47,9 +47,12 @@ LTC音声はNAudioのWASAPIループバック/入力デバイスから取得し�
 
 - `IPlaybackApi`（`Contracts/IPlaybackApi.cs`）: 再生操作と状態取得の境界。`Load` / `Seek` /
   `Stop` / `SetPaused` / `SetRate` / `SetRateInstant` / `SetVolume` / `SetMute` /
-  `TryGetTimePos` / `TryGetDuration` / `TryGetFps` / `GetPath` / `TryGetSize` / `GetVideoCodec` /
-  `IsPaused` / `IsSeeking`。相対シークは含めず、呼び出し側が `TryGetTimePos` の値へ加算して
-  `Seek`（絶対）を発行する。
+  `TryGetTimePos` / `TryGetPositionSample` / `TryGetDuration` / `TryGetFps` / `GetPath` / `TryGetSize` /
+  `GetVideoCodec` / `IsPaused` / `IsSeeking`。相対シークは含めず、呼び出し側が `TryGetTimePos` の値へ加算して
+  `Seek`（絶対）を発行する。`TryGetPositionSample` は位置・時計の基準（パイプライン位置か配信フレームの PTS か）・
+  世代・最新配信フレームの PTS を、1 回のネイティブ照会で同じ瞬間の 1 組（`PlaybackPositionSample`）として返す。
+  同期の評価と着地の観測はこの値を使う。DLL に `tcs_player_get_time_pos_ex` が無いときは、警告を 1 回出して
+  `TryGetTimePos` の経路へ切り替える。
 - `GstPlaybackApi`（`Gst/GstPlaybackApi.cs`）: 唯一の実装。shim（`IGstNativeApi`）を直接呼び、
   セッション初期化（player 生成と `pause=yes` 相当）もここで行う。シーク中判定は
   `GstSeekingTracker`（配信到着数ベース）を共有する。
@@ -153,10 +156,11 @@ GStreamer shim ─ フレーム通知（コールバック）──────�
 | `GapFreezeHandler.cs` | トラック間・終端後のギャップ状態を管理するステートマシン（Freeze/Black/通常再生の遷移） |
 | `PlaylistState.cs` | プレイリストの内部状態（トラック一覧・現在位置など）を保持する |
 | `GstSpoutOutput.cs` | `ISpoutOutput` の有効/無効状態を持つ。実際の送信は GPU 合成層が `OutputEngine` の Spout worker（`Output/SpoutSender.cs`）で行う |
-| `ViewModels/MainViewModel.cs` | Playlist・Sync・Playerの各ViewModelを集約するルートViewModel |
+| `ViewModels/MainViewModel.cs` | Playlist・Player・Sync・Outputの各ViewModelを集約するルートViewModel |
 | `ViewModels/PlaylistViewModel.cs` | プレイリスト操作コマンドとプレイリストの表示状態を管理 |
 | `ViewModels/SyncViewModel.cs` | LTC開始/停止、同期トグル、同期状態の管理 |
 | `ViewModels/PlayerViewModel.cs` | 再生状態（再生/一時停止など）と再生系コマンドの管理 |
+| `ViewModels/OutputControlViewModel.cs` | 出力グループのUI状態（テストカードのON/OFF）。トグルはカードの表示だけを変え、タイムライン状態と再生状態には触れない |
 | `Contracts/IVideoSource.cs` | 出力側の映像ソース契約。世代排除・最新優先・有限lease・非ブロッキングを定める |
 | `Contracts/IPlaybackApi.cs`, `Contracts/PlaybackResult.cs`, `Contracts/IRenderUpdateSource.cs` | 再生操作・失敗結果・フレーム更新通知の型付き契約。文字列コマンドとプロパティ名を境界から排除する |
 | `Output/OutputEngine.cs` | GPU出力層。GPU workerとSpout workerを所有し、pool・全画面swapchain・合成・プレビュー・デバイス消失復旧・終了を管理する |
