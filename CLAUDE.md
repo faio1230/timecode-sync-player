@@ -78,7 +78,7 @@ timecode-sync-player/
 │   ├── Strategies/                 # SyncDecisionEngine の拡張メソッド 1 つ（DecideSeekTarget。現在は呼び出し元なし）
 │   ├── Gst/                        # shim 連携（GstPlaybackApi / GstRenderUpdateSource / GstBackendState / GstNativeApi）
 │   ├── Output/                     # GPU 合成・全画面・Spout・デバイス復旧（OutputEngine / ComposeLayer / GStreamerSource ほか）
-│   ├── LtcDecoder.cs               # libltc 不使用・純C# LTC デコーダ
+│   ├── LtcDecoder.cs               # libltc 不使用・純C# LTC デコーダー
 │   ├── LtcAudioMonitor.cs          # NAudio WASAPI 録音 + LTC デコード
 │   ├── LtcSyncController.cs        # LTC 受信・信号断・Single/Continue/Gap の分岐統合
 │   ├── SyncDecisionEngine.cs       # LTC秒→シーク判定ロジック
