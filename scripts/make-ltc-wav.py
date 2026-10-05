@@ -32,8 +32,9 @@ def frame_bits(hours, minutes, seconds, frames, fps):
     put(hours % 10, 48, 4)
     put(hours // 10, 56, 2)
     bits[64:80] = SYNC_WORD
-    # Polarity correction bit (bit 27 at 25 fps, bit 59 otherwise): even number of ones.
-    parity_bit = 27 if fps == 25 else 59
+    # Polarity correction bit (bit 59 at 25 fps per EBU Tech 3097-E 3.3/4.5, bit 27 otherwise per SMPTE 12M):
+    # even number of ones (= even number of zeros, the frame is 80 bits).
+    parity_bit = 59 if fps == 25 else 27
     if sum(bits) % 2 == 1:
         bits[parity_bit] = 1
     return bits

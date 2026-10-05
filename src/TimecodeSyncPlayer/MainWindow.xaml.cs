@@ -2692,6 +2692,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         StopUiHeartbeat("closing");
         _ltcSyncController.LogLayer2SummaryAtExit();
+        // v0.6.5 B3: LTC のフレームの検査の件数（起動からの累計）。同じ時点に 1 回だけ Information で 1 行。
+        LtcFrameCheckStats.Shared.LogSummaryAtExit();
     }
 
     // ── 起動直後の UI スレッドの生存記録（v0.5.4、記録だけ） ──────────────
