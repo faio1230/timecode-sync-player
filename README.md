@@ -26,7 +26,7 @@ TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレ�
 - 接続ディスプレイを選べる外部モニターのフルスクリーン出力
 - VJツール連携用のSpout2出力
 - プレイリストとプロジェクトの保存・読み込み
-- 純C#のLTCデコーダとGStreamerベースのGPU出力
+- 純C#のLTCデコーダーとGStreamerベースのGPU出力
 - HAP（Hap / Hap Alpha / Hap Q）のGPUデコード（v0.5.0から）
 - ProResのGPUデコード（v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。NVIDIAのGPUで検証し、推奨します。ほかのGPUは未検証で、既定ではCPUでデコードします）
 
@@ -34,9 +34,9 @@ TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレ�
 
 ## 動作要件
 
-動作には、Windows 10/11 x64、Direct3D 11.4に対応したGPUとドライバ、[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)、LTC音声を入力できるオーディオデバイスが必要です。検証の前提は外付け（RTX級）のGPUです。CPU内蔵のGPUでは、4K60の素材の復号が間に合わないことがあります。
+動作には、Windows 10/11 x64、Direct3D 11.4に対応したGPUとドライバ、[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)、LTC音声を入力できるオーディオデバイスが必要です。検証の前提は外付け（RTX級）のGPUです。CPU内蔵のGPUでは、4K60の素材のデコードが間に合わないことがあります。
 
-Direct3D 11.4は映像の合成と出力に使います。対応していない環境では、起動時にそのことを知らせ、再生だけを無効にします。アプリは開いたままで、CPUでの合成には切り替えません。
+Direct3D 11.4は映像の合成と出力に使います。対応していない環境では、起動時にそのことを知らせて再生だけを無効にし、アプリは開いたままです。CPUでの合成には切り替えません。
 
 ProResのGPUデコードのプラグインは、Microsoft Visual C++ 2015-2022再頒布可能パッケージ（x64）14.50以上を必要とします。インストーラーは、入っていないか古いときだけ導入し、その途中で一度だけ管理者の確認（UAC）が出ます。zip版では、入っていないか古い場合に[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を手動で実行してください。
 
