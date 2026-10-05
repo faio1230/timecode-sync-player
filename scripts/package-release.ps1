@@ -381,9 +381,9 @@ Setup
 2. Select the LTC capture device and press START.
 3. Load media, then press Sync ON.
 
-ProRes GPU decoding (gst-prores-d3d11) is enabled by default on NVIDIA GPUs; other
-GPU vendors decode ProRes on the CPU by default. Change it with the proResGpu
-setting (auto / on / off, applied after restart).
+ProRes GPU decoding is enabled by default on all GPUs (verified on NVIDIA; other
+vendors are unverified). Set proResGpu to off to decode on the CPU. A change takes
+effect after restarting the app.
 
 The GStreamer 1.28.2 runtime (bin, plugins and license texts) is included in the
 gstreamer folder; no separate GStreamer installation is required. SpoutDX.dll
