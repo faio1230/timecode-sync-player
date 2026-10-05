@@ -11,7 +11,7 @@
 - .NET 8 SDK
 - PowerShell 7（`pwsh`）。開発・試験のスクリプト（`scripts\`・`native\gst-shim\`）に要ります。v0.6.0 から PowerShell 7 専用で、Windows PowerShell 5.1 では動きません。
   利用者が使うスクリプト（`scripts\inspect-gop.ps1`）は 5.1 のままでも動きます（`powershell -File` と `pwsh -File` のどちらでも可）
-- **推奨環境（メモリ）**: システムのコミットの空き（タスク マネージャーの「コミット済み」の上限との差）が **4 GB 以上**。4K の ProRes を CPU で復号するとアプリだけで 1.5〜1.7 GB を使います（GPU で復号するときは約 0.7 GB）。空きが尽きた環境では、復号のメモリの確保に失敗してアプリが終了することがあります（GStreamer の性質で、アプリでは防げません）
+- **推奨環境（メモリ）**: システムのコミットの空き（タスク マネージャーの「コミット済み」の上限との差）が **4 GB 以上**。4K の ProRes を CPU でデコードするとアプリだけで 1.5〜1.7 GB を使います（GPU でデコードするときは約 0.7 GB）。空きが尽きた環境では、デコードのメモリの確保に失敗してアプリが終了することがあります（GStreamer の性質で、アプリでは防げません）
 
 `dotnet` コマンドが利用可能であること、およびバージョンを確認します。
 
@@ -70,7 +70,7 @@ timecode-sync-player/
 |---------|---------|---------|
 | `native/SpoutDX.dll` | Spout 出力を使う場合に必要 | Spout 送信に使います。[Spout2](https://github.com/leadedge/Spout2)のSDK内SpoutDXプロジェクトをビルドして配置します。配布zip／インストーラーには同梱済みです。 |
 | `native/tcs_gstreamer.dll` | **必須** | 動画再生に使います。下記「GStreamer 1.28.2」を参照して`native/gst-shim`からビルドします。 |
-| `native/gst-prores/`（`gstproresd3d11.dll`と`prores_*.cso`6個） | ProResをGPUで復号する場合に必要 | ProResのGPU復号のプラグイン（gst-prores-d3d11）です。`pwsh -File scripts\get-prores-plugin.ps1`を実行すると、版を固定したzipを取得してSHA-256を照合し、`native\gst-prores`に置きます。本体のビルド時に、出力先の`gst-extra-plugins\`へコピーされます。無いときはProResをCPUで復号します。配布zip／インストーラーには同梱済みです。 |
+| `native/gst-prores/`（`gstproresd3d11.dll`と`prores_*.cso`6個） | ProResをGPUでデコードする場合に必要 | ProResのGPUデコードのプラグイン（gst-prores-d3d11）です。`pwsh -File scripts\get-prores-plugin.ps1`を実行すると、版を固定したzipを取得してSHA-256を照合し、`native\gst-prores`に置きます。本体のビルド時に、出力先の`gst-extra-plugins\`へコピーされます。無いときはProResをCPUでデコードします。配布zip／インストーラーには同梱済みです。 |
 
 詳細は [native/README.md](../native/README.md) を参照してください。
 
@@ -215,8 +215,8 @@ GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-Y
 | JSONキー | 値 | 既定 | 内容 |
 |---|---|---|---|
 | `outputBackend` | `1` = Gpu | `1` | 映像出力バックエンド。`0`（Cpu）は v0.3 の設定で、v0.4 は無視して `1`（Gpu）で起動します（警告ログ 1 行、設定ファイルは書き換えません） |
-| `proResGpu` | `auto` / `on` / `off` | `auto` | ProRes の GPU 復号（v0.6.0）。`auto` は NVIDIA の GPU でだけ使い、ほかの GPU では CPU で復号します。`on` はどの GPU でも使います（NVIDIA 以外は未検証でサポート対象外）。`off` は常に CPU。**変更はアプリの再起動の後に反映**（起動時に 1 回だけ読み、GPU の復旧でも起動時の値のまま）。画面の「ProRes の GPU 復号」でも選べます。不正値は `auto` として扱い、警告ログを出します |
-| `decodeMode` | `hardware` / `software` | `hardware` | デコード方式。`software`はCPUデコーダを優先し、GPUデコーダは最後の手段として使います（GPUに落ちた場合は警告ログ）。**変更はアプリの再起動が必要です**（プレイヤー生成時に1回だけ読みます）。不正値は`hardware`として扱い、警告ログを出します |
+| `proResGpu` | `auto` / `on` / `off` | `auto` | ProRes の GPU デコード（v0.6.0）。`auto` は NVIDIA の GPU でだけ使い、ほかの GPU では CPU でデコードします。`on` はどの GPU でも使います（NVIDIA 以外は未検証でサポート対象外）。`off` は常に CPU。**変更はアプリの再起動の後に反映**（起動時に 1 回だけ読み、GPU の復旧でも起動時の値のまま）。画面の「ProRes の GPU 復号」でも選べます。不正値は `auto` として扱い、警告ログを出します |
+| `decodeMode` | `hardware` / `software` | `hardware` | デコード方式。`software`はCPUデコーダーを優先し、GPUデコーダーは最後の手段として使います（GPUに落ちた場合は警告ログ）。**変更はアプリの再起動が必要です**（プレイヤー生成時に1回だけ読みます）。不正値は`hardware`として扱い、警告ログを出します |
 
 - v0.3 の `backend` キーは v0.4 で廃止しました（再生バックエンドは GStreamer 固定）。
   値があっても無視して警告ログを 1 行出し、設定ファイルは書き換えません。
@@ -286,16 +286,16 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
   フレーム単位のずれが残る場合は、このオフセットで合わせます
 - **V3 の測定は `0`（既定）で行います。** オフセットは現場の調整手段であり、精度を作る手段ではありません
 
-### ProRes の GPU 復号（v0.6.0）
+### ProRes の GPU デコード（v0.6.0）
 
-- ProRes の素材は、GStreamer のプラグイン gst-prores-d3d11（v0.2.3、同梱）で GPU で復号します。NVIDIA（RTX 級）で検証しました
-- どちらで開いたかは、画面のメタデータ行のデコーダ名で分かります: `V:proresd3d11dec` なら GPU、`V:avdec_prores` なら CPU
-- GPU の復号に失敗したとき（プラグインが読めない、アダプタが合わないなど）は、CPU の復号に切り替えて開きます。**1 回失敗すると、その起動の間は ProRes を CPU で復号します**（GPU の復旧かアプリの再起動で、GPU をまた試します）。理由は `logs\tcs-gst-*.log` の `load.skip` / `load.fail` / `load.attempt` の行に出ます
-- ProRes 4444 / 4444 XQ（アルファ付きを含む）も GPU で復号します。アルファは合成で使わず、不透明で出します（v0.5.x と同じ）
-- 4K の CPU 復号は GPU の約 2.3 倍のメモリを使います（開発機の実測: 1.55 GB 対 0.68 GB）。NVIDIA 以外の GPU では既定で CPU になります
-- `decodeMode=software` のときは CPU の復号が先に試されるので、`proResGpu` が `auto`・`on` でも ProRes は CPU で開きます
+- ProRes の素材は、GStreamer のプラグイン gst-prores-d3d11（v0.2.3、同梱）で GPU でデコードします。NVIDIA（RTX 級）で検証しました
+- どちらで開いたかは、画面のメタデータ行のデコーダー名で分かります: `V:proresd3d11dec` なら GPU、`V:avdec_prores` なら CPU
+- GPU のデコードに失敗したとき（プラグインが読めない、アダプタが合わないなど）は、CPU のデコードに切り替えて開きます。**1 回失敗すると、その起動の間は ProRes を CPU でデコードします**（GPU の復旧かアプリの再起動で、GPU をまた試します）。理由は `logs\tcs-gst-*.log` の `load.skip` / `load.fail` / `load.attempt` の行に出ます
+- ProRes 4444 / 4444 XQ（アルファ付きを含む）も GPU でデコードします。アルファは合成で使わず、不透明で出します（v0.5.x と同じ）
+- 4K の CPU デコードは GPU の約 2.3 倍のメモリを使います（開発機の実測: 1.55 GB 対 0.68 GB）。NVIDIA 以外の GPU では既定で CPU になります
+- `decodeMode=software` のときは CPU のデコードが先に試されるので、`proResGpu` が `auto`・`on` でも ProRes は CPU で開きます
 - 壊れたフレームがあっても再生は止まりません（そのフレームは捨てるか、そのまま出して続けます）。`tcs-gst-*.log` に `decode.warning` が 1 行と、件数の `decode.warnings` が出ます
-- プラグインは VC++ の再頒布パッケージ「Microsoft Visual C++ v14 Redistributable (x64)」の 14.50.35710 以上が要ります。インストーラーは古いときだけ入れます（zip の利用者は手で入れてください）。VC++ が 14.50 より古い PC では、インストールの途中で一度だけ管理者の確認（UAC）が出ます。無人でインストールするときは、先にこの再頒布パッケージ（14.50 以上）を入れておいてください。入っていないときは ProRes を CPU で復号します
+- プラグインは VC++ の再頒布パッケージ「Microsoft Visual C++ v14 Redistributable (x64)」（旧称 Microsoft Visual C++ 2015-2022）の 14.50.35710 以上が要ります。インストーラーは古いときだけ入れます（zip の利用者は手で入れてください）。VC++ が 14.50 より古い PC では、インストールの途中で一度だけ管理者の確認（UAC）が出ます。無人でインストールするときは、先にこの再頒布パッケージ（14.50 以上）を入れておいてください。入っていないときは ProRes を CPU でデコードします
 
 ### 環境変数
 
@@ -310,7 +310,7 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
 | `outputBackend=1`で再生できない | D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では、起動時ダイアログを出して**再生だけを無効**にします（Cpu 合成へはフォールバックしません）。表示された原因とログを確認してください。 |
 | 再生開始に失敗する | GStreamerランタイム未導入、または`tcs_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
 | スクリプトが `cannot be run because it contained a "#requires" statement` で止まる | Windows PowerShell 5.1 で実行しています。`pwsh -File <スクリプト>` で実行してください（「1. 前提環境」）。 |
-| ProRes が CPU（`V:avdec_prores`）で開く | 既定（`auto`）では NVIDIA 以外の GPU は CPU で復号します（正しい動作）。NVIDIA でも CPU なら、`tcs-gst-*.log` の `prores-gpu:` と `load.skip` / `load.fail` の行で理由を見てください（`proResGpu=off`、プラグインの読み込みの失敗、VC++ が古い、アダプタの不一致など）。1 回失敗するとその起動の間は CPU のままです |
+| ProRes が CPU（`V:avdec_prores`）で開く | 既定（`auto`）では NVIDIA 以外の GPU は CPU でデコードします（正しい動作）。NVIDIA でも CPU なら、`tcs-gst-*.log` の `prores-gpu:` と `load.skip` / `load.fail` の行で理由を見てください（`proResGpu=off`、プラグインの読み込みの失敗、VC++ が古い、アダプタの不一致など）。1 回失敗するとその起動の間は CPU のままです |
 | コンソール出力やログの日本語が文字化けする | PowerShellのコンソールエンコーディングをUTF-8に設定してください。<br>`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` |
 
 ---
@@ -321,7 +321,7 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
 
 | 項目 | 推奨 | 補足 |
 |---|---|---|
-| 映像コーデック | **H.264（High、4:2:0）** を推奨。HEVCは推奨外（同期の安定性を測っていない） | H.264 / HEVCはGPUのデコーダ（`d3d11h264dec` / `d3d11h265dec`）で再生する。AV1は、GPUがAV1の復号に対応していれば`d3d11av1dec`でGPU復号し、対応していなければCPU（`dav1ddec`）の復号になる。CPUの復号では、4K60で素材fpsを満たせない |
-| キーフレーム間隔 | **1秒を目安、長くても2秒**（60fpsなら`-g 60 -keyint_min 30`、30fpsなら`-g 30 -keyint_min 15`） | LTC同期のジャンプはaccurateシークのため、キーフレームから目標まで復号する。10秒間隔では着地が1〜3秒遅れる |
-| ProRes | **NVIDIAのGPUでは推奨**。ほかのGPUでもGPUで復号できるが未検証 | NVIDIAのGPUでは、既定（`proResGpu=auto`）でGPUで復号します。ほかのGPUでは既定でCPUの復号になり、4Kでは1.5〜1.7GBのメモリを使います。`proResGpu=on`にするとGPUで復号しますが、NVIDIA以外では検証していません |
+| 映像コーデック | **H.264（High、4:2:0）** を推奨。HEVCは推奨外（同期の安定性を測っていない） | H.264 / HEVCはGPUのデコーダー（`d3d11h264dec` / `d3d11h265dec`）で再生する。AV1は、GPUがAV1のデコードに対応していれば`d3d11av1dec`でGPUデコードし、対応していなければCPU（`dav1ddec`）のデコードになる。CPUのデコードでは、4K60で素材fpsを満たせない |
+| キーフレーム間隔 | **1秒を目安、長くても2秒**（60fpsなら`-g 60 -keyint_min 30`、30fpsなら`-g 30 -keyint_min 15`） | LTC同期のジャンプはaccurateシークのため、キーフレームから目標までデコードする。10秒間隔では着地が1〜3秒遅れる |
+| ProRes | **NVIDIAのGPUでは推奨**。ほかのGPUでもGPUでデコードできるが未検証 | NVIDIAのGPUでは、既定（`proResGpu=auto`）でGPUでデコードします。ほかのGPUでは既定でCPUのデコードになり、4Kでは1.5〜1.7GBのメモリを使います。`proResGpu=on`にするとGPUでデコードしますが、NVIDIA以外では検証していません |
 | 音声 | **48kHz を推奨**（44.1kHz も可） | 再生端末のミックスレートは通常 48kHz のため、変換なしで再生できる。44.1kHz は audioresample で変換して再生する |

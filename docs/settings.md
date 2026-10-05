@@ -41,7 +41,7 @@ can restore the user's preferences. Delete it manually to remove the preferences
 | `syncOffsetMs` | number | `0` | Global sync offset in ms, clamped to `-1000`–`1000`. Positive makes the picture lead, compensating input-side and downstream (LED wall etc.) latency together. Editable in the UI / 全体の同期オフセット（ms）。`-1000`～`1000`へクランプ。プラスで映像が先行し、入力側と下流（LED 等）の遅延をまとめて補正する。UI から変更可 |
 | `syncCorrectionMode` | enum | `Smooth` | `Smooth` closes small drift by nudging the playback rate; `Jump` seeks when the drift exceeds a threshold. Measured on field material, `Jump` does not reduce overshoot and adds up to ~1 s of frozen picture, so keep `Smooth` unless told otherwise / `Smooth` は再生速度を少し変えて詰める。`Jump` はしきい値を超えたらシークする。実素材の測定では `Jump` にしても行き過ぎは減らず、止まる時間が最大 1 秒ほど増えるため、特に理由が無ければ `Smooth` のまま |
 | `decodeMode` | string | `"hardware"` | `"hardware"` (GPU decode, default) or `"software"`; any other value is treated as `"hardware"` with a warning. Restart required / `"hardware"`（GPU デコード、既定）または `"software"`。それ以外は警告して `"hardware"` 扱い。変更には再起動が必要 |
-| `proResGpu` | string | `"auto"` | ProRes GPU decoding (v0.6.0): `"auto"` uses it only on NVIDIA GPUs, `"on"` uses it on any GPU (unverified outside NVIDIA), `"off"` always decodes on the CPU. Any other value is treated as `"auto"` with a warning. Read once at startup and kept through GPU recovery; restart required. Editable in the UI (ProRes の GPU 復号) / ProResのGPU復号（v0.6.0）。`"auto"`はNVIDIAのGPUでだけ使い、`"on"`はどのGPUでも使う（NVIDIA以外は未検証）。`"off"`は常にCPUで復号する。それ以外の値は警告して`"auto"`扱い。起動時に1回だけ読み、GPUの復旧でも起動時の値のまま。変更には再起動が必要。UI（ProRes の GPU 復号）から変更可 |
+| `proResGpu` | string | `"auto"` | ProRes GPU decoding (v0.6.0): `"auto"` uses it only on NVIDIA GPUs, `"on"` uses it on any GPU (unverified outside NVIDIA), `"off"` always decodes on the CPU. Any other value is treated as `"auto"` with a warning. Read once at startup and kept through GPU recovery; restart required. Editable in the UI (ProRes の GPU デコード) / ProResのGPUデコード（v0.6.0）。`"auto"`はNVIDIAのGPUでだけ使い、`"on"`はどのGPUでも使う（NVIDIA以外は未検証）。`"off"`は常にCPUでデコードする。それ以外の値は警告して`"auto"`扱い。起動時に1回だけ読み、GPUの復旧でも起動時の値のまま。変更には再起動が必要。UI（ProRes の GPU デコード）から変更可 |
 | `outputBackend` | enum | `Gpu` | Only `Gpu` (`1`) exists since v0.4. The v0.3 value `0` (CPU compositing) is ignored with a warning and the file is not rewritten / v0.4 以降は `Gpu`（`1`）のみ。v0.3 の `0`（CPU 合成）は警告して無視し、ファイルは書き換えない |
 
 フルスクリーン出力中に出力モニターへマウスを載せると、ESCで閉じられるよう出力ウィンドウへフォーカスが移ります。
@@ -100,9 +100,9 @@ Set these before starting the app. Most exist for measurement; only `TCS_GOP_SCA
 
 ### Test only / 試験用
 
-Names only. These exist for automated tests and measurements; do not set them in the field.
+Names only. For tests and diagnostics; their behavior is not guaranteed and may change between versions. These exist for automated tests and measurements; do not set them in the field.
 
-名前だけを挙げます。自動テストと計測のためのもので、現場では設定しません。
+名前だけを挙げます。試験・診断用で、動作は保証せず、版で変わることがあります。自動テストと計測のためのもので、現場では設定しません。
 
 - App / アプリ: `TCS_GAP_MODE`, `TCS_SEEK_LATENCY_COMPENSATION`, `TIMECODE_SYNC_PLAYER_FORCE_GPU_UNAVAILABLE`, `TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH`, `TIMECODE_ACCURACY_TRACE`, `TIMECODE_ACCURACY_LTC_FPS`
 - Shim / shim: `TCS_GOP_WARN_SECONDS`, `TCS_SEEK_METHOD`, `TCS_FRAME_LOG`, `TCS_LEASE_LOG`, `TCS_PAUSED_SEEK_DIAG`, `TCS_SEEK_DIAG`, `TCS_NO_SEGMENT_REWRITE`, `TCS_ONE_ATTEMPT`, `TCS_APPSINK_MAX_BUFFERS`, `TCS_DECODE_THREAD_TYPE`, `TCS_DECODE_MAX_THREADS`, `TCS_NO_AUDIO`, `TCS_FAKE_AUDIO`, `TCS_FORCE_DECODER_ADAPTER_MISMATCH`, `TCS_FORCE_DECODER_LUID_MISMATCH`, `TCS_TEST_HOLD_FRAME_LOCK_MS`, `TCS_TEST_HOLD_SEEK_LOCK_MS`, `TCS_TEST_PUMP_TICK_DELAY_MS`
