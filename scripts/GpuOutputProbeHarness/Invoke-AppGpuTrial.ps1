@@ -12,7 +12,8 @@ param(
     [string]$LogRoot = '',
     [switch]$NoFullscreen,
     [int]$KillReceiverAfterSeconds = 0,
-    [ValidateSet('Mpv','Gstreamer')][string]$PlayerBackend = 'Mpv',
+    # Kept for callers and the playerBackend field of the result; v0.4 and later play with GStreamer only.
+    [ValidateSet('Gstreamer')][string]$PlayerBackend = 'Gstreamer',
     [switch]$NoSpout,
     # V6: long soak runs must not fill the output trace (1,000,000-event cap).
     [switch]$NoOutputTrace,
@@ -146,8 +147,8 @@ $trace = Join-Path $run 'app'
 $settings = Join-Path $run 'settings.json'
 $sender = 'TCSParent-' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
 $escapedDevice = $DisplayDeviceName.Replace('\', '\\')  # JSON: one backslash -> two
-$backendValue = if ($PlayerBackend -eq 'Gstreamer') { 1 } else { 0 }  # PlayerBackend enum: Mpv=0, Gstreamer=1
-$json = '{"outputBackend":1,"backend":' + $backendValue + ',"fullscreenDisplayDeviceName":"' + $escapedDevice + '"'
+# The "backend" key was removed in v0.4 (playback is GStreamer only; the app ignores the key and warns), so it is not written.
+$json = '{"outputBackend":1,"fullscreenDisplayDeviceName":"' + $escapedDevice + '"'
 if ($DecodeMode) { $json += ',"decodeMode":"' + $DecodeMode + '"' }
 $json += '}'
 [IO.File]::WriteAllText($settings, $json, [Text.UTF8Encoding]::new($false))
