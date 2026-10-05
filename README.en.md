@@ -38,7 +38,7 @@ You need Windows 10/11 x64, a GPU and driver supporting Direct3D 11.4, the [.NET
 
 Direct3D 11.4 is used to composite and output the picture. On a system without it, the app says so at startup and disables playback only. The app stays open, and there is no fallback to CPU compositing.
 
-The ProRes GPU decoding plugin requires the Microsoft Visual C++ 2015-2022 Redistributable (x64) 14.50 or later. The setup installs it only when it is missing or older, and then asks once for administrator approval (UAC) during installation. For the zip, run [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe) manually when it is missing or older.
+The ProRes GPU decoding plugin requires the Microsoft Visual C++ v14 Redistributable (x64) 14.50 or later (formerly named Microsoft Visual C++ 2015-2022). The setup installs it only when it is missing or older, and then asks once for administrator approval (UAC) during installation. For the zip, run [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe) manually when it is missing or older.
 
 ProRes GPU decoding is verified and recommended on NVIDIA (RTX class) GPUs. The plugin runs on generic Direct3D 11 shaders, so other GPUs can decode on the GPU too when the "ProRes の GPU 復号" (ProRes GPU decoding) selector in the app is set to on, but this is unverified. By default (auto), GPUs other than NVIDIA decode ProRes on the CPU. A change takes effect after the app is restarted. The UI is in Japanese.
 
@@ -54,7 +54,7 @@ Uninstalling removes the application, logs, and shortcuts. The per-user settings
 ## Using the zip
 
 1. Extract `TimecodeSyncPlayer-v<version>-win-x64.zip` to a writable folder.
-2. If the Visual C++ 2015-2022 Redistributable (x64) 14.50 or later is not installed, run [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe).
+2. If the Microsoft Visual C++ v14 Redistributable (x64) 14.50 or later is not installed, run [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe).
 3. Start `TimecodeSyncPlayer.exe`.
 
 The GStreamer runtime is included. See the [setup guide](docs/SETUP.md) for details.
