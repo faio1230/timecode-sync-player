@@ -32,6 +32,8 @@ LTC（Linear Timecode）を受信し、プレイリスト上の動画クリッ�
 **開発環境: Windows ネイティブ（PowerShell 7 / Visual Studio）**
 
 ```powershell
+# 初回だけ: shim のビルドに使う Spout2 SDK（タグ 2.007.017・コミット固定）を vendor/Spout2 へ取得（git 管理外）
+pwsh -File native\gst-shim\get-spout.ps1
 pwsh -File native\gst-shim\build-shim.ps1 -Config Debug
 dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj
@@ -52,8 +54,10 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe
 
 **ログの場所（実行後）:**
 ```
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log
+src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log   # アプリ（Serilog）
+src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\tcs-gst-YYYYMMDD.log             # shim（tcs_gstreamer.dll）
 ```
+shim のログの出力先は環境変数 `TCS_LOG_FILE`。未設定ならアプリが起動時に上の logs を設定し、7 日より古い `tcs-gst-*.log` を消す。
 
 ---
 
@@ -65,15 +69,16 @@ timecode-sync-player/
 │   ├── App.xaml / App.xaml.cs      # 起動・DI・Serilogセットアップ
 │   ├── MainWindow.xaml / .cs       # メインUI（映像・LTC・Playlist）
 │   ├── ViewModels/                 # MVVM ViewModels
-│   │   ├── MainViewModel.cs        # Playlist・Sync・Player を集約
+│   │   ├── MainViewModel.cs        # 下の 4 つ（Playlist・Player・Sync・Output）を集約
 │   │   ├── PlaylistViewModel.cs    # プレイリスト操作コマンド・状態
+│   │   ├── PlayerViewModel.cs      # 再生状態・コマンド
 │   │   ├── SyncViewModel.cs        # LTC開始停止・同期トグル・状態
-│   │   └── PlayerViewModel.cs      # 再生状態・コマンド
+│   │   └── OutputControlViewModel.cs # 出力グループの UI 状態（テストカードの ON/OFF）
 │   ├── Contracts/                  # 境界の型（IPlaybackApi / PlaybackResult / IRenderUpdateSource / IVideoSource ほか）
-│   ├── Strategies/                 # Strategyパターン実装
+│   ├── Strategies/                 # SyncDecisionEngine の拡張メソッド 1 つ（DecideSeekTarget。現在は呼び出し元なし）
 │   ├── Gst/                        # shim 連携（GstPlaybackApi / GstRenderUpdateSource / GstBackendState / GstNativeApi）
 │   ├── Output/                     # GPU 合成・全画面・Spout・デバイス復旧（OutputEngine / ComposeLayer / GStreamerSource ほか）
-│   ├── LtcDecoder.cs               # libltc 不使用・純C# LTC デコーダ
+│   ├── LtcDecoder.cs               # libltc 不使用・純C# LTC デコーダー
 │   ├── LtcAudioMonitor.cs          # NAudio WASAPI 録音 + LTC デコード
 │   ├── LtcSyncController.cs        # LTC 受信・信号断・Single/Continue/Gap の分岐統合
 │   ├── SyncDecisionEngine.cs       # LTC秒→シーク判定ロジック

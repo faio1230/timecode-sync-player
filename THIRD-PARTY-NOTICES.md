@@ -53,7 +53,7 @@ through GStreamer at runtime and does not link to it.
   (`LICENSE`, `README.txt`)
 - Source code: the v0.2.3 tag of the upstream repository,
   [github.com/faio1230/gst-prores-d3d11/tree/v0.2.3](https://github.com/faio1230/gst-prores-d3d11/tree/v0.2.3)
-- Runtime requirement: Microsoft Visual C++ Redistributable (x64) 14.50 or later (see below)
+- Runtime requirement: Microsoft Visual C++ v14 Redistributable (x64) (formerly Microsoft Visual C++ 2015-2022) 14.50 or later (see below)
 
 ## SpoutDX / Spout2
 
@@ -88,14 +88,14 @@ The current upstream license is reproduced below.
 > IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 > OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-## Microsoft Visual C++ 2015-2026 Redistributable (x64)
+## Microsoft Visual C++ v14 Redistributable (x64)
 
 The installer chains Microsoft's redistributable package (`vc_redist.x64.exe`) when the Visual C++
 runtime is not already installed or is older than 14.50.35710 (required by gst-prores-d3d11), so
 the runtime is registered by Microsoft's own installer instead of being copied as DLLs. The zip
 distribution does not include it; users install it themselves when it is missing or older.
 
-- Project: Microsoft Visual C++ Redistributable
+- Project: Microsoft Visual C++ v14 Redistributable
 - Download: [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)
 - License terms: [Microsoft Software License Terms](https://visualstudio.microsoft.com/license-terms/)
 
