@@ -16,7 +16,7 @@ public enum GopSeekQuality
 /// 0.4.5-C3: 読み込み時に測ったキーフレーム間隔から、シーク性能を判定する（純ロジック）。
 ///
 /// 判定は<b>最大ギャップ</b>で行う。中央値では見逃すため: 実素材の測定で、中央値 0.708 秒
-/// （推奨の 1 秒（長くても 2 秒）に収まる）なのに最大 5.5 秒の区間を持つ素材があった。長いギャップの中へ
+/// （推奨の 1〜2 秒に収まる）なのに最大 5.5 秒の区間を持つ素材があった。長いギャップの中へ
 /// シークすると、その区間だけ実際に遅くなる（同一素材の実測: キーフレーム直後 244ms、
 /// ギャップ中央 1,258ms、次のキーフレーム直前 2,164ms）。
 ///
@@ -54,9 +54,9 @@ internal static class GopScanVerdict
     internal static string Format(GopSeekQuality quality, double maxGapSeconds) => quality switch
     {
         GopSeekQuality.Error => FormattableString.Invariant(
-            $"⚠ キーフレーム間隔が {maxGapSeconds:F1} 秒の区間があります。同期が不安定になる可能性があります（推奨 1 秒（長くても 2 秒））"),
+            $"⚠ キーフレーム間隔が {maxGapSeconds:F1} 秒の区間があります。同期が不安定になる可能性があります（推奨 1〜2 秒）"),
         GopSeekQuality.Warning => FormattableString.Invariant(
-            $"キーフレーム間隔が長い区間があります（最大 {maxGapSeconds:F1} 秒、推奨 1 秒（長くても 2 秒））"),
+            $"キーフレーム間隔が長い区間があります（最大 {maxGapSeconds:F1} 秒、推奨 1〜2 秒）"),
         _ => string.Empty,
     };
 }
