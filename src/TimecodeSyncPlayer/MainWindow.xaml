@@ -339,7 +339,7 @@
                         <ComboBox x:Name="ProResGpuCombo"
                                   AutomationProperties.AutomationId="ProResGpuCombo"
                                   Width="80" Height="28"
-                                  ToolTip="自動: NVIDIA の GPU でだけ使う。有効: どの GPU でも使う（NVIDIA 以外は未検証）。無効: CPU でデコード。GPU のデコードに 1 回失敗すると、その起動の間は CPU でデコードする"
+                                  ToolTip="自動・有効: どの GPU でも使う（NVIDIA 以外は未検証）。無効: CPU でデコード。GPU のデコードに 1 回失敗すると、その起動の間は CPU でデコードする"
                                   SelectedIndex="{Binding Sync.ProResGpuModeIndex, Mode=TwoWay}">
                             <ComboBoxItem Content="自動" Tag="auto"/>
                             <ComboBoxItem Content="有効" Tag="on"/>
