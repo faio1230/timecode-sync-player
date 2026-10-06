@@ -2,6 +2,38 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.6.5 - (unreleased)
+
+Stable (Latest). LTC frame check and ProRes GPU decoding on all GPUs by default. The sync rules, gates and constants are
+the same as 0.6.4. Settings and projects are unchanged from 0.6.4.
+
+### Changed
+
+- LTC frames that do not follow the standard (a BCD digit above 9, or not exactly 80 bits between sync words) are not used.
+  The first LTC frame after the start and after a dropout is not used either, because its length cannot be checked, so
+  reception is one LTC frame later (40 ms at 25 fps); a stop-and-play workflow gets the same delay each time. When LTC
+  runs for only a few frames and stops, the picture can land directly on the stopped position without a re-alignment
+  (the stopped position is the same). This prevents a garbled first value from causing a brief gap black or re-alignment.
+- ProRes GPU decoding is enabled by default (auto) on all GPUs. Up to 0.6.4, auto used it only on NVIDIA GPUs. Other
+  vendors are verified only on the test machine's integrated AMD GPU. If there is a problem, set "ProRes の GPU デコード"
+  to off (takes effect after restarting). Media the GPU cannot open still falls back to the CPU.
+- Display: the FPS item "29.97 fps DF" now reads "29.97 fps" (choose it for a non-drop-frame 29.97 signal; drop frame is
+  detected in Auto too). "ProRes の GPU 復号" now reads "ProRes の GPU デコード", and the app log says "CPU でデコード".
+  The installer and README.txt name the VC++ package "Microsoft Visual C++ v14 Redistributable (x64)" (formerly
+  Microsoft Visual C++ 2015-2022).
+
+### Observability
+
+- New log line at exit: `LTC frame check summary` (frames rejected, first frames skipped, frames accepted, polarity bits).
+
+### Known issues
+
+- None within the recommended media (same as 0.6.4).
+
+### Known intermittent issues
+
+- As listed for 0.6.4.
+
 ## 0.6.4 - 2026-10-03
 
 Stable (Latest). Observability and test-infrastructure cleanup. Sync decisions and playback behave as in 0.6.3.
