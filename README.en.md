@@ -13,7 +13,7 @@ TimecodeSyncPlayer is a live-show video player for Windows. It receives LTC (Lin
 
 The installer and the zip are on the [latest stable release (Latest) on GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases/latest). The stable release is the latest v0.6.x, starting with v0.6.1. Releases marked "Pre-release" are still being verified. Do not use them for a show.
 
-For most users, use the per-user installer `TimecodeSyncPlayer-v<version>-setup.exe`, which does not require administrator privileges. For a portable extracted copy, choose `TimecodeSyncPlayer-v<version>-win-x64.zip`. `<version>` is the latest stable release, for example `v0.6.4`. The GStreamer 1.28.2 runtime is included, so no separate GStreamer installation is needed.
+For most users, use the per-user installer `TimecodeSyncPlayer-v<version>-setup.exe`, which does not require administrator privileges. For a portable extracted copy, choose `TimecodeSyncPlayer-v<version>-win-x64.zip`. `<version>` is the latest stable release, for example `v0.6.5`. The GStreamer 1.28.2 runtime is included, so no separate GStreamer installation is needed.
 
 Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show. How the material is exported makes a large difference to sync stability.
 
@@ -28,7 +28,7 @@ Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show
 - Playlist and project save/load
 - Pure C# LTC decoder and GStreamer-based GPU output
 - GPU decoding of HAP (Hap / Hap Alpha / Hap Q) (since v0.5.0)
-- GPU decoding of ProRes (since v0.6.0, by [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11). Verified and recommended on NVIDIA GPUs. Other GPUs are unverified and decode ProRes on the CPU by default)
+- GPU decoding of ProRes (since v0.6.0, by [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11). Verified and recommended on NVIDIA GPUs. Since v0.6.5, other GPUs also decode on the GPU by default, but they are unverified)
 
 The recommended formats are H.264 (keyframe interval about 1 second, at most 2 seconds) and ProRes. HAP also loads without a warning. VP9, AV1, H.265 and others load but are not recommended, and a warning is shown when they are loaded. See the [field preparation guide](docs/USER-MANUAL.md) (Japanese) for the recommendation per format.
 
@@ -40,7 +40,7 @@ Direct3D 11.4 is used to composite and output the picture. On a system without i
 
 The ProRes GPU decoding plugin requires the Microsoft Visual C++ v14 Redistributable (x64) 14.50 or later (formerly named Microsoft Visual C++ 2015-2022). The setup installs it only when it is missing or older, and then asks once for administrator approval (UAC) during installation. For the zip, run [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe) manually when it is missing or older.
 
-ProRes GPU decoding is verified and recommended on NVIDIA (RTX class) GPUs. The plugin runs on generic Direct3D 11 shaders, so other GPUs can decode on the GPU too when the "ProRes の GPU 復号" (ProRes GPU decoding) selector in the app is set to on, but this is unverified. By default (auto), GPUs other than NVIDIA decode ProRes on the CPU. A change takes effect after the app is restarted. The UI is in Japanese.
+ProRes GPU decoding is verified and recommended on NVIDIA (RTX class) GPUs. The plugin runs on generic Direct3D 11 shaders, so since v0.6.5 the default (auto) decodes on the GPU on any GPU. GPUs other than NVIDIA are verified only as far as the test machine's integrated AMD GPU. On an integrated GPU, 4K60 ProRes decoding may fall behind the CPU; in that case set the "ProRes の GPU デコード" (ProRes GPU decoding) selector in the app to 無効 (off). A change takes effect after the app is restarted. The UI is in Japanese.
 
 `SpoutDX.dll` is included in release packages and is only used for Spout output.
 

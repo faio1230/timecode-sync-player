@@ -76,15 +76,15 @@
 
 NVIDIA（RTX級）のGPUで確かめる。ProResの素材をプレイリストに入れて使う。
 
-- [ ] 「ProRes の GPU 復号」を「自動」にしてProResの素材を開く
+- [ ] 「ProRes の GPU デコード」を「自動」にしてProResの素材を開く
 - [ ] 期待する挙動: 画面のメタデータ行のデコーダ名が`V:proresd3d11dec`になる
 - [ ] 期待するログ（shim）
   - `prores-gpu: mode=auto source=... vendor=0x10de -> enabled`
   - `loaded (...)`の行に`decoder=proresd3d11dec`
-- [ ] 「ProRes の GPU 復号」を「無効」に変える。画面に「再起動の後に反映」と出るので、アプリを再起動してから同じ素材を開く
+- [ ] 「ProRes の GPU デコード」を「無効」に変える。画面に「再起動の後に反映」と出るので、アプリを再起動してから同じ素材を開く
 - [ ] 期待する挙動: デコーダ名が`V:avdec_prores`になる
 - [ ] 期待するログ
-  - アプリ: `ProRes: CPU で復号（proResGpu=off、理由は tcs-gst のログ）`
+  - アプリ: `ProRes: CPU でデコード（proResGpu=off、理由は tcs-gst のログ）`
   - shim: `load.skip ... profile=prores-gpu reason=prores-gpu-off`
 - [ ] 確かめた後は「自動」に戻し、アプリを再起動する
 

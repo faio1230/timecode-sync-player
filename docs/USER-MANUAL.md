@@ -192,7 +192,7 @@ CPU内蔵のGPUでは、4K60の素材を実時間でデコードしきれない�
 
 前提は外付け（RTX級）のGPUです。映像の合成と出力にはDirect3D 11.4が必要で、対応していないPCでは起動時にそのことを知らせ、再生だけを無効にします。CPU内蔵のGPUでは4K60の素材のデコードが間に合わないことがあります（6節）。
 
-ProResは同梱のプラグイン（gst-prores-d3d11）でGPUデコードします。検証して推奨しているのはNVIDIA（RTX級）のGPUです。プラグインはDirect3D 11の汎用のシェーダーで動くので、ほかのGPUでもGPUデコードはできますが、未検証です。既定（auto）ではNVIDIA以外はCPUでデコードします。画面の「ProRes の GPU 復号」でauto・on・offを選べ、変更はアプリの再起動後に反映されます。
+ProResは同梱のプラグイン（gst-prores-d3d11）でGPUデコードします。検証して推奨しているのはNVIDIA（RTX級）のGPUです。プラグインはDirect3D 11の汎用のシェーダーで動くので、v0.6.5からは既定（自動）でどのGPUでもGPUデコードします。NVIDIA以外は、検証機のCPU内蔵のGPU（AMD）で確かめた範囲です。内蔵のGPUでは4K60のProResのデコードがCPUより追いつかないことがあり、そのときは画面の「ProRes の GPU デコード」を「無効」にしてください。自動・有効・無効の変更は、アプリの再起動後に反映されます。
 
 GPUデコードに1回失敗すると、その起動の間はProResをCPUでデコードします（アプリの再起動でGPUをまた試します）。どちらで開いたかの手がかりは、画面のメタデータ行のデコーダ名です。`V:proresd3d11dec`ならGPU、`V:avdec_prores`ならCPUです。理由はshimのログ（`logs\tcs-gst-YYYYMMDD.log`）の`prores-gpu:`と`load.skip`・`load.fail`の行に出ます。
 
