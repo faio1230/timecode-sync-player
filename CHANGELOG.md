@@ -32,7 +32,7 @@ the same as 0.6.4. Settings and projects are unchanged from 0.6.4.
 
 ### Known intermittent issues
 
-- As listed for 0.6.4.
+- As listed for 0.6.1, plus the 0.6.4 entry (the picture can briefly stay ahead of the target right after a seek while paused).
 
 ## 0.6.4 - 2026-10-03
 
