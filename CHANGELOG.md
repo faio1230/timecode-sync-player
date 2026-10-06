@@ -17,6 +17,9 @@ the same as 0.6.4. Settings and projects are unchanged from 0.6.4.
 - ProRes GPU decoding is enabled by default (auto) on all GPUs. Up to 0.6.4, auto used it only on NVIDIA GPUs. Other
   vendors are verified only on the test machine's integrated AMD GPU. If there is a problem, set "ProRes の GPU デコード"
   to off (takes effect after restarting). Media the GPU cannot open still falls back to the CPU.
+  The intended hardware is a discrete GPU (NVIDIA or AMD). On the test machine's integrated AMD GPU, 4K60 ProRes HQ
+  decoding on the GPU fell behind the CPU and sync re-alignments increased (55 with CPU decoding in 0.6.4, 99 to 101
+  with GPU decoding, 54 with GPU decoding off). On an integrated GPU that falls behind, set it to off.
 - Display: the FPS item "29.97 fps DF" now reads "29.97 fps" (choose it for a non-drop-frame 29.97 signal; drop frame is
   detected in Auto too). "ProRes の GPU 復号" now reads "ProRes の GPU デコード", and the app log says "CPU でデコード".
   The installer and README.txt name the VC++ package "Microsoft Visual C++ v14 Redistributable (x64)" (formerly
@@ -32,7 +35,10 @@ the same as 0.6.4. Settings and projects are unchanged from 0.6.4.
 
 ### Known intermittent issues
 
-- As listed for 0.6.1, plus the 0.6.4 entry (the picture can briefly stay ahead of the target right after a seek while paused).
+- As listed for 0.6.1, plus the 0.6.4 entry (the picture can briefly stay ahead of the target right after a seek while paused). In
+  one occurrence on the 0.6.5 test machine, the output trace showed the composed picture and the internal position on
+  target (24.968 s) while only the on-screen position display pointed about 3 s ahead (25.1 s); the path that produced
+  the display is not identified.
 
 ## 0.6.4 - 2026-10-03
 
