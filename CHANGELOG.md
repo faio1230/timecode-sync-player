@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.6.5 - (unreleased)
+## 0.6.5 - 2026-10-06
 
 Stable (Latest). LTC frame check and ProRes GPU decoding on all GPUs by default. The sync rules, gates and constants are
 the same as 0.6.4. Settings and projects are unchanged from 0.6.4.
