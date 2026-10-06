@@ -47,8 +47,20 @@ internal static class LtcTestSignalGenerator
     /// <summary>
     /// 1個の <see cref="LtcTimecode"/> を 80ビットの LTC フレームビット列に変換する。
     /// 配列 index = フレームビット番号（bit0 が LSB ファーストで最初に送出される）。
+    /// v0.6.5 B3: 極性補正ビットを規格どおりに立てる（80 ビットの中の 0 の数を偶数にする）。
+    /// 位置は 25fps で bit 59（EBU Tech 3097-E 3.3 節・4.5 節）、24・29.97・30fps で bit 27（SMPTE 12M）。
+    /// ほかのビット（ユーザーのビット・フラグ）は 0 のまま。
     /// </summary>
-    public static bool[] BuildFrameBits(LtcTimecode tc)
+    public static bool[] BuildFrameBits(LtcTimecode tc, double fps)
+        => SetPolarityCorrection(BuildRawFrameBits(tc), PolarityCorrectionBit(fps));
+
+    /// <summary>極性補正ビットの位置。25fps は bit 59、24・29.97・30fps は bit 27。</summary>
+    public static int PolarityCorrectionBit(double fps) => Math.Round(fps) == 25 ? 59 : 27;
+
+    /// <summary>
+    /// 極性補正ビットを立てない 80 ビット（v0.6.5 B3 の単体テストで、補正の有無や位置を明示して作るため）。
+    /// </summary>
+    public static bool[] BuildRawFrameBits(LtcTimecode tc)
     {
         var bits = new bool[80];
 
@@ -87,7 +99,7 @@ internal static class LtcTestSignalGenerator
     {
         var frames = new List<bool[]>();
         foreach (var tc in timecodes)
-            frames.Add(BuildFrameBits(tc));
+            frames.Add(BuildFrameBits(tc, fps));
         return EncodeFrames(frames, fps, sampleRate, options);
     }
 
@@ -178,6 +190,56 @@ internal static class LtcTestSignalGenerator
             _sampleIndex = endSample;
             return count;
         }
+    }
+
+    /// <summary>
+    /// v0.6.5 B3: 任意の長さのビット列（80 ビットに区切らない）をそのまま BMC の波形にする。
+    /// 79 ビット・81 ビットの LTC のフレームや、無音をはさむ列を作るのに使う。
+    /// 遷移の置き方は <see cref="Encoder"/> と同じ（各ビットの境界に遷移、"1" は中央にも遷移）。
+    /// デコーダは "1" をビットの終わりの境界の遷移で確定させるので、最後のビット（同期ワードの bit 79 = "1"）の後に
+    /// 境界の遷移を 1 つ足し、その後ろに半ビットぶん同じレベルを置く（列の最後の LTC のフレームも読めるように）。
+    /// </summary>
+    public static float[] EncodeBitStream(IReadOnlyList<bool> bits, double fps, int sampleRate)
+    {
+        double samplesPerBit = sampleRate / (fps * 80.0);
+        long total = (long)Math.Round((bits.Count + 0.5) * samplesPerBit);
+        var transitions = new List<double>(bits.Count * 2 + 1);
+        for (int b = 0; b < bits.Count; b++)
+        {
+            double boundary = b * samplesPerBit;
+            transitions.Add(boundary);
+            if (bits[b])
+                transitions.Add(boundary + samplesPerBit * 0.5);
+        }
+        transitions.Add(bits.Count * samplesPerBit); // 最後のビットを閉じる境界の遷移
+
+        var samples = new float[total];
+        float level = 1.0f;
+        int cursor = 0;
+        for (long n = 0; n < total; n++)
+        {
+            while (cursor < transitions.Count && transitions[cursor] <= n)
+            {
+                level = -level;
+                cursor++;
+            }
+            samples[n] = level;
+        }
+        return samples;
+    }
+
+    /// <summary>
+    /// v0.6.5 B3: 極性補正ビット（<paramref name="bitIndex"/>）を立てて、80 ビットの中の 0 の数を偶数にする
+    /// （EBU Tech 3097-E 4.5 節の定義）。<paramref name="bits"/> を書き換えて返す。
+    /// </summary>
+    public static bool[] SetPolarityCorrection(bool[] bits, int bitIndex)
+    {
+        bits[bitIndex] = false;
+        int zeros = 0;
+        foreach (bool bit in bits)
+            if (!bit) zeros++;
+        bits[bitIndex] = zeros % 2 != 0;
+        return bits;
     }
 
     /// <summary>

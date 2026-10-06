@@ -11,7 +11,7 @@ public class ProResCpuDecodeNoticeTests
         var notice = new ProResCpuDecodeNotice();
 
         notice.Next("avdec_prores", ProResGpuMode.Auto)
-            .Should().Be("ProRes: CPU で復号（proResGpu=auto、理由は tcs-gst のログ）");
+            .Should().Be("ProRes: CPU でデコード（proResGpu=auto、理由は tcs-gst のログ）");
     }
 
     [Fact]

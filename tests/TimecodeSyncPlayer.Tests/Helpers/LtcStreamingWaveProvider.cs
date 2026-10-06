@@ -22,6 +22,7 @@ internal sealed class LtcStreamingWaveProvider : IWaveProvider
     private readonly IEnumerator<LtcTimecode> _timecodes;
     private readonly LtcTestSignalGenerator.Encoder _encoder;
     private readonly int _channels;
+    private readonly double _fps; // v0.6.5 B3: 極性補正ビットの位置（25fps は bit 59、ほかは bit 27）
     private readonly float[] _frameSamples;
     private byte[] _frameBytes;
     private int _frameByteCount;
@@ -41,6 +42,7 @@ internal sealed class LtcStreamingWaveProvider : IWaveProvider
         if (channels <= 0) throw new ArgumentOutOfRangeException(nameof(channels));
 
         _timecodes = timecodes.GetEnumerator();
+        _fps = fps;
         _encoder = new LtcTestSignalGenerator.Encoder(fps, sampleRate, options);
         _channels = channels;
         _frameSamples = new float[_encoder.MaxSamplesPerFrame];
@@ -93,7 +95,7 @@ internal sealed class LtcStreamingWaveProvider : IWaveProvider
         }
 
         int sampleCount = _encoder.Encode(
-            LtcTestSignalGenerator.BuildFrameBits(_timecodes.Current), _frameSamples);
+            LtcTestSignalGenerator.BuildFrameBits(_timecodes.Current, _fps), _frameSamples);
 
         int byteCount = sampleCount * _channels * sizeof(float);
         if (_frameBytes.Length < byteCount)

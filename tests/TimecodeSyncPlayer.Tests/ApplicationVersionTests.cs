@@ -21,8 +21,8 @@ public sealed class ApplicationVersionTests
     [Fact]
     public void CurrentVersionAndWindowTitle_ComeFromApplicationAssembly()
     {
-        // 0.6.4への固定は、リリース成果物の意図しないバージョン変更を検出するリリースゲート。
-        ApplicationVersion.Current.Should().Be("0.6.4");
-        ApplicationVersion.WindowTitle.Should().Be("Timecode Sync Player v0.6.4");
+        // 0.6.5への固定は、リリース成果物の意図しないバージョン変更を検出するリリースゲート。
+        ApplicationVersion.Current.Should().Be("0.6.5");
+        ApplicationVersion.WindowTitle.Should().Be("Timecode Sync Player v0.6.5");
     }
 }

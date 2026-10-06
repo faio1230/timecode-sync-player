@@ -269,7 +269,8 @@
                         <ComboBoxItem Content="Auto" Tag="Auto"/>
                         <ComboBoxItem Content="24 fps" Tag="Fixed24"/>
                         <ComboBoxItem Content="25 fps" Tag="Fixed25"/>
-                        <ComboBoxItem Content="29.97 fps DF" Tag="Fixed29_97"/>
+                        <ComboBoxItem Content="29.97 fps" Tag="Fixed29_97"
+                                      ToolTip="29.97 のノンドロップの信号はこれを選んでください。ドロップフレームは Auto でも判定できます"/>
                         <ComboBoxItem Content="30 fps" Tag="Fixed30"/>
                     </ComboBox>
                     <TextBlock Text="補正:" Foreground="#BBBBBB"
@@ -333,12 +334,12 @@
                     </StackPanel>
                     <!-- v0.6.0: 幅が足りないときは「再起動の後に反映」を下の行へ折り返す -->
                     <WrapPanel Grid.Row="4" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,6,0,0">
-                        <TextBlock Text="ProRes の GPU 復号:" Foreground="#BBBBBB"
+                        <TextBlock Text="ProRes の GPU デコード:" Foreground="#BBBBBB"
                                    VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <ComboBox x:Name="ProResGpuCombo"
                                   AutomationProperties.AutomationId="ProResGpuCombo"
                                   Width="80" Height="28"
-                                  ToolTip="自動: NVIDIA の GPU でだけ使う。有効: どの GPU でも使う（NVIDIA 以外は未検証）。無効: CPU で復号。GPU の復号に 1 回失敗すると、その起動の間は CPU で復号する"
+                                  ToolTip="自動・有効: どの GPU でも使う（NVIDIA 以外は未検証）。無効: CPU でデコード。GPU のデコードに 1 回失敗すると、その起動の間は CPU でデコードする"
                                   SelectedIndex="{Binding Sync.ProResGpuModeIndex, Mode=TwoWay}">
                             <ComboBoxItem Content="自動" Tag="auto"/>
                             <ComboBoxItem Content="有効" Tag="on"/>

@@ -769,30 +769,35 @@ run_prores_gpu_policy_tests ()
   const unsigned vendors[] = { 0x10DEu, 0x1002u, 0x8086u, 0x1414u, 0u };
   const char* vnames[] = { "nvidia", "amd", "intel", "microsoft(warp)", "unknown(0)" };
   char what[160];
+  /* v0.6.5 (design B2): auto and on allow every vendor; only off blocks.
+   * The GPU path on anything but NVIDIA is logged as unverified (auto and on). */
   for (int v = 0; v < 5; v++) {
     const bool nvidia = vendors[v] == 0x10DEu;
-    snprintf (what, sizeof (what), "prores-gpu gate: auto + %s -> %s", vnames[v],
-        nvidia ? "allowed" : "blocked");
-    check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_AUTO, vendors[v]) == (nvidia ? 1 : 0), what);
+    snprintf (what, sizeof (what), "prores-gpu gate: auto + %s -> allowed", vnames[v]);
+    check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_AUTO, vendors[v]) == 1, what);
     snprintf (what, sizeof (what), "prores-gpu gate: on + %s -> allowed", vnames[v]);
     check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_ON, vendors[v]) == 1, what);
     snprintf (what, sizeof (what), "prores-gpu gate: off + %s -> blocked", vnames[v]);
     check (tcs_prores_gpu_allowed (TCS_PRORES_GPU_OFF, vendors[v]) == 0, what);
+    snprintf (what, sizeof (what), "prores-gpu gate: auto + %s unverified=%d", vnames[v],
+        nvidia ? 0 : 1);
+    check (tcs_prores_gpu_unverified (TCS_PRORES_GPU_AUTO, vendors[v]) == (nvidia ? 0 : 1), what);
     snprintf (what, sizeof (what), "prores-gpu gate: on + %s unverified=%d", vnames[v],
         nvidia ? 0 : 1);
     check (tcs_prores_gpu_unverified (TCS_PRORES_GPU_ON, vendors[v]) == (nvidia ? 0 : 1), what);
-    check (tcs_prores_gpu_unverified (TCS_PRORES_GPU_AUTO, vendors[v]) == 0 &&
-           tcs_prores_gpu_unverified (TCS_PRORES_GPU_OFF, vendors[v]) == 0,
-        "prores-gpu gate: only mode=on is logged as unverified");
+    snprintf (what, sizeof (what), "prores-gpu gate: off + %s is never unverified", vnames[v]);
+    check (tcs_prores_gpu_unverified (TCS_PRORES_GPU_OFF, vendors[v]) == 0, what);
   }
   check (tcs_prores_gpu_allowed (3, 0x10DEu) == 0 && tcs_prores_gpu_allowed (-1, 0x10DEu) == 0,
       "prores-gpu gate: an out-of-range mode never allows");
-  /* skip reasons (load.skip reason=...) */
+  check (tcs_prores_gpu_unverified (3, 0x1002u) == 0 && tcs_prores_gpu_unverified (-1, 0x1002u) == 0,
+      "prores-gpu gate: an out-of-range mode is never unverified");
+  /* skip reasons (load.skip reason=...): only off skips */
   check (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0x10DEu) == nullptr,
       "prores-gpu skip: auto + nvidia -> no skip");
-  check (strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0x1002u), "prores-gpu-vendor") == 0 &&
-         strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0u), "prores-gpu-vendor") == 0,
-      "prores-gpu skip: auto + other/unknown vendor -> prores-gpu-vendor");
+  check (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0x1002u) == nullptr &&
+         tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_AUTO, 0u) == nullptr,
+      "prores-gpu skip: auto + other/unknown vendor -> no skip");
   check (strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_OFF, 0x10DEu), "prores-gpu-off") == 0 &&
          strcmp (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_OFF, 0u), "prores-gpu-off") == 0,
       "prores-gpu skip: off -> prores-gpu-off (any vendor)");

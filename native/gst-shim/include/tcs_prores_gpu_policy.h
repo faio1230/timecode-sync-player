@@ -6,9 +6,17 @@
  * the adapter the shim device runs on (the adapter that actually decodes):
  *
  *   mode \ vendor | NVIDIA (0x10DE) | other | unknown (0)
- *   auto          | yes             | no    | no
- *   on            | yes             | yes   | yes (logged as unverified)
+ *   auto          | yes             | yes   | yes
+ *   on            | yes             | yes   | yes
  *   off           | no              | no    | no
+ *
+ *   "other" and "unknown" with auto / on are logged as unverified.
+ *
+ * v0.6.5 (design B2): auto no longer gates on the vendor and behaves the
+ * same as on (TCS_PRORES_GPU, when set, wins over the setting either way).
+ * A GPU that cannot open ProRes still falls back to prores-cpu through the
+ * D34 gates (caps-missing / preroll-timeout / chain-fail /
+ * decoder-adapter-mismatch).
  *
  * Pure so the native shim test can pin the truth table without a GPU.
  * License: MIT (same as the shim). */
@@ -29,27 +37,26 @@ tcs_prores_gpu_mode_valid (int mode)
 static inline int
 tcs_prores_gpu_allowed (int mode, unsigned vendor_id)
 {
-  if (mode == TCS_PRORES_GPU_ON)
-    return 1;
-  if (mode == TCS_PRORES_GPU_AUTO)
-    return vendor_id == TCS_PCI_VENDOR_NVIDIA;
-  return 0;
+  (void) vendor_id;
+  return mode == TCS_PRORES_GPU_AUTO || mode == TCS_PRORES_GPU_ON;
 }
 
-/* The load.skip reason when the gate is closed, NULL when it is open. */
+/* The load.skip reason when the gate is closed (mode=off only), NULL when it
+ * is open. */
 static inline const char*
 tcs_prores_gpu_skip_reason (int mode, unsigned vendor_id)
 {
   if (tcs_prores_gpu_allowed (mode, vendor_id))
     return nullptr;
-  return mode == TCS_PRORES_GPU_AUTO ? "prores-gpu-vendor" : "prores-gpu-off";
+  return "prores-gpu-off";
 }
 
-/* mode=on forces the GPU path on an adapter it was not verified on. */
+/* The GPU path is used (auto or on) on an adapter it was not verified on
+ * (anything but NVIDIA). */
 static inline int
 tcs_prores_gpu_unverified (int mode, unsigned vendor_id)
 {
-  return mode == TCS_PRORES_GPU_ON && vendor_id != TCS_PCI_VENDOR_NVIDIA;
+  return tcs_prores_gpu_allowed (mode, vendor_id) && vendor_id != TCS_PCI_VENDOR_NVIDIA;
 }
 
 static inline const char*

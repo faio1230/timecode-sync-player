@@ -2,6 +2,44 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.6.5 - 2026-10-06
+
+Stable (Latest). LTC frame check and ProRes GPU decoding on all GPUs by default. The sync rules, gates and constants are
+the same as 0.6.4. Settings and projects are unchanged from 0.6.4.
+
+### Changed
+
+- LTC frames that do not follow the standard (a BCD digit above 9, or not exactly 80 bits between sync words) are not used.
+  The first LTC frame after the start and after a dropout is not used either, because its length cannot be checked, so
+  reception is one LTC frame later (40 ms at 25 fps); a stop-and-play workflow gets the same delay each time. When LTC
+  runs for only a few frames and stops, the picture can land directly on the stopped position without a re-alignment
+  (the stopped position is the same). This prevents a garbled first value from causing a brief gap black or re-alignment.
+- ProRes GPU decoding is enabled by default (auto) on all GPUs. Up to 0.6.4, auto used it only on NVIDIA GPUs. Other
+  vendors are verified only on the test machine's integrated AMD GPU. If there is a problem, set "ProRes の GPU デコード"
+  to off (takes effect after restarting). Media the GPU cannot open still falls back to the CPU.
+  The intended hardware is a discrete GPU (NVIDIA or AMD). On the test machine's integrated AMD GPU, 4K60 ProRes HQ
+  decoding on the GPU fell behind the CPU and sync re-alignments increased (55 with CPU decoding in 0.6.4, 99 to 101
+  with GPU decoding, 54 with GPU decoding off). On an integrated GPU that falls behind, set it to off.
+- Display: the FPS item "29.97 fps DF" now reads "29.97 fps" (choose it for a non-drop-frame 29.97 signal; drop frame is
+  detected in Auto too). "ProRes の GPU 復号" now reads "ProRes の GPU デコード", and the app log says "CPU でデコード".
+  The installer and README.txt name the VC++ package "Microsoft Visual C++ v14 Redistributable (x64)" (formerly
+  Microsoft Visual C++ 2015-2022).
+
+### Observability
+
+- New log line at exit: `LTC frame check summary` (frames rejected, first frames skipped, frames accepted, polarity bits).
+
+### Known issues
+
+- None within the recommended media (same as 0.6.4).
+
+### Known intermittent issues
+
+- As listed for 0.6.1, plus the 0.6.4 entry (the picture can briefly stay ahead of the target right after a seek while paused). In
+  one occurrence on the 0.6.5 test machine, the output trace showed the composed picture and the internal position on
+  target (24.968 s) while only the on-screen position display pointed about 3 s ahead (25.1 s); the path that produced
+  the display is not identified.
+
 ## 0.6.4 - 2026-10-03
 
 Stable (Latest). Observability and test-infrastructure cleanup. Sync decisions and playback behave as in 0.6.3.

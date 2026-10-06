@@ -47,6 +47,9 @@ public sealed record LtcDecodedFrame(LtcTimecode Timecode, long EndSampleIndex);
 ///   1. ゼロクロッシングで遷移を検出
 ///   2. 遷移間隔の長短（ショート=ハーフビット / ロング=フルビット）でBMCビットを復元
 ///   3. 80ビットのシフトレジスタで同期ワード(0xBFFC)を検出したらフレームを解析
+///   4. v0.6.5 B3: LTC のフレームの検査（同期ワードから次の同期ワードまでがちょうど 80 ビット、
+///      BCD の 1 の位が 9 以下）。通らない LTC のフレームはキューに入れない（同期の側からは「来なかった」のと同じ）。
+///      受け始め（デコーダを作った直後、無音の後）の最初の同期ワードは前の同期ワードが無く長さを確かめられないので使わない。
 /// </summary>
 public sealed class LtcDecoder
 {
@@ -69,11 +72,32 @@ public sealed class LtcDecoder
     private const int MaxQueueSize = 60; // 最大60フレーム（約2秒@30fps）
     private readonly int _sampleRate;
     private long _sampleIndex;     // T2: Write で受け取ったサンプルの通し番号（次に処理するサンプルの位置）
+    private readonly LtcFrameCheckStats _frameCheck;
+
+    // ── v0.6.5 B3: LTC のフレームの長さの検査 ──────────────────────
+    // 同期ワードを見つけるたびに 0 に戻し、ビットを 1 つ出すたびに 1 足す。
+    // _haveSync が false の間（受け始め・無音の後）は前の同期ワードが無いので長さを確かめられない。
+    private const int FrameBits = 80;
+    private int  _bitsSinceSync;
+    private bool _haveSync;
+
+    /// <summary>
+    /// 遷移の間隔がこのハーフビット数を超えたら信号が途切れたとみなし、次の同期ワードを受け始めの扱いにする。
+    /// 正しい BMC の最長の間隔は 1 ビット（ハーフビット 2 つ）なので、その 2 倍（2 ビットぶん）。
+    /// </summary>
+    private const double SignalBreakHalfBits = 4.0;
 
     /// <param name="sampleRate">オーディオサンプルレート (例: 48000)</param>
     /// <param name="fps">初期フレームレート推定値（適応的に更新される）</param>
     public LtcDecoder(int sampleRate, double fps = 25.0)
+        : this(sampleRate, fps, LtcFrameCheckStats.Shared)
     {
+    }
+
+    /// <param name="frameCheck">v0.6.5 B3: LTC のフレームの検査の数えの行き先（テストでは個別のものを渡す）。</param>
+    internal LtcDecoder(int sampleRate, double fps, LtcFrameCheckStats frameCheck)
+    {
+        _frameCheck = frameCheck;
         _sampleRate = sampleRate;
         // 初期ハーフビット推定: sampleRate / (fps × 80bits × 2)
         _halfPeriod = sampleRate / (fps * 80.0 * 2.0);
@@ -130,6 +154,10 @@ public sealed class LtcDecoder
         int d = _sinceTrans;
         _sinceTrans = 0;
 
+        // v0.6.5 B3: 2 ビットぶんより長く遷移が無かった（無音・抜け）→ 次の同期ワードは受け始めの扱い。
+        if (d > _halfPeriod * SignalBreakHalfBits)
+            _haveSync = false;
+
         if (d < _halfPeriod * 1.6)
         {
             // ショートインターバル: ハーフビット周期相当 → "1" ビットの構成要素
@@ -162,13 +190,34 @@ public sealed class LtcDecoder
         _data    = (_data >> 1) | (overflow ? (1UL << 63) : 0UL);
         _syncReg = (ushort)((_syncReg >> 1) | (b << 15));
 
+        if (_bitsSinceSync < int.MaxValue)   // 同期ワードの無い雑音が長く続いても桁あふれさせない
+            _bitsSinceSync++;
         if (_syncReg == FwdSync)
-            TryParseFrame(transitionSampleIndex);
+        {
+            int length = _bitsSinceSync;
+            bool lengthKnown = _haveSync;
+            _bitsSinceSync = 0;
+            _haveSync = true;
+            TryParseFrame(transitionSampleIndex, lengthKnown, length);
+        }
     }
 
-    private void TryParseFrame(long endSampleIndex)
+    private void TryParseFrame(long endSampleIndex, bool lengthKnown, int length)
     {
         ulong f = _data;
+
+        // v0.6.5 B3 (b): 同期ワードから次の同期ワードまでがちょうど 80 ビット。
+        // 受け始めの最初の 1 つは長さを確かめられないので使わない（遅れは LTC のフレーム 1 つ分）。
+        if (!lengthKnown)
+        {
+            _frameCheck.RecordRejected(LtcFrameCheckStats.RejectReason.Start, "no previous sync word");
+            return;
+        }
+        if (length != FrameBits)
+        {
+            _frameCheck.RecordRejected(LtcFrameCheckStats.RejectReason.Length, $"bits={length}");
+            return;
+        }
 
         // LTC 80ビットフレーム構造（SMPTE 12M）
         int frameU    = (int)( f        & 0x0F);  // bits 0-3
@@ -184,6 +233,14 @@ public sealed class LtcDecoder
         int hourU     = (int)((f >> 48) & 0x0F);  // bits 48-51
         int hourTens  = (int)((f >> 56) & 0x03);  // bits 56-57
 
+        // v0.6.5 B3 (a): BCD の 1 の位が 9 以下。10 の位は規格の桁幅（2〜3 ビット）と下の値の範囲の検査で収まる。
+        if (frameU > 9 || secU > 9 || minU > 9 || hourU > 9)
+        {
+            _frameCheck.RecordRejected(LtcFrameCheckStats.RejectReason.Bcd,
+                $"units frame={frameU} sec={secU} min={minU} hour={hourU}");
+            return;
+        }
+
         int fr = frameTens * 10 + frameU;
         int s  = secTens   * 10 + secU;
         int m  = minTens   * 10 + minU;
@@ -191,6 +248,14 @@ public sealed class LtcDecoder
 
         // 範囲チェック（ノイズによる誤検出を排除）
         if (fr > 29 || s > 59 || m > 59 || h > 23) return;
+
+        // v0.6.5 B3: 極性補正ビットは検査に使わず数えるだけ。EBU Tech 3097-E 4.5 節の定義
+        // 「80 ビットの中の 0 の数が偶数」を見る。同期ワード（bits 64-79）の 0 は 3 つ（奇数）なので、
+        // データ部（bits 0-63）の 0 の数が奇数なら合っている。この偶奇はどちらのビットが補正ビットでも同じなので、
+        // どちらが補正ビットかは bit 27 と bit 59 が 1 になった回数で見る（数えるだけ）。
+        int dataZeros = 64 - System.Numerics.BitOperations.PopCount(f);
+        bool parityMismatch = (dataZeros + 3) % 2 != 0;
+        _frameCheck.RecordAccepted(parityMismatch, (f & (1UL << 27)) != 0, (f & (1UL << 59)) != 0);
 
         while (_queue.Count >= MaxQueueSize)
         {
