@@ -131,6 +131,52 @@ public sealed class MediaDurationProbeTests : IClassFixture<MediaDurationProbeFi
         }
     }
 
+    /// <summary>
+    /// v0.6.6: 拡張子の表（プレイヤーと共通）に無い拡張子は、中身が読める素材でも「不明」（null）。
+    /// typefind に落とさない（typefind が gio を読み込み、その裏の読みでアプリが落ちていた）。
+    /// 長さは読み込んだときの再生時の長さで埋まる（PlaylistDurationFallback）。
+    /// </summary>
+    [SkippableFact]
+    public void Probe_ExtensionOutsideTheTable_ReturnsNull()
+    {
+        string source = _fx.RequireClip("h264_mp4");
+        string renamed = TestTempPaths.Combine("f7-durations", "h264_mp4.unknownext");
+        File.Copy(source, renamed, overwrite: true);
+
+        GstPlaybackApi.ProbeMediaDuration(renamed).Should().BeNull();
+        GstPlaybackApi.ProbeMediaDuration(source).Should().NotBeNull("the same bytes with a known extension still probe");
+    }
+
+    /// <summary>
+    /// v0.6.6: 表に無い拡張子は、長さの軽い関数も GOP 走査も同じ rc（TCS_ERR_UNSUPPORTED_EXTENSION）で失敗し、
+    /// アプリの警告には「対応していない拡張子」と分かる文が添えられる。
+    /// </summary>
+    [SkippableFact]
+    public void ExtensionOutsideTheTable_ProbeAndGopScan_ReturnUnsupportedExtension()
+    {
+        string source = _fx.RequireClip("h264_mp4");
+        string renamed = TestTempPaths.Combine("f7-durations", "h264_mp4_gop.unknownext");
+        File.Copy(source, renamed, overwrite: true);
+
+        GstNative.Imports.tcs_probe_duration(renamed, 0, out double seconds)
+            .Should().Be(GstNative.TcsErrUnsupportedExtension);
+        seconds.Should().Be(0.0);
+        GstNative.Imports.tcs_scan_gop(renamed, 0, out GstNative.TcsGopScan scan)
+            .Should().Be(GstNative.TcsErrUnsupportedExtension);
+        scan.Keyframes.Should().Be(0);
+        GstPlaybackApi.ScanGop(renamed).Should().BeNull();
+    }
+
+    /// <summary>v0.6.6: 警告に添える文（DLL 不要）。</summary>
+    [Fact]
+    public void DescribeProbeFailure_NamesTheUnsupportedExtension()
+    {
+        GstNative.DescribeProbeFailure(GstNative.TcsErrUnsupportedExtension)
+            .Should().Contain("unsupported extension").And.Contain("typefind is not used");
+        GstNative.DescribeProbeFailure(GstNative.TcsErrTimeout).Should().Be(" (timeout)");
+        GstNative.DescribeProbeFailure(-1).Should().BeEmpty();
+    }
+
     [SkippableFact]
     public void Probe_FileThatIsNotMedia_ReturnsNullQuickly()
     {
