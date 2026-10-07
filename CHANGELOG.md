@@ -2,7 +2,7 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
-## 0.6.6 - YYYY-MM-DD
+## 0.6.6 - 2026-10-08
 
 Stable (Latest). Fixes from field feedback. Clip durations no longer depend on ffprobe; scrubbing, numeric offset input, one-frame step
 buttons, button styling and an LTC input meter are added. The sync rules, gates and constants are the same as 0.6.5.
