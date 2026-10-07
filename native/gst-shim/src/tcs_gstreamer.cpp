@@ -5222,5 +5222,240 @@ tcs_scan_gop (const char* utf8_path, int32_t budget_ms, TcsGopScan* out)
   return TCS_OK;
 }
 
+
+/* ---- v0.6.6 F-7: container duration only --------------------------------
+ * filesrc ! typefind ! <demuxer> ! fakesink, PAUSED, duration query.
+ * No decoder, no parser. Own pipeline, no TcsPlayer state, no frame_lock.
+ * I13: the only lock here (DurationProbeCtx::lock) guards the pending pad and
+ * is never held across a GStreamer state change or a pad link. */
+
+struct DurationProbeCtx {
+  GstElement*       pipeline = nullptr;
+  GstElement*       sink = nullptr;
+  std::atomic<bool> linked{ false };
+  std::mutex        lock;            /* guards first_pad and demux_name */
+  GstPad*           first_pad = nullptr;  /* first non-video pad (ref), linked only if no video pad comes */
+  std::string       demux_name;
+};
+
+/* The demuxer with the highest rank whose sink template accepts the typefind
+ * caps (what decodebin would plug first). NULL when none matches. */
+static GstElementFactory*
+duration_probe_pick_demuxer (GstCaps* caps)
+{
+  GList* all = gst_element_factory_list_get_elements (
+      GST_ELEMENT_FACTORY_TYPE_DEMUXER, GST_RANK_MARGINAL);
+  GList* ok = gst_element_factory_list_filter (all, caps, GST_PAD_SINK, FALSE);
+  ok = g_list_sort (ok, gst_plugin_feature_rank_compare_func);
+  GstElementFactory* pick = ok
+      ? GST_ELEMENT_FACTORY (gst_object_ref (ok->data)) : nullptr;
+  gst_plugin_feature_list_free (ok);
+  gst_plugin_feature_list_free (all);
+  return pick;
+}
+
+static void
+duration_probe_link (DurationProbeCtx* ctx, GstPad* pad)
+{
+  bool expected = false;
+  if (!ctx->linked.compare_exchange_strong (expected, true))
+    return;
+  GstPad* sinkpad = gst_element_get_static_pad (ctx->sink, "sink");
+  if (sinkpad) {
+    if (gst_pad_link (pad, sinkpad) != GST_PAD_LINK_OK)
+      LOG ("duration-probe: link of demux pad '%s' failed", GST_PAD_NAME (pad));
+    gst_object_unref (sinkpad);
+  }
+}
+
+/* The video pad is preferred (the player's duration comes through its video
+ * branch); any other pad is kept until no-more-pads in case there is no video. */
+static void
+duration_probe_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user_data)
+{
+  DurationProbeCtx* ctx = static_cast<DurationProbeCtx*> (user_data);
+  if (ctx->linked.load ())
+    return;
+  GstCaps* caps = gst_pad_get_current_caps (pad);
+  if (!caps)
+    caps = gst_pad_query_caps (pad, nullptr);
+  bool is_video = false;
+  if (caps) {
+    const GstStructure* st = gst_caps_get_size (caps) > 0
+        ? gst_caps_get_structure (caps, 0) : nullptr;
+    const char* name = st ? gst_structure_get_name (st) : nullptr;
+    is_video = name && g_str_has_prefix (name, "video/");
+    gst_caps_unref (caps);
+  }
+  if (is_video) {
+    duration_probe_link (ctx, pad);
+    return;
+  }
+  std::lock_guard<std::mutex> g (ctx->lock);
+  if (!ctx->first_pad)
+    ctx->first_pad = GST_PAD (gst_object_ref (pad));
+}
+
+static void
+duration_probe_no_more_pads (GstElement* /*demux*/, gpointer user_data)
+{
+  DurationProbeCtx* ctx = static_cast<DurationProbeCtx*> (user_data);
+  if (ctx->linked.load ())
+    return;
+  GstPad* pad = nullptr;
+  {
+    std::lock_guard<std::mutex> g (ctx->lock);
+    if (ctx->first_pad)
+      pad = GST_PAD (gst_object_ref (ctx->first_pad));
+  }
+  if (pad) {
+    duration_probe_link (ctx, pad);
+    gst_object_unref (pad);
+  }
+}
+
+/* typefind found the container: plug the demuxer. In pull mode typefind emits
+ * this from its activation, i.e. inside our set_state(PAUSED) call; in push
+ * mode from the streaming thread. No lock is held here. */
+static void
+duration_probe_have_type (GstElement* typefind, guint /*probability*/,
+    GstCaps* caps, gpointer user_data)
+{
+  DurationProbeCtx* ctx = static_cast<DurationProbeCtx*> (user_data);
+  GstElementFactory* factory = duration_probe_pick_demuxer (caps);
+  if (!factory) {
+    gchar* desc = gst_caps_to_string (caps);
+    LOG ("duration-probe: no demuxer for %s", desc ? desc : "?");
+    g_free (desc);
+    GST_ELEMENT_ERROR (typefind, STREAM, DEMUX, ("no demuxer for the container"), (nullptr));
+    return;
+  }
+  GstElement* demux = gst_element_factory_create (factory, nullptr);
+  {
+    std::lock_guard<std::mutex> g (ctx->lock);
+    ctx->demux_name = gst_plugin_feature_get_name (GST_PLUGIN_FEATURE (factory));
+  }
+  gst_object_unref (factory);
+  if (!demux) {
+    GST_ELEMENT_ERROR (typefind, STREAM, DEMUX, ("demuxer could not be created"), (nullptr));
+    return;
+  }
+  g_signal_connect (demux, "pad-added", G_CALLBACK (duration_probe_pad_added), ctx);
+  g_signal_connect (demux, "no-more-pads", G_CALLBACK (duration_probe_no_more_pads), ctx);
+  gst_bin_add (GST_BIN (ctx->pipeline), demux);
+  if (!gst_element_link (typefind, demux)) {
+    GST_ELEMENT_ERROR (typefind, STREAM, DEMUX, ("typefind -> demuxer link failed"), (nullptr));
+    return;
+  }
+  gst_element_sync_state_with_parent (demux);
+}
+
+static void
+duration_probe_log_bus_error (GstMessage* msg)
+{
+  GError* err = nullptr;
+  gchar* dbg = nullptr;
+  gst_message_parse_error (msg, &err, &dbg);
+  LOG ("duration-probe: error %s (%s)", err ? err->message : "?", dbg ? dbg : "");
+  if (err) g_error_free (err);
+  if (dbg) g_free (dbg);
+}
+
+TCS_GST_API int
+tcs_probe_duration (const char* utf8_path, int32_t timeout_ms, double* out_sec)
+{
+  if (!out_sec)
+    return TCS_ERR_INVALID_ARG;
+  *out_sec = 0.0;
+  if (!utf8_path || !*utf8_path)
+    return TCS_ERR_INVALID_ARG;
+  gst_init_once ();
+  LARGE_INTEGER qpf, t0;
+  QueryPerformanceFrequency (&qpf);
+  QueryPerformanceCounter (&t0);
+
+  GstElement* pipeline = gst_pipeline_new ("tcs-duration-probe");
+  GstElement* src = gst_element_factory_make ("filesrc", nullptr);
+  GstElement* typefind = gst_element_factory_make ("typefind", nullptr);
+  GstElement* sink = gst_element_factory_make ("fakesink", nullptr);
+  if (!pipeline || !src || !typefind || !sink) {
+    if (src) gst_object_unref (src);
+    if (typefind) gst_object_unref (typefind);
+    if (sink) gst_object_unref (sink);
+    if (pipeline) gst_object_unref (pipeline);
+    return TCS_ERR_GENERIC;
+  }
+
+  DurationProbeCtx ctx;
+  ctx.pipeline = pipeline;
+  ctx.sink = sink;
+  g_object_set (src, "location", utf8_path, nullptr);
+  g_object_set (sink, "sync", FALSE, nullptr);
+  gst_bin_add_many (GST_BIN (pipeline), src, typefind, sink, nullptr);
+  gst_element_link (src, typefind);
+  g_signal_connect (typefind, "have-type", G_CALLBACK (duration_probe_have_type), &ctx);
+
+  GstBus* bus = gst_element_get_bus (pipeline);
+  int rc = TCS_OK;
+  const char* outcome = "ok";
+  GstStateChangeReturn sr = gst_element_set_state (pipeline, GST_STATE_PAUSED);
+  if (sr == GST_STATE_CHANGE_FAILURE) {
+    GstMessage* msg = gst_bus_pop_filtered (bus, GST_MESSAGE_ERROR);
+    if (msg) {
+      duration_probe_log_bus_error (msg);
+      gst_message_unref (msg);
+    }
+    rc = TCS_ERR_GENERIC;
+    outcome = "state-change-failed";
+  } else if (sr == GST_STATE_CHANGE_ASYNC) {
+    GstClockTime wait = (timeout_ms > 0 ? (GstClockTime) timeout_ms : 10000) * GST_MSECOND;
+    GstMessage* msg = gst_bus_timed_pop_filtered (bus, wait,
+        (GstMessageType) (GST_MESSAGE_ASYNC_DONE | GST_MESSAGE_ERROR));
+    if (!msg) {
+      rc = TCS_ERR_TIMEOUT;
+      outcome = "timeout";
+    } else {
+      if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ERROR) {
+        duration_probe_log_bus_error (msg);
+        rc = TCS_ERR_GENERIC;
+        outcome = "error";
+      }
+      gst_message_unref (msg);
+    }
+  }
+  double seconds = 0.0;
+  if (rc == TCS_OK) {
+    gint64 dur = 0;
+    if (gst_element_query_duration (pipeline, GST_FORMAT_TIME, &dur) && dur > 0) {
+      seconds = (double) dur / (double) GST_SECOND;
+    } else {
+      rc = TCS_ERR_GENERIC;
+      outcome = "no-duration";
+    }
+  }
+  gst_object_unref (bus);
+  gst_element_set_state (pipeline, GST_STATE_NULL);
+
+  std::string demux_name;
+  {
+    std::lock_guard<std::mutex> g (ctx.lock);
+    demux_name = ctx.demux_name;
+    if (ctx.first_pad) {
+      gst_object_unref (ctx.first_pad);
+      ctx.first_pad = nullptr;
+    }
+  }
+  gst_object_unref (pipeline);
+
+  LARGE_INTEGER t1;
+  QueryPerformanceCounter (&t1);
+  double ms = (double) (t1.QuadPart - t0.QuadPart) * 1000.0 / (double) qpf.QuadPart;
+  LOG ("duration-probe: %s demux=%s durationSec=%.6f elapsedMs=%.1f",
+      outcome, demux_name.empty () ? "-" : demux_name.c_str (), seconds, ms);
+  if (rc == TCS_OK)
+    *out_sec = seconds;
+  return rc;
+}
+
 } /* extern C */
 

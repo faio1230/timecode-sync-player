@@ -50,6 +50,7 @@ typedef struct TcsPlayer TcsPlayer;
 #define TCS_ERR_SIZE -5
 #define TCS_ERR_ENDED -6   /* acquire: end of stream, nothing left to hand over */
 #define TCS_ERR_INVALID_ARG -7
+#define TCS_ERR_TIMEOUT -8 /* tcs_probe_duration: the preroll did not finish in time */
 
 /* Decode mode for tcs_player_set_decode_mode. HARDWARE is 0 so a caller that
  * never calls the setter keeps the hardware-first order (the default). */
@@ -352,6 +353,25 @@ typedef struct TcsGopScan {
  * bandwidth with playback. Callers that care about playback smoothness should
  * measure the impact on the material they actually use. */
 TCS_GST_API int tcs_scan_gop(const char* utf8_path, int32_t budget_ms, TcsGopScan* out);
+
+/* ---- v0.6.6 F-7: container duration only (no player, no decoder) ----
+ * Builds filesrc ! typefind ! <demuxer chosen from the typefind caps> ! fakesink,
+ * raises it to PAUSED and asks the pipeline for the duration. No decoder and no
+ * parser is created, so the call reads only the container headers (measured on
+ * the development machine: 1-5 ms per file, up to ~40 ms for 4K ProRes on a cold
+ * cache). The answer comes from the same demuxer the player uses, so it equals
+ * tcs_player_get_duration for the same file (the player's demuxer is chosen by
+ * extension; for the known extensions typefind picks the same element).
+ *
+ * The probe has its own pipeline and shares no state or lock with any TcsPlayer.
+ * timeout_ms bounds the wait for the preroll (a file the demuxer cannot finish
+ * reading must not hang the caller); timeout_ms <= 0 uses 10000.
+ * Returns TCS_OK with *out_sec > 0; TCS_ERR_TIMEOUT when the preroll did not
+ * finish in time; TCS_ERR_GENERIC when no demuxer matched, the pipeline posted
+ * an error or the duration is unknown; TCS_ERR_INVALID_ARG for bad arguments.
+ * *out_sec is 0 on every failure. Blocks the calling thread: call it off the UI
+ * thread. */
+TCS_GST_API int tcs_probe_duration(const char* utf8_path, int32_t timeout_ms, double* out_sec);
 /* Convenience getters (avoid struct marshalling from .NET). */
 TCS_GST_API int tcs_player_decoder_name(TcsPlayer* player, char* out, size_t out_len);
 TCS_GST_API int tcs_player_spout_ready(TcsPlayer* player);

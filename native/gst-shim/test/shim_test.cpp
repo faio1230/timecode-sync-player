@@ -2423,6 +2423,102 @@ run_paused_seek_one_frame (int argc, char** argv)
   return failures;
 }
 
+/* v0.6.6 F-7: --probe-duration <file...>
+ * Per file: the light container probe (tcs_probe_duration, cold then warm), and
+ * the player's duration after a paused load (tcs_player_get_duration, the value
+ * the sync uses). Both must come from the same demuxer, so they must be equal
+ * (1 microsecond tolerance for the double conversion). Then the failure paths:
+ * a missing file and a file that is not media must fail fast with 0, and the
+ * bad-argument path must not touch the pipeline. One line per file
+ * "PROBE file=<name> probeSec=... coldMs=... warmMs=... playerSec=..." for the
+ * table. */
+static int
+run_probe_duration (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --probe-duration <file...>\n");
+    return 2;
+  }
+  for (int i = 2; i < argc; i++) {
+    const char* file = argv[i];
+    const char* name = strrchr (file, '\\');
+    const char* slash = strrchr (file, '/');
+    if (!name || (slash && slash > name)) name = slash;
+    name = name ? name + 1 : file;
+
+    double probe = 0.0, warm = 0.0;
+    auto t0 = std::chrono::steady_clock::now ();
+    int rc = tcs_probe_duration (file, 0, &probe);
+    double cold_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - t0).count ();
+    t0 = std::chrono::steady_clock::now ();
+    int rc2 = tcs_probe_duration (file, 0, &warm);
+    double warm_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - t0).count ();
+
+    double player_sec = 0.0;
+    char err[512] = "";
+    TcsPlayer* p = tcs_player_create ("TCSGstShimProbeDuration", nullptr, err, sizeof (err));
+    int lrc = p ? tcs_player_load (p, file, 0.0, 1, err, sizeof (err)) : TCS_ERR_GENERIC;
+    int drc = (p && lrc == TCS_OK) ? tcs_player_get_duration (p, &player_sec) : TCS_ERR_NOT_LOADED;
+    if (p) tcs_player_destroy (p);
+
+    printf ("PROBE file=%s rc=%d probeSec=%.6f coldMs=%.1f warmMs=%.1f playerRc=%d playerSec=%.6f diffUs=%.1f\n",
+        name, rc, probe, cold_ms, warm_ms, drc, player_sec, (probe - player_sec) * 1e6);
+    char what[512];
+    snprintf (what, sizeof (what), "probe-duration: %s probe returns a duration", name);
+    check (rc == TCS_OK && probe > 0.0, what);
+    snprintf (what, sizeof (what), "probe-duration: %s second probe gives the same value", name);
+    check (rc2 == TCS_OK && warm == probe, what);
+    snprintf (what, sizeof (what), "probe-duration: %s player duration is available", name);
+    check (lrc == TCS_OK && drc == TCS_OK && player_sec > 0.0, what);
+    snprintf (what, sizeof (what), "probe-duration: %s probe equals the player's duration", name);
+    check (fabs (probe - player_sec) < 1e-6, what);
+  }
+
+  /* Failure paths: 0 and an error code, quickly. */
+  double d = 123.0;
+  check (tcs_probe_duration (nullptr, 0, &d) == TCS_ERR_INVALID_ARG && d == 0.0,
+      "probe-duration: NULL path -> INVALID_ARG, 0");
+  check (tcs_probe_duration (argv[2], 0, nullptr) == TCS_ERR_INVALID_ARG,
+      "probe-duration: NULL out -> INVALID_ARG");
+  d = 123.0;
+  auto t0 = std::chrono::steady_clock::now ();
+  int rc = tcs_probe_duration ("Z:\\tcs-no-such-dir\\missing-clip.mp4", 0, &d);
+  double ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();
+  printf ("  missing file: rc=%d sec=%.3f ms=%.1f\n", rc, d, ms);
+  check (rc != TCS_OK && d == 0.0 && ms < 2000.0, "probe-duration: missing file fails fast with 0");
+
+  char tmp_dir[MAX_PATH] = "";
+  GetTempPathA (sizeof (tmp_dir), tmp_dir);
+  char junk[MAX_PATH + 64];
+  snprintf (junk, sizeof (junk), "%stcs-probe-duration-junk-%lu.mp4", tmp_dir, GetCurrentProcessId ());
+  FILE* f = fopen (junk, "wb");
+  if (f) {
+    for (int k = 0; k < 4096; k++) fputc ((k * 37) & 0xff, f);
+    fclose (f);
+  }
+  d = 123.0;
+  t0 = std::chrono::steady_clock::now ();
+  rc = tcs_probe_duration (junk, 0, &d);
+  ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();
+  printf ("  not-media file: rc=%d sec=%.3f ms=%.1f\n", rc, d, ms);
+  check (rc != TCS_OK && d == 0.0 && ms < 2000.0, "probe-duration: a file that is not media fails fast with 0");
+  remove (junk);
+
+  /* The timeout bounds the wait: a 1 ms budget on a real file either answers or
+   * reports TIMEOUT, and never blocks for the default 10 s. */
+  d = 123.0;
+  t0 = std::chrono::steady_clock::now ();
+  rc = tcs_probe_duration (argv[2], 1, &d);
+  ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();
+  printf ("  1 ms budget: rc=%d sec=%.6f ms=%.1f\n", rc, d, ms);
+  check ((rc == TCS_OK && d > 0.0) || (rc == TCS_ERR_TIMEOUT && d == 0.0),
+      "probe-duration: 1 ms budget answers or reports TIMEOUT with 0");
+  check (ms < 2000.0, "probe-duration: 1 ms budget returns promptly");
+  return failures;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -2449,6 +2545,11 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--stress") == 0)
     return run_stress (argc, argv);
+  if (strcmp (argv[1], "--probe-duration") == 0) {
+    run_probe_duration (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
   if (strcmp (argv[1], "--load-bench") == 0) {
     int rc = run_load_bench (argc, argv);
     printf ("RESULT failures=%d\n", failures);
