@@ -35,7 +35,7 @@ public sealed class F7DurationWithoutFfprobeE2ETests
         using LtcSignalPlayer signalOwner = signal!;
 
         // 素材は試験側で作る（試験のプロセスの PATH はそのまま）。
-        var sources = new (string Format, double Seconds)[] { ("h264_mp4", 6), ("hap_mov", 6), ("h264_mp4", 8) };
+        var sources = new (string Format, double Seconds)[] { ("h264_mp4", 6), ("hap_mov", 6), ("h264_mp4", 14) };
         var copies = new List<string>();
         try
         {
@@ -67,15 +67,24 @@ public sealed class F7DurationWithoutFfprobeE2ETests
 
             // (1) 自動オフセット: 2 行目は 1 本目の長さ、3 行目は 1・2 本目の和（追加時に自動オフセット、既定 ON）。
             double[] expectedOffsets = { 0, lengths[0], lengths[0] + lengths[1] };
-            E2EAssert.WaitUntil(() =>
+            try
             {
-                for (int i = 0; i < 3; i++)
+                E2EAssert.WaitUntil(() =>
                 {
-                    double? offset = RowOffsetSeconds(playlist, i);
-                    if (offset is null || Math.Abs(offset.Value - expectedOffsets[i]) > 2.0 / 30) return false;
-                }
-                return true;
-            }, TimeSpan.FromSeconds(10));
+                    for (int i = 0; i < 3; i++)
+                    {
+                        double? offset = RowOffsetSeconds(playlist, i);
+                        // 許す幅: 表示は 30fps の hh:mm:ss:ff に丸めるので 1 フレーム（1/30 秒）まで。
+                        if (offset is null || Math.Abs(offset.Value - expectedOffsets[i]) > 1.0 / 30) return false;
+                    }
+                    return true;
+                }, TimeSpan.FromSeconds(10));
+            }
+            catch (TimeoutException ex)
+            {
+                throw new TimeoutException("auto offsets: " + string.Join(", ", Enumerable.Range(0, 3).Select(i =>
+                    $"row {i} text='{RowOffsetText(playlist, i)}' expected={expectedOffsets[i]:F3}")), ex);
+            }
             for (int i = 0; i < 3; i++)
                 _output.WriteLine($"row {i}: offset={RowOffsetSeconds(playlist, i):F3} expected={expectedOffsets[i]:F3}");
 
@@ -88,20 +97,42 @@ public sealed class F7DurationWithoutFfprobeE2ETests
                 hscroll = app.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("HorizontalScrollBar"));
                 return hscroll != null;
             }, TimeSpan.FromSeconds(5));
+            AutomationElement? zoomIn = app.MainWindow
+                .FindAllDescendants(cf => cf.ByControlType(FlaUI.Core.Definitions.ControlType.Button))
+                .FirstOrDefault(b => b.Name == "+");
+            zoomIn.Should().NotBeNull("the timeline zoom-in button");
+            double ReadMaximum() => hscroll!.Patterns.RangeValue.Pattern.Maximum.Value;
+            // ズームは 1 段 1.2 倍、最小 0.01 秒/px。全長が表示幅を超えるまで寄せる（既定の 1 秒/px では全部が収まり最大値は 0）。
             double maximum = 0;
-            for (int zoom = 0; zoom < 20 && maximum <= 0; zoom++)
+            int zooms = 0;
+            for (; zooms < 40 && maximum <= 0; zooms++)
             {
-                AutomationElement? zoomIn = app.MainWindow
-                    .FindAllDescendants(cf => cf.ByControlType(FlaUI.Core.Definitions.ControlType.Button))
-                    .FirstOrDefault(b => b.Name == "+");
-                zoomIn.Should().NotBeNull("the timeline zoom-in button");
                 zoomIn!.AsButton().Invoke();
                 Thread.Sleep(100);
-                maximum = hscroll!.Patterns.RangeValue.Pattern.Maximum.Value;
+                maximum = ReadMaximum();
             }
-            _output.WriteLine($"timeline: total={total:F3} horizontalMaximum={maximum:F3}");
             maximum.Should().BeGreaterThan(0, "the timeline is as wide as the clips");
             maximum.Should().BeLessThan(total, "the scroll range is the total length minus the visible part");
+            // さらに 2 段寄せる。最大値 = 全長 − 表示幅、表示幅は 1 段で 1/1.2 になるので、
+            // (全長 − 最大値) の比が 1.2 になるのは、アプリの全長が試験の全長（長さの和）と同じときだけ。
+            // 偶然の一致を避けるため 2 か所（段 n→n+1 と n+1→n+2）で確かめる。
+            var maxima = new List<double> { maximum };
+            for (int step = 0; step < 2; step++)
+            {
+                zoomIn!.AsButton().Invoke();
+                Thread.Sleep(100);
+                maxima.Add(ReadMaximum());
+            }
+            _output.WriteLine($"timeline: total={total:F3} zooms={zooms} horizontalMaxima=" +
+                string.Join(" -> ", maxima.Select(m => m.ToString("F3", CultureInfo.InvariantCulture))));
+            for (int k = 0; k + 1 < maxima.Count; k++)
+            {
+                double ratio = (total - maxima[k]) / (total - maxima[k + 1]);
+                _output.WriteLine($"timeline: ratio[{k}]={ratio:F4}");
+                maxima[k + 1].Should().BeGreaterThan(maxima[k], "zooming in widens the scroll range");
+                ratio.Should().BeApproximately(1.2, 0.02,
+                    "the app's timeline length equals the sum of the clip lengths");
+            }
 
             // (3) Continue: 各クリップの中ほどの LTC で、そのクリップが選ばれる（長さ 0 だと一度も当たらない）。
             ConfigureContinue(app);
@@ -152,19 +183,23 @@ public sealed class F7DurationWithoutFfprobeE2ETests
         return string.Join(Path.PathSeparator, kept);
     }
 
-    private static double? RowOffsetSeconds(ListBox playlist, int index)
+    private static double? RowOffsetSeconds(ListBox playlist, int index) =>
+        RowOffsetText(playlist, index) is { } text ? TimecodeSeconds(text, 30) : null;
+
+    private static string? RowOffsetText(ListBox playlist, int index)
     {
         try
         {
             AutomationElement[] items = playlist.Items;
-            if (items.Length <= index) return null;
+            if (items.Length <= index) return $"<no row; items={items.Length}>";
+            // 一覧の高さに入らない行は中身が UIA に出ない（仮想化）。読む前に見える位置へ送る。
+            items[index].Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView();
             AutomationElement? box = items[index].FindFirstDescendant(cf => cf.ByAutomationId("TimelineOffsetTextBox"));
-            return box is null ? null : TimecodeSeconds(box.AsTextBox().Text, 30);
+            return box is null ? "<no TimelineOffsetTextBox>" : box.AsTextBox().Text;
         }
-        catch (Exception ex) when (ex is FlaUI.Core.Exceptions.ElementNotAvailableException
-                                   or System.Runtime.InteropServices.COMException)
+        catch (Exception ex)
         {
-            return null;
+            return $"<{ex.GetType().Name}: {ex.Message}>";
         }
     }
 
