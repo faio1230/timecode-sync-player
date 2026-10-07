@@ -13,7 +13,7 @@ namespace TimecodeSyncPlayer.Gst;
 internal sealed class GstBackendState : IDisposable
 {
     /// <summary>検証実行時は環境変数で送信者名を分離できる（既定は運用名）。</summary>
-    public const string SenderNameEnvVar = "TIMECODE_SYNC_PLAYER_SPOUT_NAME";
+    public const string SenderNameEnvVar = SpoutDefaults.SenderNameEnvironmentVariable;
 
     private readonly IGstNativeApi _native;
     private readonly AppSettingsManager? _settingsManager;
@@ -226,11 +226,8 @@ internal sealed class GstBackendState : IDisposable
 
     public void Dispose() => DisposePlayer();
 
-    internal static string ResolveSenderName()
-    {
-        string? fromEnv = Environment.GetEnvironmentVariable(SenderNameEnvVar);
-        return string.IsNullOrWhiteSpace(fromEnv) ? SpoutDefaults.DefaultSenderName : fromEnv.Trim();
-    }
+    // v0.6.6 R-11: 送信名は OutputEngine 側（MainWindow）と同じ関数で決める。
+    internal static string ResolveSenderName() => SpoutDefaults.SenderNameFromEnvironment();
 
     private void OnNativeFrame(IntPtr userData, ulong generation, ulong seq)
     {

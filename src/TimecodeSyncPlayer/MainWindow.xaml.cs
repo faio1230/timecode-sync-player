@@ -51,6 +51,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // ── Spout ─────────────────────────────────────────────────────
     private readonly ISpoutOutput _spoutOutput;
+    // v0.6.6 R-11: Spout の送信名。shim 側（GstBackendState）と同じ関数で決め、送信と表示の両方に使う。
+    private readonly string _spoutSenderName = SpoutDefaults.SenderNameFromEnvironment();
 
     // ── GPU 出力 ──────────────────────────────────────────────────
     private readonly OutputEngine? _outputEngine;
@@ -263,7 +265,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             {
                 CanvasWidth = CanvasSettings.Default.Width,
                 CanvasHeight = CanvasSettings.Default.Height,
-                SenderName = ResolveOutputSenderName(),
+                SenderName = _spoutSenderName,
                 AdapterLuid = OutputDisplays.FindAdapterLuid(settingsManager.Current.FullscreenDisplayDeviceName),
                 TestCardEnabled = _vm.Output.TestCardEnabled,
                 Trace = outputTrace,
@@ -673,12 +675,6 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             ReadPlaybackTimePos() ?? 0,
             _gapFreezeHandler.OutputFreezeTargetSeconds,
             _fps));
-    }
-
-    private static string ResolveOutputSenderName()
-    {
-        string? fromEnv = Environment.GetEnvironmentVariable(SpoutSender.SenderNameEnvironmentVariable);
-            return string.IsNullOrWhiteSpace(fromEnv) ? SpoutDefaults.DefaultSenderName : fromEnv;
     }
 
     // OutputEngine の GPU worker から呼ばれる。UI は Dispatcher に投げるだけで待たない。
@@ -1920,6 +1916,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _spoutOutput.IsEnabled = !_spoutOutput.IsEnabled;
         _outputEngine?.SetSpoutEnabled(_spoutOutput.IsEnabled);
         _vm.Sync.SpoutToggleLabel = ToggleLabelFormatter.Format(_spoutOutput.IsEnabled, SpoutOnLabel, SpoutOffLabel);
+        _vm.Output.SetSpoutStatus(_spoutOutput.IsEnabled, _spoutSenderName);
         Log.Information("Spout 出力: {State}", _spoutOutput.IsEnabled ? "ON" : "OFF");
     }
 
