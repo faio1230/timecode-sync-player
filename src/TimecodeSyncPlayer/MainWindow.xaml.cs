@@ -34,6 +34,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly RenderSession _renderSession;
     private readonly IDisplayCatalog _displayCatalog = new NativeDisplayCatalog();
     private FullscreenOutputWindow? _fullscreenWindow;
+    private bool _isConfirmingFullscreen;
     private bool _isRefreshingDisplays;
     private readonly PlaybackPerformanceStats _playbackPerformanceStats;
 
@@ -2139,6 +2140,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             return;
         if (_outputEngine == null)
             return; // 再生不可（GPU 出力なし）では全画面を開かない。
+        if (!ConfirmFullscreenTarget(ref target, FullscreenRequestOrigin.UserButton))
+            return;
 
         var window = new FullscreenOutputWindow(target, _displayCatalog, _outputEngine);
         window.Closed += FullscreenWindow_Closed;
@@ -2159,6 +2162,43 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _fullscreenWindow = null;
             throw;
         }
+    }
+
+    // v0.6.6 R-8: 主画面（作業中の画面）に利用者の操作で出すときだけ確認を出す。false なら出さない。
+    // 確認の間に画面の構成が変わったら、選び直した出力先が確認した画面と同じときだけ続ける。
+    private bool ConfirmFullscreenTarget(ref DisplayTarget target, FullscreenRequestOrigin origin)
+    {
+        if (!FullscreenConfirmationPolicy.ShouldConfirm(target, origin))
+            return true;
+        if (_isConfirmingFullscreen)
+            return false; // 確認の画面が出ている間の 2 回目の押下（UI オートメーション等）は捨てる。
+
+        bool confirmed;
+        _isConfirmingFullscreen = true;
+        try
+        {
+            confirmed = new FullscreenConfirmDialog(this).ShowDialog() == true;
+        }
+        finally
+        {
+            _isConfirmingFullscreen = false;
+        }
+
+        Log.Information("全画面の確認: display={Display} 結果={Result}",
+            target.DeviceName, confirmed ? "出す" : "やめる");
+        if (!confirmed || _fullscreenWindow != null)
+            return false;
+
+        RefreshDisplaySelection(target.DeviceName);
+        if (DisplayCombo.SelectedItem is not DisplayTarget current || current != target)
+        {
+            Log.Warning("全画面の確認の間に出力先が変わったため出しません: confirmed={Confirmed} now={Now}",
+                target.DeviceName, (DisplayCombo.SelectedItem as DisplayTarget)?.DeviceName ?? "(なし)");
+            return false;
+        }
+
+        target = current;
+        return true;
     }
 
     private void FullscreenWindow_Closed(object? sender, EventArgs e)
