@@ -57,16 +57,30 @@ Settings and projects are unchanged from 0.6.5.
   `Seek command sent source=FrameStep`, `FrameStep landed`, `FrameStep queued`, `FrameStep ignored`,
   `Sync offset input rejected`, and the fullscreen confirmation result (`全画面の確認`).
 
+### Fixed
+
+- Right after startup, after a ProRes clip was loaded with GPU decoding, the app could rarely crash (since 0.6.2). The
+  cause is GIO in the GLib 2.82.4 bundled with GStreamer reading past an unterminated string while it reads the Windows
+  registry during its initialization. GIO is loaded together with the file type detection (typefind) plugin. In 0.6.6
+  the clip duration and the GOP scan pick the demuxer from the file extension instead of typefind, so GIO is not loaded
+  for the recommended formats. Formats outside the recommendation (read by the generic decoder) still load it, and the
+  crash window remains for them. The evidence of the fix is that GIO is no longer loaded; crashes were 2 in 72 startups
+  before the fix and 0 in 60 startups plus the full suite after it.
+
 ### Known issues
 
 - None within the recommended media (same as 0.6.5).
 
+### Known limitations
+
+- Formats outside the recommendation (read by the generic decoder: MPEG-2, MJPEG, DNxHD/DNxHR video, and files with
+  the .mpg or .flv extension) load GIO, so the rare crash right after startup can still happen. For a file whose
+  extension is not in the table, the clip duration and the GOP scan fail as an unsupported extension, and the duration
+  is filled from the playback duration when the clip is loaded.
+
 ### Known intermittent issues
 
 - As listed for 0.6.5.
-- Right after startup, after a ProRes clip is loaded with GPU decoding, the app can rarely crash (since 0.6.2; the cause
-  is under investigation). On the development machine, 5 of 487 such startups (4 in 0.6.2, 1 during the 0.6.6 work);
-  0 of 275 in 0.6.3 and 0.6.4.
 
 ## 0.6.5 - 2026-10-06
 
