@@ -2058,7 +2058,31 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         BtnApplyCanvas.IsEnabled = canChange;
         BtnTestCard.IsEnabled = true;
         System.Windows.Controls.ToolTipService.SetToolTip(CanvasGroup, tip);
-        System.Windows.Controls.ToolTipService.SetToolTip(BtnTestCard, null);
+        // v0.6.6 R-6: 適用のボタンには説明と押せない理由を出す（無効でも出る。ShowOnDisabled はボタンのスタイル）。
+        System.Windows.Controls.ToolTipService.SetToolTip(BtnApplyCanvas, ButtonToolTipText.Compose(
+            ButtonToolTipText.Describe(ButtonToolTipKey.ApplyCanvas), tip));
+        System.Windows.Controls.ToolTipService.SetToolTip(BtnTestCard,
+            ButtonToolTipText.For(ButtonToolTipKey.TestCard, isEnabled: true));
+    }
+
+    /// <summary>
+    /// v0.6.6: 再生コントロールの行。中央の再生の並びを切らないよう、右側の並びの最大の幅を残りの幅にする
+    /// （右側は WrapPanel なので、収まらなければ下の行へ折り返す）。
+    /// </summary>
+    private void ControlRow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!e.WidthChanged)
+            return;
+        double centerWidth = 0;
+        foreach (FrameworkElement child in TransportButtons.Children.OfType<FrameworkElement>())
+            centerWidth += child.Width + child.Margin.Left + child.Margin.Right;
+        double minimumRight = 0;
+        foreach (FrameworkElement child in ControlRowRight.Children.OfType<FrameworkElement>())
+            minimumRight = Math.Max(minimumRight, child.DesiredSize.Width);
+        // 中央の並びの左右に少し余白を残す
+        const double centerGap = 16;
+        ControlRowRight.MaxWidth = ControlRowLayout.RightGroupMaxWidth(
+            e.NewSize.Width, ControlRowLeft.ActualWidth, centerWidth + centerGap, minimumRight);
     }
 
     // ── クリップ配置（右クリックメニュー） ────────────────────────

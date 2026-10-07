@@ -46,7 +46,7 @@ public sealed class SyncOffsetInputE2ETests
                 E2EAssert.WaitUntil(() => box.Text == "-1000", TimeSpan.FromSeconds(3));
                 KeyboardInputHelper.ReplaceTextAndEnterOrSkip(box, "12.5");
                 E2EAssert.WaitUntil(() => box.Text == "-1000", TimeSpan.FromSeconds(3));
-                app.Text("SyncOffsetValueText").Should().Be("-1000 ms");
+                box.Text.Should().Be("-1000");
                 ReadSettings(settingsPath)!.SyncOffsetMs.Should().Be(-1000);
 
                 // 範囲の内側の値に戻して、再起動で戻ることを確かめる。
@@ -58,7 +58,7 @@ public sealed class SyncOffsetInputE2ETests
 
             using var restarted = E2EAppRunner.Start(prereqs.ExePath, "--vo null", settingsPath);
             E2EAssert.WaitUntil(() => InputBox(restarted).Text == "+37", TimeSpan.FromSeconds(5));
-            restarted.Text("SyncOffsetValueText").Should().Be("+37 ms");
+            InputBox(restarted).Text.Should().Be("+37");
             restarted.Slider("SyncOffsetSlider").Value.Should().Be(37);
         }
         finally
@@ -87,7 +87,7 @@ public sealed class SyncOffsetInputE2ETests
             box.Text.Should().Be("-300");
             Keyboard.Type(VirtualKeyShort.ESCAPE);
             E2EAssert.WaitUntil(() => box.Text == "+100", TimeSpan.FromSeconds(3));
-            app.Text("SyncOffsetValueText").Should().Be("+100 ms");
+            box.Text.Should().Be("+100");
 
             // つまみで変えたら欄もそろう。
             app.Slider("SyncOffsetSlider").Patterns.RangeValue.Pattern.SetValue(-20);
@@ -161,8 +161,8 @@ public sealed class SyncOffsetInputE2ETests
 
     private static void WaitForApplied(E2EAppRunner app, TextBox box, string settingsPath, string boxText, double ms)
     {
+        // v0.6.6: 値の文字（SyncOffsetValueText）は外した。値は入力欄で読む
         E2EAssert.WaitUntil(() => box.Text == boxText, TimeSpan.FromSeconds(3));
-        E2EAssert.WaitUntil(() => app.Text("SyncOffsetValueText") == boxText + " ms", TimeSpan.FromSeconds(3));
         E2EAssert.WaitUntil(() => app.Slider("SyncOffsetSlider").Value == ms, TimeSpan.FromSeconds(3));
         E2EAssert.WaitUntil(() => ReadSettings(settingsPath)?.SyncOffsetMs == ms, TimeSpan.FromSeconds(5));
     }
