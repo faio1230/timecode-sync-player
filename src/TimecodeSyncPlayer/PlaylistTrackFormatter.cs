@@ -7,6 +7,15 @@ namespace TimecodeSyncPlayer;
 public static class PlaylistTrackFormatter
 {
     /// <summary>
+    /// v0.6.6 F-7: 長さが分からない（取れなかった）ときの表示。0 を長さとして見せない。
+    /// </summary>
+    public const string UnknownDurationText = "--:--:--:--";
+
+    /// <summary>長さが分からない行か（素材の長さが 0 で、Out 点も無い）。</summary>
+    public static bool IsDurationUnknown(PlaylistTrack track) =>
+        track.MediaDuration <= TimeSpan.Zero && !track.MediaOut.HasValue;
+
+    /// <summary>
     /// TimelineIn を hh:mm:ss:ff 形式で取得する。
     /// </summary>
     public static string FormatTimelineIn(PlaylistTrack track)
@@ -29,6 +38,7 @@ public static class PlaylistTrackFormatter
     /// </summary>
     public static string FormatMediaDuration(PlaylistTrack track)
     {
+        if (track.MediaDuration <= TimeSpan.Zero) return UnknownDurationText;
         int fps = GetFps(track);
         return FormatTimecode(track.MediaDuration, fps);
     }
@@ -38,6 +48,7 @@ public static class PlaylistTrackFormatter
     /// </summary>
     public static string FormatEffectiveDuration(PlaylistTrack track)
     {
+        if (IsDurationUnknown(track)) return UnknownDurationText;
         int fps = GetFps(track);
         return FormatTimecode(track.GetEffectiveDuration(), fps);
     }

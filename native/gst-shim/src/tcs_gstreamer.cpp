@@ -1,7 +1,7 @@
 /* tcs_gstreamer implementation (v3). See tcs_gstreamer.h for the contract.
  *
  * Role: GPU frame SOURCE for the compositing layer.
- *   filesrc ! typefind ! demux ! <explicit per-codec chain> ! appsink
+ *   filesrc ! demux (by extension, no typefind) ! <explicit per-codec chain> ! appsink
  * - decodebin is NOT used for video as a decoder (it would auto-pick CPU
  *   decoders and hand raw pads). Codecs are classified explicitly with GPU
  *   profiles first and CPU fallbacks; CPU decodes are uploaded with
@@ -2778,24 +2778,51 @@ build_audio_chain (TcsPlayer* p, gboolean need_audio_decode)
   return TRUE;
 }
 
+/* v0.6.6: 拡張子 → demux の表。プレイヤー（build_pipeline）・長さの軽い関数
+ * （tcs_probe_duration）・GOP 走査（tcs_scan_gop）がこの 1 か所を読む。
+ * typefind を使わないための表でもある: 最初の typefind で gsttypefindfunctions.dll が
+ * 読み込まれ、それが静的に取り込む gio-2.0-0.dll が DLL の初期化でレジストリの読みを
+ * GLib のスレッドプールへ投げ、その裏の読みの中でアプリが落ちていた（GLib 2.82.4）。 */
+struct TcsDemuxByExtension {
+  const char* ext;
+  const char* demux;
+};
+static const TcsDemuxByExtension kDemuxByExtension[] = {
+  { ".mp4",  "qtdemux" },
+  { ".mov",  "qtdemux" },
+  { ".m4v",  "qtdemux" },
+  { ".3gp",  "qtdemux" },
+  { ".3g2",  "qtdemux" },
+  { ".mkv",  "matroskademux" },
+  { ".webm", "matroskademux" },
+  { ".mka",  "matroskademux" },
+  { ".ts",   "tsdemux" },
+  { ".m2ts", "tsdemux" },
+  { ".mts",  "tsdemux" },
+  { ".mxf",  "mxfdemux" },
+  { ".avi",  "avidemux" },
+};
+
+/* The demuxer for the path's extension, or NULL when the extension is not in
+ * the table (the caller decides: the player falls back to decodebin, the
+ * duration probe and the GOP scan report "unknown" without typefind). */
+static const char*
+demux_for_extension (const char* path)
+{
+  const char* dot = path ? strrchr (path, '.') : nullptr;
+  if (!dot) return nullptr;
+  for (const TcsDemuxByExtension& e : kDemuxByExtension)
+    if (!_stricmp (dot, e.ext))
+      return e.demux;
+  return nullptr;
+}
+
 /* container by extension; unknown -> decodebin (full autoplugg, raw video pad) */
 static const char*
 select_demux_for_path (const char* path)
 {
-  const char* dot = strrchr (path, '.');
-  if (!dot) return "decodebin";
-  if (!_stricmp (dot, ".mp4") || !_stricmp (dot, ".mov") || !_stricmp (dot, ".m4v") ||
-      !_stricmp (dot, ".3gp") || !_stricmp (dot, ".3g2"))
-    return "qtdemux";
-  if (!_stricmp (dot, ".mkv") || !_stricmp (dot, ".webm") || !_stricmp (dot, ".mka"))
-    return "matroskademux";
-  if (!_stricmp (dot, ".ts") || !_stricmp (dot, ".m2ts") || !_stricmp (dot, ".mts"))
-    return "tsdemux";
-  if (!_stricmp (dot, ".mxf"))
-    return "mxfdemux";
-  if (!_stricmp (dot, ".avi"))
-    return "avidemux";
-  return "decodebin";
+  const char* demux = demux_for_extension (path);
+  return demux ? demux : "decodebin";
 }
 
 static gboolean
@@ -5013,8 +5040,14 @@ tcs_player_spout_ready (TcsPlayer* player)
 
 
 /* ---- 0.4.5-C3: static keyframe scan ------------------------------------
- * filesrc ! parsebin ! fakesink with a pad probe on every parsebin src pad.
- * Nothing is decoded. Own pipeline, no TcsPlayer state, no frame_lock. */
+ * filesrc ! <demux by extension> ! parsebin (video pads) ! fakesink with a pad
+ * probe on every parsebin src pad. Nothing is decoded. Own pipeline, no
+ * TcsPlayer state, no frame_lock.
+ * v0.6.6: the demuxer comes from the extension table (demux_for_extension), not
+ * from typefind: parsebin at the file head runs typefind, which loads
+ * gsttypefindfunctions.dll and with it gio-2.0-0.dll (see the table). parsebin
+ * now sits behind the demuxer, whose src pads carry fixed caps, so parsebin's
+ * own typefind takes the upstream caps and calls no typefind function. */
 
 struct GopScanCtx {
   std::mutex            lock;
@@ -5096,6 +5129,46 @@ gop_scan_pad_added (GstElement* /*parsebin*/, GstPad* pad, gpointer user_data)
   }
 }
 
+/* v0.6.6: the demuxer exposes one pad per stream. A video pad goes through its
+ * own parsebin (the parser sets the keyframe flags the probe reads, as before);
+ * every other pad goes straight to a fakesink (gop_scan_pad_added does that for
+ * a pad that is not video). */
+static void
+gop_scan_demux_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user_data)
+{
+  GopScanCtx* ctx = static_cast<GopScanCtx*> (user_data);
+  GstCaps* caps = gst_pad_get_current_caps (pad);
+  if (!caps)
+    caps = gst_pad_query_caps (pad, nullptr);
+  bool is_video = false;
+  if (caps) {
+    const GstStructure* st = gst_caps_get_size (caps) > 0
+        ? gst_caps_get_structure (caps, 0) : nullptr;
+    const char* name = st ? gst_structure_get_name (st) : nullptr;
+    is_video = name && g_str_has_prefix (name, "video/");
+    gst_caps_unref (caps);
+  }
+  if (!is_video) {
+    gop_scan_pad_added (nullptr, pad, ctx);
+    return;
+  }
+  GstElement* parse = gst_element_factory_make ("parsebin", nullptr);
+  if (!parse) {
+    LOG ("gop-scan: parsebin could not be created");
+    gop_scan_pad_added (nullptr, pad, ctx);
+    return;
+  }
+  g_signal_connect (parse, "pad-added", G_CALLBACK (gop_scan_pad_added), ctx);
+  gst_bin_add (GST_BIN (ctx->pipeline), parse);
+  gst_element_sync_state_with_parent (parse);
+  GstPad* sinkpad = gst_element_get_static_pad (parse, "sink");
+  if (sinkpad) {
+    if (gst_pad_link (pad, sinkpad) != GST_PAD_LINK_OK)
+      LOG ("gop-scan: link of demux pad '%s' to parsebin failed", GST_PAD_NAME (pad));
+    gst_object_unref (sinkpad);
+  }
+}
+
 static double
 gop_percentile (const std::vector<double>& sorted, double frac)
 {
@@ -5116,12 +5189,20 @@ tcs_scan_gop (const char* utf8_path, int32_t budget_ms, TcsGopScan* out)
   memset (out, 0, sizeof (*out));
   gst_init_once ();
 
+  /* v0.6.6: no typefind. An extension outside the table is "unknown". */
+  const char* demux_name = demux_for_extension (utf8_path);
+  if (!demux_name) {
+    LOG ("gop-scan: unknown-extension (typefind is not used) path=%s", utf8_path);
+    return TCS_ERR_UNSUPPORTED_EXTENSION;
+  }
+
   GstElement* pipeline = gst_pipeline_new ("tcs-gop-scan");
   GstElement* src = gst_element_factory_make ("filesrc", nullptr);
-  GstElement* parse = gst_element_factory_make ("parsebin", nullptr);
-  if (!pipeline || !src || !parse) {
+  GstElement* demux = gst_element_factory_make (demux_name, nullptr);
+  if (!pipeline || !src || !demux) {
+    LOG ("gop-scan: element factory failed (demux %s)", demux_name);
     if (src) gst_object_unref (src);
-    if (parse) gst_object_unref (parse);
+    if (demux) gst_object_unref (demux);
     if (pipeline) gst_object_unref (pipeline);
     return TCS_ERR_GENERIC;
   }
@@ -5129,9 +5210,9 @@ tcs_scan_gop (const char* utf8_path, int32_t budget_ms, TcsGopScan* out)
   GopScanCtx ctx;
   ctx.pipeline = pipeline;
   g_object_set (src, "location", utf8_path, nullptr);
-  gst_bin_add_many (GST_BIN (pipeline), src, parse, nullptr);
-  gst_element_link (src, parse);
-  g_signal_connect (parse, "pad-added", G_CALLBACK (gop_scan_pad_added), &ctx);
+  gst_bin_add_many (GST_BIN (pipeline), src, demux, nullptr);
+  gst_element_link (src, demux);
+  g_signal_connect (demux, "pad-added", G_CALLBACK (gop_scan_demux_pad_added), &ctx);
 
   int rc = TCS_OK;
   if (gst_element_set_state (pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
@@ -5220,6 +5301,201 @@ tcs_scan_gop (const char* utf8_path, int32_t budget_ms, TcsGopScan* out)
   out->p95_gap_sec    = gop_percentile (gaps, 0.95);
   out->max_gap_sec    = gaps.back ();
   return TCS_OK;
+}
+
+
+/* ---- v0.6.6 F-7: container duration only --------------------------------
+ * filesrc ! <demuxer by extension> ! fakesink, PAUSED, duration query.
+ * No decoder, no parser. Own pipeline, no TcsPlayer state, no frame_lock.
+ * v0.6.6: the demuxer comes from the same extension table the player uses
+ * (demux_for_extension), not from typefind (typefind loads
+ * gsttypefindfunctions.dll and with it gio-2.0-0.dll; see the table). An
+ * extension outside the table is "unknown"; the app then fills the length from
+ * the player when the clip is loaded.
+ * I13: the only lock here (DurationProbeCtx::lock) guards the pending pad and
+ * is never held across a GStreamer state change or a pad link. */
+
+struct DurationProbeCtx {
+  GstElement*       pipeline = nullptr;
+  GstElement*       sink = nullptr;
+  std::atomic<bool> linked{ false };
+  std::mutex        lock;            /* guards first_pad */
+  GstPad*           first_pad = nullptr;  /* first non-video pad (ref), linked only if no video pad comes */
+};
+
+static void
+duration_probe_link (DurationProbeCtx* ctx, GstPad* pad)
+{
+  bool expected = false;
+  if (!ctx->linked.compare_exchange_strong (expected, true))
+    return;
+  GstPad* sinkpad = gst_element_get_static_pad (ctx->sink, "sink");
+  if (sinkpad) {
+    if (gst_pad_link (pad, sinkpad) != GST_PAD_LINK_OK)
+      LOG ("duration-probe: link of demux pad '%s' failed", GST_PAD_NAME (pad));
+    gst_object_unref (sinkpad);
+  }
+}
+
+/* The video pad is preferred (the player's duration comes through its video
+ * branch); any other pad is kept until no-more-pads in case there is no video. */
+static void
+duration_probe_pad_added (GstElement* /*demux*/, GstPad* pad, gpointer user_data)
+{
+  DurationProbeCtx* ctx = static_cast<DurationProbeCtx*> (user_data);
+  if (ctx->linked.load ())
+    return;
+  GstCaps* caps = gst_pad_get_current_caps (pad);
+  if (!caps)
+    caps = gst_pad_query_caps (pad, nullptr);
+  bool is_video = false;
+  if (caps) {
+    const GstStructure* st = gst_caps_get_size (caps) > 0
+        ? gst_caps_get_structure (caps, 0) : nullptr;
+    const char* name = st ? gst_structure_get_name (st) : nullptr;
+    is_video = name && g_str_has_prefix (name, "video/");
+    gst_caps_unref (caps);
+  }
+  if (is_video) {
+    duration_probe_link (ctx, pad);
+    return;
+  }
+  std::lock_guard<std::mutex> g (ctx->lock);
+  if (!ctx->first_pad)
+    ctx->first_pad = GST_PAD (gst_object_ref (pad));
+}
+
+static void
+duration_probe_no_more_pads (GstElement* /*demux*/, gpointer user_data)
+{
+  DurationProbeCtx* ctx = static_cast<DurationProbeCtx*> (user_data);
+  if (ctx->linked.load ())
+    return;
+  GstPad* pad = nullptr;
+  {
+    std::lock_guard<std::mutex> g (ctx->lock);
+    if (ctx->first_pad)
+      pad = GST_PAD (gst_object_ref (ctx->first_pad));
+  }
+  if (pad) {
+    duration_probe_link (ctx, pad);
+    gst_object_unref (pad);
+  }
+}
+
+static void
+duration_probe_log_bus_error (GstMessage* msg)
+{
+  GError* err = nullptr;
+  gchar* dbg = nullptr;
+  gst_message_parse_error (msg, &err, &dbg);
+  LOG ("duration-probe: error %s (%s)", err ? err->message : "?", dbg ? dbg : "");
+  if (err) g_error_free (err);
+  if (dbg) g_free (dbg);
+}
+
+TCS_GST_API int
+tcs_probe_duration (const char* utf8_path, int32_t timeout_ms, double* out_sec)
+{
+  if (!out_sec)
+    return TCS_ERR_INVALID_ARG;
+  *out_sec = 0.0;
+  if (!utf8_path || !*utf8_path)
+    return TCS_ERR_INVALID_ARG;
+  gst_init_once ();
+  LARGE_INTEGER qpf, t0;
+  QueryPerformanceFrequency (&qpf);
+  QueryPerformanceCounter (&t0);
+
+  /* v0.6.6: the player's extension table, no typefind. Unknown -> no answer. */
+  const char* demux_name = demux_for_extension (utf8_path);
+  if (!demux_name) {
+    LOG ("duration-probe: unknown-extension demux=- durationSec=0.000000 (typefind is not used) path=%s",
+        utf8_path);
+    return TCS_ERR_UNSUPPORTED_EXTENSION;
+  }
+
+  GstElement* pipeline = gst_pipeline_new ("tcs-duration-probe");
+  GstElement* src = gst_element_factory_make ("filesrc", nullptr);
+  GstElement* demux = gst_element_factory_make (demux_name, nullptr);
+  GstElement* sink = gst_element_factory_make ("fakesink", nullptr);
+  if (!pipeline || !src || !demux || !sink) {
+    LOG ("duration-probe: element factory failed (demux %s)", demux_name);
+    if (src) gst_object_unref (src);
+    if (demux) gst_object_unref (demux);
+    if (sink) gst_object_unref (sink);
+    if (pipeline) gst_object_unref (pipeline);
+    return TCS_ERR_GENERIC;
+  }
+
+  DurationProbeCtx ctx;
+  ctx.pipeline = pipeline;
+  ctx.sink = sink;
+  g_object_set (src, "location", utf8_path, nullptr);
+  g_object_set (sink, "sync", FALSE, nullptr);
+  gst_bin_add_many (GST_BIN (pipeline), src, demux, sink, nullptr);
+  gst_element_link (src, demux);
+  g_signal_connect (demux, "pad-added", G_CALLBACK (duration_probe_pad_added), &ctx);
+  g_signal_connect (demux, "no-more-pads", G_CALLBACK (duration_probe_no_more_pads), &ctx);
+
+  GstBus* bus = gst_element_get_bus (pipeline);
+  int rc = TCS_OK;
+  const char* outcome = "ok";
+  GstStateChangeReturn sr = gst_element_set_state (pipeline, GST_STATE_PAUSED);
+  if (sr == GST_STATE_CHANGE_FAILURE) {
+    GstMessage* msg = gst_bus_pop_filtered (bus, GST_MESSAGE_ERROR);
+    if (msg) {
+      duration_probe_log_bus_error (msg);
+      gst_message_unref (msg);
+    }
+    rc = TCS_ERR_GENERIC;
+    outcome = "state-change-failed";
+  } else if (sr == GST_STATE_CHANGE_ASYNC) {
+    GstClockTime wait = (timeout_ms > 0 ? (GstClockTime) timeout_ms : 10000) * GST_MSECOND;
+    GstMessage* msg = gst_bus_timed_pop_filtered (bus, wait,
+        (GstMessageType) (GST_MESSAGE_ASYNC_DONE | GST_MESSAGE_ERROR));
+    if (!msg) {
+      rc = TCS_ERR_TIMEOUT;
+      outcome = "timeout";
+    } else {
+      if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ERROR) {
+        duration_probe_log_bus_error (msg);
+        rc = TCS_ERR_GENERIC;
+        outcome = "error";
+      }
+      gst_message_unref (msg);
+    }
+  }
+  double seconds = 0.0;
+  if (rc == TCS_OK) {
+    gint64 dur = 0;
+    if (gst_element_query_duration (pipeline, GST_FORMAT_TIME, &dur) && dur > 0) {
+      seconds = (double) dur / (double) GST_SECOND;
+    } else {
+      rc = TCS_ERR_GENERIC;
+      outcome = "no-duration";
+    }
+  }
+  gst_object_unref (bus);
+  gst_element_set_state (pipeline, GST_STATE_NULL);
+
+  {
+    std::lock_guard<std::mutex> g (ctx.lock);
+    if (ctx.first_pad) {
+      gst_object_unref (ctx.first_pad);
+      ctx.first_pad = nullptr;
+    }
+  }
+  gst_object_unref (pipeline);
+
+  LARGE_INTEGER t1;
+  QueryPerformanceCounter (&t1);
+  double ms = (double) (t1.QuadPart - t0.QuadPart) * 1000.0 / (double) qpf.QuadPart;
+  LOG ("duration-probe: %s demux=%s durationSec=%.6f elapsedMs=%.1f",
+      outcome, demux_name, seconds, ms);
+  if (rc == TCS_OK)
+    *out_sec = seconds;
+  return rc;
 }
 
 } /* extern C */

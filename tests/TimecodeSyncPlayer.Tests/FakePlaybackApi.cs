@@ -72,8 +72,16 @@ internal sealed class FakePlaybackApi : IPlaybackApi
         return true;
     }
 
+    /// <summary>設定したときは <see cref="TryGetPositionSample"/> がこれを返す（世代を試験から動かす）。</summary>
+    public PlaybackPositionSample? PositionSample { get; set; }
+
     public bool TryGetPositionSample(out PlaybackPositionSample sample)
     {
+        if (PositionSample is { } configured)
+        {
+            sample = configured;
+            return true;
+        }
         sample = new PlaybackPositionSample(
             TimePos, PlaybackPositionBasis.Pipeline, 0, 0, 0, 0);
         return true;

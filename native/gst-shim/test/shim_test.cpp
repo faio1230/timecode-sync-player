@@ -2423,6 +2423,180 @@ run_paused_seek_one_frame (int argc, char** argv)
   return failures;
 }
 
+/* v0.6.6: --startup-seq <file> [--allow-gio]
+ * The app's start-up order for one clip: paused load (the player), the light
+ * duration probe, then the GOP scan. After each step, prints whether
+ * gio-2.0-0.dll and gsttypefindfunctions.dll are in the process: typefind loads
+ * gsttypefindfunctions.dll, which pulls gio in, and gio's registry reader
+ * (GLib 2.82.4, a thread-pool thread) crashed the app right after start-up.
+ * Fails when either DLL got loaded, unless --allow-gio is given (formats that
+ * go through the decodebin fallback, recorded in the design doc). One line
+ * "STARTUP file=<name> ..." for the record. */
+static int
+startup_seq_modules (const char* step)
+{
+  const int gio = GetModuleHandleA ("gio-2.0-0.dll") ? 1 : 0;
+  const int tff = GetModuleHandleA ("gsttypefindfunctions.dll") ? 1 : 0;
+  printf ("  after %s: gio=%d typefindfunctions=%d\n", step, gio, tff);
+  return gio | (tff << 1);
+}
+
+static int
+run_startup_seq (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --startup-seq <file> [--allow-gio]\n");
+    return 2;
+  }
+  const char* file = argv[2];
+  const bool allow_gio = argc > 3 && strcmp (argv[3], "--allow-gio") == 0;
+  const char* name = strrchr (file, '\\');
+  const char* slash = strrchr (file, '/');
+  if (!name || (slash && slash > name)) name = slash;
+  name = name ? name + 1 : file;
+
+  int seen = startup_seq_modules ("start");
+  char err[512] = "";
+  TcsPlayer* p = tcs_player_create ("TCSGstShimStartupSeq", nullptr, err, sizeof (err));
+  check (p != nullptr, "startup-seq: create");
+  if (!p) { printf ("  err=%s\n", err); return 1; }
+  int lrc = tcs_player_load (p, file, 0.0, 1, err, sizeof (err));
+  if (lrc != TCS_OK) printf ("  load err=%s\n", err);
+  double player_sec = 0.0;
+  int drc = lrc == TCS_OK ? tcs_player_get_duration (p, &player_sec) : TCS_ERR_NOT_LOADED;
+  TcsStats st = {};
+  tcs_player_get_stats (p, &st);
+  seen |= startup_seq_modules ("load");
+
+  double probe = 0.0;
+  int prc = tcs_probe_duration (file, 0, &probe);
+  seen |= startup_seq_modules ("probe-duration");
+
+  TcsGopScan gop = {};
+  int grc = tcs_scan_gop (file, 0, &gop);
+  seen |= startup_seq_modules ("scan-gop");
+  tcs_player_destroy (p);
+  seen |= startup_seq_modules ("destroy");
+
+  printf ("STARTUP file=%s decoder=%s loadRc=%d playerSec=%.6f probeRc=%d probeSec=%.6f "
+      "gopRc=%d keyframes=%d gopDurationSec=%.6f maxGapSec=%.6f gio=%d typefindfunctions=%d\n",
+      name, st.decoder, lrc, player_sec, prc, probe, grc, gop.keyframes, gop.duration_sec,
+      gop.max_gap_sec, seen & 1, (seen >> 1) & 1);
+  check (lrc == TCS_OK && drc == TCS_OK, "startup-seq: paused load gives a duration");
+  check (prc == TCS_OK && fabs (probe - player_sec) < 1e-6, "startup-seq: probe equals the player's duration");
+  check (grc == TCS_OK && gop.keyframes > 0, "startup-seq: GOP scan finds keyframes");
+  if (!allow_gio)
+    check (seen == 0, "startup-seq: neither gio-2.0-0.dll nor gsttypefindfunctions.dll was loaded");
+  return failures;
+}
+
+/* v0.6.6 F-7: --probe-duration <file...>
+ * Per file: the light container probe (tcs_probe_duration, cold then warm), and
+ * the player's duration after a paused load (tcs_player_get_duration, the value
+ * the sync uses). Both must come from the same demuxer, so they must be equal
+ * (1 microsecond tolerance for the double conversion). Then the failure paths:
+ * a missing file and a file that is not media must fail fast with 0, and the
+ * bad-argument path must not touch the pipeline. One line per file
+ * "PROBE file=<name> probeSec=... coldMs=... warmMs=... playerSec=..." for the
+ * table. */
+static int
+run_probe_duration (int argc, char** argv)
+{
+  if (argc < 3) {
+    printf ("usage: tcs-shim-test --probe-duration <file...>\n");
+    return 2;
+  }
+  for (int i = 2; i < argc; i++) {
+    const char* file = argv[i];
+    const char* name = strrchr (file, '\\');
+    const char* slash = strrchr (file, '/');
+    if (!name || (slash && slash > name)) name = slash;
+    name = name ? name + 1 : file;
+
+    double probe = 0.0, warm = 0.0;
+    auto t0 = std::chrono::steady_clock::now ();
+    int rc = tcs_probe_duration (file, 0, &probe);
+    double cold_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - t0).count ();
+    t0 = std::chrono::steady_clock::now ();
+    int rc2 = tcs_probe_duration (file, 0, &warm);
+    double warm_ms = std::chrono::duration<double, std::milli> (
+        std::chrono::steady_clock::now () - t0).count ();
+
+    double player_sec = 0.0;
+    char err[512] = "";
+    TcsPlayer* p = tcs_player_create ("TCSGstShimProbeDuration", nullptr, err, sizeof (err));
+    int lrc = p ? tcs_player_load (p, file, 0.0, 1, err, sizeof (err)) : TCS_ERR_GENERIC;
+    int drc = (p && lrc == TCS_OK) ? tcs_player_get_duration (p, &player_sec) : TCS_ERR_NOT_LOADED;
+    if (p) tcs_player_destroy (p);
+
+    printf ("PROBE file=%s rc=%d probeSec=%.6f coldMs=%.1f warmMs=%.1f playerRc=%d playerSec=%.6f diffUs=%.1f\n",
+        name, rc, probe, cold_ms, warm_ms, drc, player_sec, (probe - player_sec) * 1e6);
+    char what[512];
+    snprintf (what, sizeof (what), "probe-duration: %s probe returns a duration", name);
+    check (rc == TCS_OK && probe > 0.0, what);
+    snprintf (what, sizeof (what), "probe-duration: %s second probe gives the same value", name);
+    check (rc2 == TCS_OK && warm == probe, what);
+    snprintf (what, sizeof (what), "probe-duration: %s player duration is available", name);
+    check (lrc == TCS_OK && drc == TCS_OK && player_sec > 0.0, what);
+    snprintf (what, sizeof (what), "probe-duration: %s probe equals the player's duration", name);
+    check (fabs (probe - player_sec) < 1e-6, what);
+  }
+
+  /* Failure paths: 0 and an error code, quickly. */
+  double d = 123.0;
+  check (tcs_probe_duration (nullptr, 0, &d) == TCS_ERR_INVALID_ARG && d == 0.0,
+      "probe-duration: NULL path -> INVALID_ARG, 0");
+  check (tcs_probe_duration (argv[2], 0, nullptr) == TCS_ERR_INVALID_ARG,
+      "probe-duration: NULL out -> INVALID_ARG");
+  d = 123.0;
+  auto t0 = std::chrono::steady_clock::now ();
+  int rc = tcs_probe_duration ("Z:\\tcs-no-such-dir\\missing-clip.mp4", 0, &d);
+  double ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();
+  printf ("  missing file: rc=%d sec=%.3f ms=%.1f\n", rc, d, ms);
+  check (rc != TCS_OK && d == 0.0 && ms < 2000.0, "probe-duration: missing file fails fast with 0");
+
+  /* v0.6.6: an extension outside the player's table is "unknown" (no typefind),
+   * for the probe and for the GOP scan alike. The file need not exist. */
+  d = 123.0;
+  rc = tcs_probe_duration ("Z:\\tcs-no-such-dir\\clip.unknownext", 0, &d);
+  check (rc == TCS_ERR_UNSUPPORTED_EXTENSION && d == 0.0,
+      "probe-duration: unknown extension -> UNSUPPORTED_EXTENSION, 0");
+  TcsGopScan gop = {};
+  rc = tcs_scan_gop ("Z:\\tcs-no-such-dir\\clip.unknownext", 0, &gop);
+  check (rc == TCS_ERR_UNSUPPORTED_EXTENSION && gop.keyframes == 0,
+      "gop-scan: unknown extension -> UNSUPPORTED_EXTENSION");
+
+  char tmp_dir[MAX_PATH] = "";
+  GetTempPathA (sizeof (tmp_dir), tmp_dir);
+  char junk[MAX_PATH + 64];
+  snprintf (junk, sizeof (junk), "%stcs-probe-duration-junk-%lu.mp4", tmp_dir, GetCurrentProcessId ());
+  FILE* f = fopen (junk, "wb");
+  if (f) {
+    for (int k = 0; k < 4096; k++) fputc ((k * 37) & 0xff, f);
+    fclose (f);
+  }
+  d = 123.0;
+  t0 = std::chrono::steady_clock::now ();
+  rc = tcs_probe_duration (junk, 0, &d);
+  ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();
+  printf ("  not-media file: rc=%d sec=%.3f ms=%.1f\n", rc, d, ms);
+  check (rc != TCS_OK && d == 0.0 && ms < 2000.0, "probe-duration: a file that is not media fails fast with 0");
+  remove (junk);
+
+  /* The timeout bounds the wait: a 1 ms budget on a real file either answers or
+   * reports TIMEOUT, and never blocks for the default 10 s. */
+  d = 123.0;
+  t0 = std::chrono::steady_clock::now ();
+  rc = tcs_probe_duration (argv[2], 1, &d);
+  ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();
+  printf ("  1 ms budget: rc=%d sec=%.6f ms=%.1f\n", rc, d, ms);
+  check ((rc == TCS_OK && d > 0.0) || (rc == TCS_ERR_TIMEOUT && d == 0.0),
+      "probe-duration: 1 ms budget answers or reports TIMEOUT with 0");
+  check (ms < 2000.0, "probe-duration: 1 ms budget returns promptly");
+  return failures;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -2449,6 +2623,16 @@ main (int argc, char** argv)
   }
   if (strcmp (argv[1], "--stress") == 0)
     return run_stress (argc, argv);
+  if (strcmp (argv[1], "--probe-duration") == 0) {
+    run_probe_duration (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
+  if (strcmp (argv[1], "--startup-seq") == 0) {
+    run_startup_seq (argc, argv);
+    printf ("RESULT failures=%d\n", failures);
+    return failures == 0 ? 0 : 1;
+  }
   if (strcmp (argv[1], "--load-bench") == 0) {
     int rc = run_load_bench (argc, argv);
     printf ("RESULT failures=%d\n", failures);

@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Serilog;
+using TimecodeSyncPlayer.Contracts;
 using Vortice.Direct3D11;
 
 namespace TimecodeSyncPlayer.Output;
@@ -17,7 +18,7 @@ internal sealed class SpoutSender : IDisposable
     public const int AllocationBytes = 4096;
     public const int VerifiedSdkSize = 1864;
     public const string VerifiedSdkHash = "BBCEE6F0031F6BD1A6461585C53F3F8F3CECBF006B486661BCDE6413E2ADDEF5";
-    public const string SenderNameEnvironmentVariable = "TIMECODE_SYNC_PLAYER_SPOUT_NAME";
+    public const string SenderNameEnvironmentVariable = SpoutDefaults.SenderNameEnvironmentVariable;
 
     private readonly GpuDevice gpu;
     private readonly OutputTrace log;

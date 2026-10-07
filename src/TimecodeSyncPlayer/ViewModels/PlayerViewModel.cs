@@ -22,12 +22,17 @@ internal sealed class PlayerViewModel : INotifyPropertyChanged
         BackCommand      = new RelayCommand(() => controller.SeekRelative(-10.0));
         FwdCommand       = new RelayCommand(() => controller.SeekRelative(10.0));
         SpeedCommand     = new RelayCommand(controller.CycleSpeed);
+        // v0.6.6 R-4: 1 フレーム送り・戻し（10 秒送りは残す）。
+        FrameBackCommand = new RelayCommand(() => controller.StepFrame(-1));
+        FrameFwdCommand  = new RelayCommand(() => controller.StepFrame(1));
     }
 
     public ICommand PlayPauseCommand { get; }
     public ICommand BackCommand { get; }
     public ICommand FwdCommand { get; }
     public ICommand SpeedCommand { get; }
+    public ICommand FrameBackCommand { get; }
+    public ICommand FrameFwdCommand { get; }
 
     public string PlayPauseIcon
     {

@@ -14,6 +14,22 @@ internal static class GstNative
 {
     internal const string Lib = "tcs_gstreamer.dll";
     internal const int TcsErrEnded = -6;
+    /* tcs_gstreamer.h の TCS_ERR_TIMEOUT（tcs_probe_duration の待ちの上限切れ、v0.6.6）。 */
+    internal const int TcsErrTimeout = -8;
+    /* tcs_gstreamer.h の TCS_ERR_UNSUPPORTED_EXTENSION（長さの軽い関数・GOP 走査で、拡張子が
+     * プレイヤーの demux の表に無い。typefind は使わない。v0.6.6）。 */
+    internal const int TcsErrUnsupportedExtension = -9;
+
+    /// <summary>
+    /// v0.6.6: 長さの問い合わせ・GOP 走査の失敗の rc に添える説明（ログの警告の後ろに付ける）。
+    /// 知らない rc は空文字。
+    /// </summary>
+    internal static string DescribeProbeFailure(int rc) => rc switch
+    {
+        TcsErrTimeout => " (timeout)",
+        TcsErrUnsupportedExtension => " (unsupported extension: not in the player's demuxer table, typefind is not used)",
+        _ => "",
+    };
     /* tcs_gstreamer.h の tcs_decode_mode と同じ値。 */
     internal const int DecodeModeHardware = 0;
     internal const int DecodeModeSoftware = 1;
@@ -222,6 +238,11 @@ internal static class GstNative
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         internal static extern int tcs_scan_gop(
             [MarshalAs(UnmanagedType.LPUTF8Str)] string utf8Path, int budgetMs, out TcsGopScan outScan);
+
+        // v0.6.6 F-7: 容器の長さだけを読む（デコーダを作らない）。プレイヤー不要で、再生経路には触れない。
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        internal static extern int tcs_probe_duration(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string utf8Path, int timeoutMs, out double outSeconds);
 
         // ステージ 6b: 共有テクスチャリングの NT ハンドル + 共有フェンス。
         // ハンドルは shim 所有（CloseHandle 禁止）。

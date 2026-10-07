@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace TimecodeSyncPlayer;
 
@@ -35,5 +36,42 @@ public static class SyncOffsetPolicy
     /// （異なる fps のタイムコードと素材を実時間で吸収する設計のため）。
     /// </summary>
     public static string FormatMilliseconds(double milliseconds) =>
-        Clamp(milliseconds).ToString("+0.###;-0.###;0", CultureInfo.InvariantCulture) + " ms";
+        FormatInput(milliseconds) + " ms";
+
+    /// <summary>R-9: 数値の入力欄に出す文字（単位なし）。表示の文字と同じ符号の付け方にする。</summary>
+    public static string FormatInput(double milliseconds) =>
+        Clamp(milliseconds).ToString("+0.###;-0.###;0", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// R-9: 数値の入力欄の解釈。受けるのは ms の整数だけ。
+    /// 前後の空白と先頭の + / - は許す。全角の数字・符号・空白は半角に直してから読む。
+    /// 小数・指数・桁区切り・数字以外・空は拒む（呼び出し側は前の値に戻す）。
+    /// 範囲の外はここでは丸めない（値を返し、反映する側が <see cref="Clamp"/> で丸める）。
+    /// </summary>
+    public static bool TryParseInput(string? text, out double milliseconds)
+    {
+        milliseconds = DefaultMilliseconds;
+        if (text is null)
+            return false;
+
+        string normalized = text.Normalize(NormalizationForm.FormKC).Trim();
+        if (normalized.Length == 0)
+            return false;
+
+        int start = normalized[0] is '+' or '-' ? 1 : 0;
+        if (start == normalized.Length)
+            return false;
+        for (int i = start; i < normalized.Length; i++)
+        {
+            if (normalized[i] is < '0' or > '9')
+                return false;
+        }
+
+        double value = double.Parse(normalized, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
+        // 桁があふれて無限大になったら、範囲の外の大きな値として扱う（Clamp は非有限を 0 にするため）。
+        if (double.IsInfinity(value))
+            value = value > 0 ? double.MaxValue : double.MinValue;
+        milliseconds = value + 0.0; // "-0" を +0 にそろえる
+        return true;
+    }
 }

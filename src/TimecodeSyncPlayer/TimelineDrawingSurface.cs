@@ -25,6 +25,13 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
 
     internal event EventHandler<TimelineSeekEventArgs>? TimelineSeekRequested;
 
+    /// <summary>v0.6.6 F-2: ドラッグ中の目標（押した行に固定）。離したときは <see cref="TimelineSeekRequested"/>。</summary>
+    internal event EventHandler<TimelineScrubEventArgs>? TimelineScrubMoved;
+
+    private readonly TimelineScrubGesture _scrubGesture = new();
+    private double _lastScrubX;
+    private bool _releasingCapture;
+
     public TimelineDrawingSurface(PlaylistState playlist, bool isTimelineVisible)
     {
         _playlist = playlist;
@@ -46,7 +53,10 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         AddVisualChild(_emptyMessage);
 
         _playlist.Tracks.CollectionChanged += OnTracksCollectionChanged;
+        MouseLeftButtonDown += TimelineDrawingSurface_MouseLeftButtonDown;
+        MouseMove += TimelineDrawingSurface_MouseMove;
         MouseLeftButtonUp += TimelineDrawingSurface_MouseLeftButtonUp;
+        LostMouseCapture += TimelineDrawingSurface_LostMouseCapture;
 
         UpdateEmptyMessageVisibility();
     }
@@ -407,37 +417,100 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         RenderPlayhead();
     }
 
+    // v0.6.6 F-2: 押した行に固定してドラッグする（行の扱いは TimelineScrubGesture）。
+    private void TimelineDrawingSurface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (ActualWidth <= 0 || ActualHeight <= 0) return;
+        var point = e.GetPosition(this);
+        int? trackIndex = HitTrackIndex(point);
+        _scrubGesture.Press(trackIndex, point.X);
+        _lastScrubX = point.X;
+        if (trackIndex.HasValue)
+            CaptureMouse();
+    }
+
+    private void TimelineDrawingSurface_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _scrubGesture.PinnedTrackIndex is null) return;
+        double x = e.GetPosition(this).X;
+        TimelineScrubMove move = _scrubGesture.Move(x, SystemParameters.MinimumHorizontalDragDistance);
+        if (!move.Moved) return;
+        _lastScrubX = x;
+        if (!TryCalculateTarget(x, move.TrackIndex, out double targetSeconds)) return;
+        TimelineScrubMoved?.Invoke(this, new TimelineScrubEventArgs(targetSeconds, move.TrackIndex, move.Started));
+    }
+
     private void TimelineDrawingSurface_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         double width = ActualWidth;
         double height = ActualHeight;
-        if (width <= 0 || height <= 0) return;
+        if (width <= 0 || height <= 0)
+        {
+            _scrubGesture.Cancel();
+            ReleaseScrubCapture();
+            return;
+        }
 
-        var dpi = VisualTreeHelper.GetDpi(this);
-        double dpiScaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
-        double dpiScaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
         var point = e.GetPosition(this);
-        double x = point.X;
-        int? clickedTrackIndex = TimelineLayoutCalculator.CalculateClickedTrackIndex(
-            x,
+        int? clickedTrackIndex = HitTrackIndex(point);
+        TimelineScrubRelease release = _scrubGesture.Release(clickedTrackIndex);
+        ReleaseScrubCapture();
+        RaiseRelease(release, point.X);
+    }
+
+    private void TimelineDrawingSurface_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_releasingCapture || !_scrubGesture.IsDragging) return;
+        // 捕捉を失った（別の窓へ移った等）: 押した行のまま、最後の位置でドラッグを締める。
+        TimelineScrubRelease release = _scrubGesture.Release(null);
+        RaiseRelease(release, _lastScrubX);
+    }
+
+    private void RaiseRelease(TimelineScrubRelease release, double x)
+    {
+        // 行の外で離したただのクリックは今のまま何もしない。
+        if (release.TrackIndex is not int trackIndex) return;
+        if (!TryCalculateTarget(x, trackIndex, out double targetSeconds)) return;
+        TimelineSeekRequested?.Invoke(this, new TimelineSeekEventArgs(targetSeconds, trackIndex, release.EndsDrag));
+    }
+
+    private void ReleaseScrubCapture()
+    {
+        if (!IsMouseCaptured) return;
+        _releasingCapture = true;
+        try { ReleaseMouseCapture(); }
+        finally { _releasingCapture = false; }
+    }
+
+    private int? HitTrackIndex(Point point)
+    {
+        var dpi = VisualTreeHelper.GetDpi(this);
+        double dpiScaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
+        return TimelineLayoutCalculator.CalculateClickedTrackIndex(
+            point.X,
             point.Y,
             dpiScaleY,
             _displayState.TrackHeight,
             _displayState.VerticalScrollOffset,
             _playlist.Tracks.Count);
-        if (!clickedTrackIndex.HasValue)
-            return;
+    }
 
-        int trackIndex = clickedTrackIndex.Value;
+    private bool TryCalculateTarget(double x, int trackIndex, out double targetSeconds)
+    {
+        targetSeconds = 0;
+        if (trackIndex < 0 || trackIndex >= _playlist.Tracks.Count) return false;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        double dpiScaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
+        // ドラッグ中は捕捉しているので、面の外（左端より左・右端より右）の位置も来る。面の幅に収める。
+        double clampedX = Math.Clamp(x, 0, Math.Max(0, ActualWidth));
         var track = _playlist.Tracks[trackIndex];
-        double targetSeconds = TimelineLayoutCalculator.CalculateSeekTargetSeconds(
-            x,
+        targetSeconds = TimelineLayoutCalculator.CalculateSeekTargetSeconds(
+            clampedX,
             dpiScaleX,
             _displayState.SecondsPerPixel,
             _displayState.HorizontalScrollSeconds,
             track.GetActualTimelineIn().TotalSeconds);
-
-        TimelineSeekRequested?.Invoke(this, new TimelineSeekEventArgs(targetSeconds, trackIndex));
+        return true;
     }
 
     public void Dispose()
@@ -446,7 +519,11 @@ public class TimelineDrawingSurface : FrameworkElement, IDisposable
         _disposed = true;
 
         _playlist.Tracks.CollectionChanged -= OnTracksCollectionChanged;
+        MouseLeftButtonDown -= TimelineDrawingSurface_MouseLeftButtonDown;
+        MouseMove -= TimelineDrawingSurface_MouseMove;
         MouseLeftButtonUp -= TimelineDrawingSurface_MouseLeftButtonUp;
+        LostMouseCapture -= TimelineDrawingSurface_LostMouseCapture;
         TimelineSeekRequested = null;
+        TimelineScrubMoved = null;
     }
 }

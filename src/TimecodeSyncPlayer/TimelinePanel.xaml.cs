@@ -16,6 +16,9 @@ public partial class TimelinePanel : UserControl, IDisposable
 
     internal event EventHandler<TimelineSeekEventArgs>? TimelineSeekRequested;
 
+    /// <summary>v0.6.6 F-2: タイムラインのドラッグ中の目標（押した行に固定）。</summary>
+    internal event EventHandler<TimelineScrubEventArgs>? TimelineScrubMoved;
+
     public Guid? LoadedTrackId
     {
         get => _drawingSurface?.LoadedTrackId;
@@ -43,6 +46,7 @@ public partial class TimelinePanel : UserControl, IDisposable
 
         _drawingSurface = new TimelineDrawingSurface(playlist, isTimelineVisible);
         _drawingSurface.TimelineSeekRequested += DrawingSurface_TimelineSeekRequested;
+        _drawingSurface.TimelineScrubMoved += DrawingSurface_TimelineScrubMoved;
         _drawingSurface.SizeChanged += DrawingSurface_SizeChanged;
 
         DrawingSurfaceContainer.Child = _drawingSurface;
@@ -146,6 +150,11 @@ public partial class TimelinePanel : UserControl, IDisposable
         _inputInterpreter.RequestSeek(e);
     }
 
+    private void DrawingSurface_TimelineScrubMoved(object? sender, TimelineScrubEventArgs e)
+    {
+        TimelineScrubMoved?.Invoke(this, e);
+    }
+
     public void UpdatePlaybackPosition(double seconds)
     {
         _drawingSurface?.UpdatePlaybackPosition(seconds);
@@ -159,6 +168,7 @@ public partial class TimelinePanel : UserControl, IDisposable
         if (_drawingSurface != null)
         {
             _drawingSurface.TimelineSeekRequested -= DrawingSurface_TimelineSeekRequested;
+            _drawingSurface.TimelineScrubMoved -= DrawingSurface_TimelineScrubMoved;
             _drawingSurface.SizeChanged -= DrawingSurface_SizeChanged;
         }
 

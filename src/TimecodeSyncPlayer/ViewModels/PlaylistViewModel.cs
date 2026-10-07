@@ -61,6 +61,12 @@ internal sealed class PlaylistViewModel : INotifyPropertyChanged
 
     public bool AutoOffsetOnAdd { get; set; } = true;
 
+    /// <summary>
+    /// v0.6.6 F-7: 長さが取れなかった行（id、この追加で自動オフセットを置き直すか）を知らせる。
+    /// 読み込んだときに再生時の長さで埋める側（PlaylistDurationFallback）が使う。
+    /// </summary>
+    public Action<Guid, bool>? DurationUnavailable { get; set; }
+
     public ICommand RemoveTrackCommand => _removeTrackCommand;
     public ICommand MoveUpCommand => _moveUpCommand;
     public ICommand MoveDownCommand => _moveDownCommand;
@@ -107,6 +113,8 @@ internal sealed class PlaylistViewModel : INotifyPropertyChanged
             ct.ThrowIfCancellationRequested();
             if (duration.HasValue)
                 _playlist.UpdateMediaDuration(track.Id, duration.Value, recalculate: autoOffsetOnAdd);
+            else
+                DurationUnavailable?.Invoke(track.Id, autoOffsetOnAdd);
         }
     }
 

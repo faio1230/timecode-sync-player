@@ -388,8 +388,8 @@ internal sealed class GstPlaybackApi : IPlaybackApi
             if (rc != 0)
             {
                 Log.Warning(
-                    "GOP scan failed: rc={Rc} elapsedMs={Elapsed} budgetMs={Budget} path={Path}",
-                    rc, sw.ElapsedMilliseconds, budgetMs, path);
+                    "GOP scan failed: rc={Rc}{Reason} elapsedMs={Elapsed} budgetMs={Budget} path={Path}",
+                    rc, GstNative.DescribeProbeFailure(rc), sw.ElapsedMilliseconds, budgetMs, path);
                 return null;
             }
             if (n.Keyframes < 2)
@@ -431,6 +431,58 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         finally
         {
             System.Threading.Thread.CurrentThread.Priority = previous;
+        }
+    }
+
+    private static bool _probeDurationUnavailable;
+
+    /// <summary>v0.6.6 F-7: 長さの問い合わせの待ちの上限（ミリ秒）。読めないファイルで固まらないため。</summary>
+    internal const int ProbeDurationTimeoutMs = 10000;
+
+    /// <summary>
+    /// v0.6.6 F-7: 素材の容器の長さ（秒）を読む。取れなければ null。プレイヤー不要で、再生経路には触れない。
+    /// </summary>
+    /// <remarks>
+    /// shim の <c>tcs_probe_duration</c>（filesrc ! 拡張子の demux ! fakesink を PAUSED まで上げて
+    /// duration を問い合わせる。デコーダは作らない。typefind は使わず、表に無い拡張子は失敗＝null）。
+    /// プレイリストの長さの正。再生時の長さ
+    /// （<see cref="TryGetDuration"/>）と同じ demux の値なので、同じ素材で一致する。
+    /// 所要は開発機で 1 本 1〜5ms だが、ファイルを読むので UI スレッドから呼ばないこと。
+    /// 失敗は必ずログに残す（黙って 0 を長さとして使わない）。
+    /// </remarks>
+    public static double? ProbeMediaDuration(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        if (_probeDurationUnavailable) return null;
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int rc = GstNative.Imports.tcs_probe_duration(path, ProbeDurationTimeoutMs, out double seconds);
+            sw.Stop();
+            if (rc != 0 || !(seconds > 0) || double.IsInfinity(seconds))
+            {
+                Log.Warning(
+                    "Media duration probe failed: rc={Rc}{Reason} elapsedMs={Elapsed} path={Path}",
+                    rc, GstNative.DescribeProbeFailure(rc), sw.ElapsedMilliseconds, path);
+                return null;
+            }
+            Log.Information(
+                "Media duration probe: durationSec={Duration:F6} elapsedMs={Elapsed} path={Path}",
+                seconds, sw.ElapsedMilliseconds, path);
+            return seconds;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // 旧 DLL（v0.6.6 より前）。1 回だけ警告し、以後は呼ばない（長さは読み込み時の再生の値で埋める）。
+            _probeDurationUnavailable = true;
+            Log.Warning("GstPlaybackApi: tcs_probe_duration が DLL に無いため、クリップの長さは読み込んだときに埋めます");
+            return null;
+        }
+        catch (DllNotFoundException)
+        {
+            _probeDurationUnavailable = true;
+            Log.Warning("GstPlaybackApi: tcs_gstreamer.dll が無いため、クリップの長さを読めません");
+            return null;
         }
     }
 

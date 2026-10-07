@@ -16,6 +16,8 @@ public class OutputControlViewModelTests
         public void TogglePlayPause() => ToggleCount++;
         public void SeekRelative(double seconds) => SeekCount++;
         public void CycleSpeed() => CycleCount++;
+        public int LastStepFrames;
+        public void StepFrame(int steps) => LastStepFrames = steps;
     }
 
     [Fact]

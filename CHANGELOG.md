@@ -2,6 +2,88 @@
 
 All notable changes to TimecodeSyncPlayer are documented in this file.
 
+## 0.6.6 - 2026-10-08
+
+Stable (Latest). Fixes from field feedback. Clip durations no longer depend on ffprobe; scrubbing, numeric offset input, one-frame step
+buttons, button styling and an LTC input meter are added. The sync rules, gates and constants are the same as 0.6.5.
+Settings and projects are unchanged from 0.6.5.
+
+### Migration note
+
+- The Spout sender name taken from the environment variable is now trimmed of leading and trailing spaces
+  (e.g. " Stage A " becomes "Stage A"). If a receiver had selected the name with spaces, select it again.
+
+### Changed
+
+- Clip durations are read from the playback engine (shim) by probing the media container, and ffprobe is no longer used.
+  Up to 0.6.5 durations came only from ffprobe, which is not in the distribution, so on machines without ffprobe every
+  playlist clip had a duration of 0, and the timeline width and scrolling, the automatic offset on add, and Continue's
+  "which clip is the current time in" judgment all ran with a duration of 0. Durations are now read when clips are added
+  and when a file or project is opened. A clip whose duration cannot be read is shown as "--:--" (the duration column
+  as "--:--:--:--") instead of being used as 0, and is filled from the playback engine when the clip is loaded.
+- Scrubbing: dragging the seek bar or the timeline now moves the playback position while held (up to 0.6.5 it jumped
+  only on release). The next seek is sent after the previous one lands (one seek in flight; the release position is
+  always sent). Sync correction stops while held, and on release behaves as the existing manual seek. On the timeline,
+  the drag stays on the row where it started and does not load another row's file while dragging.
+- One-frame step buttons (-1F, +1F) are added; the 10-second skip buttons (◀◀ ▶▶) are kept. Pressing during playback
+  pauses first, then steps one frame. Repeated presses are queued and sent after each landing; stepping stops at the
+  first and last frame. The path is the same as the existing manual seek.
+- Numeric offset input: integer ms; applied on Enter or when the field loses focus, Esc restores the previous value.
+  Values outside -1000 to 1000 ms are clamped and the clamped value is written back to the field; non-numbers (decimals,
+  units, empty) are rejected and the previous value is restored; full-width digits are accepted. The value read by sync,
+  its range and the settings path are unchanged.
+- Fullscreen on the working (primary) display asks for confirmation every time ("出す" / "やめる"; Enter and Esc choose
+  "やめる"). The FULLSCREEN button is the only way into fullscreen; no confirmation is shown for other displays, for
+  closing, or for paths without a user action (startup arguments, project load, settings restore, device recovery).
+- Display: disabled buttons are dark with dim text; ON buttons (Sync, Spout, Timeline, Card, LTC running) are green
+  (the ON/OFF text is kept). MUTE is green while muted; START, which cannot be pressed while LTC is running, is dark
+  green. Main buttons have tooltips, including why a button cannot be pressed. The offset row is one
+  line (slider, input, ms) without the value text ("+40 ms"). The playlist row's "Eff:" value is no longer cut off. In a
+  narrow window the transport row is not cut off; the right-hand group (MUTE, volume, speed, Spout, Card, Timeline)
+  wraps to the next line. With Spout on, the output area shows "Spout: <name>" (it does not reflect whether sending
+  succeeds). Playlist rows have a grip mark and a tooltip saying they can be reordered by dragging (behavior unchanged).
+- LTC input meter (peak, -60 to 0 dBFS) and a three-state reception display: "無音" (peak below -60 dBFS),
+  "LTC 受信中" (decoded LTC frames in the last second at least half the fps, e.g. 13 at 25 fps), otherwise
+  "信号あり・LTC なし". The fps is the fixed value selected in the LTC area, or with Auto the detected
+  fps once detected, and 24 before detection. The meter only
+  shows values the decoder already counts; the LTC decoder and the sync rules, gates and constants are not touched, and
+  the display state is not read by sync.
+
+### Observability
+
+- New log line at startup: whether ffprobe is on PATH (`ffprobe: not found on PATH ...` / `ffprobe: found on PATH ...`;
+  not used for durations). The "ffprobe is not available, cannot read duration" warning is gone.
+- New log lines: `Media duration probe`, `Media duration from the loaded clip`, `Scrub landed`, `Scrub summary`,
+  `Seek command sent source=FrameStep`, `FrameStep landed`, `FrameStep queued`, `FrameStep ignored`,
+  `Sync offset input rejected`, and the fullscreen confirmation result (`全画面の確認`).
+
+### Fixed
+
+- Right after startup, after a ProRes clip was loaded with GPU decoding, the app could rarely crash (since 0.6.2). The
+  cause is GIO in the GLib 2.82.4 bundled with GStreamer reading past an unterminated string while it reads the Windows
+  registry during its initialization. GIO is loaded together with the file type detection (typefind) plugin. In 0.6.6
+  the clip duration and the GOP scan pick the demuxer from the file extension instead of typefind, so GIO is not loaded
+  for the recommended formats. Formats outside the recommendation (read by the generic decoder) still load it, and the
+  crash window remains for them. The evidence of the fix is that GIO is no longer loaded; crashes were 2 in 72 startups
+  before the fix and 0 in 60 startups plus the full suite after it.
+
+### Known issues
+
+- None within the recommended media (same as 0.6.5).
+
+### Known limitations
+
+- The bundled GStreamer does not include the Matroska demuxer, so .mkv/.webm files cannot be opened (their duration is
+  unknown too). The recommended containers are mp4 and mov (same as 0.6.5 and earlier).
+- Formats outside the recommendation (read by the generic decoder: MPEG-2, MJPEG, DNxHD/DNxHR video, and files with
+  the .mpg or .flv extension) load GIO, so the rare crash right after startup can still happen. For a file whose
+  extension is not in the table, the clip duration and the GOP scan fail as an unsupported extension, and the duration
+  is filled from the playback duration when the clip is loaded.
+
+### Known intermittent issues
+
+- As listed for 0.6.5.
+
 ## 0.6.5 - 2026-10-06
 
 Stable (Latest). LTC frame check and ProRes GPU decoding on all GPUs by default. The sync rules, gates and constants are
