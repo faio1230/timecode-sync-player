@@ -134,7 +134,8 @@ public sealed class SystemScenarioE2ETests
 
         for (int cycle = 0; cycle < 2; cycle++)
         {
-            app.Button("BtnFullscreen").Invoke();
+            // v0.6.6 R-8: 主画面なら確認の画面が出るので「出す」を押す。
+            E2EFullscreen.Open(app.MainWindow);
             E2EAssert.WaitUntil(
                 () => app.Button("BtnFullscreen").Name == "EXIT FULLSCREEN",
                 TimeSpan.FromSeconds(5));

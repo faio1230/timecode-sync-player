@@ -134,7 +134,8 @@ public sealed class TimecodeSyncPlayerE2ETests : IClassFixture<TimecodeSyncPlaye
     {
         SkipIfNeeded();
 
-        Btn("BtnFullscreen").Invoke();
+        // v0.6.6 R-8: 主画面なら確認の画面が出るので「出す」を押す（E2EFullscreen.Open）。
+        E2EFullscreen.Open(Win);
         await WaitUntil(() => FullscreenWindow() != null, TimeSpan.FromSeconds(5));
 
         Window? fullscreen = FullscreenWindow();

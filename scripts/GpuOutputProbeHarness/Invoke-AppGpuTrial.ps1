@@ -262,6 +262,13 @@ $null = $app.Handle
     if (-not $NoFullscreen) {
         $fs = Find-Button $app.Id 'BtnFullscreen' 10
         Invoke-Button $fs; $result.steps += "BtnFullscreen invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+        # v0.6.6 R-8: on the primary display the app asks for confirmation first; answer "show" if the dialog appears.
+        try {
+            $confirm = Find-Button $app.Id 'BtnFullscreenConfirmShow' 3
+            Invoke-Button $confirm; $result.steps += "BtnFullscreenConfirmShow invoked at $((Get-Date).ToString('HH:mm:ss.fff'))"
+        } catch {
+            if ($_.Exception.Message -notlike 'UI element not found*') { throw }
+        }
     }
     if ($KillReceiverAfterSeconds -gt 0 -and $KillReceiverAfterSeconds -lt $Seconds) {
         Start-Sleep -Seconds $KillReceiverAfterSeconds
