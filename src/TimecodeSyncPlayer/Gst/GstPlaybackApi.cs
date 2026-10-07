@@ -443,8 +443,9 @@ internal sealed class GstPlaybackApi : IPlaybackApi
     /// v0.6.6 F-7: 素材の容器の長さ（秒）を読む。取れなければ null。プレイヤー不要で、再生経路には触れない。
     /// </summary>
     /// <remarks>
-    /// shim の <c>tcs_probe_duration</c>（filesrc ! typefind ! demux ! fakesink を PAUSED まで上げて
-    /// duration を問い合わせる。デコーダは作らない）。プレイリストの長さの正。再生時の長さ
+    /// shim の <c>tcs_probe_duration</c>（filesrc ! 拡張子の demux ! fakesink を PAUSED まで上げて
+    /// duration を問い合わせる。デコーダは作らない。typefind は使わず、表に無い拡張子は失敗＝null）。
+    /// プレイリストの長さの正。再生時の長さ
     /// （<see cref="TryGetDuration"/>）と同じ demux の値なので、同じ素材で一致する。
     /// 所要は開発機で 1 本 1〜5ms だが、ファイルを読むので UI スレッドから呼ばないこと。
     /// 失敗は必ずログに残す（黙って 0 を長さとして使わない）。

@@ -131,6 +131,22 @@ public sealed class MediaDurationProbeTests : IClassFixture<MediaDurationProbeFi
         }
     }
 
+    /// <summary>
+    /// v0.6.6: 拡張子の表（プレイヤーと共通）に無い拡張子は、中身が読める素材でも「不明」（null）。
+    /// typefind に落とさない（typefind が gio を読み込み、その裏の読みでアプリが落ちていた）。
+    /// 長さは読み込んだときの再生時の長さで埋まる（PlaylistDurationFallback）。
+    /// </summary>
+    [SkippableFact]
+    public void Probe_ExtensionOutsideTheTable_ReturnsNull()
+    {
+        string source = _fx.RequireClip("h264_mp4");
+        string renamed = TestTempPaths.Combine("f7-durations", "h264_mp4.unknownext");
+        File.Copy(source, renamed, overwrite: true);
+
+        GstPlaybackApi.ProbeMediaDuration(renamed).Should().BeNull();
+        GstPlaybackApi.ProbeMediaDuration(source).Should().NotBeNull("the same bytes with a known extension still probe");
+    }
+
     [SkippableFact]
     public void Probe_FileThatIsNotMedia_ReturnsNullQuickly()
     {
