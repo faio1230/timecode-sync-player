@@ -64,6 +64,9 @@ Settings and projects are unchanged from 0.6.5.
 ### Known intermittent issues
 
 - As listed for 0.6.5.
+- Right after startup, after a ProRes clip is loaded with GPU decoding, the app can rarely crash (since 0.6.2; the cause
+  is under investigation). On the development machine, 5 of 487 such startups (4 in 0.6.2, 1 during the 0.6.6 work);
+  0 of 275 in 0.6.3 and 0.6.4.
 
 ## 0.6.5 - 2026-10-06
 
