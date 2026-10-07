@@ -739,82 +739,106 @@
                             </MenuItem>
                         </ContextMenu>
                     </ListBox.ContextMenu>
+                    <!-- v0.6.6 R-12: 行にツールチップ（見せ方だけ。並べ替えの動作は変えない） -->
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                            <Setter Property="ToolTip" Value="{x:Static local:PlaylistRowLook.RowToolTip}"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Margin="4,3">
-                                <DockPanel>
-                                    <TextBlock x:Name="LongGopWarningText"
-                                               DockPanel.Dock="Right"
-                                               Text="{Binding LongGopWarningText}"
-                                               ToolTip="{Binding LongGopWarningTooltip}"
-                                               Foreground="#D7A24B"
-                                               FontSize="10"
-                                               Margin="6,0,0,0"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock x:Name="CodecWarningText"
-                                               DockPanel.Dock="Right"
-                                               Text="{Binding CodecWarningText}"
-                                               ToolTip="{Binding CodecWarningTooltip}"
-                                               Foreground="#D7A24B"
-                                               FontSize="10"
-                                               Margin="6,0,0,0"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock Text="{Binding Name}"
-                                               TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding FilePath}"
-                                               FontSize="13"/>
-                                </DockPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                    <TextBlock x:Name="TimelineRangeTextBlock"
-                                               Foreground="#666666"
-                                               FontSize="10"
-                                               FontFamily="Consolas"
-                                               TextTrimming="CharacterEllipsis"
-                                               Text=""/>
+                            <DockPanel Margin="4,3">
+                                <!-- v0.6.6 R-12: 行の左端のつかむ印。ドラッグはこれまでどおり行のどこからでも始まる -->
+                                <Label x:Name="PlaylistDragGrip"
+                                       DockPanel.Dock="Left"
+                                       AutomationProperties.AutomationId="PlaylistDragGrip"
+                                       Content="{x:Static local:PlaylistRowLook.GripText}"
+                                       ToolTip="{x:Static local:PlaylistRowLook.RowToolTip}"
+                                       Cursor="SizeAll"
+                                       Background="Transparent"
+                                       Foreground="#9A9A9A"
+                                       FontSize="16"
+                                       FontWeight="Bold"
+                                       Padding="0"
+                                       Margin="0,0,6,0"
+                                       Width="14"
+                                       HorizontalContentAlignment="Center"
+                                       VerticalContentAlignment="Center"/>
+                                <StackPanel>
+                                    <DockPanel>
+                                        <TextBlock x:Name="LongGopWarningText"
+                                                   DockPanel.Dock="Right"
+                                                   Text="{Binding LongGopWarningText}"
+                                                   ToolTip="{Binding LongGopWarningTooltip}"
+                                                   Foreground="#D7A24B"
+                                                   FontSize="10"
+                                                   Margin="6,0,0,0"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="CodecWarningText"
+                                                   DockPanel.Dock="Right"
+                                                   Text="{Binding CodecWarningText}"
+                                                   ToolTip="{Binding CodecWarningTooltip}"
+                                                   Foreground="#D7A24B"
+                                                   FontSize="10"
+                                                   Margin="6,0,0,0"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Name}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding FilePath}"
+                                                   FontSize="13"/>
+                                    </DockPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                        <TextBlock x:Name="TimelineRangeTextBlock"
+                                                   Foreground="#666666"
+                                                   FontSize="10"
+                                                   FontFamily="Consolas"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Text=""/>
+                                    </StackPanel>
+                                     <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                                         <TextBlock Text="Offset:"
+                                                    Foreground="#888888"
+                                                    FontSize="9"
+                                                    FontFamily="Consolas"
+                                                    Margin="8,0,4,0"/>
+                                        <TextBox x:Name="TimelineOffsetTextBox"
+                                                 AutomationProperties.AutomationId="TimelineOffsetTextBox"
+                                                 Width="80"
+                                                 Height="18"
+                                                 FontSize="9"
+                                                 FontFamily="Consolas"
+                                                 Text="{Binding TimelineOffsetText, Mode=OneWay}"
+                                                 Foreground="White"
+                                                 Background="#2A2A2A"
+                                                 BorderBrush="#4A4A4A"
+                                                 Padding="2,0"
+                                                 Tag="{Binding Id}"
+                                                 LostFocus="TimelineOffsetTextBox_LostFocus"
+                                                 KeyDown="TimelineOffsetTextBox_KeyDown"/>
+                                    </StackPanel>
+                                    <!-- v0.6.6: Dur と Eff は別の行（1 行では列の幅に収まらず Eff の値が右で切れていた） -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                                        <TextBlock Text="Dur:"
+                                                   Foreground="#888888"
+                                                   FontSize="9"
+                                                   FontFamily="Consolas"
+                                                   Margin="8,0,4,0"/>
+                                        <TextBlock Text="{Binding MediaDurationText}"
+                                                   Foreground="#666666"
+                                                   FontSize="9"
+                                                   FontFamily="Consolas"/>
+                                        <TextBlock Text=" Eff:"
+                                                   Foreground="#888888"
+                                                   FontSize="9"
+                                                   FontFamily="Consolas"
+                                                   Margin="6,0,4,0"/>
+                                        <TextBlock Text="{Binding EffectiveDurationText}"
+                                                   Foreground="#666666"
+                                                   FontSize="9"
+                                                   FontFamily="Consolas"/>
+                                    </StackPanel>
                                 </StackPanel>
-                                 <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
-                                     <TextBlock Text="Offset:"
-                                                Foreground="#888888"
-                                                FontSize="9"
-                                                FontFamily="Consolas"
-                                                Margin="8,0,4,0"/>
-                                    <TextBox x:Name="TimelineOffsetTextBox"
-                                             AutomationProperties.AutomationId="TimelineOffsetTextBox"
-                                             Width="80"
-                                             Height="18"
-                                             FontSize="9"
-                                             FontFamily="Consolas"
-                                             Text="{Binding TimelineOffsetText, Mode=OneWay}"
-                                             Foreground="White"
-                                             Background="#2A2A2A"
-                                             BorderBrush="#4A4A4A"
-                                             Padding="2,0"
-                                             Tag="{Binding Id}"
-                                             LostFocus="TimelineOffsetTextBox_LostFocus"
-                                             KeyDown="TimelineOffsetTextBox_KeyDown"/>
-                                </StackPanel>
-                                <!-- v0.6.6: Dur と Eff は別の行（1 行では列の幅に収まらず Eff の値が右で切れていた） -->
-                                <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
-                                    <TextBlock Text="Dur:"
-                                               Foreground="#888888"
-                                               FontSize="9"
-                                               FontFamily="Consolas"
-                                               Margin="8,0,4,0"/>
-                                    <TextBlock Text="{Binding MediaDurationText}"
-                                               Foreground="#666666"
-                                               FontSize="9"
-                                               FontFamily="Consolas"/>
-                                    <TextBlock Text=" Eff:"
-                                               Foreground="#888888"
-                                               FontSize="9"
-                                               FontFamily="Consolas"
-                                               Margin="6,0,4,0"/>
-                                    <TextBlock Text="{Binding EffectiveDurationText}"
-                                               Foreground="#666666"
-                                               FontSize="9"
-                                               FontFamily="Consolas"/>
-                                </StackPanel>
-                            </StackPanel>
+                            </DockPanel>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
