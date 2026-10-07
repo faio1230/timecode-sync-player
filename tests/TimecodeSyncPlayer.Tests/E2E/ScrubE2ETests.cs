@@ -51,7 +51,7 @@ public sealed class ScrubE2ETests
 
     /// <summary>
     /// Sync ON（Continue）で LTC を流しながらスクラブし、離した後に同期が戻ること。手動のシーク（離したときの 1 本）
-    /// の後と同じく、同期のシーク（relocate）の着地が LTC の位置に出る。
+    /// の後と同じく、同期のシークの目標が LTC の位置に戻る。確かめは Release の exe でも出る Information の行だけで行う。
     /// </summary>
     [Fact]
     public void ScrubWithSyncOn_SyncReturnsAfterRelease()
@@ -81,7 +81,7 @@ public sealed class ScrubE2ETests
             signalOwner.Stop();
 
             List<string> lines = ReadLines(exe, scrubStarted);
-            DumpTail(lines, "Seek command sent", "Scrub landed", "Scrub summary", "Sync lifecycle", "sync.gate new-landing",
+            DumpTail(lines, "Seek command sent", "Scrub landed", "Scrub summary", "Sync lifecycle", "Continue mode: sync seek",
                 "sync.gate seek-settled", "Timecode sync");
             lines.Count(l => ScrubSent.IsMatch(l)).Should().BeGreaterThanOrEqualTo(2, "seeks are sent while the bar is held");
 
@@ -99,20 +99,28 @@ public sealed class ScrubE2ETests
                 .Where(l => Regex.IsMatch(l, "Sync lifecycle: \"?ManualSeek\"?")).ToList();
             foreach (string l in afterRelease) _output.WriteLine("after release: " + l.TrimEnd());
             afterRelease.Should().ContainSingle("only the release is a manual seek after letting go");
-            // 手動のシークの知らせ（reason=manual の relocate、c の学習のサンプル）は 1 回のドラッグにつき離したときの 1 本だけ。
-            int mouseDownIndex = lines.FindIndex(l => l.Contains("Seek MouseDown ", StringComparison.Ordinal));
-            List<string> manualRelocates = lines.Skip(Math.Max(0, mouseDownIndex))
-                .Where(l => l.Contains("sync.gate relocate reason=manual", StringComparison.Ordinal)).ToList();
-            foreach (string l in manualRelocates) _output.WriteLine("manual relocate: " + l.TrimEnd());
-            manualRelocates.Should().ContainSingle("mid-scrub seeks do not notify a manual seek");
-            var landings = lines.Skip(releaseIndex + 1)
-                .Select(l => Regex.Match(l, @"sync\.gate new-landing target=(?<t>[0-9.]+)"))
+            // 手動のシークの知らせは 1 回のドラッグにつき離したときの 1 本だけ。Release の exe でも出る Information の行
+            // （"Sync lifecycle: ManualSeek"）で確かめる: 離した後は source=seekbar-commit がちょうど 1 回、
+            // 押している間（"Seek MouseDown" から "Seek MouseUp" まで）は source=seekbar-scrub だけ。
+            int mouseDownIndex = lines.FindLastIndex(mouseUpIndex, l => l.Contains("Seek MouseDown ", StringComparison.Ordinal));
+            mouseDownIndex.Should().BeGreaterThanOrEqualTo(0);
+            afterRelease.Count(l => Regex.IsMatch(l, "Sync lifecycle: \"?ManualSeek\"? source=seekbar-commit"))
+                .Should().Be(1, "the release is the only manual seek notification after letting go");
+            List<string> whileHeld = lines.Skip(mouseDownIndex).Take(mouseUpIndex - mouseDownIndex)
+                .Where(l => Regex.IsMatch(l, "Sync lifecycle: \"?ManualSeek\"?")).ToList();
+            foreach (string l in whileHeld) _output.WriteLine("while held: " + l.TrimEnd());
+            whileHeld.Should().OnlyContain(l => Regex.IsMatch(l, "Sync lifecycle: \"?ManualSeek\"? source=seekbar-scrub"),
+                "mid-scrub seeks do not notify a manual seek");
+            // 離した後の同期のシーク（Information の "Continue mode: sync seek"、Single なら "Timecode sync seek"）の目標が
+            // LTC の位置に戻る。
+            var syncSeeks = lines.Skip(releaseIndex + 1)
+                .Select(l => Regex.Match(l, @"(?:Continue mode: sync seek|Timecode sync seek) ltc=[-0-9.]+ playback=[-0-9.]+ target=(?<t>[0-9.]+) .*success=true"))
                 .Where(m => m.Success)
                 .Select(m => double.Parse(m.Groups["t"].Value, CultureInfo.InvariantCulture))
                 .ToList();
-            _output.WriteLine($"ltcAtRelease={ltcAtRelease:F2} landings after release: {string.Join(", ", landings.Select(t => t.ToString("F3", CultureInfo.InvariantCulture)))}");
-            landings.Should().Contain(t => Math.Abs(t - ltcAtRelease) < 2.0,
-                "after the release, sync relocates back to the LTC position");
+            _output.WriteLine($"ltcAtRelease={ltcAtRelease:F2} sync seeks after release: {string.Join(", ", syncSeeks.Select(t => t.ToString("F3", CultureInfo.InvariantCulture)))}");
+            syncSeeks.Should().Contain(t => Math.Abs(t - ltcAtRelease) < 2.0,
+                "after the release, sync seeks back to the LTC position");
 
             Assert.True(app.ExitNormally(TimeSpan.FromSeconds(15)));
         }
