@@ -1761,6 +1761,102 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
+    // ── v0.6.6 R-4: 1 フレーム送り・戻し ───────────────────────────────────
+    // 「今のフレーム」は最後に届いた配信フレームの PTS（TimeLabel ではない）。目標はフレームの中（頭 + 半フレーム）。
+    // 飛行中は 1 本だけ、押した数は積み上げて着地の後に送る（着地はスクラブと同じ世代の比べ）。
+    // 経路は SeekRelative と同じ（同期の保留の取り消し・シーク・手動のシークの知らせ）。再生中は再生/一時停止ボタンと
+    // 同じ経路で止めてから動かす。同期の規則・ゲート・定数には触れない。
+
+    private const string FrameStepSource = "FrameStep";
+    private FrameStepper? _frameStepper;
+
+    private FrameStepper FrameStepperInstance => _frameStepper ??= new FrameStepper(new FrameStepEffects(
+        IsPaused: () => _playbackControl.IsPaused,
+        PauseAsUser: () => ((IPlaybackController)this).TogglePlayPause(),
+        ReadDelivered: ReadDeliveredFrameForStep,
+        Fps: () => _fps,
+        Duration: () => _duration,
+        Seek: SendFrameStepSeek,
+        ReadCurrentGeneration: () => _playbackApi.TryGetPositionSample(out PlaybackPositionSample s) ? s.CurrentGeneration : null));
+
+    void IPlaybackController.StepFrame(int steps)
+    {
+        if (!IsPlayerReady) return;
+        FrameStepOutcome outcome = FrameStepperInstance.Press(steps);
+        switch (outcome.Kind)
+        {
+            case FrameStepOutcomeKind.Sent:
+            case FrameStepOutcomeKind.SendFailed:
+                LogFrameStepSent(outcome);
+                break;
+            case FrameStepOutcomeKind.Queued:
+                Log.Information("FrameStep queued steps={Steps} pending={Pending} inFlightTarget={Target}",
+                    steps, outcome.Steps, outcome.TargetFrame);
+                break;
+            default:
+                Log.Information("FrameStep ignored reason={Reason:l} steps={Steps} fps={Fps:F3} base={Base} target={Target}",
+                    outcome.Kind.ToString(), steps, outcome.Fps, outcome.BaseFrame, outcome.TargetFrame);
+                break;
+        }
+    }
+
+    private FrameStepDelivered? ReadDeliveredFrameForStep()
+    {
+        if (!_playbackApi.TryGetPositionSample(out PlaybackPositionSample sample)) return null;
+        if (sample.DeliveredGeneration == 0 || !double.IsFinite(sample.DeliveredSeconds)) return null;
+        return new FrameStepDelivered(sample.DeliveredSeconds, sample.DeliveredGeneration);
+    }
+
+    private bool SendFrameStepSeek(double targetSeconds)
+    {
+        _ltcSyncController.CancelPendingSync("frame-step");
+        if (!_playbackApi.Seek(targetSeconds).Success)
+            return false;
+        // SeekRelative と同じ: 利用者のシークとして知らせ、一時停止の状態を合わせ直す。
+        _syncService.NotifyManualSeek(targetSeconds);
+        _playbackApi.SetPaused(_playbackControl.IsPaused);
+        return true;
+    }
+
+    private static void LogFrameStepSent(FrameStepOutcome outcome) =>
+        Log.Information(
+            "Seek command sent source={Source} steps={Steps} base={Base} target={Target} targetSeconds={TargetSeconds:F6} fps={Fps:F3} delivered={Delivered:F6} success={Success}",
+            FrameStepSource, outcome.Steps, outcome.BaseFrame, outcome.TargetFrame, outcome.TargetSeconds, outcome.Fps,
+            outcome.DeliveredSeconds, outcome.Kind == FrameStepOutcomeKind.Sent);
+
+    /// <summary>描画の更新ごとに、飛行中の 1 フレーム送りのシークが着地したかを世代で見る（スクラブと同じ）。</summary>
+    private void ObserveFrameStepLanding()
+    {
+        if (_frameStepper is not { InFlight: true } stepper) return;
+        if (!_playbackApi.TryGetPositionSample(out PlaybackPositionSample sample)) return;
+        // 世代が未確定なら、この照会の現在世代がシークの世代になる（ObserveLanding と同じ取り方）。
+        ulong seekGeneration = stepper.GenerationKnown ? stepper.SeekGeneration : sample.CurrentGeneration;
+        FrameStepOutcome outcome = stepper.ObserveLanding(sample.CurrentGeneration, sample.DeliveredGeneration, sample.DeliveredSeconds);
+        if (outcome.Kind == FrameStepOutcomeKind.None) return;
+        LogFrameStepLanded("frame", outcome, sample.DeliveredGeneration, seekGeneration);
+    }
+
+    private void CompleteFrameStepOnEnded()
+    {
+        if (_disposed || _frameStepper is not { InFlight: true } stepper) return;
+        ulong seekGeneration = stepper.SeekGeneration;
+        LogFrameStepLanded("ended", stepper.Ended(), 0, seekGeneration);
+    }
+
+    private static void LogFrameStepLanded(string reason, FrameStepOutcome outcome, ulong deliveredGeneration, ulong seekGeneration)
+    {
+        double fps = outcome.Fps;
+        long deliveredFrame = double.IsFinite(outcome.DeliveredSeconds) && fps > 0
+            ? FrameStepMath.FrameIndexAt(outcome.DeliveredSeconds, fps)
+            : -1;
+        Log.Information(
+            "FrameStep landed reason={Reason:l} delivered={Delivered:F6} deliveredFrame={DeliveredFrame} target={Target} deliveredGen={DeliveredGen} seekGen={SeekGen} next={Next:l}",
+            reason, outcome.DeliveredSeconds, deliveredFrame, outcome.BaseFrame, deliveredGeneration, seekGeneration,
+            outcome.Kind == FrameStepOutcomeKind.Landed ? "none" : outcome.Kind.ToString());
+        if (outcome.Kind is FrameStepOutcomeKind.Sent or FrameStepOutcomeKind.SendFailed)
+            LogFrameStepSent(outcome);
+    }
+
     void IPlaybackController.CycleSpeed()
     {
         if (!IsPlayerReady) return;
@@ -2524,6 +2620,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         ObserveLandingState();
         // v0.6.6 F-3: スクラブの着地は描画の更新の中で世代を見て取る（タイマーは足さない）。
         ObserveScrubLanding();
+        // v0.6.6 R-4: 1 フレーム送りの着地も同じ場所で世代を見て取る。
+        ObserveFrameStepLanding();
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return Task.CompletedTask;
         UpdatePerFrameUI();
         return Task.CompletedTask;
@@ -2725,6 +2823,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         try
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Normal, CompleteScrubFlightOnEnded);
+            Dispatcher.BeginInvoke(DispatcherPriority.Normal, CompleteFrameStepOnEnded);
         }
         catch (Exception ex)
         {

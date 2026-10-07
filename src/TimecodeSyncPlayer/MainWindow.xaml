@@ -134,10 +134,16 @@
                     <Button Content="◀◀" ToolTip="-10秒" Width="54" Height="38"
                             Margin="4,0" Command="{Binding Player.BackCommand}"
                             AutomationProperties.AutomationId="BtnBack"/>
+                    <Button Content="-1F" ToolTip="1 フレーム戻す" Width="46" Height="38"
+                            Margin="4,0" Command="{Binding Player.FrameBackCommand}"
+                            AutomationProperties.AutomationId="BtnFrameBack"/>
                     <Button x:Name="BtnPlay" Width="68" Height="38"
                             Margin="4,0" Command="{Binding Player.PlayPauseCommand}"
                             Content="{Binding Player.PlayPauseIcon}"
                             AutomationProperties.AutomationId="BtnPlay"/>
+                    <Button Content="+1F" ToolTip="1 フレーム送る" Width="46" Height="38"
+                            Margin="4,0" Command="{Binding Player.FrameFwdCommand}"
+                            AutomationProperties.AutomationId="BtnFrameFwd"/>
                     <Button Content="▶▶" ToolTip="+10秒" Width="54" Height="38"
                             Margin="4,0" Command="{Binding Player.FwdCommand}"
                             AutomationProperties.AutomationId="BtnFwd"/>
