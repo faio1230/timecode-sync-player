@@ -13,7 +13,7 @@ TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレ�
 
 インストーラーとzipは[GitHub Releasesの最新の安定版（Latest）](https://github.com/faio1230/timecode-sync-player/releases/latest)からダウンロードできます。安定版はv0.6.xの最新で、v0.6.1から安定版の扱いにしています。「Pre-release」と付いた版は検証中なので、本番では使わないでください。
 
-通常は、管理者権限が要らないインストーラー`TimecodeSyncPlayer-v<版>-setup.exe`を使ってください。展開して使う場合は`TimecodeSyncPlayer-v<版>-win-x64.zip`を選びます。`<版>`には最新の安定版の版番号が入ります（例: `v0.6.5`）。GStreamer 1.28.2のランタイムは同梱しているので、別に入れる必要はありません。
+通常は、管理者権限が要らないインストーラー`TimecodeSyncPlayer-v<版>-setup.exe`を使ってください。展開して使う場合は`TimecodeSyncPlayer-v<版>-win-x64.zip`を選びます。`<版>`には最新の安定版の版番号が入ります（例: `v0.6.6`）。GStreamer 1.28.2のランタイムは同梱しているので、別に入れる必要はありません。
 
 本番の前に[現場準備ガイド](docs/USER-MANUAL.md)を読んでください。素材の書き出し方しだいで、同期の安定性が大きく変わります。
 

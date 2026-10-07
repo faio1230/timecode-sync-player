@@ -1,5 +1,11 @@
 # 親（設計・検証役）の引き継ぎ（2026-09-12 13:40 JST）
 
+> **2026-10-08 06:0x（TSP-Opus）**: **ERYTHEIA v0.6.6 を Latest で公開（06:04）。** タグ v0.6.6 = main の統合 `9ed4eb7`（ProductVersion 0.6.6+1fd56ec、setup `68688123…`・zip `018b8373…`、shim `bb5fdcaf…`）。TSP-Fable が独立に確認済み。中身は現場の報告（docs/design/field-feedback-2026-10-06.md）の直しで、設計は docs/design/v0.6.6-field-fixes.md。同期の規則・ゲート・定数は v0.6.5 と同じ。
+>
+> - **途中で見つけて直したもの**: 起動直後に ProRes を GPU で読み込んだ後のまれな落ち（v0.6.2 から）。GStreamer 同梱の GLib 2.82.4 の GIO が、typefind のプラグインと一緒に読み込まれ、レジストリの読みで落ちていた（ダンプと cdb で確認）。shim が typefind を使わず拡張子から demux を選ぶようにして、推奨の形式では GIO を読み込まない。推奨外の形式（decodebin の最後の手）では残る（棚卸し #40・#41）
+> - **手順の注意**: v0.6.6 という名前のブランチがあるので、タグの push は `refs/tags/v0.6.6` を明示する。build-shim は native\ へ写さず、csproj は native\ を優先する（NativeShimGuard.targets で古い DLL ならビルドが止まる。棚卸し #37）。手で起動するときは scripts\start-isolated.ps1
+> - **残り**: 次の束は現場の報告か利用者の判断で。材料は棚卸しの #35〜#43（K2 の E2E は記録だけ、全体を収める拡大、Spout の送れていない表示、止まりの後の後ろ向き relocate、範囲の決め方、ランナーの PATH など）
+
 > **2026-10-06 17:4x（TSP-Opus）**: **ERYTHEIA v0.6.5 を Latest で公開（17:35）。** タグ v0.6.5 = main の統合 `054b9fa`（リリースのコミット `f820b6a`、ProductVersion `0.6.5+f820b6a`）。setup `7abcaff5…`、zip `077797c9…`。shim は `6266d204…`（v0.6.4 の `251627d3…` から変更）。中身: LTCのフレームの検査（受け始めと途切れの直後の最初の1つは使わない）、ProResのGPUデコードを既定で全GPUに（内蔵AMDでは4K60のProResが追いつかず合わせ直しが増える、想定は外付けGPUで利用者が了承）、29.97の表示・デコードの用語・VC++の名前。設計書は docs/design/v0.6.5-small-fixes.md。
 >
 > - **残り**: 段2（保持の入口の率、C-1・F-4・G-5・S-2を両版で各3本）はCの空きが20GBに戻ったら記録として。棚卸しの#26〜#32（v0.6.4-inventory.md）。公開文書の「既定ではNVIDIA以外はCPU」と「ProRes の GPU 復号」の引用の直しはTSP-Fable。測定の担当はv065-meas（前の担当は交代）。検証機の生ログとtraceは保管
