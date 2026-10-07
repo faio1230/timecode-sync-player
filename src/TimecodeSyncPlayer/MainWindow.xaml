@@ -88,8 +88,9 @@
                      Minimum="0" Maximum="{Binding Player.SeekBarMaximum, Mode=OneWay}"
                      Value="{Binding Player.SeekBarValue, Mode=OneWay}"
                     IsMoveToPointEnabled="True"
-                    PreviewMouseDown="Seek_MouseDown"
+                    PreviewMouseMove="Seek_MouseMove"
                     PreviewMouseUp="Seek_MouseUp"
+                    LostMouseCapture="Seek_LostMouseCapture"
                     ValueChanged="Seek_ValueChanged"/>
             <TextBlock x:Name="TimeLabel"
                        AutomationProperties.AutomationId="TimeLabel"

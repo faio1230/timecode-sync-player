@@ -555,6 +555,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         };
 
         InitializeComponent();
+        // v0.6.6 F-3: つまみ以外を押したとき、Slider（IsMoveToPointEnabled）がプレビューの押下を処理済みにする。
+        // 処理済みでも受け取り、つかんだまま動かせるようにする（捕捉とスクラブの開始）。
+        SeekBar.AddHandler(PreviewMouseDownEvent, new System.Windows.Input.MouseButtonEventHandler(Seek_MouseDown), handledEventsToo: true);
         Title = ApplicationVersion.WindowTitle;
         LoadCanvasInputsFromState();
         UpdateCanvasUiState();
@@ -978,6 +981,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         TimelineStartupState startupState = TimelineStartupInitializer.CreateState(isVisible);
         _timelinePanel = new TimelinePanel(_playlist, isVisible);
         _timelinePanel.TimelineSeekRequested += TimelinePanel_TimelineSeekRequested;
+        _timelinePanel.TimelineScrubMoved += TimelinePanel_TimelineScrubMoved;
         TimelineContainer.Child = _timelinePanel;
         TimelineContainer.Visibility = startupState.ContainerVisibility;
         _vm.Sync.TimelineToggleLabel = startupState.ToggleLabel;
@@ -2074,17 +2078,59 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     private void TimelinePanel_TimelineSeekRequested(object? sender, TimelineSeekEventArgs e)
     {
-        if (!IsPlaybackAvailable) return;
+        // v0.6.6 F-2: ドラッグを離した（スクラブの最後の 1 本）。飛行中でも必ず送り、以後は古い目標を送らない。
+        // 離した位置が別の行の上なら、行の番号はその行（今のクリックと同じ振る舞い）。
+        if (e.EndsScrub && _scrubSurface == ScrubSurface.Timeline && _scrubThrottle.IsActive)
+        {
+            _seekBarInteraction.EndSeek();
+            _scrubReleasedQpc = Stopwatch.GetTimestamp();
+            _scrubTimelineTrackIndex = e.TrackIndex;
+            if (!IsPlaybackAvailable) return;
+            SendScrubSeek(_scrubThrottle.Release(e.TargetSeconds), ScrubSourceTimelineRelease);
+            return;
+        }
 
+        if (!IsPlaybackAvailable) return;
+        SendTimelineSeek(e.TargetSeconds, e.TrackIndex, endsScrub: false);
+    }
+
+    /// <summary>タイムラインのクリックと同じ経路（同期の保留を捨てる・シーク・手動のシークの知らせ）。</summary>
+    private bool SendTimelineSeek(double targetSeconds, int trackIndex, bool endsScrub)
+    {
         _ltcSyncController.TimelineSeek();
-        bool success = SeekTo(e.TargetSeconds);
+        bool success = SeekTo(targetSeconds);
         if (success)
         {
             // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
-            _syncService.NotifyManualSeek(e.TargetSeconds);
+            _syncService.NotifyManualSeek(targetSeconds);
         }
-        Log.Information("Timeline seek target={Target:F3} trackIndex={TrackIndex} success={Success}",
-            e.TargetSeconds, e.TrackIndex, success);
+        if (endsScrub)
+        {
+            Log.Information("Timeline seek target={Target:F3} trackIndex={TrackIndex} success={Success} endsScrub=True",
+                targetSeconds, trackIndex, success);
+        }
+        else
+        {
+            Log.Information("Timeline seek target={Target:F3} trackIndex={TrackIndex} success={Success}",
+                targetSeconds, trackIndex, success);
+        }
+        return success;
+    }
+
+    /// <summary>v0.6.6 F-2: タイムラインのドラッグ中（押した行に固定）。間引いたシークを送る。</summary>
+    private void TimelinePanel_TimelineScrubMoved(object? sender, TimelineScrubEventArgs e)
+    {
+        if (!IsPlaybackAvailable) return;
+        if (e.Started || _scrubSurface != ScrubSurface.Timeline || !_scrubThrottle.IsActive)
+        {
+            // シークバーと同じく、つかんでいる間は同期の補正を止める（IsSeeking は同期の状態の入力）。
+            _seekBarInteraction.BeginSeek();
+            _scrubTimelineTrackIndex = e.TrackIndex;
+            BeginScrub(ScrubSurface.Timeline);
+        }
+        _timelinePanel?.UpdatePlaybackPosition(e.TargetSeconds);
+        if (_scrubThrottle.Move(e.TargetSeconds) is double target)
+            SendScrubSeek(target, ScrubSourceTimeline);
     }
 
     // ── シークバー操作 ────────────────────────────────────────────
@@ -2094,14 +2140,66 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _ltcSyncController.CancelPendingSync("seekbar-down");
         _seekBarInteraction.BeginSeek();
         TrySetSeekBarFromPointer(e, "MouseDown");
+        if (e.ChangedButton != System.Windows.Input.MouseButton.Left) return;
+        // v0.6.6 F-3: つまみ以外を押したとき（IsMoveToPointEnabled でつまみが飛ぶ）もつかんだまま動かせるよう、
+        // シークバーで捕捉する。つまみを押したときはつまみが自分で捕捉する。
+        if (!IsSeekBarThumbUnderMouse())
+            SeekBar.CaptureMouse();
+        // 押した位置のシークは今どおり離したときに送る（押しただけで 2 本にしない）。動かした分から送る。
+        BeginScrub(ScrubSurface.SeekBar);
+    }
+
+    private void Seek_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_scrubSurface != ScrubSurface.SeekBar || !_scrubThrottle.IsActive) return;
+        if (e.LeftButton != System.Windows.Input.MouseButtonState.Pressed || !SeekBar.IsMouseCaptured) return;
+        // つまみの外を押してつかんだときだけ、位置から値を決める（つまみのドラッグはつまみが値を動かす）。
+        TrySetSeekBarFromPointer(e, "Drag");
     }
 
     private void Seek_MouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        TrySetSeekBarFromPointer(e, "MouseUp");
-        _seekBarInteraction.EndSeek();
-        CommitSeekBarSeek(SeekBar.Value, "MouseUp");
+        _seekBarReleasing = true;
+        try
+        {
+            TrySetSeekBarFromPointer(e, "MouseUp");
+        }
+        finally
+        {
+            _seekBarReleasing = false;
+        }
+        ReleaseSeekBarScrub("MouseUp");
     }
+
+    private void Seek_LostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        // つかんだまま捕捉を失った（別の窓へ移った等）。今の位置で離したときと同じに締める。
+        if (_seekBarReleasing || _scrubSurface != ScrubSurface.SeekBar || !_scrubThrottle.IsActive) return;
+        if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed && SeekBar.IsMouseCaptureWithin) return;
+        ReleaseSeekBarScrub("CaptureLost");
+    }
+
+    private void ReleaseSeekBarScrub(string source)
+    {
+        _seekBarInteraction.EndSeek();
+        if (SeekBar.IsMouseCaptured)
+        {
+            _seekBarReleasing = true;
+            try { SeekBar.ReleaseMouseCapture(); }
+            finally { _seekBarReleasing = false; }
+        }
+        if (_scrubSurface == ScrubSurface.SeekBar && _scrubThrottle.IsActive)
+        {
+            // v0.6.6 F-3: 離したときの 1 本は飛行中でも必ず送る（最後の 1 本）。以後の着地では何も送らない。
+            _scrubReleasedQpc = Stopwatch.GetTimestamp();
+            SendScrubSeek(_scrubThrottle.Release(SeekBar.Value), source);
+            return;
+        }
+        CommitSeekBarSeek(SeekBar.Value, source);
+    }
+
+    private bool IsSeekBarThumbUnderMouse() =>
+        SeekBar.Template?.FindName("PART_Track", SeekBar) is System.Windows.Controls.Primitives.Track { Thumb: { IsMouseOver: true } };
 
     private void Seek_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
@@ -2109,10 +2207,131 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (preview.HasValue)
         {
             _vm.Player.TimeLabel = $"{PlaybackTimeFormatter.FormatFrames(preview.PositionSeconds, _fps)} / {PlaybackTimeFormatter.FormatFrames(_duration, _fps)}";
+            // v0.6.6 F-3: つかんだまま動かした分は、前のシークが着地するまで次を送らない間引きで送る。
+            if (!_seekBarReleasing && _scrubSurface == ScrubSurface.SeekBar &&
+                _scrubThrottle.Move(e.NewValue) is double value)
+            {
+                SendScrubSeek(value, ScrubSourceSeekBar);
+            }
             return;
         }
 
         CommitSeekBarSeek(e.NewValue, "Automation");
+    }
+
+    // ── v0.6.6 F-3・R-3・F-2: スクラブ（つかんだまま動かす間のシーク） ─────────
+    // 間引きは ScrubSeekThrottle（前のシークが着地するまで次を送らない。飛行中は 1 本だけ、離したときの
+    // 1 本は必ず送る）。着地は描画の更新（ProcessRenderFrameUpdateAsync）の中で、配信の世代が送ったシークの
+    // 世代に追いついたかで取る（PlaybackPositionFeedback と同じ比べ）。EOF は shim の Ended で解く。
+    // 同期の規則・ゲート・定数・シークの所要の学習値には触れない。
+
+    private enum ScrubSurface { None, SeekBar, Timeline }
+
+    private const string ScrubSourceSeekBar = "Scrub";
+    private const string ScrubSourceTimeline = "TimelineScrub";
+    private const string ScrubSourceTimelineRelease = "TimelineRelease";
+
+    private readonly ScrubSeekThrottle _scrubThrottle = new();
+    private readonly ScrubFlightStats _scrubStats = new();
+    private ScrubSurface _scrubSurface;
+    private int _scrubTimelineTrackIndex;
+    private long _scrubBeganQpc;
+    private long _scrubReleasedQpc;
+    private long _scrubSentQpc;
+    private bool _scrubSummaryPending;
+    private bool _seekBarReleasing;
+
+    private void BeginScrub(ScrubSurface surface)
+    {
+        _scrubSurface = surface;
+        _scrubThrottle.Begin();
+        _scrubStats.Reset();
+        _scrubBeganQpc = Stopwatch.GetTimestamp();
+        _scrubReleasedQpc = 0;
+        _scrubSummaryPending = true;
+    }
+
+    /// <summary>
+    /// スクラブの 1 本を送る。途中の 1 本は同期の保留の取り消しとシークだけ、離したときの 1 本は今の手動のシークと
+    /// 同じ経路（同期の保留の取り消し・シーク・手動のシークの知らせ）。
+    /// </summary>
+    private void SendScrubSeek(double value, string source)
+    {
+        bool success = _scrubSurface == ScrubSurface.Timeline
+            ? SendTimelineScrubSeek(value, source)
+            : CommitSeekBarSeek(value, source);
+        if (!success)
+        {
+            _scrubThrottle.SendFailed();
+            return;
+        }
+        _scrubStats.NoteSent();
+        _scrubSentQpc = Stopwatch.GetTimestamp();
+        // シークの世代は送った後の照会の現在世代（shim はシークの準備で世代を進める）。シークの直後は
+        // 照会が失敗しうる（新しい世代の位置がまだ無い）ので、取れなければ描画の更新で最初に取れた照会で覚える。
+        if (_playbackApi.TryGetPositionSample(out PlaybackPositionSample sample))
+            _scrubThrottle.SetSeekGeneration(sample.CurrentGeneration);
+    }
+
+    private bool SendTimelineScrubSeek(double targetSeconds, string source)
+    {
+        if (source == ScrubSourceTimelineRelease)
+            return SendTimelineSeek(targetSeconds, _scrubTimelineTrackIndex, endsScrub: true);
+
+        // スクラブの途中は同期の保留を捨ててシークするだけ（手動のシークの知らせは離したときの 1 本だけ。
+        // c の学習のサンプルと reason=manual の relocate の行は、今と同じ 1 回のドラッグにつき 1 本）。
+        _ltcSyncController.CancelPendingSync("timeline-scrub");
+        bool success = SeekTo(targetSeconds);
+        Log.Information(
+            "Seek command sent source={Source} target={Target:F3} trackIndex={TrackIndex} success={Success}",
+            source, targetSeconds, _scrubTimelineTrackIndex, success);
+        return success;
+    }
+
+    /// <summary>描画の更新ごとに、飛行中のスクラブのシークが着地したかを世代で見る。</summary>
+    private void ObserveScrubLanding()
+    {
+        if (!_scrubThrottle.InFlight) return;
+        if (!_playbackApi.TryGetPositionSample(out PlaybackPositionSample sample)) return;
+        if (!_scrubThrottle.GenerationKnown)
+            _scrubThrottle.SetSeekGeneration(sample.CurrentGeneration);
+        if (!_scrubThrottle.HasLanded(sample.DeliveredGeneration)) return;
+        CompleteScrubFlight("frame", sample.DeliveredSeconds, sample.DeliveredGeneration);
+    }
+
+    private void CompleteScrubFlight(string reason, double deliveredSeconds, ulong deliveredGeneration)
+    {
+        if (!_scrubThrottle.InFlight) return;
+        double flightMs = (Stopwatch.GetTimestamp() - _scrubSentQpc) * 1000.0 / Stopwatch.Frequency;
+        bool released = !_scrubThrottle.IsActive;
+        _scrubStats.NoteFlight(flightMs);
+        Log.Information(
+            "Scrub landed reason={Reason} surface={Surface:l} flightMs={FlightMs:F1} delivered={Delivered:F3} deliveredGen={DeliveredGen} seekGen={SeekGen} released={Released} paused={Paused}",
+            reason, _scrubSurface.ToString(), flightMs, deliveredSeconds, deliveredGeneration, _scrubThrottle.SeekGeneration,
+            released, _playbackControl.IsPaused);
+        if (_scrubThrottle.Landed() is double next)
+        {
+            SendScrubSeek(next, _scrubSurface == ScrubSurface.Timeline ? ScrubSourceTimeline : ScrubSourceSeekBar);
+            return;
+        }
+        if (released && _scrubSummaryPending)
+        {
+            _scrubSummaryPending = false;
+            double heldSeconds = _scrubReleasedQpc > _scrubBeganQpc
+                ? (_scrubReleasedQpc - _scrubBeganQpc) / (double)Stopwatch.Frequency
+                : 0.0;
+            Log.Information(
+                "Scrub summary surface={Surface:l} sent={Sent} heldMs={HeldMs:F0} sentPerSecond={SentPerSecond:F2} flights={Flights} flightMedianMs={MedianMs:F1} flightMaxMs={MaxMs:F1}",
+                _scrubSurface.ToString(), _scrubStats.Sent, heldSeconds * 1000.0, _scrubStats.SentPerSecond(heldSeconds),
+                _scrubStats.FlightsMs.Count, _scrubStats.MedianMs(), _scrubStats.MaxMs());
+        }
+    }
+
+    /// <summary>shim の Ended（EOF）を観測した。新しいフレームが来ないので、飛行中のスクラブを解く。</summary>
+    private void CompleteScrubFlightOnEnded()
+    {
+        if (_disposed || !_scrubThrottle.InFlight) return;
+        CompleteScrubFlight("ended", double.NaN, 0);
     }
 
     // ── 定期 UI 更新（タイマー） ──────────────────────────────────
@@ -2271,6 +2490,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         SubmitOutputState();
         // v0.5.4 段 B1: 描画の tick でも着地の状態（新しい判定）を観測する（LTC のフレームの経路と独立）。
         ObserveLandingState();
+        // v0.6.6 F-3: スクラブの着地は描画の更新の中で世代を見て取る（タイマーは足さない）。
+        ObserveScrubLanding();
         if (_disposed || !_renderSession.IsCurrent(renderGeneration)) return Task.CompletedTask;
         UpdatePerFrameUI();
         return Task.CompletedTask;
@@ -2468,6 +2689,15 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         GapCaptureHandoffLog.Record("ui.ended", "shim Ended received",
             "state=" + endedHandler.CurrentState + " frameSeen=" + endedHandler.FrameSeenSinceCapture);
         _gstBackendState.Seeking.NotifyEnded();
+        // v0.6.6 F-3: EOF では新しいフレームが来ない。飛行中のスクラブも同じ Ended で解く（UI スレッドで）。
+        try
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Normal, CompleteScrubFlightOnEnded);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Scrub: Ended の通知を UI へ渡せませんでした");
+        }
         RequestGapFreezeSeekRetryForEnded();
     }
 
@@ -2787,7 +3017,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         disposeTimeline: () =>
         {
             if (_timelinePanel != null)
+            {
                 _timelinePanel.TimelineSeekRequested -= TimelinePanel_TimelineSeekRequested;
+                _timelinePanel.TimelineScrubMoved -= TimelinePanel_TimelineScrubMoved;
+            }
             _timelinePanel?.Dispose();
         },
         disposeBuffer: _renderSession.Dispose,
@@ -2943,7 +3176,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // ── シークバー ────────────────────────────────────────────────
 
-    private bool TrySetSeekBarFromPointer(System.Windows.Input.MouseButtonEventArgs e, string phase)
+    private bool TrySetSeekBarFromPointer(System.Windows.Input.MouseEventArgs e, string phase)
     {
         double oldValue  = SeekBar.Value;
         double pointerX  = e.GetPosition(SeekBar).X;
@@ -2957,8 +3190,16 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         SeekBar.Value = update.SliderValue;
         _vm.Player.SeekBarValue = update.SliderValue;
-        Log.Information("Seek {Phase} pointerX={PointerX:F1} oldValue={OldValue:F6} newValue={NewValue:F6}",
-            phase, pointerX, oldValue, update.SliderValue);
+        if (phase == "Drag")
+        {
+            Log.Debug("Seek {Phase} pointerX={PointerX:F1} oldValue={OldValue:F6} newValue={NewValue:F6}",
+                phase, pointerX, oldValue, update.SliderValue);
+        }
+        else
+        {
+            Log.Information("Seek {Phase} pointerX={PointerX:F1} oldValue={OldValue:F6} newValue={NewValue:F6}",
+                phase, pointerX, oldValue, update.SliderValue);
+        }
         return true;
     }
 
@@ -2976,17 +3217,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
-    private void CommitSeekBarSeek(double sliderValue, string source)
+    /// <summary>シークバーの値でシークする。送れたら true（スクラブの間引きが飛行中にする）。</summary>
+    private bool CommitSeekBarSeek(double sliderValue, string source)
     {
-        if (!IsPlaybackAvailable) return;
+        if (!IsPlaybackAvailable) return false;
 
         SeekBarCommit commit = _seekBarInteraction.CreateCommit(sliderValue, SeekBar.Minimum, SeekBar.Maximum, _duration);
-        if (!commit.ShouldCommit) return;
+        if (!commit.ShouldCommit) return false;
 
-        _ltcSyncController.CancelPendingSync("seekbar-commit");
-        _vm.Player.SeekBarValue = commit.SliderValue;
+        _ltcSyncController.CancelPendingSync(source == ScrubSourceSeekBar ? "seekbar-scrub" : "seekbar-commit");
+        // スクラブの途中はつまみをつかんでいるので、表示の値（バインドの元）は書き換えない。
+        if (source != ScrubSourceSeekBar)
+            _vm.Player.SeekBarValue = commit.SliderValue;
         bool success = SeekTo(commit.TargetSeconds);
-        if (success)
+        // v0.6.6 F-3: スクラブの途中は手動のシークの知らせを出さない（離したときの 1 本だけが知らせる。
+        // c の学習のサンプルと reason=manual の relocate の行は今と同じ 1 回のドラッグにつき 1 本）。
+        if (success && source != ScrubSourceSeekBar)
         {
             // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
             _syncService.NotifyManualSeek(commit.TargetSeconds);
@@ -2995,6 +3241,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         Log.Information(
             "Seek command sent source={Source} value={SliderValue:F6} duration={Duration:F3} target={Target:F3} success={Success} immediateTimePos={TimePos:F3}",
             source, commit.SliderValue, _duration, commit.TargetSeconds, success, timePos);
+        return success;
     }
 
     /// <summary>
