@@ -241,8 +241,10 @@ public class SyncOffsetTests
 
         xaml.Should().Contain("AutomationProperties.AutomationId=\"SyncOffsetSlider\"");
         xaml.Should().Contain("Value=\"{Binding Sync.SyncOffsetMs, Mode=TwoWay}\"");
-        xaml.Should().Contain("AutomationProperties.AutomationId=\"SyncOffsetValueText\"");
-        xaml.Should().Contain("Text=\"{Binding Sync.SyncOffsetText}\"");
+        // v0.6.6: 値は入力欄だけで見せる（値の文字「+40 ms」は外した）
+        xaml.Should().Contain("AutomationProperties.AutomationId=\"SyncOffsetInputBox\"");
+        xaml.Should().Contain("Text=\"{Binding Sync.SyncOffsetInputText, Mode=TwoWay, UpdateSourceTrigger=Explicit}\"");
+        xaml.Should().NotContain("SyncOffsetValueText");
         xaml.Should().Contain("＋で映像が先行");
         codeBehind.Should().Contain("GetSyncOffsetMilliseconds: () => _vm.Sync.SyncOffsetMs");
         codeBehind.Should().Contain("SyncOffsetMs = _vm.Sync.SyncOffsetMs,");
