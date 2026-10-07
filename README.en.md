@@ -13,7 +13,7 @@ TimecodeSyncPlayer is a live-show video player for Windows. It receives LTC (Lin
 
 The installer and the zip are on the [latest stable release (Latest) on GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases/latest). The stable release is the latest v0.6.x, starting with v0.6.1. Releases marked "Pre-release" are still being verified. Do not use them for a show.
 
-For most users, use the per-user installer `TimecodeSyncPlayer-v<version>-setup.exe`, which does not require administrator privileges. For a portable extracted copy, choose `TimecodeSyncPlayer-v<version>-win-x64.zip`. `<version>` is the latest stable release, for example `v0.6.5`. The GStreamer 1.28.2 runtime is included, so no separate GStreamer installation is needed.
+For most users, use the per-user installer `TimecodeSyncPlayer-v<version>-setup.exe`, which does not require administrator privileges. For a portable extracted copy, choose `TimecodeSyncPlayer-v<version>-win-x64.zip`. `<version>` is the latest stable release, for example `v0.6.6`. The GStreamer 1.28.2 runtime is included, so no separate GStreamer installation is needed.
 
 Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show. How the material is exported makes a large difference to sync stability.
 
