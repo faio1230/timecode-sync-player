@@ -114,6 +114,8 @@ MSVCP140D / ucrtbased に依存するため配布できません。
 （`native\tcs_gstreamer.dll`が優先）。GStreamerランタイムのパスが通っていないとDLLを
 ロードできないため、先にランタイムを導入してください。
 
+`native\tcs_gstreamer.dll` は `build-debug` の出力より優先されます。`build-debug` の方が新しい（更新時刻）とビルドが止まります（`-p:AllowStaleNativeShim=true` で通せます。Release の構成では `build-release` と比べます）。
+
 ---
 
 ## 4. ビルド
@@ -191,6 +193,8 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe
 ```powershell
 dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 ```
+
+実機ロードなどで手でアプリを起動するときは `pwsh -File scripts\start-isolated.ps1` を使います（利用者の設定を書き換えないため。一時フォルダの settings.json を `TIMECODE_SYNC_PLAYER_SETTINGS_PATH` で渡して起動し、その場所と PID を表示します。`--playlist` などの引数はそのまま渡ります）。
 
 実行時のログは以下に出力されます。
 

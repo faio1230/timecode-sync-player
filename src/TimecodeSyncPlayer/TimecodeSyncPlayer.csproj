@@ -53,4 +53,7 @@
     </Content>
   </ItemGroup>
 
+  <!-- v0.6.6: native\ の shim が build-debug（Release では build-release）より古いときビルドを止める。 -->
+  <Import Project="NativeShimGuard.targets" />
+
 </Project>
