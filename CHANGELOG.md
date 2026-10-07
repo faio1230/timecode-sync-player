@@ -73,6 +73,8 @@ Settings and projects are unchanged from 0.6.5.
 
 ### Known limitations
 
+- The bundled GStreamer does not include the Matroska demuxer, so .mkv/.webm files cannot be opened (their duration is
+  unknown too). The recommended containers are mp4 and mov (same as 0.6.5 and earlier).
 - Formats outside the recommendation (read by the generic decoder: MPEG-2, MJPEG, DNxHD/DNxHR video, and files with
   the .mpg or .flv extension) load GIO, so the rare crash right after startup can still happen. For a file whose
   extension is not in the table, the clip duration and the GOP scan fail as an unsupported extension, and the duration
