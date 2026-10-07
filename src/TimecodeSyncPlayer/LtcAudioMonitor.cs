@@ -7,10 +7,12 @@ using TimecodeSyncPlayer.Contracts;
 
 namespace TimecodeSyncPlayer;
 
-internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
+internal sealed class LtcAudioMonitor : ILtcMonitor, ILtcInputLevelSource, IDisposable
 {
     private WasapiCapture? _capture;
     private LtcAudioSampleProcessor? _sampleProcessor;
+    // v0.6.6 R-13: 入力のメーターの間引き。音声のスレッドだけが触る。
+    private LtcInputLevelMeter? _levelMeter;
     private long _audioCallbacks;
     private long _samplesReceived;
     private long _decodedFrames;
@@ -22,6 +24,9 @@ internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
 
     public event EventHandler<LtcFrameReceivedEventArgs>? FrameReceived;
     public event EventHandler<Exception?>? Stopped;
+
+    /// <summary>v0.6.6 R-13: 100ms ごとのレベル（音声のスレッドから出す）。</summary>
+    public event EventHandler<LtcInputLevel>? LevelReported;
 
     public bool IsRunning => _capture != null;
     public string? DeviceName => _deviceName;
@@ -52,6 +57,7 @@ internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
         _deviceName = deviceName;
         _sampleRate = format.SampleRate;
         _sampleProcessor = new LtcAudioSampleProcessor(new LtcDecoder(format.SampleRate, fps: 25.0));
+        _levelMeter = new LtcInputLevelMeter(Stopwatch.Frequency);
         _audioCallbacks = 0;
         _samplesReceived = 0;
         _decodedFrames = 0;
@@ -121,6 +127,11 @@ internal sealed class LtcAudioMonitor : ILtcMonitor, IDisposable
             FrameReceived?.Invoke(this, frame);
         }
         _anchorSpreadMs = result.AnchorSpreadMs;
+
+        // v0.6.6 R-13: デコーダが出したフレームを数えるだけ（判定は変えない）。100ms に 1 回だけ知らせる。
+        LtcInputLevel? level = _levelMeter?.Observe(callbackTimestamp, result.Peak, result.Frames.Count);
+        if (level != null)
+            LevelReported?.Invoke(this, level);
 
         LogStatsIfNeeded(capture.WaveFormat, result.Peak, result.Rms, result.EstimatedFps);
     }

@@ -87,6 +87,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // ── LTC ───────────────────────────────────────────────────────
     private readonly LtcSyncController _ltcSyncController;
     private readonly ILtcMonitor _ltcMonitor;
+    // v0.6.6 R-13: 入力のメーター。音声のスレッドから最新だけを置き、UI へは Background で 1 回ずつ移す。
+    private readonly LatestValueMailbox<LtcInputLevel> _ltcLevelMailbox = new();
+    private Action? _applyLtcInputLevel;
     private readonly TimecodeSyncService _syncService;
     private readonly SeekingProbe _seekingProbe = new();
     private readonly FileLoadStabilityLogState _fileLoadStabilityLogState = new(TimeSpan.FromSeconds(1));
@@ -623,6 +626,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         PlaylistList.ItemsSource = _playlist.Tracks;
         _ltcMonitor.FrameReceived += LtcMonitor_FrameReceived;
         _ltcMonitor.Stopped += LtcMonitor_Stopped;
+        if (_ltcMonitor is ILtcInputLevelSource levelSource)
+            levelSource.LevelReported += LtcMonitor_LevelReported;
         RefreshLtcDevices();
         AutoOffsetCheckBox.IsChecked = _settingsManager.Current.AutoOffsetOnAdd;
     }
@@ -1210,6 +1215,29 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             Log.Debug("Gap action {Action}: callMs={CallMs:F1}",
                 action, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
+    }
+
+    /// <summary>
+    /// v0.6.6 R-13: 音声のスレッドで呼ばれる。最新の値を置くだけにし、UI へはまだ投げていないときだけ
+    /// Background で 1 回投げる（UI が遅れても投げた分が積み上がらない）。
+    /// </summary>
+    private void LtcMonitor_LevelReported(object? sender, LtcInputLevel level)
+    {
+        if (_disposed) return;
+        if (_ltcLevelMailbox.Offer(level))
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, _applyLtcInputLevel ??= ApplyLtcInputLevel);
+    }
+
+    private void ApplyLtcInputLevel()
+    {
+        if (_disposed) return;
+        LtcInputLevel? level = _ltcLevelMailbox.Take();
+        if (level == null) return;
+        // fps は LTC の欄で選んでいる値（Auto は確定した値、未確定なら 24）。同期の側の値は読むだけ。
+        double fps = LtcReceptionPolicy.ReceptionFps(_vm.Sync.LtcFpsMode, _ltcSyncController.LastTimecodeFps);
+        if (_vm.Sync.ApplyLtcInputLevel(level, fps))
+            Log.Debug("LTC reception state={State} peakDbfs={PeakDbfs:F1} decodedFramesLastSecond={Frames} fps={Fps:F3}",
+                _vm.Sync.LtcReception, level.PeakDbfs, level.DecodedFramesLastSecond, fps);
     }
 
     private void LtcMonitor_Stopped(object? sender, Exception? exception)
@@ -3203,6 +3231,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         {
             _ltcMonitor.FrameReceived -= LtcMonitor_FrameReceived;
             _ltcMonitor.Stopped -= LtcMonitor_Stopped;
+            if (_ltcMonitor is ILtcInputLevelSource levelSource)
+                levelSource.LevelReported -= LtcMonitor_LevelReported;
             _ltcMonitor.Dispose();
         },
         disposeSpout: () => _spoutOutput.Dispose(),
