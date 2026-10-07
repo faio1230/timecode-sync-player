@@ -116,6 +116,66 @@ public sealed class FrameStepperTests
         outcome.TargetFrame.Should().Be(102);
     }
 
+    public static readonly TheoryData<double> NtscAndSixtyFps = new()
+    {
+        24000.0 / 1001, 30000.0 / 1001, 60000.0 / 1001, 60,
+    };
+
+    /// <summary>
+    /// 押して → 着地 → 押して、を 10 回。正確なシークの後の配信 PTS はフレームの頭ではなく送った目標の秒
+    /// （頭 + 半フレーム）で出る（実機と同じ）。その PTS から次を送っても 1 回おきに 1 フレーム飛ばず、
+    /// 10 回で 10 フレーム進み、戻しの 10 回で元のフレームに戻る。PTS は送った秒そのままと、ns に切り捨てた値の両方。
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(NtscAndSixtyFps))]
+    public void PressLandPress_TenTimes_FromTheTargetSecondsPts_MovesOneFrameEach_AndBackReturns(double fps)
+    {
+        foreach (bool truncateToNs in new[] { false, true })
+        {
+            const long start = 100;
+            ulong generation = 1;
+            var fx = new Fx
+            {
+                Fps = fps,
+                Delivered = new(start / fps, generation),
+                CurrentGeneration = generation + 1,
+            };
+            var stepper = fx.Create();
+
+            long expected = start;
+            foreach (int direction in new[] { 1, -1 })
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    generation++;
+                    fx.CurrentGeneration = generation;
+
+                    FrameStepOutcome sent = stepper.Press(direction);
+                    sent.Kind.Should().Be(FrameStepOutcomeKind.Sent, $"fps={fps} ns={truncateToNs} dir={direction} i={i}");
+                    sent.BaseFrame.Should().Be(expected, $"fps={fps} ns={truncateToNs} dir={direction} i={i}");
+                    expected += direction;
+                    sent.TargetFrame.Should().Be(expected, $"fps={fps} ns={truncateToNs} dir={direction} i={i}");
+                    fx.Seeks[^1].Should().BeApproximately((expected + 0.5) / fps, 1e-9);
+
+                    // 着地。配信の PTS は送った目標の秒（頭 + 半フレーム）。
+                    double pts = truncateToNs
+                        ? Math.Floor(fx.Seeks[^1] * 1_000_000_000.0) / 1_000_000_000.0
+                        : fx.Seeks[^1];
+                    stepper.ObserveLanding(generation, generation, pts).Kind.Should().Be(FrameStepOutcomeKind.Landed);
+                    stepper.InFlight.Should().BeFalse();
+                    fx.Delivered = new(pts, generation);
+                }
+
+                long afterTen = direction > 0 ? start + 10 : start;
+                expected.Should().Be(afterTen, $"fps={fps} ns={truncateToNs} dir={direction}");
+                FrameStepMath.FrameIndexAt(fx.Delivered!.Value.Seconds, fps).Should().Be(afterTen);
+            }
+
+            fx.Seeks.Should().HaveCount(20, "one seek per press, nothing queued");
+            fx.PauseCalls.Should().Be(0);
+        }
+    }
+
     [Fact]
     public void PressesInFlight_AccumulateIntoTheTarget_AndOneSeekIsSentAfterLanding()
     {
