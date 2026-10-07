@@ -567,6 +567,76 @@
                                TextTrimming="CharacterEllipsis"
                                HorizontalAlignment="Center"
                                Margin="0,2,0,0"/>
+                    <!-- v0.6.6 R-13: 入力のメーター（ピーク）と受信の表示。LTC を止めている間は隠す（場所は空けたまま、下を動かさない） -->
+                    <Grid x:Name="LtcInputLevelPanel" Margin="0,6,0,0">
+                        <Grid.Style>
+                            <Style TargetType="Grid">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Sync.IsLtcRunning}" Value="False">
+                                        <Setter Property="Visibility" Value="Hidden"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Style>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" MinWidth="112"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
+                            <Ellipse Width="7" Height="7" Margin="0,0,5,0" VerticalAlignment="Center"
+                                     Fill="{Binding Sync.LtcReceptionForeground}"/>
+                            <TextBlock x:Name="LtcReceptionText"
+                                       AutomationProperties.AutomationId="LtcReceptionText"
+                                       AutomationProperties.ItemStatus="{Binding Sync.LtcReceptionStatus}"
+                                       Text="{Binding Sync.LtcReceptionText}"
+                                       Foreground="{Binding Sync.LtcReceptionForeground}"
+                                       FontSize="11"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <Grid Grid.Column="1" Margin="8,0,0,0"
+                              ToolTip="入力のピーク（-60〜0 dBFS）">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <ProgressBar x:Name="LtcLevelMeter"
+                                         AutomationProperties.AutomationId="LtcLevelMeter"
+                                         Minimum="0" Maximum="100" Height="8" Margin="0,4,0,0"
+                                         Value="{Binding Sync.LtcMeterPercent, Mode=OneWay}"
+                                         Foreground="{Binding Sync.LtcReceptionForeground}"
+                                         IsTabStop="False">
+                                <ProgressBar.Template>
+                                    <ControlTemplate TargetType="ProgressBar">
+                                        <Grid SnapsToDevicePixels="True">
+                                            <Border x:Name="PART_Track" Background="#1C1C1C"
+                                                    BorderBrush="#3A3A3A" BorderThickness="1"/>
+                                            <Border x:Name="PART_Indicator" HorizontalAlignment="Left"
+                                                    Background="{TemplateBinding Foreground}"/>
+                                            <!-- 目盛り: 左端 -60、2/3 の所 -20、右端 0 dBFS -->
+                                            <Grid IsHitTestVisible="False">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="2*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Rectangle Grid.Column="1" Width="1" HorizontalAlignment="Left" Fill="#666666"/>
+                                            </Grid>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </ProgressBar.Template>
+                            </ProgressBar>
+                            <Grid Grid.Row="1" Margin="0,1,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="-60" Foreground="#666666" FontSize="9" HorizontalAlignment="Left"/>
+                                <TextBlock Grid.Column="1" Text="-20" Foreground="#666666" FontSize="9"
+                                           HorizontalAlignment="Left" Margin="-7,0,0,0"/>
+                                <TextBlock Grid.Column="1" Text="0" Foreground="#666666" FontSize="9"
+                                           HorizontalAlignment="Right"/>
+                            </Grid>
+                        </Grid>
+                    </Grid>
                 </StackPanel>
 
                 <TextBlock Grid.Row="6"

@@ -89,11 +89,60 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
         get => _isLtcRunning;
         set
         {
+            bool started = value && !_isLtcRunning;
             _isLtcRunning = value;
+            if (started)
+                SetLtcReception(LtcReceptionPolicy.Initial);
             OnPropertyChanged();
             _startLtcCommand.RaiseCanExecuteChanged();
             _stopLtcCommand.RaiseCanExecuteChanged();
         }
+    }
+
+    // v0.6.6 R-13: LTC の入力のメーターと受信の表示。LTC を止めている間は窓の側で隠す（IsLtcRunning）。
+    private LtcReceptionDisplay _ltcReception = LtcReceptionPolicy.Initial;
+
+    /// <summary>受信の表示の文字（「LTC 受信中」「信号あり・LTC なし」「無音」）。</summary>
+    public string LtcReceptionText => _ltcReception.Text;
+
+    /// <summary>受信の表示とメーターの色。</summary>
+    public string LtcReceptionForeground => _ltcReception.Foreground;
+
+    /// <summary>受信の表示の段（UIA の ItemStatus に出す。Receiving・SignalWithoutLtc・Silent）。</summary>
+    public string LtcReceptionStatus => _ltcReception.State.ToString();
+
+    /// <summary>メーターの値（0〜100。-60 dBFS が 0、0 dBFS が 100）。</summary>
+    public double LtcMeterPercent => _ltcReception.MeterPercent;
+
+    /// <summary>今の受信の段（表示だけ。同期は読まない）。</summary>
+    internal LtcReceptionState LtcReception => _ltcReception.State;
+
+    /// <summary>
+    /// 監視から届いたレベルを表示へ移す（UI スレッド）。<paramref name="fps"/> は判定に使う fps
+    /// （<see cref="LtcReceptionPolicy.ReceptionFps"/>）。LTC を止めている間に遅れて届いた値は捨てる。
+    /// 段が変わったら true。
+    /// </summary>
+    public bool ApplyLtcInputLevel(LtcInputLevel level, double fps)
+    {
+        if (!_isLtcRunning)
+            return false;
+        LtcReceptionState previous = _ltcReception.State;
+        SetLtcReception(LtcReceptionPolicy.Describe(level, fps));
+        return previous != _ltcReception.State;
+    }
+
+    private void SetLtcReception(LtcReceptionDisplay display)
+    {
+        LtcReceptionDisplay previous = _ltcReception;
+        _ltcReception = display;
+        if (previous.State != display.State)
+        {
+            OnPropertyChanged(nameof(LtcReceptionText));
+            OnPropertyChanged(nameof(LtcReceptionForeground));
+            OnPropertyChanged(nameof(LtcReceptionStatus));
+        }
+        if (!previous.MeterPercent.Equals(display.MeterPercent))
+            OnPropertyChanged(nameof(LtcMeterPercent));
     }
 
     public bool SyncEnabled
