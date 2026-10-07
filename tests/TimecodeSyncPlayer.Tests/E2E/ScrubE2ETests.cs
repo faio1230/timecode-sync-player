@@ -91,7 +91,20 @@ public sealed class ScrubE2ETests
             lines.Take(releaseIndex + 1).Should().Contain(l => Regex.IsMatch(l, "Sync lifecycle: \"?ManualSeek\"? source=seekbar-commit"),
                 "the release goes through the manual seek path");
             lines.Should().Contain(l => Regex.IsMatch(l, "Sync lifecycle: \"?ManualSeek\"? source=seekbar-scrub"),
-                "the scrub seeks go through the same manual seek path");
+                "the scrub seeks cancel pending sync like a manual seek");
+            // 離した後（"Seek MouseUp" の行から）の手動のシークのできごとは 1 回だけ。
+            int mouseUpIndex = lines.FindLastIndex(l => l.Contains("Seek MouseUp ", StringComparison.Ordinal));
+            mouseUpIndex.Should().BeGreaterThanOrEqualTo(0);
+            List<string> afterRelease = lines.Skip(mouseUpIndex)
+                .Where(l => Regex.IsMatch(l, "Sync lifecycle: \"?ManualSeek\"?")).ToList();
+            foreach (string l in afterRelease) _output.WriteLine("after release: " + l.TrimEnd());
+            afterRelease.Should().ContainSingle("only the release is a manual seek after letting go");
+            // 手動のシークの知らせ（reason=manual の relocate、c の学習のサンプル）は 1 回のドラッグにつき離したときの 1 本だけ。
+            int mouseDownIndex = lines.FindIndex(l => l.Contains("Seek MouseDown ", StringComparison.Ordinal));
+            List<string> manualRelocates = lines.Skip(Math.Max(0, mouseDownIndex))
+                .Where(l => l.Contains("sync.gate relocate reason=manual", StringComparison.Ordinal)).ToList();
+            foreach (string l in manualRelocates) _output.WriteLine("manual relocate: " + l.TrimEnd());
+            manualRelocates.Should().ContainSingle("mid-scrub seeks do not notify a manual seek");
             var landings = lines.Skip(releaseIndex + 1)
                 .Select(l => Regex.Match(l, @"sync\.gate new-landing target=(?<t>[0-9.]+)"))
                 .Where(m => m.Success)

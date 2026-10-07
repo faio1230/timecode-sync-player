@@ -2251,7 +2251,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _scrubSummaryPending = true;
     }
 
-    /// <summary>スクラブの 1 本を、今の手動のシークと同じ経路で送る（同期の保留の取り消し・シーク・手動のシークの知らせ）。</summary>
+    /// <summary>
+    /// スクラブの 1 本を送る。途中の 1 本は同期の保留の取り消しとシークだけ、離したときの 1 本は今の手動のシークと
+    /// 同じ経路（同期の保留の取り消し・シーク・手動のシークの知らせ）。
+    /// </summary>
     private void SendScrubSeek(double value, string source)
     {
         bool success = _scrubSurface == ScrubSurface.Timeline
@@ -2275,10 +2278,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (source == ScrubSourceTimelineRelease)
             return SendTimelineSeek(targetSeconds, _scrubTimelineTrackIndex, endsScrub: true);
 
-        _ltcSyncController.TimelineSeek();
+        // スクラブの途中は同期の保留を捨ててシークするだけ（手動のシークの知らせは離したときの 1 本だけ。
+        // c の学習のサンプルと reason=manual の relocate の行は、今と同じ 1 回のドラッグにつき 1 本）。
+        _ltcSyncController.CancelPendingSync("timeline-scrub");
         bool success = SeekTo(targetSeconds);
-        if (success)
-            _syncService.NotifyManualSeek(targetSeconds);
         Log.Information(
             "Seek command sent source={Source} target={Target:F3} trackIndex={TrackIndex} success={Success}",
             source, targetSeconds, _scrubTimelineTrackIndex, success);
@@ -3227,7 +3230,9 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (source != ScrubSourceSeekBar)
             _vm.Player.SeekBarValue = commit.SliderValue;
         bool success = SeekTo(commit.TargetSeconds);
-        if (success)
+        // v0.6.6 F-3: スクラブの途中は手動のシークの知らせを出さない（離したときの 1 本だけが知らせる。
+        // c の学習のサンプルと reason=manual の relocate の行は今と同じ 1 回のドラッグにつき 1 本）。
+        if (success && source != ScrubSourceSeekBar)
         {
             // v0.5.4 段 B3: 利用者のシーク中は着地待ち（門 22 のネイティブの畳み先）。
             _syncService.NotifyManualSeek(commit.TargetSeconds);

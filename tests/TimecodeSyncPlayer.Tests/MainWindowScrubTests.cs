@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Gst;
 using TimecodeSyncPlayer.Tests.Gst;
+using TimecodeSyncPlayer.Tests.Integration;
 
 namespace TimecodeSyncPlayer.Tests;
 
@@ -100,6 +101,101 @@ public sealed class MainWindowScrubTests
         finally { window.Dispose(); window.Close(); }
         return Task.CompletedTask;
     });
+
+    /// <summary>
+    /// 手動のシークの知らせ（c の学習のサンプル・reason=manual の relocate の行）は、離したときの 1 本だけ。
+    /// 途中のシークは同期の保留の取り消しとシークだけで、押している間は IsSeeking で同期の補正が止まっている。
+    /// </summary>
+    [Fact]
+    public Task SeekBarScrub_NotifiesManualSeekOnlyOnRelease() => OnUi(() =>
+    {
+        using var sink = new ScenarioLogSink();
+        var playbackApi = new FakePlaybackApi
+        {
+            Duration = 20,
+            PositionSample = new PlaybackPositionSample(0, PlaybackPositionBasis.Delivered, 4, 0.5, 4, 5),
+        };
+        var (provider, window) = CreateWindow(playbackApi);
+        try
+        {
+            var seekBar = (SeekBarInteractionController)Field(window, "_seekBarInteraction");
+            typeof(MainWindow).GetField("_duration", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, 20.0);
+            window.SeekBar.Maximum = 1.0;
+            // 押した（Seek_MouseDown と同じ状態）。
+            seekBar.BeginSeek();
+            InvokeArgs(window, "BeginScrub", ScrubSurfaceSeekBar());
+
+            window.SeekBar.Value = 0.2;   // 送る（途中）
+            window.SeekBar.Value = 0.3;   // 飛行中: 覚える
+            playbackApi.PositionSample = new PlaybackPositionSample(4, PlaybackPositionBasis.Delivered, 5, 4.0, 5, 6);
+            Invoke(window, "ObserveScrubLanding");   // 着地: 0.3 を送る（途中）
+            seekBar.IsSeeking.Should().BeTrue("sync correction is stopped while the bar is held");
+
+            playbackApi.Seeks.Should().Equal([4.0, 6.0]);
+            sink.GateEvents.Count(e => e.Name == "relocate" && e.Message.Contains("reason=manual"))
+                .Should().Be(0, "mid-scrub seeks do not notify a manual seek");
+
+            window.SeekBar.Value = 0.4;   // 飛行中: 覚える
+            InvokeArgs(window, "ReleaseSeekBarScrub", "MouseUp");
+            seekBar.IsSeeking.Should().BeFalse();
+            playbackApi.Seeks.Should().Equal([4.0, 6.0, 8.0]);
+            sink.GateEvents.Count(e => e.Name == "relocate" && e.Message.Contains("reason=manual"))
+                .Should().Be(1, "only the release notifies a manual seek");
+        }
+        finally { window.Dispose(); window.Close(); provider.Dispose(); }
+        return Task.CompletedTask;
+    });
+
+    [Fact]
+    public Task TimelineScrub_NotifiesManualSeekOnlyOnRelease() => OnUi(() =>
+    {
+        using var sink = new ScenarioLogSink();
+        var playbackApi = new FakePlaybackApi
+        {
+            PositionSample = new PlaybackPositionSample(0, PlaybackPositionBasis.Delivered, 4, 0.5, 4, 5),
+        };
+        var (provider, window) = CreateWindow(playbackApi);
+        try
+        {
+            var seekBar = (SeekBarInteractionController)Field(window, "_seekBarInteraction");
+            Invoke(window, "TimelinePanel_TimelineScrubMoved", new TimelineScrubEventArgs(1.0, 0, started: true));
+            Invoke(window, "TimelinePanel_TimelineScrubMoved", new TimelineScrubEventArgs(2.0, 0, started: false));
+            playbackApi.PositionSample = new PlaybackPositionSample(1, PlaybackPositionBasis.Delivered, 5, 1.0, 5, 6);
+            Invoke(window, "ObserveScrubLanding");
+            seekBar.IsSeeking.Should().BeTrue("sync correction is stopped while the row is held");
+            playbackApi.Seeks.Should().Equal([1.0, 2.0]);
+            sink.GateEvents.Count(e => e.Name == "relocate" && e.Message.Contains("reason=manual")).Should().Be(0);
+
+            Invoke(window, "TimelinePanel_TimelineSeekRequested", new TimelineSeekEventArgs(3.0, 0, endsScrub: true));
+            seekBar.IsSeeking.Should().BeFalse();
+            playbackApi.Seeks.Should().Equal([1.0, 2.0, 3.0]);
+            sink.GateEvents.Count(e => e.Name == "relocate" && e.Message.Contains("reason=manual")).Should().Be(1);
+        }
+        finally { window.Dispose(); window.Close(); provider.Dispose(); }
+        return Task.CompletedTask;
+    });
+
+    private static (ServiceProvider Provider, MainWindow Window) CreateWindow(FakePlaybackApi playbackApi)
+    {
+        var services = new ServiceCollection();
+        App.ConfigureServices(services);
+        services.AddSingleton<IGstNativeApi>(new FakeGstNative { PlayerCreateResult = new IntPtr(1) });
+        services.AddSingleton<IPlaybackApi>(playbackApi);
+        ServiceProvider provider = services.BuildServiceProvider();
+        var window = provider.GetRequiredService<MainWindow>();
+        provider.GetRequiredService<GstBackendState>().EnsurePlayer().Should().BeTrue();
+        return (provider, window);
+    }
+
+    private static object ScrubSurfaceSeekBar()
+    {
+        Type surface = typeof(MainWindow).GetNestedType("ScrubSurface", BindingFlags.NonPublic)!;
+        return Enum.Parse(surface, "SeekBar");
+    }
+
+    private static void InvokeArgs(MainWindow window, string method, params object[] args) =>
+        typeof(MainWindow).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, args);
 
     private static object Field(MainWindow window, string name) =>
         typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
