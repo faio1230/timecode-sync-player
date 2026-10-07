@@ -51,6 +51,8 @@ typedef struct TcsPlayer TcsPlayer;
 #define TCS_ERR_ENDED -6   /* acquire: end of stream, nothing left to hand over */
 #define TCS_ERR_INVALID_ARG -7
 #define TCS_ERR_TIMEOUT -8 /* tcs_probe_duration: the preroll did not finish in time */
+#define TCS_ERR_UNSUPPORTED_EXTENSION -9 /* tcs_probe_duration / tcs_scan_gop: the extension is not
+                                          * in the player's demuxer table (typefind is not used) */
 
 /* Decode mode for tcs_player_set_decode_mode. HARDWARE is 0 so a caller that
  * never calls the setter keeps the hardware-first order (the default). */
@@ -321,7 +323,7 @@ TCS_GST_API int tcs_player_get_gop_status(TcsPlayer* player, TcsGopStatus* out);
  * material scans at I/O speed. The scan has its own pipeline and shares no state
  * with any TcsPlayer, so it never touches the playback/seek state machine.
  * v0.6.6: the demuxer comes from the player's extension table, not typefind
- * (see tcs_probe_duration); an unknown extension returns TCS_ERR_GENERIC.
+ * (see tcs_probe_duration); an unknown extension returns TCS_ERR_UNSUPPORTED_EXTENSION.
  *
  * The judgement uses the MAXIMUM gap: material whose median sits inside the
  * recommendation can still hold a 7s gap, and a seek landing there is slow
@@ -364,13 +366,14 @@ TCS_GST_API int tcs_scan_gop(const char* utf8_path, int32_t budget_ms, TcsGopSca
  * demuxer comes from the same extension table the player uses, so the answer
  * equals tcs_player_get_duration for the same file. v0.6.6: typefind is not
  * used (it loads gio-2.0-0.dll, whose registry reader crashed the app); an
- * extension outside the table returns TCS_ERR_GENERIC ("unknown").
+ * extension outside the table returns TCS_ERR_UNSUPPORTED_EXTENSION ("unknown").
  *
  * The probe has its own pipeline and shares no state or lock with any TcsPlayer.
  * timeout_ms bounds the wait for the preroll (a file the demuxer cannot finish
  * reading must not hang the caller); timeout_ms <= 0 uses 10000.
  * Returns TCS_OK with *out_sec > 0; TCS_ERR_TIMEOUT when the preroll did not
- * finish in time; TCS_ERR_GENERIC when the extension is unknown, the pipeline posted
+ * finish in time; TCS_ERR_UNSUPPORTED_EXTENSION when the extension is not in the
+ * table; TCS_ERR_GENERIC when the pipeline posted
  * an error or the duration is unknown; TCS_ERR_INVALID_ARG for bad arguments.
  * *out_sec is 0 on every failure. Blocks the calling thread: call it off the UI
  * thread. */

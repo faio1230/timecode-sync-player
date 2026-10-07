@@ -16,6 +16,20 @@ internal static class GstNative
     internal const int TcsErrEnded = -6;
     /* tcs_gstreamer.h の TCS_ERR_TIMEOUT（tcs_probe_duration の待ちの上限切れ、v0.6.6）。 */
     internal const int TcsErrTimeout = -8;
+    /* tcs_gstreamer.h の TCS_ERR_UNSUPPORTED_EXTENSION（長さの軽い関数・GOP 走査で、拡張子が
+     * プレイヤーの demux の表に無い。typefind は使わない。v0.6.6）。 */
+    internal const int TcsErrUnsupportedExtension = -9;
+
+    /// <summary>
+    /// v0.6.6: 長さの問い合わせ・GOP 走査の失敗の rc に添える説明（ログの警告の後ろに付ける）。
+    /// 知らない rc は空文字。
+    /// </summary>
+    internal static string DescribeProbeFailure(int rc) => rc switch
+    {
+        TcsErrTimeout => " (timeout)",
+        TcsErrUnsupportedExtension => " (unsupported extension: not in the player's demuxer table, typefind is not used)",
+        _ => "",
+    };
     /* tcs_gstreamer.h の tcs_decode_mode と同じ値。 */
     internal const int DecodeModeHardware = 0;
     internal const int DecodeModeSoftware = 1;

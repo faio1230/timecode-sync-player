@@ -2560,10 +2560,12 @@ run_probe_duration (int argc, char** argv)
    * for the probe and for the GOP scan alike. The file need not exist. */
   d = 123.0;
   rc = tcs_probe_duration ("Z:\\tcs-no-such-dir\\clip.unknownext", 0, &d);
-  check (rc == TCS_ERR_GENERIC && d == 0.0, "probe-duration: unknown extension -> GENERIC, 0");
+  check (rc == TCS_ERR_UNSUPPORTED_EXTENSION && d == 0.0,
+      "probe-duration: unknown extension -> UNSUPPORTED_EXTENSION, 0");
   TcsGopScan gop = {};
   rc = tcs_scan_gop ("Z:\\tcs-no-such-dir\\clip.unknownext", 0, &gop);
-  check (rc == TCS_ERR_GENERIC && gop.keyframes == 0, "gop-scan: unknown extension -> GENERIC");
+  check (rc == TCS_ERR_UNSUPPORTED_EXTENSION && gop.keyframes == 0,
+      "gop-scan: unknown extension -> UNSUPPORTED_EXTENSION");
 
   char tmp_dir[MAX_PATH] = "";
   GetTempPathA (sizeof (tmp_dir), tmp_dir);

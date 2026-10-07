@@ -5192,8 +5192,8 @@ tcs_scan_gop (const char* utf8_path, int32_t budget_ms, TcsGopScan* out)
   /* v0.6.6: no typefind. An extension outside the table is "unknown". */
   const char* demux_name = demux_for_extension (utf8_path);
   if (!demux_name) {
-    LOG ("gop-scan: unknown extension, no demuxer (typefind is not used) path=%s", utf8_path);
-    return TCS_ERR_GENERIC;
+    LOG ("gop-scan: unknown-extension (typefind is not used) path=%s", utf8_path);
+    return TCS_ERR_UNSUPPORTED_EXTENSION;
   }
 
   GstElement* pipeline = gst_pipeline_new ("tcs-gop-scan");
@@ -5412,7 +5412,7 @@ tcs_probe_duration (const char* utf8_path, int32_t timeout_ms, double* out_sec)
   if (!demux_name) {
     LOG ("duration-probe: unknown-extension demux=- durationSec=0.000000 (typefind is not used) path=%s",
         utf8_path);
-    return TCS_ERR_GENERIC;
+    return TCS_ERR_UNSUPPORTED_EXTENSION;
   }
 
   GstElement* pipeline = gst_pipeline_new ("tcs-duration-probe");

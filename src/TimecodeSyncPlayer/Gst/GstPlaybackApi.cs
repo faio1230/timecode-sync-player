@@ -388,8 +388,8 @@ internal sealed class GstPlaybackApi : IPlaybackApi
             if (rc != 0)
             {
                 Log.Warning(
-                    "GOP scan failed: rc={Rc} elapsedMs={Elapsed} budgetMs={Budget} path={Path}",
-                    rc, sw.ElapsedMilliseconds, budgetMs, path);
+                    "GOP scan failed: rc={Rc}{Reason} elapsedMs={Elapsed} budgetMs={Budget} path={Path}",
+                    rc, GstNative.DescribeProbeFailure(rc), sw.ElapsedMilliseconds, budgetMs, path);
                 return null;
             }
             if (n.Keyframes < 2)
@@ -462,8 +462,8 @@ internal sealed class GstPlaybackApi : IPlaybackApi
             if (rc != 0 || !(seconds > 0) || double.IsInfinity(seconds))
             {
                 Log.Warning(
-                    "Media duration probe failed: rc={Rc}{Timeout} elapsedMs={Elapsed} path={Path}",
-                    rc, rc == GstNative.TcsErrTimeout ? " (timeout)" : "", sw.ElapsedMilliseconds, path);
+                    "Media duration probe failed: rc={Rc}{Reason} elapsedMs={Elapsed} path={Path}",
+                    rc, GstNative.DescribeProbeFailure(rc), sw.ElapsedMilliseconds, path);
                 return null;
             }
             Log.Information(
