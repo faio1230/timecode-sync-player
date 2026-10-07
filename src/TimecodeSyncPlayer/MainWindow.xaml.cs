@@ -1616,6 +1616,38 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
+    // R-9: オフセットの数値入力。Enter か欄を離れたときに反映し、Esc で前の値に戻す。
+    // 解釈・丸めは SyncViewModel.SyncOffsetInputText と SyncOffsetPolicy が受け持つ。
+    // 窓にはキーのショートカットが無く、文字のキー（スペース等）は入力欄が受け取る。
+    private void SyncOffsetInputBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox textBox)
+            return;
+        var binding = textBox.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty);
+        if (e.Key == System.Windows.Input.Key.Enter)
+        {
+            binding?.UpdateSource();
+            binding?.UpdateTarget();
+            textBox.SelectAll();
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            binding?.UpdateTarget();
+            textBox.SelectAll();
+            e.Handled = true;
+        }
+    }
+
+    private void SyncOffsetInputBox_LostKeyboardFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox textBox)
+            return;
+        var binding = textBox.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty);
+        binding?.UpdateSource();
+        binding?.UpdateTarget();
+    }
+
     private void StopPlayback()
     {
         // T7: 再生停止・プロジェクト/プレイリスト差し替えで補正状態を捨てる。
