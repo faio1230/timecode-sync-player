@@ -298,10 +298,29 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
             _syncOffsetMs = clamped;
             OnPropertyChanged();
             OnPropertyChanged(nameof(SyncOffsetText));
+            OnPropertyChanged(nameof(SyncOffsetInputText));
         }
     }
 
     public string SyncOffsetText => SyncOffsetPolicy.FormatMilliseconds(_syncOffsetMs);
+
+    /// <summary>
+    /// R-9: オフセットの数値入力欄。読むと今の値、書くと解釈して <see cref="SyncOffsetMs"/> へ反映する
+    /// （範囲の外は SyncOffsetMs の setter が丸める）。解釈できない文字は反映せず、前の値のまま。
+    /// どちらの場合も変更を通知し、入力欄に確定した値を表示し直させる。
+    /// </summary>
+    public string SyncOffsetInputText
+    {
+        get => SyncOffsetPolicy.FormatInput(_syncOffsetMs);
+        set
+        {
+            if (SyncOffsetPolicy.TryParseInput(value, out double milliseconds))
+                SyncOffsetMs = milliseconds;
+            else
+                Serilog.Log.Information("Sync offset input rejected input='{Input}' keep={OffsetMs}", value, _syncOffsetMs);
+            OnPropertyChanged();
+        }
+    }
 
     public string SyncToggleLabel => _syncEnabled ? "Sync ON" : "Sync OFF";
 

@@ -325,14 +325,30 @@
                             TickFrequency="1" IsSnapToTickEnabled="True"
                             Margin="0,6,0,0"
                             Value="{Binding Sync.SyncOffsetMs, Mode=TwoWay}"/>
-                    <StackPanel Grid.Row="3" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,4,0,0">
+                    <!-- R-9: 入力欄を足したので、幅が足りないときは注記を下の行へ折り返す -->
+                    <WrapPanel Grid.Row="3" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,4,0,0">
                         <TextBlock Text="{Binding Sync.SyncOffsetText}"
                                    AutomationProperties.AutomationId="SyncOffsetValueText"
+                                   VerticalAlignment="Center"
                                    Foreground="#DDDDDD" FontSize="11"/>
+                        <!-- R-9: オフセットの数値入力。ms の整数。Enter か欄を離れたときに反映し、Esc で戻す -->
+                        <TextBox x:Name="SyncOffsetInputBox"
+                                 AutomationProperties.AutomationId="SyncOffsetInputBox"
+                                 Width="64" Height="20" Margin="8,0,0,0" Padding="2,0"
+                                 FontSize="11" VerticalContentAlignment="Center"
+                                 HorizontalContentAlignment="Right"
+                                 Foreground="White" Background="#2A2A2A" BorderBrush="#4A4A4A"
+                                 ToolTip="オフセット（ms、整数）。＋で映像が先行。Enter か欄を離れると反映、Esc で戻す"
+                                 Text="{Binding Sync.SyncOffsetInputText, Mode=TwoWay, UpdateSourceTrigger=Explicit}"
+                                 KeyDown="SyncOffsetInputBox_KeyDown"
+                                 LostKeyboardFocus="SyncOffsetInputBox_LostKeyboardFocus"/>
+                        <TextBlock Text="ms" Foreground="#BBBBBB" FontSize="11"
+                                   VerticalAlignment="Center" Margin="4,0,0,0"/>
                         <TextBlock Text="　＋で映像が先行（下流の遅延を補正）"
+                                   VerticalAlignment="Center"
                                    AutomationProperties.AutomationId="SyncOffsetHintText"
                                    Foreground="#888888" FontSize="11"/>
-                    </StackPanel>
+                    </WrapPanel>
                     <!-- v0.6.0: 幅が足りないときは「再起動の後に反映」を下の行へ折り返す -->
                     <WrapPanel Grid.Row="4" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,6,0,0">
                         <TextBlock Text="ProRes の GPU デコード:" Foreground="#BBBBBB"
