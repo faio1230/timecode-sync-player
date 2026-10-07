@@ -631,6 +631,25 @@
                             ToolTip="キャンバスの大きさと配置を出力へ適用する"
                             Click="BtnApplyCanvas_Click"
                             AutomationProperties.AutomationId="BtnApplyCanvas"/>
+                    <!-- v0.6.6 R-11: Spout が ON のときだけ送信名を出す（色は ON のボタンの緑にそろえる） -->
+                    <TextBlock x:Name="SpoutStatusText"
+                               Text="{Binding Output.SpoutStatusText}"
+                               AutomationProperties.AutomationId="SpoutStatusText"
+                               ToolTip="Spout の送信名（受け側ではこの名前を選ぶ）"
+                               Foreground="#56D364" FontSize="11"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,6,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Output.SpoutStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                     <TextBlock x:Name="GpuStatusText"
                                AutomationProperties.AutomationId="GpuStatusText"
                                Foreground="#D7A24B" FontSize="11"

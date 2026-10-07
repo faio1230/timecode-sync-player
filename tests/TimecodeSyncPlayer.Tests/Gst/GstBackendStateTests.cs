@@ -1,5 +1,6 @@
 using System.IO;
 using FluentAssertions;
+using TimecodeSyncPlayer.Contracts;
 using TimecodeSyncPlayer.Gst;
 
 namespace TimecodeSyncPlayer.Tests.Gst;
@@ -18,6 +19,30 @@ public class GstBackendStateTests
         finally
         {
             Environment.SetEnvironmentVariable(GstBackendState.SenderNameEnvVar, null);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, "TimecodeSyncPlayer")]
+    [InlineData("", "TimecodeSyncPlayer")]
+    [InlineData("   ", "TimecodeSyncPlayer")]
+    [InlineData("  Stage A  ", "Stage A")]
+    [InlineData("StageB", "StageB")]
+    public void SenderName_FromEnvironment_IsTheSameOnBothSides(string? value, string expected)
+    {
+        // v0.6.6 R-11: shim に渡す名前（GstBackendState）と OutputEngine に渡す名前（MainWindow）は同じ関数で決める。
+        // 同じ環境変数を書き換える試験はこのクラスにまとめる（並列で走らせない）。
+        string? previous = Environment.GetEnvironmentVariable(GstBackendState.SenderNameEnvVar);
+        Environment.SetEnvironmentVariable(GstBackendState.SenderNameEnvVar, value);
+        try
+        {
+            GstBackendState.ResolveSenderName().Should().Be(expected);
+            SpoutDefaults.SenderNameFromEnvironment().Should().Be(expected);
+            new GstBackendState(new FakeGstNative()).SenderName.Should().Be(expected);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(GstBackendState.SenderNameEnvVar, previous);
         }
     }
 

@@ -31,6 +31,19 @@ internal sealed class OutputControlViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(TestCardToggleLabel));
     }
 
+    private string _spoutStatusText = "";
+
+    /// <summary>v0.6.6 R-11: Spout が ON のときの「Spout: 送信名」。OFF は空（表示しない）。</summary>
+    public string SpoutStatusText => _spoutStatusText;
+
+    public void SetSpoutStatus(bool enabled, string senderName)
+    {
+        string text = SpoutStatusFormatter.Format(enabled, senderName);
+        if (text == _spoutStatusText) return;
+        _spoutStatusText = text;
+        OnPropertyChanged(nameof(SpoutStatusText));
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
