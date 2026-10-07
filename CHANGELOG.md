@@ -4,7 +4,7 @@ All notable changes to TimecodeSyncPlayer are documented in this file.
 
 ## 0.6.6 - YYYY-MM-DD
 
-Fixes from field feedback. Clip durations no longer depend on ffprobe; scrubbing, numeric offset input, one-frame step
+Stable (Latest). Fixes from field feedback. Clip durations no longer depend on ffprobe; scrubbing, numeric offset input, one-frame step
 buttons, button styling and an LTC input meter are added. The sync rules, gates and constants are the same as 0.6.5.
 Settings and projects are unchanged from 0.6.5.
 
@@ -36,14 +36,16 @@ Settings and projects are unchanged from 0.6.5.
   "やめる"). The FULLSCREEN button is the only way into fullscreen; no confirmation is shown for other displays, for
   closing, or for paths without a user action (startup arguments, project load, settings restore, device recovery).
 - Display: disabled buttons are dark with dim text; ON buttons (Sync, Spout, Timeline, Card, LTC running) are green
-  (the ON/OFF text is kept). Main buttons have tooltips, including why a button cannot be pressed. The offset row is one
+  (the ON/OFF text is kept). MUTE is green while muted; START, which cannot be pressed while LTC is running, is dark
+  green. Main buttons have tooltips, including why a button cannot be pressed. The offset row is one
   line (slider, input, ms) without the value text ("+40 ms"). The playlist row's "Eff:" value is no longer cut off. In a
   narrow window the transport row is not cut off; the right-hand group (MUTE, volume, speed, Spout, Card, Timeline)
   wraps to the next line. With Spout on, the output area shows "Spout: <name>" (it does not reflect whether sending
   succeeds). Playlist rows have a grip mark and a tooltip saying they can be reordered by dragging (behavior unchanged).
 - LTC input meter (peak, -60 to 0 dBFS) and a three-state reception display: "無音" (peak below -60 dBFS),
   "LTC 受信中" (decoded LTC frames in the last second at least half the fps, e.g. 13 at 25 fps), otherwise
-  "信号あり・LTC なし". The fps is the one selected in the LTC area; Auto before detection counts as 24. The meter only
+  "信号あり・LTC なし". The fps is the fixed value selected in the LTC area, or with Auto the detected
+  fps once detected, and 24 before detection. The meter only
   shows values the decoder already counts; the LTC decoder and the sync rules, gates and constants are not touched, and
   the display state is not read by sync.
 
