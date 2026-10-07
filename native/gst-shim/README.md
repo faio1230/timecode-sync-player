@@ -382,6 +382,10 @@ tcs-shim-test は C ABI のみで以下を検証する:
 追い出し規則（10 ケース）だけを固定する。`--seek-loop <file> [n]` は
 n 回連続シーク（既定 10）の到達時間・着地誤差を測り、後半が前半より
 悪化しないことを確認する（V5）。
+`--probe-duration <file...>`（v0.6.6 F-7）は容器の長さだけを読む `tcs_probe_duration`
+（filesrc ! typefind ! demux ! fakesink、デコーダを作らない）の値・所要と、同じ素材を
+一時停止で読み込んだときの `tcs_player_get_duration` が一致すること（同じ demux の値）、
+読めないファイル・無いファイルが 0 ですぐ失敗すること、待ちの上限が効くことを確かめる。
 
 Spout 受信側の目視検証は proto の recv モード
 （`native/gst-shim/proto/build-debug/tcs-gst-proto.exe recv <sender>`）が使える。

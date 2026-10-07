@@ -14,6 +14,8 @@ internal static class GstNative
 {
     internal const string Lib = "tcs_gstreamer.dll";
     internal const int TcsErrEnded = -6;
+    /* tcs_gstreamer.h の TCS_ERR_TIMEOUT（tcs_probe_duration の待ちの上限切れ、v0.6.6）。 */
+    internal const int TcsErrTimeout = -8;
     /* tcs_gstreamer.h の tcs_decode_mode と同じ値。 */
     internal const int DecodeModeHardware = 0;
     internal const int DecodeModeSoftware = 1;
@@ -222,6 +224,11 @@ internal static class GstNative
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         internal static extern int tcs_scan_gop(
             [MarshalAs(UnmanagedType.LPUTF8Str)] string utf8Path, int budgetMs, out TcsGopScan outScan);
+
+        // v0.6.6 F-7: 容器の長さだけを読む（デコーダを作らない）。プレイヤー不要で、再生経路には触れない。
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        internal static extern int tcs_probe_duration(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string utf8Path, int timeoutMs, out double outSeconds);
 
         // ステージ 6b: 共有テクスチャリングの NT ハンドル + 共有フェンス。
         // ハンドルは shim 所有（CloseHandle 禁止）。

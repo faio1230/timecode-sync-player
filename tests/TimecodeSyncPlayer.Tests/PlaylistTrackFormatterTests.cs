@@ -119,6 +119,31 @@ public class PlaylistTrackFormatterTests
         PlaylistTrackFormatter.TryParseTimecode("00:00:00:00", -30, out _, out _).Should().BeFalse();
     }
 
+    // v0.6.6 F-7: 長さが取れなかった行（0）は不明と分かる表示にする。0 を長さとして見せない。
+    [Fact]
+    public void FormatMediaDuration_Zero_ShowsUnknown()
+    {
+        var track = CreateTrack(mediaDuration: TimeSpan.Zero);
+        PlaylistTrackFormatter.FormatMediaDuration(track).Should().Be("--:--:--:--");
+        PlaylistTrackFormatter.FormatEffectiveDuration(track).Should().Be("--:--:--:--");
+        track.MediaDurationText.Should().Be(PlaylistTrackFormatter.UnknownDurationText);
+    }
+
+    [Fact]
+    public void FormatEffectiveDuration_ZeroLengthWithOutPoint_UsesTheOutPoint()
+    {
+        var track = CreateTrack(mediaDuration: TimeSpan.Zero) with { MediaOut = TimeSpan.FromSeconds(4) };
+        PlaylistTrackFormatter.FormatMediaDuration(track).Should().Be("--:--:--:--");
+        PlaylistTrackFormatter.FormatEffectiveDuration(track).Should().Be("00:00:04:00");
+    }
+
+    [Fact]
+    public void FormatMediaDuration_KnownLength_IsUnchanged()
+    {
+        var track = CreateTrack(mediaDuration: TimeSpan.FromSeconds(1), frameRate: 30);
+        PlaylistTrackFormatter.FormatMediaDuration(track).Should().Be("00:00:01:00");
+    }
+
     [Fact]
     public void FormatTimelineOffset_UsesTrackFrameRate()
     {

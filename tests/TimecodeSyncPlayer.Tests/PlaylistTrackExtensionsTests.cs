@@ -67,8 +67,10 @@ public class PlaylistTrackExtensionsTests
         result.Should().Be("60:00 → 120:00");
     }
 
+    // v0.6.6 F-7: 長さ 0（取れなかった）の行は終わりを不明と見せる。以前は "00:05 → 00:05"
+    // （0 を長さとして見せていた）。
     [Fact]
-    public void GetTimelineRangeText_WithZeroDuration_SameStartAndEnd()
+    public void GetTimelineRangeText_WithZeroDuration_ShowsUnknownEnd()
     {
         var track = CreateTrack(
             timelineOffset: TimeSpan.FromSeconds(5),
@@ -76,7 +78,7 @@ public class PlaylistTrackExtensionsTests
 
         var result = track.GetTimelineRangeText();
 
-        result.Should().Be("00:05 → 00:05");
+        result.Should().Be("00:05 → --:--");
     }
 
     [Fact]

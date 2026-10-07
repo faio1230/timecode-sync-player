@@ -34,7 +34,8 @@ public partial class App : Application
         services.AddSingleton<IRenderUpdateSource>(sp => sp.GetRequiredService<GstRenderUpdateSource>());
 
         // Core services
-        services.AddSingleton<IMediaDurationReader, MediaDurationReader>();
+        // v0.6.6 F-7: クリップの長さは shim の軽い関数（容器の長さ）で読む。ffprobe は使わない。
+        services.AddSingleton<IMediaDurationReader, GstMediaDurationReader>();
         services.AddSingleton<ILtcMonitor, LtcAudioMonitor>();
         services.AddSingleton<PlaylistState>();
         services.AddSingleton<SeekLatencyCompensator>();
@@ -125,6 +126,9 @@ public partial class App : Application
             "=== TimecodeSyncPlayer v{Version} 起動 === ログ: {Path}",
             ApplicationVersion.Current,
             logPath);
+        // v0.6.6 F-7: 現場のログで ffprobe の有無が分かるように 1 行（長さには使わない）。
+        Log.Information(FfprobePresence.Describe(
+            FfprobePresence.FindOnPath(Environment.GetEnvironmentVariable("PATH"))));
 
         var settingsManager = _services.GetRequiredService<AppSettingsManager>();
         settingsManager.LoadAsync().GetAwaiter().GetResult();

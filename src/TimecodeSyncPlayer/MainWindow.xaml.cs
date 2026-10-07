@@ -40,6 +40,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly IMediaDurationReader _mediaDurationReader;
     private readonly PlaylistDurationBackfillService _playlistDurationBackfillService;
     private readonly PlaylistDurationBackfillCoordinator _playlistDurationBackfillCoordinator;
+    // v0.6.6 F-7: 軽い関数で長さが取れなかった行を、読み込んだときの再生時の長さで埋める。
+    private readonly PlaylistDurationFallback _playlistDurationFallback = new();
     private readonly PlaylistLoadCoordinator _playlistLoadCoordinator;
     private readonly ProjectLoadApplicator _projectLoadApplicator;
     private readonly ProjectFileCoordinator _projectFileCoordinator;
@@ -244,6 +246,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         _vm = new MainViewModel();
         _vm.Player   = new PlayerViewModel(this);
         _vm.Playlist = new PlaylistViewModel(_playlist, _mediaDurationReader);
+        _vm.Playlist.DurationUnavailable = _playlistDurationFallback.MarkUnavailable;
         _vm.Sync     = new SyncViewModel(_ltcMonitor);
         _vm.Output   = new OutputControlViewModel();
         _vm.Output.InitializeTestCard(OutputEngineSettings.TestCardRequested());
@@ -401,7 +404,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                         MessageBox.Show("メディアのduration読み込みに失敗しました。", "エラー",
                             MessageBoxButton.OK, MessageBoxImage.Error);
                     });
-                }));
+                },
+                MarkDurationUnavailable: _playlistDurationFallback.MarkUnavailable));
         _projectFileCoordinator = new ProjectFileCoordinator(
             new ProjectFileActionRunner(),
             new ProjectFileEffects(
@@ -2136,7 +2140,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
         int durationRc = _playbackApi.TryGetDuration(out double dur) ? 0 : -1;
         if (durationRc == 0 && SeekBarUpdateState.IsUsableDuration(dur))
+        {
             _duration = dur;
+            // v0.6.6 F-7: 追加・開くときに長さが取れなかった行を、読み込んだ素材の再生時の長さで埋める。
+            if (_playlistDurationFallback.TryApplyFromLoadedMedia(
+                    _playlist, _loadedTrackId, _playbackApi.GetPath, dur))
+                UpdatePlaylistTimelineDisplay();
+        }
 
         TickMetadataFetch();
         // ロング GOP の判定は読み込み時の静的スキャン（0.4.5-C3、BeginGopScan）で行う。
