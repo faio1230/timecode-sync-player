@@ -57,6 +57,10 @@ v0.6.6 のレビューで見えた試験の抜けを直す束です。利用者�
 
   - 訂正: 1 節の事実の「applying the held value change frame」は、出所があります。src の「Timecode sync: applying the {Reason} frame once」の Reason が "held value change" で、開発機のログにも 2026-10-03 まで出ています。試験はそのまま残しました
   - 直した確かめは、どれも記録か報告の表だけで、合否には効きません。直した後に急に落ちるようになる確かめはありません
+- 確かめの結果（開発機、2026-10-08）
+  - 非E2E の全件: 合格 3292、スキップ 2、失敗 0
+  - Release の exe での E2E の一式（LTC シナリオと L-3 は除く）: 100 件のうち合格 83、スキップ 16、失敗 1。heartbeat の試験は合格
+  - 落ちた 1 件は `PlaylistRowLookE2ETests.DraggingTheLastRowByTheGripToTheTop_ReordersAndOffsetBoxStillTakesClicks` で、つかみでの並べ替えの後の `WaitUntil` の時間切れ（「Condition was not satisfied before timeout.」）。ログの行を読まない試験で、Debug の exe でも同じく落ちたので、Debug の行とは別の理由（開発機でのドラッグの操作）です。この項目では直していません
 - Release の構成で弱くなった確かめ: `LtcInputMeterHeartbeatE2ETests.CableLoop_WhileLtcFlows_UiHeartbeatStaysOnTime` は、LTC の受信中の 1 秒未満の止まりを見なくなりました（上の heartbeat の項）
 
 ## 2. 落ちの自動の集計
