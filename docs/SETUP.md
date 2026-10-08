@@ -158,6 +158,8 @@ FlaUIによるUI自動操作テストのため、以下が必須です。
 dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~E2ETests"
 ```
 
+LTC シナリオのランナー（`scripts\run-ltc-scenarios.ps1`）は、回の間のアプリの落ち（イベントログの .NET Runtime 1026 と Application Error 1000）を自動で数えて run-result.json の `crashes` に出し、1 回でも落ちがあればその回を失敗にします。落ちたアプリのダンプは `<ReportDir>\dumps` に残ります（既定は `DOTNET_DbgMiniDumpType=2`、full は `-MiniDumpType 4`）。
+
 ---
 
 ## 6. 一括検証スクリプト

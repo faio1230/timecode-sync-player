@@ -70,6 +70,22 @@ v0.6.6 のレビューで見えた試験の抜けを直す束です。利用者�
 - 落ちが 1 回でもあれば、run-result の判定を「失敗」にします（今は落ちた試験が失敗するだけ）
 - 検証機のランナーにも同じ変更を入れます（TSP-TestMachine にパッチを Taildrop で）
 
+### 2 の実施（2026-10-08、ブランチ ti/2-crash-count）
+
+- 実装: `scripts/run-ltc-scenarios.ps1`・`scripts/ltc-run-report.ps1`・`scripts/LtcRunMetrics.psm1`。単体は `scripts/test-ltc-crash-count.ps1`（作ったイベントログの行とアプリのログで、落ち 0、落ち 1、窓の外の 1026、ほかのアプリの 1026 を確かめる）
+- 集め方: ランナーは試験の後（終わりから 3 秒以上たってから）、試験の開始からその時までの Application のイベントログの .NET Runtime 1026 と Application Error 1000 を、全アプリの分だけ `crash-events.json` に書きます。TimecodeSyncPlayer.exe の行に絞るのは集計の側です
+- 1026 からは例外の番号と番地を、1000 からはモジュール・オフセット・プロセスの番号を取ります。1000 はプロパティの位置で読むので、表示の言語に左右されません。同じ落ちの 1026 と 1000（10 秒以内）は 1 件にまとめ、1026 の無い 1000 も 1 件と数えます
+- run-result.json に足した項目
+  - `crashes`: count、1026 と 1000 の数、窓、各件（時刻・番号・番地・モジュール・プロセスの番号・シナリオ・直前の起動の時刻と版・起動からの秒・その起動が ProRes を GPU で先頭に読んだか・ダンプのファイル名）、dumps（ReportDir\dumps のダンプの数と名前）
+  - `launches`: 窓の中の起動の数（「=== TimecodeSyncPlayer v… 起動」の行、Information）
+  - `proresGpuFirstLaunches`: 起動から 2 秒以内（次の起動の前）に「FetchMetadata: … V:proresd3d11dec」（Information）が出た起動の数
+  - `verdict`・`failReasons`: 失敗した試験があれば `tests`、落ちが 1 回でもあれば `crash`。どちらかがあれば `fail`
+- 割り当て: 各件は、時刻より前（ログの書き込みの順を見て 1 秒の余裕）の最後の起動と、trx の開始から終わりの間に時刻が入る試験に割り当てます。ダンプは `tsp-<プロセスの番号>.dmp`（1000 から）で、無ければ落ちの後 120 秒以内に書かれたものを当てます
+- 判定: 落ちが 1 回でもあれば、ランナーの終了コードは 1 で、SUMMARY の行に `crashes=N`、落ちの各件を `CRASH …` の行に出します。イベントログを読めなかった回は `crashes=unknown`（count は null）で、判定は今までどおり試験の結果だけです。落ちのあった回は、合格でも output-trace を消しません
+- ダンプ: 事前確認で `DOTNET_DbgEnableMiniDump=1`・`DOTNET_DbgMiniDumpType=2`・`DOTNET_DbgMiniDumpName=<ReportDir>\dumps\tsp-%p.dmp` を決めて runner-preflight.json の `dump` に書き、`dotnet test` の直前（ビルドの後）にランナーのプロセスの環境に入れます。試験のプロセスと、そこから起動するアプリが継ぎます。full のダンプは `-MiniDumpType 4` です
+- 古い回（crash-events.json の無い回）を集計し直すと、`crashes.count` は null、起動の数は trx の開始〜終わりで数えます
+- 確かめ（開発機、2026-10-08）: 自己試験 `scripts/test-ltc-crash-count.ps1` は全項目合格、既存の `scripts/test-ltc-run-metrics.ps1` も合格。非E2E の全件は合格 3292、スキップ 2、失敗 0。ランナーを S-1 の 1 本（ProRes の素材を先頭）で 1 回回し、合格 1、`crashes.count=0`、`launches=1`、`proresGpuFirstLaunches=1`、`verdict=pass` で、runner-preflight.json に `dump` が出ました。C: の空きが 20 GB に届かなかったため、この回だけ手元の写しで C: の確認を 15 GB に下げています（コミットしたランナーは 20 GB のまま）
+
 ## 3. 合否の範囲の決め方
 
 - 規則: 数（relocate・holdEntries・3 つの和ほか）の範囲を、「3 回以上の回の最小〜最大」と「中央 ±2√N」の広いほうにします。v0.6.4 の棚卸しの #29 のとおり、50 前後の数で幅 3 は、√N の揺れ（約 7）より狭すぎます

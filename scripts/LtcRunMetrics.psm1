@@ -80,6 +80,10 @@ function Get-TcsProResLoadSummary {
 # A property of a parsed JSON object, or $null when it is missing (older journals).
 function Get-TcsField($Object, [string]$Name) {
     if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) { return $Object[$Name] }
+        return $null
+    }
     $property = $Object.PSObject.Properties[$Name]
     if ($property) { return $property.Value }
     return $null
@@ -199,6 +203,270 @@ function Get-TcsSystemCommitFreeGb {
     return [math]::Round([double]$os.FreeVirtualMemory / 1MB, 2)
 }
 
+# ---- crashes (test infrastructure 2026-10, item 2) ----------------------------------------
+# v0.6.6: a rare crash right after a ProRes GPU load (.NET Runtime 1026, c0000005) showed up only
+# as one timed-out LTC scenario ("CABLE Output enumeration; ltc=NaN"), and the event log was read
+# by hand. The runner now saves the Application-log crash records of the run's time window
+# (crash-events.json, Read-TcsCrashEventLog) and ltc-run-report.ps1 turns them into
+# run-result.json "crashes", "launches" and "proresGpuFirstLaunches" (Get-TcsCrashSummary).
+# One crash fails the run.
+
+$script:TcsCrashAppName = 'TimecodeSyncPlayer.exe'
+
+# One Application-log record (EventLogRecord) as a plain object for crash-events.json:
+# { timeCreated (local ISO with offset), provider, id, values (the event properties as strings) }.
+function ConvertTo-TcsCrashEventRecord($Event) {
+    [ordered]@{
+        timeCreated = ([DateTimeOffset]$Event.TimeCreated).ToString('o')
+        provider = [string]$Event.ProviderName
+        id = [int]$Event.Id
+        values = @($Event.Properties | ForEach-Object { [string]$_.Value })
+    }
+}
+
+# The .NET Runtime 1026 and Application Error 1000 records of the Application log between
+# FromUtc and ToUtc (all applications; Get-TcsCrashSummary keeps TimecodeSyncPlayer only).
+function Read-TcsCrashEventLog([DateTime]$FromUtc, [DateTime]$ToUtc) {
+    $filter = @{
+        LogName = 'Application'
+        ProviderName = @('.NET Runtime', 'Application Error')
+        Id = @(1026, 1000)
+        StartTime = $FromUtc.ToLocalTime()
+        EndTime = $ToUtc.ToLocalTime()
+    }
+    $events = @()
+    try {
+        $events = @(Get-WinEvent -FilterHashtable $filter -ErrorAction Stop)
+    } catch {
+        if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return @() }
+        throw
+    }
+    @($events | ForEach-Object { ConvertTo-TcsCrashEventRecord $_ })
+}
+
+# A crash-events.json record as { atUtc, source ('1026' | '1000'), app, code, address, module,
+# offset, pid, exception }, or $null when it is not a crash record of TimecodeSyncPlayer.exe.
+#   1026 (.NET Runtime): one property, the message: "Application: <exe>" and
+#        "Exception Info: exception code c0000005, exception address 00007FFB77D9088F"
+#        (a managed exception has "Exception Info: System.X: ..." instead).
+#   1000 (Application Error): properties 0 app, 3 module, 6 code, 7 offset, 8 process id
+#        (read by position, so the localized message text does not matter).
+function ConvertFrom-TcsCrashEventRecord($Record, [string]$AppName = $script:TcsCrashAppName) {
+    if ($null -eq $Record) { return $null }
+    $at = ConvertTo-TcsUtc (Get-TcsField $Record 'timeCreated')
+    if ($null -eq $at) { return $null }
+    $provider = [string](Get-TcsField $Record 'provider')
+    $id = [int](Get-TcsField $Record 'id')
+    $values = @(Get-TcsField $Record 'values' | ForEach-Object { [string]$_ })
+    $item = [ordered]@{ atUtc = $at; source = ''; app = ''; code = $null; address = $null; module = $null;
+        offset = $null; pid = $null; exception = $null }
+    if ($provider -eq '.NET Runtime' -and $id -eq 1026) {
+        $text = $values -join "`n"
+        $item.source = '1026'
+        if ($text -match '(?m)^Application:\s*(\S+)') { $item.app = $matches[1] }
+        if ($text -match 'exception code ([0-9a-fA-F]+), exception address ([0-9a-fA-F]+)') {
+            $item.code = $matches[1].ToLowerInvariant()
+            $item.address = $matches[2].ToUpperInvariant()
+        } elseif ($text -match '(?m)^Exception Info:\s*(.+?)\s*$') {
+            $item.exception = $matches[1]
+        }
+    } elseif ($provider -eq 'Application Error' -and $id -eq 1000) {
+        $item.source = '1000'
+        if ($values.Count -gt 0) { $item.app = $values[0] }
+        if ($values.Count -gt 3) { $item.module = $values[3] }
+        if ($values.Count -gt 6) { $item.code = ($values[6] -replace '^0x', '').ToLowerInvariant() }
+        if ($values.Count -gt 7) { $item.offset = ($values[7] -replace '^0x', '') }
+        if ($values.Count -gt 8 -and $values[8] -match '^(0x)?([0-9a-fA-F]+)$') {
+            $item.pid = if ($matches[1]) { [Convert]::ToInt32($matches[2], 16) } else { [int]$values[8] }
+        }
+    } else {
+        return $null
+    }
+    if (-not [string]::Equals($item.app, $AppName, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    return $item
+}
+
+# Launches of the app from its log lines: "=== TimecodeSyncPlayer v<version> 起動" (Information).
+# proresGpuFirst: a "FetchMetadata: ... V:proresd3d11dec" line (Information) within
+# ProResWindowSeconds of the launch and before the next launch. Only launches between FromUtc
+# and ToUtc (when given) are returned. [ { atUtc, version, proresGpuFirst } ] in time order.
+function Get-TcsAppLaunches {
+    param([string[]]$AppLines = @(), $FromUtc = $null, $ToUtc = $null, [double]$ProResWindowSeconds = 2)
+    $launches = New-Object System.Collections.Generic.List[object]
+    $fetches = New-Object System.Collections.Generic.List[DateTime]
+    foreach ($line in $AppLines) {
+        if ($line -match '=== TimecodeSyncPlayer v(\S+) 起動') {
+            $version = $matches[1]
+            $at = Get-TcsLogLineUtc $line
+            if ($null -ne $at) { $launches.Add([pscustomobject]@{ atUtc = $at; version = $version; proresGpuFirst = $false }) }
+        } elseif ($line -match 'FetchMetadata: .*\bV:proresd3d11dec\b') {
+            $at = Get-TcsLogLineUtc $line
+            if ($null -ne $at) { $fetches.Add($at) }
+        }
+    }
+    $sorted = @($launches | Sort-Object atUtc)
+    for ($i = 0; $i -lt $sorted.Count; $i++) {
+        $start = $sorted[$i].atUtc
+        $limit = $start.AddSeconds($ProResWindowSeconds)
+        if ($i + 1 -lt $sorted.Count -and $sorted[$i + 1].atUtc -lt $limit) { $limit = $sorted[$i + 1].atUtc }
+        foreach ($f in $fetches) {
+            if ($f -ge $start -and $f -le $limit) { $sorted[$i].proresGpuFirst = $true; break }
+        }
+    }
+    @($sorted | Where-Object {
+        ($null -eq $FromUtc -or $_.atUtc -ge $FromUtc) -and ($null -eq $ToUtc -or $_.atUtc -le $ToUtc)
+    })
+}
+
+# Tests of a trx with their times: [ { name (last segment), startUtc, endUtc } ].
+function Get-TcsTrxTestTimes([string]$TrxPath) {
+    if (-not $TrxPath -or -not (Test-Path -LiteralPath $TrxPath)) { return @() }
+    [xml]$doc = Get-Content -LiteralPath $TrxPath
+    @(foreach ($r in @($doc.SelectNodes("//*[local-name()='UnitTestResult']"))) {
+        $start = $r.GetAttribute('startTime'); $end = $r.GetAttribute('endTime')
+        if (-not $start -or -not $end) { continue }
+        [pscustomobject]@{
+            name = ($r.GetAttribute('testName') -split '\.')[-1]
+            startUtc = ConvertTo-TcsUtc $start
+            endUtc = ConvertTo-TcsUtc $end
+        }
+    })
+}
+
+# End of the test run (trx Times/@finish) as UTC, or $null.
+function Get-TcsRunFinishUtc([string]$TrxPath) {
+    if (-not $TrxPath -or -not (Test-Path -LiteralPath $TrxPath)) { return $null }
+    [xml]$doc = Get-Content -LiteralPath $TrxPath
+    $times = $doc.SelectSingleNode("//*[local-name()='Times']")
+    if (-not $times -or -not $times.GetAttribute('finish')) { return $null }
+    return ConvertTo-TcsUtc $times.GetAttribute('finish')
+}
+
+function Format-TcsLocalTime($Utc) {
+    if ($null -eq $Utc) { return $null }
+    return ([DateTimeOffset]([DateTime]::SpecifyKind($Utc, [DateTimeKind]::Utc))).ToLocalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffzzz')
+}
+
+# The crash summary of one run.
+#   Records    - crash-events.json "events" (all applications, maybe wider than the window)
+#   FromUtc/ToUtc - the run's window; records and launches outside it are not counted
+#   AppLines   - the app log lines of the run (whole daily files are fine: launches are windowed)
+#   Tests      - Get-TcsTrxTestTimes (the scenario a crash happened in)
+#   DumpFiles  - the files of ReportDir\dumps (FileInfo or { Name, LastWriteTimeUtc })
+# One crash usually leaves a 1026 and a 1000 a moment apart; a 1000 within PairSeconds of a 1026
+# is the same crash. A 1000 with no 1026 (a crash the runtime did not see) is a crash of its own.
+# Each crash goes to the last launch at or before it (+1 s for the log write order) and to the
+# test whose trx start..end holds it. Its dump is tsp-<pid>.dmp (the 1000 gives the pid), else
+# the first dump written within DumpSeconds after it.
+# Returns @{ crashes = [ordered]...; launches = N; proresGpuFirstLaunches = N }.
+function Get-TcsCrashSummary {
+    param(
+        [object[]]$Records = @(),
+        $FromUtc = $null,
+        $ToUtc = $null,
+        [string[]]$AppLines = @(),
+        [object[]]$Tests = @(),
+        [object[]]$DumpFiles = @(),
+        [string]$DumpDir = '',
+        [bool]$Collected = $true,
+        [string]$CollectError = '',
+        [double]$PairSeconds = 10,
+        [double]$DumpSeconds = 120,
+        [string]$AppName = 'TimecodeSyncPlayer.exe'
+    )
+    $from = ConvertTo-TcsUtc $FromUtc
+    $to = ConvertTo-TcsUtc $ToUtc
+    $events = @(foreach ($r in $Records) {
+        $e = ConvertFrom-TcsCrashEventRecord $r $AppName
+        if ($null -eq $e) { continue }
+        if ($null -ne $from -and $e.atUtc -lt $from) { continue }
+        if ($null -ne $to -and $e.atUtc -gt $to) { continue }
+        $e
+    }) | Sort-Object { $_.atUtc }
+    $events = @($events)
+    $runtime = @($events | Where-Object { $_.source -eq '1026' })
+    $werList = @($events | Where-Object { $_.source -eq '1000' })
+
+    $crashes = New-Object System.Collections.Generic.List[object]
+    foreach ($e in $runtime) {
+        $crashes.Add([ordered]@{ atUtc = $e.atUtc; sources = @('1026'); code = $e.code; address = $e.address;
+            exception = $e.exception; module = $null; offset = $null; pid = $null })
+    }
+    foreach ($w in $werList) {
+        $best = $null; $bestGap = [double]::MaxValue
+        foreach ($c in $crashes) {
+            if ($c.sources -contains '1000') { continue }
+            $gap = [math]::Abs(($w.atUtc - $c.atUtc).TotalSeconds)
+            if ($gap -le $PairSeconds -and $gap -lt $bestGap) { $best = $c; $bestGap = $gap }
+        }
+        if ($null -eq $best) {
+            $crashes.Add([ordered]@{ atUtc = $w.atUtc; sources = @('1000'); code = $w.code; address = $null;
+                exception = $null; module = $w.module; offset = $w.offset; pid = $w.pid })
+        } else {
+            $best.sources = @($best.sources) + '1000'
+            $best.module = $w.module; $best.offset = $w.offset; $best.pid = $w.pid
+            if (-not $best.code) { $best.code = $w.code }
+        }
+    }
+
+    $allLaunches = @(Get-TcsAppLaunches -AppLines $AppLines)
+    $windowLaunches = @($allLaunches | Where-Object {
+        ($null -eq $from -or $_.atUtc -ge $from) -and ($null -eq $to -or $_.atUtc -le $to)
+    })
+    $dumps = @($DumpFiles | Where-Object { $_.Name -like '*.dmp' } | Sort-Object { $_.LastWriteTimeUtc })
+    $usedDumps = @{}
+    $items = @(foreach ($c in ($crashes | Sort-Object { $_.atUtc })) {
+        $launch = @($allLaunches | Where-Object { $_.atUtc -le $c.atUtc.AddSeconds(1) }) | Select-Object -Last 1
+        $test = @($Tests | Where-Object { $_.startUtc -le $c.atUtc -and $c.atUtc -le $_.endUtc }) | Select-Object -First 1
+        $dump = $null
+        if ($null -ne $c.pid) {
+            $byPid = @($dumps | Where-Object { $_.Name -ieq ('tsp-' + $c.pid + '.dmp') }) | Select-Object -First 1
+            if ($byPid) { $dump = $byPid.Name }
+        }
+        if (-not $dump) {
+            $byTime = @($dumps | Where-Object {
+                -not $usedDumps.ContainsKey($_.Name) -and
+                $_.LastWriteTimeUtc -ge $c.atUtc.AddSeconds(-5) -and $_.LastWriteTimeUtc -le $c.atUtc.AddSeconds($DumpSeconds)
+            }) | Select-Object -First 1
+            if ($byTime) { $dump = $byTime.Name }
+        }
+        if ($dump) { $usedDumps[$dump] = $true }
+        [ordered]@{
+            time = Format-TcsLocalTime $c.atUtc
+            sources = @($c.sources)
+            code = $c.code
+            address = $c.address
+            module = $c.module
+            offset = $c.offset
+            exception = $c.exception
+            pid = $c.pid
+            scenario = $(if ($test) { $test.name } else { $null })
+            launchTime = $(if ($launch) { Format-TcsLocalTime $launch.atUtc } else { $null })
+            launchVersion = $(if ($launch) { $launch.version } else { $null })
+            secondsAfterLaunch = $(if ($launch) { [math]::Round(($c.atUtc - $launch.atUtc).TotalSeconds, 3) } else { $null })
+            proresGpuFirstLaunch = $(if ($launch) { [bool]$launch.proresGpuFirst } else { $null })
+            dump = $dump
+        }
+    })
+    $crashSummary = [ordered]@{
+        count = $(if ($Collected) { $items.Count } else { $null })
+        collected = $Collected
+        error = $(if ($CollectError) { $CollectError } else { $null })
+        windowFrom = Format-TcsLocalTime $from
+        windowTo = Format-TcsLocalTime $to
+        dotnetRuntime1026 = $runtime.Count
+        applicationError1000 = $werList.Count
+        items = @($items)
+        dumps = [ordered]@{ dir = $(if ($DumpDir) { $DumpDir } else { $null }); count = $dumps.Count; names = @($dumps | ForEach-Object { $_.Name }) }
+    }
+    @{
+        crashes = $crashSummary
+        launches = $windowLaunches.Count
+        proresGpuFirstLaunches = @($windowLaunches | Where-Object { $_.proresGpuFirst }).Count
+    }
+}
+
 Export-ModuleMember -Function Get-TcsField, ConvertTo-TcsUtc, Get-TcsLogLineUtc, Get-TcsRunStartUtc, Get-TcsProResLoadSummary,
     Get-TcsMedian, Get-TcsExitLogLines, Get-TcsAppExitSummary, Get-TcsCommitFreeGbAtStart, Get-TcsSystemCommitFreeGb,
-    Get-TcsRunnerPreflightValue, Get-TcsDriveFreeGb
+    Get-TcsRunnerPreflightValue, Get-TcsDriveFreeGb, ConvertTo-TcsCrashEventRecord, Read-TcsCrashEventLog,
+    ConvertFrom-TcsCrashEventRecord, Get-TcsAppLaunches, Get-TcsTrxTestTimes, Get-TcsRunFinishUtc, Get-TcsCrashSummary

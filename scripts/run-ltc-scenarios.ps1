@@ -34,7 +34,16 @@
 # gstreamer\bin next to the exe, GSTREAMER_1_0_ROOT_MSVC_X86_64, Program Files,
 # or PATH). D18 makes the bundled runtime work without the environment variable.
 #
-# Exit codes: 0 = no failures, 1 = test failures, 2 = prerequisite failure.
+# Exit codes: 0 = no failures, 1 = test failures or a crash of the app, 2 = prerequisite failure.
+#
+# Crashes (test infrastructure 2026-10, item 2): after the tests the runner reads the .NET Runtime
+# 1026 and Application Error 1000 records of the Application event log in the run's window
+# (crash-events.json), and ltc-run-report.ps1 counts the TimecodeSyncPlayer crashes, the launches
+# and the launches that read ProRes on the GPU first into run-result.json (crashes, launches,
+# proresGpuFirstLaunches). One crash fails the run (failReasons "crash", SUMMARY crashes=N).
+# The test processes inherit DOTNET_DbgEnableMiniDump=1 / DOTNET_DbgMiniDumpType (-MiniDumpType,
+# default 2; 4 = full, over 1 GB, only when chasing a crash) / DOTNET_DbgMiniDumpName =
+# <ReportDir>/dumps/tsp-%p.dmp, so a crashed app leaves its dump in the report directory.
 #
 # NOTE: backslash- and control-character traps of ".ps1" are checked without running
 # the script (Parser.ParseFile, scripts\check-control-chars.ps1). Never "-?" as a dry run.
@@ -92,7 +101,10 @@ param(
     # artifacts\analysis-data\logs-<yyyyMMdd>-<HHmmss>\ before the run, so the tests do not read a log
     # that grew over earlier runs of the day (25.9 -> 48.5 MB made the test setup about 2.2 s slower,
     # design 9-2). -KeepAppLogs leaves them in place.
-    [switch]$KeepAppLogs
+    [switch]$KeepAppLogs,
+    # Dump type of a crashed app (DOTNET_DbgMiniDumpType): 2 = with heap (default), 4 = full.
+    [ValidateSet(1, 2, 3, 4)]
+    [int]$MiniDumpType = 2
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -277,8 +289,24 @@ try {
 } catch {
     $problems += ('free space on C: could not be read: ' + $_.Exception.Message)
 }
-[ordered]@{ commitFreeGbAtStart = $commitFreeGb; cDriveFreeGbAtStart = $cDriveFreeGb; measuredAt = (Get-Date).ToString('o') } |
-    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ReportDir 'runner-preflight.json') -Encoding UTF8
+# Dumps of a crashed app (test infrastructure 2026-10, item 2). The environment is put into the
+# runner process right before "dotnet test" (after the build), so only the test processes and the
+# apps they start inherit it.
+$dumpDir = Join-Path $ReportDir 'dumps'
+$dumpEnvironment = [ordered]@{
+    DOTNET_DbgEnableMiniDump = '1'
+    DOTNET_DbgMiniDumpType = [string]$MiniDumpType
+    DOTNET_DbgMiniDumpName = (Join-Path $dumpDir 'tsp-%p.dmp')
+}
+try {
+    New-Item -ItemType Directory -Force -Path $dumpDir | Out-Null
+} catch {
+    $problems += ('dump folder could not be created: ' + $dumpDir + ' : ' + $_.Exception.Message)
+}
+[ordered]@{
+    commitFreeGbAtStart = $commitFreeGb; cDriveFreeGbAtStart = $cDriveFreeGb; measuredAt = (Get-Date).ToString('o')
+    dump = [ordered]@{ type = $MiniDumpType; dir = $dumpDir; environment = $dumpEnvironment }
+} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $ReportDir 'runner-preflight.json') -Encoding UTF8
 if ($null -ne $commitFreeGb -and $commitFreeGb -lt 4) {
     $problems += ('system commit free is ' + $commitFreeGb + ' GB, under 4 GB: close other programs before the run')
 }
@@ -489,6 +517,8 @@ Write-Output ('prereqs: cable_mm=[render: ' + ($renderCable -join '; ') + ' | ca
     '] cable_pnp=[' + $pnpText + '] gstreamer=' + $gstSource + ' ffmpeg=' + $ffmpegText +
     ' commit_free_gb=' + $commitFreeGb + ' c_free_gb=' + $cDriveFreeGb)
 Write-Output ('prereqs: filter=' + $Filter + ' given=' + $filterGiven + ' l1=' + $filterL1 + ' l3=' + $filterL3)
+Write-Output ('prereqs: dump enable=' + $dumpEnvironment.DOTNET_DbgEnableMiniDump + ' type=' + $dumpEnvironment.DOTNET_DbgMiniDumpType +
+    ' name=' + $dumpEnvironment.DOTNET_DbgMiniDumpName)
 if ($problems.Count -gt 0) {
     foreach ($p in $problems) { Write-Output ('PREREQ-ERROR ' + $p) }
     Write-Output ('SUMMARY prereq_failed=' + $problems.Count + ' report=' + $ReportDir)
@@ -732,12 +762,14 @@ if (-not $SkipBuild) {
     if ($buildExit) { throw "tests build failed ($buildExit)" }
 }
 
+foreach ($name in $dumpEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $dumpEnvironment[$name], 'Process') }
 $testStart = Get-Date
 $trxName = 'results.trx'
 $testExit = Invoke-NativeToLog {
     dotnet test $testProj -c Debug --no-build --filter $Filter `
         --results-directory $ReportDir --logger "trx;LogFileName=$trxName"
 } (Join-Path $ReportDir 'dotnet-test.log')
+$testEnd = Get-Date
 Get-Content -LiteralPath (Join-Path $ReportDir 'dotnet-test.log') -Tail 3 | ForEach-Object { Write-Output $_ }
 
 # ---- copy evidence ---------------------------------------------------------
@@ -804,6 +836,34 @@ $token = ([BitConverter]::ToString($hashBytes) -replace '-', '').ToLowerInvarian
 $testTempRoot = Join-Path $env:TEMP ('TimecodeSyncPlayer.Tests\' + $token.Substring(0, 12))
 Copy-RecentFiles $testTempRoot 'test-temp'
 
+# ---- crash records (test infrastructure 2026-10, item 2) --------------------
+# The .NET Runtime 1026 and Application Error 1000 records of the run's window (from the test start
+# to now, at least 3 s after the tests so WER has written its record), all applications;
+# ltc-run-report.ps1 keeps the TimecodeSyncPlayer ones. A read failure is recorded
+# (crashes.count becomes null).
+$crashWindowTo = Get-Date
+$sinceTestEndMs = ($crashWindowTo - $testEnd).TotalMilliseconds
+if ($sinceTestEndMs -lt 3000) {
+    Start-Sleep -Milliseconds ([int](3000 - $sinceTestEndMs))
+    $crashWindowTo = Get-Date
+}
+$crashRecords = @()
+$crashReadError = $null
+try {
+    $crashRecords = @(Read-TcsCrashEventLog $testStart.ToUniversalTime() $crashWindowTo.ToUniversalTime())
+} catch {
+    $crashReadError = 'event log read failed: ' + $_.Exception.Message
+    Write-Output ('CRASH-READ-ERROR ' + $_.Exception.Message)
+}
+[ordered]@{
+    schema = 'ltc-crash-events/1'
+    fromUtc = $testStart.ToUniversalTime().ToString('o')
+    testEndUtc = $testEnd.ToUniversalTime().ToString('o')
+    toUtc = $crashWindowTo.ToUniversalTime().ToString('o')
+    error = $crashReadError
+    events = @($crashRecords)
+} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $ReportDir 'crash-events.json') -Encoding UTF8
+
 # ---- summary ---------------------------------------------------------------
 $passed = 0; $failed = 0; $skipped = 0; $failedNames = @()
 $trxPath = Join-Path $ReportDir $trxName
@@ -834,12 +894,8 @@ foreach ($name in $copiedLogs) {
 }
 
 $leftover = @(Get-Process -Name TimecodeSyncPlayer -ErrorAction SilentlyContinue)
-Write-Output ('SUMMARY passed=' + $passed + ' failed=' + $failed + ' skipped=' + $skipped +
-    ' err_ftl=' + $errFtl + ' leftover=' + $leftover.Count + ' report=' + $ReportDir)
-foreach ($name in $failedNames) { Write-Output ('FAILED ' + $name) }
-Write-Output ('app_logs=' + (($copiedLogs | Sort-Object) -join ','))
 # Result JSON (run-result.json) and the retention rules (delete a passed run's output-trace and leftover media links).
-# A failure here must not change the test result.
+# A failure here must not change the test result. It runs before the SUMMARY line, which takes the crash count from it.
 try {
     $reportArgs = @{ ReportDir = $ReportDir; Media = (@($Media) -join ','); Filter = $Filter;
         MediaInOffsetSeconds = $MediaInOffsetSeconds.ToString([Globalization.CultureInfo]::InvariantCulture) }
@@ -849,6 +905,29 @@ try {
 } catch {
     Write-Output ('RESULT-ERROR ' + $_.Exception.Message)
 }
+# Crashes from run-result.json: one crash fails the run. "unknown" when the event log could not be
+# read or run-result.json was not written (the run is then judged by the tests only, as before).
+$crashCount = $null
+$crashItems = @()
+$runResultPath = Join-Path $ReportDir 'run-result.json'
+if (Test-Path -LiteralPath $runResultPath) {
+    try {
+        $runResult = Get-Content -LiteralPath $runResultPath -Raw | ConvertFrom-Json
+        $crashCount = $runResult.crashes.count
+        $crashItems = @($runResult.crashes.items)
+    } catch {
+        Write-Output ('CRASH-COUNT-ERROR ' + $_.Exception.Message)
+    }
+}
+$crashText = if ($null -eq $crashCount) { 'unknown' } else { [string]$crashCount }
+Write-Output ('SUMMARY passed=' + $passed + ' failed=' + $failed + ' skipped=' + $skipped +
+    ' err_ftl=' + $errFtl + ' leftover=' + $leftover.Count + ' crashes=' + $crashText + ' report=' + $ReportDir)
+foreach ($name in $failedNames) { Write-Output ('FAILED ' + $name) }
+foreach ($item in $crashItems) {
+    Write-Output ('CRASH time=' + $item.time + ' scenario=' + $item.scenario + ' code=' + $item.code + ' address=' + $item.address +
+        ' module=' + $item.module + ' prores_gpu_first_launch=' + $item.proresGpuFirstLaunch + ' dump=' + $item.dump)
+}
+Write-Output ('app_logs=' + (($copiedLogs | Sort-Object) -join ','))
 }
 finally {
     if ($spoutFrameCountState) {
@@ -865,5 +944,5 @@ finally {
     Remove-ScenarioProjectArtifacts
 }
 
-if ($failed -gt 0 -or $testExit -ne 0) { exit 1 }
+if ($failed -gt 0 -or $testExit -ne 0 -or $crashCount -gt 0) { exit 1 }
 exit 0
