@@ -15,7 +15,8 @@
     "assert": 10,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 0
    }
   },
   {
@@ -32,7 +33,8 @@
     "assert": 14,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 76
+    "proresGpu": 76,
+    "proresCpu": 0
    }
   },
   {
@@ -49,7 +51,8 @@
     "assert": 16,
     "refStale": 12,
     "recap": 0,
-    "proresGpu": 37
+    "proresGpu": 37,
+    "proresCpu": 0
    }
   },
   {
@@ -66,7 +69,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 0
    }
   },
   {
@@ -83,7 +87,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 0
    }
   },
   {
@@ -100,7 +105,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 0
    }
   },
   {
@@ -117,7 +123,8 @@
     "assert": 3,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 2
+    "proresGpu": 2,
+    "proresCpu": 0
    }
   },
   {
@@ -134,7 +141,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 3
+    "proresGpu": 3,
+    "proresCpu": 0
    }
   },
   {
@@ -151,7 +159,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 3
+    "proresGpu": 3,
+    "proresCpu": 0
    }
   },
   {
@@ -169,6 +178,7 @@
     "refStale": 0,
     "recap": 0,
     "proresGpu": 20,
+    "proresCpu": 0,
     "l2def": 0.027,
     "l2gpu": 0.017
    }
@@ -188,6 +198,7 @@
     "refStale": 0,
     "recap": 0,
     "proresGpu": 20,
+    "proresCpu": 0,
     "l2def": 0.02,
     "l2gpu": 0.017
    }
@@ -206,7 +217,8 @@
     "assert": 19,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 183
+    "proresGpu": 183,
+    "proresCpu": 0
    }
   },
   {
@@ -223,7 +235,8 @@
     "assert": 42,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 76
+    "proresGpu": 76,
+    "proresCpu": 0
    }
   },
   {
@@ -240,7 +253,8 @@
     "assert": 6,
     "refStale": 12,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 76
    }
   },
   {
@@ -257,7 +271,8 @@
     "assert": 6,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 0
    }
   },
   {
@@ -274,7 +289,8 @@
     "assert": 4,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 76
+    "proresGpu": 76,
+    "proresCpu": 0
    }
   },
   {
@@ -291,7 +307,8 @@
     "assert": 15,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 37
+    "proresGpu": 37,
+    "proresCpu": 0
    }
   },
   {
@@ -308,7 +325,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 0
    }
   },
   {
@@ -325,7 +343,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 0
    }
   },
   {
@@ -342,7 +361,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 0
+    "proresGpu": 0,
+    "proresCpu": 0
    }
   },
   {
@@ -359,7 +379,8 @@
     "assert": 1,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 2
+    "proresGpu": 2,
+    "proresCpu": 0
    }
   },
   {
@@ -376,7 +397,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 3
+    "proresGpu": 3,
+    "proresCpu": 0
    }
   },
   {
@@ -393,7 +415,8 @@
     "assert": 0,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 3
+    "proresGpu": 3,
+    "proresCpu": 0
    }
   },
   {
@@ -411,6 +434,7 @@
     "refStale": 0,
     "recap": 0,
     "proresGpu": 22,
+    "proresCpu": 0,
     "l2def": 0.02,
     "l2gpu": 0.017
    }
@@ -430,6 +454,7 @@
     "refStale": 0,
     "recap": 0,
     "proresGpu": 20,
+    "proresCpu": 0,
     "l2def": 0.017,
     "l2gpu": 0.017
    }
@@ -448,7 +473,8 @@
     "assert": 29,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 183
+    "proresGpu": 183,
+    "proresCpu": 0
    }
   },
   {
@@ -465,7 +491,8 @@
     "assert": 51,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 76
+    "proresGpu": 76,
+    "proresCpu": 0
    }
   },
   {
@@ -482,7 +509,8 @@
     "assert": 17,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 76
+    "proresGpu": 76,
+    "proresCpu": 0
    }
   },
   {
@@ -499,7 +527,8 @@
     "assert": 42,
     "refStale": 0,
     "recap": 0,
-    "proresGpu": 183
+    "proresGpu": 183,
+    "proresCpu": 0
    }
   }
  ]

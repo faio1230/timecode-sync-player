@@ -1,17 +1,23 @@
 """LTC の一式の数の合否の範囲を、回ごとの集計から計算する（試験基盤の束 2026-10 の 3）。
 
 規則（TSP-Fable の決定、docs/design/test-infra-2026-10.md の 3 節）:
-  数え上げの数（relocate・holdEntries・3 つの和・boundary・pump・assertion など）の範囲は、
-  「3 回以上の回の最小〜最大」と「中央 ±2√中央」の広いほう。
-  - 広いほう = 下端と上端をそれぞれ広い側にとる（両方を含む範囲）。2 つが入れ子なら、広いほうそのもの
-  - 中央 ±2√中央 は整数に外向きに丸める（下端は切り捨てで 0 未満にしない、上端は切り上げ）
-  - 回が 3 未満の種類は「回が足りない」とし、±2√中央 を参考に出すだけで範囲には使わない
-  - 小数の項目（l2def・l2gpu など）は √ を使わず、最小〜最大だけ
-  読み方（上に外れたら止める、下は説明できれば記録）は変えない。このスクリプトは範囲を出すだけで、判定はしない。
+  読み方: 上に外れたら止める。下に外れたら、受け始めの型など既知の説明が付けば記録、付かなければ止める。
+  項目ごとの扱い（下の CLASS の表。--class で上書きできる）:
+  - 揺れ（揺れのある数え上げ。relocate・pump: held・ProRes の GPU/CPU の回数）:
+      「3 回以上の回の最小〜最大」と「中央 ±2√中央」の広いほう。
+      広いほう = 端ごと（下端は低い側、上端は高い側）。2 つが入れ子でなければ「両方の外側」と出す。
+      中央 ±2√中央 は整数に外向きに丸める（下端は切り捨てで 0 未満にしない、上端は切り上げ）
+  - 筋書き（試験の筋書きで決まる数。holdEntries・3 つの和・boundary・dropping stale・L-1 の relocate）:
+      3 回以上の回の最小〜最大、整数は ±1（下端は 0 未満にしない）
+  - 記録だけ（assertion）: 揺れと同じに計算して上限の数字を残すが、止めない
+  - 1 でも止める（reference-stale・recapture-failed・落ち）: 範囲は 0
+  - 小数（L-2 の maxFrameDeficit・maxGpuDeficit）: 最小〜最大だけ
+  回が 3 未満の種類は「回が足りない」とし、範囲には使わない（揺れの項目は ±2√中央 を参考に出す）。
+  このスクリプトは範囲を出すだけで、判定はしない。
 
 入力（位置引数、いくつでも。形は中身で見分ける）:
   (a) run-result.json（scripts/ltc-run-report.ps1 の出力、schema ltc-run-result/1）
-      読む数: failed・prores.gpu・l2[0].maxFrameDeficitSeconds・crashes.count。
+      読む数: failed・prores.gpu・prores.cpu・l2[0].maxFrameDeficitSeconds・crashes.count。
       "metrics"（または "counts"）の辞書があれば、その数も読む
   (b) check.py の出力のテキスト（「##### <label>」の後に「  reloc: 35+17=52」「  hold: 87」などの行）。
       1 つのファイルに複数の回があってよい
@@ -24,8 +30,10 @@ failed が 1 以上の回は、数が欠けるので自動で除く（--include-
 使い方:
   python scripts/compute-ltc-ranges.py <入力>... --kinds "std1=std,std2=std,heavy-a=heavy" \\
       [--kinds-file kinds.json] [--exclude "check-a691b58-prores*=落ちで数が欠けた"] \\
-      [--title "開発機"] [--out ranges.md] [--dump-runs runs.json]
+      [--class "a:reloc=sqrt,assert=record"] [--title "開発機"] [--out ranges.md] [--dump-runs runs.json]
   種類の対応のキーは label への fnmatch のパターン（そのままの名前でもよい）。
+  --class のキーは「項目」か「種類:項目」、値は sqrt（揺れ）・fixed（筋書き）・record（記録だけ）・
+  stop1（1 でも止める）・decimal（小数）。
   自己試験: python scripts/tests/test_compute_ltc_ranges.py
 """
 import argparse
@@ -37,17 +45,29 @@ import re
 import statistics
 import sys
 
+RULE_LINE = '読み方: 上に外れたら止める。下に外れたら、受け始めの型など既知の説明が付けば記録、付かなければ止める。'
+
 # 出力の順。ここに無い項目は後ろに名前の順で並べる。
-METRIC_ORDER = ['reloc', 'hold', 'back3', 'bound', 'stale', 'pump', 'assert', 'proresGpu',
-                'refStale', 'recap', 'l2def', 'l2gpu']
+METRIC_ORDER = ['reloc', 'hold', 'back3', 'bound', 'stale', 'pump', 'assert', 'proresGpu', 'proresCpu',
+                'refStale', 'recap', 'crashes', 'l2def', 'l2gpu']
 METRIC_LABEL = {
     'reloc': 'relocate', 'hold': 'holdEntries', 'back3': '3 つの和', 'bound': 'boundary',
     'stale': 'dropping stale', 'pump': 'pump: held', 'assert': 'assertion', 'proresGpu': 'ProRes GPU',
-    'refStale': 'reference-stale', 'recap': 'recapture-failed', 'l2def': 'L-2 maxFrameDeficit（秒）',
-    'l2gpu': 'L-2 maxGpuDeficit（秒）',
+    'proresCpu': 'ProRes CPU', 'refStale': 'reference-stale', 'recap': 'recapture-failed', 'crashes': '落ち',
+    'l2def': 'L-2 maxFrameDeficit（秒）', 'l2gpu': 'L-2 maxGpuDeficit（秒）',
 }
-# 小数の項目（√ を使わない）。ここに無くても、値に小数があれば小数の項目として扱う。
-DECIMAL_METRICS = {'l2def', 'l2gpu'}
+
+# 項目の扱い。キーは「項目」か「種類:項目」（種類:項目 が先に効く）。表に無い整数の項目は筋書き（fixed）。
+SQRT, FIXED, RECORD, STOP1, DECIMAL = 'sqrt', 'fixed', 'record', 'stop1', 'decimal'
+CLASS_LABEL = {SQRT: '揺れ', FIXED: '筋書き', RECORD: '記録だけ', STOP1: '1 でも止める', DECIMAL: '小数'}
+CLASS = {
+    'reloc': SQRT, 'pump': SQRT, 'proresGpu': SQRT, 'proresCpu': SQRT,
+    'assert': RECORD,
+    'hold': FIXED, 'back3': FIXED, 'bound': FIXED, 'stale': FIXED,
+    'l1:reloc': FIXED,  # L-1 の relocate は 1〜5 の小さい固定の数（素材ごとにほぼ決まる）
+    'refStale': STOP1, 'recap': STOP1, 'crashes': STOP1,
+    'l2def': DECIMAL, 'l2gpu': DECIMAL,
+}
 MIN_RUNS = 3
 
 # check.py の行の名前 → 項目の名前
@@ -97,9 +117,10 @@ def parse_check_text(text, source):
         elif key == 'reloc':
             cur.metrics['reloc'] = int(val.split('=')[-1])
         elif key == 'prores':
-            g = re.search(r"'gpu':\s*(\d+)", val)
-            if g:
-                cur.metrics['proresGpu'] = int(g.group(1))
+            for name, metric in (('gpu', 'proresGpu'), ('cpu', 'proresCpu')):
+                g = re.search(r"'" + name + r"':\s*(\d+)", val)
+                if g:
+                    cur.metrics[metric] = int(g.group(1))
         elif key in CHECK_KEYS:
             v = _num(val)
             if v is not None:
@@ -114,8 +135,9 @@ def _is_number(v):
 def parse_run_result(obj, source):
     metrics = {}
     pr = obj.get('prores') or {}
-    if _is_number(pr.get('gpu')):
-        metrics['proresGpu'] = pr['gpu']
+    for name, metric in (('gpu', 'proresGpu'), ('cpu', 'proresCpu')):
+        if _is_number(pr.get(name)):
+            metrics[metric] = pr[name]
     l2 = obj.get('l2') or []
     if isinstance(l2, dict):
         l2 = [l2]
@@ -200,8 +222,12 @@ def select_runs(runs, excludes, include_failed):
     return used, dropped
 
 
-def is_decimal(metric, values):
-    return metric in DECIMAL_METRICS or any(isinstance(v, float) and not float(v).is_integer() for v in values)
+def classify(kind, metric, values, classes=None):
+    """項目の扱いを返す。値に小数があれば、表にかかわらず小数。"""
+    classes = CLASS if classes is None else classes
+    if any(isinstance(v, float) and not float(v).is_integer() for v in values):
+        return DECIMAL
+    return classes.get(f'{kind}:{metric}') or classes.get(metric) or FIXED
 
 
 def sqrt_band(median):
@@ -209,23 +235,34 @@ def sqrt_band(median):
     return max(0, math.floor(median - half)), math.ceil(median + half)
 
 
-def compute(values, decimal):
-    """1 つの種類・項目の範囲。辞書で返す。"""
+def compute(values, cls):
+    """1 つの種類・項目の範囲。辞書で返す。cls は sqrt・fixed・record・stop1・decimal。"""
     n = len(values)
     lo, hi = min(values), max(values)
     med = statistics.median(values)
-    row = {'n': n, 'min': lo, 'max': hi, 'median': med, 'decimal': decimal,
+    row = {'n': n, 'min': lo, 'max': hi, 'median': med, 'cls': cls, 'decimal': cls == DECIMAL,
            'band': None, 'range': None, 'source': None, 'nested': True, 'enough': n >= MIN_RUNS}
-    if decimal:
-        row['range'] = (lo, hi) if row['enough'] else None
-        row['source'] = '最小〜最大（小数）' if row['enough'] else None
+    if cls == STOP1:
+        # 回の数にかかわらず 0。1 でも止める
+        row['enough'] = True
+        row['range'] = (0, 0)
+        row['source'] = '1 でも止める'
+        return row
+    if cls == DECIMAL:
+        if row['enough']:
+            row['range'] = (lo, hi)
+            row['source'] = '最小〜最大（小数）'
+        return row
+    if cls == FIXED:
+        if row['enough']:
+            row['range'] = (max(0, lo - 1), hi + 1)
+            row['source'] = '最小〜最大 ±1'
         return row
     band = sqrt_band(med)
     row['band'] = band
     if not row['enough']:
         return row
-    rlo, rhi = min(lo, band[0]), max(hi, band[1])
-    row['range'] = (rlo, rhi)
+    row['range'] = (min(lo, band[0]), max(hi, band[1]))
     mm_in_band = band[0] <= lo and hi <= band[1]
     band_in_mm = lo <= band[0] and band[1] <= hi
     row['nested'] = mm_in_band or band_in_mm
@@ -244,7 +281,7 @@ def metric_sort_key(m):
     return (METRIC_ORDER.index(m), '') if m in METRIC_ORDER else (len(METRIC_ORDER), m)
 
 
-def build_table(runs, metrics_filter=None):
+def build_table(runs, metrics_filter=None, classes=None):
     """{kind: {metric: row}} と、種類の並び（最初に出た順）を返す。"""
     kinds = []
     data = {}
@@ -261,7 +298,7 @@ def build_table(runs, metrics_filter=None):
         table[k] = {}
         for m in sorted(data[k], key=metric_sort_key):
             vals = data[k][m]
-            table[k][m] = compute(vals, is_decimal(m, vals))
+            table[k][m] = compute(vals, classify(k, m, vals, classes))
             table[k][m]['values'] = vals
     return kinds, table
 
@@ -286,23 +323,29 @@ def render_markdown(title, kinds, table, used, dropped):
     if title:
         out.append(f'### {title}')
         out.append('')
-    out.append('範囲 = 「最小〜最大」と「中央 ±2√中央」の広いほう（下端・上端をそれぞれ広い側に）。'
-               f'回が {MIN_RUNS} 未満の種類は範囲に使わない。小数の項目は最小〜最大だけ。')
+    out.append(RULE_LINE)
     out.append('')
-    out.append('| 種類 | 項目 | 回数 | 値 | 最小〜最大 | 中央 | 中央±2√中央 | 範囲 | 範囲の元 |')
-    out.append('|---|---|---|---|---|---|---|---|---|')
+    out.append('範囲: 揺れの項目は「最小〜最大」と「中央 ±2√中央」の広いほう（端ごと）、筋書きの項目は最小〜最大 ±1、'
+               '記録だけの項目は揺れと同じに計算して止めない、1 でも止める項目は 0、小数の項目は最小〜最大。'
+               f'回が {MIN_RUNS} 未満の種類は範囲に使わない。')
+    out.append('')
+    out.append('| 種類 | 項目 | 扱い | 回数 | 値 | 最小〜最大 | 中央 | 中央±2√中央 | 範囲 | 範囲の元 |')
+    out.append('|---|---|---|---|---|---|---|---|---|---|')
     for k in kinds:
         for m, row in table[k].items():
             dec = row['decimal']
+            cls = row['cls']
             vals = '・'.join(_fmt(v, dec) for v in row['values'])
-            band = '—（小数）' if dec else _fmt_range(row['band'], False)
+            band = _fmt_range(row['band'], False) if row['band'] is not None else '—'
             if row['enough']:
                 rng = _fmt_range(row['range'], dec)
+                if cls == RECORD:
+                    rng += '（記録だけ）'
                 src = row['source']
             else:
                 rng = f'回が足りない（{row["n"]} 回、範囲に使わない）'
                 src = '—'
-            out.append(f'| {k} | {METRIC_LABEL.get(m, m)} | {row["n"]} | {vals} | '
+            out.append(f'| {k} | {METRIC_LABEL.get(m, m)} | {CLASS_LABEL[cls]} | {row["n"]} | {vals} | '
                        f'{_fmt_range((row["min"], row["max"]), dec)} | {_fmt(row["median"], dec)} | '
                        f'{band} | {rng} | {src} |')
     out.append('')
@@ -326,11 +369,20 @@ def main(argv=None):
     ap.add_argument('--exclude', action='append', default=[],
                     help='回の名前のパターン=理由（何度でも）。名前は <ファイル名>#<label>')
     ap.add_argument('--include-failed', action='store_true', help='失敗のあった回も使う')
+    ap.add_argument('--class', dest='classes', default='',
+                    help='項目の扱いの上書き。「項目=扱い」か「種類:項目=扱い」を , で区切る'
+                         '（扱いは sqrt・fixed・record・stop1・decimal）')
     ap.add_argument('--metrics', default='', help='出す項目を , で区切る（既定は全部）')
     ap.add_argument('--title', default='')
     ap.add_argument('--out', help='Markdown の書き出し先（既定は標準出力）')
     ap.add_argument('--dump-runs', help='読んだ回を手で作る JSON の形で書き出す')
     a = ap.parse_args(argv)
+
+    classes = dict(CLASS)
+    for k, v in parse_pairs(a.classes):
+        if v not in CLASS_LABEL:
+            ap.error(f'--class の扱いが不明: {k}={v}')
+        classes[k] = v
 
     runs = []
     for p in a.inputs:
@@ -346,7 +398,7 @@ def main(argv=None):
         excludes.append((pat.strip(), why.strip()))
     used, dropped = select_runs(runs, excludes, a.include_failed)
     metrics_filter = set(x.strip() for x in a.metrics.split(',') if x.strip()) or None
-    kinds, table = build_table(used, metrics_filter)
+    kinds, table = build_table(used, metrics_filter, classes)
     md = render_markdown(a.title, kinds, table, used, dropped)
 
     if a.dump_runs:

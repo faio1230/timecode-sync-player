@@ -17,7 +17,8 @@
         "recap": 0,
         "l2def": 0.003,
         "l2gpu": 0.002,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -37,7 +38,8 @@
         "recap": 0,
         "l2def": 0.003,
         "l2gpu": 0.001,
-        "proresGpu": 142
+        "proresGpu": 142,
+        "proresCpu": 0
       }
     },
     {
@@ -57,7 +59,8 @@
         "recap": 0,
         "l2def": 0.0,
         "l2gpu": 0.0,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -77,7 +80,8 @@
         "recap": 0,
         "l2def": 0.003,
         "l2gpu": 0.001,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -95,7 +99,8 @@
         "assert": 3,
         "refStale": 0,
         "recap": 0,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -115,7 +120,8 @@
         "recap": 0,
         "l2def": 0.003,
         "l2gpu": 0.001,
-        "proresGpu": 129
+        "proresGpu": 129,
+        "proresCpu": 0
       }
     },
     {
@@ -135,7 +141,8 @@
         "recap": 0,
         "l2def": 0.0,
         "l2gpu": 0.002,
-        "proresGpu": 139
+        "proresGpu": 139,
+        "proresCpu": 0
       }
     },
     {
@@ -155,7 +162,8 @@
         "recap": 0,
         "l2def": 0.0,
         "l2gpu": 0.0,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -175,7 +183,8 @@
         "recap": 0,
         "l2def": 0.0,
         "l2gpu": 0.0,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -195,7 +204,8 @@
         "recap": 0,
         "l2def": 0.003,
         "l2gpu": 0.001,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -213,7 +223,8 @@
         "assert": 3,
         "refStale": 0,
         "recap": 0,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -231,7 +242,8 @@
         "assert": 4,
         "refStale": 0,
         "recap": 0,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -251,7 +263,8 @@
         "recap": 0,
         "l2def": 0.003,
         "l2gpu": 0.001,
-        "proresGpu": 142
+        "proresGpu": 142,
+        "proresCpu": 0
       }
     },
     {
@@ -271,7 +284,8 @@
         "recap": 0,
         "l2def": 0.0,
         "l2gpu": 0.002,
-        "proresGpu": 142
+        "proresGpu": 142,
+        "proresCpu": 0
       }
     },
     {
@@ -291,7 +305,8 @@
         "recap": 0,
         "l2def": 0.0,
         "l2gpu": 0.0,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     },
     {
@@ -311,7 +326,8 @@
         "recap": 0,
         "l2def": 0.0,
         "l2gpu": 0.0,
-        "proresGpu": 0
+        "proresGpu": 0,
+        "proresCpu": 0
       }
     }
   ]
