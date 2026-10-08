@@ -1,0 +1,535 @@
+{
+ "note": "検証機の固定の一式の表（v0.6.5 899ee68・v0.6.6 91985cd、TSP-TestMachine の報告）から手で写した回ごとの数。素材は記号だけ。relocate = Continue + Single、3 つの和 = backwardSeeksWhileStopped + heldJumpBackwardWhileStopped + otherBackwardWhileStopped、stale = dropping stale、pump = pump: held、assert = gst_segment_do_seek の assertion。A の l2def / l2gpu は L-2 の連続性の表の maxDeficitSeconds / maxGpuDeficitSeconds。種類: std-a はインストール版（トレース無し）、std-bc は RTX の zip（v0.6.6 の ffmpeg 無しの std を含む）、prores-rtx は v0.6.6 の gio の採取の回を含む、l1 は L-1 の 6 素材、a は A（1 時間）、amd-auto は内蔵 AMD の自動（relocate は記録だけ、利用者の決定 2026-10-06）、amd-off は内蔵 AMD で ProRes の GPU デコードを切った参考の回。PR4 は数が全部 0 なので入れない",
+ "runs": [
+  {
+   "source": "v065-899ee68",
+   "label": "std a",
+   "kind": "std-a",
+   "metrics": {
+    "reloc": 67,
+    "hold": 88,
+    "back3": 42,
+    "bound": 2,
+    "stale": 0,
+    "pump": 4,
+    "assert": 10,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "std b",
+   "kind": "std-bc",
+   "metrics": {
+    "reloc": 53,
+    "hold": 89,
+    "back3": 32,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 14,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 76,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "std c",
+   "kind": "std-bc",
+   "metrics": {
+    "reloc": 51,
+    "hold": 89,
+    "back3": 33,
+    "bound": 2,
+    "stale": 0,
+    "pump": 1,
+    "assert": 16,
+    "refStale": 12,
+    "recap": 0,
+    "proresGpu": 37,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "L-1 M1",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "L-1 M2",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "L-1 M3",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "L-1 M4",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 4,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 3,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 2,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "L-1 M5",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 3,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "L-1 M7",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 3,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "A 1",
+   "kind": "a",
+   "metrics": {
+    "reloc": 83,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 20,
+    "proresCpu": 0,
+    "l2def": 0.027,
+    "l2gpu": 0.017
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "A 2",
+   "kind": "a",
+   "metrics": {
+    "reloc": 83,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 20,
+    "proresCpu": 0,
+    "l2def": 0.02,
+    "l2gpu": 0.017
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "ProRes RTX",
+   "kind": "prores-rtx",
+   "metrics": {
+    "reloc": 52,
+    "hold": 89,
+    "back3": 33,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 19,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 183,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "AMD auto",
+   "kind": "amd-auto",
+   "metrics": {
+    "reloc": 101,
+    "hold": 88,
+    "back3": 32,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 42,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 76,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v065-899ee68",
+   "label": "AMD off",
+   "kind": "amd-off",
+   "metrics": {
+    "reloc": 54,
+    "hold": 88,
+    "back3": 32,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 6,
+    "refStale": 12,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 76
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "std a",
+   "kind": "std-a",
+   "metrics": {
+    "reloc": 67,
+    "hold": 87,
+    "back3": 42,
+    "bound": 2,
+    "stale": 0,
+    "pump": 4,
+    "assert": 6,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "std b",
+   "kind": "std-bc",
+   "metrics": {
+    "reloc": 53,
+    "hold": 88,
+    "back3": 33,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 4,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 76,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "std c",
+   "kind": "std-bc",
+   "metrics": {
+    "reloc": 52,
+    "hold": 88,
+    "back3": 33,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 15,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 37,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "L-1 M1",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "L-1 M2",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "L-1 M3",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 0,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "L-1 M4",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 4,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 1,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 2,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "L-1 M5",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 3,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "L-1 M7",
+   "kind": "l1",
+   "metrics": {
+    "reloc": 1,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 3,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "A 1",
+   "kind": "a",
+   "metrics": {
+    "reloc": 83,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 22,
+    "proresCpu": 0,
+    "l2def": 0.02,
+    "l2gpu": 0.017
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "A 2",
+   "kind": "a",
+   "metrics": {
+    "reloc": 84,
+    "hold": 0,
+    "back3": 0,
+    "bound": 0,
+    "stale": 0,
+    "pump": 0,
+    "assert": 0,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 20,
+    "proresCpu": 0,
+    "l2def": 0.017,
+    "l2gpu": 0.017
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "ProRes RTX",
+   "kind": "prores-rtx",
+   "metrics": {
+    "reloc": 52,
+    "hold": 89,
+    "back3": 33,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 29,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 183,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "ProRes AMD internal (no output)",
+   "kind": "amd-auto",
+   "metrics": {
+    "reloc": 96,
+    "hold": 87,
+    "back3": 32,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 51,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 76,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "std without ffmpeg",
+   "kind": "std-bc",
+   "metrics": {
+    "reloc": 54,
+    "hold": 88,
+    "back3": 32,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 17,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 76,
+    "proresCpu": 0
+   }
+  },
+  {
+   "source": "v066-91985cd",
+   "label": "ProRes RTX gio sampling",
+   "kind": "prores-rtx",
+   "metrics": {
+    "reloc": 52,
+    "hold": 89,
+    "back3": 33,
+    "bound": 2,
+    "stale": 0,
+    "pump": 0,
+    "assert": 42,
+    "refStale": 0,
+    "recap": 0,
+    "proresGpu": 183,
+    "proresCpu": 0
+   }
+  }
+ ]
+}

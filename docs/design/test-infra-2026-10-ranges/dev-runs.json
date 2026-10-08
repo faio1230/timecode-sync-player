@@ -1,0 +1,334 @@
+{
+  "runs": [
+    {
+      "source": "check-v065-heavy-a",
+      "label": "heavy-a",
+      "kind": "heavy",
+      "failed": 0,
+      "metrics": {
+        "reloc": 53,
+        "hold": 87,
+        "back3": 32,
+        "bound": 2,
+        "stale": 0,
+        "pump": 33,
+        "assert": 10,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.003,
+        "l2gpu": 0.002,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-v065-prores1",
+      "label": "prores1",
+      "kind": "prores",
+      "failed": 0,
+      "metrics": {
+        "reloc": 50,
+        "hold": 83,
+        "back3": 31,
+        "bound": 2,
+        "stale": 0,
+        "pump": 0,
+        "assert": 4,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.003,
+        "l2gpu": 0.001,
+        "proresGpu": 142,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-v065-std1",
+      "label": "std1",
+      "kind": "std",
+      "failed": 0,
+      "metrics": {
+        "reloc": 50,
+        "hold": 87,
+        "back3": 31,
+        "bound": 2,
+        "stale": 0,
+        "pump": 86,
+        "assert": 6,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.0,
+        "l2gpu": 0.0,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-a691b58-heavy-a",
+      "label": "heavy-a",
+      "kind": "heavy",
+      "failed": 0,
+      "metrics": {
+        "reloc": 52,
+        "hold": 86,
+        "back3": 34,
+        "bound": 2,
+        "stale": 0,
+        "pump": 31,
+        "assert": 9,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.003,
+        "l2gpu": 0.001,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-a691b58-l1-1",
+      "label": "l1-1",
+      "kind": "l1",
+      "failed": 0,
+      "metrics": {
+        "reloc": 3,
+        "hold": 0,
+        "back3": 0,
+        "bound": 0,
+        "stale": 0,
+        "pump": 0,
+        "assert": 3,
+        "refStale": 0,
+        "recap": 0,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-a691b58-prores1",
+      "label": "prores1",
+      "kind": "prores",
+      "failed": 1,
+      "metrics": {
+        "reloc": 48,
+        "hold": 65,
+        "back3": 32,
+        "bound": 2,
+        "stale": 0,
+        "pump": 0,
+        "assert": 5,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.003,
+        "l2gpu": 0.001,
+        "proresGpu": 129,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-a691b58-prores2",
+      "label": "prores2",
+      "kind": "prores",
+      "failed": 1,
+      "metrics": {
+        "reloc": 50,
+        "hold": 85,
+        "back3": 33,
+        "bound": 2,
+        "stale": 0,
+        "pump": 3,
+        "assert": 7,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.0,
+        "l2gpu": 0.002,
+        "proresGpu": 139,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-a691b58-std1",
+      "label": "std1",
+      "kind": "std",
+      "failed": 0,
+      "metrics": {
+        "reloc": 50,
+        "hold": 83,
+        "back3": 31,
+        "bound": 2,
+        "stale": 0,
+        "pump": 85,
+        "assert": 4,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.0,
+        "l2gpu": 0.0,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-a691b58-std2",
+      "label": "std2",
+      "kind": "std",
+      "failed": 0,
+      "metrics": {
+        "reloc": 50,
+        "hold": 86,
+        "back3": 31,
+        "bound": 2,
+        "stale": 0,
+        "pump": 85,
+        "assert": 5,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.0,
+        "l2gpu": 0.0,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-91985cd-heavy-a",
+      "label": "heavy-a",
+      "kind": "heavy",
+      "failed": 0,
+      "metrics": {
+        "reloc": 49,
+        "hold": 84,
+        "back3": 31,
+        "bound": 2,
+        "stale": 0,
+        "pump": 30,
+        "assert": 11,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.003,
+        "l2gpu": 0.001,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-91985cd-l1-1",
+      "label": "l1-1",
+      "kind": "l1",
+      "failed": 0,
+      "metrics": {
+        "reloc": 3,
+        "hold": 0,
+        "back3": 0,
+        "bound": 0,
+        "stale": 0,
+        "pump": 0,
+        "assert": 3,
+        "refStale": 0,
+        "recap": 0,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-91985cd-l1-2",
+      "label": "l1-2",
+      "kind": "l1",
+      "failed": 0,
+      "metrics": {
+        "reloc": 5,
+        "hold": 0,
+        "back3": 0,
+        "bound": 0,
+        "stale": 0,
+        "pump": 0,
+        "assert": 4,
+        "refStale": 0,
+        "recap": 0,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-91985cd-prores1",
+      "label": "prores1",
+      "kind": "prores",
+      "failed": 0,
+      "metrics": {
+        "reloc": 52,
+        "hold": 87,
+        "back3": 33,
+        "bound": 2,
+        "stale": 0,
+        "pump": 0,
+        "assert": 6,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.003,
+        "l2gpu": 0.001,
+        "proresGpu": 142,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-91985cd-prores2",
+      "label": "prores2",
+      "kind": "prores",
+      "failed": 0,
+      "metrics": {
+        "reloc": 50,
+        "hold": 86,
+        "back3": 32,
+        "bound": 2,
+        "stale": 0,
+        "pump": 1,
+        "assert": 5,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.0,
+        "l2gpu": 0.002,
+        "proresGpu": 142,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-91985cd-std1",
+      "label": "std1",
+      "kind": "std",
+      "failed": 0,
+      "metrics": {
+        "reloc": 50,
+        "hold": 87,
+        "back3": 33,
+        "bound": 2,
+        "stale": 0,
+        "pump": 85,
+        "assert": 4,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.0,
+        "l2gpu": 0.0,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    },
+    {
+      "source": "check-91985cd-std2",
+      "label": "std2",
+      "kind": "std",
+      "failed": 0,
+      "metrics": {
+        "reloc": 51,
+        "hold": 88,
+        "back3": 33,
+        "bound": 2,
+        "stale": 0,
+        "pump": 83,
+        "assert": 6,
+        "refStale": 0,
+        "recap": 0,
+        "l2def": 0.0,
+        "l2gpu": 0.0,
+        "proresGpu": 0,
+        "proresCpu": 0
+      }
+    }
+  ]
+}
