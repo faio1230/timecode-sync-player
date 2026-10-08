@@ -152,6 +152,8 @@ FlaUIによるUI自動操作テストのため、以下が必須です。
 
 試験を足すときは、E2E とランナーの確かめ（判定・数え・待ち）を、アプリのログの Information 以上の行だけで行ってください。アプリは Release ではログの最小の段階が Information で、Debug の行は配布物の構成では出ません。単体・結合の試験のメモリのシンクは対象外です。
 
+1 版に複数の項目を入れるときは、項目を入れるたびに非E2E を全部回すのに加え、見せ方に触れた項目を入れた後は、それより前に入れた項目の UI の E2E を回し直し、候補を作る前に E2E の一式（LTC シナリオ以外）を Release の exe で一度回してください（v0.6.6 で、LTC のメーターの領域がプレイリストの一覧を縮め、先に入れた並べ替えの E2E が開発機で落ちるようになったのに気づかなかった）。
+
 ```powershell
 dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~E2ETests"
 ```
