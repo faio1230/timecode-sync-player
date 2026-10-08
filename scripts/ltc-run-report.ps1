@@ -17,6 +17,13 @@
     appExit（終了を押してからプロセスが消えるまでの秒数。回数・中央・最大と、15 秒を超えた回の終了の段のログ行）、
     prores（ProRes のロードの profile の内訳 prores-gpu / prores-cpu と decoder-adapter-mismatch の発火の回数。
     この回の trx の開始より前のログ行は数えない）。
+    試験基盤の束 2026-10 の 2 の追加（落ちの自動の集計）:
+    crashes（回の窓の中の、イベントログの .NET Runtime 1026 と Application Error 1000 のうち TimecodeSyncPlayer の行から
+    数えた落ち。各件の時刻・例外の番号・番地・シナリオ・直前の起動・ダンプのファイル名と、ReportDir\dumps のダンプの数と名前。
+    ランナーが集めた crash-events.json が無い回は count が null）、
+    launches（窓の中の起動の数、「=== TimecodeSyncPlayer v… 起動」の行）、
+    proresGpuFirstLaunches（起動から 2 秒以内に「FetchMetadata: … V:proresd3d11dec」が出た起動の数）、
+    verdict / failReasons（失敗した試験があれば tests、落ちが 1 回でもあれば crash。どちらかがあれば fail）。
   所見（3 行）は人が書くので、ここでは作らない。
 
   保持（-Prune のとき）:
@@ -199,6 +206,32 @@ $appExit = Get-TcsAppExitSummary -Events $appExitEvents -AppLines $appLines -Shi
     -ShimLinesByScenario $shimLinesByScenario
 $prores = Get-TcsProResLoadSummary -ShimLines $shimLines -SinceUtc $runStartUtc
 
+# ---- 落ち（試験基盤の束 2026-10 の 2） -------------------------------------------
+# ランナーが回の窓（試験の開始〜終わりの後の集め）で読んだイベントログの行（crash-events.json）と、
+# app-logs の起動の行、trx の試験の時刻、dumps のダンプから数える。1 回でも落ちがあれば回は失敗。
+$crashEventsPath = Join-Path $ReportDir 'crash-events.json'
+$dumpDir = Join-Path $ReportDir 'dumps'
+$crashArgs = @{ AppLines = $appLines; DumpDir = $dumpDir }
+if ($trx) { $crashArgs.Tests = @(Get-TcsTrxTestTimes $trx.FullName) }
+if (Test-Path -LiteralPath $dumpDir) { $crashArgs.DumpFiles = @(Get-ChildItem -LiteralPath $dumpDir -File -Filter '*.dmp') }
+if (Test-Path -LiteralPath $crashEventsPath) {
+    $crashEvents = Get-Content -LiteralPath $crashEventsPath -Raw | ConvertFrom-Json
+    $crashArgs.Records = @($crashEvents.events)
+    $crashArgs.FromUtc = $crashEvents.fromUtc
+    $crashArgs.ToUtc = $crashEvents.toUtc
+    if ($crashEvents.error) { $crashArgs.Collected = $false; $crashArgs.CollectError = [string]$crashEvents.error }
+} else {
+    # 集めていない回（この変更より前のランナー）。数は null、起動の数は trx の開始〜終わりで数える。
+    $crashArgs.Collected = $false
+    $crashArgs.CollectError = 'crash-events.json not found (the runner did not read the event log)'
+    $crashArgs.FromUtc = $runStartUtc
+    if ($trx) { $crashArgs.ToUtc = Get-TcsRunFinishUtc $trx.FullName }
+}
+$crashSummary = Get-TcsCrashSummary @crashArgs
+$failReasons = @()
+if ($failed -gt 0) { $failReasons += 'tests' }
+if ($crashSummary.crashes.count -gt 0) { $failReasons += 'crash' }
+
 $result = [ordered]@{
     schema = 'ltc-run-result/1'
     label = (Split-Path $ReportDir -Leaf)
@@ -229,6 +262,11 @@ $result = [ordered]@{
     cDriveFreeGbAtStart = $cDriveFreeGbAtStart
     appExit = $appExit
     prores = $prores
+    verdict = $(if ($failReasons.Count -gt 0) { 'fail' } else { 'pass' })
+    failReasons = @($failReasons)
+    crashes = $crashSummary.crashes
+    launches = $crashSummary.launches
+    proresGpuFirstLaunches = $crashSummary.proresGpuFirstLaunches
 }
 
 $outPath = Join-Path $ReportDir 'run-result.json'
@@ -238,6 +276,11 @@ Write-Output ('RESULT ' + $outPath + ' passed=' + $passed + ' failed=' + $failed
 Write-Output ('RESULT-5B commit_free_gb=' + $commitFreeGbAtStart + ' c_free_gb=' + $cDriveFreeGbAtStart + ' app_exit_count=' + $appExit.count +
     ' app_exit_median_s=' + $appExit.medianSeconds + ' app_exit_max_s=' + $appExit.maxSeconds + ' app_exit_over15s=' + @($appExit.over15s).Count +
     ' prores_gpu=' + $prores.gpu + ' prores_cpu=' + $prores.cpu + ' adapter_mismatch=' + $prores.adapterMismatch)
+$crashCountText = if ($null -eq $crashSummary.crashes.count) { 'unknown' } else { [string]$crashSummary.crashes.count }
+Write-Output ('RESULT-CRASH crashes=' + $crashCountText + ' dotnet_1026=' + $crashSummary.crashes.dotnetRuntime1026 +
+    ' app_error_1000=' + $crashSummary.crashes.applicationError1000 + ' launches=' + $crashSummary.launches +
+    ' prores_gpu_first_launches=' + $crashSummary.proresGpuFirstLaunches + ' dumps=' + $crashSummary.crashes.dumps.count +
+    ' verdict=' + $result.verdict + ' fail_reasons=' + ($failReasons -join ','))
 
 if ($Prune) {
     # media はハードリンクだけを消す（runner の D23-b と同じ: 名前が 1 つしかないファイルは実体なので残す）。
@@ -253,7 +296,8 @@ if ($Prune) {
     }
     $trace = Join-Path $ReportDir 'output-trace'
     # 消すのは「結果がそろって合格した回」だけ。trx の無い回（途中で止めた回）は残す。
-    if ($trx -and $passed -gt 0 -and $failed -eq 0 -and $invalid.Count -eq 0 -and (Test-Path -LiteralPath $trace)) {
+    if ($trx -and $passed -gt 0 -and $failed -eq 0 -and $invalid.Count -eq 0 -and -not ($crashSummary.crashes.count -gt 0) -and
+        (Test-Path -LiteralPath $trace)) {
         $bytes = (Get-ChildItem -LiteralPath $trace -Recurse -File | Measure-Object Length -Sum).Sum
         Remove-Item -LiteralPath $trace -Recurse -Force
         Write-Output ('pruned output-trace (passed run) ' + [math]::Round($bytes / 1MB, 1) + ' MB')
