@@ -78,11 +78,19 @@ if (-not $MediaDir.StartsWith($outDirPrefix, [System.StringComparison]::OrdinalI
         'MediaDir=' + $MediaDir + ' OutDir=' + $outDir)
 }
 
-if (Test-Path $FfmpegDir) { $env:PATH = "$env:PATH;$FfmpegDir" }
-$ffprobe = Get-Command ffprobe -ErrorAction SilentlyContinue
-if (-not $ffprobe) {
-    throw 'ffprobe not found on PATH (pass -FfmpegDir)'
+# #43: ffprobe is called by its full path and PATH is left as it is. This script used
+# to append -FfmpegDir to PATH; the runner ran it in its own process, so the folder
+# stayed on the runner's PATH and reached the app, which then saw ffprobe in a run
+# that was meant to have none. Order (scripts\TcsFfmpeg.psm1, Resolve-TcsFfprobe):
+# TCS_FFPROBE, ffprobe.exe next to TCS_FFMPEG, -FfmpegDir\ffprobe.exe, PATH.
+Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
+$ffprobeResolved = Resolve-TcsFfprobe -FfmpegDir $FfmpegDir
+if (-not $ffprobeResolved.Ffprobe) {
+    throw ('ffprobe not found (searched: ' + ($ffprobeResolved.Searched -join '; ') +
+        '). Set TCS_FFMPEG to an ffmpeg.exe with ffprobe.exe next to it, pass -FfmpegDir, or put ffprobe on PATH')
 }
+$ffprobePath = $ffprobeResolved.Ffprobe
+Write-Output ('ffprobe: ' + $ffprobePath + ' (' + $ffprobeResolved.Source + ')')
 
 $extensions = @('.mp4', '.mov', '.mkv', '.mxf', '.ts')
 $allFiles = @(Get-ChildItem -LiteralPath $MediaDir -File |
@@ -141,7 +149,7 @@ foreach ($selected in $selection) {
     $index++
     $file = $selected.File
     $symbol = $selected.Symbol
-    $durationText = & $ffprobe.Source -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $file.FullName
+    $durationText = & $ffprobePath -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $file.FullName
     if ($LASTEXITCODE -ne 0) { throw "ffprobe failed for track $symbol" }
     $duration = [double]::Parse(($durationText | Select-Object -First 1).Trim(), $invariant)
     if ($duration -le 0) { throw "ffprobe returned no duration for track $symbol" }

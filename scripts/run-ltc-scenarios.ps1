@@ -264,9 +264,12 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $problems += 'dot
 # The ffmpeg make-e2e-media.ps1 will use (TCS_FFMPEG, its default -FfmpegDir, PATH;
 # scripts\TcsFfmpeg.psm1). Its version is the first line of make-e2e-media.log.
 Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'TcsChildScript.psm1') -Force
+# The same folder goes to make-ltc-scenario-project.ps1 as -FfmpegDir (#43).
+$ffmpegDefaultDir = Join-Path $env:ProgramFiles 'ffmpeg\bin'
 $ffmpegText = ''
 try {
-    $ffmpegResolved = Resolve-TcsFfmpeg -FfmpegDir (Join-Path $env:ProgramFiles 'ffmpeg\bin')
+    $ffmpegResolved = Resolve-TcsFfmpeg -FfmpegDir $ffmpegDefaultDir
     $ffmpegText = $ffmpegResolved.VersionLine + ' (' + $ffmpegResolved.Source + ')'
 } catch {
     $problems += ('ffmpeg: ' + $_.Exception.Message)
@@ -604,8 +607,13 @@ if ($MediaDir) {
     if (-not [string]::IsNullOrWhiteSpace($TrackSegmentSeconds)) { $makeArgs.TrackSegmentSeconds = $TrackSegmentSeconds }
     Write-Output ('media_select=' + $(if ($Media) { $Media } else { '(first 3 by name)' }) +
         ' media_in_offset=' + $MediaInOffsetSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))
-    & $makeProject @makeArgs *> (Join-Path $ReportDir 'make-ltc-scenario-project.log')
-    if (-not $?) { throw "make-ltc-scenario-project.ps1 failed" }
+    # #43: a child pwsh, so nothing the project script does to its process (PATH above all)
+    # stays on the runner and reaches the test host and the app. Its ffprobe is resolved in
+    # the same order as the ffmpeg of the prerequisites (TCS_FFMPEG, -FfmpegDir, PATH;
+    # scripts\TcsFfmpeg.psm1) and called by its full path.
+    $makeArgs.FfmpegDir = $ffmpegDefaultDir
+    $makeExit = Invoke-TcsChildScript -ScriptPath $makeProject -Arguments $makeArgs -LogPath (Join-Path $ReportDir 'make-ltc-scenario-project.log')
+    if ($makeExit -ne 0) { throw ("make-ltc-scenario-project.ps1 failed (exit " + $makeExit + ", see make-ltc-scenario-project.log)") }
     if (-not (Test-Path -LiteralPath $projectPath)) { throw "project not generated: $projectPath" }
     $env:TIMECODE_LTC_SCENARIO_PROJECT = $projectPath
     $env:TIMECODE_REAL_PROJECT_PATH = $projectPath

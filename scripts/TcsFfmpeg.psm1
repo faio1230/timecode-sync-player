@@ -8,6 +8,8 @@
 #   2. -FfmpegDir  - folder that holds ffmpeg.exe (the script argument)
 #   3. PATH
 # ffprobe: TCS_FFPROBE, then ffprobe.exe next to the resolved ffmpeg, then PATH.
+# Resolve-TcsFfprobe walks the same levels for a script that only needs ffprobe
+# (TCS_FFPROBE, next to TCS_FFMPEG, -FfmpegDir, PATH) and does not need ffmpeg.
 #
 # Why: the dev machine and the test machine had two ffmpeg builds each, and the
 # scripts (-FfmpegDir first) and the tests (PATH) picked opposite ones, so the same
@@ -80,6 +82,59 @@ function Resolve-TcsFfmpeg {
         VersionLine   = [string]$versionLine
         Major         = $major
     }
+}
+
+# ffprobe alone, for a script that reads durations and never runs ffmpeg
+# (make-ltc-scenario-project.ps1). Same levels as Resolve-TcsFfmpeg, without
+# requiring ffmpeg itself:
+#   0. TCS_FFPROBE              - full path of ffprobe.exe (the override of this module)
+#   1. next to TCS_FFMPEG       - ffprobe.exe in the folder of the ffmpeg.exe it names
+#   2. -FfmpegDir\ffprobe.exe
+#   3. PATH
+# Returns Ffprobe = '' when none is found; Searched lists where it looked (for the
+# error message). Never changes PATH (#43: the runner used to keep the folder that
+# the project script appended to PATH, and the app then saw ffprobe).
+function Resolve-TcsFfprobe {
+    [CmdletBinding()]
+    param([string]$FfmpegDir = '')
+
+    $searched = New-Object System.Collections.Generic.List[string]
+    $fromEnv = [Environment]::GetEnvironmentVariable('TCS_FFPROBE')
+    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
+        if (-not (Test-Path -LiteralPath $fromEnv -PathType Leaf)) {
+            throw ('TCS_FFPROBE does not point to a file: ' + $fromEnv)
+        }
+        return [pscustomobject]@{ Ffprobe = (Get-Item -LiteralPath $fromEnv).FullName; Source = 'env:TCS_FFPROBE'; Searched = @('TCS_FFPROBE') }
+    }
+    $searched.Add('TCS_FFPROBE (unset)')
+
+    $ffmpegFromEnv = [Environment]::GetEnvironmentVariable('TCS_FFMPEG')
+    if (-not [string]::IsNullOrWhiteSpace($ffmpegFromEnv)) {
+        $next = Join-Path (Split-Path -Parent $ffmpegFromEnv) 'ffprobe.exe'
+        if (Test-Path -LiteralPath $next -PathType Leaf) {
+            return [pscustomobject]@{ Ffprobe = (Get-Item -LiteralPath $next).FullName; Source = 'next-to-TCS_FFMPEG'; Searched = @($searched) + $next }
+        }
+        $searched.Add($next)
+    } else {
+        $searched.Add('TCS_FFMPEG (unset)')
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($FfmpegDir)) {
+        $inDir = Join-Path $FfmpegDir 'ffprobe.exe'
+        if (Test-Path -LiteralPath $inDir -PathType Leaf) {
+            return [pscustomobject]@{ Ffprobe = (Get-Item -LiteralPath $inDir).FullName; Source = 'arg:FfmpegDir'; Searched = @($searched) + $inDir }
+        }
+        $searched.Add($inDir)
+    } else {
+        $searched.Add('-FfmpegDir (empty)')
+    }
+
+    $onPath = Get-Command ffprobe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $searched.Add('PATH')
+    if ($onPath) {
+        return [pscustomobject]@{ Ffprobe = $onPath.Source; Source = 'PATH'; Searched = @($searched) }
+    }
+    return [pscustomobject]@{ Ffprobe = ''; Source = ''; Searched = @($searched) }
 }
 
 # Major release of an ffmpeg build. Release builds say "ffmpeg version 4.2.3" or
@@ -192,5 +247,5 @@ function Assert-TcsColorTags {
     return ('colour-tags ok (' + $Expect + '): ' + (Split-Path -Leaf $Path) + ' ' + $text)
 }
 
-Export-ModuleMember -Function Resolve-TcsFfmpeg, Get-TcsFfmpegMajor, Get-TcsFfmpegLogLines,
+Export-ModuleMember -Function Resolve-TcsFfmpeg, Resolve-TcsFfprobe, Get-TcsFfmpegMajor, Get-TcsFfmpegLogLines,
     Get-TcsFfmpegOldVersionWarning, Update-TcsFfmpegSidecar, Get-TcsColorTags, Assert-TcsColorTags
