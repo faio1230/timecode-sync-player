@@ -203,3 +203,161 @@ runnerの`-PlayerBackend`は既定の`Gstreamer`のままでよい（v0.4から�
 FPSの設定（固定の値、またはAuto）: ________
 
 実施日: ____年__月__日
+
+---
+
+## 固定の一式（検証機）
+
+公開の候補ごとに検証機で回す一式。中身はv0.6.6の検証（[設計書](design/v0.6.6-field-fixes.md)の検証の節）に、試験基盤の束（[test-infra-2026-10.md](design/test-infra-2026-10.md)）で決めた恒久の回を足したもの。
+
+- 標準のシナリオ3通り（うち1通りは本番の構成: インストール版・出力トレースの環境変数なし）
+- 連続追従（L-1）6本
+- 切替（A）2本
+- ProResのGPUデコード（RTXと内蔵AMD）、アルファつきのProRes（PR4）
+- プロジェクトの保存と復元10回、K2（記録だけで合否に数えない）
+- 非E2Eの全件
+- アプリのプロセスのPATHだけからffmpegを外した回（v0.6.6で追加）
+- **まっさらな環境の一式**（下の節。試験基盤の束で追加。恒久）
+
+---
+
+## まっさらな環境の一式
+
+配布物だけで動くことを、開発の道具が無い環境で確かめる。
+v0.6.6では、開発機と検証機のPATHにffmpegがあったため、ffprobeが無いとクリップの長さが0になる件（現場の報告のF-7）が試験で見えなかった。
+この回は固定の一式の恒久の1本で、検証機で回す。
+
+### 準備: 新しいWindowsのユーザー
+
+- [ ] 検証機の管理者のPowerShellで、ローカルの標準ユーザーを作る（名前は文書に書かない。以下`<新しいユーザー>`）
+
+```powershell
+$pw = Read-Host -AsSecureString
+New-LocalUser -Name '<新しいユーザー>' -Password $pw
+Add-LocalGroupMember -Group 'Users' -Member '<新しいユーザー>'
+```
+
+- [ ] そのユーザーでconsoleのセッションにサインインする（リモートデスクトップでは表示の試験が回らない。`query session`で`>console`を確かめる）
+- [ ] 最初に、そのユーザーのPowerShell 7で次を確かめる。1つでも外れたら、インストールの前に止めて親へ報告する
+
+```powershell
+# 1) PATH に ffmpeg・ffprobe・GStreamer が無い（何も出ないこと）
+Get-Command ffmpeg, ffprobe, gst-launch-1.0 -ErrorAction SilentlyContinue
+$env:PATH -split ';' | Where-Object { $_ -and (
+    (Test-Path (Join-Path $_ 'ffmpeg.exe')) -or (Test-Path (Join-Path $_ 'ffprobe.exe')) -or
+    (Test-Path (Join-Path $_ 'gstreamer-1.0-0.dll'))) }
+# 2) GStreamer の環境変数が無い（空であること）。あるとアプリは同梱の GStreamer より先にそれを使う
+[Environment]::GetEnvironmentVariable('GSTREAMER_1_0_ROOT_MSVC_X86_64')
+# 3) 試験の道具の環境変数が無い（空であること）
+$env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE; $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH; $env:TCS_FFMPEG
+# 4) 設定とインストールが無い（どちらも False）
+Test-Path (Join-Path $env:LOCALAPPDATA 'TimecodeSyncPlayer')
+Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
+```
+
+- `GSTREAMER_1_0_ROOT_MSVC_X86_64`がシステムの環境変数で入っているときは、この回の担当は消さない（ほかの回に響く）。値があることを記録して止める
+- `Program Files`の下にGStreamerやffmpegが入っていること自体は構わない（PATHと環境変数に出ていなければよい）。あれば場所を記録する
+
+### インストール
+
+- [ ] 候補の`setup.exe`のSHA-256が、親から渡された値と一致することを確かめる（`Get-FileHash`）
+- [ ] そのユーザーで`setup.exe`を実行して入れる（ユーザー単位のインストールで、入る先は`%LOCALAPPDATA%\Programs\TimecodeSyncPlayer`。UACは出ない）
+- [ ] インストール先に`gstreamer\bin`（同梱のGStreamer）と`tcs_gstreamer.dll`があることを確かめる
+
+### 試験のソースとランナーの準備
+
+- [ ] 候補と同じSHAの試験のソースを、そのユーザーのフォルダに展開する（親が渡したtarなど）
+- [ ] インストール先の`tcs_gstreamer.dll`を、試験のソースの`native\`に写す。ffprobeを外した長さの試験は、試験のプロセスでも長さを読む関数を呼ぶため、試験のbinにshimが要る（棚卸しの#43）
+- [ ] ランナーが素材とLTCのwavを作るffmpegは、`TCS_FFMPEG`（ffmpeg.exeのフルパス）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
+
+```powershell
+$env:TCS_FFMPEG = '<ffmpeg.exe のフルパス>'
+$app = Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer\TimecodeSyncPlayer.exe'
+```
+
+### 回す（2本、直列に1本ずつ）
+
+1. 標準のシナリオ1通り（本番の構成: インストール版・出力トレースの環境変数なし）。引数は、固定の一式の本番の構成の1通りと同じにし、`-AppExe`だけをインストール先にする
+
+```powershell
+pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe $app -MediaDir <実素材のフォルダ> -ReportDir <報告のフォルダ1>
+```
+
+2. ffprobeを外した長さの試験（`F7DurationWithoutFfprobeE2ETests`）。`-MediaDir`は付けない
+
+```powershell
+pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe $app -ReportDir <報告のフォルダ2> -Filter "FullyQualifiedName~F7DurationWithoutFfprobeE2ETests"
+```
+
+### ffmpegがアプリのプロセスへ漏れていないかの確かめ
+
+`-MediaDir`を付けると、ランナーは`scripts\make-ltc-scenario-project.ps1`でプロジェクトを作る。
+このスクリプトはffprobeでクリップの長さを読むため、`-FfmpegDir`（既定は`Program Files`の`ffmpeg\bin`）があればPATHの末尾に足し、PATHにffprobeが無ければ止まる（81〜84行目あたり）。
+`TCS_FFMPEG`は見ない。
+ランナーはこのスクリプトを自分のプロセスの中で呼ぶ（`& $makeProject`）ので、足したPATHはランナーに残り、そこから起動する試験とアプリのプロセスにも渡りうる。
+漏れたかどうかは、アプリの起動のログで決める。
+
+- [ ] 1本目の回の、インストール先の`logs\timecodesyncplayer-YYYYMMDD.log`で、起動の行を数える
+
+```powershell
+$logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer\logs') -Filter 'timecodesyncplayer-*.log'
+(Select-String -Path $logs.FullName -SimpleMatch 'ffprobe: not found on PATH').Count   # 起動の回数と同じ
+(Select-String -Path $logs.FullName -SimpleMatch 'ffprobe: found on PATH').Count       # 0
+```
+
+- 起動の行は`ffprobe: not found on PATH (not used; clip durations come from the media container)`。起動の回数は`run-result.json`の`launches`と比べる
+- 0時をまたいだ回は、前日のログのファイルも数える
+- [ ] `ffprobe: found on PATH`が1行でもあれば、ffmpegがアプリのプロセスに漏れている。この回は無効として、漏れた事実（行の数、`make-ltc-scenario-project.log`の内容、使った`-FfmpegDir`の場所）を記録して止め、親へ報告する。ランナーの写しを手で直して回し直すことはしない
+- [ ] `make-ltc-scenario-project.ps1`が`ffprobe not found on PATH`で止まったときも、同じく記録して止め、親へ報告する（PATHに足さない限りプロジェクトが作れないため）
+
+### 合否
+
+| 見るもの | 合格 |
+|---|---|
+| 2本の回の結果（`run-result.json`・SUMMARY） | 失敗0 |
+| 落ち（`run-result.json`の`crashes`） | 2本とも0 |
+| 起動のログ | `ffprobe: not found on PATH`が起動の回数だけあり、`ffprobe: found on PATH`が0 |
+| クリップの長さ | `Media duration probe failed`が0で、`Media duration probe: durationSec=...`の行がある |
+
+### 結果記録（まっさらな環境）
+
+| 項目 | 結果 | メモ |
+|---|---|---|
+| 準備の確かめ（PATH・環境変数・設定なし） | OK / NG | |
+| 標準のシナリオ1通り（本番の構成） | OK / NG | 合格・失敗の数 |
+| ffprobeを外した長さの試験 | OK / NG | |
+| 起動のログ（not found／found の行の数） | OK / NG | |
+| 長さ（成功／失敗の行の数） | OK / NG | |
+| 落ち（crashes） | OK / NG | |
+
+候補のSHA: ________ 実施日: ____年__月__日
+
+---
+
+## 利用者の目で触る回（公開の条件）
+
+自動の試験では、初めて触る人がどこで迷い、何を不具合と感じるかは分からない。
+そのため、版ごとに1回、この回を公開の条件にする。
+
+### 条件
+
+- [ ] 版ごとに1回、その版の開発に関わっていない、初めて触る人が操作する
+- [ ] 候補をインストールした機体で、15分自由に操作してもらう
+- [ ] 操作している間、画面を音声つきで録画する。操作する人には、思ったことを話しながら操作してもらう
+- [ ] 終わったら、録画のファイルと、アプリのlogsフォルダ（インストール先の`logs`）のzipを受け取る
+- [ ] 録画の開始時刻が分かるようにする（ファイル名に時刻が入る録画の道具を使うか、開始時刻を書き留める）。ログの時刻と突き合わせるため
+- [ ] LTCの同期も触ってもらうときは、始める前にLTCの送り元からアプリに信号が届いていることを確かめる（2026-10-06の回はLTCが届いておらず、同期の挙動を何も確かめられなかった）
+
+### 受け取り方
+
+[field-feedback-2026-10-06.md](design/field-feedback-2026-10-06.md)の5節のやり方で読む。
+
+- 音声は文字起こしして読む
+- 画面は、1分ごとのコマと、指摘があった時刻のコマを切り出して読む
+- 録画の開始時刻とログの時刻を突き合わせて、指摘ごとに起きた事象を特定する
+
+### 整理と公開の判断
+
+- [ ] 報告を`docs/design/field-feedback-YYYY-MM-DD.md`に整理する（ログから分かったこと、録画で指摘された不具合、要望、利用者に確かめること、受け取り方の過不足）
+- [ ] 指摘ごとに、この版で直すか次の束に回すかを利用者が決める。決まってから公開の判断をする
+- [ ] 文書には素材の作品名と人名を書かない。素材はM1〜M7などの記号と技術仕様だけ、操作した人は「操作した人」と書く。録画とログのzipはリポジトリに入れない

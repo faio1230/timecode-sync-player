@@ -204,6 +204,13 @@ python scripts\compute-ltc-ranges.py docs\design\test-infra-2026-10-ranges\test-
 - ランナーは PATH に ffmpeg を足すので（`make-ltc-scenario-project.ps1` の 81 行目、PATH の末尾）、このユーザーではランナーに ffmpeg の場所を引数で渡し、アプリのプロセスの PATH には入らないことをログ（「ffprobe: not found on PATH」）で確かめます
 - 手順は docs/verification-checklist.md に節を足して書きます
 
+### 5 の実施（2026-10-08、ブランチ ti/57-checklist）
+
+- docs/verification-checklist.md の末尾に「まっさらな環境の一式」の節を足しました。新しいローカルの標準ユーザーを作り、最初に PATH（ffmpeg・ffprobe・GStreamer）、`GSTREAMER_1_0_ROOT_MSVC_X86_64`、試験の道具の環境変数、設定とインストールのフォルダが無いことをコマンドで確かめます。候補の setup.exe をそのユーザーで入れ、標準のシナリオ 1 通り（本番の構成）と F7DurationWithoutFfprobeE2ETests を直列に回します。ランナーの ffmpeg は `TCS_FFMPEG` で渡します
+- 合否: 失敗 0、`crashes` 0、起動のログの `ffprobe: not found on PATH` が起動の回数（`launches`）だけあって `found` が 0、`Media duration probe failed` が 0
+- `make-ltc-scenario-project.ps1` の PATH の扱い: このスクリプトは `TCS_FFMPEG` を見ず、`-FfmpegDir`（既定は Program Files の ffmpeg\bin）があれば PATH の末尾に足し、PATH に ffprobe が無ければ止まります。ランナーはこれを自分のプロセスの中で `&` で呼ぶので、足した PATH は試験とアプリのプロセスに渡りえます。手順では、起動のログの `ffprobe: found on PATH` が 1 行でもあれば漏れとして回を無効にし、事実を記録して止めることにしました（スクリプトがプロジェクトを作れずに止まった場合も同じ）。ランナーは変えていません。直すのは棚卸しの #43（ランナーに ffmpeg を外す口）です
+- 同じ節の前に「固定の一式（検証機）」の一覧を足し、v0.6.6 の検証の一式に、この回を恒久の 1 行として加えました
+
 ## 6. 形式の表と同梱の突き合わせ
 
 - 事実
@@ -237,6 +244,11 @@ python scripts\compute-ltc-ranges.py docs\design\test-infra-2026-10-ranges\test-
 - docs/verification-checklist.md に、公開の条件として「版ごとに 1 回、初めて触る人が 15 分自由に操作し、画面の録画（音声つき）とアプリの logs の zip を渡す」を書きます
 - 受け取り方は docs/design/field-feedback-2026-10-06.md の 5 節（音声は文字起こし、画面は 1 分ごとと指摘の時刻のコマ、録画の開始時刻とログの時刻の突き合わせ）です
 - 公開の判断の前に、報告を整理して、直すか次の束かを利用者が決めます
+
+### 7 の実施（2026-10-08、ブランチ ti/57-checklist）
+
+- docs/verification-checklist.md の末尾に「利用者の目で触る回（公開の条件）」の節を足しました。条件（版ごとに 1 回、その版の開発に関わっていない人が 15 分、話しながらの音声つきの録画と logs の zip、録画の開始時刻、LTC の送り元の確かめ）、受け取り方（field-feedback-2026-10-06.md の 5 節を参照）、整理と公開の判断（docs/design/field-feedback-YYYY-MM-DD.md にまとめ、直すか次の束かを利用者が決めてから公開を判断）を書きました
+- 素材の作品名と人名を文書に書かないこと、録画とログの zip をリポジトリに入れないことも同じ節に書きました
 
 ## 7b. 項目を入れるたびの E2E（ドラッグの E2E の調べから、TSP-Fable 2026-10-08）
 
