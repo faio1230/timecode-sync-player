@@ -77,6 +77,19 @@ public sealed class PlaylistRowLookE2ETests
             // 離さないので、ほかの試験が残すことがある）。前提として確かめ、落ちたときに理由が分かるようにする。
             (GetAsyncKeyState(VkEscape) & 0x8000).Should().Be(0, "Escape must not be held down, or OLE cancels the drag at once");
 
+            // 一覧の高さが 3 行に足りない画面では、3 行目が下にはみ出している（v0.6.6 R-13 で LTC の欄にメーターが入り、
+            // 1920x1080 の最大化で一覧が 222px から 191px に縮んだ）。はみ出した行を押すと行がフォーカスを得て、
+            // 一覧がその行を見せるために 1 行分スクロールする。先に測った 1 行目の位置に 2 行目が来て、2 行目の前に落ちる。
+            // そこで先に 3 行目を押して離し（選ぶ・フォーカスを置く）、一覧を先頭へ戻してから位置を測る。
+            // フォーカスが 3 行目にあれば、つかむときに押してもスクロールしない。
+            // UIA の Focus・Select では一覧そのものにフォーカスが残ることがあったので、マウスで押す。
+            var grip2 = Grip(playlist, 2).BoundingRectangle;
+            Mouse.Position = new System.Drawing.Point(grip2.Left + grip2.Width / 2, grip2.Top + grip2.Height / 2);
+            Thread.Sleep(80);
+            Mouse.Click(MouseButton.Left);
+            E2EAssert.WaitUntil(() => playlist.Items[2].Properties.HasKeyboardFocus.ValueOrDefault, TimeSpan.FromSeconds(3));
+            ScrollPlaylistToTop(playlist);
+            WritePreflight(app, playlist);
             var from = Grip(playlist, 2).BoundingRectangle;
             var to = playlist.Items[0].BoundingRectangle;
             Drag(
@@ -124,6 +137,28 @@ public sealed class PlaylistRowLookE2ETests
         return playlist;
     }
 
+    /// <summary>
+    /// 一覧を先頭へ戻す。UIA の ScrollPattern で戻したときは、その直前に一覧そのものへ UIA の SetFocus が届いて
+    /// フォーカスが 3 行目から外れた（開発機 2026-10-08）。フォーカスを動かさないマウスのホイールで戻す。
+    /// </summary>
+    private static void ScrollPlaylistToTop(ListBox playlist)
+    {
+        var area = playlist.BoundingRectangle;
+        E2EAssert.WaitUntil(() =>
+        {
+            AutomationElement[] items = playlist.Items;
+            if (items.Length == 3 && items[0].BoundingRectangle.Top >= area.Top)
+                return true;
+            // 1 行目のつかむ印の辺り（入力欄の上を避ける）でホイールを上へ
+            Mouse.Position = new System.Drawing.Point(area.Left + 12, area.Top + 20);
+            Thread.Sleep(50);
+            Mouse.Scroll(1);
+            Thread.Sleep(150);
+            return false;
+        }, TimeSpan.FromSeconds(3));
+        Thread.Sleep(200);
+    }
+
     private static AutomationElement Grip(ListBox playlist, int index) =>
         playlist.Items[index].FindFirstDescendant(cf => cf.ByAutomationId("PlaylistDragGrip"))
         ?? throw new InvalidOperationException($"row {index} has no PlaylistDragGrip");
@@ -167,6 +202,69 @@ public sealed class PlaylistRowLookE2ETests
         }, IntPtr.Zero);
         return result;
     }
+
+    /// <summary>
+    /// ドラッグの前の事前確認を出力に書く（判定には使わない）。開発機で並べ替えが起きなかったとき、
+    /// 前面の窓・押されたままのキー・マウスの位置・つかむ印と行の位置・画面の構成を後から比べられるようにする。
+    /// </summary>
+    private void WritePreflight(E2EAppRunner app, ListBox playlist)
+    {
+        IntPtr fg = GetForegroundWindow();
+        var title = new System.Text.StringBuilder(256);
+        _ = GetWindowText(fg, title, title.Capacity);
+        _ = GetWindowThreadProcessId(fg, out uint fgPid);
+        string fgProcess;
+        try { fgProcess = System.Diagnostics.Process.GetProcessById((int)fgPid).ProcessName; }
+        catch (ArgumentException) { fgProcess = "?"; }
+        IntPtr main = app.MainWindow.Properties.NativeWindowHandle.Value;
+        _output.WriteLine($"preflight: foreground hwnd=0x{fg.ToInt64():X} isApp={fg == main} pid={fgPid} (app {app.Process.Id}) process={fgProcess} title=\"{title}\"");
+
+        var held = new List<string>();
+        for (int vk = 1; vk <= 255; vk++)
+        {
+            if ((GetAsyncKeyState(vk) & 0x8000) != 0)
+                held.Add($"0x{vk:X2}");
+        }
+        _output.WriteLine($"preflight: held keys={(held.Count == 0 ? "none" : string.Join(",", held))}");
+        _output.WriteLine($"preflight: mouse={Mouse.Position}");
+
+        _output.WriteLine($"preflight: window rect={app.MainWindow.BoundingRectangle} state={app.MainWindow.Patterns.Window.Pattern.WindowVisualState.ValueOrDefault} dpi={GetDpiForWindow(main)}");
+        _output.WriteLine($"preflight: screen primary={GetSystemMetrics(0)}x{GetSystemMetrics(1)} monitors={GetSystemMetrics(80)} virtual=({GetSystemMetrics(76)},{GetSystemMetrics(77)}) {GetSystemMetrics(78)}x{GetSystemMetrics(79)}");
+        var scrollState = playlist.Patterns.Scroll.PatternOrDefault;
+        _output.WriteLine($"preflight: playlist rect={playlist.BoundingRectangle} vScrollable={scrollState?.VerticallyScrollable.ValueOrDefault} vPercent={scrollState?.VerticalScrollPercent.ValueOrDefault:F1} vView={scrollState?.VerticalViewSize.ValueOrDefault:F1}");
+        AutomationElement[] items = playlist.Items;
+        for (int i = 0; i < items.Length; i++)
+        {
+            AutomationElement? grip = items[i].FindFirstDescendant(cf => cf.ByAutomationId("PlaylistDragGrip"));
+            _output.WriteLine($"preflight: row{i} rect={items[i].BoundingRectangle} offscreen={items[i].IsOffscreen} grip={grip?.BoundingRectangle.ToString() ?? "none"} selected={items[i].Patterns.SelectionItem.PatternOrDefault?.IsSelected.ValueOrDefault} focused={items[i].Properties.HasKeyboardFocus.ValueOrDefault}");
+        }
+
+        // つかむ印（3 行目）の中心にある窓が、このアプリの主窓かどうか（ほかの最前面の窓に覆われていないか）
+        var g = Grip(playlist, 2).BoundingRectangle;
+        var center = new System.Drawing.Point(g.Left + g.Width / 2, g.Top + g.Height / 2);
+        IntPtr under = WindowFromPoint(center);
+        IntPtr underRoot = GetAncestor(under, 2);
+        _ = GetWindowThreadProcessId(underRoot, out uint underPid);
+        _output.WriteLine($"preflight: window under grip2 center {center} root=0x{underRoot.ToInt64():X} isApp={underRoot == main} pid={underPid}");
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr handle, System.Text.StringBuilder text, int maxCount);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr handle);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(System.Drawing.Point point);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr handle, uint flags);
 
     private const int VkEscape = 0x1B;
 
