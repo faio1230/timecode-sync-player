@@ -30,7 +30,7 @@ TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレ�
 - HAP（Hap / Hap Alpha / Hap Q）のGPUデコード（v0.5.0から）
 - ProResのGPUデコード（v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。NVIDIAのGPUで検証し、推奨します。v0.6.5からは既定でほかのGPUでもGPUでデコードしますが、NVIDIA以外は未検証です）
 
-推奨する素材の形式はH.264（キーフレーム間隔は1秒を目安、長くても2秒）とProResです。HAPも警告なしで使えます。VP9・AV1・H.265なども読み込めますが推奨外で、読み込み時に警告を出します。形式ごとの推奨は[現場準備ガイド](docs/USER-MANUAL.md)を参照してください。
+推奨する素材の形式はH.264（キーフレーム間隔は1秒を目安、長くても2秒）とProResで、容器はmp4とmovです。HAPも警告なしで使えます。VP9・AV1・H.265なども読み込めますが推奨外で、読み込み時に警告を出します。形式ごとの推奨は[現場準備ガイド](docs/USER-MANUAL.md)を参照してください。
 
 ## 動作要件
 
