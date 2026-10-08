@@ -268,7 +268,7 @@ Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 
 - [ ] 候補と同じSHAの試験のソースを、そのユーザーのフォルダに展開する（親が渡したtarなど）
 - [ ] インストール先の`tcs_gstreamer.dll`を、試験のソースの`native\`に写す。ffprobeを外した長さの試験は、試験のプロセスでも長さを読む関数を呼ぶため、試験のbinにshimが要る（棚卸しの#43）
-- [ ] ランナーが素材とLTCのwavを作るffmpegは、`TCS_FFMPEG`（ffmpeg.exeのフルパス）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
+- [ ] ランナーが素材とLTCのwavを作るffmpegは、`TCS_FFMPEG`（ffmpeg.exeのフルパス。同じフォルダに`ffprobe.exe`があるもの）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
 
 ```powershell
 $env:TCS_FFMPEG = '<ffmpeg.exe のフルパス>'
@@ -292,9 +292,10 @@ pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe $app -ReportDir <報告のフ�
 ### ffmpegがアプリのプロセスへ漏れていないかの確かめ
 
 `-MediaDir`を付けると、ランナーは`scripts\make-ltc-scenario-project.ps1`でプロジェクトを作る。
-このスクリプトはffprobeでクリップの長さを読むため、`-FfmpegDir`（既定は`Program Files`の`ffmpeg\bin`）があればPATHの末尾に足し、PATHにffprobeが無ければ止まる（81〜84行目あたり）。
-`TCS_FFMPEG`は見ない。
-ランナーはこのスクリプトを自分のプロセスの中で呼ぶ（`& $makeProject`）ので、足したPATHはランナーに残り、そこから起動する試験とアプリのプロセスにも渡りうる。
+このスクリプトはffprobeでクリップの長さを読む。
+ffprobeは`TCS_FFPROBE`、`TCS_FFMPEG`の隣の`ffprobe.exe`、`-FfmpegDir`（ランナーは`Program Files`の`ffmpeg\bin`を渡す）の`ffprobe.exe`、PATHの順で探し、フルパスで呼ぶ。PATHには足さない。
+ランナーはこのスクリプトを子のプロセス（`pwsh -NoProfile -File`）で呼ぶので、スクリプトの中の変更はランナーに残らない（棚卸しの#43、試験基盤の束で直した）。
+使ったffprobeは`make-ltc-scenario-project.log`の先頭の`ffprobe: <パス> (<出所>)`の行に出る。
 漏れたかどうかは、アプリの起動のログで決める。
 
 - [ ] 1本目の回の、インストール先の`logs\timecodesyncplayer-YYYYMMDD.log`で、起動の行を数える
@@ -308,7 +309,7 @@ $logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer\
 - 起動の行は`ffprobe: not found on PATH (not used; clip durations come from the media container)`。起動の回数は`run-result.json`の`launches`と比べる
 - 0時をまたいだ回は、前日のログのファイルも数える
 - [ ] `ffprobe: found on PATH`が1行でもあれば、ffmpegがアプリのプロセスに漏れている。この回は無効として、漏れた事実（行の数、`make-ltc-scenario-project.log`の内容、使った`-FfmpegDir`の場所）を記録して止め、親へ報告する。ランナーの写しを手で直して回し直すことはしない
-- [ ] `make-ltc-scenario-project.ps1`が`ffprobe not found on PATH`で止まったときも、同じく記録して止め、親へ報告する（PATHに足さない限りプロジェクトが作れないため）
+- [ ] `make-ltc-scenario-project.ps1`が`ffprobe not found (searched: ...)`で止まったときも、同じく記録して止め、親へ報告する（探した場所が文言に出る。`TCS_FFMPEG`の隣に`ffprobe.exe`があるかを先に確かめる）
 
 ### 合否
 
