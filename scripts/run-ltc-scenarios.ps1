@@ -29,7 +29,8 @@
 #       -TrackSegmentSeconds '25,25,25' sets the used length per track instead.
 #   pwsh -File scripts\run-ltc-scenarios.ps1 -IncludeL3   # also the 12-hour L-3 production day
 #
-# Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg, .NET SDK, the
+# Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg 6 or later (the pinned
+# test build: pwsh -File scripts\get-ffmpeg.ps1; an older one stops here), .NET SDK, the
 # target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
 # gstreamer\bin next to the exe, GSTREAMER_1_0_ROOT_MSVC_X86_64, Program Files,
 # or PATH). D18 makes the bundled runtime work without the environment variable.
@@ -261,16 +262,22 @@ Remove-LinkedMediaArtifacts
 # ---- prerequisites ---------------------------------------------------------
 $problems = @()
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $problems += 'dotnet is not on PATH' }
-# The ffmpeg make-e2e-media.ps1 will use (TCS_FFMPEG, its default -FfmpegDir, PATH;
-# scripts\TcsFfmpeg.psm1). Its version is the first line of make-e2e-media.log.
+# The ffmpeg make-e2e-media.ps1 and the tests will use (TCS_FFMPEG, tools\ffmpeg, its default
+# -FfmpegDir, PATH; scripts\TcsFfmpeg.psm1). Its version is the first line of make-e2e-media.log.
 Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'TcsChildScript.psm1') -Force
 # The same folder goes to make-ltc-scenario-project.ps1 as -FfmpegDir (#43).
 $ffmpegDefaultDir = Join-Path $env:ProgramFiles 'ffmpeg\bin'
 $ffmpegText = ''
+$ffmpegRecord = $null
 try {
     $ffmpegResolved = Resolve-TcsFfmpeg -FfmpegDir $ffmpegDefaultDir
-    $ffmpegText = $ffmpegResolved.VersionLine + ' (' + $ffmpegResolved.Source + ')'
+    $ffmpegText = $ffmpegResolved.VersionLine + ' (' + $ffmpegResolved.Source + ': ' + $ffmpegResolved.Ffmpeg + ')'
+    $ffmpegRecord = Get-TcsFfmpegRecord $ffmpegResolved
+    # Test infrastructure 2026-10, item 8: a build older than 6 cannot make every fixture
+    # (hap_mov needs 6 or later); stop here instead of failing inside a test.
+    $ffmpegStop = Get-TcsFfmpegVersionStop $ffmpegResolved
+    if ($ffmpegStop) { $problems += ('ffmpeg: ' + $ffmpegStop) }
 } catch {
     $problems += ('ffmpeg: ' + $_.Exception.Message)
 }
@@ -309,6 +316,7 @@ try {
 [ordered]@{
     commitFreeGbAtStart = $commitFreeGb; cDriveFreeGbAtStart = $cDriveFreeGb; measuredAt = (Get-Date).ToString('o')
     dump = [ordered]@{ type = $MiniDumpType; dir = $dumpDir; environment = $dumpEnvironment }
+    ffmpeg = $ffmpegRecord
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $ReportDir 'runner-preflight.json') -Encoding UTF8
 if ($null -ne $commitFreeGb -and $commitFreeGb -lt 4) {
     $problems += ('system commit free is ' + $commitFreeGb + ' GB, under 4 GB: close other programs before the run')
@@ -533,6 +541,11 @@ Write-Output 'prereqs: OK'
 $makeMedia = Join-Path $PSScriptRoot 'make-e2e-media.ps1'
 & $makeMedia *> (Join-Path $ReportDir 'make-e2e-media.log')
 if (-not $?) { throw "make-e2e-media.ps1 failed" }
+# Item 8: the ffmpeg-version.txt of the E2E media goes with the report (which build made each file).
+$mediaSidecar = Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media\ffmpeg-version.txt'
+if (Test-Path -LiteralPath $mediaSidecar) {
+    Copy-Item -LiteralPath $mediaSidecar -Destination (Join-Path $ReportDir 'ffmpeg-version.txt') -Force
+}
 
 function Remove-ScenarioProjectArtifacts {
     if ($KeepProject -and $projectPath) {

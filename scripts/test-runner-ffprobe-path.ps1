@@ -29,6 +29,7 @@ function Touch([string]$Path) {
 $savedPath = $env:PATH
 $savedFfmpeg = $env:TCS_FFMPEG
 $savedFfprobe = $env:TCS_FFPROBE
+$savedToolsDir = $env:TCS_FFMPEG_TOOLS_DIR
 $makeProject = Join-Path $PSScriptRoot 'make-ltc-scenario-project.ps1'
 $runner = Join-Path $PSScriptRoot 'run-ltc-scenarios.ps1'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('tcs-runner-ffprobe-' + [Guid]::NewGuid().ToString('N'))
@@ -50,6 +51,9 @@ try {
     Touch (Join-Path $pathDir 'ffprobe.exe')
     Touch (Join-Path $overrideDir 'ffprobe.exe')
     $missingDir = Join-Path $root 'missing'
+    # tools\ffmpeg of the repository (item 8) is replaced by an empty folder, so a pinned
+    # build placed by get-ffmpeg.ps1 does not take part in these checks.
+    $env:TCS_FFMPEG_TOOLS_DIR = Join-Path $root 'no-tools'
 
     # ---- resolution order ---------------------------------------------------------------
     $env:PATH = $pathDir + ';' + $cleanPath
@@ -73,8 +77,8 @@ try {
     $env:PATH = $cleanPath
     $r = Resolve-TcsFfprobe -FfmpegDir $missingDir
     Check ($r.Ffprobe -eq '' -and $r.Source -eq '') 'nowhere: empty result'
-    Check (@($r.Searched).Count -eq 4 -and ($r.Searched -join ';').Contains((Join-Path $missingDir 'ffprobe.exe')) -and
-        (@($r.Searched)[-1] -eq 'PATH')) 'nowhere: Searched lists the four levels'
+    Check (@($r.Searched).Count -eq 5 -and ($r.Searched -join ';').Contains((Join-Path $missingDir 'ffprobe.exe')) -and
+        (@($r.Searched)[-1] -eq 'PATH')) 'nowhere: Searched lists the five levels'
 
     $env:TCS_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
     $env:TCS_FFPROBE = Join-Path $overrideDir 'ffprobe.exe'
@@ -149,6 +153,7 @@ try {
     $env:PATH = $savedPath
     $env:TCS_FFMPEG = $savedFfmpeg
     $env:TCS_FFPROBE = $savedFfprobe
+    $env:TCS_FFMPEG_TOOLS_DIR = $savedToolsDir
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 

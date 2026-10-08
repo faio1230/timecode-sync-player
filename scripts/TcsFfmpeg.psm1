@@ -1,28 +1,46 @@
 #requires -Version 7.0
 # Shared ffmpeg resolution and version record for the scripts that make test media
-# (make-e2e-media.ps1, make-heavy-media.ps1, capture-setup.ps1). The C# fixtures use
-# the same order (tests\TimecodeSyncPlayer.Tests\Helpers\FfmpegTool.cs).
+# (make-e2e-media.ps1, make-heavy-media.ps1, capture-setup.ps1) and the LTC runner.
+# The C# fixtures use the same order (tests\TimecodeSyncPlayer.Tests\Helpers\FfmpegTool.cs).
 #
-# Order (v0.6.0 stage 5b, one rule for every script and test):
-#   1. TCS_FFMPEG  - full path of ffmpeg.exe
-#   2. -FfmpegDir  - folder that holds ffmpeg.exe (the script argument)
-#   3. PATH
+# Order (test infrastructure 2026-10, item 8; one rule for every script and test):
+#   1. TCS_FFMPEG     - full path of ffmpeg.exe
+#   2. tools\ffmpeg   - the pinned test build in this repository (scripts\get-ffmpeg.ps1)
+#   3. -FfmpegDir     - folder that holds ffmpeg.exe (the script argument; the scripts
+#                       default it to C:\Program Files\ffmpeg\bin)
+#   4. PATH           - last resort
 # ffprobe: TCS_FFPROBE, then ffprobe.exe next to the resolved ffmpeg, then PATH.
 # Resolve-TcsFfprobe walks the same levels for a script that only needs ffprobe
-# (TCS_FFPROBE, next to TCS_FFMPEG, -FfmpegDir, PATH) and does not need ffmpeg.
+# (TCS_FFPROBE, next to TCS_FFMPEG, tools\ffmpeg, -FfmpegDir, PATH) and does not need ffmpeg.
+# TCS_FFMPEG_TOOLS_DIR replaces tools\ffmpeg (self-tests only; leave it unset).
 #
 # Why: the dev machine and the test machine had two ffmpeg builds each, and the
 # scripts (-FfmpegDir first) and the tests (PATH) picked opposite ones, so the same
 # test ran on 4.2.3 on one machine and 8.0.1 on the other. The build used is now
 # printed as the first log line and written next to the media (ffmpeg-version.txt).
+# Item 8: a clean test machine resolved n5.0 and the F-7 E2E died 5 seconds in on
+# "hap_mov needs 6 or later". The pinned build (8.0.1) now comes before Program Files,
+# and the runner stops in its prerequisites on a build older than 6
+# (Get-TcsFfmpegVersionStop).
 
 Set-StrictMode -Version 3.0
 
 $script:MinimumMajor = 6
 
+# tools\ffmpeg of this repository (where scripts\get-ffmpeg.ps1 puts the pinned build).
+function Get-TcsFfmpegToolsDir {
+    $override = [Environment]::GetEnvironmentVariable('TCS_FFMPEG_TOOLS_DIR')
+    if (-not [string]::IsNullOrWhiteSpace($override)) { return $override }
+    return (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\ffmpeg')
+}
+
 function Resolve-TcsFfmpeg {
     [CmdletBinding()]
-    param([string]$FfmpegDir = '')
+    param(
+        [string]$FfmpegDir = '',
+        # Only find the files; do not run ffmpeg -version (self-tests with stand-in files).
+        [switch]$NoVersion
+    )
 
     $exe = ''
     $source = ''
@@ -33,6 +51,9 @@ function Resolve-TcsFfmpeg {
         }
         $exe = (Get-Item -LiteralPath $fromEnv).FullName
         $source = 'env:TCS_FFMPEG'
+    } elseif (Test-Path -LiteralPath (Join-Path (Get-TcsFfmpegToolsDir) 'ffmpeg.exe') -PathType Leaf) {
+        $exe = (Get-Item -LiteralPath (Join-Path (Get-TcsFfmpegToolsDir) 'ffmpeg.exe')).FullName
+        $source = 'repo:tools\ffmpeg'
     } elseif (-not [string]::IsNullOrWhiteSpace($FfmpegDir) -and
         (Test-Path -LiteralPath (Join-Path $FfmpegDir 'ffmpeg.exe') -PathType Leaf)) {
         $exe = (Get-Item -LiteralPath (Join-Path $FfmpegDir 'ffmpeg.exe')).FullName
@@ -45,7 +66,7 @@ function Resolve-TcsFfmpeg {
         }
     }
     if ([string]::IsNullOrWhiteSpace($exe)) {
-        throw 'ffmpeg not found (set TCS_FFMPEG to ffmpeg.exe, pass -FfmpegDir, or put ffmpeg on PATH)'
+        throw 'ffmpeg not found (run pwsh -File scripts\get-ffmpeg.ps1, set TCS_FFMPEG to ffmpeg.exe, pass -FfmpegDir, or put ffmpeg on PATH)'
     }
 
     $probe = ''
@@ -69,10 +90,14 @@ function Resolve-TcsFfmpeg {
         }
     }
 
-    $all = @(& $exe -version 2>&1 | ForEach-Object { [string]$_ })
-    if ($LASTEXITCODE -ne 0) { throw ('ffmpeg -version failed: ' + $exe) }
-    $versionLine = ($all | Select-Object -First 1)
-    $major = Get-TcsFfmpegMajor -VersionLines $all
+    $versionLine = ''
+    $major = -1
+    if (-not $NoVersion) {
+        $all = @(& $exe -version 2>&1 | ForEach-Object { [string]$_ })
+        if ($LASTEXITCODE -ne 0) { throw ('ffmpeg -version failed: ' + $exe) }
+        $versionLine = ($all | Select-Object -First 1)
+        $major = Get-TcsFfmpegMajor -VersionLines $all
+    }
 
     [pscustomobject]@{
         Ffmpeg        = $exe
@@ -119,6 +144,12 @@ function Resolve-TcsFfprobe {
         $searched.Add('TCS_FFMPEG (unset)')
     }
 
+    $inTools = Join-Path (Get-TcsFfmpegToolsDir) 'ffprobe.exe'
+    if (Test-Path -LiteralPath $inTools -PathType Leaf) {
+        return [pscustomobject]@{ Ffprobe = (Get-Item -LiteralPath $inTools).FullName; Source = 'repo:tools\ffmpeg'; Searched = @($searched) + $inTools }
+    }
+    $searched.Add($inTools)
+
     if (-not [string]::IsNullOrWhiteSpace($FfmpegDir)) {
         $inDir = Join-Path $FfmpegDir 'ffprobe.exe'
         if (Test-Path -LiteralPath $inDir -PathType Leaf) {
@@ -161,6 +192,27 @@ function Get-TcsFfmpegLogLines {
         ('ffmpeg: ' + $Ffmpeg.Ffmpeg + ' (' + $Ffmpeg.Source + ')'),
         ('ffprobe: ' + $(if ($Ffmpeg.Ffprobe) { $Ffmpeg.Ffprobe + ' (' + $Ffmpeg.FfprobeSource + ')' } else { '(not found)' }))
     )
+}
+
+# Item 8: the reason to stop before a run when the resolved ffmpeg is older than 6
+# (or its version cannot be read), else $null. The runner adds it to its
+# prerequisites, so a run never starts on a build that cannot make the media.
+function Get-TcsFfmpegVersionStop {
+    param([Parameter(Mandatory = $true)]$Ffmpeg)
+    if ($Ffmpeg.Major -ge $script:MinimumMajor) { return $null }
+    $shown = if ($Ffmpeg.Major -lt 0) { 'unknown' } else { [string]$Ffmpeg.Major }
+    return ('ffmpeg major ' + $shown + ' is older than ' + $script:MinimumMajor + ': ' + $Ffmpeg.Ffmpeg +
+        ' (' + $Ffmpeg.Source + ', ' + $Ffmpeg.VersionLine + '). Get the pinned test build with ' +
+        'pwsh -File scripts\get-ffmpeg.ps1 (tools\ffmpeg), or point TCS_FFMPEG at a build 6 or later')
+}
+
+# The ffmpeg of a run as one object for runner-preflight.json / run-result.json.
+function Get-TcsFfmpegRecord {
+    param([Parameter(Mandatory = $true)]$Ffmpeg)
+    [ordered]@{
+        path = $Ffmpeg.Ffmpeg; source = $Ffmpeg.Source; versionLine = $Ffmpeg.VersionLine; major = $Ffmpeg.Major
+        ffprobe = $Ffmpeg.Ffprobe; ffprobeSource = $Ffmpeg.FfprobeSource
+    }
 }
 
 # One warning line when a NEW file is made with an ffmpeg older than 6. Reusing an
@@ -247,5 +299,5 @@ function Assert-TcsColorTags {
     return ('colour-tags ok (' + $Expect + '): ' + (Split-Path -Leaf $Path) + ' ' + $text)
 }
 
-Export-ModuleMember -Function Resolve-TcsFfmpeg, Resolve-TcsFfprobe, Get-TcsFfmpegMajor, Get-TcsFfmpegLogLines,
-    Get-TcsFfmpegOldVersionWarning, Update-TcsFfmpegSidecar, Get-TcsColorTags, Assert-TcsColorTags
+Export-ModuleMember -Function Resolve-TcsFfmpeg, Resolve-TcsFfprobe, Get-TcsFfmpegToolsDir, Get-TcsFfmpegMajor, Get-TcsFfmpegLogLines,
+    Get-TcsFfmpegVersionStop, Get-TcsFfmpegRecord, Get-TcsFfmpegOldVersionWarning, Update-TcsFfmpegSidecar, Get-TcsColorTags, Assert-TcsColorTags

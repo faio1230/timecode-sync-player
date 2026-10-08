@@ -9,31 +9,66 @@ internal sealed record FfmpegResolution(string Ffmpeg, string FfmpegSource, stri
 
 /// <summary>
 /// v0.6.0 段 5b: 試験で素材を作る ffmpeg / ffprobe の解決。スクリプト（scripts\TcsFfmpeg.psm1）と同じ順:
-/// ffmpeg は <c>TCS_FFMPEG</c>（ffmpeg.exe のフルパス）→ 既定のフォルダ（スクリプトの -FfmpegDir の既定と同じ
-/// <c>%ProgramFiles%\ffmpeg\bin</c>。試験には引数が無いので既定だけ）→ PATH。
+/// ffmpeg は <c>TCS_FFMPEG</c>（ffmpeg.exe のフルパス）→ リポジトリの <c>tools\ffmpeg</c>（試験用に固定した版、
+/// scripts\get-ffmpeg.ps1 で取る。試験基盤の 8）→ 既定のフォルダ（スクリプトの -FfmpegDir の既定と同じ
+/// <c>%ProgramFiles%\ffmpeg\bin</c>。試験には引数が無いので既定だけ）→ PATH（最後の手）。
 /// ffprobe は <c>TCS_FFPROBE</c> → 解決した ffmpeg と同じフォルダ → PATH。
 /// 以前は名前（"ffmpeg"）で起動しており、開発機と検証機で PATH の先頭の版が逆向きにずれていた。
+/// 試験基盤の 8: 見つけた ffmpeg の版が 6 未満なら、最初に <see cref="Ffmpeg"/> を使うところで止める
+/// （検証機のまっさらな回で n5.0 を拾い、F-7 の HAP の素材が試験の中で作れず落ちたため）。
 /// </summary>
 internal static class FfmpegTool
 {
     public const string FfmpegEnvironmentVariable = "TCS_FFMPEG";
     public const string FfprobeEnvironmentVariable = "TCS_FFPROBE";
 
-    /// <summary>これより古い版で新しく素材を作ったら警告を 1 行出す。</summary>
+    /// <summary>tools\ffmpeg の置き換え（自己試験の用。ふだんは設定しない）。scripts と同じ名前。</summary>
+    public const string ToolsDirectoryEnvironmentVariable = "TCS_FFMPEG_TOOLS_DIR";
+
+    /// <summary>これより古い版では試験を始めない（素材の一部、特に hap_mov が作れない）。</summary>
     public const int MinimumMajor = 6;
 
     /// <summary>既定のフォルダ（scripts の make-*-media.ps1 の -FfmpegDir の既定と同じ）。</summary>
     public static string DefaultDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin");
 
+    /// <summary>リポジトリの tools\ffmpeg（scripts\get-ffmpeg.ps1 の置き場）。リポジトリが見つからなければ null。</summary>
+    public static string? ToolsDirectory
+    {
+        get
+        {
+            string? overridden = Environment.GetEnvironmentVariable(ToolsDirectoryEnvironmentVariable);
+            if (!string.IsNullOrWhiteSpace(overridden)) return overridden;
+            DirectoryInfo? dir = new(AppContext.BaseDirectory);
+            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TimecodeSyncPlayer.slnx")))
+                dir = dir.Parent;
+            return dir is null ? null : Path.Combine(dir.FullName, "tools", "ffmpeg");
+        }
+    }
+
     private static readonly Lazy<FfmpegResolution> s_resolution = new(() =>
-        Resolve(Environment.GetEnvironmentVariable, DefaultDirectory, Environment.GetEnvironmentVariable("PATH")));
+        Resolve(Environment.GetEnvironmentVariable, ToolsDirectory, DefaultDirectory, Environment.GetEnvironmentVariable("PATH")));
 
     private static readonly Lazy<string> s_versionLines = new(() => ReadVersionLines(s_resolution.Value.Ffmpeg));
 
     public static FfmpegResolution Current => s_resolution.Value;
 
-    public static string Ffmpeg => Current.Ffmpeg;
+    /// <summary>
+    /// 素材を作る ffmpeg のフルパス。見つけた ffmpeg が 6 未満なら <see cref="InvalidOperationException"/> で止める
+    /// （文言に場所・版・get-ffmpeg.ps1）。見つからないときは従来どおり名前を返し、起動の失敗で分かる。
+    /// </summary>
+    public static string Ffmpeg
+    {
+        get
+        {
+            if (VersionStopReason(Current, s_versionLines.Value) is { } stop)
+                throw new InvalidOperationException(stop);
+            return Current.Ffmpeg;
+        }
+    }
+
+    /// <summary>試験基盤の 8: 始める前に止める理由（6 未満・版が読めない）。止めないときは null。</summary>
+    public static string? StopReason => VersionStopReason(Current, s_versionLines.Value);
 
     public static string Ffprobe => Current.Ffprobe;
 
@@ -51,7 +86,22 @@ internal static class FfmpegTool
                $"Point {FfmpegEnvironmentVariable} at a build {MinimumMajor} or later.";
     }
 
-    internal static FfmpegResolution Resolve(Func<string, string?> getEnvironment, string? defaultDirectory, string? pathVariable)
+    /// <summary>
+    /// 試験基盤の 8: 解決した ffmpeg で試験を始めてよいか。見つかった（名前でない）ffmpeg の版が 6 未満、
+    /// または版が読めなければ止める理由を返す。見つからない（名前）ときは null（起動の失敗で分かる）。
+    /// </summary>
+    internal static string? VersionStopReason(FfmpegResolution resolution, string versionOutput)
+    {
+        if (resolution.FfmpegSource == "name") return null;
+        int major = ParseMajor(versionOutput);
+        if (major >= MinimumMajor) return null;
+        string shown = major < 0 ? "unknown" : major.ToString(CultureInfo.InvariantCulture);
+        return $"ffmpeg major {shown} is older than {MinimumMajor}: {resolution.Ffmpeg} ({resolution.FfmpegSource}, " +
+               $"{FirstLine(versionOutput)}). Get the pinned test build with pwsh -File scripts\\get-ffmpeg.ps1 " +
+               $"(tools\\ffmpeg), or point {FfmpegEnvironmentVariable} at a build {MinimumMajor} or later.";
+    }
+
+    internal static FfmpegResolution Resolve(Func<string, string?> getEnvironment, string? toolsDirectory, string? defaultDirectory, string? pathVariable)
     {
         string ffmpeg;
         string ffmpegSource;
@@ -62,6 +112,11 @@ internal static class FfmpegTool
                 throw new InvalidOperationException($"{FfmpegEnvironmentVariable} does not point to a file: {fromEnvironment}");
             ffmpeg = Path.GetFullPath(fromEnvironment);
             ffmpegSource = "env:" + FfmpegEnvironmentVariable;
+        }
+        else if (!string.IsNullOrEmpty(toolsDirectory) && File.Exists(Path.Combine(toolsDirectory, "ffmpeg.exe")))
+        {
+            ffmpeg = Path.GetFullPath(Path.Combine(toolsDirectory, "ffmpeg.exe"));
+            ffmpegSource = "repo:tools\\ffmpeg";
         }
         else if (!string.IsNullOrEmpty(defaultDirectory) && File.Exists(Path.Combine(defaultDirectory, "ffmpeg.exe")))
         {

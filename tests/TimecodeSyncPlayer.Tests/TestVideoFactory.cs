@@ -6,7 +6,7 @@ namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
 /// ffmpeg でテスト用動画を生成するヘルパー。アプリドメイン単位で一度だけ生成する。
-/// 段 5b: ffmpeg は <see cref="FfmpegTool"/>（TCS_FFMPEG → 既定のフォルダ → PATH）で解決し、
+/// 段 5b: ffmpeg は <see cref="FfmpegTool"/>（TCS_FFMPEG → tools\ffmpeg → 既定のフォルダ → PATH）で解決し、
 /// 作った素材の版を素材のフォルダの ffmpeg-version.txt に記録する（6 未満なら警告を標準エラーへ 1 行）。
 /// </summary>
 internal static class TestVideoFactory
@@ -16,12 +16,16 @@ internal static class TestVideoFactory
     private static readonly object _lock = new();
     private static bool _oldVersionWarned;
 
-    /// <summary>ffmpeg（<see cref="FfmpegTool"/> の解決）が起動できるかを確認する。</summary>
+    /// <summary>
+    /// ffmpeg（<see cref="FfmpegTool"/> の解決）が起動できるかを確認する。
+    /// 試験基盤の 8: 見つけた ffmpeg が 6 未満なら false にせず例外で止める（スキップに紛れさせない）。
+    /// </summary>
     public static bool FfmpegAvailable()
     {
+        string ffmpeg = FfmpegTool.Ffmpeg;
         try
         {
-            var psi = new ProcessStartInfo(FfmpegTool.Ffmpeg, "-nostdin -version")
+            var psi = new ProcessStartInfo(ffmpeg, "-nostdin -version")
             {
                 UseShellExecute        = false,
                 RedirectStandardOutput = true,

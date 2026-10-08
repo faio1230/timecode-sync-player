@@ -10,7 +10,8 @@
 #   pwsh -File scripts\make-e2e-media.ps1 -OutDir D:\media -Force
 #   pwsh -File scripts\make-e2e-media.ps1 -IncludeA1Repro   # also the 4K ProRes/AV1 clips
 #
-# Requires ffmpeg (default C:\Program Files\ffmpeg\bin).
+# Requires ffmpeg: TCS_FFMPEG, else tools\ffmpeg (the pinned test build, scripts\get-ffmpeg.ps1),
+# else -FfmpegDir (default C:\Program Files\ffmpeg\bin), else PATH.
 [CmdletBinding()]
 param(
     [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\media'),
@@ -24,7 +25,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Resolve one concrete ffmpeg.exe and call it by full path (scripts\TcsFfmpeg.psm1):
-# TCS_FFMPEG, then -FfmpegDir, then PATH. -FfmpegDir used to be APPENDED to PATH,
+# TCS_FFMPEG, then tools\ffmpeg, then -FfmpegDir, then PATH. -FfmpegDir used to be APPENDED to PATH,
 # so an older ffmpeg earlier on PATH won: ImageMagick ships ffmpeg 4.2.3 in its
 # install directory, which has no libsvtav1, and the 4K AV1 fixture died with
 # "Unknown encoder 'libsvtav1'" (seen 2026-09-19). The version line of the build
