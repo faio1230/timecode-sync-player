@@ -82,7 +82,7 @@ public sealed class ScrubE2ETests
 
             List<string> lines = ReadLines(exe, scrubStarted);
             DumpTail(lines, "Seek command sent", "Scrub landed", "Scrub summary", "Sync lifecycle", "Continue mode: sync seek",
-                "sync.gate seek-settled", "Timecode sync");
+                "Timecode sync pending", "Timecode sync");
             lines.Count(l => ScrubSent.IsMatch(l)).Should().BeGreaterThanOrEqualTo(2, "seeks are sent while the bar is held");
 
             int releaseIndex = lines.FindLastIndex(l => ReleaseSent.IsMatch(l));

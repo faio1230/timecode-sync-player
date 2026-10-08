@@ -21,14 +21,12 @@ try {
         "2026-05-25 10:00:02.000 [INF] LTC audio stats callbacks=2 samples=48000 decodedFrames=12 sampleRate=48000 bits=32 channels=2 peak=0.400 rms=0.100 decoderFps=30.000",
         "2026-05-25 10:00:02.010 [WRN] LTC frame diagnostic status=Jump tc=00:00:10:00 rawSeconds=10.000 resolvedSeconds=10.000 deltaSeconds=2.000 deltaFrames=60.00 detectedFps=30.000 resolvedFps=30.000 mode=Auto",
         "2026-05-25 10:00:02.020 [INF] Timecode sync skipped due to LTC frame diagnostic status=Jump tc=00:00:10:00 resolvedSeconds=10.000 deltaSeconds=2.000 deltaFrames=60.00",
-        "2026-05-25 10:00:03.000 [INF] Continue mode: waiting for file load stability playback=1.000 mediaPos=1.000 renderedFrames=1",
+        "2026-05-25 10:00:03.000 [DBG] Continue mode: waiting for file load stability playback=1.000 mediaPos=1.000 renderedFrames=1",
         "2026-05-25 10:00:04.000 [INF] Continue mode: sync seek ltc=12.000 playback=1.000 target=2.000 delta=1.000 tolerance=0.2000 success=True",
-        "2026-05-25 10:00:04.100 [INF] Timecode sync pending Settled playback=2.000 tolerance=0.2000",
+        "2026-05-25 10:00:04.100 [INF] Timecode sync pending `"Settled`" playback=2.000 tolerance=0.2000",
         "2026-05-25 10:00:05.000 [INF] Playback perf elapsed=2.00s expectedFps=30.000 playbackRate=1.000 displayedFps=29.00 ticks=60 renderCallbacks=70 coalescedRenderCallbacks=3 renderUpdates=60 frameUpdates=58 renderedFrames=58 avgRenderMs=9.20 maxRenderMs=15.00 avgBitmapMs=4.50 maxBitmapMs=9.00 avgSpoutMs=2.50 maxSpoutMs=5.00 size=1920x1080 spoutEnabled=True",
         "2026-05-25 10:00:05.100 [WRN] Playback perf warning: displayed FPS is below source FPS",
-        "2026-05-25 10:00:06.000 [INF] SpoutOutput: 初期化完了 sender='TimecodeSyncPlayer'",
-        "2026-05-25 10:00:06.100 [INF] SpoutOutput: 送信開始 1920x1080 pitch=7680 sender='TimecodeSyncPlayer'",
-        "2026-05-25 10:00:06.200 [WRN] SpoutOutput: SendImage が false を返した count=4 (device lost?)"
+        "2026-05-25 10:00:06.200 [WRN] SpoutDX.dll のハッシュが ABI 検証済みと異なります: 0123abcd"
     ) | Set-Content -Encoding UTF8 -LiteralPath $logPath
 
     & (Join-Path $repoRoot "scripts\run-timecodesyncplayer-diagnostics.ps1") `
@@ -61,7 +59,7 @@ try {
         "| Bitmap-heavy avgBitmapMs>=4 | 1 |",
         "| Spout-heavy avgSpoutMs>=2 | 1 |",
         "## Spout Output Health",
-        "| Spout SendImage false | 1 |"
+        "| SpoutDX check warning | 1 |"
     )
 
     foreach ($needle in $required) {

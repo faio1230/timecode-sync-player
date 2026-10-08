@@ -156,6 +156,9 @@ GStreamer の状態変更・シーク（`gst_element_set_state` / `gst_element_s
 相対シークは API に無い（`Seek` は絶対秒。呼び出し側が現在位置へ加算する）。
 失敗は `PlaybackResult(bool Success, string? Error)` で返し、呼び出し側が成功と取り違えない。
 
+### E2E とランナーの確かめは Information 以上の行だけ
+E2E とランナーの確かめ（判定・数え・待ち）は、アプリのログの Information 以上の行だけで行う。アプリは Release ではログの最小の段階が Information で、Debug の行は配布物の構成では出ない（`App.xaml.cs`）。単体・結合の試験のメモリのシンクは対象外。
+
 ### v0.3 の設定キーは無視する
 `backend`（再生バックエンドの選択）と `outputBackend=Cpu` は v0.4 で廃止。値があっても無視して
 警告ログを 1 行出し、設定ファイルは書き換えない。
