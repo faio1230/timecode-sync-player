@@ -2793,14 +2793,14 @@ static const TcsDemuxByExtension kDemuxByExtension[] = {
   { ".m4v",  "qtdemux" },
   { ".3gp",  "qtdemux" },
   { ".3g2",  "qtdemux" },
-  { ".mkv",  "matroskademux" },
-  { ".webm", "matroskademux" },
-  { ".mka",  "matroskademux" },
+  { ".mkv",  "matroskademux" },  /* 同梱の GStreamer に matroskademux は入っていない。開発機のフルの GStreamer では開ける */
+  { ".webm", "matroskademux" },  /* 同梱の GStreamer に matroskademux は入っていない。開発機のフルの GStreamer では開ける */
+  { ".mka",  "matroskademux" },  /* 同梱の GStreamer に matroskademux は入っていない。開発機のフルの GStreamer では開ける */
   { ".ts",   "tsdemux" },
   { ".m2ts", "tsdemux" },
   { ".mts",  "tsdemux" },
   { ".mxf",  "mxfdemux" },
-  { ".avi",  "avidemux" },
+  { ".avi",  "avidemux" },  /* 同梱の GStreamer に avidemux は入っていない。開発機のフルの GStreamer では開ける */
 };
 
 /* The demuxer for the path's extension, or NULL when the extension is not in

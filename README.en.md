@@ -30,7 +30,7 @@ Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show
 - GPU decoding of HAP (Hap / Hap Alpha / Hap Q) (since v0.5.0)
 - GPU decoding of ProRes (since v0.6.0, by [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11). Verified and recommended on NVIDIA GPUs. Since v0.6.5, other GPUs also decode on the GPU by default, but they are unverified)
 
-The recommended formats are H.264 (keyframe interval about 1 second, at most 2 seconds) and ProRes. HAP also loads without a warning. VP9, AV1, H.265 and others load but are not recommended, and a warning is shown when they are loaded. See the [field preparation guide](docs/USER-MANUAL.md) (Japanese) for the recommendation per format.
+The recommended formats are H.264 (keyframe interval about 1 second, at most 2 seconds) and ProRes, in an mp4 or mov container. HAP also loads without a warning. VP9, AV1, H.265 and others load but are not recommended, and a warning is shown when they are loaded. See the [field preparation guide](docs/USER-MANUAL.md) (Japanese) for the recommendation per format.
 
 ## Requirements
 
