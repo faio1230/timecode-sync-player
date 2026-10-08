@@ -2738,8 +2738,10 @@ public sealed partial class LtcScenarioE2ETests
 
                 if (arrivedAt is null)
                 {
+                    // 試験基盤の束 1（2026-10）: 「applying the first Jump frame」は src に無い（2026-09-19 のログが最後）ので外した。
+                    // 今の適用の行は「applying the confirmed Jump frame once」と「applying the held value change frame once」
+                    // （後者は "applying the {Reason} frame once" の Reason が "held value change"）。
                     if (line.Contains("LTC frame diagnostic status=\"Jump\"", StringComparison.Ordinal) ||
-                        line.Contains("applying the first Jump frame", StringComparison.Ordinal) ||
                         line.Contains("applying the confirmed Jump frame", StringComparison.Ordinal) ||
                         line.Contains("applying the held value change frame", StringComparison.Ordinal))
                         arrivedAt = at;

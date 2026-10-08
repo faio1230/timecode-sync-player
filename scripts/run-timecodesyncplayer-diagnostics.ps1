@@ -306,10 +306,10 @@ function Get-PlaybackPerfWarningClassification {
     )
 
     $warnings = @($Lines | Select-String -Pattern "Playback perf warning" | ForEach-Object { $_.Line })
-    $displayedFps = @($warnings | Where-Object { $_ -match "displayed FPS is below source FPS" })
+    $displayedFps = @($warnings | Where-Object { $_ -match "FPS is below source FPS" })
     $slowerClock = @($warnings | Where-Object { $_ -match "playback clock is slower than realtime" })
     $other = @($warnings | Where-Object {
-        $_ -notmatch "displayed FPS is below source FPS" -and
+        $_ -notmatch "FPS is below source FPS" -and
         $_ -notmatch "playback clock is slower than realtime"
     })
 
@@ -389,7 +389,8 @@ function Get-PlaybackPerfWarningContextClassification {
             $trackSwitchEvents += $timestamp
         }
 
-        if ($line -match "Continue mode: exiting gap") {
+        # Gap exit is the Information line "Sync lifecycle: GapExit source=..." (Serilog quotes the enum value).
+        if ($line -match 'Sync lifecycle: "?GapExit"?') {
             $gapExitEvents += $timestamp
         }
 
@@ -540,48 +541,15 @@ function Get-SpoutOutputClassification {
         [int]$Limit
     )
 
-    $spoutLines = @($Lines | Select-String -Pattern "SpoutOutput:" | ForEach-Object { $_.Line })
-    $initialized = @($spoutLines | Where-Object { $_ -match "sender='" -and $_ -notmatch "pitch=" })
-    $dllMissing = @($spoutLines | Where-Object { $_ -match "SpoutDX\.dll" })
-    $initFailure = @($spoutLines | Where-Object {
-        $_ -match "spoutDX|OpenDirectX11|SetSenderName" -and
-        $_ -notmatch "sender='" -and
-        $_ -notmatch "pitch="
-    })
-    $sendStarted = @($spoutLines | Where-Object { $_ -match "pitch=.*sender='" })
-    $sendFalse = @($spoutLines | Where-Object { $_ -match "SendImage" -and $_ -match "false" })
-    $sendException = @($spoutLines | Where-Object { $_ -match "SendFrame" -and $_ -notmatch "SendImage" })
+    # The app logs Spout problems only as the SpoutDX.dll check warnings (Output\SpoutSender.cs).
+    # The older "SpoutOutput:" lines (init / send started / SendImage false / SendFrame) are gone from src.
+    $dllCheck = @($Lines | Select-String -Pattern "\[(WRN|ERR)\] SpoutDX\.dll" | ForEach-Object { $_.Line })
 
     return @(
         [pscustomobject]@{
-            Name = "Spout initialized"
-            Count = $initialized.Count
-            Samples = @($initialized | Select-Object -First $Limit)
-        }
-        [pscustomobject]@{
-            Name = "SpoutDX missing"
-            Count = $dllMissing.Count
-            Samples = @($dllMissing | Select-Object -First $Limit)
-        }
-        [pscustomobject]@{
-            Name = "Spout init failure"
-            Count = $initFailure.Count
-            Samples = @($initFailure | Select-Object -First $Limit)
-        }
-        [pscustomobject]@{
-            Name = "Spout send started"
-            Count = $sendStarted.Count
-            Samples = @($sendStarted | Select-Object -First $Limit)
-        }
-        [pscustomobject]@{
-            Name = "Spout SendImage false"
-            Count = $sendFalse.Count
-            Samples = @($sendFalse | Select-Object -First $Limit)
-        }
-        [pscustomobject]@{
-            Name = "Spout send exception"
-            Count = $sendException.Count
-            Samples = @($sendException | Select-Object -First $Limit)
+            Name = "SpoutDX check warning"
+            Count = $dllCheck.Count
+            Samples = @($dllCheck | Select-Object -First $Limit)
         }
     )
 }
@@ -666,9 +634,8 @@ function Get-ContinueSyncClassification {
     $syncSeekSuccess = @($syncSeek | Where-Object { $_ -match "success=True" })
     $syncSeekFailure = @($syncSeek | Where-Object { $_ -match "success=False" })
     $pending = @($Lines | Select-String -Pattern "Timecode sync pending" | ForEach-Object { $_.Line })
-    $pendingTimedOut = @($pending | Where-Object { $_ -match "Timecode sync pending TimedOut" })
-    $pendingSettled = @($pending | Where-Object { $_ -match "Timecode sync pending Settled" })
-    $loadStabilityWait = @($Lines | Select-String -Pattern "Continue mode: waiting for file load stability" | ForEach-Object { $_.Line })
+    $pendingTimedOut = @($pending | Where-Object { $_ -match 'Timecode sync pending "?TimedOut"?' })
+    $pendingSettled = @($pending | Where-Object { $_ -match 'Timecode sync pending "?Settled"?' })
 
     return @(
         [pscustomobject]@{
@@ -700,11 +667,6 @@ function Get-ContinueSyncClassification {
             Name = "Timecode sync pending Settled"
             Count = $pendingSettled.Count
             Samples = @($pendingSettled | Select-Object -First $Limit)
-        }
-        [pscustomobject]@{
-            Name = "Continue load stability wait"
-            Count = $loadStabilityWait.Count
-            Samples = @($loadStabilityWait | Select-Object -First $Limit)
         }
     )
 }
@@ -1052,11 +1014,11 @@ function Write-Report {
     $lines.Add("- If ``Sync seek bursts`` is greater than 0, inspect load-stability wait and pending seek settlement.")
     $lines.Add("- If ``Continue sync seek bursts`` is greater than 0, inspect Continue mode load stability and LTC jump filtering.")
     $lines.Add("- Use ``LoadFile Classification`` to distinguish repeated same path/start loads from intentional track changes.")
-    $lines.Add("- Use ``Spout Output Health`` to distinguish missing optional SpoutDX from sender initialization/send failures.")
+    $lines.Add("- Use ``Spout Output Health`` to find SpoutDX.dll check warnings (hash mismatch or check failure).")
     $lines.Add("- Use ``LTC Input Health`` to separate no-input/low-decode periods from diagnostic frame filtering.")
     $lines.Add("- Use ``Continue Sync Health`` to confirm Continue sync seeks settle without repeated failure or timeout.")
     $lines.Add("- Use ``Playback Perf Timing`` to separate render, bitmap update, Spout, and resolution-related load.")
-    $lines.Add("- If ``Gap freeze timeout`` or ``Frame-step not yet reflected`` increases, inspect Freeze capture path/time-pos validation.")
+    $lines.Add("- If ``Gap freeze timeout`` increases, inspect the Freeze capture path.")
     $lines.Add("- If ``Playback perf warning`` exceeds the threshold, inspect render, bitmap update, and Spout timings.")
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
@@ -1096,21 +1058,18 @@ $previousReportPath = Get-PreviousReportPath -Directory $ReportDirectory
 $patternSummaries = @(
     Get-PatternSummary -Lines $logLines -Name "Critical errors" -Pattern "\[(ERR|FTL)\]|Exception|success=false" -Limit $SampleLimit
     Get-PatternSummary -Lines $logLines -Name "Gap freeze timeout" -Pattern "gap freeze final-frame capture timed out" -Limit $SampleLimit
-    Get-PatternSummary -Lines $logLines -Name "Frame-step not yet reflected" -Pattern "frame-step not yet reflected" -Limit $SampleLimit
     Get-PatternSummary -Lines $logLines -Name "Playback perf warning" -Pattern "Playback perf warning" -Limit $SampleLimit
-    Get-PatternSummary -Lines $logLines -Name "Load stability wait" -Pattern "Continue mode: waiting for file load stability" -Limit $SampleLimit
     Get-PatternSummary -Lines $logLines -Name "LTC audio stats" -Pattern "LTC audio stats" -Limit $SampleLimit
     Get-PatternSummary -Lines $logLines -Name "LTC frame diagnostic" -Pattern "^\d{4}-\d{2}-\d{2} .* \[[A-Z]{3}\] LTC frame diagnostic status=" -Limit $SampleLimit
     Get-PatternSummary -Lines $logLines -Name "Timecode sync skipped" -Pattern "Timecode sync skipped" -Limit $SampleLimit
     Get-PatternSummary -Lines $logLines -Name "Continue sync seek" -Pattern "Continue mode: sync seek" -Limit $SampleLimit
     Get-PatternSummary -Lines $logLines -Name "Timecode sync pending" -Pattern "Timecode sync pending" -Limit $SampleLimit
-    Get-PatternSummary -Lines $logLines -Name "Spout output warning" -Pattern "SpoutOutput: .*?(SpoutDX\.dll|spoutDX|OpenDirectX11|SetSenderName|SendImage)" -Limit $SampleLimit
-    Get-PatternSummary -Lines $logLines -Name "Spout output exception" -Pattern "SpoutOutput: .*?SendFrame" -Limit $SampleLimit
+    Get-PatternSummary -Lines $logLines -Name "Spout output warning" -Pattern "\[(WRN|ERR)\] SpoutDX\.dll" -Limit $SampleLimit
 )
 
 $burstSummaries = @(
     Get-BurstSummary -Lines $logLines -Name "LoadFile bursts" -Pattern "LoadFile|loadfile" -WindowSeconds $BurstWindowSeconds -Threshold $LoadFileBurstThreshold -Limit $SampleLimit
-    Get-BurstSummary -Lines $logLines -Name "Sync seek bursts" -Pattern "Timecode sync seek" -WindowSeconds $BurstWindowSeconds -Threshold $SyncSeekBurstThreshold -Limit $SampleLimit
+    Get-BurstSummary -Lines $logLines -Name "Sync seek bursts" -Pattern "Timecode sync seek ltc=" -WindowSeconds $BurstWindowSeconds -Threshold $SyncSeekBurstThreshold -Limit $SampleLimit
     Get-BurstSummary -Lines $logLines -Name "Continue sync seek bursts" -Pattern "Continue mode: sync seek" -WindowSeconds $BurstWindowSeconds -Threshold $SyncSeekBurstThreshold -Limit $SampleLimit
 )
 

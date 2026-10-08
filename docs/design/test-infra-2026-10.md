@@ -28,6 +28,37 @@ v0.6.6 のレビューで見えた試験の抜けを直す束です。利用者�
 - 確かめ: 開発機で、E2E の一式（LTC シナリオと L-3 は除く）を Release の exe（配布物と同じ作り、`TIMECODE_SYNC_PLAYER_E2E_APP_PATH`）で 1 回通します
 - 以後の規則: 「E2E とランナーの確かめは Information 以上の行だけで行う」を CLAUDE.md と担当の定型に入れます。単体・結合の試験のメモリのシンク（Debug まで受ける）は対象外です
 
+### 1 の実施（2026-10-08、ブランチ ti/1-debug-lines）
+
+- heartbeat の試験の判定
+  - 要約の行「UI heartbeat summary」は、MainWindow の構築から 30 秒の区間の終わり（reason=window）か、終了の手順（reason=closing）で 1 回だけ出ます（`UiHeartbeatRecorder.Window`）。試験は起動から 45 秒まで要約の行を待ちます
+  - 事実: 要約の maxLateMs は、ほぼ常に起動の 1 回目の tick（firstLateMs）の値です。構築の直後に区間を始め、1 回目の tick がメッセージループの開始まで待つためです。開発機の手元のログ 230 件では、maxLateMs と firstLateMs が違う回は 0 件、maxLateMs の中央値は 838ms、1000ms 以上は 8 件でした。reason=window の回の ticks は 248〜267 でした
+  - 判定は 2 つにしました。1 つ目は「maxLateMs が firstLateMs と同じ（最大は起動の 1 回目）か、1000ms 未満」、2 つ目は「reason=window かつ ticks が 200 以上」です。ticks の床と実測の下限の差は 48 tick で、約 5 秒の止まりにあたります
+  - Release の構成では、受信中の 1 秒未満の止まりは見ていません（起動の 1 回目が最大になるため）。受信中の窓に限った数字（中央値・最大）も取れなくなりました。見えるのは、起動の 1 回目より遅い tick（1 つ目の判定）と、数秒の止まり（2 つ目の判定）だけです
+  - 次の製品の版の材料: 要約に「起動の 1 回目を除いた最大（maxLateAfterFirstMs）と中央値」を出す案です。製品のログの行の変更なので、この束では入れません（棚卸し `v0.6.4-inventory.md` の #44）
+- 置き換え（前 → 後）
+  - `LtcInputMeterE2ETests` の heartbeat: `ui.heartbeat`（Debug）の seq と end の行 → 「UI heartbeat summary: …」（Information）
+  - `ScrubE2ETests` の DumpTail のキー: `sync.gate seek-settled`（Debug）→ `Timecode sync pending`（Information。Settled と TimedOut の行）
+  - 診断のスクリプトの「Continue mode: waiting for file load stability」（Debug）: Information の代わりが無いので、パターンの表と Continue Sync Health の行から外しました
+  - 診断のスクリプトの「Sync seek bursts」: `Timecode sync seek` → `Timecode sync seek ltc=`。Debug の「…seek suppressed」と Information の「…seek gated」を数えなくなります。`-TreatWarningsAsFailure` では、抑止やゲートの行が多いだけの回は WARN（終了コード 1）にならなくなります。実際のシークの連発は今までどおり WARN です
+  - `scripts/analyze-v054-gates.py`: 冒頭のコメントに「Debug のビルドのログが要る」を足しただけです（解析専用）
+- 今まで何も確かめていなかった試験（src に出所が無く、いつ数えても 0 件だったもの）
+
+| 試験（またはスクリプト） | 元の文字列 | 何を確かめていたつもりだったか | 直した先 |
+|---|---|---|---|
+| `LtcScenarioE2ETests` の `LandingLatencySecondsSince`（D38、記録だけ） | `applying the first Jump frame` | Jump の値がアプリに届いた時刻（最初の Jump の適用） | 外した（2026-09-19 のログが最後。今の適用の行「applying the confirmed Jump frame once」は同じ式に既にある） |
+| `LtcScenarioE2ETests.L2` の l2-summary の `landingWindowClosed`（記録だけ） | `landing window closed without progress` | シークで追い付けずに着地の窓が閉じた回数 | 外した（v0.5.4 B6b の門の除去で行が無くなった。l2-summary の項目も外した） |
+| `run-timecodesyncplayer-diagnostics.ps1` の性能の警告の文脈の分類 | `Continue mode: exiting gap` | 性能の警告がギャップの出口の直後かどうか | `Sync lifecycle: "GapExit"`（正規表現は `Sync lifecycle: "?GapExit"?`） |
+| 同じスクリプトのパターンの表 | `frame-step not yet reflected` | コマ送りが位置に反映されない回数 | 外した（今のコマ送りの行は「FrameStep landed」で、反映されない回の行は無い） |
+| 同じスクリプトの Spout Output Health とパターンの表 | `SpoutOutput:`（初期化・送信開始・SendImage false・SendFrame の例外・SpoutDX 欠落） | Spout の初期化と送信の失敗 | `SpoutDX.dll` の確認の Warning（`[WRN]` か `[ERR]` の後に `SpoutDX.dll`）だけを数える。他の行は今の src に無いので外した |
+| 同じスクリプトの Continue Sync Health | 引用符の無い `Timecode sync pending TimedOut` / `Settled` | 同期のシークの保留の終わり方の数 | `Timecode sync pending "?TimedOut"?` / `"?Settled"?`（実際のログは引用符付き） |
+| 同じスクリプトの性能の警告の分類 | `displayed FPS is below source FPS` | 表示の fps が素材の fps を下回った警告の数 | `FPS is below source FPS`（今の行は「full-resolution bitmap publication FPS is below source FPS」）。1 節の 7 つの外で、この洗い出しで見つけた |
+| `test-timecodesyncplayer-diagnostics.ps1`（上のスクリプトの自己試験） | 作り物の行（`SpoutOutput: …`、引用符の無い `pending Settled`） | 上の分類が数えること | 今の src の行の形に直した（`pending "Settled"`、`SpoutDX.dll` の Warning） |
+
+  - 訂正: 1 節の事実の「applying the held value change frame」は、出所があります。src の「Timecode sync: applying the {Reason} frame once」の Reason が "held value change" で、開発機のログにも 2026-10-03 まで出ています。試験はそのまま残しました
+  - 直した確かめは、どれも記録か報告の表だけで、合否には効きません。直した後に急に落ちるようになる確かめはありません
+- Release の構成で弱くなった確かめ: `LtcInputMeterHeartbeatE2ETests.CableLoop_WhileLtcFlows_UiHeartbeatStaysOnTime` は、LTC の受信中の 1 秒未満の止まりを見なくなりました（上の heartbeat の項）
+
 ## 2. 落ちの自動の集計
 
 - ランナーの各回の後に、その回の時間の窓の中の、イベントログの .NET Runtime 1026（TimecodeSyncPlayer）とダンプの有無を集めます。run-result に「起動の数／落ちの数／ProRes を GPU で先頭に読んだ起動の数（起動から 2 秒以内に FetchMetadata の proresd3d11dec）」と、落ちの番地を出します

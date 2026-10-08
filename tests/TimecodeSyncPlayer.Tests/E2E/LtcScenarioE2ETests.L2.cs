@@ -533,11 +533,9 @@ public sealed partial class LtcScenarioE2ETests
         int gapLogLines = scenario.CountLogMatchesSince(@"Continue mode: entered gap", startedAt);
         int syncSeekLogLines = scenario.CountLogMatchesSince(@"Continue mode: sync seek", startedAt);
         // シークで追い付けないと判断してアプリが速度補正へ切り替えた回数と、その所要。
-        // シークが 1.4 秒かかる素材では `landing window closed without progress` のあと
-        // `rate catch-up preferred` になり、追い付きに 12 秒級かかる。
+        // 試験基盤の束 1（2026-10）: 着地の窓の行（`landing window closed without progress`）は v0.5.4 B6b の
+        // 門の除去で src から無くなり、いつ数えても 0 だったので数えを外した（l2-summary の landingWindowClosed も外した）。
         int rateCatchUpPreferred = scenario.CountLogMatchesSince(@"rate catch-up preferred", startedAt);
-        int landingWindowClosed = scenario.CountLogMatchesSince(
-            @"landing window closed without progress", startedAt);
         double[] rateCatchUpSeconds = scenario.RateCatchUpSecondsSince(startedAt).OrderBy(value => value).ToArray();
         int decodeBehindInGap = decodeBehindAt.Count(at => L2ZoneOfTransitions(transitions, at) < 0);
 
@@ -567,7 +565,6 @@ public sealed partial class LtcScenarioE2ETests
             switchLogLines,
             gapLogLines,
             syncSeekLogLines,
-            landingWindowClosed,
             rateCatchUpPreferred,
             rateCatchUpCount = rateCatchUpSeconds.Length,
             rateCatchUpMedianSeconds = Math.Round(L2Percentile(rateCatchUpSeconds, 0.50), 2),

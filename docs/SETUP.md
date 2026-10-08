@@ -150,6 +150,8 @@ FlaUIによるUI自動操作テストのため、以下が必須です。
 - `native/tcs_gstreamer.dll`とGStreamerランタイムが配置されていること
 - **テスト実行中に実際にアプリウィンドウが開閉します**（フォーカスを奪う可能性があるため、実行中は他の操作を避けてください）
 
+試験を足すときは、E2E とランナーの確かめ（判定・数え・待ち）を、アプリのログの Information 以上の行だけで行ってください。アプリは Release ではログの最小の段階が Information で、Debug の行は配布物の構成では出ません。単体・結合の試験のメモリのシンクは対象外です。
+
 ```powershell
 dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~E2ETests"
 ```

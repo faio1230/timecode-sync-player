@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """v0.5.4 段 0: LTC シナリオのアプリログから、門ごとの発火回数と足した遅延を数える。
 
+Debug のビルドのログが要る（sync.gate の行は Debug。Release のビルドでは出ないので、門の数はすべて 0 になる）。
+
 使い方:
   python scripts/analyze-v054-gates.py --run label=REPORT_DIR [--run ...] --out DIR
 
