@@ -160,6 +160,8 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 
 LTC シナリオのランナー（`scripts\run-ltc-scenarios.ps1`）は、回の間のアプリの落ち（イベントログの .NET Runtime 1026 と Application Error 1000）を自動で数えて run-result.json の `crashes` に出し、1 回でも落ちがあればその回を失敗にします。落ちたアプリのダンプは `<ReportDir>\dumps` に残ります（既定は `DOTNET_DbgMiniDumpType=2`、full は `-MiniDumpType 4`）。
 
+一式の数（relocate・holdEntries・3 つの和・boundary・pump: held・assertion など）の合否の範囲は、`scripts\compute-ltc-ranges.py` で計算し、手で決めません。新しい版の一式の前に、前の版までの回（check の出力か run-result.json）で計算し直します（規則と使い方は docs/design/test-infra-2026-10.md の 3 節）。
+
 ---
 
 ## 6. 一括検証スクリプト
