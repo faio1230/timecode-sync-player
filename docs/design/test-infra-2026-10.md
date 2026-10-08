@@ -84,6 +84,7 @@ v0.6.6 のレビューで見えた試験の抜けを直す束です。利用者�
 - 判定: 落ちが 1 回でもあれば、ランナーの終了コードは 1 で、SUMMARY の行に `crashes=N`、落ちの各件を `CRASH …` の行に出します。イベントログを読めなかった回は `crashes=unknown`（count は null）で、判定は今までどおり試験の結果だけです。落ちのあった回は、合格でも output-trace を消しません
 - ダンプ: 事前確認で `DOTNET_DbgEnableMiniDump=1`・`DOTNET_DbgMiniDumpType=2`・`DOTNET_DbgMiniDumpName=<ReportDir>\dumps\tsp-%p.dmp` を決めて runner-preflight.json の `dump` に書き、`dotnet test` の直前（ビルドの後）にランナーのプロセスの環境に入れます。試験のプロセスと、そこから起動するアプリが継ぎます。full のダンプは `-MiniDumpType 4` です
 - 古い回（crash-events.json の無い回）を集計し直すと、`crashes.count` は null、起動の数は trx の開始〜終わりで数えます
+- 確かめ（開発機、2026-10-08）: 自己試験 `scripts/test-ltc-crash-count.ps1` は全項目合格、既存の `scripts/test-ltc-run-metrics.ps1` も合格。非E2E の全件は合格 3292、スキップ 2、失敗 0。ランナーを S-1 の 1 本（ProRes の素材を先頭）で 1 回回し、合格 1、`crashes.count=0`、`launches=1`、`proresGpuFirstLaunches=1`、`verdict=pass` で、runner-preflight.json に `dump` が出ました。C: の空きが 20 GB に届かなかったため、この回だけ手元の写しで C: の確認を 15 GB に下げています（コミットしたランナーは 20 GB のまま）
 
 ## 3. 合否の範囲の決め方
 
