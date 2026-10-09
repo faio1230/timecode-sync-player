@@ -293,6 +293,30 @@ python scripts\compute-ltc-ranges.py docs\design\test-infra-2026-10-ranges\test-
 - `TCS_FFMPEG` に 4.2.3 を指してランナーを回すと、事前確認で `PREREQ-ERROR ffmpeg: ffmpeg major 4 is older than 6: <場所> (env:TCS_FFMPEG, ffmpeg version 4.2.3 ...). Get the pinned test build with pwsh -File scripts\get-ffmpeg.ps1 ...` が出て、終了コード 2 で止まった。同じ設定でテストを回すと、ffmpeg を最初に使うところで同じ文言の例外で止まった
 - 事実: 開発機の Program Files の ffmpeg は git のビルド（N-109850、libavcodec 60 なので判定は 6）で、hap の encoder が無い。`tools\ffmpeg` が無いと事前確認は通るが、HAP の素材は作れない
 
+## 7d. 試験基盤の 9: アプリには本番と同じ環境で起動させる（2026-10-09、ブランチ ti/9-app-env、TSP-Fable の決定）
+
+### 背景
+
+- 検証機のまっさらな環境の回で、F-7 の試験（`F7DurationWithoutFfprobeE2ETests`）は試験のプロセスの中で shim の `GstPlaybackApi.ProbeMediaDuration` を呼ぶため、試験のプロセスに GStreamer が要る。担当はインストール先の `gstreamer\bin` を PATH の先頭に置き、`GSTREAMER_1_0_ROOT_MSVC_X86_64` をインストール先の `gstreamer` にした
+- F-7 の試験は、アプリに渡す環境を「試験の PATH から ffmpeg・ffprobe のフォルダを外したもの」で作り、PATH だけを指定していた。そのため `GSTREAMER_1_0_ROOT_MSVC_X86_64` と PATH の先頭の `gstreamer\bin` がアプリにも継がれ、本番の構成（変数なし）と違っていた
+- アプリは GStreamer を「`GSTREAMER_1_0_ROOT_MSVC_X86_64` → exe の隣の `gstreamer\`（同梱）→ `Program Files\gstreamer\1.0\msvc_x86_64`」の順で探す（`GstNativeLibraryResolver.ResolveRoot`）。変数が継がれると、同梱があっても変数の側を使う。変数が同梱と同じフォルダを指していても、出所の扱い（同梱のときだけプラグインの探索とレジストリを同梱に固定し、追加のプラグインのフォルダを足さない）は本番と違う
+
+### 作り
+
+- `tests/TimecodeSyncPlayer.Tests/Helpers/E2EAppRunner.cs` の `ApplyProductionGstEnvironment`: アプリを起動する全経路（`Start`・`StartProcess`）で、呼び出し側の環境を当てた後に呼ぶ。exe の隣の `gstreamer\bin` に GStreamer のコアの DLL（`gstreamer-1.0-0.dll` か `gstreamer-1.0.dll`）があるときだけ、`GSTREAMER_1_0_ROOT_MSVC_X86_64` と、PATH のうちコアの DLL があるフォルダ（GStreamer の bin）を外す。呼び出し側が変数を明示したときは変数を残す
+- 同梱の有無で分けた理由: アプリは同梱があれば変数なしでも同梱を使うので、外しても起動できる。同梱が無い exe（開発機の Debug の exe）は、変数か Program Files の GStreamer しか使えない。変数を外すと、Program Files に入れていない機体では GStreamer を見つけられずに起動できなくなる。同梱の判定はアプリの判定（`IsGstRoot`: `bin` にコアの DLL があるか）と同じにした
+- F-7 の試験の `PathWithoutFfmpeg` も exe のフォルダを受け取り、同梱があるときは GStreamer の bin も外す（`E2EAppRunner.PathForApp`）
+- 出力: 起動のたびに `app-env: bundledGstreamer=yes|no GSTREAMER_1_0_ROOT_MSVC_X86_64=<値か <not passed>> (removed=yes|no) pathGstBinEntries=<渡した PATH の GStreamer の bin の数> (removed=<外した数>)` を標準出力に 1 行出す。F-7 は同じ行を試験の出力に、LTC シナリオは標準出力とジャーナルの `app-environment` に出す
+- アプリは GStreamer の出所をログに出さない（棚卸し #49 で次の製品の版の材料にした）。そのため試験の側で、アプリのプロセスが読み込んだ `gstreamer-1.0-0.dll` のパスを `Process.Modules` で読み、`app-gstreamer: loaded=<パス> origin=bundled|environment|programFiles|other|none` を 1 行出す。読むのは GStreamer を読み込んだ後（F-7 は長さが入った後、LTC シナリオは初回ロードの後）
+- F-7 は同梱があるとき、変数を渡していないこと・PATH に GStreamer の bin が無いこと・`origin=bundled` を確かめる（外れたら失敗）
+
+### 確かめ（開発機、2026-10-09）
+
+- 単体（`AppGstEnvironmentTests`）: 同梱あり・なし × 変数あり・なし × PATH の GStreamer の bin あり・なし、呼び出し側が変数を明示したとき、F-7 の PATH、読んだ DLL の出所の判定。既存の `GstRuntimeLocatorTests` と合わせて 16 件合格。非E2E の全件は合格 3321、スキップ 2、失敗 0
+- 開発機の Debug の exe（同梱なし、試験のプロセスに変数と PATH の GStreamer の bin あり）で F-7 を 1 本: 合格。`app-env: bundledGstreamer=no GSTREAMER_1_0_ROOT_MSVC_X86_64=C:\Program Files\gstreamer\1.0\msvc_x86_64 (removed=no) pathGstBinEntries=3 (removed=0)`、`app-gstreamer: loaded=C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gstreamer-1.0-0.dll origin=environment`。同梱が無いので触らず、アプリは変数の GStreamer で動いた
+- 配布物の exe（v0.6.6 の最終の候補の zip を展開。試験のプロセスには展開先の `gstreamer\bin` を PATH の先頭、変数を展開先の `gstreamer` に）で F-7 を 1 本: 合格。`app-env: bundledGstreamer=yes GSTREAMER_1_0_ROOT_MSVC_X86_64=<not passed> (removed=yes) pathGstBinEntries=0 (removed=0)`（PATH の GStreamer の bin は先に `PathWithoutFfmpeg` が外したので、起動の側で外した数は 0）、`app-gstreamer: loaded=<展開先>\gstreamer\bin\gstreamer-1.0-0.dll origin=bundled`
+- 同じ exe と環境で、ランナーで S-1 を 1 本（実素材 M5・M6・M1）: 合格 1、失敗 0、`crashes=0`、`verdict=pass`。`app-env: bundledGstreamer=yes GSTREAMER_1_0_ROOT_MSVC_X86_64=<not passed> (removed=yes) pathGstBinEntries=0 (removed=4)`、`app-gstreamer: loaded=<展開先>\gstreamer\bin\gstreamer-1.0-0.dll origin=bundled`（ジャーナルの `app-environment` も同じ値）。C: の空きが 20 GB に届かなかったため（18.7 GB）、この回だけ手元の写しで C: の確認を 15 GB に下げた（コミットしたランナーは 20 GB のまま）
+
 ## 8. 順と合否
 
 - 順: 1 → 2 → 6 の決め → 3 → 5 → 7 → 4（4 は影響が大きいので、段 1 の案の承認を受けてから）

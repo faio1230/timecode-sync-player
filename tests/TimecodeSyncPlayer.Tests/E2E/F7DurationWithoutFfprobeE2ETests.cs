@@ -55,7 +55,8 @@ public sealed class F7DurationWithoutFfprobeE2ETests
                 ?? throw new InvalidOperationException($"probe failed: {c}")).ToArray();
             _output.WriteLine("lengths: " + string.Join(", ", lengths.Select(l => l.ToString("F3", CultureInfo.InvariantCulture))));
 
-            string appPath = PathWithoutFfmpeg(Environment.GetEnvironmentVariable("PATH"));
+            // 試験基盤の 9: 同梱の GStreamer があるときは GStreamer の bin も外す（アプリは同梱だけで起動する）。
+            string appPath = PathWithoutFfmpeg(Environment.GetEnvironmentVariable("PATH"), Path.GetDirectoryName(exe)!);
             FfprobePresence.FindOnPath(appPath).Should().BeNull("the app process must not see ffprobe");
             DateTime started = DateTime.Now;
             using var app = E2EAppRunner.Start(exe, "--vo null", settingsFilePath: null,
@@ -87,6 +88,17 @@ public sealed class F7DurationWithoutFfprobeE2ETests
             }
             for (int i = 0; i < 3; i++)
                 _output.WriteLine($"row {i}: offset={RowOffsetSeconds(playlist, i):F3} expected={expectedOffsets[i]:F3}");
+
+            // 試験基盤の 9: アプリに渡した環境と、アプリが読んだ GStreamer（長さが入った後なので読み込み済み）。
+            _output.WriteLine(app.AppEnvironment.Describe());
+            (string? gstPath, string gstOrigin) = app.LoadedGstreamer();
+            _output.WriteLine($"app-gstreamer: loaded={gstPath ?? "<not loaded>"} origin={gstOrigin}");
+            if (app.AppEnvironment.BundledNextToExe)
+            {
+                app.AppEnvironment.RootPassed.Should().BeNull("the app runs with the bundled GStreamer only, as in production");
+                app.AppEnvironment.PathGstEntriesPassed.Should().Be(0, "no GStreamer bin is passed on the app's PATH");
+                gstOrigin.Should().Be("bundled", "the app must load the GStreamer bundled next to the exe");
+            }
 
             // (2) タイムラインの幅: 長さが 0 だと全長 0 で、どれだけ寄せても横のスクロールの最大値が 0 のまま（F-1）。
             double total = lengths.Sum();
@@ -163,10 +175,14 @@ public sealed class F7DurationWithoutFfprobeE2ETests
         }
     }
 
-    /// <summary>PATH から ffmpeg.exe / ffprobe.exe のあるフォルダを外す（アプリのプロセスに渡す分だけ）。</summary>
-    internal static string PathWithoutFfmpeg(string? path)
+    /// <summary>
+    /// PATH から ffmpeg.exe / ffprobe.exe のあるフォルダを外す（アプリのプロセスに渡す分だけ）。
+    /// exeDir を渡し、その隣に同梱の gstreamer\bin があるときは GStreamer の bin も外す（試験基盤の 9）。
+    /// </summary>
+    internal static string PathWithoutFfmpeg(string? path, string? exeDir = null)
     {
         if (string.IsNullOrEmpty(path)) return "";
+        if (exeDir != null) path = E2EAppRunner.PathForApp(path, exeDir);
         IEnumerable<string> kept = path.Split(Path.PathSeparator).Where(entry =>
         {
             string dir = entry.Trim().Trim('"');
