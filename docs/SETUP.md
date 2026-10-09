@@ -162,6 +162,25 @@ LTC シナリオのランナー（`scripts\run-ltc-scenarios.ps1`）は、回の
 
 一式の数（relocate・holdEntries・3 つの和・boundary・pump: held・assertion など）の合否の範囲は、`scripts\compute-ltc-ranges.py` で計算し、手で決めません。新しい版の一式の前に、前の版までの回（check の出力か run-result.json）で計算し直します（規則と使い方は docs/design/test-infra-2026-10.md の 3 節）。
 
+### 5.3 試験用の ffmpeg（8.0.1 に固定）
+
+試験の素材は ffmpeg で作ります。試験に使う ffmpeg は 8.0.1（gyan.dev の full のビルド。hap と prores_ks の encoder を含む）に固定しています。初回だけ、次のコマンドでリポジトリの `tools\ffmpeg\`（git 管理外）に取ってください。zip と ffmpeg.exe・ffprobe.exe の SHA-256 をスクリプトに固定した値と照らし、合わなければ止まります。
+
+```powershell
+pwsh -File scripts\get-ffmpeg.ps1
+```
+
+試験とスクリプト（ランナー、`make-e2e-media.ps1` などの素材のスクリプト、テストの `FfmpegTool`）は、ffmpeg を次の順で探します。PATH は最後の手です。
+
+1. 環境変数 `TCS_FFMPEG`（ffmpeg.exe のフルパス。ffprobe は `TCS_FFPROBE`、無ければ同じフォルダ）
+2. リポジトリの `tools\ffmpeg\`（`get-ffmpeg.ps1` の置き場）
+3. `C:\Program Files\ffmpeg\bin`（スクリプトでは `-FfmpegDir` の既定）
+4. PATH
+
+見つけた ffmpeg のメジャー版が 6 未満なら、試験を始める前に止まります。ランナーは事前確認（`PREREQ-ERROR ffmpeg: ...`、終了コード 2）で止まり、テストは ffmpeg を最初に使うところで例外を出します。どちらも、見つけた場所と版、`get-ffmpeg.ps1` で取れることを表示します。ランナーは使った ffmpeg の場所と版を `runner-preflight.json` と `run-result.json` の `ffmpeg` に書き、素材を作った版の記録（`artifacts\media\ffmpeg-version.txt`）を ReportDir に写します。
+
+この ffmpeg は GPL のビルドです。試験の道具としてだけ使い、配布物には入れません。
+
 ---
 
 ## 6. 一括検証スクリプト

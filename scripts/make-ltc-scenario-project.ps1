@@ -82,12 +82,13 @@ if (-not $MediaDir.StartsWith($outDirPrefix, [System.StringComparison]::OrdinalI
 # to append -FfmpegDir to PATH; the runner ran it in its own process, so the folder
 # stayed on the runner's PATH and reached the app, which then saw ffprobe in a run
 # that was meant to have none. Order (scripts\TcsFfmpeg.psm1, Resolve-TcsFfprobe):
-# TCS_FFPROBE, ffprobe.exe next to TCS_FFMPEG, -FfmpegDir\ffprobe.exe, PATH.
+# TCS_FFPROBE, ffprobe.exe next to TCS_FFMPEG, tools\ffmpeg\ffprobe.exe (item 8),
+# -FfmpegDir\ffprobe.exe, PATH.
 Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
 $ffprobeResolved = Resolve-TcsFfprobe -FfmpegDir $FfmpegDir
 if (-not $ffprobeResolved.Ffprobe) {
     throw ('ffprobe not found (searched: ' + ($ffprobeResolved.Searched -join '; ') +
-        '). Set TCS_FFMPEG to an ffmpeg.exe with ffprobe.exe next to it, pass -FfmpegDir, or put ffprobe on PATH')
+        '). Run pwsh -File scripts\get-ffmpeg.ps1, set TCS_FFMPEG to an ffmpeg.exe with ffprobe.exe next to it, pass -FfmpegDir, or put ffprobe on PATH')
 }
 $ffprobePath = $ffprobeResolved.Ffprobe
 Write-Output ('ffprobe: ' + $ffprobePath + ' (' + $ffprobeResolved.Source + ')')

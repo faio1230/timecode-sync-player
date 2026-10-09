@@ -14,6 +14,7 @@
     v0.6.0 段 5b の追加（scripts\LtcRunMetrics.psm1）:
     commitFreeGbAtStart（ランナーの開始時のシステムのコミットの空き、runner-preflight.json）、
     cDriveFreeGbAtStart（ランナーの開始時の C: の空き、runner-preflight.json）、
+    ffmpeg（試験基盤の 8。ランナーが解決した ffmpeg の場所・出所・-version の 1 行目・メジャー版と ffprobe、runner-preflight.json）、
     appExit（終了を押してからプロセスが消えるまでの秒数。回数・中央・最大と、15 秒を超えた回の終了の段のログ行）、
     prores（ProRes のロードの profile の内訳 prores-gpu / prores-cpu と decoder-adapter-mismatch の発火の回数。
     この回の trx の開始より前のログ行は数えない）。
@@ -202,6 +203,7 @@ $skipped = $skips.Count
 $runStartUtc = if ($trx) { Get-TcsRunStartUtc $trx.FullName } else { $null }
 $commitFreeGbAtStart = Get-TcsCommitFreeGbAtStart $ReportDir
 $cDriveFreeGbAtStart = Get-TcsRunnerPreflightValue $ReportDir 'cDriveFreeGbAtStart'
+$ffmpegAtStart = Get-TcsRunnerPreflightValue $ReportDir 'ffmpeg'
 $appExit = Get-TcsAppExitSummary -Events $appExitEvents -AppLines $appLines -ShimLines @($shimLines | Where-Object { $_ -match '\] destroy: ' }) `
     -ShimLinesByScenario $shimLinesByScenario
 $prores = Get-TcsProResLoadSummary -ShimLines $shimLines -SinceUtc $runStartUtc
@@ -260,6 +262,7 @@ $result = [ordered]@{
     l2 = $l2
     commitFreeGbAtStart = $commitFreeGbAtStart
     cDriveFreeGbAtStart = $cDriveFreeGbAtStart
+    ffmpeg = $ffmpegAtStart
     appExit = $appExit
     prores = $prores
     verdict = $(if ($failReasons.Count -gt 0) { 'fail' } else { 'pass' })

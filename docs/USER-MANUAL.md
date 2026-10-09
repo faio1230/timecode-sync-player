@@ -44,6 +44,8 @@ ffmpeg -i input.mov -c:v libx264 -g 30 -keyint_min 15 -sc_threshold 0 out.mp4
 
 書き出した素材を確認するスクリプトを同梱しています（`ffprobe`が必要です）。
 
+`ffprobe`は4.1以上を使ってください。MP4に入ったAV1を読めるのが4.1からです。
+
 ```
 powershell -File scripts\inspect-gop.ps1 -Path D:\media
 ```

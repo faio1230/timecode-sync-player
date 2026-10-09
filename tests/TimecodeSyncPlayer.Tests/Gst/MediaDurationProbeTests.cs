@@ -303,7 +303,8 @@ public sealed class MediaDurationProbeFixture
             + (audio ? $" -f lavfi -i sine=frequency=1000:duration={seconds}" : "");
         string arguments = $"-nostdin -y -hide_banner -loglevel error {inputs} {args} -t {seconds} \"{path}\"";
         (string? made, string? reason) = Run(FfmpegTool.Ffmpeg, arguments, path, format);
-        // 試験の ffmpeg（TCS_FFMPEG → 既定 → PATH）に hap が無いことがある。HAP だけ PATH の ffmpeg も試す。
+        // 試験の ffmpeg（TCS_FFMPEG → tools\ffmpeg → 既定 → PATH）に hap が無いことがある。HAP だけ PATH の ffmpeg も試す。
+        // 試験基盤の 8 で、固定の版（tools\ffmpeg の 8.0.1 full）なら hap を含む。
         if (made is null && format.StartsWith("hap", StringComparison.Ordinal))
             (made, reason) = Run("ffmpeg", arguments, path, format);
         return (made, reason);

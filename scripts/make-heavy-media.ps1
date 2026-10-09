@@ -22,8 +22,9 @@
 #   pwsh -File scripts\make-heavy-media.ps1 -OutDir D:\heavy -Force
 #   pwsh -File scripts\make-heavy-media.ps1 -Only heavy_e*,heavy_f*,heavy_g*   # the ProRes clips only
 #
-# Requires ffmpeg (TCS_FFMPEG = full path of ffmpeg.exe, else -FfmpegDir, default
-# C:\Program Files\ffmpeg\bin, else PATH; scripts\TcsFfmpeg.psm1), ffprobe next to it
+# Requires ffmpeg (TCS_FFMPEG = full path of ffmpeg.exe, else tools\ffmpeg from
+# scripts\get-ffmpeg.ps1, else -FfmpegDir, default C:\Program Files\ffmpeg\bin, else
+# PATH; scripts\TcsFfmpeg.psm1), ffprobe next to it
 # or TCS_FFPROBE, and python (for the LTC track, scripts\make-ltc-wav.py). The first
 # output line is the ffmpeg version; ffmpeg-version.txt in OutDir records the build
 # that made each file. Existing files are reused and never re-encoded (without -Force).

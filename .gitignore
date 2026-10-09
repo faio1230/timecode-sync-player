@@ -6,6 +6,7 @@ TestResults/
 *.user
 native/*.dll
 native/gst-prores/
+tools/ffmpeg/
 vendor/
 native/gst-shim/build-*/
 native/gst-shim/proto/build-*/

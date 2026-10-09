@@ -266,6 +266,33 @@ python scripts\compute-ltc-ranges.py docs\design\test-infra-2026-10-ranges\test-
 - 事実: v0.6.6 の R-13（LTCのメーター）の領域が、止めている間も Hidden で場所を取り、1080p で最大化したときにプレイリストの一覧が 222px から 191px に縮んだ。3 行目がはみ出し、つかむとフォーカスで 1 行スクロールして、先に入れた R-12 の並べ替えの E2E が開発機で落ちるようになった。R-12 の担当の 3/3 は R-13 の合流の前で、その後は開発機で一度も回っていなかった（ti/drag-e2e で試験の側を直した）
 - 規則: 1 版に複数の項目を入れるときは、項目を入れるたびに非E2E を全部回すのに加え、見せ方に触れた項目を入れた後は、それより前に入れた項目の UI の E2E を回し直し、候補を作る前に E2E の一式（LTC シナリオ以外）を Release の exe で一度回する。CLAUDE.md と docs/SETUP.md の試験の節に入れた
 
+## 7c. 試験基盤の 8: 試験用の ffmpeg の版を固定する（2026-10-09、ブランチ ti/8-ffmpeg-pin、TSP-Fable の決定）
+
+### 背景
+
+- 試験の ffmpeg の版が機体と経路でずれていた（開発機の PATH は 4.2.3、Program Files は git のビルド、検証機は 8.0.1）。検証機のまっさらな環境の回で `TCS_FFMPEG` が n5.0 を指していて、E2E の素材の生成が「版 6 以上が必要」で hap_mov を作れず、F-7 の試験が 5 秒で落ちた。試験の中で落ちるまで分からなかった
+- 段 5b で解決の順はそろえたが、版はそろっていなかった（6 未満は警告の 1 行だけ）。利用者の問い「根本解決は」への答えとして、試験の ffmpeg を決まったビルドに固定し、6 未満では始めないことにした
+
+### 作り
+
+- `scripts/get-ffmpeg.ps1`: 8.0.1 の gyan.dev の full のビルドを GitHub のリリース（GyanD/codexffmpeg の 8.0.1）の資産から取り、zip と ffmpeg.exe・ffprobe.exe の SHA-256 をスクリプトに固定した値と照らして、`tools\ffmpeg\`（git 管理外）に置く。置いた後に `-version` の 1 行目と、encoder の hap・prores_ks・libx264 を確かめる。置き済みで SHA が合えば取り直さない。zip は置いた後に消す。GPL のビルドなので試験の道具としてだけ使い、配布物に入れない（スクリプトの冒頭に書いた）
+- 配布元に GitHub のリリースの資産を選んだ理由: 名前と中身が固定され、同じ URL で同じバイトを取り直せる。gyan.dev のサイトの既定のリンク（release-full）は最新の版を指す動く名前。BtbN のビルドは日付のタグが入れ替わり、古いものは消えていく。資産の SHA-256 は GitHub の資産の digest と、取った zip の両方で確かめた
+- 解決の順（ランナーの `scripts/TcsFfmpeg.psm1` の Resolve-TcsFfmpeg・Resolve-TcsFfprobe と、テストの `Helpers/FfmpegTool.cs`）: `TCS_FFMPEG`（ffprobe は `TCS_FFPROBE`）→ リポジトリの `tools\ffmpeg\` → `C:\Program Files\ffmpeg\bin`（スクリプトの `-FfmpegDir` の既定）→ PATH。自己試験だけは `TCS_FFMPEG_TOOLS_DIR` で `tools\ffmpeg` を差し替える
+- 版の事前確認: ランナーは事前確認で、解決した ffmpeg の `-version` からメジャー版を読み、6 未満（または読めない）なら `PREREQ-ERROR ffmpeg: ...` で止める（終了コード 2）。テストは `FfmpegTool.Ffmpeg` を最初に使うところで例外を出す（`TestVideoFactory.FfmpegAvailable` は false にせず例外を通す。スキップに紛れさせない）。どちらの文言にも、見つけた場所・出所・版の 1 行目と、`get-ffmpeg.ps1` で取れることを書く。見つからないとき（名前で起動）は従来どおり
+- 記録: ランナーは `runner-preflight.json` と `run-result.json` の `ffmpeg`（path・source・versionLine・major・ffprobe・ffprobeSource）に書き、素材の `artifacts\media\ffmpeg-version.txt` を ReportDir に写す
+- 検証機のキットは今回の対象外。キットも同じ順（`TCS_FFMPEG` → `tools\ffmpeg` → Program Files → PATH）にそろえ、事前確認で 6 未満を止める
+- 固定した値: zip `ffmpeg-8.0.1-full_build.zip` の SHA-256 は `467cde100a47ed4b03a897988aeb4a296890c1e2b2d2864204657d002bc5fb90`、ffmpeg.exe は `74db6c184a03dba2bdfe23e1a1f41cf5a8385bc1de6a7a1b26db1dc541abef93`、ffprobe.exe は `55bb6c6289367ae2383efa86b26bf2596f8adb72ac747360eb13df162354161c`
+- 現場準備ガイドの inspect-gop.ps1 の節に、ffprobe は 4.1 以上と 1 行足した。inspect-gop.ps1 が使う `-select_streams`・`-show_entries` は 1.1 から、csv・default の書き出しは 0.9 からある。FFmpeg の Changelog で MP4 の AV1 を読めるようになったのが 4.1 で、ガイドが AV1 を inspect-gop.ps1 で確かめるよう書いているので、4.1 を最低とした
+
+### 確かめ（開発機、2026-10-09）
+
+- `get-ffmpeg.ps1` を 1 回走らせ、zip の SHA-256 が固定の値と合い、`tools\ffmpeg\` に ffmpeg.exe・ffprobe.exe・LICENSE・README.txt が置かれた。`-encoders` に hap と prores_ks がある。2 回目は「Already placed」で取り直さない
+- 自己試験 `scripts/test-ffmpeg-pin.ps1` は全項目合格（解決の順 4 通りと見つからないとき、版の判定 4.2.3・n5.0・5.0・6.0・8.0.1・git のビルド・不明、記録の配線、SHA の固定）。既存の `scripts/test-runner-ffprobe-path.ps1` も合格
+- 非E2E の全件は合格 3307、スキップ 2、失敗 0（1 回目は RenderSessionTests の 1 件が落ちた。単独で 3 回と全件の再走では通り、この変更の外の時間の揺れと見た）。テストが作った素材のサイドカーは 8.0.1（tools\ffmpeg）
+- ランナーで S-1 を 1 本（`TCS_FFMPEG`・`TCS_FFPROBE` を外した状態）: 合格 1、失敗 0、`crashes.count=0`、`verdict=pass`。runner-preflight.json と run-result.json の `ffmpeg.source` は `repo:tools\ffmpeg`、`major` は 8。ReportDir に写った ffmpeg-version.txt の素材 10 本はすべて 8.0.1 で作られた。C: の空きが 20 GB に届かなかったため（19.03 GB）、この回だけ手元の写しで C: の確認を 15 GB に下げた（コミットしたランナーは 20 GB のまま）
+- `TCS_FFMPEG` に 4.2.3 を指してランナーを回すと、事前確認で `PREREQ-ERROR ffmpeg: ffmpeg major 4 is older than 6: <場所> (env:TCS_FFMPEG, ffmpeg version 4.2.3 ...). Get the pinned test build with pwsh -File scripts\get-ffmpeg.ps1 ...` が出て、終了コード 2 で止まった。同じ設定でテストを回すと、ffmpeg を最初に使うところで同じ文言の例外で止まった
+- 事実: 開発機の Program Files の ffmpeg は git のビルド（N-109850、libavcodec 60 なので判定は 6）で、hap の encoder が無い。`tools\ffmpeg` が無いと事前確認は通るが、HAP の素材は作れない
+
 ## 8. 順と合否
 
 - 順: 1 → 2 → 6 の決め → 3 → 5 → 7 → 4（4 は影響が大きいので、段 1 の案の承認を受けてから）
