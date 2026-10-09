@@ -268,6 +268,7 @@ Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 
 - [ ] 候補と同じSHAの試験のソースを、そのユーザーのフォルダに展開する（親が渡したtarなど）
 - [ ] インストール先の`tcs_gstreamer.dll`を、試験のソースの`native\`に写す。ffprobeを外した長さの試験は、試験のプロセスでも長さを読む関数を呼ぶため、試験のbinにshimが要る（棚卸しの#43）
+- [ ] アプリには同梱のGStreamerだけで起動させる（試験が足した変数は渡さない）。試験のプロセスにGStreamer（インストール先の`gstreamer\bin`をPATHの先頭、`GSTREAMER_1_0_ROOT_MSVC_X86_64`）を足しても、exeの隣に同梱があれば、試験はその変数とPATHのGStreamerの`bin`をアプリに渡さない（試験基盤の9）。試験の出力の`app-env:`の行が`GSTREAMER_1_0_ROOT_MSVC_X86_64=<not passed>`、`app-gstreamer:`の行が`origin=bundled`であることを確かめる
 - [ ] ランナーが素材とLTCのwavを作るffmpegは、`TCS_FFMPEG`（ffmpeg.exeのフルパス。同じフォルダに`ffprobe.exe`があるもの）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
 
 ```powershell

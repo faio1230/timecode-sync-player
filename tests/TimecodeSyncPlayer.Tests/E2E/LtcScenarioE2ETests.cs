@@ -1620,6 +1620,21 @@ public sealed partial class LtcScenarioE2ETests
             Journal.Write("app-started", details: new { appStartedAt });
 
             WaitUntil(() => LoadedTrackIndex() >= 0, 20, "プロジェクトの初回ロード");
+
+            // 試験基盤の 9: アプリに渡した環境と、アプリが読んだ GStreamer（初回ロードの後なので読み込み済み）。
+            (string? gstPath, string gstOrigin) = App.LoadedGstreamer();
+            Console.WriteLine(App.AppEnvironment.Describe());
+            Console.WriteLine($"app-gstreamer: loaded={gstPath ?? "<not loaded>"} origin={gstOrigin}");
+            Journal.Write("app-environment", details: new
+            {
+                bundledGstreamer = App.AppEnvironment.BundledNextToExe,
+                gstRootPassed = App.AppEnvironment.RootPassed,
+                gstRootRemoved = App.AppEnvironment.RootRemoved,
+                pathGstBinEntries = App.AppEnvironment.PathGstEntriesPassed,
+                pathGstBinEntriesRemoved = App.AppEnvironment.PathGstEntriesRemoved,
+                gstLoaded = gstPath,
+                gstOrigin,
+            });
         }
 
         private void ConfigureLtc()

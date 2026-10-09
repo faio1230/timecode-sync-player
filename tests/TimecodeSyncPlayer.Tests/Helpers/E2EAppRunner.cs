@@ -20,14 +20,18 @@ internal sealed class E2EAppRunner : IDisposable
     private readonly UIA3Automation _automation;
     private readonly Process _process;
 
-    private E2EAppRunner(UIA3Automation automation, Process process, Window mainWindow)
+    private E2EAppRunner(UIA3Automation automation, Process process, Window mainWindow, AppGstEnvironment appEnvironment)
     {
         _automation = automation;
         _process = process;
         MainWindow = mainWindow;
+        AppEnvironment = appEnvironment;
     }
 
     public Window MainWindow { get; }
+
+    /// <summary>試験基盤の 9: アプリに渡した GStreamer まわりの環境（出力の 1 行は <see cref="AppGstEnvironment.Describe"/>）。</summary>
+    public AppGstEnvironment AppEnvironment { get; }
 
     public Process Process => _process;
 
@@ -168,7 +172,8 @@ internal sealed class E2EAppRunner : IDisposable
         string exeDir = Path.GetDirectoryName(exePath)!;
         var automation = new UIA3Automation();
 
-        Process process = StartProcess(exePath, arguments, settingsFilePath, environment);
+        (Process process, AppGstEnvironment appEnvironment) =
+            StartProcessCore(exePath, arguments, settingsFilePath, environment);
 
         try
         {
@@ -201,7 +206,7 @@ internal sealed class E2EAppRunner : IDisposable
                 TimeSpan.FromSeconds(5));
             if (pausePlaybackIfNeeded)
                 PausePlaybackIfNeeded(window);
-            return new E2EAppRunner(automation, process, window);
+            return new E2EAppRunner(automation, process, window, appEnvironment);
         }
         catch
         {
@@ -241,6 +246,10 @@ internal sealed class E2EAppRunner : IDisposable
 
     public static Process StartProcess(string exePath, string arguments, string? settingsFilePath,
         IReadOnlyDictionary<string, string?>? environment = null)
+        => StartProcessCore(exePath, arguments, settingsFilePath, environment).Process;
+
+    private static (Process Process, AppGstEnvironment Environment) StartProcessCore(
+        string exePath, string arguments, string? settingsFilePath, IReadOnlyDictionary<string, string?>? environment)
     {
         string exeDir = Path.GetDirectoryName(exePath)!;
         var startInfo = new ProcessStartInfo
@@ -260,6 +269,15 @@ internal sealed class E2EAppRunner : IDisposable
             }
         }
         IsolateOutputTrace(startInfo, environment);
+
+        // 試験基盤の 9: アプリは本番と同じ環境で起動させる。同梱の GStreamer があるときは、試験のプロセスが
+        // 持つ GSTREAMER_1_0_ROOT_MSVC_X86_64 と PATH の GStreamer の bin を渡さない（呼び出し側が
+        // 変数を明示したときだけ、その値を残す）。
+        bool callerSetRoot = environment != null &&
+            environment.TryGetValue(GstRootVariable, out string? explicitRoot) && explicitRoot != null;
+        AppGstEnvironment appEnvironment = ApplyProductionGstEnvironment(
+            startInfo.Environment, exeDir, callerSetRoot, HasGstCoreDll);
+        Console.WriteLine(appEnvironment.Describe());
 
         string? settingsDirectory = null;
         if (string.IsNullOrWhiteSpace(settingsFilePath))
@@ -301,7 +319,7 @@ internal sealed class E2EAppRunner : IDisposable
                 E2ESettingsIsolation.Delete(settingsDirectory);
         }
 
-        return process;
+        return (process, appEnvironment);
     }
 
     public Button Button(string automationId)
@@ -420,6 +438,129 @@ internal sealed class E2EAppRunner : IDisposable
         => File.Exists(Path.Combine(bin, "gstreamer-1.0-0.dll")) ||
            File.Exists(Path.Combine(bin, "gstreamer-1.0.dll"));
 
+    internal const string GstRootVariable = "GSTREAMER_1_0_ROOT_MSVC_X86_64";
+
+    /// <summary>
+    /// 試験基盤の 9: アプリに渡す環境を本番に揃える。アプリは GSTREAMER_1_0_ROOT_MSVC_X86_64 を同梱の
+    /// gstreamer\ より先に使う（GstNativeLibraryResolver.ResolveRoot）。試験のプロセスは shim を読むために
+    /// この変数と PATH の先頭の gstreamer\bin を持つことがあり、そのまま継ぐと本番（変数なし）と違う構成になる。
+    /// exe の隣に同梱の gstreamer\bin（コアの DLL 入り）があるときだけ、変数と、PATH のうち GStreamer の
+    /// コアの DLL があるフォルダを外す（呼び出し側が変数を明示したときは変数を残す）。同梱が無いとき
+    /// （開発機の Debug の exe）は触らない。アプリは変数か Program Files の GStreamer しか使えないため、
+    /// 外すと変数でしか置いていない機体では起動できなくなる。
+    /// </summary>
+    internal static AppGstEnvironment ApplyProductionGstEnvironment(
+        IDictionary<string, string?> environment, string exeDir, bool callerSetRoot, Func<string, bool> hasGstCoreDll)
+    {
+        bool bundled = hasGstCoreDll(Path.Combine(exeDir, "gstreamer", "bin"));
+        bool rootRemoved = false;
+        int pathEntriesRemoved = 0;
+        if (bundled)
+        {
+            if (!callerSetRoot && environment.ContainsKey(GstRootVariable))
+                rootRemoved = environment.Remove(GstRootVariable);
+            if (environment.TryGetValue("PATH", out string? path) && path != null)
+            {
+                (string kept, int removed) = WithoutGstBinEntries(path, hasGstCoreDll);
+                environment["PATH"] = kept;
+                pathEntriesRemoved = removed;
+            }
+        }
+
+        environment.TryGetValue(GstRootVariable, out string? root);
+        environment.TryGetValue("PATH", out string? finalPath);
+        int pathEntriesPassed = string.IsNullOrEmpty(finalPath)
+            ? 0
+            : finalPath.Split(Path.PathSeparator).Count(entry => IsGstBinEntry(entry, hasGstCoreDll));
+        return new AppGstEnvironment(bundled, string.IsNullOrEmpty(root) ? null : root,
+            rootRemoved, pathEntriesRemoved, pathEntriesPassed);
+    }
+
+    /// <summary>同梱の gstreamer\bin が exe の隣にあるときだけ、PATH から GStreamer の bin を外す（F7 の PATH 用）。</summary>
+    internal static string PathForApp(string path, string exeDir, Func<string, bool>? hasGstCoreDll = null)
+    {
+        Func<string, bool> has = hasGstCoreDll ?? HasGstCoreDll;
+        return has(Path.Combine(exeDir, "gstreamer", "bin")) ? WithoutGstBinEntries(path, has).Path : path;
+    }
+
+    internal static (string Path, int Removed) WithoutGstBinEntries(string path, Func<string, bool> hasGstCoreDll)
+    {
+        string[] entries = path.Split(Path.PathSeparator);
+        List<string> kept = entries.Where(entry => !IsGstBinEntry(entry, hasGstCoreDll)).ToList();
+        return (string.Join(Path.PathSeparator, kept), entries.Length - kept.Count);
+    }
+
+    private static bool IsGstBinEntry(string entry, Func<string, bool> hasGstCoreDll)
+    {
+        string dir = entry.Trim().Trim('"');
+        if (dir.Length == 0) return false;
+        try
+        {
+            return hasGstCoreDll(dir);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 試験基盤の 9: アプリのプロセスが読み込んだ GStreamer のコアの DLL のパスと出所。アプリは GStreamer の
+    /// 出所をログに出さないため（棚卸し #48）、試験の側で読む。GStreamer を読み込んだ後
+    /// （プロジェクトやクリップのロードの後）に呼ぶ。
+    /// </summary>
+    public (string? Path, string Origin) LoadedGstreamer()
+    {
+        string? loaded = null;
+        try
+        {
+            _process.Refresh();
+            foreach (ProcessModule module in _process.Modules)
+            {
+                string name = Path.GetFileName(module.FileName ?? "");
+                if (name.Equals("gstreamer-1.0-0.dll", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("gstreamer-1.0.dll", StringComparison.OrdinalIgnoreCase))
+                {
+                    loaded = module.FileName;
+                    break;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return ($"<unreadable: {ex.Message}>", "unknown");
+        }
+
+        string programFilesBin = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "gstreamer", "1.0", "msvc_x86_64", "bin");
+        return (loaded, ClassifyGstOrigin(loaded, Path.GetDirectoryName(_process.MainModule?.FileName ?? "") ?? "",
+            AppEnvironment.RootPassed, programFilesBin));
+    }
+
+    /// <summary>読み込んだ DLL のフォルダから出所を決める（bundled / environment / programFiles / other / none）。</summary>
+    internal static string ClassifyGstOrigin(string? loadedPath, string exeDir, string? rootPassed, string programFilesBin)
+    {
+        if (string.IsNullOrEmpty(loadedPath)) return "none";
+        string? dir = Path.GetDirectoryName(loadedPath);
+        if (SameDirectory(dir, Path.Combine(exeDir, "gstreamer", "bin"))) return "bundled";
+        if (rootPassed != null && SameDirectory(dir, Path.Combine(rootPassed, "bin"))) return "environment";
+        return SameDirectory(dir, programFilesBin) ? "programFiles" : "other";
+    }
+
+    private static bool SameDirectory(string? a, string? b)
+    {
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        try
+        {
+            return string.Equals(Path.GetFullPath(a).TrimEnd('\\'), Path.GetFullPath(b).TrimEnd('\\'),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
     public static void KillProcess(Process? process)
     {
         if (process == null)
@@ -501,4 +642,17 @@ internal sealed class E2EAppRunner : IDisposable
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+}
+
+/// <summary>
+/// 試験基盤の 9: アプリに渡した GStreamer まわりの環境。RootPassed は渡した GSTREAMER_1_0_ROOT_MSVC_X86_64 の値
+/// （渡していなければ null）、PathGstEntriesPassed は渡した PATH のうち GStreamer のコアの DLL があるフォルダの数。
+/// </summary>
+internal sealed record AppGstEnvironment(
+    bool BundledNextToExe, string? RootPassed, bool RootRemoved, int PathGstEntriesRemoved, int PathGstEntriesPassed)
+{
+    public string Describe() =>
+        $"app-env: bundledGstreamer={(BundledNextToExe ? "yes" : "no")}" +
+        $" GSTREAMER_1_0_ROOT_MSVC_X86_64={RootPassed ?? "<not passed>"} (removed={(RootRemoved ? "yes" : "no")})" +
+        $" pathGstBinEntries={PathGstEntriesPassed} (removed={PathGstEntriesRemoved})";
 }
