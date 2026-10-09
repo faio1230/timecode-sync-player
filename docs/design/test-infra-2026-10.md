@@ -281,6 +281,17 @@ python scripts\compute-ltc-ranges.py docs\design\test-infra-2026-10-ranges\test-
 - 版の事前確認: ランナーは事前確認で、解決した ffmpeg の `-version` からメジャー版を読み、6 未満（または読めない）なら `PREREQ-ERROR ffmpeg: ...` で止める（終了コード 2）。テストは `FfmpegTool.Ffmpeg` を最初に使うところで例外を出す（`TestVideoFactory.FfmpegAvailable` は false にせず例外を通す。スキップに紛れさせない）。どちらの文言にも、見つけた場所・出所・版の 1 行目と、`get-ffmpeg.ps1` で取れることを書く。見つからないとき（名前で起動）は従来どおり
 - 記録: ランナーは `runner-preflight.json` と `run-result.json` の `ffmpeg`（path・source・versionLine・major・ffprobe・ffprobeSource）に書き、素材の `artifacts\media\ffmpeg-version.txt` を ReportDir に写す
 - 検証機のキットは今回の対象外。キットも同じ順（`TCS_FFMPEG` → `tools\ffmpeg` → Program Files → PATH）にそろえ、事前確認で 6 未満を止める
+- 固定した値: zip `ffmpeg-8.0.1-full_build.zip` の SHA-256 は `467cde100a47ed4b03a897988aeb4a296890c1e2b2d2864204657d002bc5fb90`、ffmpeg.exe は `74db6c184a03dba2bdfe23e1a1f41cf5a8385bc1de6a7a1b26db1dc541abef93`、ffprobe.exe は `55bb6c6289367ae2383efa86b26bf2596f8adb72ac747360eb13df162354161c`
+- 現場準備ガイドの inspect-gop.ps1 の節に、ffprobe は 4.1 以上と 1 行足した。inspect-gop.ps1 が使う `-select_streams`・`-show_entries` は 1.1 から、csv・default の書き出しは 0.9 からある。FFmpeg の Changelog で MP4 の AV1 を読めるようになったのが 4.1 で、ガイドが AV1 を inspect-gop.ps1 で確かめるよう書いているので、4.1 を最低とした
+
+### 確かめ（開発機、2026-10-09）
+
+- `get-ffmpeg.ps1` を 1 回走らせ、zip の SHA-256 が固定の値と合い、`tools\ffmpeg\` に ffmpeg.exe・ffprobe.exe・LICENSE・README.txt が置かれた。`-encoders` に hap と prores_ks がある。2 回目は「Already placed」で取り直さない
+- 自己試験 `scripts/test-ffmpeg-pin.ps1` は全項目合格（解決の順 4 通りと見つからないとき、版の判定 4.2.3・n5.0・5.0・6.0・8.0.1・git のビルド・不明、記録の配線、SHA の固定）。既存の `scripts/test-runner-ffprobe-path.ps1` も合格
+- 非E2E の全件は合格 3307、スキップ 2、失敗 0（1 回目は RenderSessionTests の 1 件が落ちた。単独で 3 回と全件の再走では通り、この変更の外の時間の揺れと見た）。テストが作った素材のサイドカーは 8.0.1（tools\ffmpeg）
+- ランナーで S-1 を 1 本（`TCS_FFMPEG`・`TCS_FFPROBE` を外した状態）: 合格 1、失敗 0、`crashes.count=0`、`verdict=pass`。runner-preflight.json と run-result.json の `ffmpeg.source` は `repo:tools\ffmpeg`、`major` は 8。ReportDir に写った ffmpeg-version.txt の素材 10 本はすべて 8.0.1 で作られた。C: の空きが 20 GB に届かなかったため（19.03 GB）、この回だけ手元の写しで C: の確認を 15 GB に下げた（コミットしたランナーは 20 GB のまま）
+- `TCS_FFMPEG` に 4.2.3 を指してランナーを回すと、事前確認で `PREREQ-ERROR ffmpeg: ffmpeg major 4 is older than 6: <場所> (env:TCS_FFMPEG, ffmpeg version 4.2.3 ...). Get the pinned test build with pwsh -File scripts\get-ffmpeg.ps1 ...` が出て、終了コード 2 で止まった。同じ設定でテストを回すと、ffmpeg を最初に使うところで同じ文言の例外で止まった
+- 事実: 開発機の Program Files の ffmpeg は git のビルド（N-109850、libavcodec 60 なので判定は 6）で、hap の encoder が無い。`tools\ffmpeg` が無いと事前確認は通るが、HAP の素材は作れない
 
 ## 8. 順と合否
 

@@ -29,8 +29,8 @@ $version = "8.0.1"
 $zipName = "ffmpeg-$version-full_build.zip"
 $zipUrl = "https://github.com/GyanD/codexffmpeg/releases/download/$version/$zipName"
 $expectedZipSha256 = "467cde100a47ed4b03a897988aeb4a296890c1e2b2d2864204657d002bc5fb90"
-$expectedFfmpegSha256 = "PENDING"
-$expectedFfprobeSha256 = "PENDING"
+$expectedFfmpegSha256 = "74db6c184a03dba2bdfe23e1a1f41cf5a8385bc1de6a7a1b26db1dc541abef93"
+$expectedFfprobeSha256 = "55bb6c6289367ae2383efa86b26bf2596f8adb72ac747360eb13df162354161c"
 $expectedVersionPrefix = "ffmpeg version $version-full_build-www.gyan.dev "
 $requiredEncoders = @("hap", "prores_ks", "libx264")
 
