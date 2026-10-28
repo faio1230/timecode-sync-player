@@ -4,100 +4,109 @@
         xmlns:local="clr-namespace:TimecodeSyncPlayer"
         Width="1120" Height="680"
         MinWidth="980" MinHeight="600"
-        Background="#111"
+        Background="#000000"
+        Foreground="#F2F2F2"
+        FontFamily="Yu Gothic UI, Segoe UI"
+        UseLayoutRounding="True"
         Loaded="Window_Loaded"
         Closing="Window_Closing">
 
     <Window.Resources>
-        <local:OnLabelConverter x:Key="OnLabel"/>
-        <local:ButtonToolTipConverter x:Key="ButtonToolTip"/>
-        <!-- v0.6.6 R-2: キーボードで移ったときだけ出るフォーカスの枠 -->
-        <Style x:Key="ButtonFocusVisual">
-            <Setter Property="Control.Template">
-                <Setter.Value>
-                    <ControlTemplate>
-                        <Rectangle Margin="2" RadiusX="2" RadiusY="2"
-                                   Stroke="#5AA0E6" StrokeThickness="1" StrokeDashArray="2 2"
-                                   SnapsToDevicePixels="True"/>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <!-- v0.6.6 R-2・R-6・R-7: ボタンのテンプレート。無効は暗い背景に薄い文字（WPF の既定の明るい灰色は暗い画面から浮く）。
-             乗せた・押した・キーボードのフォーカスもここで作る。ButtonLook.IsOn が真なら緑の縁と背景（ON/OFF のボタン）。
-             無効のボタンでもツールチップ（押せない理由）を出す。 -->
-        <Style TargetType="Button">
-            <Setter Property="Background"   Value="#2A2A2A"/>
-            <Setter Property="Foreground"   Value="White"/>
-            <Setter Property="BorderBrush"  Value="#555"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding"      Value="10,5"/>
-            <Setter Property="FontSize"     Value="13"/>
-            <Setter Property="Cursor"       Value="Hand"/>
-            <Setter Property="HorizontalContentAlignment" Value="Center"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonFocusVisual}"/>
-            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="3"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter Margin="{TemplateBinding Padding}"
-                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                              RecognizesAccessKey="True"
-                                              SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="local:ButtonLook.IsOn" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#1E3B26"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#3FB950"/>
-                            </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#3A3A3A"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#8A8A8A"/>
-                            </Trigger>
-                            <MultiTrigger>
-                                <MultiTrigger.Conditions>
-                                    <Condition Property="IsMouseOver" Value="True"/>
-                                    <Condition Property="local:ButtonLook.IsOn" Value="True"/>
-                                </MultiTrigger.Conditions>
-                                <Setter TargetName="Bd" Property="Background" Value="#27502F"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#56D364"/>
-                            </MultiTrigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#161616"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#B0B0B0"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Background" Value="#1A1A1A"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#2C2C2C"/>
-                                <Setter Property="Foreground" Value="#5A5A5A"/>
-                                <Setter Property="Cursor" Value="Arrow"/>
-                            </Trigger>
-                            <MultiTrigger>
-                                <MultiTrigger.Conditions>
-                                    <Condition Property="IsEnabled" Value="False"/>
-                                    <Condition Property="local:ButtonLook.IsOn" Value="True"/>
-                                </MultiTrigger.Conditions>
-                                <Setter TargetName="Bd" Property="Background" Value="#17261A"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#2F6B3A"/>
-                                <Setter Property="Foreground" Value="#7FA187"/>
-                            </MultiTrigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ConsoleTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <local:OnLabelConverter x:Key="OnLabel"/>
+            <local:ButtonToolTipConverter x:Key="ButtonToolTip"/>
+            <!-- v0.6.6 R-2: キーボードで移ったときだけ出るフォーカスの枠 -->
+            <Style x:Key="ButtonFocusVisual">
+                <Setter Property="Control.Template">
+                    <Setter.Value>
+                        <ControlTemplate>
+                            <Rectangle Margin="2" RadiusX="2" RadiusY="2"
+                                       Stroke="#FF2438" StrokeThickness="1" StrokeDashArray="2 2"
+                                       SnapsToDevicePixels="True"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <!-- v0.6.6 R-2・R-6・R-7: ボタンのテンプレート。無効は暗い背景に薄い文字（WPF の既定の明るい灰色は暗い画面から浮く）。
+                 乗せた・押した・キーボードのフォーカスもここで作る。ButtonLook.IsOn が真なら緑の縁と背景（ON/OFF のボタン）。
+                 無効のボタンでもツールチップ（押せない理由）を出す。 -->
+            <Style TargetType="Button">
+                <Setter Property="Background"   Value="#050505"/>
+                <Setter Property="Foreground"   Value="#F2F2F2"/>
+                <Setter Property="BorderBrush"  Value="#3A3A3A"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding"      Value="10,5"/>
+                <Setter Property="FontSize"     Value="13"/>
+                <Setter Property="Cursor"       Value="Hand"/>
+                <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonFocusVisual}"/>
+                <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="0"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  RecognizesAccessKey="True"
+                                                  SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="local:ButtonLook.IsOn" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#1E3B26"/>
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#3FB950"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#28070D"/>
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#FF2438"/>
+                                </Trigger>
+                                <MultiTrigger>
+                                    <MultiTrigger.Conditions>
+                                        <Condition Property="IsMouseOver" Value="True"/>
+                                        <Condition Property="local:ButtonLook.IsOn" Value="True"/>
+                                    </MultiTrigger.Conditions>
+                                    <Setter TargetName="Bd" Property="Background" Value="#27502F"/>
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#56D364"/>
+                                </MultiTrigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#5B0B15"/>
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#FF6573"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Bd" Property="Background" Value="#0A0A0A"/>
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#252525"/>
+                                    <Setter Property="Foreground" Value="#5A5A5A"/>
+                                    <Setter Property="Cursor" Value="Arrow"/>
+                                </Trigger>
+                                <MultiTrigger>
+                                    <MultiTrigger.Conditions>
+                                        <Condition Property="IsEnabled" Value="False"/>
+                                        <Condition Property="local:ButtonLook.IsOn" Value="True"/>
+                                    </MultiTrigger.Conditions>
+                                    <Setter TargetName="Bd" Property="Background" Value="#17261A"/>
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#2F6B3A"/>
+                                    <Setter Property="Foreground" Value="#7FA187"/>
+                                </MultiTrigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+        </ResourceDictionary>
     </Window.Resources>
 
-    <Grid>
+    <Border Padding="8" Background="#000000">
+    <Grid Background="#000000" SnapsToDevicePixels="True">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="300"/>
@@ -112,8 +121,8 @@
 
         <!-- メニューバー -->
         <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal"
-                    Background="#1C1C1C" Margin="6,4">
-            <Button Content="📂 開く" Width="90" Height="30"
+                    Background="#000000" Margin="0,0,8,8">
+            <Button Content="開く" Width="90" Height="30"
                     ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=Open}"
                     Click="BtnOpen_Click"
                     AutomationProperties.AutomationId="BtnOpen"/>
@@ -134,7 +143,8 @@
         </StackPanel>
 
         <!-- 映像エリア（SW レンダーの WriteableBitmap を表示） -->
-        <Border Grid.Row="1" Grid.Column="0" Background="Black">
+        <Border Grid.Row="1" Grid.Column="0" Background="Black"
+                Margin="0,0,8,0" BorderBrush="#D7192D" BorderThickness="1">
             <Grid>
                 <Image x:Name="VideoImage"
                        AutomationProperties.AutomationId="VideoImage"
@@ -156,7 +166,7 @@
         </Border>
 
         <!-- シークバー -->
-        <Grid Grid.Row="2" Grid.Column="0" Margin="10,6,10,2">
+        <Grid Grid.Row="2" Grid.Column="0" Margin="0,8,8,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -193,7 +203,7 @@
         <!-- 再生コントロール -->
         <!-- v0.6.6: 窓が狭いときも中央の再生の並びを切らないため、右側の並びの最大の幅を
              ControlRow_SizeChanged が決める（ControlRowLayout）。右側は収まらなければ下の行へ折り返す。 -->
-        <Grid x:Name="ControlRow" Grid.Row="3" Grid.Column="0" Margin="10,4,10,12"
+        <Grid x:Name="ControlRow" Grid.Row="3" Grid.Column="0" Margin="0,0,8,0"
               SizeChanged="ControlRow_SizeChanged">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -201,38 +211,39 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <StackPanel x:Name="ControlRowLeft" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="|◀" Width="46" Height="36"
+            <StackPanel x:Name="ControlRowLeft" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Top">
+                <Button Content="|◀" Width="46" Height="34"
                         ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=PreviousTrack}"
-                        Margin="0,0,6,0" Click="BtnPreviousTrack_Click"
+                        Margin="0,0,8,0" Click="BtnPreviousTrack_Click"
                         AutomationProperties.AutomationId="BtnPreviousTrack"/>
-                <Button Content="▶|" Width="46" Height="36"
+                <Button Content="▶|" Width="46" Height="34"
                         ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=NextTrack}"
-                        Margin="0,0,10,0" Click="BtnNextTrack_Click"
+                        Margin="0,0,8,0" Click="BtnNextTrack_Click"
                         AutomationProperties.AutomationId="BtnNextTrack"/>
             </StackPanel>
 
             <StackPanel Grid.Column="1"
-                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                        HorizontalAlignment="Center" VerticalAlignment="Top">
                 <StackPanel x:Name="TransportButtons" Orientation="Horizontal" HorizontalAlignment="Center">
-                    <Button Content="◀◀" Width="54" Height="38"
+                    <Button Content="◀◀" Width="54" Height="34"
                             ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=Back}"
                             Margin="4,0" Command="{Binding Player.BackCommand}"
                             AutomationProperties.AutomationId="BtnBack"/>
-                    <Button Content="-1F" Width="46" Height="38"
+                    <Button Content="-1F" Width="46" Height="34"
                             ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=FrameBack}"
                             Margin="4,0" Command="{Binding Player.FrameBackCommand}"
                             AutomationProperties.AutomationId="BtnFrameBack"/>
-                    <Button x:Name="BtnPlay" Width="68" Height="38"
+                    <Button x:Name="BtnPlay" Width="68" Height="34"
+                            Background="#050505" BorderBrush="#FF2438"
                             ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=PlayPause}"
                             Margin="4,0" Command="{Binding Player.PlayPauseCommand}"
                             Content="{Binding Player.PlayPauseIcon}"
                             AutomationProperties.AutomationId="BtnPlay"/>
-                    <Button Content="+1F" Width="46" Height="38"
+                    <Button Content="+1F" Width="46" Height="34"
                             ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=FrameForward}"
                             Margin="4,0" Command="{Binding Player.FrameFwdCommand}"
                             AutomationProperties.AutomationId="BtnFrameFwd"/>
-                    <Button Content="▶▶" Width="54" Height="38"
+                    <Button Content="▶▶" Width="54" Height="34"
                             ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=Forward}"
                             Margin="4,0" Command="{Binding Player.FwdCommand}"
                             AutomationProperties.AutomationId="BtnFwd"/>
@@ -256,15 +267,15 @@
 
             <!-- 部品ごとに折り返す（音量の文字とつまみ、速度の文字とボタンは 1 組で動かす） -->
             <WrapPanel x:Name="ControlRowRight" Grid.Column="2" Orientation="Horizontal"
-                       VerticalAlignment="Center" HorizontalAlignment="Right">
+                       VerticalAlignment="Top" HorizontalAlignment="Right">
                 <Button x:Name="BtnMute"
                         Content="{Binding Player.MuteToggleLabel}"
                         local:ButtonLook.IsOn="{Binding Player.MuteToggleLabel, Converter={StaticResource OnLabel}}"
                         ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=Mute}"
-                        Width="88" Height="34" Margin="10,2,0,2"
+                        Width="88" Height="34" Margin="10,0,0,4"
                         Click="BtnMute_Click"
                         AutomationProperties.AutomationId="BtnMute"/>
-                <StackPanel Orientation="Horizontal" Margin="10,2,0,2">
+                <StackPanel Orientation="Horizontal" Height="34" Margin="10,0,0,4">
                     <TextBlock Text="音量:" Foreground="#888"
                                VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <Slider x:Name="VolumeSlider"
@@ -277,7 +288,7 @@
                             ValueChanged="VolumeSlider_ValueChanged"
                             AutomationProperties.AutomationId="VolumeSlider"/>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="10,2,0,2">
+                <StackPanel Orientation="Horizontal" Height="34" Margin="10,0,0,4">
                     <TextBlock Text="速度:" Foreground="#888"
                                VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <Button Content="{Binding Player.SpeedLabel}" Width="52" Height="34"
@@ -288,18 +299,18 @@
                 <Button x:Name="BtnSpout" Content="{Binding Sync.SpoutToggleLabel}" Width="88" Height="34"
                         local:ButtonLook.IsOn="{Binding Sync.SpoutToggleLabel, Converter={StaticResource OnLabel}}"
                         ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=Spout}"
-                        Margin="10,2,0,2" Click="BtnSpout_Click"
+                        Margin="10,0,0,4" Click="BtnSpout_Click"
                         IsEnabled="False"
                         AutomationProperties.AutomationId="BtnSpout"/>
                 <Button x:Name="BtnTestCard" Content="{Binding Output.TestCardToggleLabel}" Width="88" Height="34"
                         local:ButtonLook.IsOn="{Binding Output.TestCardToggleLabel, Converter={StaticResource OnLabel}}"
                         ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=TestCard}"
-                        Margin="10,2,0,2" Click="BtnTestCard_Click"
+                        Margin="10,0,0,4" Click="BtnTestCard_Click"
                         AutomationProperties.AutomationId="BtnTestCard"/>
                 <Button x:Name="BtnTimeline" Content="{Binding Sync.TimelineToggleLabel}" Width="96" Height="34"
                         local:ButtonLook.IsOn="{Binding Sync.TimelineToggleLabel, Converter={StaticResource OnLabel}}"
                         ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=Timeline}"
-                        Margin="10,2,0,2" Click="BtnTimeline_Click"
+                        Margin="10,0,0,4" Click="BtnTimeline_Click"
                         AutomationProperties.AutomationId="BtnTimeline"/>
             </WrapPanel>
         </Grid>
@@ -308,12 +319,18 @@
         <Border x:Name="TimelineContainer"
                 Grid.Row="4" Grid.Column="0"
                 Visibility="Collapsed"
-                BorderBrush="#333" BorderThickness="0,1,0,0"/>
+                Margin="0,8,8,0"
+                BorderBrush="#3A3A3A" BorderThickness="0,1,0,0"/>
 
         <!-- Playlist -->
-        <Border Grid.Row="0" Grid.Column="1" Grid.RowSpan="5"
-                Background="#171717" BorderBrush="#303030" BorderThickness="1,0,0,0">
-            <Grid Margin="10,8">
+        <Border x:Name="SidebarHost" Grid.Row="0" Grid.Column="1" Grid.RowSpan="5"
+                Background="#000000">
+            <ScrollViewer x:Name="SidebarScroll" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+                <ScrollViewer.Resources>
+                    <Style TargetType="ScrollBar" BasedOn="{StaticResource ConsoleScrollBar}"/>
+                </ScrollViewer.Resources>
+            <Grid MinHeight="{Binding ActualHeight, ElementName=SidebarHost}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>  <!-- LTCタイトル -->
                     <RowDefinition Height="Auto"/>  <!-- デバイス選択 -->
@@ -331,11 +348,8 @@
                     <RowDefinition Height="Auto"/>  <!-- CurrentTrackLabel -->
                 </Grid.RowDefinitions>
 
-                <TextBlock Text="LTC"
-                           Foreground="White"
-                           FontSize="14"
-                           FontWeight="SemiBold"
-                           Margin="0,0,0,6"/>
+                <TextBlock Text="LTC" Style="{StaticResource PanelHeading}"
+                           Margin="0,0,0,8"/>
 
                 <Grid Grid.Row="1" Margin="0,0,0,6">
                     <Grid.ColumnDefinitions>
@@ -345,8 +359,6 @@
                     <ComboBox x:Name="LtcDeviceCombo"
                               AutomationProperties.AutomationId="LtcDeviceCombo"
                               Height="28"
-                              Background="White"
-                              Foreground="Black"
                               SelectionChanged="LtcDeviceCombo_SelectionChanged"
                               SelectedItem="{Binding Sync.SelectedDevice, Mode=TwoWay}">
                     </ComboBox>
@@ -377,7 +389,7 @@
                               Grid.Row="0" Grid.Column="1"
                               AutomationProperties.AutomationId="LtcFpsModeCombo"
                               Height="28"
-                              ToolTip="本番では LTC の発生器と同じ fps に固定してください"
+                              ToolTip="Auto は確認用です。本番では LTC の発生器と同じ fps に固定してください"
                               SelectedIndex="{Binding Sync.LtcFpsModeIndex, Mode=TwoWay}">
                         <ComboBoxItem Content="Auto" Tag="Auto"/>
                         <ComboBoxItem Content="24 fps" Tag="Fixed24"/>
@@ -406,21 +418,25 @@
                                        Text="{Binding Sync.SyncCorrectionStatus}"/>
                             <TextBlock x:Name="LtcFpsAutoNoteText"
                                        AutomationProperties.AutomationId="LtcFpsAutoNoteText"
-                                       Text="Auto は確認用です。本番は固定にしてください"
+                                       Text="AUTO：確認用"
+                                       ToolTip="本番では LTC の発生器と同じ fps に固定してください"
                                        Foreground="#888888" FontSize="11" Margin="0,4,0,0"
                                        Visibility="{Binding Sync.ShowLtcFpsAutoNote, Converter={StaticResource BoolToVisibility}}"/>
                         </Grid>
                         <TextBlock x:Name="LongGopWarningText"
+                                   Style="{StaticResource StatusNote}"
                                    AutomationProperties.AutomationId="LongGopWarningText"
                                    Foreground="#D7A24B" FontSize="11" Margin="0,2,0,0"
                                    TextWrapping="Wrap"
                                    Text="{Binding Sync.LongGopWarning}"/>
                         <TextBlock x:Name="CodecWarningText"
+                                   Style="{StaticResource StatusNote}"
                                    AutomationProperties.AutomationId="CodecWarningText"
                                    Foreground="#D7A24B" FontSize="11" Margin="0,2,0,0"
                                    TextWrapping="Wrap"
                                    Text="{Binding Sync.CodecWarning}"/>
                         <TextBlock x:Name="DecodeHealthWarningText"
+                                   Style="{StaticResource StatusNote}"
                                    AutomationProperties.AutomationId="DecodeHealthWarningText"
                                    Foreground="#FF8A65" FontSize="11" Margin="0,2,0,0"
                                    TextWrapping="Wrap"
@@ -429,8 +445,7 @@
                     <TextBlock Text="オフセット:" Foreground="#BBBBBB"
                                Grid.Row="2" Grid.Column="0"
                                VerticalAlignment="Center" Margin="0,6,8,0"/>
-                    <!-- v0.6.6: 「オフセット: [つまみ] [入力欄] ms」の 1 行と注記の 1 行。値は入力欄だけで見せる
-                         （前は値の文字「+40 ms」と入力欄「+40」で同じ値を 2 回見せていた） -->
+                    <!-- 値は入力欄だけに表示し、補正方向の説明はツールチップに置く。 -->
                     <Grid Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,6,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -443,7 +458,13 @@
                                 Minimum="-1000" Maximum="1000"
                                 SmallChange="1" LargeChange="10"
                                 TickFrequency="1" IsSnapToTickEnabled="True"
-                                Value="{Binding Sync.SyncOffsetMs, Mode=TwoWay}"/>
+                                AutomationProperties.HelpText="＋で映像が先行（下流の遅延を補正）"
+                                Value="{Binding Sync.SyncOffsetMs, Mode=TwoWay}">
+                            <Slider.ToolTip>
+                                <TextBlock Text="＋で映像が先行（下流の遅延を補正）"
+                                           AutomationProperties.AutomationId="SyncOffsetHintText"/>
+                            </Slider.ToolTip>
+                        </Slider>
                         <!-- R-9: オフセットの数値入力。ms の整数。Enter か欄を離れたときに反映し、Esc で戻す。幅は「-1000」が収まる幅 -->
                         <TextBox x:Name="SyncOffsetInputBox"
                                  Grid.Column="1"
@@ -451,7 +472,7 @@
                                  Width="52" Height="20" Margin="6,0,0,0" Padding="2,0"
                                  FontSize="11" VerticalContentAlignment="Center"
                                  HorizontalContentAlignment="Right"
-                                 Foreground="White" Background="#2A2A2A" BorderBrush="#4A4A4A"
+                                 Foreground="White" Background="#030303" BorderBrush="#3A3A3A"
                                  ToolTip="オフセット（ms、整数）。＋で映像が先行。Enter か欄を離れると反映、Esc で戻す"
                                  Text="{Binding Sync.SyncOffsetInputText, Mode=TwoWay, UpdateSourceTrigger=Explicit}"
                                  KeyDown="SyncOffsetInputBox_KeyDown"
@@ -459,14 +480,10 @@
                         <TextBlock Grid.Column="2" Text="ms" Foreground="#BBBBBB" FontSize="11"
                                    VerticalAlignment="Center" Margin="4,0,0,0"/>
                     </Grid>
-                    <TextBlock Grid.Row="3" Grid.ColumnSpan="4" Margin="0,4,0,0"
-                               Text="＋で映像が先行（下流の遅延を補正）"
-                               TextWrapping="Wrap"
-                               AutomationProperties.AutomationId="SyncOffsetHintText"
-                               Foreground="#888888" FontSize="11"/>
                     <!-- v0.6.0: 幅が足りないときは「再起動の後に反映」を下の行へ折り返す -->
                     <WrapPanel Grid.Row="4" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,6,0,0">
-                        <TextBlock Text="ProRes の GPU デコード:" Foreground="#BBBBBB"
+                        <TextBlock Text="ProRes GPU:" Foreground="#BBBBBB"
+                                   ToolTip="ProRes の GPU デコード"
                                    VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <ComboBox x:Name="ProResGpuCombo"
                                   AutomationProperties.AutomationId="ProResGpuCombo"
@@ -478,6 +495,7 @@
                             <ComboBoxItem Content="無効" Tag="off"/>
                         </ComboBox>
                         <TextBlock x:Name="ProResGpuRestartNoticeText"
+                                   Style="{StaticResource StatusNote}"
                                    AutomationProperties.AutomationId="ProResGpuRestartNoticeText"
                                    Foreground="#FFB300" FontSize="11"
                                    VerticalAlignment="Center" Margin="8,0,0,0"
@@ -609,7 +627,7 @@
                                     <ControlTemplate TargetType="ProgressBar">
                                         <Grid SnapsToDevicePixels="True">
                                             <Border x:Name="PART_Track" Background="#1C1C1C"
-                                                    BorderBrush="#3A3A3A" BorderThickness="1"/>
+                                                    BorderBrush="#672029" BorderThickness="1"/>
                                             <Border x:Name="PART_Indicator" HorizontalAlignment="Left"
                                                     Background="{TemplateBinding Foreground}"/>
                                             <!-- 目盛り: 左端 -60、2/3 の所 -20、右端 0 dBFS -->
@@ -641,16 +659,14 @@
 
                 <TextBlock Grid.Row="6"
                            Text="出力"
-                           Foreground="White"
-                           FontSize="14"
-                           FontWeight="SemiBold"
-                           Margin="0,0,0,6"/>
+                           Style="{StaticResource PanelHeading}"
+                           Margin="0,0,0,8"/>
 
                 <StackPanel Grid.Row="7" x:Name="CanvasGroup" Margin="0,0,0,10"
-                            ToolTipService.ShowOnDisabled="True">
+                            ToolTipService.ShowOnDisabled="True" Grid.IsSharedSizeScope="True">
                     <Grid Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="CanvasLabel"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="キャンバス:" Foreground="#BBBBBB" FontSize="11"
@@ -666,27 +682,25 @@
                     </Grid>
                     <Grid Margin="0,0,0,4">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="CanvasLabel"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="幅:" Foreground="#BBBBBB" FontSize="11"
                                    VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <TextBox x:Name="CanvasWidthBox" Grid.Column="1" Height="24" Width="72"
-                                 HorizontalAlignment="Left"
+                        <TextBox x:Name="CanvasWidthBox" Grid.Column="1" Height="24"
                                  AutomationProperties.AutomationId="CanvasWidthBox"
                                  Text="1920"/>
                         <TextBlock Text="高さ:" Grid.Column="2" Foreground="#BBBBBB" FontSize="11"
                                    VerticalAlignment="Center" Margin="10,0,4,0"/>
-                        <TextBox x:Name="CanvasHeightBox" Grid.Column="3" Height="24" Width="72"
-                                 HorizontalAlignment="Left"
+                        <TextBox x:Name="CanvasHeightBox" Grid.Column="3" Height="24"
                                  AutomationProperties.AutomationId="CanvasHeightBox"
                                  Text="1080"/>
                     </Grid>
                     <Grid Margin="0,0,0,6">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="CanvasLabel"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="配置:" Foreground="#BBBBBB" FontSize="11"
@@ -697,7 +711,7 @@
                             <ComboBoxItem Content="幅合わせ" Tag="fit-width"/>
                         </ComboBox>
                     </Grid>
-                    <Button x:Name="BtnApplyCanvas" Content="キャンバスを適用" Height="28"
+                    <Button x:Name="BtnApplyCanvas" Content="適用" Height="28"
                             ToolTip="キャンバスの大きさと配置を出力へ適用する"
                             Click="BtnApplyCanvas_Click"
                             AutomationProperties.AutomationId="BtnApplyCanvas"/>
@@ -721,6 +735,7 @@
                         </TextBlock.Style>
                     </TextBlock>
                     <TextBlock x:Name="GpuStatusText"
+                               Style="{StaticResource StatusNote}"
                                AutomationProperties.AutomationId="GpuStatusText"
                                Foreground="#D7A24B" FontSize="11"
                                TextWrapping="Wrap"
@@ -735,14 +750,13 @@
 
                 <TextBlock Grid.Row="8"
                            Text="Playlist"
-                           Foreground="White"
-                           FontSize="14"
-                           FontWeight="SemiBold"
-                           Margin="0,0,0,6"/>
+                           Style="{StaticResource PanelHeading}"
+                           Margin="0,0,0,8"/>
 
                 <CheckBox x:Name="AutoOffsetCheckBox"
                           Grid.Row="9"
-                          Content="自動オフセット（追加時に後ろに配置）"
+                          Content="自動オフセット"
+                          ToolTip="クリップを追加すると、直前のクリップの後ろに配置します"
                           Foreground="#BBBBBB"
                           FontSize="11"
                           Margin="0,0,0,6"
@@ -785,13 +799,15 @@
                             AutomationProperties.AutomationId="BtnLoadProject"/>
                 </UniformGrid>
 
-                <ListBox x:Name="PlaylistList"
+                <ListBox Margin="0,0,0,0" x:Name="PlaylistList"
                          Grid.Row="12"
+                         MinHeight="120"
+                         MaxHeight="{Binding ActualHeight, ElementName=SidebarHost}"
                          AutomationProperties.AutomationId="PlaylistList"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          AllowDrop="True"
-                         Background="#101010"
-                         BorderBrush="#3A3A3A"
+                         Background="#030303"
+                         BorderThickness="0"
                          Foreground="White"
                          PreviewMouseLeftButtonDown="PlaylistList_PreviewMouseLeftButtonDown"
                          PreviewMouseMove="PlaylistList_PreviewMouseMove"
@@ -879,8 +895,8 @@
                                                  FontFamily="Consolas"
                                                  Text="{Binding TimelineOffsetText, Mode=OneWay}"
                                                  Foreground="White"
-                                                 Background="#2A2A2A"
-                                                 BorderBrush="#4A4A4A"
+                                                 Background="#030303"
+                                                 BorderBrush="#3A3A3A"
                                                  Padding="2,0"
                                                  Tag="{Binding Id}"
                                                  LostFocus="TimelineOffsetTextBox_LostFocus"
@@ -921,6 +937,8 @@
                            TextTrimming="CharacterEllipsis"
                            Margin="0,6,0,0"/>
             </Grid>
+            </ScrollViewer>
         </Border>
     </Grid>
+    </Border>
 </Window>

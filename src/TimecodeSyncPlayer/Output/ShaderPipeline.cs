@@ -8,7 +8,7 @@ using Vortice.Mathematics;
 namespace TimecodeSyncPlayer.Output;
 
 /// <summary>
-/// 合成・表示の HLSL パイプライン。テストカード（外周枠・十字・動くマーカー・24bit 更新番号）を描く Pattern、
+/// 合成・表示の HLSL パイプライン。テストカード（グリッド・正円・色／階調・流れるグラデーション）を描く Pattern、
 /// 画像をキャンバスへ配置して黒で埋める Display（UV 矩形で SourceCrop をサンプル）を持つ。
 /// 試作 scripts/GpuOutputProbe の ShaderPipeline を移植。
 /// </summary>
@@ -37,20 +37,109 @@ internal sealed class ShaderPipeline : IDisposable
             Vertex o; o.uv = float2((id << 1) & 2, id & 2);
             o.position = float4(o.uv * float2(2,-2) + float2(-1,1),0,1); return o;
         }
+        float3 Hue(float h) {
+            return saturate(abs(frac(h + float3(0,2.0/3,1.0/3))*6-3)-1);
+        }
+        float Line(float distance, float thickness) {
+            return 1-smoothstep(thickness*.5, thickness*.5+1, abs(distance));
+        }
+        bool Inside(float2 uv, float4 rect) {
+            return all(uv >= rect.xy) && all(uv <= rect.zw);
+        }
+        // Compact 3x5 digits, drawn in the shader without font textures or UI-thread work.
+        float Digit(float2 p, uint digit) {
+            if (any(p < 0) || p.x >= 3 || p.y >= 5) return 0;
+            static const uint glyphs[10] = {
+                31599, 11415, 29671, 29647, 23497,
+                31183, 31215, 29257, 31727, 31695
+            };
+            uint bit = 14-((uint)p.y*3+(uint)p.x);
+            return (glyphs[min(digit,9u)] >> bit)&1;
+        }
+        float Dimension(float2 p, uint value) {
+            if (any(p < 0) || p.x >= 19 || p.y >= 5) return 0;
+            uint slot = (uint)(p.x/4);
+            uint divisor = slot == 0 ? 10000 : slot == 1 ? 1000 : slot == 2 ? 100 : slot == 3 ? 10 : 1;
+            if (value < divisor && slot < 4) return 0;
+            return Digit(float2(p.x-slot*4,p.y), (value/divisor)%10);
+        }
         float4 Pattern(Vertex v) : SV_Target {
             float2 uv = v.uv;
-            uint bar = min(7u,(uint)(uv.x * 8));
-            float3 c = float3((bar & 4) ? 1 : 0, (bar & 2) ? 1 : 0, (bar & 1) ? 1 : 0);
-            if (uv.y > .50) c *= .35;
-            if (min(uv.x,1-uv.x) < 3/width || min(uv.y,1-uv.y) < 3/height) c=1;
-            if (abs(uv.x-.5) < 1/width || abs(uv.y-.5) < 1/height) c=1;
-            if (abs(uv.x-frac(seconds*.2)) < .007 && uv.y > .52 && uv.y < .74) c=float3(1,1,1);
-            // 24-bit binary image ID: least significant bit on the left. Black gutters make mixed frames visible.
-            if (uv.y > .80 && uv.y < .94 && uv.x > .02 && uv.x < .98) {
-                float cell = (uv.x-.02)/.96*24;
-                uint bit = (uint)cell;
-                c = frac(cell)<.08 ? float3(.2,.2,.2) : (((frameId>>bit)&1) ? float3(1,1,1) : float3(0,0,0));
+            float2 size = float2(width,height);
+            float2 p = (uv-.5)*size;
+            float shortSide = min(width,height);
+            float stroke = max(1,shortSide/900);
+            float cell = shortSide/18;
+            float2 gridPosition = p/cell;
+            // All panel edges use integer coordinates in the same centered square grid.
+            // The lower strips are adjacent one-cell rows and share the side panels' baseline.
+            float panelOuter = round(width/cell*.435);
+            float panelInner = round(width/cell*.30);
+            float panelBottom = round(height/cell*.38);
+            float stripHalfWidth = max(1,round(width/cell*.235));
+
+            // A sharp leading edge moves toward the bottom-right; only its trailing
+            // side fades out. Antialias the edge over one output pixel. Both ends of
+            // the eight-second loop are offscreen, so the phase wrap stays invisible.
+            float sweepPosition = lerp(-.05,1.45,frac(seconds/8));
+            float sweepCoordinate = (uv.x+uv.y)*.5;
+            float behindEdge = sweepPosition-sweepCoordinate;
+            float edgePixel = fwidth(sweepCoordinate);
+            float sweep = smoothstep(-edgePixel*.5,edgePixel*.5,behindEdge)
+                * (1-smoothstep(0,.40,behindEdge));
+            float3 c = lerp(float3(.36,.36,.36),float3(.94,.94,.94),sweep);
+
+            // Continuous hue/saturation ramp on the left, black-to-white ramp on the right.
+            if (Inside(gridPosition,float4(-panelOuter,-panelBottom,-panelInner,panelBottom))) {
+                float3 hue = Hue((gridPosition.y+panelBottom)/(2*panelBottom));
+                c = lerp(float3(1,1,1),hue,saturate((gridPosition.x+panelOuter)/(panelOuter-panelInner)));
             }
+            if (Inside(gridPosition,float4(panelInner,-panelBottom,panelOuter,panelBottom))) {
+                float gray = saturate(gridPosition.y/(panelBottom*1.3)+.5);
+                c = float3(gray,gray,gray);
+            }
+
+            float2 gridDistance = abs(frac(p/cell+.5)-.5)*cell;
+            float grid = max(Line(gridDistance.x,stroke*.6),Line(gridDistance.y,stroke*.6));
+            c = lerp(c,float3(.10,.10,.10),grid*.8);
+
+            // Pixel-space distances keep the circle round at every canvas aspect ratio.
+            float circle = Line(length(p)-shortSide*.40,stroke);
+            float diagonal = min(abs(uv.x-uv.y),abs(uv.x+uv.y-1)) / length(1/size);
+            float guides = max(circle,Line(diagonal,stroke*.65));
+            float dashX = step(.5,frac((p.x+shortSide)/ (stroke*8)));
+            float dashY = step(.5,frac((p.y+shortSide)/ (stroke*8)));
+            guides = max(guides,max(Line(p.y,stroke)*dashX,Line(p.x,stroke)*dashY));
+            c = lerp(c,float3(.9,.9,.9),guides);
+
+            // Static detail wedge: period decreases from 12 to 2 output pixels.
+            // Limit the frequency at the fine end to the output's Nyquist frequency.
+            if (Inside(gridPosition,float4(-stripHalfWidth,panelBottom-2,stripHalfWidth,panelBottom-1))) {
+                float x = (gridPosition.x+stripHalfWidth)*cell;
+                float extent = 2*stripHalfWidth*cell;
+                float phase = x/12 + (1.0/2-1.0/12)*x*x/(2*extent);
+                float stripes = step(0,sin(phase*6.2831853));
+                c = float3(stripes,stripes,stripes);
+            }
+            if (Inside(gridPosition,float4(-stripHalfWidth,panelBottom-1,stripHalfWidth,panelBottom))) {
+                // One solid hue per grid cell, including when the canvas aspect ratio changes.
+                float count = 2*stripHalfWidth;
+                float band = min(count-1,floor(gridPosition.x+stripHalfWidth));
+                c = lerp(Hue(band/count),float3(.10,.10,.10),grid*.8);
+            }
+
+            // Output dimensions, with a multiplication sign and space for five digits.
+            float textScale = max(1,floor(shortSide/240));
+            float2 text = (p-float2(-21.5*textScale,shortSide*.07))/textScale;
+            float ink = Dimension(text,(uint)width);
+            ink = max(ink,Dimension(text-float2(24,0),(uint)height));
+            float2 cross = text-float2(20,1);
+            if (all(cross >= 0) && all(cross < 3))
+                ink = max(ink,(floor(cross.x)==floor(cross.y) || floor(cross.x)+floor(cross.y)==2) ? 1 : 0);
+            c = lerp(c,float3(1,1,1),ink);
+
+            float edge = min(min(uv.x,1-uv.x)*width,min(uv.y,1-uv.y)*height);
+            c = lerp(c,float3(.9,.9,.9),1-smoothstep(stroke,stroke+1,edge));
             return float4(c,1);
         }
         Texture2D image : register(t0); SamplerState linearClamp : register(s0);
