@@ -5,9 +5,10 @@
 # 1. 制御文字: 追加された行に、タブ・CR・LF 以外の 0x00-0x1F と 0x7F があれば止める
 #    （scripts/check-control-chars.ps1 と同じ対象。\a が BEL に化けるなどを防ぐ）。
 #    grep -P はロケールによって動かず素通りするので perl で判定する。
-if ! git diff --cached -U0 --no-color --text | perl -ne 'exit 1 if /^\+/ && /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/'; then
+#    PNG は画像データなので文字検査から除く。文書中の NUL も調べるため --text は維持する。
+if ! git diff --cached -U0 --no-color --text -- . ':(exclude,icase)*.png' | perl -ne 'exit 1 if /^\+/ && /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/'; then
   echo "pre-commit: 制御文字がコミットに含まれています（scripts/check-control-chars.ps1 で場所を確かめてください）。" >&2
-  git diff --cached -U0 --no-color --text | perl -ne 'print "$.: $_" if /^\+/ && /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/' | cut -c1-120 >&2
+  git diff --cached -U0 --no-color --text -- . ':(exclude,icase)*.png' | perl -ne 'print "$.: $_" if /^\+/ && /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/' | cut -c1-120 >&2
   exit 1
 fi
 

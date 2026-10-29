@@ -1,15 +1,19 @@
-# TimecodeSyncPlayer
+# ERYTHEIA
 
 [日本語](README.md)
 
 [![CI](https://github.com/faio1230/timecode-sync-player/actions/workflows/ci.yml/badge.svg)](https://github.com/faio1230/timecode-sync-player/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-![TimecodeSyncPlayer screenshot](assets/screenshot.png)
+![ERYTHEIA with the test card enabled](assets/screenshot.png)
 
-TimecodeSyncPlayer is a live-show video player for Windows. It receives LTC (Linear Timecode) audio and plays the clips in a playlist in sync with the timecode. The development code name is ERYTHEIA.
+Development build with the test card enabled.
+
+ERYTHEIA is a live-show video player for Windows. It receives LTC (Linear Timecode) audio and plays the clips in a playlist in sync with the timecode.
 
 ## Download
+
+Current release files, the executable, and the Start menu entry still use the name `TimecodeSyncPlayer`.
 
 The installer and the zip are on the [latest stable release (Latest) on GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases/latest). The stable release is the latest v0.6.x, starting with v0.6.1. Releases marked "Pre-release" are still being verified. Do not use them for a show.
 
@@ -40,7 +44,7 @@ Direct3D 11.4 is used to composite and output the picture. On a system without i
 
 The ProRes GPU decoding plugin requires the Microsoft Visual C++ v14 Redistributable (x64) 14.50 or later (formerly named Microsoft Visual C++ 2015-2022). The setup installs it only when it is missing or older, and then asks once for administrator approval (UAC) during installation. For the zip, run [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe) manually when it is missing or older.
 
-ProRes GPU decoding is verified and recommended on NVIDIA (RTX class) GPUs. The plugin runs on generic Direct3D 11 shaders, so since v0.6.5 the default (auto) decodes on the GPU on any GPU. GPUs other than NVIDIA are verified only as far as the test machine's integrated AMD GPU. On an integrated GPU, 4K60 ProRes decoding may fall behind the CPU; in that case set the "ProRes の GPU デコード" (ProRes GPU decoding) selector in the app to 無効 (off). A change takes effect after the app is restarted. The UI is in Japanese.
+ProRes GPU decoding is verified and recommended on NVIDIA (RTX class) GPUs. The plugin runs on generic Direct3D 11 shaders, so since v0.6.5 the default (auto) decodes on the GPU on any GPU. GPUs other than NVIDIA are verified only as far as the test machine's integrated AMD GPU. On an integrated GPU, 4K60 ProRes decoding may fall behind the CPU; in that case set the "ProRes GPU" selector in the app to 無効 (off). A change takes effect after the app is restarted. The UI is in Japanese.
 
 `SpoutDX.dll` is included in release packages and is only used for Spout output.
 
@@ -92,7 +96,7 @@ Building from source also requires the GStreamer 1.28.2 MSVC x64 runtime and `tc
 
 ## Related projects
 
-[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11) is a GStreamer plugin that decodes ProRes on the GPU with Direct3D 11, by the same developer. It is licensed under LGPL-2.1 or later and bundled with TimecodeSyncPlayer releases.
+[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11) is a GStreamer plugin that decodes ProRes on the GPU with Direct3D 11, by the same developer. It is licensed under LGPL-2.1 or later and bundled with ERYTHEIA releases.
 
 ## Hardware LTC loop E2E tests
 
@@ -106,7 +110,7 @@ Hardware tests skip automatically when the prerequisites are unavailable.
 
 ## License
 
-TimecodeSyncPlayer is licensed under the [MIT License](LICENSE). Third-party terms that apply to the distribution, including the bundled GStreamer runtime and gst-prores-d3d11, are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+ERYTHEIA is licensed under the [MIT License](LICENSE). Third-party terms that apply to the distribution, including the bundled GStreamer runtime and gst-prores-d3d11, are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Credits
 

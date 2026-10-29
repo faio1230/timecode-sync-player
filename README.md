@@ -1,15 +1,19 @@
-# TimecodeSyncPlayer
+# ERYTHEIA
 
 [English](README.en.md)
 
 [![CI](https://github.com/faio1230/timecode-sync-player/actions/workflows/ci.yml/badge.svg)](https://github.com/faio1230/timecode-sync-player/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-![TimecodeSyncPlayer スクリーンショット](assets/screenshot.png)
+![ERYTHEIA：Cardを表示した操作画面](assets/screenshot.png)
 
-TimecodeSyncPlayerは、LTC（Linear Timecode）の音声を受信し、プレイリストの動画をタイムコードに同期して再生する、ライブショー向けのWindows用ビデオプレイヤーです。開発コードネームはERYTHEIAです。
+開発版の画面（Card表示）。
+
+ERYTHEIAは、LTC（Linear Timecode）の音声を受信し、プレイリストの動画をタイムコードに同期して再生する、ライブショー向けのWindows用ビデオプレイヤーです。
 
 ## ダウンロード
+
+現在の配布ファイル・実行ファイル・スタートメニューの名称は、引き続き`TimecodeSyncPlayer`です。
 
 インストーラーとzipは[GitHub Releasesの最新の安定版（Latest）](https://github.com/faio1230/timecode-sync-player/releases/latest)からダウンロードできます。安定版はv0.6.xの最新で、v0.6.1から安定版の扱いにしています。「Pre-release」と付いた版は検証中なので、本番では使わないでください。
 
@@ -40,7 +44,7 @@ Direct3D 11.4は映像の合成と出力に使います。対応していない�
 
 ProResのGPUデコードのプラグインは、Microsoft Visual C++ v14再頒布可能パッケージ（x64）14.50以上（旧称 Microsoft Visual C++ 2015-2022）を必要とします。インストーラーは、入っていないか古いときだけ導入し、その途中で一度だけ管理者の確認（UAC）が出ます。zip版では、入っていないか古い場合に[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を手動で実行してください。
 
-ProResのGPUデコードはNVIDIA（RTX級）のGPUで検証し、推奨しています。プラグインはDirect3D 11の汎用のシェーダーで動くので、v0.6.5からは既定（自動）でどのGPUでもGPUでデコードします。NVIDIA以外は、検証機のCPU内蔵のGPU（AMD）で確かめた範囲です。内蔵のGPUでは4K60のProResのデコードがCPUより追いつかないことがあるので、そのときは画面の「ProRes の GPU デコード」を「無効」にしてください。変更はアプリの再起動後に反映されます。
+ProResのGPUデコードはNVIDIA（RTX級）のGPUで検証し、推奨しています。プラグインはDirect3D 11の汎用のシェーダーで動くので、v0.6.5からは既定（自動）でどのGPUでもGPUでデコードします。NVIDIA以外は、検証機のCPU内蔵のGPU（AMD）で確かめた範囲です。内蔵のGPUでは4K60のProResのデコードがCPUより追いつかないことがあるので、そのときは画面の「ProRes GPU」を「無効」にしてください。変更はアプリの再起動後に反映されます。
 
 `SpoutDX.dll`は配布パッケージに含まれていますが、使うのはSpout出力のときだけです。
 
@@ -92,7 +96,7 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 
 ## 関連プロジェクト
 
-[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)は、ProResをDirect3D 11でGPUデコードするGStreamerプラグインで、同じ開発者が開発しています。ライセンスはLGPL-2.1以降です。TimecodeSyncPlayerの配布物に同梱しています。
+[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)は、ProResをDirect3D 11でGPUデコードするGStreamerプラグインで、同じ開発者が開発しています。ライセンスはLGPL-2.1以降です。ERYTHEIAの配布物に同梱しています。
 
 ## 実機LTCループE2Eテスト
 
@@ -106,7 +110,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --fil
 
 ## ライセンス
 
-TimecodeSyncPlayerのライセンスは[MIT License](LICENSE)です。配布物に関係する第三者のライセンス（同梱するGStreamerランタイムとgst-prores-d3d11を含む）は[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)に記載しています。
+ERYTHEIAのライセンスは[MIT License](LICENSE)です。配布物に関係する第三者のライセンス（同梱するGStreamerランタイムとgst-prores-d3d11を含む）は[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)に記載しています。
 
 ## クレジット
 
