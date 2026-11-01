@@ -19,9 +19,16 @@
 dotnet --version
 ```
 
-`8.x.x` 系のバージョンが表示されれば問題ありません。表示されない場合は [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) をインストールしてください。
+SDKが無い場合は[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)をインストールしてください。別の版のSDKを使う環境でも、テストとアプリが使う.NET 8 Desktop Runtimeを確認します。
 
-PowerShell 7 が無い場合は導入し、`pwsh` で版を確認します（7.0 以上。開発機・検証機は 7.6.6）。
+```powershell
+dotnet --list-sdks
+dotnet --list-runtimes
+```
+
+`Microsoft.WindowsDesktop.App 8.0.x`が必要です。対象フレームワークは`net8.0-windows`で、通常の開発・検証にはDebug構成を使います。
+
+PowerShell 7（7.0以上）が必要です。未導入の場合はインストールし、`pwsh --version`で版を確認します。
 開発・試験のスクリプトは `pwsh -File <スクリプト>` で実行します（`powershell -File` ではありません）。
 
 ```powershell
@@ -94,15 +101,31 @@ MSVC x64用の1.28.2ランタイムをインストールし、`bin`に`gstreamer
 `native/gst-shim`は、GStreamerのデコード結果をD3D11テクスチャのリースAPIとして
 合成層へ公開するshimです。`tcs_gstreamer.dll`は配布物にも含まれます。次の手順でビルドします。
 
+ビルドにはVisual Studio Build ToolsのC++ x64ツール、CMake、Ninjaと、GStreamer 1.28.2 MSVC x64の開発用SDKが必要です。ランタイムだけではヘッダーとリンク用ライブラリが揃いません。アプリは標準のインストール先を探索しますが、shimのビルドには標準の場所でも環境変数を指定します。以下はリポジトリのルートで、同じPowerShell 7セッションから実行してください。
+
 ```powershell
+$env:GSTREAMER_1_0_ROOT_MSVC_X86_64 = 'C:\Program Files\gstreamer\1.0\msvc_x86_64'
+if (-not (Test-Path -LiteralPath (Join-Path $env:GSTREAMER_1_0_ROOT_MSVC_X86_64 'include/gstreamer-1.0/gst/gst.h'))) {
+    throw 'GStreamerの開発用SDKの場所を確認してください。'
+}
 # Spout2 (tag 2.007.017) を vendor/Spout2 へ取得（git管理外）
 pwsh -File native\gst-shim\get-spout.ps1
-# Debugビルド（Visual Studio Build Tools + CMake + Ninja が必要）
+if ($LASTEXITCODE -ne 0) { throw 'Spout2の取得に失敗しました。' }
+# 現在のソースからDebug版を作り、優先される配置先も更新する
 pwsh -File native\gst-shim\build-shim.ps1 -Config Debug
-# 配布物を作る場合は Release ビルドも必要
+if ($LASTEXITCODE -ne 0) { throw 'shimのビルドに失敗しました。' }
+Copy-Item -LiteralPath native\gst-shim\build-debug\tcs_gstreamer.dll -Destination native\tcs_gstreamer.dll -Force -ErrorAction Stop
+Get-FileHash -Algorithm SHA256 -LiteralPath native\gst-shim\build-debug\tcs_gstreamer.dll, native\tcs_gstreamer.dll
+```
+
+2つのSHA-256が同じことを確認します。環境変数はこのPowerShellセッションと子プロセスだけに設定されます。
+
+配布物を作る場合はRelease版を別にビルドし、配置先もRelease版で更新します。
+
+```powershell
 pwsh -File native\gst-shim\build-shim.ps1 -Config Release
-# 出力: native\gst-shim\build-debug\tcs_gstreamer.dll
-#       native\gst-shim\build-release\tcs_gstreamer.dll
+if ($LASTEXITCODE -ne 0) { throw 'shimのReleaseビルドに失敗しました。' }
+Copy-Item -LiteralPath native\gst-shim\build-release\tcs_gstreamer.dll -Destination native\tcs_gstreamer.dll -Force -ErrorAction Stop
 ```
 
 配布物（`scripts\package-release.ps1`）は `native\gst-shim\build-release\tcs_gstreamer.dll` と
@@ -114,7 +137,9 @@ MSVCP140D / ucrtbased に依存するため配布できません。
 （`native\tcs_gstreamer.dll`が優先）。GStreamerランタイムのパスが通っていないとDLLを
 ロードできないため、先にランタイムを導入してください。
 
-`native\tcs_gstreamer.dll` は `build-debug` の出力より優先されます。`build-debug` の方が新しい（更新時刻）とビルドが止まります（`-p:AllowStaleNativeShim=true` で通せます。Release の構成では `build-release` と比べます）。
+`TCS0001`でビルドが止まったときは、`native\tcs_gstreamer.dll`よりビルド出力の方が新しい状態です。上の手順で現在のソースから作り直し、配置とSHA-256を確認してから再実行してください。更新時刻の比較だけでは、どちらのDLLも現在のソースに合っているとは確認できません。Release構成では`build-release`と比較します。
+
+`-p:AllowStaleNativeShim=true`は、古いDLLでの挙動を意図的に調べるための指定です。通常の検証では使いません。DebugとReleaseを切り替えたときも、配置したDLLの構成を確認してください。
 
 ---
 
@@ -124,7 +149,11 @@ MSVCP140D / ucrtbased に依存するため配布できません。
 dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 ```
 
-ビルド時、`native/` に存在するDLLだけが `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\` へ自動コピーされます。
+ビルド時に`native/`のDLLを本体の出力先へコピーします。shimは`native\tcs_gstreamer.dll`が無い場合だけ`native\gst-shim\build-debug\tcs_gstreamer.dll`を使います。テストプロジェクトのビルド後は、テストの出力先も含めてSHA-256を確認できます。
+
+```powershell
+Get-FileHash -Algorithm SHA256 -LiteralPath native\tcs_gstreamer.dll, src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\tcs_gstreamer.dll, tests\TimecodeSyncPlayer.Tests\bin\Debug\net8.0-windows\tcs_gstreamer.dll
+```
 
 **注意:** `tcs_gstreamer.dll`や`SpoutDX.dll`が無くてもビルド自体は成功します。ただし
 `tcs_gstreamer.dll`とGStreamerランタイムが無い場合は動画再生ができません。`SpoutDX.dll`が無い場合は
@@ -136,11 +165,22 @@ Spout 出力を利用できません（Spout を有効にすると送信 worker 
 
 ### 5.1 非E2Eテスト
 
-デスクトップセッションが無い環境（CIなど）でも実行でき、ネイティブDLLも不要です。
+非E2Eには、外部依存のない単体テストに加え、実DLL・GStreamer・GPUを使う結合テストやWPFのテストも含まれます。名前のフィルターは実行範囲の指定で、必要な環境の区分ではありません。
+
+| 対象 | 必要な環境 | 結果の読み方 |
+|---|---|---|
+| 同期の計算・プレイリストなどの単体テスト | .NET 8 Desktop Runtime。再生API等はテスト用の実装 | 実行した対象と合否を記録する |
+| 長さ取得・GPU合成などの結合テスト | 対応するshim、GStreamer、D3D11対応GPU。素材生成にはffmpeg | 前提不足でスキップするテストがある。スキップは未検証として理由を記録する |
+| WPFのウィンドウ・Dispatcherを使うテスト | WindowsのWPF実行環境 | CIでの結果とローカルの実行範囲が一致するとは限らない |
 
 ```powershell
-dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName!~E2ETests"
+$verificationRun = Join-Path 'artifacts\verification' (Get-Date -Format 'yyyyMMdd-HHmmss')
+dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj -c Debug --filter "FullyQualifiedName!~E2ETests" --logger "trx;LogFileName=non-e2e.trx" --results-directory $verificationRun
 ```
+
+合格数・失敗数・スキップ数とスキップ理由をTRXで確認してください。DLLが無いCIで成功しても、ネイティブやGPUの動作を確認できたとは限りません。
+
+変更前後の比較には、コミット、構成、OS・GPU、.NET SDK／Runtime、GStreamerとffmpegの版、使用したshimのSHA-256、実行コマンド、結果と未実施範囲を残します。記録例は[2026-10-14の開発前検証](reports/2026-10-14-development-baseline.md)です。
 
 ### 5.2 E2Eテスト
 
