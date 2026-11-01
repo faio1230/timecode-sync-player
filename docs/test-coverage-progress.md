@@ -1,5 +1,7 @@
 # テストカバレッジ拡充進捗
 
+> この文書は2026年7月の計画・経過の記録です。本文のルールとテスト件数は当時のもので、現行の開発ルールや最新の結果を示すものではありません。現行の手順は[文書案内](README.md)、次の開発に向けた確認結果は[2026-10-14の検証記録](reports/2026-10-14-development-baseline.md)を参照してください。
+
 - T1 完了 (コミット 0355c11, 非E2E 771件, PlayerViewModel 100% / SyncViewModel 96.9% / AppSettingsManager 93.2%, E2E対象外)
 - T2 完了 (コミット 589cc53, 非E2E 783件, FrameRenderer 100%, E2E対象外)
 - T4 完了 (コミット c89aa56, 非E2E 800件, SpoutOutput 100%, E2E 25/25合格)

@@ -8,8 +8,9 @@
 
 ## 事前準備
 
-- [ ] Debugビルドを最新にする: `dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj`
-- [ ] `native\tcs_gstreamer.dll`とGStreamerランタイムを配置する（[SETUP.md](SETUP.md)）。Spoutも確かめるときは`SpoutDX.dll`も置く
+- [ ] 現在のソースからshimのDebug版をビルドし、`native\tcs_gstreamer.dll`へ配置する（SDK・環境変数・手順は[SETUP.md](SETUP.md)）。Spoutも確かめるときは`SpoutDX.dll`も置く
+- [ ] 本体とテストをDebug構成でビルドし、実行先のshimのSHA-256がビルドしたDLLと一致することを確かめる。`TCS0001`で停止した場合は再ビルド・配置を確認する
+- [ ] コミット、構成、DLLのSHA-256、機材・依存ツールの版、実行した試験と未実施範囲を結果と一緒に残す（[記録例](reports/2026-10-14-development-baseline.md)）。配布候補を確かめる回は、後述の手順に従い対象のRelease版exeと同梱DLLを使う
 - [ ] ProResを確かめるときは、ソースからのビルドでは`pwsh -File scripts\get-prores-plugin.ps1`でgst-prores-d3d11を`native\gst-prores`に置く（インストーラーとzipには同梱）
 - [ ] LTC音源を用意する。ループしないLTCソースを使う（ループすると最終トラックの終端を越えられない）
   - LTC音声ファイル（WAV）を使うときは、プレイリスト全体のTimelineOutを十分に越える長さまで再生できるものにする
