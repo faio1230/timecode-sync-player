@@ -32,7 +32,7 @@ Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show
 - Playlist and project save/load
 - Pure C# LTC decoder and GStreamer-based GPU output
 - GPU decoding of HAP (Hap / Hap Alpha / Hap Q) (since v0.5.0)
-- GPU decoding of ProRes (since v0.6.0, by [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11). Verified and recommended on NVIDIA GPUs. Since v0.6.5, other GPUs also decode on the GPU by default, but they are unverified)
+- GPU decoding of ProRes (since v0.6.0, by [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11). Verified and recommended on NVIDIA GPUs. Since v0.6.5, other GPUs also decode on the GPU by default, with non-NVIDIA verification limited to the test machine's integrated AMD GPU)
 
 The recommended formats are H.264 (keyframe interval about 1 second, at most 2 seconds) and ProRes, in an mp4 or mov container. HAP also loads without a warning. VP9, AV1, H.265 and others load but are not recommended, and a warning is shown when they are loaded. See the [field preparation guide](docs/USER-MANUAL.md) (Japanese) for the recommendation per format.
 
@@ -85,6 +85,8 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 Building from source also requires the GStreamer 1.28.2 MSVC x64 runtime and `tcs_gstreamer.dll` (release packages bundle them). The ProRes GPU decoding plugin is fetched with `scripts\get-prores-plugin.ps1`. Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder. See the [setup guide](docs/SETUP.md) for details.
 
 ## Documentation
+
+The [documentation guide](docs/README.md) (Japanese) separates current instructions from records of past releases and development.
 
 - **[Field preparation guide](docs/USER-MANUAL.md)** (Japanese): recommended material formats (keyframe interval, codec, fps), timecode signal conditions, how to read the warnings
 - [Setup and build](docs/SETUP.md)

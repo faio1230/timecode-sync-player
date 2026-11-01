@@ -32,7 +32,7 @@ ERYTHEIAは、LTC（Linear Timecode）の音声を受信し、プレイリスト
 - プレイリストとプロジェクトの保存・読み込み
 - 純C#のLTCデコーダとGStreamerベースのGPU出力
 - HAP（Hap / Hap Alpha / Hap Q）のGPUデコード（v0.5.0から）
-- ProResのGPUデコード（v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。NVIDIAのGPUで検証し、推奨します。v0.6.5からは既定でほかのGPUでもGPUでデコードしますが、NVIDIA以外は未検証です）
+- ProResのGPUデコード（v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。NVIDIAのGPUで検証し、推奨します。v0.6.5からは既定でほかのGPUでもGPUでデコードしますが、NVIDIA以外は検証機の内蔵AMDのGPUで確かめた範囲です）
 
 推奨する素材の形式はH.264（キーフレーム間隔は1秒を目安、長くても2秒）とProResで、容器はmp4とmovです。HAPも警告なしで使えます。VP9・AV1・H.265なども読み込めますが推奨外で、読み込み時に警告を出します。形式ごとの推奨は[現場準備ガイド](docs/USER-MANUAL.md)を参照してください。
 
@@ -86,11 +86,13 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 
 ## ドキュメント
 
+[文書案内](docs/README.md)から、現行の手順と版ごとの過去の記録を参照できます。
+
 - **[現場準備ガイド](docs/USER-MANUAL.md)**: 推奨する素材の形式（キーフレーム間隔・コーデック・fps）、タイムコード信号の条件、警告の読み方
 - [セットアップとビルド](docs/SETUP.md)
 - [ネイティブDLL](native/README.md)
 - [アーキテクチャ](docs/ARCHITECTURE.md)
-- [開発ロードマップ（v0.5.x〜v0.8.0）](docs/ROADMAP.md)
+- [開発ロードマップ](docs/ROADMAP.md)
 - [設定リファレンス](docs/settings.md)
 - [手動検証チェックリスト](docs/verification-checklist.md)
 
