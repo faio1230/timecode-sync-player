@@ -142,6 +142,12 @@ public sealed class AppSettingsManager
         _legacySettingsFilePath = legacySettingsFilePath;
     }
 
+    /// <summary>読み書きする settings.json のパス（試験で設定の場所の隔離を確かめる用）。</summary>
+    internal string FilePath => _settingsFilePath;
+
+    /// <summary>引き継ぎの元の旧の settings.json のパス。上書きのパスがあるときは null（試験で確かめる用）。</summary>
+    internal string? LegacyFilePath => _legacySettingsFilePath;
+
     internal static string ResolveSettingsFilePath()
     {
         string? overridePath = EnvironmentVariables.Get(SettingsPathEnvironmentVariable);

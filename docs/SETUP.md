@@ -182,6 +182,8 @@ dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj -c Debug --filter "FullyQ
 
 合格数・失敗数・スキップ数とスキップ理由をTRXで確認してください。DLLが無いCIで成功しても、ネイティブやGPUの動作を確認できたとは限りません。
 
+試験のプロセスは、アプリの設定を一時のフォルダ（`%TEMP%\Erytheia.Tests\settings-<プロセスID>\settings.json`）に向けます（`tests\Erytheia.Tests\Helpers\TestSettingsIsolation.cs`）。利用者の`%LOCALAPPDATA%\ERYTHEIA`と、v0.6.6までの`%LOCALAPPDATA%\TimecodeSyncPlayer`の設定は、読みも書きもしません。v0.6.6までの非E2Eは、MainWindowを組む試験が本物の設定を既定の値で上書きしていました。E2Eは、アプリを起動するたびに設定の場所を渡します。
+
 変更前後の比較には、コミット、構成、OS・GPU、.NET SDK／Runtime、GStreamerとffmpegの版、使用したshimのSHA-256、実行コマンド、結果と未実施範囲を残します。記録例は[2026-10-14の開発前検証](reports/2026-10-14-development-baseline.md)です。
 
 ### 5.2 E2Eテスト
