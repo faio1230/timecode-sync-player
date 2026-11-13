@@ -21,7 +21,7 @@ internal sealed class SeekLatencyCompensator
     /// T9: 補償を有効にする環境変数。既定は無効。`on`（大文字小文字不問）を指定したときだけ
     /// 有効になる（無効時は L は常に 0、測定も行わない）。
     /// </summary>
-    public const string EnvironmentVariable = "TCS_SEEK_LATENCY_COMPENSATION";
+    public const string EnvironmentVariable = "ERYTHEIA_SEEK_LATENCY_COMPENSATION";
 
     private readonly object gate = new();
     private readonly bool _enabled;
@@ -37,7 +37,7 @@ internal sealed class SeekLatencyCompensator
     private long _sequenceAtArm;
 
     public SeekLatencyCompensator()
-        : this(IsCompensationEnabled(Environment.GetEnvironmentVariable(EnvironmentVariable)))
+        : this(IsCompensationEnabled(EnvironmentVariables.Get(EnvironmentVariable)))
     {
     }
 

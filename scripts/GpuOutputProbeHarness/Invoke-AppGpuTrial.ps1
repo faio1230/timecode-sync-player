@@ -228,10 +228,10 @@ try {
     $psi.WorkingDirectory = Split-Path $AppExe; $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
-    $psi.Environment['TIMECODE_SYNC_PLAYER_SETTINGS_PATH'] = $settings
-    $psi.Environment['TIMECODE_SYNC_PLAYER_SPOUT_NAME'] = $sender
-    if (-not $NoOutputTrace) { $psi.Environment['TIMECODE_SYNC_PLAYER_OUTPUT_TRACE'] = $trace }
-    if ($SimulateDeviceLoss) { $psi.Environment['TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS'] = $SimulateDeviceLoss }
+    $psi.Environment['ERYTHEIA_SETTINGS_PATH'] = $settings
+    $psi.Environment['ERYTHEIA_SPOUT_NAME'] = $sender
+    if (-not $NoOutputTrace) { $psi.Environment['ERYTHEIA_OUTPUT_TRACE'] = $trace }
+    if ($SimulateDeviceLoss) { $psi.Environment['ERYTHEIA_SIMULATE_DEVICE_LOSS'] = $SimulateDeviceLoss }
 $app = [System.Diagnostics.Process]::Start($psi)
 $null = $app.Handle
 [AppOutputCapture]::Attach($app, (Join-Path $run 'app-stdout.txt'), (Join-Path $run 'app-stderr.txt'))

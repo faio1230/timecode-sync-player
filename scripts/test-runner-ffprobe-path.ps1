@@ -2,10 +2,10 @@
 # Self-test of #43 (test infrastructure bundle): the LTC scenario runner must not leave
 # an ffmpeg folder on its PATH, and make-ltc-scenario-project.ps1 must find ffprobe in
 # the same order as the runner's ffmpeg (scripts\TcsFfmpeg.psm1):
-#   TCS_FFPROBE, ffprobe.exe next to TCS_FFMPEG, -FfmpegDir\ffprobe.exe, PATH.
+#   ERYTHEIA_FFPROBE, ffprobe.exe next to ERYTHEIA_FFMPEG, -FfmpegDir\ffprobe.exe, PATH.
 #
 # Uses empty stand-in files named ffmpeg.exe / ffprobe.exe under %TEMP% (only their
-# location is checked; they are never run). PATH, TCS_FFMPEG and TCS_FFPROBE are set
+# location is checked; they are never run). PATH, ERYTHEIA_FFMPEG and ERYTHEIA_FFPROBE are set
 # for this process only and restored at the end. Starts no app and no test run.
 #
 #   pwsh -NoProfile -File scripts\test-runner-ffprobe-path.ps1
@@ -27,9 +27,9 @@ function Touch([string]$Path) {
 }
 
 $savedPath = $env:PATH
-$savedFfmpeg = $env:TCS_FFMPEG
-$savedFfprobe = $env:TCS_FFPROBE
-$savedToolsDir = $env:TCS_FFMPEG_TOOLS_DIR
+$savedFfmpeg = $env:ERYTHEIA_FFMPEG
+$savedFfprobe = $env:ERYTHEIA_FFPROBE
+$savedToolsDir = $env:ERYTHEIA_FFMPEG_TOOLS_DIR
 $makeProject = Join-Path $PSScriptRoot 'make-ltc-scenario-project.ps1'
 $runner = Join-Path $PSScriptRoot 'run-ltc-scenarios.ps1'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('tcs-runner-ffprobe-' + [Guid]::NewGuid().ToString('N'))
@@ -40,11 +40,11 @@ try {
             -not (Test-Path -LiteralPath (Join-Path $_ 'ffmpeg.exe'))
     }) -join ';')
 
-    $envDir = Join-Path $root 'env'            # ffmpeg.exe + ffprobe.exe (TCS_FFMPEG)
+    $envDir = Join-Path $root 'env'            # ffmpeg.exe + ffprobe.exe (ERYTHEIA_FFMPEG)
     $envOnlyDir = Join-Path $root 'env-only'   # ffmpeg.exe without ffprobe.exe
     $argDir = Join-Path $root 'arg'            # ffprobe.exe (-FfmpegDir)
     $pathDir = Join-Path $root 'path'          # ffprobe.exe (PATH)
-    $overrideDir = Join-Path $root 'override'  # ffprobe.exe (TCS_FFPROBE)
+    $overrideDir = Join-Path $root 'override'  # ffprobe.exe (ERYTHEIA_FFPROBE)
     Touch (Join-Path $envDir 'ffmpeg.exe'); Touch (Join-Path $envDir 'ffprobe.exe')
     Touch (Join-Path $envOnlyDir 'ffmpeg.exe')
     Touch (Join-Path $argDir 'ffprobe.exe')
@@ -53,23 +53,23 @@ try {
     $missingDir = Join-Path $root 'missing'
     # tools\ffmpeg of the repository (item 8) is replaced by an empty folder, so a pinned
     # build placed by get-ffmpeg.ps1 does not take part in these checks.
-    $env:TCS_FFMPEG_TOOLS_DIR = Join-Path $root 'no-tools'
+    $env:ERYTHEIA_FFMPEG_TOOLS_DIR = Join-Path $root 'no-tools'
 
     # ---- resolution order ---------------------------------------------------------------
     $env:PATH = $pathDir + ';' + $cleanPath
-    $env:TCS_FFPROBE = $null
+    $env:ERYTHEIA_FFPROBE = $null
 
-    $env:TCS_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
+    $env:ERYTHEIA_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
     $r = Resolve-TcsFfprobe -FfmpegDir $argDir
-    Check ($r.Ffprobe -eq (Join-Path $envDir 'ffprobe.exe') -and $r.Source -eq 'next-to-TCS_FFMPEG') 'TCS_FFMPEG set: ffprobe next to it wins over -FfmpegDir and PATH'
+    Check ($r.Ffprobe -eq (Join-Path $envDir 'ffprobe.exe') -and $r.Source -eq 'next-to-ERYTHEIA_FFMPEG') 'ERYTHEIA_FFMPEG set: ffprobe next to it wins over -FfmpegDir and PATH'
 
-    $env:TCS_FFMPEG = Join-Path $envOnlyDir 'ffmpeg.exe'
+    $env:ERYTHEIA_FFMPEG = Join-Path $envOnlyDir 'ffmpeg.exe'
     $r = Resolve-TcsFfprobe -FfmpegDir $argDir
-    Check ($r.Ffprobe -eq (Join-Path $argDir 'ffprobe.exe') -and $r.Source -eq 'arg:FfmpegDir') 'TCS_FFMPEG set without ffprobe next to it: -FfmpegDir next'
+    Check ($r.Ffprobe -eq (Join-Path $argDir 'ffprobe.exe') -and $r.Source -eq 'arg:FfmpegDir') 'ERYTHEIA_FFMPEG set without ffprobe next to it: -FfmpegDir next'
 
-    $env:TCS_FFMPEG = $null
+    $env:ERYTHEIA_FFMPEG = $null
     $r = Resolve-TcsFfprobe -FfmpegDir $argDir
-    Check ($r.Ffprobe -eq (Join-Path $argDir 'ffprobe.exe') -and $r.Source -eq 'arg:FfmpegDir') 'TCS_FFMPEG unset: -FfmpegDir wins over PATH'
+    Check ($r.Ffprobe -eq (Join-Path $argDir 'ffprobe.exe') -and $r.Source -eq 'arg:FfmpegDir') 'ERYTHEIA_FFMPEG unset: -FfmpegDir wins over PATH'
 
     $r = Resolve-TcsFfprobe -FfmpegDir $missingDir
     Check ($r.Ffprobe -eq (Join-Path $pathDir 'ffprobe.exe') -and $r.Source -eq 'PATH') 'only PATH: PATH'
@@ -80,16 +80,16 @@ try {
     Check (@($r.Searched).Count -eq 5 -and ($r.Searched -join ';').Contains((Join-Path $missingDir 'ffprobe.exe')) -and
         (@($r.Searched)[-1] -eq 'PATH')) 'nowhere: Searched lists the five levels'
 
-    $env:TCS_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
-    $env:TCS_FFPROBE = Join-Path $overrideDir 'ffprobe.exe'
+    $env:ERYTHEIA_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
+    $env:ERYTHEIA_FFPROBE = Join-Path $overrideDir 'ffprobe.exe'
     $r = Resolve-TcsFfprobe -FfmpegDir $argDir
-    Check ($r.Ffprobe -eq (Join-Path $overrideDir 'ffprobe.exe') -and $r.Source -eq 'env:TCS_FFPROBE') 'TCS_FFPROBE overrides every level (module rule)'
-    $env:TCS_FFPROBE = Join-Path $missingDir 'ffprobe.exe'
+    Check ($r.Ffprobe -eq (Join-Path $overrideDir 'ffprobe.exe') -and $r.Source -eq 'env:ERYTHEIA_FFPROBE') 'ERYTHEIA_FFPROBE overrides every level (module rule)'
+    $env:ERYTHEIA_FFPROBE = Join-Path $missingDir 'ffprobe.exe'
     $threw = $false
     try { Resolve-TcsFfprobe -FfmpegDir $argDir | Out-Null } catch { $threw = $true }
-    Check $threw 'TCS_FFPROBE pointing nowhere stops'
-    $env:TCS_FFPROBE = $null
-    $env:TCS_FFMPEG = $null
+    Check $threw 'ERYTHEIA_FFPROBE pointing nowhere stops'
+    $env:ERYTHEIA_FFPROBE = $null
+    $env:ERYTHEIA_FFMPEG = $null
 
     # ---- make-ltc-scenario-project does not touch PATH ----------------------------------
     # In this process (as the runner did before #43): -FfmpegDir exists, the media folder
@@ -133,13 +133,13 @@ try {
     Check ($exit -ne 0) ('a child that throws returns non-zero (' + $exit + ')')
     Check (([IO.File]::ReadAllText($log)).Contains('child failed')) 'the error of the child is in the log'
 
-    # make-ltc-scenario-project through the child, with ffprobe only next to TCS_FFMPEG.
-    $env:TCS_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
+    # make-ltc-scenario-project through the child, with ffprobe only next to ERYTHEIA_FFMPEG.
+    $env:ERYTHEIA_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
     $exit = Invoke-TcsChildScript -ScriptPath $makeProject -Arguments @{ MediaDir = $mediaDir; Out = (Join-Path $outDir 'p.tsp'); FfmpegDir = $missingDir } -LogPath $log
     $text = [IO.File]::ReadAllText($log)
-    Check ($exit -ne 0 -and $text.Contains('ffprobe: ' + (Join-Path $envDir 'ffprobe.exe') + ' (next-to-TCS_FFMPEG)')) 'child make-ltc-scenario-project logs the ffprobe next to TCS_FFMPEG'
+    Check ($exit -ne 0 -and $text.Contains('ffprobe: ' + (Join-Path $envDir 'ffprobe.exe') + ' (next-to-ERYTHEIA_FFMPEG)')) 'child make-ltc-scenario-project logs the ffprobe next to ERYTHEIA_FFMPEG'
     Check ($env:PATH -eq $before) 'PATH unchanged after the child make-ltc-scenario-project'
-    $env:TCS_FFMPEG = $null
+    $env:ERYTHEIA_FFMPEG = $null
 
     # ---- the runner calls the project script through the child -------------------------
     $runnerText = [IO.File]::ReadAllText($runner)
@@ -151,9 +151,9 @@ try {
     Check (-not ($makeText -match '\$env:PATH\s*=')) 'make-ltc-scenario-project does not assign PATH'
 } finally {
     $env:PATH = $savedPath
-    $env:TCS_FFMPEG = $savedFfmpeg
-    $env:TCS_FFPROBE = $savedFfprobe
-    $env:TCS_FFMPEG_TOOLS_DIR = $savedToolsDir
+    $env:ERYTHEIA_FFMPEG = $savedFfmpeg
+    $env:ERYTHEIA_FFPROBE = $savedFfprobe
+    $env:ERYTHEIA_FFMPEG_TOOLS_DIR = $savedToolsDir
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 

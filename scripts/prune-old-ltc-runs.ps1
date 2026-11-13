@@ -1,7 +1,7 @@
 ﻿#requires -Version 7.0
 <#
 .SYNOPSIS
-  結果置き場（-Root、省略時は環境変数 TCS_LTC_RESULTS_ROOT）の古い回を、要約だけ残して中身を消す（既定は一覧だけ）。
+  結果置き場（-Root、省略時は環境変数 ERYTHEIA_LTC_RESULTS_ROOT）の古い回を、要約だけ残して中身を消す（既定は一覧だけ）。
 
 .DESCRIPTION
   -Days より古い ReportDir（runner.txt のあるフォルダー）について、run-result.json が無ければ
@@ -15,13 +15,13 @@
   pwsh -File scripts\prune-old-ltc-runs.ps1 -Root E:\results -Days 3 -Apply
 #>
 param(
-    [string]$Root = $env:TCS_LTC_RESULTS_ROOT,
+    [string]$Root = $env:ERYTHEIA_LTC_RESULTS_ROOT,
     [int]$Days = 7,
     [switch]$Apply
 )
 
 $ErrorActionPreference = 'Stop'
-if ([string]::IsNullOrWhiteSpace($Root)) { throw '-Root か環境変数 TCS_LTC_RESULTS_ROOT で結果置き場を指定してください' }
+if ([string]::IsNullOrWhiteSpace($Root)) { throw '-Root か環境変数 ERYTHEIA_LTC_RESULTS_ROOT で結果置き場を指定してください' }
 if (-not (Test-Path -LiteralPath $Root -PathType Container)) { throw "Root not found: $Root" }
 # 実行中の回を選ばないよう、1 日より新しいものは対象にしない。
 if ($Days -lt 1) { throw '-Days は 1 以上（実行中の回を消さないため）' }

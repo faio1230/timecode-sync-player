@@ -195,15 +195,15 @@ public sealed class ScrubE2ETests
     }
 
     /// <summary>
-    /// 計測専用（記録だけ）: TCS_SCRUB_MEDIA に素材（例: 4K60 の ProRes）を指定したときだけ動く。一時停止中と再生中に
+    /// 計測専用（記録だけ）: ERYTHEIA_SCRUB_MEDIA に素材（例: 4K60 の ProRes）を指定したときだけ動く。一時停止中と再生中に
     /// シークバーを 約 1.5 秒細かく動かし続け、"Scrub summary"（送った本数・1 秒あたりの本数・飛行の所要の中央値と最大）を
     /// 出力に写す。合否は付けない（スクラブの行が出たことだけ確かめる）。
     /// </summary>
     [SkippableFact]
     public void ScrubMeasurement_WithGivenMedia()
     {
-        string? media = Environment.GetEnvironmentVariable("TCS_SCRUB_MEDIA");
-        Skip.If(string.IsNullOrWhiteSpace(media) || !File.Exists(media), "Set TCS_SCRUB_MEDIA to a media file to measure scrubbing.");
+        string? media = Environment.GetEnvironmentVariable("ERYTHEIA_SCRUB_MEDIA");
+        Skip.If(string.IsNullOrWhiteSpace(media) || !File.Exists(media), "Set ERYTHEIA_SCRUB_MEDIA to a media file to measure scrubbing.");
         (string exe, string? reason) = E2EAppRunner.ResolvePrereqs();
         reason.Should().BeNull();
         using var app = E2EAppRunner.Start(exe, $"--vo null --playlist \"{media}\"");

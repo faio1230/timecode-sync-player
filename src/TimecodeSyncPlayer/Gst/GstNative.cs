@@ -326,7 +326,7 @@ internal static class GstNativeLibraryResolver
     }
 
     /// <summary>
-    /// D15/O1: shim（tcs_gstreamer.dll）の LOG 出力先（TCS_LOG_FILE）を logs ディレクトリへ設定する。
+    /// D15/O1: shim（tcs_gstreamer.dll）の LOG 出力先（ERYTHEIA_LOG_FILE）を logs ディレクトリへ設定する。
     /// GStreamer を初期化する前に呼ぶ。利用者が既に設定していれば上書きしない。
     /// ログの肥大を避けるため、7 日より古い tcs-gst-*.log を消す。
     /// </summary>
@@ -334,10 +334,10 @@ internal static class GstNativeLibraryResolver
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TCS_LOG_FILE")))
+            if (string.IsNullOrWhiteSpace(EnvironmentVariables.Get("ERYTHEIA_LOG_FILE")))
             {
                 System.IO.Directory.CreateDirectory(logsDirectory);
-                Environment.SetEnvironmentVariable("TCS_LOG_FILE",
+                Environment.SetEnvironmentVariable("ERYTHEIA_LOG_FILE",
                     System.IO.Path.Combine(logsDirectory, $"tcs-gst-{DateTime.Now:yyyyMMdd}.log"));
             }
 
@@ -350,7 +350,7 @@ internal static class GstNativeLibraryResolver
     }
 
     /// <summary>
-    /// v0.5.4 K3 (3): shim は DLL ロード時に TCS_PUMP_BUDGET_MS を 1 回だけ読む
+    /// v0.5.4 K3 (3): shim は DLL ロード時に ERYTHEIA_PUMP_BUDGET_MS を 1 回だけ読む
     /// （native/gst-shim/src/tcs_gstreamer.cpp:253-274）。明示が無ければ「着地の時間切れ − 0.5 秒」を
     /// 渡し、ポンプがアプリの着地より先に切れるようにする（時間切れの逆転を戻さない）。利用者が
     /// 既に設定していれば上書きしない。GStreamer（shim）の初期化前に呼ぶ。
@@ -360,7 +360,7 @@ internal static class GstNativeLibraryResolver
         try
         {
             if (string.IsNullOrWhiteSpace(
-                    Environment.GetEnvironmentVariable(SeekTimeBudget.PumpBudgetEnvironmentVariable)))
+                    EnvironmentVariables.Get(SeekTimeBudget.PumpBudgetEnvironmentVariable)))
             {
                 Environment.SetEnvironmentVariable(SeekTimeBudget.PumpBudgetEnvironmentVariable,
                     SeekTimeBudget.PumpBudgetMilliseconds.ToString(CultureInfo.InvariantCulture));

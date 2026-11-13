@@ -14,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $startScript = Join-Path $PSScriptRoot 'start-isolated.ps1'
 $pwshPath = (Get-Process -Id $PID).Path
-$settingsVariable = 'TIMECODE_SYNC_PLAYER_SETTINGS_PATH'
+$settingsVariable = 'ERYTHEIA_SETTINGS_PATH'
 
 $failures = New-Object System.Collections.Generic.List[string]
 function Check([bool]$Condition, [string]$Name) {
@@ -55,7 +55,7 @@ try {
     @'
 $out = $args[0]
 [ordered]@{
-    settingsPath = [Environment]::GetEnvironmentVariable('TIMECODE_SYNC_PLAYER_SETTINGS_PATH')
+    settingsPath = [Environment]::GetEnvironmentVariable('ERYTHEIA_SETTINGS_PATH')
     arguments = @($args | Select-Object -Skip 1)
     workingDirectory = (Get-Location).Path
 } | ConvertTo-Json | Set-Content -LiteralPath $out -Encoding UTF8

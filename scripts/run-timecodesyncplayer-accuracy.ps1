@@ -58,7 +58,7 @@ $info.CreateNoWindow = $true
 $info.RedirectStandardOutput = $true
 $info.RedirectStandardError = $true
 foreach ($arg in @('test', $testProject, '-c', 'Debug', '--no-build', '--filter', 'Category=Accuracy', '--logger', 'trx;LogFileName=accuracy.trx', '--results-directory', $runPath, '-v', 'minimal')) { $info.ArgumentList.Add($arg) }
-$info.Environment['TIMECODE_SYNC_PLAYER_E2E_APP_PATH'] = $appPath
+$info.Environment['ERYTHEIA_E2E_APP_PATH'] = $appPath
 $info.Environment['TIMECODE_ACCURACY_REPORT_DIR'] = $runPath
 # Instrument only the app explicitly launched by the test, never dotnet/testhost.
 $null = $info.Environment.Remove('TIMECODE_ACCURACY_TRACE')

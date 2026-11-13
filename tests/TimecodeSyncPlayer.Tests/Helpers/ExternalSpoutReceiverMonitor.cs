@@ -171,10 +171,10 @@ internal static class ExternalSpoutReceiverSummaryParser
 /// </summary>
 internal sealed class ExternalSpoutReceiverMonitor : IDisposable
 {
-    public const string ExecutableEnvironmentVariable = "TCS_L2_SPOUT_RECEIVER_EXE";
-    public const string SenderEnvironmentVariable = "TCS_L2_SPOUT_SENDER_NAME";
-    public const string RequiredEnvironmentVariable = "TCS_L2_REQUIRE_EXTERNAL_SPOUT";
-    public const string PixelSampleMillisecondsEnvironmentVariable = "TCS_L2_SPOUT_PIXEL_SAMPLE_MS";
+    public const string ExecutableEnvironmentVariable = "ERYTHEIA_L2_SPOUT_RECEIVER_EXE";
+    public const string SenderEnvironmentVariable = "ERYTHEIA_L2_SPOUT_SENDER_NAME";
+    public const string RequiredEnvironmentVariable = "ERYTHEIA_L2_REQUIRE_EXTERNAL_SPOUT";
+    public const string PixelSampleMillisecondsEnvironmentVariable = "ERYTHEIA_L2_SPOUT_PIXEL_SAMPLE_MS";
 
     private readonly Process _process;
     private readonly Task<string> _stdout;

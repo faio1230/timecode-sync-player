@@ -38,7 +38,7 @@ public sealed class SpoutDecodeComparisonE2ETests
 
         // ResolvePrereqs normally falls back when an override is invalid. An explicit
         // comparison binary must never silently fall back to a different build.
-        string? binaryOverride = Environment.GetEnvironmentVariable("TIMECODE_SYNC_PLAYER_E2E_APP_PATH");
+        string? binaryOverride = Environment.GetEnvironmentVariable("ERYTHEIA_E2E_APP_PATH");
         if (!string.IsNullOrWhiteSpace(binaryOverride))
             Assert.True(File.Exists(binaryOverride), $"App override does not exist: {binaryOverride}");
         var prerequisites = E2EAppRunner.ResolvePrereqs();

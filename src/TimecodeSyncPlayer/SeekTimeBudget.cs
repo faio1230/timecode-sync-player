@@ -24,5 +24,5 @@ internal static class SeekTimeBudget
     public static readonly TimeSpan LandingTimeout = TimeSpan.FromSeconds(LandingTimeoutSeconds);
 
     /// <summary>shim のポンプの予算を渡す環境変数（shim は DLL ロード時に 1 回だけ読む）。</summary>
-    public const string PumpBudgetEnvironmentVariable = "TCS_PUMP_BUDGET_MS";
+    public const string PumpBudgetEnvironmentVariable = "ERYTHEIA_PUMP_BUDGET_MS";
 }

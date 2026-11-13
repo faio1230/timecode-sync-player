@@ -24,10 +24,10 @@ public sealed class TimecodeSyncService
     // 実機で同等以上を確認してから既定を on にする。評価位置が得られないとき
     // （旧 DLL、世代不一致）は on でも従来の抑制に落ちる。
     private readonly bool _positionFeedbackEnabled =
-        string.Equals(Environment.GetEnvironmentVariable(PositionFeedbackEnvironmentVariable), "on",
+        string.Equals(EnvironmentVariables.Get(PositionFeedbackEnvironmentVariable), "on",
             StringComparison.OrdinalIgnoreCase);
 
-    internal const string PositionFeedbackEnvironmentVariable = "TCS_SYNC_POSITION_FEEDBACK";
+    internal const string PositionFeedbackEnvironmentVariable = "ERYTHEIA_SYNC_POSITION_FEEDBACK";
     private double _publishedSeekCostSeconds = double.NaN;
 
     private DateTime _lastSyncSeekAt = DateTime.MinValue;
@@ -82,7 +82,7 @@ public sealed class TimecodeSyncService
         state = state with { SeekTargetLookaheadSeconds = RelocateLookaheadSeconds };
 
         // 0.4.5-A フェーズ 1: 評価位置は trace に併記するだけ（判断は現行のまま）。
-        // 0.4.5-A フェーズ 2（TCS_SYNC_POSITION_FEEDBACK=on）: 評価位置を判断にも使う。
+        // 0.4.5-A フェーズ 2（ERYTHEIA_SYNC_POSITION_FEEDBACK=on）: 評価位置を判断にも使う。
         bool hasEvalPosition = false;
         if (positionSample is { } sample)
         {

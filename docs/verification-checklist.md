@@ -250,7 +250,7 @@ $env:PATH -split ';' | Where-Object { $_ -and (
 # 2) GStreamer の環境変数が無い（空であること）。あるとアプリは同梱の GStreamer より先にそれを使う
 [Environment]::GetEnvironmentVariable('GSTREAMER_1_0_ROOT_MSVC_X86_64')
 # 3) 試験の道具の環境変数が無い（空であること）
-$env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE; $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH; $env:TCS_FFMPEG
+$env:ERYTHEIA_OUTPUT_TRACE; $env:ERYTHEIA_SETTINGS_PATH; $env:ERYTHEIA_FFMPEG
 # 4) 設定とインストールが無い（4 つとも False）。v0.6.7 から名前は ERYTHEIA。旧の名前の場所も見る
 Test-Path (Join-Path $env:LOCALAPPDATA 'ERYTHEIA')
 Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA')
@@ -272,10 +272,10 @@ Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 - [ ] 候補と同じSHAの試験のソースを、そのユーザーのフォルダに展開する（親が渡したtarなど）
 - [ ] インストール先の`tcs_gstreamer.dll`を、試験のソースの`native\`に写す。ffprobeを外した長さの試験は、試験のプロセスでも長さを読む関数を呼ぶため、試験のbinにshimが要る（棚卸しの#43）
 - [ ] アプリには同梱のGStreamerだけで起動させる（試験が足した変数は渡さない）。試験のプロセスにGStreamer（インストール先の`gstreamer\bin`をPATHの先頭、`GSTREAMER_1_0_ROOT_MSVC_X86_64`）を足しても、exeの隣に同梱があれば、試験はその変数とPATHのGStreamerの`bin`をアプリに渡さない（試験基盤の9）。試験の出力の`app-env:`の行が`GSTREAMER_1_0_ROOT_MSVC_X86_64=<not passed>`、`app-gstreamer:`の行が`origin=bundled`であることを確かめる
-- [ ] ランナーが素材とLTCのwavを作るffmpegは、`TCS_FFMPEG`（ffmpeg.exeのフルパス。同じフォルダに`ffprobe.exe`があるもの）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
+- [ ] ランナーが素材とLTCのwavを作るffmpegは、`ERYTHEIA_FFMPEG`（ffmpeg.exeのフルパス。同じフォルダに`ffprobe.exe`があるもの）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
 
 ```powershell
-$env:TCS_FFMPEG = '<ffmpeg.exe のフルパス>'
+$env:ERYTHEIA_FFMPEG = '<ffmpeg.exe のフルパス>'
 $app = Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA\ERYTHEIA.exe'
 ```
 
@@ -297,7 +297,7 @@ pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe $app -ReportDir <報告のフ�
 
 `-MediaDir`を付けると、ランナーは`scripts\make-ltc-scenario-project.ps1`でプロジェクトを作る。
 このスクリプトはffprobeでクリップの長さを読む。
-ffprobeは`TCS_FFPROBE`、`TCS_FFMPEG`の隣の`ffprobe.exe`、`-FfmpegDir`（ランナーは`Program Files`の`ffmpeg\bin`を渡す）の`ffprobe.exe`、PATHの順で探し、フルパスで呼ぶ。PATHには足さない。
+ffprobeは`ERYTHEIA_FFPROBE`、`ERYTHEIA_FFMPEG`の隣の`ffprobe.exe`、`-FfmpegDir`（ランナーは`Program Files`の`ffmpeg\bin`を渡す）の`ffprobe.exe`、PATHの順で探し、フルパスで呼ぶ。PATHには足さない。
 ランナーはこのスクリプトを子のプロセス（`pwsh -NoProfile -File`）で呼ぶので、スクリプトの中の変更はランナーに残らない（棚卸しの#43、試験基盤の束で直した）。
 使ったffprobeは`make-ltc-scenario-project.log`の先頭の`ffprobe: <パス> (<出所>)`の行に出る。
 漏れたかどうかは、アプリの起動のログで決める。
@@ -313,7 +313,7 @@ $logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA\logs') -Fi
 - 起動の行は`ffprobe: not found on PATH (not used; clip durations come from the media container)`。起動の回数は`run-result.json`の`launches`と比べる
 - 0時をまたいだ回は、前日のログのファイルも数える
 - [ ] `ffprobe: found on PATH`が1行でもあれば、ffmpegがアプリのプロセスに漏れている。この回は無効として、漏れた事実（行の数、`make-ltc-scenario-project.log`の内容、使った`-FfmpegDir`の場所）を記録して止め、親へ報告する。ランナーの写しを手で直して回し直すことはしない
-- [ ] `make-ltc-scenario-project.ps1`が`ffprobe not found (searched: ...)`で止まったときも、同じく記録して止め、親へ報告する（探した場所が文言に出る。`TCS_FFMPEG`の隣に`ffprobe.exe`があるかを先に確かめる）
+- [ ] `make-ltc-scenario-project.ps1`が`ffprobe not found (searched: ...)`で止まったときも、同じく記録して止め、親へ報告する（探した場所が文言に出る。`ERYTHEIA_FFMPEG`の隣に`ffprobe.exe`があるかを先に確かめる）
 
 ### 合否
 

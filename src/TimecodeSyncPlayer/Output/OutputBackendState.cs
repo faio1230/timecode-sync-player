@@ -30,7 +30,7 @@ internal static class OutputBackendResolver
 public sealed class OutputBackendState
 {
     /// <summary>E2E・検証用の注入。設定項目は増やさない（R1 1-2）。</summary>
-    internal const string ForceUnavailableEnvironmentVariable = "TIMECODE_SYNC_PLAYER_FORCE_GPU_UNAVAILABLE";
+    internal const string ForceUnavailableEnvironmentVariable = "ERYTHEIA_FORCE_GPU_UNAVAILABLE";
 
     // 初期化前は「要求値も有効値も Gpu」のプレースホルダ。エンジン生成は IsInitialized で
     // 判定するため、MainWindow を初期化せず構築する単体テストでも GPU 出力を開始しない。
@@ -48,7 +48,7 @@ public sealed class OutputBackendState
     public void Initialize(OutputBackend requested) => Initialize(
         requested,
         D3D11CapabilityProbe.Detect,
-        IsForcedUnavailable(Environment.GetEnvironmentVariable(ForceUnavailableEnvironmentVariable)));
+        IsForcedUnavailable(EnvironmentVariables.Get(ForceUnavailableEnvironmentVariable)));
 
     internal void Initialize(OutputBackend requested, Func<D3D11CapabilityResult> probe)
         => Initialize(requested, probe, forceUnavailable: false);

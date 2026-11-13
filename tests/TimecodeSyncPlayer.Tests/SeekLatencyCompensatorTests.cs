@@ -430,7 +430,7 @@ public class SeekLatencyCompensatorTests
 
         service.LatencyCompensator.Should().BeSameAs(compensator);
 
-        // T9: 製品既定は無効（TCS_SEEK_LATENCY_COMPENSATION=on のときだけ有効）。学習しても行き先は動かない。
+        // T9: 製品既定は無効（ERYTHEIA_SEEK_LATENCY_COMPENSATION=on のときだけ有効）。学習しても行き先は動かない。
         Learn(compensator, latencySeconds: 0.2, sourceSequence: 1);
         compensator.CompensationSeconds.Should().Be(0.0);
         engine.Decide(10.0, SeekYieldingState(4.0));

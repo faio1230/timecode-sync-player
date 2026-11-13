@@ -1,7 +1,7 @@
 #requires -Version 7.0
 # Self-test of item 8 of the test infrastructure bundle (pin the ffmpeg of the tests):
 #   - the order of Resolve-TcsFfmpeg / Resolve-TcsFfprobe (scripts\TcsFfmpeg.psm1):
-#     TCS_FFMPEG, tools\ffmpeg (scripts\get-ffmpeg.ps1), -FfmpegDir (Program Files by
+#     ERYTHEIA_FFMPEG, tools\ffmpeg (scripts\get-ffmpeg.ps1), -FfmpegDir (Program Files by
 #     default in the scripts), PATH;
 #   - the major version read from "ffmpeg -version" (4.2.3, n5.0, 6.0, 8.0.1, a git build)
 #     and the stop before a run below 6 (Get-TcsFfmpegVersionStop);
@@ -9,8 +9,8 @@
 #     runner-preflight.json, and ltc-run-report.ps1 copies it to run-result.json.
 #
 # Uses empty stand-in files named ffmpeg.exe / ffprobe.exe under %TEMP% (only their
-# location is checked; Resolve-TcsFfmpeg -NoVersion never runs them). PATH, TCS_FFMPEG,
-# TCS_FFPROBE and TCS_FFMPEG_TOOLS_DIR are set for this process only and restored at
+# location is checked; Resolve-TcsFfmpeg -NoVersion never runs them). PATH, ERYTHEIA_FFMPEG,
+# ERYTHEIA_FFPROBE and ERYTHEIA_FFMPEG_TOOLS_DIR are set for this process only and restored at
 # the end. Starts no app and no test run.
 #
 #   pwsh -NoProfile -File scripts\test-ffmpeg-pin.ps1
@@ -31,18 +31,24 @@ function Touch([string]$Path) {
 }
 
 $savedPath = $env:PATH
-$savedFfmpeg = $env:TCS_FFMPEG
-$savedFfprobe = $env:TCS_FFPROBE
-$savedToolsDir = $env:TCS_FFMPEG_TOOLS_DIR
+$savedFfmpeg = $env:ERYTHEIA_FFMPEG
+$savedFfprobe = $env:ERYTHEIA_FFPROBE
+$savedToolsDir = $env:ERYTHEIA_FFMPEG_TOOLS_DIR
+# v0.6.7: the old names (read during v0.6.x when the new one is unset) are cleared for the run.
+$savedLegacyFfmpeg = $env:TCS_FFMPEG
+$savedLegacyFfprobe = $env:TCS_FFPROBE
+$env:TCS_FFMPEG = $null
+$env:TCS_FFPROBE = $null
 $root = Join-Path ([IO.Path]::GetTempPath()) ('tcs-ffmpeg-pin-' + [Guid]::NewGuid().ToString('N'))
 try {
+
     # PATH without any folder that holds ffmpeg or ffprobe (the dev machine has them on PATH).
     $cleanPath = (@($savedPath -split ';' | Where-Object {
         $_ -and -not (Test-Path -LiteralPath (Join-Path $_ 'ffprobe.exe')) -and
             -not (Test-Path -LiteralPath (Join-Path $_ 'ffmpeg.exe'))
     }) -join ';')
 
-    $envDir = Join-Path $root 'env'          # TCS_FFMPEG
+    $envDir = Join-Path $root 'env'          # ERYTHEIA_FFMPEG
     $toolsDir = Join-Path $root 'tools'      # tools\ffmpeg
     $programDir = Join-Path $root 'program'  # -FfmpegDir (Program Files in the scripts)
     $pathDir = Join-Path $root 'path'        # PATH
@@ -50,22 +56,28 @@ try {
     foreach ($dir in @($envDir, $toolsDir, $programDir, $pathDir)) {
         Touch (Join-Path $dir 'ffmpeg.exe'); Touch (Join-Path $dir 'ffprobe.exe')
     }
-    $env:TCS_FFPROBE = $null
+    $env:ERYTHEIA_FFPROBE = $null
 
     # ---- ffmpeg: resolution order -----------------------------------------------------------
     $env:PATH = $pathDir + ';' + $cleanPath
-    $env:TCS_FFMPEG_TOOLS_DIR = $toolsDir
-    $env:TCS_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
+    $env:ERYTHEIA_FFMPEG_TOOLS_DIR = $toolsDir
+    $env:ERYTHEIA_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
     $r = Resolve-TcsFfmpeg -FfmpegDir $programDir -NoVersion
-    Check ($r.Ffmpeg -eq (Join-Path $envDir 'ffmpeg.exe') -and $r.Source -eq 'env:TCS_FFMPEG' -and
-        $r.Ffprobe -eq (Join-Path $envDir 'ffprobe.exe') -and $r.FfprobeSource -eq 'next-to-ffmpeg') 'TCS_FFMPEG set: it wins over tools\ffmpeg, -FfmpegDir and PATH'
+    Check ($r.Ffmpeg -eq (Join-Path $envDir 'ffmpeg.exe') -and $r.Source -eq 'env:ERYTHEIA_FFMPEG' -and
+        $r.Ffprobe -eq (Join-Path $envDir 'ffprobe.exe') -and $r.FfprobeSource -eq 'next-to-ffmpeg') 'ERYTHEIA_FFMPEG set: it wins over tools\ffmpeg, -FfmpegDir and PATH'
 
+    # v0.6.7: the old name TCS_FFMPEG is still read when ERYTHEIA_FFMPEG is unset (v0.6.x only).
+    $env:ERYTHEIA_FFMPEG = $null
+    $env:TCS_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
+    $r = Resolve-TcsFfmpeg -FfmpegDir $programDir -NoVersion -WarningAction SilentlyContinue
+    Check ($r.Ffmpeg -eq (Join-Path $envDir 'ffmpeg.exe') -and $r.Source -eq 'env:ERYTHEIA_FFMPEG') 'old name TCS_FFMPEG: still read when ERYTHEIA_FFMPEG is unset'
     $env:TCS_FFMPEG = $null
+
     $r = Resolve-TcsFfmpeg -FfmpegDir $programDir -NoVersion
     Check ($r.Ffmpeg -eq (Join-Path $toolsDir 'ffmpeg.exe') -and $r.Source -eq 'repo:tools\ffmpeg' -and
-        $r.Ffprobe -eq (Join-Path $toolsDir 'ffprobe.exe')) 'TCS_FFMPEG unset: tools\ffmpeg wins over -FfmpegDir (Program Files) and PATH'
+        $r.Ffprobe -eq (Join-Path $toolsDir 'ffprobe.exe')) 'ERYTHEIA_FFMPEG unset: tools\ffmpeg wins over -FfmpegDir (Program Files) and PATH'
 
-    $env:TCS_FFMPEG_TOOLS_DIR = $missingDir
+    $env:ERYTHEIA_FFMPEG_TOOLS_DIR = $missingDir
     $r = Resolve-TcsFfmpeg -FfmpegDir $programDir -NoVersion
     Check ($r.Ffmpeg -eq (Join-Path $programDir 'ffmpeg.exe') -and $r.Source -eq 'arg:FfmpegDir') 'no tools\ffmpeg: -FfmpegDir (Program Files) wins over PATH'
 
@@ -77,24 +89,24 @@ try {
     try { Resolve-TcsFfmpeg -FfmpegDir $missingDir -NoVersion | Out-Null } catch { $threw = $_.Exception.Message }
     Check ($threw -like 'ffmpeg not found*get-ffmpeg.ps1*') ('nowhere: stops and names get-ffmpeg.ps1 (' + $threw + ')')
 
-    $env:TCS_FFMPEG = Join-Path $missingDir 'ffmpeg.exe'
+    $env:ERYTHEIA_FFMPEG = Join-Path $missingDir 'ffmpeg.exe'
     $threw = ''
     try { Resolve-TcsFfmpeg -FfmpegDir $programDir -NoVersion | Out-Null } catch { $threw = $_.Exception.Message }
-    Check ($threw -like 'TCS_FFMPEG does not point to a file*') 'TCS_FFMPEG pointing nowhere stops (no fallback)'
-    $env:TCS_FFMPEG = $null
+    Check ($threw -like 'ERYTHEIA_FFMPEG does not point to a file*') 'ERYTHEIA_FFMPEG pointing nowhere stops (no fallback)'
+    $env:ERYTHEIA_FFMPEG = $null
 
-    # ---- ffprobe alone: tools\ffmpeg comes after TCS_FFMPEG and before -FfmpegDir --------------
+    # ---- ffprobe alone: tools\ffmpeg comes after ERYTHEIA_FFMPEG and before -FfmpegDir --------------
     $env:PATH = $pathDir + ';' + $cleanPath
-    $env:TCS_FFMPEG_TOOLS_DIR = $toolsDir
+    $env:ERYTHEIA_FFMPEG_TOOLS_DIR = $toolsDir
     $r = Resolve-TcsFfprobe -FfmpegDir $programDir
     Check ($r.Ffprobe -eq (Join-Path $toolsDir 'ffprobe.exe') -and $r.Source -eq 'repo:tools\ffmpeg') 'ffprobe: tools\ffmpeg wins over -FfmpegDir and PATH'
-    $env:TCS_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
+    $env:ERYTHEIA_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
     $r = Resolve-TcsFfprobe -FfmpegDir $programDir
-    Check ($r.Source -eq 'next-to-TCS_FFMPEG') 'ffprobe: next to TCS_FFMPEG wins over tools\ffmpeg'
-    $env:TCS_FFMPEG = $null
+    Check ($r.Source -eq 'next-to-ERYTHEIA_FFMPEG') 'ffprobe: next to ERYTHEIA_FFMPEG wins over tools\ffmpeg'
+    $env:ERYTHEIA_FFMPEG = $null
 
     # ---- the default tools\ffmpeg is the one of this repository -----------------------------
-    $env:TCS_FFMPEG_TOOLS_DIR = $null
+    $env:ERYTHEIA_FFMPEG_TOOLS_DIR = $null
     $expectedTools = Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\ffmpeg'
     Check ((Get-TcsFfmpegToolsDir) -eq $expectedTools) ('tools dir defaults to <repo>\tools\ffmpeg (' + (Get-TcsFfmpegToolsDir) + ')')
 
@@ -146,9 +158,11 @@ try {
         $getText -match '\$expectedFfprobeSha256 = "[0-9a-f]{64}"') 'get-ffmpeg.ps1 pins the SHA-256 of the zip, ffmpeg.exe and ffprobe.exe'
 } finally {
     $env:PATH = $savedPath
-    $env:TCS_FFMPEG = $savedFfmpeg
-    $env:TCS_FFPROBE = $savedFfprobe
-    $env:TCS_FFMPEG_TOOLS_DIR = $savedToolsDir
+    $env:ERYTHEIA_FFMPEG = $savedFfmpeg
+    $env:ERYTHEIA_FFPROBE = $savedFfprobe
+    $env:ERYTHEIA_FFMPEG_TOOLS_DIR = $savedToolsDir
+    $env:TCS_FFMPEG = $savedLegacyFfmpeg
+    $env:TCS_FFPROBE = $savedLegacyFfprobe
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 

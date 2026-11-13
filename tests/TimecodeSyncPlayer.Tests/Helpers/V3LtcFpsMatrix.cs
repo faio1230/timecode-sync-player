@@ -9,8 +9,8 @@ namespace TimecodeSyncPlayer.Tests.Helpers;
 /// </summary>
 internal static class V3LtcFpsMatrix
 {
-    public const string FpsEnvironmentVariable = "TCS_V3_LTC_FPS";
-    public const string ModeEnvironmentVariable = "TCS_V3_LTC_FPS_MODE";
+    public const string FpsEnvironmentVariable = "ERYTHEIA_V3_LTC_FPS";
+    public const string ModeEnvironmentVariable = "ERYTHEIA_V3_LTC_FPS_MODE";
 
     private const double Fps29_97 = 30000.0 / 1001.0;
     private const string Token24 = "24";

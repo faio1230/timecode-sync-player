@@ -58,7 +58,7 @@ foreach ($original in $ProjectPaths) {
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
     foreach ($arg in @('test', $project, '-c', 'Debug', '--no-build', '--filter', 'Category=RealProject', '--logger', 'trx;LogFileName=real-project.trx', '--results-directory', $report, '-v', 'minimal')) { $info.ArgumentList.Add($arg) }
-    $info.Environment['TIMECODE_SYNC_PLAYER_E2E_APP_PATH'] = $appPath
+    $info.Environment['ERYTHEIA_E2E_APP_PATH'] = $appPath
     $info.Environment['TIMECODE_REAL_PROJECT_PATH'] = $original
     $info.Environment['TIMECODE_REAL_PROJECT_REPORT_DIR'] = $report
     $process = [Diagnostics.Process]::new()

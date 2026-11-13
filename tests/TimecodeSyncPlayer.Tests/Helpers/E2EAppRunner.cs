@@ -12,7 +12,7 @@ namespace TimecodeSyncPlayer.Tests.Helpers;
 internal sealed class E2EAppRunner : IDisposable
 {
     /// <summary>出力トレースの環境変数。値はフォルダ名。</summary>
-    private const string OutputTraceVariable = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
+    private const string OutputTraceVariable = "ERYTHEIA_OUTPUT_TRACE";
 
     private static readonly object TraceGate = new();
     private static int _traceLaunchNumber;
@@ -385,7 +385,7 @@ internal sealed class E2EAppRunner : IDisposable
 
     private static string LocateExe()
     {
-        string? env = Environment.GetEnvironmentVariable("TIMECODE_SYNC_PLAYER_E2E_APP_PATH");
+        string? env = Environment.GetEnvironmentVariable("ERYTHEIA_E2E_APP_PATH");
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
             return env;
 
@@ -409,7 +409,7 @@ internal sealed class E2EAppRunner : IDisposable
         }
 
         throw new FileNotFoundException(
-            "ERYTHEIA.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
+            "ERYTHEIA.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか ERYTHEIA_E2E_APP_PATH を設定してください。");
     }
 
     /// <summary>

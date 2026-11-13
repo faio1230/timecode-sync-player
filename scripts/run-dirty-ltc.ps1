@@ -60,14 +60,14 @@ for ($i = 1; $i -le $Repeats; $i++) {
     # Gpu compositor + smooth correction, same as the V3 harness (backend key is obsolete).
     '{"outputBackend":1,"syncCorrectionMode":0}' | Set-Content (Join-Path $runReport 'settings.json') -Encoding UTF8
 
-    $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe
+    $env:ERYTHEIA_E2E_APP_PATH = $AppExe
     $env:TIMECODE_ACCURACY_REPORT_DIR = $runReport
-    $env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE = $runReport
-    $env:TCS_M6_DIRTY_PLAN = (Resolve-Path -LiteralPath $planPath).Path
+    $env:ERYTHEIA_OUTPUT_TRACE = $runReport
+    $env:ERYTHEIA_M6_DIRTY_PLAN = (Resolve-Path -LiteralPath $planPath).Path
 
     Write-Output "app=$AppExe"
     Write-Output "report=$runReport"
-    Write-Output "plan=$($env:TCS_M6_DIRTY_PLAN)"
+    Write-Output "plan=$($env:ERYTHEIA_M6_DIRTY_PLAN)"
 
     $testStart = Get-Date
     & dotnet test $TestProject -c Debug --no-build --filter 'FullyQualifiedName~DirtyLtc' `
@@ -91,8 +91,8 @@ for ($i = 1; $i -le $Repeats; $i++) {
     }
 
     Remove-Item Env:TIMECODE_ACCURACY_REPORT_DIR -ErrorAction SilentlyContinue
-    Remove-Item Env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE -ErrorAction SilentlyContinue
-    Remove-Item Env:TCS_M6_DIRTY_PLAN -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_OUTPUT_TRACE -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_M6_DIRTY_PLAN -ErrorAction SilentlyContinue
 }
 
 # Analysis runs offline (no machine needed).

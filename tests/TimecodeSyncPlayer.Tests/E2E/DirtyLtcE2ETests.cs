@@ -9,7 +9,7 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 /// <summary>
 /// M6: ダーティーな LTC を段階的に流し、デコードと同期の限界点を測る。
 /// 加工はテスト側（<see cref="DirtyLtcSignal"/>）だけで行い、製品コードは変更しない。
-/// 計画は環境変数 TCS_M6_DIRTY_PLAN の JSON、レポート先は TIMECODE_ACCURACY_REPORT_DIR。
+/// 計画は環境変数 ERYTHEIA_M6_DIRTY_PLAN の JSON、レポート先は TIMECODE_ACCURACY_REPORT_DIR。
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Category", "DirtyLtc")]
@@ -19,9 +19,9 @@ public sealed class DirtyLtcE2ETests
     [SkippableFact]
     public async Task CableLoop_PlaysDegradedLtcLevelsAndRecordsTrace()
     {
-        string? planPath = Environment.GetEnvironmentVariable("TCS_M6_DIRTY_PLAN");
+        string? planPath = Environment.GetEnvironmentVariable("ERYTHEIA_M6_DIRTY_PLAN");
         Skip.If(string.IsNullOrWhiteSpace(planPath) || !File.Exists(planPath),
-            "Set TCS_M6_DIRTY_PLAN to a dirty-plan json.");
+            "Set ERYTHEIA_M6_DIRTY_PLAN to a dirty-plan json.");
         string? report = Environment.GetEnvironmentVariable("TIMECODE_ACCURACY_REPORT_DIR");
         Skip.If(string.IsNullOrWhiteSpace(report), "Set TIMECODE_ACCURACY_REPORT_DIR to enable the measurement.");
         report = Path.GetFullPath(report!);

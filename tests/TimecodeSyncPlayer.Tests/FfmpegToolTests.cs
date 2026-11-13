@@ -3,7 +3,7 @@ using TimecodeSyncPlayer.Tests.Helpers;
 
 namespace TimecodeSyncPlayer.Tests;
 
-/// <summary>段 5b と試験基盤の 8: 試験の ffmpeg の解決の順（TCS_FFMPEG → tools\ffmpeg → 既定 → PATH、ffprobe は TCS_FFPROBE → 同じフォルダ → PATH）と版の読み取り。</summary>
+/// <summary>段 5b と試験基盤の 8: 試験の ffmpeg の解決の順（ERYTHEIA_FFMPEG → tools\ffmpeg → 既定 → PATH、ffprobe は ERYTHEIA_FFPROBE → 同じフォルダ → PATH）と版の読み取り。</summary>
 public sealed class FfmpegToolTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "tcs-ffmpeg-tool-" + Guid.NewGuid().ToString("N"));
@@ -32,6 +32,22 @@ public sealed class FfmpegToolTests : IDisposable
     };
 
     [Fact]
+    public void WithLegacyNames_ReadsTheOldNameOnlyWhenTheNewOneIsUnset()
+    {
+        var both = FfmpegTool.WithLegacyNames(name => name switch
+        {
+            "ERYTHEIA_FFMPEG" => "new",
+            "TCS_FFMPEG" => "old",
+            _ => null,
+        });
+        var oldOnly = FfmpegTool.WithLegacyNames(name => name == "TCS_FFPROBE" ? "old" : null);
+
+        Assert.Equal("new", both(FfmpegTool.FfmpegEnvironmentVariable));
+        Assert.Equal("old", oldOnly(FfmpegTool.FfprobeEnvironmentVariable));
+        Assert.Null(oldOnly(FfmpegTool.FfmpegEnvironmentVariable));
+    }
+
+    [Fact]
     public void Resolve_EnvironmentWinsOverDefaultAndPath_AndFfprobeComesFromTheSameFolder()
     {
         string pinned = MakeFile("pinned", "ffmpeg.exe");
@@ -44,7 +60,7 @@ public sealed class FfmpegToolTests : IDisposable
         FfmpegResolution resolution = FfmpegTool.Resolve(Env(ffmpeg: pinned), Path.Combine(_root, "tools"), Path.Combine(_root, "default"), Path.Combine(_root, "path"));
 
         Assert.Equal(pinned, resolution.Ffmpeg);
-        Assert.Equal("env:TCS_FFMPEG", resolution.FfmpegSource);
+        Assert.Equal("env:ERYTHEIA_FFMPEG", resolution.FfmpegSource);
         Assert.Equal(pinnedProbe, resolution.Ffprobe);
         Assert.Equal("next-to-ffmpeg", resolution.FfprobeSource);
     }
@@ -82,7 +98,7 @@ public sealed class FfmpegToolTests : IDisposable
         Assert.NotEqual(newer, resolution.Ffmpeg);
     }
 
-    // ---- 試験基盤の 8: 解決の順（TCS_FFMPEG あり・tools\ffmpeg だけ・Program Files だけ・PATH だけ） ----
+    // ---- 試験基盤の 8: 解決の順（ERYTHEIA_FFMPEG あり・tools\ffmpeg だけ・Program Files だけ・PATH だけ） ----
 
     private (string Tools, string Default, string Path) MakeAllFour()
     {
@@ -103,7 +119,7 @@ public sealed class FfmpegToolTests : IDisposable
         FfmpegResolution resolution = FfmpegTool.Resolve(Env(ffmpeg: pinned), tools, preset, path);
 
         Assert.Equal(pinned, resolution.Ffmpeg);
-        Assert.Equal("env:TCS_FFMPEG", resolution.FfmpegSource);
+        Assert.Equal("env:ERYTHEIA_FFMPEG", resolution.FfmpegSource);
     }
 
     [Fact]
@@ -146,7 +162,7 @@ public sealed class FfmpegToolTests : IDisposable
     {
         // 自己試験の置き換えが無い前提（ふだんの回）。
         Skip.If(!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(FfmpegTool.ToolsDirectoryEnvironmentVariable)),
-            "TCS_FFMPEG_TOOLS_DIR is set");
+            "ERYTHEIA_FFMPEG_TOOLS_DIR is set");
         string? tools = FfmpegTool.ToolsDirectory;
         Assert.NotNull(tools);
         Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(tools)!)!, "TimecodeSyncPlayer.slnx")));
@@ -193,7 +209,7 @@ public sealed class FfmpegToolTests : IDisposable
         FfmpegResolution resolution = FfmpegTool.Resolve(Env(ffmpeg: pinned, ffprobe: probe), null, null, null);
 
         Assert.Equal(probe, resolution.Ffprobe);
-        Assert.Equal("env:TCS_FFPROBE", resolution.FfprobeSource);
+        Assert.Equal("env:ERYTHEIA_FFPROBE", resolution.FfprobeSource);
     }
 
     [Fact]

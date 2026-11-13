@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$AppPath,
-    # Folder of ffmpeg.exe. Order: TCS_FFMPEG (full path), then -FfmpegDir, then PATH
+    # Folder of ffmpeg.exe. Order: ERYTHEIA_FFMPEG (full path), then -FfmpegDir, then PATH
     # (scripts\TcsFfmpeg.psm1).
     [string]$FfmpegDir = "",
     [ValidateRange(20, 30)]
@@ -51,9 +51,9 @@ Update-TcsFfmpegSidecar -Directory $captureDirectory -Ffmpeg $ffmpeg -MadeNames 
 }
 "@ | Set-Content -LiteralPath $settingsPath -Encoding UTF8
 
-$previousSettingsPath = $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH
+$previousSettingsPath = $env:ERYTHEIA_SETTINGS_PATH
 try {
-    $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH = $settingsPath
+    $env:ERYTHEIA_SETTINGS_PATH = $settingsPath
     $arguments = @(
         "--open", ('"' + $videoPath + '"'),
         "--playlist", ('"' + $videoPath + '"')
@@ -65,7 +65,7 @@ try {
         -PassThru
 }
 finally {
-    $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH = $previousSettingsPath
+    $env:ERYTHEIA_SETTINGS_PATH = $previousSettingsPath
 }
 
 Write-Host "ERYTHEIA is ready for a client-side screenshot."

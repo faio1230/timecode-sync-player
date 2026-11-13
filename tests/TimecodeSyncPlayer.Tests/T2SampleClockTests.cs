@@ -7,7 +7,7 @@ namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
 /// T2 段 2/3: フレーム終端から受信ハンドラまでの経過（age）を同期値に足す切替
-/// （TCS_LTC_SAMPLE_CLOCK、段 3 で既定 on。off 指定時だけ無効）。
+/// （ERYTHEIA_LTC_SAMPLE_CLOCK、段 3 で既定 on。off 指定時だけ無効）。
 /// Single モードのシーク先（= 同期目標）で観測する。
 /// </summary>
 public class T2SampleClockTests

@@ -69,7 +69,7 @@ public sealed record AppSettings
 /// </summary>
 public sealed class AppSettingsManager
 {
-    public const string SettingsPathEnvironmentVariable = "TIMECODE_SYNC_PLAYER_SETTINGS_PATH";
+    public const string SettingsPathEnvironmentVariable = "ERYTHEIA_SETTINGS_PATH";
 
     /// <summary>v0.6.7: 設定と GStreamer のレジストリのキャッシュを置く %LOCALAPPDATA% の下のフォルダの名前。</summary>
     internal const string AppDataDirectoryName = "ERYTHEIA";
@@ -113,8 +113,8 @@ public sealed class AppSettingsManager
             {
                 lock (_lock)
                 {
-                    // 試験用の経路（TIMECODE_SYNC_PLAYER_SETTINGS_PATH）が付いているときは旧の場所から写さない。
-                    string? overridePath = Environment.GetEnvironmentVariable(SettingsPathEnvironmentVariable);
+                    // 試験用の経路（ERYTHEIA_SETTINGS_PATH）が付いているときは旧の場所から写さない。
+                    string? overridePath = EnvironmentVariables.Get(SettingsPathEnvironmentVariable);
                     _instance ??= new AppSettingsManager(
                         ResolveSettingsFilePath(overridePath),
                         legacySettingsFilePath: string.IsNullOrWhiteSpace(overridePath) ? LegacySettingsFilePath : null);
@@ -144,7 +144,7 @@ public sealed class AppSettingsManager
 
     internal static string ResolveSettingsFilePath()
     {
-        string? overridePath = Environment.GetEnvironmentVariable(SettingsPathEnvironmentVariable);
+        string? overridePath = EnvironmentVariables.Get(SettingsPathEnvironmentVariable);
         return ResolveSettingsFilePath(overridePath);
     }
 

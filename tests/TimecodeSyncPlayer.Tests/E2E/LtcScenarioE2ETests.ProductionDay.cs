@@ -13,10 +13,10 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 /// </summary>
 public sealed partial class LtcScenarioE2ETests
 {
-    private const string L3RehearsalVariable = "TCS_L3_REHEARSAL_SECONDS";
-    private const string L3BreakVariable = "TCS_L3_BREAK_SECONDS";
-    private const string L3ShowVariable = "TCS_L3_SHOW_SECONDS";
-    private const string L3PostIdleVariable = "TCS_L3_POST_IDLE_SECONDS";
+    private const string L3RehearsalVariable = "ERYTHEIA_L3_REHEARSAL_SECONDS";
+    private const string L3BreakVariable = "ERYTHEIA_L3_BREAK_SECONDS";
+    private const string L3ShowVariable = "ERYTHEIA_L3_SHOW_SECONDS";
+    private const string L3PostIdleVariable = "ERYTHEIA_L3_POST_IDLE_SECONDS";
 
     [SkippableFact(Timeout = 46_800_000)]
     public void L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow() =>
@@ -30,21 +30,21 @@ public sealed partial class LtcScenarioE2ETests
             double totalSeconds = activeSeconds + breakSeconds + postIdleSeconds;
             double lapSeconds = scenario.Tracks.Max(track => track.End);
             double healthIntervalSeconds = L2PositiveDoubleFromEnvironment(
-                "TCS_L2_HEALTH_SAMPLE_SECONDS", 10.0);
+                "ERYTHEIA_L2_HEALTH_SAMPLE_SECONDS", 10.0);
             double maxFrameDeficitSeconds = L2PositiveDoubleFromEnvironment(
-                "TCS_L2_MAX_FRAME_DEFICIT_SECONDS", 0.5);
+                "ERYTHEIA_L2_MAX_FRAME_DEFICIT_SECONDS", 0.5);
             double maxPositionStallSeconds = L2PositiveDoubleFromEnvironment(
-                "TCS_L2_MAX_POSITION_STALL_SECONDS", 0.5);
+                "ERYTHEIA_L2_MAX_POSITION_STALL_SECONDS", 0.5);
             double maxSpoutReceiverGapMilliseconds = L2PositiveDoubleFromEnvironment(
-                "TCS_L2_MAX_SPOUT_RECEIVER_GAP_MS", 500.0);
+                "ERYTHEIA_L2_MAX_SPOUT_RECEIVER_GAP_MS", 500.0);
             double? maxPrivateGrowthMbPerHour = L2OptionalPositiveDoubleFromEnvironment(
-                "TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR");
+                "ERYTHEIA_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR");
             double? maxHandleGrowthPerHour = L2OptionalPositiveDoubleFromEnvironment(
-                "TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR");
+                "ERYTHEIA_L2_MAX_HANDLE_GROWTH_PER_HOUR");
 
             Skip.If(lapSeconds < 10.0, $"L-3: プレイリストが {lapSeconds:F1}s しかない");
             scenario.SetSync(true);
-            bool spoutRequired = L2BooleanFromEnvironment("TCS_L2_ENABLE_SPOUT");
+            bool spoutRequired = L2BooleanFromEnvironment("ERYTHEIA_L2_ENABLE_SPOUT");
             if (spoutRequired)
                 scenario.SetSpout(true);
 

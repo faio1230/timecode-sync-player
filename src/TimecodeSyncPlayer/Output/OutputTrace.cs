@@ -10,16 +10,16 @@ internal sealed record OutputTraceEvent(string Stage, string Worker, long Qpc, l
 
 /// <summary>
 /// 出力トレース（試作 GpuOutputProbe の manifest.json / events.jsonl / summary.json と同スキーマ）。
-/// 環境変数 TIMECODE_SYNC_PLAYER_OUTPUT_TRACE にディレクトリを指定したときだけ有効。
-/// イベント上限は TIMECODE_SYNC_PLAYER_OUTPUT_TRACE_CAPACITY で変更できる（既定 1,000,000、不正値は既定）。
+/// 環境変数 ERYTHEIA_OUTPUT_TRACE にディレクトリを指定したときだけ有効。
+/// イベント上限は ERYTHEIA_OUTPUT_TRACE_CAPACITY で変更できる（既定 1,000,000、不正値は既定）。
 /// 試作と同じくイベントはメモリに溜め、停止時にまとめて書く（強制終了時は残らない）。
 /// メモリの目安: 1,000,000 件で約 170MB、60 分 60Hz 相当（約 730 万件）で約 1.2GB（実測）。
 /// 上限到達時は最初の 1 件で警告を 1 回出し、summary.json の droppedEvents / capacity で確認できる。
 /// </summary>
 internal sealed class OutputTrace
 {
-    public const string EnvironmentVariable = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
-    public const string CapacityEnvironmentVariable = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE_CAPACITY";
+    public const string EnvironmentVariable = "ERYTHEIA_OUTPUT_TRACE";
+    public const string CapacityEnvironmentVariable = "ERYTHEIA_OUTPUT_TRACE_CAPACITY";
     public const int DefaultCapacity = 1_000_000;
     private readonly ConcurrentQueue<OutputTraceEvent> events = new();
     private readonly int capacity;
@@ -70,7 +70,7 @@ internal sealed class OutputTrace
             PruneOldRuns(full, RetainedBytes);
             string run = ResolveRunDirectory(full);
             System.IO.Directory.CreateDirectory(run);
-            return new OutputTrace(run, ParseCapacity(Environment.GetEnvironmentVariable(CapacityEnvironmentVariable)));
+            return new OutputTrace(run, ParseCapacity(EnvironmentVariables.Get(CapacityEnvironmentVariable)));
         }
         catch (Exception ex)
         {

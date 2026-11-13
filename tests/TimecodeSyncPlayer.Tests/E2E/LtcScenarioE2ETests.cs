@@ -31,10 +31,10 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 public sealed partial class LtcScenarioE2ETests
 {
     private const double DefaultLtcFps = 25.0;
-    private const string LtcFpsVariable = "TCS_LTC_FPS";
+    private const string LtcFpsVariable = "ERYTHEIA_LTC_FPS";
     /// <summary>
     /// 送る LTC の fps。既定は 25（既存のシナリオはすべて 25 で組んである）。
-    /// TCS_E2E_LTC_FPS に 24 / 25 / 30 を入れると変えられる（U-1 のフレームレート比較用）。
+    /// ERYTHEIA_E2E_LTC_FPS に 24 / 25 / 30 を入れると変えられる（U-1 のフレームレート比較用）。
     /// </summary>
     internal static int ParseLtcFps(string? value) =>
         int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fps) && fps is 24 or 25 or 30
@@ -44,7 +44,7 @@ public sealed partial class LtcScenarioE2ETests
     private const string ReportVariable = "TIMECODE_LTC_SCENARIO_REPORT_DIR";
 
     // "1" のとき、各シナリオは事前確認（重い処理・区間・黒い参照）だけして Skip で終える（空振り）。
-    private const string PreflightOnlyVariable = "TCS_PREFLIGHT_ONLY";
+    private const string PreflightOnlyVariable = "ERYTHEIA_PREFLIGHT_ONLY";
 
     // 事前確認: 各トラックの使う区間の最短（S-2 が頭から 15 秒先まで跳ぶため）。
     private const double MinUsedSeconds = 15.0;
@@ -61,9 +61,9 @@ public sealed partial class LtcScenarioE2ETests
         get
         {
             string? value = Environment.GetEnvironmentVariable(LtcFpsVariable);
-            // 開発機の U-1 は TCS_E2E_LTC_FPS で fps を変える。runner は TCS_LTC_FPS を使う。どちらでもよい。
+            // 開発機の U-1 は ERYTHEIA_E2E_LTC_FPS で fps を変える。runner は ERYTHEIA_LTC_FPS を使う。どちらでもよい。
             if (string.IsNullOrWhiteSpace(value))
-                value = Environment.GetEnvironmentVariable("TCS_E2E_LTC_FPS");
+                value = Environment.GetEnvironmentVariable("ERYTHEIA_E2E_LTC_FPS");
             if (string.IsNullOrWhiteSpace(value))
                 return DefaultLtcFps;
             if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double fps) ||
@@ -242,7 +242,7 @@ public sealed partial class LtcScenarioE2ETests
 
     // ---- U: 外部ツールの UI Automation 読み取り負荷（U-1、v0.4.8 hotfix） ----
 
-    private const string UiaIntervalVariable = "TCS_U1_UIA_INTERVAL_MS";
+    private const string UiaIntervalVariable = "ERYTHEIA_U1_UIA_INTERVAL_MS";
 
     /// <summary>
     /// U-1: 外部ツールが LTC 表示と再生位置表示を高頻度（既定 50ms）で UI Automation から読み続けても、
@@ -260,8 +260,8 @@ public sealed partial class LtcScenarioE2ETests
     ///   除外し、外した区間を `switch-excluded` としてジャーナルに残す。1.0 秒を超えて同じ絵が
     ///   続けば従来どおり FAIL（TSP-Fable の判定、`docs/release-0.5-plan.md` の段 A の候補節）</item>
     /// </list>
-    /// 読み取り間隔は TCS_U1_UIA_INTERVAL_MS（既定 50）、LTC の fps は TCS_E2E_LTC_FPS で変えられる。
-    /// 出力トレースは TIMECODE_SYNC_PLAYER_OUTPUT_TRACE が無ければ報告フォルダーの下に自動で有効にする。
+    /// 読み取り間隔は ERYTHEIA_U1_UIA_INTERVAL_MS（既定 50）、LTC の fps は ERYTHEIA_E2E_LTC_FPS で変えられる。
+    /// 出力トレースは ERYTHEIA_OUTPUT_TRACE が無ければ報告フォルダーの下に自動で有効にする。
     /// </summary>
     [SkippableFact(Timeout = 3_600_000)]
     public void U1_Continue_HighRateUiaAudit_KeepsSyncAndOutput()
@@ -272,13 +272,13 @@ public sealed partial class LtcScenarioE2ETests
             $"U-1 は {ProjectVariable} に実素材のプロジェクト（ギャップ無し）を指定したときだけ回す");
         int intervalMs = int.TryParse(Environment.GetEnvironmentVariable(UiaIntervalVariable),
             NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed > 0 ? parsed : 50;
-        string traceRoot = Environment.GetEnvironmentVariable("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE") ?? "";
+        string traceRoot = Environment.GetEnvironmentVariable("ERYTHEIA_OUTPUT_TRACE") ?? "";
         bool ownTrace = string.IsNullOrWhiteSpace(traceRoot);
         if (ownTrace)
         {
             traceRoot = Path.Combine(Path.GetTempPath(), $"tcs-u1-trace-{DateTime.Now:yyyyMMdd-HHmmss}");
             Directory.CreateDirectory(traceRoot);
-            Environment.SetEnvironmentVariable("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", traceRoot);
+            Environment.SetEnvironmentVariable("ERYTHEIA_OUTPUT_TRACE", traceRoot);
         }
 
         var result = new UiaLoadRunResult();
@@ -357,7 +357,7 @@ public sealed partial class LtcScenarioE2ETests
         finally
         {
             if (ownTrace)
-                Environment.SetEnvironmentVariable("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", null);
+                Environment.SetEnvironmentVariable("ERYTHEIA_OUTPUT_TRACE", null);
         }
 
         // ---- 判定（アプリ終了後に出力トレースが書かれてから） ----
@@ -436,7 +436,7 @@ public sealed partial class LtcScenarioE2ETests
     /// <summary>
     /// L-1: Single モードで 1 トラック内を連続追従し、窓ごとに frameUpdates・位置の進み・
     /// 誤差を集計して「途中で詰まらないか」を見る。対象トラック・秒数・窓長は
-    /// TCS_L1_TRACKS / TCS_L1_FOLLOW_SECONDS / TCS_L1_WINDOW_SECONDS で外から変えられる。
+    /// ERYTHEIA_L1_TRACKS / ERYTHEIA_L1_FOLLOW_SECONDS / ERYTHEIA_L1_WINDOW_SECONDS で外から変えられる。
     /// </summary>
     [SkippableFact(Timeout = 900_000)]
     public void L1_Single_ContinuousFollow_DoesNotStall() => Run("L-1", continueMode: false, blackGap: true, scenario =>
@@ -744,7 +744,7 @@ public sealed partial class LtcScenarioE2ETests
     /// 報告を読む側が「5 秒の判定を通った回」と取り違えない。
     /// </summary>
     private static double FollowStartLimitSecondsFromEnvironment() =>
-        ReadPositiveDouble("TCS_L1_FOLLOW_START_LIMIT_SECONDS", FollowStartLimitSeconds);
+        ReadPositiveDouble("ERYTHEIA_L1_FOLLOW_START_LIMIT_SECONDS", FollowStartLimitSeconds);
 
     /// <summary>
     /// 保持中に「黒でない絵」を待つ上限。実素材の 4K60 はトラック切替からロード 0.42 秒 +
@@ -792,33 +792,33 @@ public sealed partial class LtcScenarioE2ETests
 
         TrackInfo? match = scenario.Tracks.FirstOrDefault(
             candidate => string.Equals(candidate.Symbol, token, StringComparison.OrdinalIgnoreCase));
-        Skip.If(match is null, $"TCS_L1_TRACKS の '{token}' がプロジェクトのトラックに無い");
+        Skip.If(match is null, $"ERYTHEIA_L1_TRACKS の '{token}' がプロジェクトのトラックに無い");
         return match!;
     }
 
     private static double FollowSecondsFromEnvironment() =>
-        ReadPositiveDouble("TCS_L1_FOLLOW_SECONDS", 60.0);
+        ReadPositiveDouble("ERYTHEIA_L1_FOLLOW_SECONDS", 60.0);
 
     private static double FollowWindowSecondsFromEnvironment() =>
-        ReadPositiveDouble("TCS_L1_WINDOW_SECONDS", 2.0);
+        ReadPositiveDouble("ERYTHEIA_L1_WINDOW_SECONDS", 2.0);
 
     /// <summary>
     /// L-1: 追従開始直後の過渡として判定から除外する長さ。既定 4 秒（2 秒窓 ×2）。
     /// 既存シナリオが着地直後を判定に入れないのに合わせ、除外した窓は報告に残す。
     /// </summary>
     private static double FollowSettlingSecondsFromEnvironment() =>
-        ReadPositiveDouble("TCS_L1_SETTLING_SECONDS", 4.0);
+        ReadPositiveDouble("ERYTHEIA_L1_SETTLING_SECONDS", 4.0);
 
     /// <summary>
     /// L-1: 追従開始ゲート（誤差が許容内に入るまでの待ち）の上限。既定 30 秒。
     /// 上限に達したら失敗にする（重い素材で追いつけないこと自体が結果）。
     /// </summary>
     private static double FollowStartGateSecondsFromEnvironment() =>
-        ReadPositiveDouble("TCS_L1_START_GATE_SECONDS", 30.0);
+        ReadPositiveDouble("ERYTHEIA_L1_START_GATE_SECONDS", 30.0);
 
     private static string[] FollowTracksFromEnvironment()
     {
-        string? raw = Environment.GetEnvironmentVariable("TCS_L1_TRACKS");
+        string? raw = Environment.GetEnvironmentVariable("ERYTHEIA_L1_TRACKS");
         if (string.IsNullOrWhiteSpace(raw))
             return ["A"];
         string[] tokens = raw.Split([',', ';'],
@@ -1609,7 +1609,7 @@ public sealed partial class LtcScenarioE2ETests
             // 隔離する。Git 管理する集計へは LongRunTelemetryAudit の匿名数値だけを渡す。
             var environment = new Dictionary<string, string?>
             {
-                ["TCS_LOG_FILE"] = Path.Combine(ReportDir, "tcs-gst-raw.log"),
+                ["ERYTHEIA_LOG_FILE"] = Path.Combine(ReportDir, "tcs-gst-raw.log"),
             };
             App = E2EAppRunner.Start(_exePath, $"--load-project \"{projectPath}\"",
                 settingsPath, pausePlaybackIfNeeded: false, environment: environment);

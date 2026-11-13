@@ -10,7 +10,7 @@
 
 使い方:
   python scripts/analyze-v3-seek-breakdown.py --player gst --run DIR [--run DIR ...] --out DIR
-DIR は TIMECODE_ACCURACY_REPORT_DIR 兼 TIMECODE_SYNC_PLAYER_OUTPUT_TRACE の run ディレクトリ。
+DIR は TIMECODE_ACCURACY_REPORT_DIR 兼 ERYTHEIA_OUTPUT_TRACE の run ディレクトリ。
 """
 import argparse
 import csv

@@ -14,18 +14,18 @@ internal enum GapPlayerMode
 }
 
 /// <summary>
-/// 環境変数 TCS_GAP_MODE の解釈。未設定・未知の値は Pause（現状のまま）。
+/// 環境変数 ERYTHEIA_GAP_MODE の解釈。未設定・未知の値は Pause（現状のまま）。
 /// 未知の値の警告は Current 初期化時に 1 回だけ出す。
 /// </summary>
 internal static class GapPlayerModePolicy
 {
-    public const string EnvironmentVariable = "TCS_GAP_MODE";
+    public const string EnvironmentVariable = "ERYTHEIA_GAP_MODE";
     public const string PauseValue = "pause";
     public const string ComposeBlackValue = "compose-black";
 
     public static GapPlayerMode Current { get; } = Resolve(
-        Environment.GetEnvironmentVariable(EnvironmentVariable),
-        value => Log.Warning("TCS_GAP_MODE の未知の値 '{Value}' は pause として扱います", value));
+        EnvironmentVariables.Get(EnvironmentVariable),
+        value => Log.Warning("ERYTHEIA_GAP_MODE の未知の値 '{Value}' は pause として扱います", value));
 
     internal static GapPlayerMode Resolve(string? value, Action<string>? warnUnknown = null)
     {

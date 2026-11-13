@@ -19,8 +19,8 @@ public sealed class D8DeviceLostMeasurementE2ETests
 {
     private const string ReportVariable = "TIMECODE_D8_REPORT_DIR";
     private const string ModeVariable = "TIMECODE_D8_MODE";
-    private const string TraceVariable = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
-    private const string TraceCapacityVariable = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE_CAPACITY";
+    private const string TraceVariable = "ERYTHEIA_OUTPUT_TRACE";
+    private const string TraceCapacityVariable = "ERYTHEIA_OUTPUT_TRACE_CAPACITY";
     private const int ObservationSeconds = 60;
 
     [SkippableFact(Timeout = 300_000)]

@@ -42,7 +42,7 @@ typedef struct TcsGopTracker {
   int64_t  median_interval_ns; /* median keyframe-to-keyframe interval (0 = unconfirmed) */
   int64_t  pending_ns;         /* last observed buffer PTS - anchor PTS (diagnostics) */
   uint64_t keyframes;          /* keyframes observed since load */
-  int64_t  threshold_ns;       /* default 2.0s, TCS_GOP_WARN_SECONDS override */
+  int64_t  threshold_ns;       /* default 2.0s, ERYTHEIA_GOP_WARN_SECONDS override */
   uint64_t warning_qpc;        /* QPC when the warning latched (0 = none) */
   int64_t  intervals_ns[TCS_GOP_INTERVAL_CAPACITY]; /* ring of measured intervals */
   uint32_t interval_count;     /* intervals pushed since load (saturating) */

@@ -4,15 +4,15 @@
 # The C# fixtures use the same order (tests\TimecodeSyncPlayer.Tests\Helpers\FfmpegTool.cs).
 #
 # Order (test infrastructure 2026-10, item 8; one rule for every script and test):
-#   1. TCS_FFMPEG     - full path of ffmpeg.exe
+#   1. ERYTHEIA_FFMPEG     - full path of ffmpeg.exe
 #   2. tools\ffmpeg   - the pinned test build in this repository (scripts\get-ffmpeg.ps1)
 #   3. -FfmpegDir     - folder that holds ffmpeg.exe (the script argument; the scripts
 #                       default it to C:\Program Files\ffmpeg\bin)
 #   4. PATH           - last resort
-# ffprobe: TCS_FFPROBE, then ffprobe.exe next to the resolved ffmpeg, then PATH.
+# ffprobe: ERYTHEIA_FFPROBE, then ffprobe.exe next to the resolved ffmpeg, then PATH.
 # Resolve-TcsFfprobe walks the same levels for a script that only needs ffprobe
-# (TCS_FFPROBE, next to TCS_FFMPEG, tools\ffmpeg, -FfmpegDir, PATH) and does not need ffmpeg.
-# TCS_FFMPEG_TOOLS_DIR replaces tools\ffmpeg (self-tests only; leave it unset).
+# (ERYTHEIA_FFPROBE, next to ERYTHEIA_FFMPEG, tools\ffmpeg, -FfmpegDir, PATH) and does not need ffmpeg.
+# ERYTHEIA_FFMPEG_TOOLS_DIR replaces tools\ffmpeg (self-tests only; leave it unset).
 #
 # Why: the dev machine and the test machine had two ffmpeg builds each, and the
 # scripts (-FfmpegDir first) and the tests (PATH) picked opposite ones, so the same
@@ -27,9 +27,25 @@ Set-StrictMode -Version 3.0
 
 $script:MinimumMajor = 6
 
+# v0.6.7: the environment variables were renamed from TCS_* to ERYTHEIA_*. During v0.6.x the old
+# name (TCS_FFMPEG, TCS_FFPROBE) is still read when the new one is unset, with one warning per variable.
+$script:LegacyEnvWarned = @{}
+function Get-TcsEnvironmentValue([string]$Name) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+    $legacy = 'TCS_' + $Name.Substring('ERYTHEIA_'.Length)
+    $legacyValue = [Environment]::GetEnvironmentVariable($legacy)
+    if (-not [string]::IsNullOrWhiteSpace($legacyValue) -and -not $script:LegacyEnvWarned.ContainsKey($legacy)) {
+        $script:LegacyEnvWarned[$legacy] = $true
+        Write-Warning ('read the old environment variable ' + $legacy + '; rename it to ' + $Name +
+            ' (the old name is read during v0.6.x only)')
+    }
+    return $legacyValue
+}
+
 # tools\ffmpeg of this repository (where scripts\get-ffmpeg.ps1 puts the pinned build).
 function Get-TcsFfmpegToolsDir {
-    $override = [Environment]::GetEnvironmentVariable('TCS_FFMPEG_TOOLS_DIR')
+    $override = [Environment]::GetEnvironmentVariable('ERYTHEIA_FFMPEG_TOOLS_DIR')
     if (-not [string]::IsNullOrWhiteSpace($override)) { return $override }
     return (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\ffmpeg')
 }
@@ -44,13 +60,13 @@ function Resolve-TcsFfmpeg {
 
     $exe = ''
     $source = ''
-    $fromEnv = [Environment]::GetEnvironmentVariable('TCS_FFMPEG')
+    $fromEnv = (Get-TcsEnvironmentValue 'ERYTHEIA_FFMPEG')
     if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
         if (-not (Test-Path -LiteralPath $fromEnv -PathType Leaf)) {
-            throw ('TCS_FFMPEG does not point to a file: ' + $fromEnv)
+            throw ('ERYTHEIA_FFMPEG does not point to a file: ' + $fromEnv)
         }
         $exe = (Get-Item -LiteralPath $fromEnv).FullName
-        $source = 'env:TCS_FFMPEG'
+        $source = 'env:ERYTHEIA_FFMPEG'
     } elseif (Test-Path -LiteralPath (Join-Path (Get-TcsFfmpegToolsDir) 'ffmpeg.exe') -PathType Leaf) {
         $exe = (Get-Item -LiteralPath (Join-Path (Get-TcsFfmpegToolsDir) 'ffmpeg.exe')).FullName
         $source = 'repo:tools\ffmpeg'
@@ -66,19 +82,19 @@ function Resolve-TcsFfmpeg {
         }
     }
     if ([string]::IsNullOrWhiteSpace($exe)) {
-        throw 'ffmpeg not found (run pwsh -File scripts\get-ffmpeg.ps1, set TCS_FFMPEG to ffmpeg.exe, pass -FfmpegDir, or put ffmpeg on PATH)'
+        throw 'ffmpeg not found (run pwsh -File scripts\get-ffmpeg.ps1, set ERYTHEIA_FFMPEG to ffmpeg.exe, pass -FfmpegDir, or put ffmpeg on PATH)'
     }
 
     $probe = ''
     $probeSource = ''
-    $probeFromEnv = [Environment]::GetEnvironmentVariable('TCS_FFPROBE')
+    $probeFromEnv = (Get-TcsEnvironmentValue 'ERYTHEIA_FFPROBE')
     $probeNext = Join-Path (Split-Path -Parent $exe) 'ffprobe.exe'
     if (-not [string]::IsNullOrWhiteSpace($probeFromEnv)) {
         if (-not (Test-Path -LiteralPath $probeFromEnv -PathType Leaf)) {
-            throw ('TCS_FFPROBE does not point to a file: ' + $probeFromEnv)
+            throw ('ERYTHEIA_FFPROBE does not point to a file: ' + $probeFromEnv)
         }
         $probe = (Get-Item -LiteralPath $probeFromEnv).FullName
-        $probeSource = 'env:TCS_FFPROBE'
+        $probeSource = 'env:ERYTHEIA_FFPROBE'
     } elseif (Test-Path -LiteralPath $probeNext -PathType Leaf) {
         $probe = (Get-Item -LiteralPath $probeNext).FullName
         $probeSource = 'next-to-ffmpeg'
@@ -112,8 +128,8 @@ function Resolve-TcsFfmpeg {
 # ffprobe alone, for a script that reads durations and never runs ffmpeg
 # (make-ltc-scenario-project.ps1). Same levels as Resolve-TcsFfmpeg, without
 # requiring ffmpeg itself:
-#   0. TCS_FFPROBE              - full path of ffprobe.exe (the override of this module)
-#   1. next to TCS_FFMPEG       - ffprobe.exe in the folder of the ffmpeg.exe it names
+#   0. ERYTHEIA_FFPROBE              - full path of ffprobe.exe (the override of this module)
+#   1. next to ERYTHEIA_FFMPEG       - ffprobe.exe in the folder of the ffmpeg.exe it names
 #   2. -FfmpegDir\ffprobe.exe
 #   3. PATH
 # Returns Ffprobe = '' when none is found; Searched lists where it looked (for the
@@ -124,24 +140,24 @@ function Resolve-TcsFfprobe {
     param([string]$FfmpegDir = '')
 
     $searched = New-Object System.Collections.Generic.List[string]
-    $fromEnv = [Environment]::GetEnvironmentVariable('TCS_FFPROBE')
+    $fromEnv = (Get-TcsEnvironmentValue 'ERYTHEIA_FFPROBE')
     if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
         if (-not (Test-Path -LiteralPath $fromEnv -PathType Leaf)) {
-            throw ('TCS_FFPROBE does not point to a file: ' + $fromEnv)
+            throw ('ERYTHEIA_FFPROBE does not point to a file: ' + $fromEnv)
         }
-        return [pscustomobject]@{ Ffprobe = (Get-Item -LiteralPath $fromEnv).FullName; Source = 'env:TCS_FFPROBE'; Searched = @('TCS_FFPROBE') }
+        return [pscustomobject]@{ Ffprobe = (Get-Item -LiteralPath $fromEnv).FullName; Source = 'env:ERYTHEIA_FFPROBE'; Searched = @('ERYTHEIA_FFPROBE') }
     }
-    $searched.Add('TCS_FFPROBE (unset)')
+    $searched.Add('ERYTHEIA_FFPROBE (unset)')
 
-    $ffmpegFromEnv = [Environment]::GetEnvironmentVariable('TCS_FFMPEG')
+    $ffmpegFromEnv = (Get-TcsEnvironmentValue 'ERYTHEIA_FFMPEG')
     if (-not [string]::IsNullOrWhiteSpace($ffmpegFromEnv)) {
         $next = Join-Path (Split-Path -Parent $ffmpegFromEnv) 'ffprobe.exe'
         if (Test-Path -LiteralPath $next -PathType Leaf) {
-            return [pscustomobject]@{ Ffprobe = (Get-Item -LiteralPath $next).FullName; Source = 'next-to-TCS_FFMPEG'; Searched = @($searched) + $next }
+            return [pscustomobject]@{ Ffprobe = (Get-Item -LiteralPath $next).FullName; Source = 'next-to-ERYTHEIA_FFMPEG'; Searched = @($searched) + $next }
         }
         $searched.Add($next)
     } else {
-        $searched.Add('TCS_FFMPEG (unset)')
+        $searched.Add('ERYTHEIA_FFMPEG (unset)')
     }
 
     $inTools = Join-Path (Get-TcsFfmpegToolsDir) 'ffprobe.exe'
@@ -203,7 +219,7 @@ function Get-TcsFfmpegVersionStop {
     $shown = if ($Ffmpeg.Major -lt 0) { 'unknown' } else { [string]$Ffmpeg.Major }
     return ('ffmpeg major ' + $shown + ' is older than ' + $script:MinimumMajor + ': ' + $Ffmpeg.Ffmpeg +
         ' (' + $Ffmpeg.Source + ', ' + $Ffmpeg.VersionLine + '). Get the pinned test build with ' +
-        'pwsh -File scripts\get-ffmpeg.ps1 (tools\ffmpeg), or point TCS_FFMPEG at a build 6 or later')
+        'pwsh -File scripts\get-ffmpeg.ps1 (tools\ffmpeg), or point ERYTHEIA_FFMPEG at a build 6 or later')
 }
 
 # The ffmpeg of a run as one object for runner-preflight.json / run-result.json.
@@ -222,7 +238,7 @@ function Get-TcsFfmpegOldVersionWarning {
     if ($Ffmpeg.Major -ge $script:MinimumMajor) { return $null }
     $shown = if ($Ffmpeg.Major -lt 0) { 'unknown' } else { [string]$Ffmpeg.Major }
     return ('ffmpeg major ' + $shown + ' is older than ' + $script:MinimumMajor +
-        ' and made new media (' + $Ffmpeg.VersionLine + '). Point TCS_FFMPEG at a build 6 or later.')
+        ' and made new media (' + $Ffmpeg.VersionLine + '). Point ERYTHEIA_FFMPEG at a build 6 or later.')
 }
 
 # ffmpeg-version.txt in the media folder: one line per file, "<name> | <version line>".
@@ -265,7 +281,7 @@ function Get-TcsColorTags {
         [Parameter(Mandatory = $true)]$Ffmpeg,
         [Parameter(Mandatory = $true)][string]$Path
     )
-    if (-not $Ffmpeg.Ffprobe) { throw 'ffprobe not found (set TCS_FFPROBE or put ffprobe next to ffmpeg)' }
+    if (-not $Ffmpeg.Ffprobe) { throw 'ffprobe not found (set ERYTHEIA_FFPROBE or put ffprobe next to ffmpeg)' }
     $out = @(& $Ffmpeg.Ffprobe -v error -select_streams v:0 `
         -show_entries stream=color_primaries,color_transfer,color_space `
         -of default=noprint_wrappers=1 $Path 2>&1 | ForEach-Object { [string]$_ })

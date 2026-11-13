@@ -4,14 +4,14 @@ ERYTHEIA stores per-user settings as JSON at
 `%LOCALAPPDATA%\ERYTHEIA\settings.json` (v0.6.7 and later). When that file does not exist and the
 settings of v0.6.6 and earlier, `%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`, do, the first
 start copies them to the new location and keeps the original. For isolated automation, the
-`TIMECODE_SYNC_PLAYER_SETTINGS_PATH` environment variable can override this with an absolute or
+`ERYTHEIA_SETTINGS_PATH` environment variable can override this with an absolute or
 relative file path (then nothing is copied from the old location). Relative override paths are resolved against the process working directory.
 
 ERYTHEIAはユーザーごとの設定を
 `%LOCALAPPDATA%\ERYTHEIA\settings.json`へJSONで保存します（v0.6.7から）。そのファイルが無く、
 v0.6.6までの`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`があるときは、最初の起動で新しい場所へ
 写します（元のファイルは残します）。自動テストなどで隔離する
-場合は、環境変数`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`に絶対または相対ファイルパスを指定できます（このときは旧の場所から写しません）。
+場合は、環境変数`ERYTHEIA_SETTINGS_PATH`に絶対または相対ファイルパスを指定できます（このときは旧の場所から写しません）。
 相対パスはプロセスの作業ディレクトリを基準に絶対化されます。
 
 The installer intentionally retains this settings file during uninstall so that a later reinstall
@@ -80,27 +80,31 @@ also require a restart.
 
 ## Environment variables / 環境変数
 
-Set these before starting the app. Most exist for measurement; only `TCS_GOP_SCAN` and `TCS_HAP` are meant for field use.
+Set these before starting the app. Most exist for measurement; only `ERYTHEIA_GOP_SCAN` and `ERYTHEIA_HAP` are meant for field use.
 
-起動前に設定します。ほとんどは計測用で、現場で使う想定のものは`TCS_GOP_SCAN`と`TCS_HAP`だけです。
+起動前に設定します。ほとんどは計測用で、現場で使う想定のものは`ERYTHEIA_GOP_SCAN`と`ERYTHEIA_HAP`だけです。
+
+v0.6.7 renamed the variables from `TIMECODE_SYNC_PLAYER_*` and `TCS_*` to `ERYTHEIA_*` (same suffix, for example `TCS_GOP_SCAN` → `ERYTHEIA_GOP_SCAN`). During v0.6.x the old names are still read when the new one is not set, with one warning line per variable in the log; when both are set, the new one is used (also with one line). The old names will no longer be read from v0.7.0. The variables read only by the tests and the runner scripts take the new names only, except `ERYTHEIA_FFMPEG` and `ERYTHEIA_FFPROBE`.
+
+v0.6.7で、環境変数の名前を`TIMECODE_SYNC_PLAYER_*`・`TCS_*`から`ERYTHEIA_*`に変えました（後ろの部分は同じ。例: `TCS_GOP_SCAN`→`ERYTHEIA_GOP_SCAN`）。v0.6.xの間は、新しい名前が無ければ旧の名前も読み、変数ごとにWarningをログに1行出します。両方があれば新しい名前を使い、その旨も1行出します。v0.7.0からは旧の名前を読みません。
 
 | Variable | Default | Effect / 効果 |
 | --- | --- | --- |
-| `TCS_GOP_SCAN=off` | on | Skips the keyframe-interval scan done when a file is loaded. Use it to avoid the first full read of very large files (a 300 GB file is expected to take about 8 minutes). **The long-keyframe-interval warning is not shown while this is off** / 読み込み時のキーフレーム間隔の解析を止める。非常に大きい素材で初回の読み切りを避けたいときに使う（300GB で 8 分程度の見込み）。**止めている間は、キーフレーム間隔の警告も出ない** |
-| `TCS_HAP=off` | on | Turns off HAP playback (v0.5.0 plays Hap, Hap Alpha and Hap Q by decompressing them on the GPU). While off, HAP files fail to load; they are never decoded on the CPU. Hap 7 and Hap HDR are always refused with a reason; Hap Q Alpha is not guaranteed until verified with real footage / HAP の再生を止める（v0.5.0 は Hap・Hap Alpha・Hap Q を GPU で展開して再生する）。止めている間は HAP の素材は読み込みに失敗する（CPU では展開しない）。Hap 7・Hap HDR は常に理由を出して断る。Hap Q Alpha は実素材で確かめるまで未保証 |
-| `TCS_PUMP_BUDGET_MS` | app: `2500` / shim alone: `4000` | Upper bound (1–60000 ms) on waiting for the first frame after a seek while paused. Unless set explicitly, the app passes the landing timeout (3 s) minus 0.5 s at startup so the pump is cut before the landing timeout; an explicit value is used as-is / 一時停止中のシークで最初のフレームを待つ上限（1～60000ms）。明示が無ければ、アプリが起動時に「着地の時間切れ（3 秒）− 0.5 秒」を渡し、ポンプが着地より先に切れるようにする。明示した値はそのまま使う |
-| `TCS_SEEK_COST_HINT=on` | off | Measurement only. Aims the follow-start seek ahead by an estimate derived from the keyframe interval. Off by default because it broke other cases; **do not use in the field** / 計測用。追従開始のシークを、キーフレーム間隔から見積もったぶん先へ狙う。別の場面を壊したため既定で無効。**現場では使わない** |
-| `TCS_SYNC_POSITION_FEEDBACK=on` | off | Measurement only. While a seek has not been confirmed to have landed, derives the position used for sync decisions from the frame actually delivered / 計測用。シークの着地が確認できるまで、同期の判断に使う位置を実際に届いたフレームから求める |
-| `TCS_LTC_SAMPLE_CLOCK=off` | on | Measurement only. Disables the correction that adds the time from the LTC frame end to its handling / 計測用。LTC フレームの終端から処理までの経過を足す補正を無効にする |
-| `TCS_PRORES_GPU` | unset (follows `proResGpu`) | Test switch. `auto`, `on` or `off` (case-insensitive) overrides the `proResGpu` setting; the shim log shows `source=env`. Read once when the player is created. Any other value is ignored with one warning line / 試験用。`auto`・`on`・`off`（大文字小文字を区別しない）で設定の`proResGpu`より優先する。shimのログに`source=env`が出る。プレイヤーの作成時に1回だけ読む。それ以外の値は警告を1行出して無視する |
-| `TCS_LOG_FILE` | app: `logs\tcs-gst-YYYYMMDD.log` / shim alone: none | Path of the shim (`tcs_gstreamer.dll`) log file. The app sets it at startup only when it is not already set, and deletes `tcs-gst-*.log` older than 7 days. Without it the shim writes only to stderr / shim（`tcs_gstreamer.dll`）のログの出力先。未設定のときだけ、アプリが起動時に設定する。起動時に7日より古い`tcs-gst-*.log`を消す。未設定のshimは標準エラーにだけ出す |
+| `ERYTHEIA_GOP_SCAN=off` | on | Skips the keyframe-interval scan done when a file is loaded. Use it to avoid the first full read of very large files (a 300 GB file is expected to take about 8 minutes). **The long-keyframe-interval warning is not shown while this is off** / 読み込み時のキーフレーム間隔の解析を止める。非常に大きい素材で初回の読み切りを避けたいときに使う（300GB で 8 分程度の見込み）。**止めている間は、キーフレーム間隔の警告も出ない** |
+| `ERYTHEIA_HAP=off` | on | Turns off HAP playback (v0.5.0 plays Hap, Hap Alpha and Hap Q by decompressing them on the GPU). While off, HAP files fail to load; they are never decoded on the CPU. Hap 7 and Hap HDR are always refused with a reason; Hap Q Alpha is not guaranteed until verified with real footage / HAP の再生を止める（v0.5.0 は Hap・Hap Alpha・Hap Q を GPU で展開して再生する）。止めている間は HAP の素材は読み込みに失敗する（CPU では展開しない）。Hap 7・Hap HDR は常に理由を出して断る。Hap Q Alpha は実素材で確かめるまで未保証 |
+| `ERYTHEIA_PUMP_BUDGET_MS` | app: `2500` / shim alone: `4000` | Upper bound (1–60000 ms) on waiting for the first frame after a seek while paused. Unless set explicitly, the app passes the landing timeout (3 s) minus 0.5 s at startup so the pump is cut before the landing timeout; an explicit value is used as-is / 一時停止中のシークで最初のフレームを待つ上限（1～60000ms）。明示が無ければ、アプリが起動時に「着地の時間切れ（3 秒）− 0.5 秒」を渡し、ポンプが着地より先に切れるようにする。明示した値はそのまま使う |
+| `ERYTHEIA_SEEK_COST_HINT=on` | off | Measurement only. Aims the follow-start seek ahead by an estimate derived from the keyframe interval. Off by default because it broke other cases; **do not use in the field** / 計測用。追従開始のシークを、キーフレーム間隔から見積もったぶん先へ狙う。別の場面を壊したため既定で無効。**現場では使わない** |
+| `ERYTHEIA_SYNC_POSITION_FEEDBACK=on` | off | Measurement only. While a seek has not been confirmed to have landed, derives the position used for sync decisions from the frame actually delivered / 計測用。シークの着地が確認できるまで、同期の判断に使う位置を実際に届いたフレームから求める |
+| `ERYTHEIA_LTC_SAMPLE_CLOCK=off` | on | Measurement only. Disables the correction that adds the time from the LTC frame end to its handling / 計測用。LTC フレームの終端から処理までの経過を足す補正を無効にする |
+| `ERYTHEIA_PRORES_GPU` | unset (follows `proResGpu`) | Test switch. `auto`, `on` or `off` (case-insensitive) overrides the `proResGpu` setting; the shim log shows `source=env`. Read once when the player is created. Any other value is ignored with one warning line / 試験用。`auto`・`on`・`off`（大文字小文字を区別しない）で設定の`proResGpu`より優先する。shimのログに`source=env`が出る。プレイヤーの作成時に1回だけ読む。それ以外の値は警告を1行出して無視する |
+| `ERYTHEIA_LOG_FILE` | app: `logs\tcs-gst-YYYYMMDD.log` / shim alone: none | Path of the shim (`tcs_gstreamer.dll`) log file. The app sets it at startup only when it is not already set, and deletes `tcs-gst-*.log` older than 7 days. Without it the shim writes only to stderr / shim（`tcs_gstreamer.dll`）のログの出力先。未設定のときだけ、アプリが起動時に設定する。起動時に7日より古い`tcs-gst-*.log`を消す。未設定のshimは標準エラーにだけ出す |
 | `GSTREAMER_1_0_ROOT_MSVC_X86_64` | unset | Root of the GStreamer runtime (the parent of `bin`). Checked first; then the bundled `gstreamer` folder next to the app, then `C:\Program Files\gstreamer\1.0\msvc_x86_64` / GStreamerランタイムのルート（`bin`の親）。最初に見る。次にアプリの隣の同梱の`gstreamer`、最後に`C:\Program Files\gstreamer\1.0\msvc_x86_64`を見る |
-| `TIMECODE_SYNC_PLAYER_SETTINGS_PATH` | unset | Overrides the location of `settings.json` (isolation for automated tests; see the top of this page) / `settings.json`の場所を上書きする（自動テストの隔離用。このページの冒頭を参照） |
-| `TIMECODE_SYNC_PLAYER_SPOUT_NAME` | unset (default name) | Overrides the Spout sender name / Spoutの送信者名を上書きする |
-| `TIMECODE_SYNC_PLAYER_OUTPUT_TRACE` | unset (off) | Output directory of the output trace (`manifest.json` / `events.jsonl` / `summary.json`). Written out when the app stops, so nothing is left after a forced termination / 出力トレースの出力ディレクトリ。停止時にまとめて書き出すため、強制終了では残らない |
-| `TIMECODE_SYNC_PLAYER_OUTPUT_TRACE_CAPACITY` | `1000000` | Event limit of the output trace (positive integer; unset or invalid values use the default, about 8.3 minutes at 60 Hz). Events past the limit are dropped; the first one logs a warning and `summary.json` records `droppedEvents` and `capacity`. Events are kept in memory, so a higher limit uses more memory (measured: about 170 MB for 1,000,000 events) / 出力トレースのイベントの上限（正の整数。未設定・不正値は既定で、60Hzで約8.3分）。上限に達すると以降は捨て、最初の1件で警告ログを出し、`summary.json`の`droppedEvents`と`capacity`に記録する。イベントはメモリに溜めるため、上限を上げると常駐が増える（実測: 1,000,000件で約170MB、60分60Hz相当の約730万件で約1.2GB） |
-| `TIMECODE_SYNC_PLAYER_TEST_CARD` | unset (off) | `1` or `true` turns the test card on at startup (for checking the output) / `1`または`true`で起動時にテストカードを表示する（動作確認用） |
-| `TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS` | unset (off) | `<seconds>[,<seconds>...]`. Simulates a device loss at those times to exercise the recovery path (verification only) / `<秒>[,<秒>...]`。指定した時刻に疑似的なデバイス消失を起こし、復旧の経路を確かめる（検証用） |
+| `ERYTHEIA_SETTINGS_PATH` | unset | Overrides the location of `settings.json` (isolation for automated tests; see the top of this page) / `settings.json`の場所を上書きする（自動テストの隔離用。このページの冒頭を参照） |
+| `ERYTHEIA_SPOUT_NAME` | unset (default name) | Overrides the Spout sender name / Spoutの送信者名を上書きする |
+| `ERYTHEIA_OUTPUT_TRACE` | unset (off) | Output directory of the output trace (`manifest.json` / `events.jsonl` / `summary.json`). Written out when the app stops, so nothing is left after a forced termination / 出力トレースの出力ディレクトリ。停止時にまとめて書き出すため、強制終了では残らない |
+| `ERYTHEIA_OUTPUT_TRACE_CAPACITY` | `1000000` | Event limit of the output trace (positive integer; unset or invalid values use the default, about 8.3 minutes at 60 Hz). Events past the limit are dropped; the first one logs a warning and `summary.json` records `droppedEvents` and `capacity`. Events are kept in memory, so a higher limit uses more memory (measured: about 170 MB for 1,000,000 events) / 出力トレースのイベントの上限（正の整数。未設定・不正値は既定で、60Hzで約8.3分）。上限に達すると以降は捨て、最初の1件で警告ログを出し、`summary.json`の`droppedEvents`と`capacity`に記録する。イベントはメモリに溜めるため、上限を上げると常駐が増える（実測: 1,000,000件で約170MB、60分60Hz相当の約730万件で約1.2GB） |
+| `ERYTHEIA_TEST_CARD` | unset (off) | `1` or `true` turns the test card on at startup (for checking the output) / `1`または`true`で起動時にテストカードを表示する（動作確認用） |
+| `ERYTHEIA_SIMULATE_DEVICE_LOSS` | unset (off) | `<seconds>[,<seconds>...]`. Simulates a device loss at those times to exercise the recovery path (verification only) / `<秒>[,<秒>...]`。指定した時刻に疑似的なデバイス消失を起こし、復旧の経路を確かめる（検証用） |
 
 ### Test only / 試験用
 
@@ -108,5 +112,5 @@ Names only. For tests and diagnostics; their behavior is not guaranteed and may 
 
 名前だけを挙げます。試験・診断用で、動作は保証せず、版で変わることがあります。自動テストと計測のためのもので、現場では設定しません。
 
-- App / アプリ: `TCS_GAP_MODE`, `TCS_SEEK_LATENCY_COMPENSATION`, `TIMECODE_SYNC_PLAYER_FORCE_GPU_UNAVAILABLE`, `TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH`, `TIMECODE_ACCURACY_TRACE`, `TIMECODE_ACCURACY_LTC_FPS`
-- Shim / shim: `TCS_GOP_WARN_SECONDS`, `TCS_SEEK_METHOD`, `TCS_FRAME_LOG`, `TCS_LEASE_LOG`, `TCS_PAUSED_SEEK_DIAG`, `TCS_SEEK_DIAG`, `TCS_NO_SEGMENT_REWRITE`, `TCS_ONE_ATTEMPT`, `TCS_APPSINK_MAX_BUFFERS`, `TCS_DECODE_THREAD_TYPE`, `TCS_DECODE_MAX_THREADS`, `TCS_NO_AUDIO`, `TCS_FAKE_AUDIO`, `TCS_FORCE_DECODER_ADAPTER_MISMATCH`, `TCS_FORCE_DECODER_LUID_MISMATCH`, `TCS_TEST_HOLD_FRAME_LOCK_MS`, `TCS_TEST_HOLD_SEEK_LOCK_MS`, `TCS_TEST_PUMP_TICK_DELAY_MS`
+- App / アプリ: `ERYTHEIA_GAP_MODE`, `ERYTHEIA_SEEK_LATENCY_COMPENSATION`, `ERYTHEIA_FORCE_GPU_UNAVAILABLE`, `ERYTHEIA_TEST_FORCE_GAP_BLACK_ON_SWITCH`, `TIMECODE_ACCURACY_TRACE`, `TIMECODE_ACCURACY_LTC_FPS`
+- Shim / shim: `ERYTHEIA_GOP_WARN_SECONDS`, `ERYTHEIA_SEEK_METHOD`, `ERYTHEIA_FRAME_LOG`, `ERYTHEIA_LEASE_LOG`, `ERYTHEIA_PAUSED_SEEK_DIAG`, `ERYTHEIA_SEEK_DIAG`, `ERYTHEIA_NO_SEGMENT_REWRITE`, `ERYTHEIA_ONE_ATTEMPT`, `ERYTHEIA_APPSINK_MAX_BUFFERS`, `ERYTHEIA_DECODE_THREAD_TYPE`, `ERYTHEIA_DECODE_MAX_THREADS`, `ERYTHEIA_NO_AUDIO`, `ERYTHEIA_FAKE_AUDIO`, `ERYTHEIA_FORCE_DECODER_ADAPTER_MISMATCH`, `ERYTHEIA_FORCE_DECODER_LUID_MISMATCH`, `ERYTHEIA_TEST_HOLD_FRAME_LOCK_MS`, `ERYTHEIA_TEST_HOLD_SEEK_LOCK_MS`, `ERYTHEIA_TEST_PUMP_TICK_DELAY_MS`

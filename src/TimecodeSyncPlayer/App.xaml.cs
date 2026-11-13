@@ -82,7 +82,7 @@ public partial class App : Application
 
         string logDir  = Path.Combine(AppContext.BaseDirectory, "logs");
         Directory.CreateDirectory(logDir);
-        // D15/O1: shim の LOG 出力先（TCS_LOG_FILE）を同じ logs ディレクトリへ固定する（GStreamer 初期化前）。
+        // D15/O1: shim の LOG 出力先（ERYTHEIA_LOG_FILE）を同じ logs ディレクトリへ固定する（GStreamer 初期化前）。
         GstNativeLibraryResolver.ConfigureLogFile(logDir);
         // v0.5.4 K3 (3): shim のポンプの予算（着地の時間切れ − 0.5 秒）を DLL ロード前に渡す。
         GstNativeLibraryResolver.ConfigurePumpBudget();
@@ -100,6 +100,8 @@ public partial class App : Application
                 rollingInterval: RollingInterval.Day,
                 flushToDiskInterval: TimeSpan.FromSeconds(1))
             .CreateLogger();
+        // v0.6.7: Serilog を作る前に読んだ旧の名前の環境変数（shim のログの出力先など）の Warning を出す。
+        EnvironmentVariables.FlushPendingWarnings();
 
         SyncAccuracyTrace.Current = SyncAccuracyTrace.Create(
             Environment.GetEnvironmentVariable(SyncAccuracyTrace.EnvironmentVariable));

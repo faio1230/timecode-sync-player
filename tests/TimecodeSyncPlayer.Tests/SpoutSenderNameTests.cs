@@ -50,7 +50,7 @@ public class SpoutSenderNameTests
     [Fact]
     public void EnvironmentVariableName_IsSharedByBothSides()
     {
-        SpoutDefaults.SenderNameEnvironmentVariable.Should().Be("TIMECODE_SYNC_PLAYER_SPOUT_NAME");
+        SpoutDefaults.SenderNameEnvironmentVariable.Should().Be("ERYTHEIA_SPOUT_NAME");
         TimecodeSyncPlayer.Gst.GstBackendState.SenderNameEnvVar.Should().Be(SpoutDefaults.SenderNameEnvironmentVariable);
         TimecodeSyncPlayer.Output.SpoutSender.SenderNameEnvironmentVariable.Should().Be(SpoutDefaults.SenderNameEnvironmentVariable);
     }

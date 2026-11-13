@@ -242,7 +242,7 @@ TCS_GST_API int tcs_player_set_decode_mode(TcsPlayer* player, int mode);
  * the first load (the same restriction as tcs_player_set_decode_mode). AUTO
  * (the default) and ON try the GPU on any adapter (v0.6.5; anything but
  * NVIDIA is logged as unverified); OFF never does. The environment variable
- * TCS_PRORES_GPU (auto / on / off, read once at create) wins over this
+ * ERYTHEIA_PRORES_GPU (auto / on / off, read once at create) wins over this
  * setter. Returns TCS_OK; TCS_ERR_GENERIC when already loaded, when mode is
  * out of range (the value is not changed) or for a NULL player. */
 #define TCS_PRORES_GPU_AUTO 0

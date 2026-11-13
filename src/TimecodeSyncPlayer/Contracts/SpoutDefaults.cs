@@ -7,7 +7,7 @@ public static class SpoutDefaults
     public const string DefaultSenderName = "TimecodeSyncPlayer";
 
     /// <summary>Spout 送信名を変える環境変数。</summary>
-    public const string SenderNameEnvironmentVariable = "TIMECODE_SYNC_PLAYER_SPOUT_NAME";
+    public const string SenderNameEnvironmentVariable = "ERYTHEIA_SPOUT_NAME";
 
     /// <summary>
     /// v0.6.6 R-11: 送信名を決める（純粋関数）。未設定・空・空白だけは既定名、それ以外は前後の空白を落とした値。
@@ -18,5 +18,5 @@ public static class SpoutDefaults
 
     /// <summary>環境変数から送信名を決める。</summary>
     public static string SenderNameFromEnvironment() =>
-        ResolveSenderName(Environment.GetEnvironmentVariable(SenderNameEnvironmentVariable));
+        ResolveSenderName(EnvironmentVariables.Get(SenderNameEnvironmentVariable));
 }

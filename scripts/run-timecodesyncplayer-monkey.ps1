@@ -104,7 +104,7 @@ foreach ($seed in $Seeds) {
     foreach ($argument in @('test', $testProject, '-c', $Configuration, '--no-build', '--filter', 'Category=Monkey', '--logger', 'trx;LogFileName=monkey.trx', '--results-directory', $seedDirectory, '-v', 'minimal')) {
         $startInfo.ArgumentList.Add($argument)
     }
-    $startInfo.Environment['TIMECODE_SYNC_PLAYER_E2E_APP_PATH'] = $appPath
+    $startInfo.Environment['ERYTHEIA_E2E_APP_PATH'] = $appPath
     $startInfo.Environment['TIMECODE_MONKEY_ENABLED'] = '1'
     $startInfo.Environment['TIMECODE_MONKEY_SEED'] = [string]$seed
     $startInfo.Environment['TIMECODE_MONKEY_ACTIONS'] = [string]$Actions

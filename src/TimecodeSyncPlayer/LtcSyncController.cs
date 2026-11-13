@@ -60,7 +60,7 @@ internal sealed record LtcSyncEffects(
 internal sealed class LtcSyncController
 {
     /// <summary>T2: サンプル時計（フレーム終端から受信ハンドラまでの経過を同期値に足す）の切替。既定 on。</summary>
-    internal const string SampleClockEnvironmentVariable = "TCS_LTC_SAMPLE_CLOCK";
+    internal const string SampleClockEnvironmentVariable = "ERYTHEIA_LTC_SAMPLE_CLOCK";
 
     /// <summary>T2: age として受け付ける上限。停止や時計の不一致を同期値へ持ち込まない。</summary>
     internal const double MaxSampleClockAgeSeconds = 0.5;
@@ -124,7 +124,7 @@ internal sealed class LtcSyncController
         _gapCoordinator = gapCoordinator;
         _getUtcNow = getUtcNow ?? (() => DateTime.UtcNow);
         _sampleClockEnabled = sampleClockEnabled ?? IsSampleClockEnabled(
-            Environment.GetEnvironmentVariable(SampleClockEnvironmentVariable));
+            EnvironmentVariables.Get(SampleClockEnvironmentVariable));
         _getQpc = getQpc ?? Stopwatch.GetTimestamp;
         Log.Information(
             "LTC sample clock: {State}（{Variable}=off のときだけ無効）",

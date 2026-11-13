@@ -261,7 +261,7 @@ CPU デコード素材も GPU 素材と同じリース経路で受け取る（�
 ProRes（v0.6.0から）の注:
 
 - プロファイル`prores-gpu`は、GPUの組の最後に置く。試すかどうかは`include/tcs_prores_gpu_policy.h`のゲートで決める。自動（既定）はshimのデバイスのアダプタがNVIDIA（PCIのベンダーID 0x10DE）のときだけ試し、有効は常に試し（NVIDIA以外は未検証としてログに残す）、無効は試さない。
-- モードは`tcs_player_set_prores_gpu`で最初のロードの前に渡す。環境変数`TCS_PRORES_GPU`（auto / on / off）があればそちらを優先する。
+- モードは`tcs_player_set_prores_gpu`で最初のロードの前に渡す。環境変数`ERYTHEIA_PRORES_GPU`（auto / on / off）があればそちらを優先する。
 - `proresd3d11dec`はアダプタごとのd3d11のクラスではないので、shimが自分のデバイスのLUIDを`adapter-luid`に書いてから使う。デコーダの出力がshimのデバイスに無いときは失敗（decoder-adapter-mismatch）とし、CPUの`prores-cpu`へ移る。
 - プラグインのDLL（`gstproresd3d11.dll`）とシェーダー（`prores_*.cso`）は、配布物では同梱のGStreamerのプラグインのフォルダに置く（「配布とセットアップ」）。
 
@@ -269,7 +269,7 @@ HAP（v0.5.0から）の注:
 
 - HAPと分かったファイルは、デコーダを挟まずに`queue ! appsink(video/x-hap)`で受ける。HAPの解析とSnappyの展開はCPUで、`frame_lock`の外で行う。展開したBC1/BC3のテクスチャは、shimのデバイスでGPUがBGRAに変換してリングへ載せる（Hap QはYCoCgからの変換のシェーダーを使う）。
 - 対応はHap・Hap Alpha・Hap Q。Hap 7・Hap HDR・Hap Alpha Onlyは、色の戻し方が違うので読み込みの時点で理由を付けて断る。
-- 起動前に環境変数`TCS_HAP=off`を設定すると、HAPのファイルは読み込みを断る（CPUのデコーダには渡さない）。
+- 起動前に環境変数`ERYTHEIA_HAP=off`を設定すると、HAPのファイルは読み込みを断る（CPUのデコーダには渡さない）。
 
 コンテナ: mp4/mov/m4v/3gp→qtdemux、mkv→matroskademux、ts→tsdemux、
 mxf→mxfdemux、avi→avidemux、raw ES→直接チェーン、他→decodebin。
@@ -280,7 +280,7 @@ mxf→mxfdemux、avi→avidemux、raw ES→直接チェーン、他→decodebin�
 non-interleaved F32LE（volume が拒否する）を受け止めるためのもので、
 欠けると qtdemux が not-negotiated で全体を失敗させる（S1）。
 autoaudiosink がデバイスを開けない環境では `fakesink sync=true` へ退避する
-（`TCS_FAKE_AUDIO=1` で強制）。paused ロードでは音声シンクが最初のバッファを
+（`ERYTHEIA_FAKE_AUDIO=1` で強制）。paused ロードでは音声シンクが最初のバッファを
 消費するまで待ってから PAUSED へ落とす（初期化途中の停止で wasapi2 が
 復帰しなくなるため）。パイプラインのクロックは常に GstSystemClock を強制し、
 音声シンクをスレーブさせる（理由は下記「システムクロックの強制」）。
@@ -335,9 +335,9 @@ av: qpc=... video_pts=... target=... audio_pos=... diff_ms=... aok=...
 seek: diag stalled ... （3 秒以上ゲートが開かないときの状態ダンプ）
 ```
 
-`TCS_SEEK_DIAG=1` でゲート開後 15 秒間の A/V サンプル（15 フレーム毎）を
-追加出力する。`TCS_NO_SEGMENT_REWRITE=1` は方式 5 へ戻すデバッグ用の
-エスケープハッチ、`TCS_FRAME_LOG=1` は全配信フレームの pts/qpc を出す。
+`ERYTHEIA_SEEK_DIAG=1` でゲート開後 15 秒間の A/V サンプル（15 フレーム毎）を
+追加出力する。`ERYTHEIA_NO_SEGMENT_REWRITE=1` は方式 5 へ戻すデバッグ用の
+エスケープハッチ、`ERYTHEIA_FRAME_LOG=1` は全配信フレームの pts/qpc を出す。
 
 ### 実測（2026-09-12、Debug、GStreamer 1.28.2、RTX 3070）
 
@@ -404,7 +404,7 @@ Spout 受信側の目視検証は proto の recv モード
 | 切り替え反復 (--stress, 4 素材×120 回) | load 失敗 0 / フレーム 363。作業セットは warmup 後 ~160MB で飽和（非有界増加なし） |
 | アプリ E2E (backend=Gstreamer) | ① 1080p60 GPU 経路の実フレームを別プロセス Spout 受信で確認（受信側の終了→再起動後も接続・フレームイベント継続、アプリは描画継続） ② 4 コンテナの next/prev 反復 7 ロード全成功・クラッシュなし ③ 再生中クローズで終了コード 0 |
 | 既存単体テスト | 非 E2E 1200 件合格（mpv 既定経路の退行なし。E2E 含め全件は 1242 件） |
-| S1/S2 追試（2026-09-12、V1 素材） | H.264+AAC（`v1_h264_1080p60_aac.mp4`）: decoder=d3d11h264dec・60/秒・failures=0（autoaudiosink／`TCS_FAKE_AUDIO=1` の両方）。ProRes 422（`v1_prores422_1080p60.mov`）: decoder=avdec_prores・60/秒・failures=0。回帰 8 素材は decoder と配信レートが既存値のまま（TS の seek/step 2 件はベースラインでも失敗する既知項目） |
+| S1/S2 追試（2026-09-12、V1 素材） | H.264+AAC（`v1_h264_1080p60_aac.mp4`）: decoder=d3d11h264dec・60/秒・failures=0（autoaudiosink／`ERYTHEIA_FAKE_AUDIO=1` の両方）。ProRes 422（`v1_prores422_1080p60.mov`）: decoder=avdec_prores・60/秒・failures=0。回帰 8 素材は decoder と配信レートが既存値のまま（TS の seek/step 2 件はベースラインでも失敗する既知項目） |
 | 性能参考値 (720p60, 15s, Spout OFF) | mpv: CPU 73.1% (1コア換算) / WS 平均 251.5MB → GStreamer: 46.7% / 230.2MB。GPU util は 10–16% で同等（他プロセスの GPU 使用あり・参考値） |
 
 未検証/制約:

@@ -10,10 +10,10 @@ namespace TimecodeSyncPlayer.Tests.Helpers;
 internal static class E2ESettingsIsolation
 {
     /// <summary>起動前に置く設定 JSON（省略時は空の設定で起動）。</summary>
-    public const string SeedEnvironmentVariable = "TCS_E2E_SETTINGS_JSON";
+    public const string SeedEnvironmentVariable = "ERYTHEIA_E2E_SETTINGS_JSON";
 
     /// <summary>
-    /// TCS_E2E_SETTINGS_JSON が指定されていれば、その各キーを baseJson に上書きして返す
+    /// ERYTHEIA_E2E_SETTINGS_JSON が指定されていれば、その各キーを baseJson に上書きして返す
     /// （未指定なら baseJson のまま）。テストが独自に settings.json を書く箇所でも、同じ口で
     /// 補正モードのような設定ファイル側の項目を差し込めるようにするためのもの。
     /// </summary>
@@ -41,7 +41,7 @@ internal static class E2ESettingsIsolation
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         string settingsPath = Path.Combine(directory, "settings.json");
-        // 既定は「空の設定で起動」。TCS_E2E_SETTINGS_JSON が指定されたときだけ、その内容を
+        // 既定は「空の設定で起動」。ERYTHEIA_E2E_SETTINGS_JSON が指定されたときだけ、その内容を
         // 初期設定として置く（補正モードのような設定ファイル側の項目を測るための口）。
         // 指定しない実行の挙動は従来と完全に同じ。
         string? seed = Environment.GetEnvironmentVariable(SeedEnvironmentVariable);

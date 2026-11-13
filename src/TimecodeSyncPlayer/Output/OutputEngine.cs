@@ -18,8 +18,8 @@ internal readonly record struct PreviewDiagnostics(
 
 internal sealed class OutputEngineSettings
 {
-    public const string TestCardEnvironmentVariable = "TIMECODE_SYNC_PLAYER_TEST_CARD";
-    public const string SimulateDeviceLossEnvironmentVariable = "TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS";
+    public const string TestCardEnvironmentVariable = "ERYTHEIA_TEST_CARD";
+    public const string SimulateDeviceLossEnvironmentVariable = "ERYTHEIA_SIMULATE_DEVICE_LOSS";
     public int CanvasWidth { get; init; } = 1920;
     public int CanvasHeight { get; init; } = 1080;
     public double Fps { get; init; } = 60;
@@ -54,11 +54,11 @@ internal sealed class OutputEngineSettings
 
     public static bool TestCardRequested()
     {
-        string? value = Environment.GetEnvironmentVariable(TestCardEnvironmentVariable);
+        string? value = EnvironmentVariables.Get(TestCardEnvironmentVariable);
         return value is not null && (value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS=&lt;秒&gt;[,&lt;秒&gt;] を起動時に 1 回だけ解析する。</summary>
+    /// <summary>ERYTHEIA_SIMULATE_DEVICE_LOSS=&lt;秒&gt;[,&lt;秒&gt;] を起動時に 1 回だけ解析する。</summary>
     public static double[] ParseSimulatedDeviceLossSeconds(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return [];
@@ -173,12 +173,12 @@ internal sealed class OutputEngine : IDisposable
 
     private readonly PreviewHandoff previewHandoff = new(3);
 
-    // D5 決定再現用: 環境変数 TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH=1 のときだけ、世代切替
+    // D5 決定再現用: 環境変数 ERYTHEIA_TEST_FORCE_GAP_BLACK_ON_SWITCH=1 のときだけ、世代切替
     // からその世代の最初のフレーム取得までギャップを Black に固定する。
     // 未設定なら forceGapBlackOnSwitch=false で、切替ごとの分岐 1 回のみ（既定経路は不変）。
-    internal const string ForceGapBlackOnSwitchEnvironmentVariable = "TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH";
+    internal const string ForceGapBlackOnSwitchEnvironmentVariable = "ERYTHEIA_TEST_FORCE_GAP_BLACK_ON_SWITCH";
     private static readonly bool forceGapBlackOnSwitch =
-        Environment.GetEnvironmentVariable(ForceGapBlackOnSwitchEnvironmentVariable) == "1";
+        EnvironmentVariables.Get(ForceGapBlackOnSwitchEnvironmentVariable) == "1";
     private bool anyFrameAcquired;
     private bool armedForceGapBlack;
 

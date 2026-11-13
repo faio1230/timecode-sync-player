@@ -212,7 +212,7 @@ pwsh -File scripts\get-ffmpeg.ps1
 
 試験とスクリプト（ランナー、`make-e2e-media.ps1` などの素材のスクリプト、テストの `FfmpegTool`）は、ffmpeg を次の順で探します。PATH は最後の手です。
 
-1. 環境変数 `TCS_FFMPEG`（ffmpeg.exe のフルパス。ffprobe は `TCS_FFPROBE`、無ければ同じフォルダ）
+1. 環境変数 `ERYTHEIA_FFMPEG`（ffmpeg.exe のフルパス。ffprobe は `ERYTHEIA_FFPROBE`、無ければ同じフォルダ）
 2. リポジトリの `tools\ffmpeg\`（`get-ffmpeg.ps1` の置き場）
 3. `C:\Program Files\ffmpeg\bin`（スクリプトでは `-FfmpegDir` の既定）
 4. PATH
@@ -261,7 +261,7 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe
 dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 ```
 
-実機ロードなどで手でアプリを起動するときは `pwsh -File scripts\start-isolated.ps1` を使います（利用者の設定を書き換えないため。一時フォルダの settings.json を `TIMECODE_SYNC_PLAYER_SETTINGS_PATH` で渡して起動し、その場所と PID を表示します。`--playlist` などの引数はそのまま渡ります）。
+実機ロードなどで手でアプリを起動するときは `pwsh -File scripts\start-isolated.ps1` を使います（利用者の設定を書き換えないため。一時フォルダの settings.json を `ERYTHEIA_SETTINGS_PATH` で渡して起動し、その場所と PID を表示します。`--playlist` などの引数はそのまま渡ります）。
 
 実行時のログは以下に出力されます。
 
@@ -269,7 +269,7 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log
 ```
 
-GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-YYYYMMDD.log` として出力されます（環境変数 `TCS_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `tcs-gst-*.log` は削除されます）。
+GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-YYYYMMDD.log` として出力されます（環境変数 `ERYTHEIA_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `tcs-gst-*.log` は削除されます）。
 
 起動後、映像が表示され、LTC入力デバイスがプルダウンに表示されることを確認してください。
 
@@ -279,7 +279,7 @@ GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-Y
 
 ### OutputBackend
 
-設定は`%LOCALAPPDATA%\ERYTHEIA\settings.json`（`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`で
+設定は`%LOCALAPPDATA%\ERYTHEIA\settings.json`（`ERYTHEIA_SETTINGS_PATH`で
 上書き可。v0.6.6までの`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`は、新しい場所に無いときだけ最初の起動で写します）の次のキーで選びます。変更後はアプリを再起動してください（`decodeMode`も同様に、
 プレイヤー生成時に読むため再起動しないと反映されません）。
 
@@ -326,7 +326,7 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
 
 | モード | 挙動 |
 |---|---|
-| **Smooth**（既定） | 残差に比例して再生レートを動かします（`rate = 1 + clamp(e / 1.0s, ±0.10)`）。デッドバンド **5ms**、戻りバンド **2ms** です。LTC の時刻は音声サンプル位置から出したフレーム終端を基準にしています（`TCS_LTC_SAMPLE_CLOCK=off` で従来の受信時刻基準）。**シークやトラック切替の着地直後 1.0 秒だけ上限が ±0.20** になります（収束を 1 秒以内にするため。着地誤差 100〜150ms なら約 0.5〜0.8 秒で詰まります）。**シークを発行しない**ので絵は飛びません。GStreamer のパイプラインが `INSTANT_RATE_CHANGE` に非対応の場合は使用不可となり、その状態を表示します（**Jump へ切り替えて**ください。フラッシュシークへの自動フォールバックはしません）。レートを出しても残差が縮まない場合も、残差が大きいとき（窓の開始で 30ms 以上）に限り既定回数で諦めて警告し、補正なしへ落ちます |
+| **Smooth**（既定） | 残差に比例して再生レートを動かします（`rate = 1 + clamp(e / 1.0s, ±0.10)`）。デッドバンド **5ms**、戻りバンド **2ms** です。LTC の時刻は音声サンプル位置から出したフレーム終端を基準にしています（`ERYTHEIA_LTC_SAMPLE_CLOCK=off` で従来の受信時刻基準）。**シークやトラック切替の着地直後 1.0 秒だけ上限が ±0.20** になります（収束を 1 秒以内にするため。着地誤差 100〜150ms なら約 0.5〜0.8 秒で詰まります）。**シークを発行しない**ので絵は飛びません。GStreamer のパイプラインが `INSTANT_RATE_CHANGE` に非対応の場合は使用不可となり、その状態を表示します（**Jump へ切り替えて**ください。フラッシュシークへの自動フォールバックはしません）。レートを出しても残差が縮まない場合も、残差が大きいとき（窓の開始で 30ms 以上）に限り既定回数で諦めて警告し、補正なしへ落ちます |
 | `Jump` | 残差が **80ms（LTC 2 フレーム分）** を超えたらフラッシュシークで合わせます。Smooth のデッドバンド（5ms）より広いのは、LTC の粒度と音声コールバック（50ms ごと）で残差に ±20〜40ms の揺れが乗るためです。連続 3 回で止まり、残差が 1 秒間しきい値の内側に留まると回数が戻ります（揺れで飛び続けない） |
 
 **音声への影響（重要）**: Smooth の上限 ±10% は音程で約 **165 セント（約 1.65 半音）**です。

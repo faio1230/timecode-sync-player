@@ -39,7 +39,7 @@ public sealed class UiaReadSideEffectE2ETests
         string videoPath = TestVideoFactory.GetOrCreate();
         string traceDir = Path.Combine(Path.GetTempPath(), $"tcs-uia-read-{Environment.ProcessId}-{DateTime.UtcNow.Ticks}");
         Directory.CreateDirectory(traceDir);
-        var environment = new Dictionary<string, string?> { ["TIMECODE_SYNC_PLAYER_OUTPUT_TRACE"] = traceDir };
+        var environment = new Dictionary<string, string?> { ["ERYTHEIA_OUTPUT_TRACE"] = traceDir };
 
         long idleStart, idleEnd, readStart, readEnd;
         int reads = 0;
@@ -51,9 +51,9 @@ public sealed class UiaReadSideEffectE2ETests
                 E2EAssert.WaitUntil(() => app.Button("BtnPlay").Name == "⏸", TimeSpan.FromSeconds(5));
             Thread.Sleep(2000);
 
-            // 区間の長さは TCS_UIA_READ_SECONDS で伸ばせる（GPU 使用率などを外から並べて測るとき用）。
+            // 区間の長さは ERYTHEIA_UIA_READ_SECONDS で伸ばせる（GPU 使用率などを外から並べて測るとき用）。
             // テスト動画は 20 秒なので、待機 2 秒 + 2 区間が収まる 8 秒までにする。
-            double phaseSeconds = double.TryParse(Environment.GetEnvironmentVariable("TCS_UIA_READ_SECONDS"),
+            double phaseSeconds = double.TryParse(Environment.GetEnvironmentVariable("ERYTHEIA_UIA_READ_SECONDS"),
                 NumberStyles.Float, CultureInfo.InvariantCulture, out double s) && s > 0 ? Math.Min(s, 8.0) : 3.0;
             idleStart = Stopwatch.GetTimestamp();
             Thread.Sleep(TimeSpan.FromSeconds(phaseSeconds));

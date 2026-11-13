@@ -6,7 +6,7 @@ namespace TimecodeSyncPlayer.Tests;
 /// 0.4.5-A フェーズ 2: 評価位置（着地未確認なら配信 PTS + 外挿）を判断にも使う。
 /// ここで固定するのは「判断に使う値が評価位置になること」と
 /// 「トレース用のクエリ値の意味が変わらないこと」の 2 点。
-/// スイッチ（TCS_SYNC_POSITION_FEEDBACK）の既定 off は TimecodeSyncService 側の配線で、
+/// スイッチ（ERYTHEIA_SYNC_POSITION_FEEDBACK）の既定 off は TimecodeSyncService 側の配線で、
 /// off のときは EvalPositionSeconds が判断へ渡らないため、エンジンは従来どおり動く。
 /// </summary>
 public sealed class V045APhase2Tests

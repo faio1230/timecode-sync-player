@@ -186,7 +186,7 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
     private static string LocateExe()
     {
         // 環境変数で明示指定
-        string? env = Environment.GetEnvironmentVariable("TIMECODE_SYNC_PLAYER_E2E_APP_PATH");
+        string? env = Environment.GetEnvironmentVariable("ERYTHEIA_E2E_APP_PATH");
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
             return env;
 
@@ -209,7 +209,7 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
         }
 
         throw new FileNotFoundException(
-            "ERYTHEIA.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
+            "ERYTHEIA.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか ERYTHEIA_E2E_APP_PATH を設定してください。");
     }
 
     private async Task PausePlaybackIfNeeded()

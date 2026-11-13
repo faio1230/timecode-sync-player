@@ -9,21 +9,21 @@ internal sealed record FfmpegResolution(string Ffmpeg, string FfmpegSource, stri
 
 /// <summary>
 /// v0.6.0 段 5b: 試験で素材を作る ffmpeg / ffprobe の解決。スクリプト（scripts\TcsFfmpeg.psm1）と同じ順:
-/// ffmpeg は <c>TCS_FFMPEG</c>（ffmpeg.exe のフルパス）→ リポジトリの <c>tools\ffmpeg</c>（試験用に固定した版、
+/// ffmpeg は <c>ERYTHEIA_FFMPEG</c>（ffmpeg.exe のフルパス）→ リポジトリの <c>tools\ffmpeg</c>（試験用に固定した版、
 /// scripts\get-ffmpeg.ps1 で取る。試験基盤の 8）→ 既定のフォルダ（スクリプトの -FfmpegDir の既定と同じ
 /// <c>%ProgramFiles%\ffmpeg\bin</c>。試験には引数が無いので既定だけ）→ PATH（最後の手）。
-/// ffprobe は <c>TCS_FFPROBE</c> → 解決した ffmpeg と同じフォルダ → PATH。
+/// ffprobe は <c>ERYTHEIA_FFPROBE</c> → 解決した ffmpeg と同じフォルダ → PATH。
 /// 以前は名前（"ffmpeg"）で起動しており、開発機と検証機で PATH の先頭の版が逆向きにずれていた。
 /// 試験基盤の 8: 見つけた ffmpeg の版が 6 未満なら、最初に <see cref="Ffmpeg"/> を使うところで止める
 /// （検証機のまっさらな回で n5.0 を拾い、F-7 の HAP の素材が試験の中で作れず落ちたため）。
 /// </summary>
 internal static class FfmpegTool
 {
-    public const string FfmpegEnvironmentVariable = "TCS_FFMPEG";
-    public const string FfprobeEnvironmentVariable = "TCS_FFPROBE";
+    public const string FfmpegEnvironmentVariable = "ERYTHEIA_FFMPEG";
+    public const string FfprobeEnvironmentVariable = "ERYTHEIA_FFPROBE";
 
     /// <summary>tools\ffmpeg の置き換え（自己試験の用。ふだんは設定しない）。scripts と同じ名前。</summary>
-    public const string ToolsDirectoryEnvironmentVariable = "TCS_FFMPEG_TOOLS_DIR";
+    public const string ToolsDirectoryEnvironmentVariable = "ERYTHEIA_FFMPEG_TOOLS_DIR";
 
     /// <summary>これより古い版では試験を始めない（素材の一部、特に hap_mov が作れない）。</summary>
     public const int MinimumMajor = 6;
@@ -47,7 +47,18 @@ internal static class FfmpegTool
     }
 
     private static readonly Lazy<FfmpegResolution> s_resolution = new(() =>
-        Resolve(Environment.GetEnvironmentVariable, ToolsDirectory, DefaultDirectory, Environment.GetEnvironmentVariable("PATH")));
+        Resolve(WithLegacyNames(Environment.GetEnvironmentVariable), ToolsDirectory, DefaultDirectory, Environment.GetEnvironmentVariable("PATH")));
+
+    /// <summary>
+    /// v0.6.7: 環境変数の名前を ERYTHEIA_* に変えた。v0.6.x の間は、新しい名前が無ければ旧の名前（TCS_FFMPEG など）も読む。
+    /// </summary>
+    internal static Func<string, string?> WithLegacyNames(Func<string, string?> getEnvironment) => name =>
+    {
+        string? value = getEnvironment(name);
+        if (!string.IsNullOrWhiteSpace(value) || !name.StartsWith("ERYTHEIA_", StringComparison.Ordinal))
+            return value;
+        return getEnvironment("TCS_" + name["ERYTHEIA_".Length..]);
+    };
 
     private static readonly Lazy<string> s_versionLines = new(() => ReadVersionLines(s_resolution.Value.Ffmpeg));
 

@@ -3,7 +3,7 @@
 # 利用者の %LOCALAPPDATA%\ERYTHEIA\settings.json（と v0.6.6 までの %LOCALAPPDATA%\TimecodeSyncPlayer\settings.json）を
 # 書き換えないため。
 #
-# 一時フォルダを作り、その中の settings.json を TIMECODE_SYNC_PLAYER_SETTINGS_PATH
+# 一時フォルダを作り、その中の settings.json を ERYTHEIA_SETTINGS_PATH
 # （AppSettingsManager.SettingsPathEnvironmentVariable）で exe に渡して起動する。
 # - 環境変数は起動する子プロセスにだけ渡す（このシェルの環境は変えない）。
 # - 設定ファイルのパスが利用者の既定の settings.json と同じになるときは起動しない。
@@ -44,7 +44,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$settingsVariable = 'TIMECODE_SYNC_PLAYER_SETTINGS_PATH'
+$settingsVariable = 'ERYTHEIA_SETTINGS_PATH'
 
 if ([string]::IsNullOrWhiteSpace($ExePath)) {
     $ExePath = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe'

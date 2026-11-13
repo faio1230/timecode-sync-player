@@ -172,14 +172,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// <b>新しい機能が既存の合格を 5 件壊しているので、既定では渡さない。</b>
     /// 正しい直し方は「最大ギャップからの点推定」をやめ、<b>キーフレーム列を見て着地先を選ぶ</b>こと
     /// （docs/analysis/2026-09-19-keyframe-aware-seek-target.md）。0.4.6 で入れる。
-    /// 計測用に <c>TCS_SEEK_COST_HINT=on</c> で有効にできる。
+    /// 計測用に <c>ERYTHEIA_SEEK_COST_HINT=on</c> で有効にできる。
     /// </summary>
     private readonly bool _seekCostHintEnabled =
-        string.Equals(Environment.GetEnvironmentVariable("TCS_SEEK_COST_HINT"), "on",
+        string.Equals(EnvironmentVariables.Get("ERYTHEIA_SEEK_COST_HINT"), "on",
             StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// 0.4.5-C3: キーフレーム分布のスキャンを行うか（`TCS_GOP_SCAN=off` で止める）。<b>既定は on。</b>
+    /// 0.4.5-C3: キーフレーム分布のスキャンを行うか（`ERYTHEIA_GOP_SCAN=off` で止める）。<b>既定は on。</b>
     ///
     /// 足した理由は 2 つ。
     /// 1. <b>切り分けのため。</b>v0.4.3（スキャン無し）は M8 ×5 で配信の落ち込みが 0/277 窓、
@@ -192,7 +192,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     /// 止めると<b>キーフレーム間隔の警告も出なくなる</b>（判定の材料が無くなるため）。
     /// </summary>
     private readonly bool _gopScanEnabled =
-        !string.Equals(Environment.GetEnvironmentVariable("TCS_GOP_SCAN"), "off",
+        !string.Equals(EnvironmentVariables.Get("ERYTHEIA_GOP_SCAN"), "off",
             StringComparison.OrdinalIgnoreCase);
 
     // ── 同期コーディネータ（遅延生成キャッシュ。ラムダは this のフィールドのみを参照するため
@@ -263,7 +263,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         if (outputBackendState.IsInitialized && outputBackendState.PlaybackAvailable)
         {
             // プレビューは OutputEngine の読み戻しで更新する。
-            OutputTrace outputTrace = OutputTrace.Create(Environment.GetEnvironmentVariable(OutputTrace.EnvironmentVariable));
+            OutputTrace outputTrace = OutputTrace.Create(EnvironmentVariables.Get(OutputTrace.EnvironmentVariable));
             OutputTrace.Current = outputTrace;
             _outputEngine = new OutputEngine(new OutputEngineSettings
             {
@@ -275,7 +275,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 Trace = outputTrace,
                 PreviewFrameReady = OnOutputPreviewFrame,
                 SimulatedDeviceLossSeconds = OutputEngineSettings.ParseSimulatedDeviceLossSeconds(
-                    Environment.GetEnvironmentVariable(OutputEngineSettings.SimulateDeviceLossEnvironmentVariable)),
+                    EnvironmentVariables.Get(OutputEngineSettings.SimulateDeviceLossEnvironmentVariable)),
                 GpuStatusChanged = OnGpuStatusChanged,
                 GStreamerRebindRequested = OnGStreamerRebindRequested,
                 SourceFrameReady = OnSourceFrameReady,

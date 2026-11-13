@@ -13,7 +13,7 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 /// <summary>
 /// D5 の決定的な再現系。GStreamer × GPU 合成で、トラック切替（世代変更）の直後に
 /// 映像が黒のまま戻らない事象を、**Spout 受信（アプリの A1 読み戻しとは独立した消費者）**
-/// が受け取った画素で判定する。出力トレース（TIMECODE_SYNC_PLAYER_OUTPUT_TRACE）も
+/// が受け取った画素で判定する。出力トレース（ERYTHEIA_OUTPUT_TRACE）も
 /// 同時に取り、取得側の状態（acquire の imageId が固まっていないか）を残す。
 ///
 ///  - 対照: 切替しなければ受信フレームは映像のまま（観測経路の妥当性）
@@ -23,7 +23,7 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 [Collection("E2E")]
 public sealed class D5BlackAfterSwitchReproE2ETests
 {
-    private const string SenderEnvVar = "TIMECODE_SYNC_PLAYER_SPOUT_NAME";
+    private const string SenderEnvVar = "ERYTHEIA_SPOUT_NAME";
 
     [SkippableFact(Timeout = 180_000)]
     public void GpuCompositor_WithoutTrackSwitch_PublishesContent()
@@ -50,7 +50,7 @@ public sealed class D5BlackAfterSwitchReproE2ETests
     public void GpuCompositor_ForcedBlackAtSwitch_PublishesContentAfterSwitch()
     {
         // D5 の決定的再現: 世代切替からその世代の最初のフレーム取得まで gap を Black に
-        // 固定する（TCS_TEST_FORCE_GAP_BLACK_ON_SWITCH=1）。修正前は lease が返らず、
+        // 固定する（ERYTHEIA_TEST_FORCE_GAP_BLACK_ON_SWITCH=1）。修正前は lease が返らず、
         // 切替後の出力が黒のままになる。
         Observation observation = RunSpoutObservation(
             receiverSeconds: 18, switchAtMs: 10_500, forceGapBlackOnSwitch: true);
@@ -91,7 +91,7 @@ public sealed class D5BlackAfterSwitchReproE2ETests
             var environment = new Dictionary<string, string?>
             {
                 [SenderEnvVar] = sender,
-                ["TIMECODE_SYNC_PLAYER_OUTPUT_TRACE"] = workDir,
+                ["ERYTHEIA_OUTPUT_TRACE"] = workDir,
                 [OutputEngine.ForceGapBlackOnSwitchEnvironmentVariable] =
                     forceGapBlackOnSwitch ? "1" : null,
             };

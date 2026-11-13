@@ -6,7 +6,7 @@ namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
 /// ffmpeg でテスト用動画を生成するヘルパー。アプリドメイン単位で一度だけ生成する。
-/// 段 5b: ffmpeg は <see cref="FfmpegTool"/>（TCS_FFMPEG → tools\ffmpeg → 既定のフォルダ → PATH）で解決し、
+/// 段 5b: ffmpeg は <see cref="FfmpegTool"/>（ERYTHEIA_FFMPEG → tools\ffmpeg → 既定のフォルダ → PATH）で解決し、
 /// 作った素材の版を素材のフォルダの ffmpeg-version.txt に記録する（6 未満なら警告を標準エラーへ 1 行）。
 /// </summary>
 internal static class TestVideoFactory

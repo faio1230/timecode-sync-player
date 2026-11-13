@@ -15,7 +15,7 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 /// LTC をプレイリストの先頭から最後のトラックの終わりまで流し、終わったら先頭へ戻して
 /// 繰り返す。1 周ごとに「トラック切替」「ギャップの出入り」「周回の戻り（大きな逆方向の
 /// 跳躍）」が一通り起きるので、切替の経路を何十〜何百回と踏む。長さは
-/// TCS_L1_FOLLOW_SECONDS で指定する（L-1 と共通）。
+/// ERYTHEIA_L1_FOLLOW_SECONDS で指定する（L-1 と共通）。
 /// </para>
 ///
 /// <para>
@@ -51,13 +51,13 @@ public sealed partial class LtcScenarioE2ETests
     private const double L2SyncSettleTimeoutSeconds = 20.0;
 
     /// <summary>
-    /// L-2: 切替の見え方を 4 コマ残す回数。TCS_L2_CAPTURE_SWITCHES で指定する（既定 0）。
+    /// L-2: 切替の見え方を 4 コマ残す回数。ERYTHEIA_L2_CAPTURE_SWITCHES で指定する（既定 0）。
     /// 残す回は着地時間の測定が 1.6 秒遅れるので、診断のときだけ使う。
     /// </summary>
     private static int L2CapturedSwitches;
 
     private static int L2CaptureSwitchLimitFromEnvironment() =>
-        int.TryParse(Environment.GetEnvironmentVariable("TCS_L2_CAPTURE_SWITCHES"),
+        int.TryParse(Environment.GetEnvironmentVariable("ERYTHEIA_L2_CAPTURE_SWITCHES"),
             NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed > 0
             ? parsed
             : 0;
@@ -72,25 +72,25 @@ public sealed partial class LtcScenarioE2ETests
         double totalSeconds = Math.Max(lapSeconds, requestedSeconds);
 
         scenario.SetSync(true);
-        bool spoutRequired = L2BooleanFromEnvironment("TCS_L2_ENABLE_SPOUT");
+        bool spoutRequired = L2BooleanFromEnvironment("ERYTHEIA_L2_ENABLE_SPOUT");
         if (spoutRequired)
             scenario.SetSpout(true);
         double healthIntervalSeconds = L2PositiveDoubleFromEnvironment(
-            "TCS_L2_HEALTH_SAMPLE_SECONDS", 10.0);
+            "ERYTHEIA_L2_HEALTH_SAMPLE_SECONDS", 10.0);
         double maxFrameDeficitSeconds = L2PositiveDoubleFromEnvironment(
-            "TCS_L2_MAX_FRAME_DEFICIT_SECONDS", 0.5);
+            "ERYTHEIA_L2_MAX_FRAME_DEFICIT_SECONDS", 0.5);
         double maxPositionStallSeconds = L2PositiveDoubleFromEnvironment(
-            "TCS_L2_MAX_POSITION_STALL_SECONDS", 0.5);
+            "ERYTHEIA_L2_MAX_POSITION_STALL_SECONDS", 0.5);
         double maxSpoutReceiverGapMilliseconds = L2PositiveDoubleFromEnvironment(
-            "TCS_L2_MAX_SPOUT_RECEIVER_GAP_MS", 500.0);
+            "ERYTHEIA_L2_MAX_SPOUT_RECEIVER_GAP_MS", 500.0);
         double probeIntervalMilliseconds = L2PositiveDoubleFromEnvironment(
-            "TCS_L2_PROBE_INTERVAL_MS", 250.0);
+            "ERYTHEIA_L2_PROBE_INTERVAL_MS", 250.0);
         double maxLoadMilliseconds = L2PositiveDoubleFromEnvironment(
-            "TCS_L2_MAX_LOAD_MILLISECONDS", 5000.0);
+            "ERYTHEIA_L2_MAX_LOAD_MILLISECONDS", 5000.0);
         double? maxPrivateGrowthMbPerHour = L2OptionalPositiveDoubleFromEnvironment(
-            "TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR");
+            "ERYTHEIA_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR");
         double? maxHandleGrowthPerHour = L2OptionalPositiveDoubleFromEnvironment(
-            "TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR");
+            "ERYTHEIA_L2_MAX_HANDLE_GROWTH_PER_HOUR");
         scenario.Journal.Write("l2-plan", details: new
         {
             requestedSeconds,

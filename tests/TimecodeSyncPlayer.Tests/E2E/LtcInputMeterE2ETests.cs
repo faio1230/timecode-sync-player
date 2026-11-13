@@ -12,7 +12,7 @@ namespace TimecodeSyncPlayer.Tests;
 /// <summary>
 /// v0.6.6 R-13: LTC の入力のメーターと受信の表示（ケーブルの折り返し）。LTC・音（正弦波・雑音）・無音を流し、
 /// 受信の表示の 3 段とメーターを確かめる。VB-CABLE が無い環境ではスキップ。
-/// 環境変数 TCS_R13_PNG_DIR を置くと、各段の LTC の欄を PNG に切り出す（窓の中だけ）。
+/// 環境変数 ERYTHEIA_R13_PNG_DIR を置くと、各段の LTC の欄を PNG に切り出す（窓の中だけ）。
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection("E2E")]
@@ -177,10 +177,10 @@ public sealed class LtcInputMeterE2ETests : IClassFixture<TimecodeSyncPlayerFixt
         return samples;
     }
 
-    /// <summary>LTC の欄だけを切り出す（TCS_R13_PNG_DIR があるときだけ）。窓を前に出してから窓の中を写す。</summary>
+    /// <summary>LTC の欄だけを切り出す（ERYTHEIA_R13_PNG_DIR があるときだけ）。窓を前に出してから窓の中を写す。</summary>
     private void CapturePanel(string fileName)
     {
-        string? directory = Environment.GetEnvironmentVariable("TCS_R13_PNG_DIR");
+        string? directory = Environment.GetEnvironmentVariable("ERYTHEIA_R13_PNG_DIR");
         if (string.IsNullOrWhiteSpace(directory))
             return;
         Directory.CreateDirectory(directory);
@@ -285,7 +285,7 @@ public sealed class LtcInputMeterE2ETests : IClassFixture<TimecodeSyncPlayerFixt
 /// v0.6.7 #44: 要約の maxLateMs はほぼ常に起動の 1 回目（中央 838ms、230 件中 8 件が 1000ms 以上）なので、
 /// 前は (1) を「maxLateMs が firstLateMs と同じか 1000ms 未満」とし、受信中の 1 秒未満の止まりを見ていなかった。
 /// 今は 1 回目を除いた最大で見る（起動の 1 回目の遅れは判定に入れない）。
-/// 環境変数 TCS_R13_REPORT_DIR を置くと、要約を heartbeat.txt に書く。
+/// 環境変数 ERYTHEIA_R13_REPORT_DIR を置くと、要約を heartbeat.txt に書く。
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection("E2E")]
@@ -379,7 +379,7 @@ public sealed class LtcInputMeterHeartbeatE2ETests
                 $"ticks={ticks} reason={summaryReason} maxLateAfterFirstMs={maxAfterFirstText} medianLateMs={medianText} " +
                 $"ltcStartToReceivingMs={(receivingLocal - ltcStartedLocal).TotalMilliseconds:F0}");
             _output.WriteLine(summary);
-            string? reportDirectory = Environment.GetEnvironmentVariable("TCS_R13_REPORT_DIR");
+            string? reportDirectory = Environment.GetEnvironmentVariable("ERYTHEIA_R13_REPORT_DIR");
             if (!string.IsNullOrWhiteSpace(reportDirectory))
             {
                 Directory.CreateDirectory(reportDirectory);

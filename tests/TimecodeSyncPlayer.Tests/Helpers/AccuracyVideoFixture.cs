@@ -19,13 +19,13 @@ internal static class AccuracyVideoFixture
     /// T11: キーフレーム間隔（フレーム数）の上書き。未設定なら 1 秒ぶん。
     /// 記録用に長い間隔（例 250）でも生成できるようにする。
     /// </summary>
-    public const string GopOverrideEnvironmentVariable = "TCS_V3_GOP";
+    public const string GopOverrideEnvironmentVariable = "ERYTHEIA_V3_GOP";
 
     /// <summary>
     /// M3-b: フィクスチャ素材の fps 上書き。"25,30,60" のように 3 本ぶんをカンマ区切りで指定する
     /// （分数は "30000/1001"）。未設定なら既定の 24 / 29.97 / 60。マーカーは clip 1〜3 固定。
     /// </summary>
-    public const string FpsOverrideEnvironmentVariable = "TCS_V3_FIXTURE_FPS";
+    public const string FpsOverrideEnvironmentVariable = "ERYTHEIA_V3_FIXTURE_FPS";
 
     public static async Task<AccuracyFixture> CreateAsync(
         string reportDirectory,

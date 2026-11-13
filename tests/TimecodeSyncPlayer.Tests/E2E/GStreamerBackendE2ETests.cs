@@ -22,7 +22,7 @@ namespace TimecodeSyncPlayer.Tests.E2E;
 [Collection("E2E")]
 public sealed class GStreamerBackendE2ETests
 {
-    private const string SenderEnvVar = "TIMECODE_SYNC_PLAYER_SPOUT_NAME";
+    private const string SenderEnvVar = "ERYTHEIA_SPOUT_NAME";
 
     [SkippableFact(Timeout = 240_000)]
     public void GStreamerBackend_PlaysAndPublishesGpuFramesToSpout()

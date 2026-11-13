@@ -19,8 +19,8 @@ function Measure-Backend {
     $settingsPath = Join-Path $dir "settings.json"
     [System.IO.File]::WriteAllText($settingsPath, "{`"backend`":$Backend}")
 
-    $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH = $settingsPath
-    $env:TIMECODE_SYNC_PLAYER_SPOUT_NAME = "TCSPerf-$Label"
+    $env:ERYTHEIA_SETTINGS_PATH = $settingsPath
+    $env:ERYTHEIA_SPOUT_NAME = "TCSPerf-$Label"
     $exeDir = Split-Path -Parent $exe
     $p = $null
     try {
@@ -56,8 +56,8 @@ function Measure-Backend {
     }
     finally {
         if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-        Remove-Item Env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH -ErrorAction SilentlyContinue
-        Remove-Item Env:TIMECODE_SYNC_PLAYER_SPOUT_NAME -ErrorAction SilentlyContinue
+        Remove-Item Env:ERYTHEIA_SETTINGS_PATH -ErrorAction SilentlyContinue
+        Remove-Item Env:ERYTHEIA_SPOUT_NAME -ErrorAction SilentlyContinue
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
     }
 }
