@@ -54,10 +54,10 @@ src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe
 
 **ログの場所（実行後）:**
 ```
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log   # アプリ（Serilog）
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\tcs-gst-YYYYMMDD.log             # shim（tcs_gstreamer.dll）
+src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log   # アプリ（Serilog）
+src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log             # shim（tcs_gstreamer.dll）
 ```
-shim のログの出力先は環境変数 `ERYTHEIA_LOG_FILE`。未設定ならアプリが起動時に上の logs を設定し、7 日より古い `tcs-gst-*.log` を消す。
+shim のログの出力先は環境変数 `ERYTHEIA_LOG_FILE`。未設定ならアプリが起動時に上の logs を設定し、7 日より古い `erytheia-gst-*.log` と、v0.6.6 までの名前のログ（`tcs-gst-*.log`・`timecodesyncplayer-*.log`）を消す。
 
 ---
 

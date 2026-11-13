@@ -460,7 +460,7 @@ finally {
     $result.completedNormally = ($null -eq $result.error) -and ($null -ne $result.appExit)
     $result.endedUtc = [DateTime]::UtcNow.ToString('o')
     $logDir = Join-Path (Split-Path $AppExe) 'logs'
-    $latest = Get-ChildItem $logDir -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+    $latest = Get-ChildItem $logDir -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { (($_.Name -like 'erytheia-*.log' -and $_.Name -notlike 'erytheia-gst-*.log') -or $_.Name -like 'timecodesyncplayer-*.log') } | Sort-Object LastWriteTime | Select-Object -Last 1
     if ($latest) { Get-Content $latest.FullName -Tail 400 | Set-Content (Join-Path $run 'app-log-tail.txt') -Encoding UTF8 }
     $result | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $run 'runner-result.json') -Encoding UTF8
 }

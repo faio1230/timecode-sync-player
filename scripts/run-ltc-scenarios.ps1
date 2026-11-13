@@ -99,7 +99,7 @@ param(
     # Keep output-trace even for a passed run (default: delete it when failed=0 and invalid=0).
     [switch]$KeepTrace,
     [switch]$SkipBuild,
-    # v0.6.4: by default today's app logs (timecodesyncplayer-<today>*.log) are MOVED (never deleted) to
+    # v0.6.4: by default today's app logs (erytheia-<today>*.log, old timecodesyncplayer-<today>*.log) are MOVED (never deleted) to
     # artifacts\analysis-data\logs-<yyyyMMdd>-<HHmmss>\ before the run, so the tests do not read a log
     # that grew over earlier runs of the day (25.9 -> 48.5 MB made the test setup about 2.2 s slower,
     # design 9-2). -KeepAppLogs leaves them in place.
@@ -720,7 +720,7 @@ Write-Output ('l2: spout=' + $env:ERYTHEIA_L2_ENABLE_SPOUT +
 
 # ---- archive today's app logs (v0.6.4) --------------------------------------
 # The E2E waits read the app log of the run from its start time; a log that grew over earlier runs
-# of the day made every wait slower (design 9-2). Move today's timecodesyncplayer-*.log out of the
+# of the day made every wait slower (design 9-2). Move today's app logs (erytheia-*.log, old timecodesyncplayer-*.log) out of the
 # log folders the run writes to (the folder next to the app exe, and without -AppExe the test output
 # folder). Move, never delete. A file that cannot be moved (open in a running app) is left in place
 # with a warning; the run itself is not stopped.
@@ -735,12 +735,14 @@ if (-not $KeepAppLogs) {
             $archiveSources += @{ Dir = $archiveTestBin; Sub = 'test-bin' }
         }
     }
-    $todayPattern = 'timecodesyncplayer-' + $archiveStamp.ToString('yyyyMMdd') + '*.log'
+    # v0.6.7: the app log is erytheia-<day>*.log (old timecodesyncplayer-<day>*.log); the shim log
+    # erytheia-gst-*.log does not match (the day comes right after the prefix).
+    $todayPatterns = @('erytheia-', 'timecodesyncplayer-') | ForEach-Object { $_ + $archiveStamp.ToString('yyyyMMdd') + '*.log' }
     $movedLogs = 0
     $movedBytes = 0
     foreach ($source in $archiveSources) {
         if (-not (Test-Path -LiteralPath $source.Dir)) { continue }
-        foreach ($log in @(Get-ChildItem -LiteralPath $source.Dir -File -Filter $todayPattern -ErrorAction SilentlyContinue)) {
+        foreach ($log in @($todayPatterns | ForEach-Object { Get-ChildItem -LiteralPath $source.Dir -File -Filter $_ -ErrorAction SilentlyContinue })) {
             $dest = Join-Path $archiveDir $source.Sub
             try {
                 New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -818,7 +820,7 @@ foreach ($source in $logSources) {
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     $logs = @(Get-ChildItem -LiteralPath $source.Dir -File -ErrorAction SilentlyContinue |
         Where-Object {
-            ($_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
+            ($_.Name -like 'erytheia-*.log' -or $_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
             $_.LastWriteTime -ge $testStart.AddMinutes(-2)
         })
     foreach ($log in $logs) {
@@ -903,7 +905,8 @@ if (Test-Path -LiteralPath $trxPath) {
 
 $errFtl = 0
 foreach ($name in $copiedLogs) {
-    if ((Split-Path $name -Leaf) -notlike 'timecodesyncplayer-*.log') { continue }
+    $leaf = Split-Path $name -Leaf
+    if (-not (($leaf -like 'erytheia-*.log' -and $leaf -notlike 'erytheia-gst-*.log') -or $leaf -like 'timecodesyncplayer-*.log')) { continue }
     $path = Join-Path $appLogDest $name
     foreach ($line in (Get-Content -LiteralPath $path)) {
         if ($line -notmatch '\[(ERR|FTL)\]') { continue }

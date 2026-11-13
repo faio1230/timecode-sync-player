@@ -182,7 +182,7 @@ H.264・ProRes・HAP以外の形式（VP9・AV1・H.265・VP8・MPEG-2・MPEG-4�
 1. 警告が出ていないか。出ていれば、まず素材をキーフレーム間隔1秒（長くても2秒）で書き出し直す
 2. 素材とタイムコードのfpsが揃っているか
 3. タイムコードのノイズ。ハムやホワイトノイズが乗っていないか
-4. それでも直らない場合は、ログ（`logs\timecodesyncplayer-YYYYMMDD.log`）を添えてご連絡ください
+4. それでも直らない場合は、ログ（`logs\erytheia-YYYYMMDD.log`）を添えてご連絡ください
 
 ---
 
@@ -212,7 +212,7 @@ CPU内蔵のGPUでは、4K60の素材を実時間でデコードしきれない�
 
 ProResは同梱のプラグイン（gst-prores-d3d11）でGPUデコードします。検証して推奨しているのはNVIDIA（RTX級）のGPUです。プラグインはDirect3D 11の汎用のシェーダーで動くので、v0.6.5からは既定（自動）でどのGPUでもGPUデコードします。NVIDIA以外は、検証機のCPU内蔵のGPU（AMD）で確かめた範囲です。内蔵のGPUでは4K60のProResのデコードがCPUより追いつかないことがあり、そのときは画面の「ProRes の GPU デコード」を「無効」にしてください。自動・有効・無効の変更は、アプリの再起動後に反映されます。
 
-GPUデコードに1回失敗すると、その起動の間はProResをCPUでデコードします（アプリの再起動でGPUをまた試します）。どちらで開いたかの手がかりは、画面のメタデータ行のデコーダ名です。`V:proresd3d11dec`ならGPU、`V:avdec_prores`ならCPUです。理由はshimのログ（`logs\tcs-gst-YYYYMMDD.log`）の`prores-gpu:`と`load.skip`・`load.fail`の行に出ます。
+GPUデコードに1回失敗すると、その起動の間はProResをCPUでデコードします（アプリの再起動でGPUをまた試します）。どちらで開いたかの手がかりは、画面のメタデータ行のデコーダ名です。`V:proresd3d11dec`ならGPU、`V:avdec_prores`ならCPUです。理由はshimのログ（`logs\erytheia-gst-YYYYMMDD.log`）の`prores-gpu:`と`load.skip`・`load.fail`の行に出ます。
 
 GPUデコードのプラグインに必要なのは、Microsoft Visual C++ v14再頒布可能パッケージ（x64）14.50以上（旧称 Microsoft Visual C++ 2015-2022）です。インストーラーは入っていないか古いときだけ導入し、その途中で一度だけ管理者の確認（UAC）が出ます。入っていないときはCPUでデコードします。
 

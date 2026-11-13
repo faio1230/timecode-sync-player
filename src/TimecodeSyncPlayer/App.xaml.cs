@@ -86,7 +86,7 @@ public partial class App : Application
         GstNativeLibraryResolver.ConfigureLogFile(logDir);
         // v0.5.4 K3 (3): shim のポンプの予算（着地の時間切れ − 0.5 秒）を DLL ロード前に渡す。
         GstNativeLibraryResolver.ConfigurePumpBudget();
-        string logPath = Path.Combine(logDir, "timecodesyncplayer-.log");
+        string logPath = LogFileNames.SerilogPath(logDir);
 
 #if DEBUG
         var minLevel = Serilog.Events.LogEventLevel.Debug;
@@ -125,7 +125,7 @@ public partial class App : Application
         };
 
         Log.Information(
-            "=== TimecodeSyncPlayer v{Version} 起動 === ログ: {Path}",
+            "=== ERYTHEIA v{Version} 起動 === ログ: {Path}",
             ApplicationVersion.Current,
             logPath);
         // v0.6.6 F-7: 現場のログで ffprobe の有無が分かるように 1 行（長さには使わない）。
@@ -151,7 +151,7 @@ public partial class App : Application
         // MainWindow owns ordered shutdown of its RenderSession and the shared LTC/Spout services.
         // Keep the provider rooted until process exit; disposing it here would bypass that order
         // and retry native resources whose release may have failed in Window_Closing.
-        Log.Information("=== TimecodeSyncPlayer 終了 ===");
+        Log.Information("=== ERYTHEIA 終了 ===");
         Log.CloseAndFlush();
         base.OnExit(e);
     }

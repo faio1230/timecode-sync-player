@@ -76,6 +76,30 @@ public class AppLogReaderTests : IDisposable
             "2026-10-03 00:00:00.300 +09:00 [INF] Playlist track loaded index=1");
     }
 
+    [Fact]
+    public void ReadLinesSince_NewAndOldNames_ReadsBothInOrderAndSkipsTheShimLog()
+    {
+        // v0.6.7: アプリのログは erytheia-*.log。v0.6.6 から上げた日は旧の timecodesyncplayer-*.log が先に書かれる。
+        // 同じフォルダの shim のログ（erytheia-gst-*.log）は読まない。
+        string dir = Path.Combine(_logDir, "names");
+        Directory.CreateDirectory(dir);
+        string legacy = Path.Combine(dir, "timecodesyncplayer-20261003.log");
+        File.WriteAllText(legacy, "2026-10-03 10:00:00.000 +09:00 [INF] === TimecodeSyncPlayer v0.6.6 起動 ===\r\n");
+        string current = Path.Combine(dir, "erytheia-20261003.log");
+        File.WriteAllText(current, "2026-10-03 11:00:00.000 +09:00 [INF] === ERYTHEIA v0.6.7 起動 ===\r\n");
+        string shim = Path.Combine(dir, "erytheia-gst-20261003.log");
+        File.WriteAllText(shim, "2026-10-03 11:00:01.000 [tcs-gst] shim line\r\n");
+        // 名前の順に並べると erytheia が先になる。書かれた時刻を逆にしても、旧の名前を先に読む。
+        File.SetLastWriteTime(current, new DateTime(2026, 10, 3, 11, 0, 1));
+        File.SetLastWriteTime(legacy, new DateTime(2026, 10, 3, 11, 0, 2));
+
+        List<string> lines = Trim(AppLogReader.ReadLinesSince(dir, new DateTime(2026, 10, 3, 0, 0, 0)));
+
+        lines.Should().Equal(
+            "2026-10-03 10:00:00.000 +09:00 [INF] === TimecodeSyncPlayer v0.6.6 起動 ===",
+            "2026-10-03 11:00:00.000 +09:00 [INF] === ERYTHEIA v0.6.7 起動 ===");
+    }
+
     // ---- v0.6.4（設計書 9-2）: 前回読んだ位置からの続きの読み（AppLogTail） ----
 
     private static void Append(string path, string text)

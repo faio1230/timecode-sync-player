@@ -111,7 +111,7 @@ function Get-LatestLogPath {
 
     $latest = $DefaultLogDirectories |
         Where-Object { Test-Path -LiteralPath $_ } |
-        ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter "timecodesyncplayer-*.log" } |
+        ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter "*.log" | Where-Object { (($_.Name -like 'erytheia-*.log' -and $_.Name -notlike 'erytheia-gst-*.log') -or $_.Name -like 'timecodesyncplayer-*.log') } } |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
 

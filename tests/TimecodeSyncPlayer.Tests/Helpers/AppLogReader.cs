@@ -5,7 +5,8 @@ using System.Text.RegularExpressions;
 namespace TimecodeSyncPlayer.Tests.Helpers;
 
 /// <summary>
-/// v0.6.4 段 4（設計書 2-3、#21）: E2E がアプリのログ（&lt;exe&gt;\logs\timecodesyncplayer-*.log）を読む共通の口。
+/// v0.6.4 段 4（設計書 2-3、#21）: E2E がアプリのログ（&lt;exe&gt;\logs\erytheia-*.log）を読む共通の口。
+/// v0.6.7 から名前は erytheia-*.log（shim の erytheia-gst-*.log は入れない）。旧の timecodesyncplayer-*.log も読む。
 /// Serilog は日次でファイルを切り替える（rollingInterval Day）ので、0 時をまたぐ回の行は前日と当日の 2 ファイルに
 /// 分かれる。最後に書かれた 1 ファイルだけを読むと前日の行を落とす（検証機の v0.5.5 の R-5 で、23:59:59 の着地の行を
 /// 落として landingSeeks=0 と誤判定）。sinceLocal の日付の 0 時以降に書かれたファイルをすべて、名前（日付）の昇順に
@@ -24,11 +25,15 @@ internal static class AppLogReader
                DateTime.TryParse(timestamp.Groups[1].Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out at);
     }
 
-    /// <summary>この日の 0 時以降に書かれたログのファイルを、名前（日付）の昇順に返す。</summary>
+    /// <summary>
+    /// この日の 0 時以降に書かれたアプリのログのファイルを、名前の日付の昇順に返す。新旧の名前が混ざる日
+    /// （v0.6.6 から上げた日）は旧の名前を先にする（<see cref="LogFileNames.AppLogSortKey"/>）。
+    /// </summary>
     internal static IEnumerable<FileInfo> FilesSince(string logDirectory, DateTime sinceLocal) =>
-        new DirectoryInfo(logDirectory).GetFiles("timecodesyncplayer-*.log")
+        new DirectoryInfo(logDirectory).GetFiles("*.log")
+            .Where(file => LogFileNames.IsAppLog(file.Name))
             .Where(file => file.LastWriteTime >= sinceLocal.Date)
-            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase);
+            .OrderBy(file => LogFileNames.AppLogSortKey(file.Name), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>アプリの exe のフォルダからログのフォルダを返す（ログは実際に起動した exe の隣に出る）。</summary>
     public static string LogDirectoryForExeDirectory(string exeDirectory) => Path.Combine(exeDirectory, "logs");

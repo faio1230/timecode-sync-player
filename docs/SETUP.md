@@ -266,10 +266,10 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 実行時のログは以下に出力されます。
 
 ```
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log
+src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log
 ```
 
-GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-YYYYMMDD.log` として出力されます（環境変数 `ERYTHEIA_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `tcs-gst-*.log` は削除されます）。
+GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `erytheia-gst-YYYYMMDD.log` として出力されます（環境変数 `ERYTHEIA_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `erytheia-gst-*.log` は削除されます）。
 
 起動後、映像が表示され、LTC入力デバイスがプルダウンに表示されることを確認してください。
 
@@ -365,7 +365,7 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
 - ProRes 4444 / 4444 XQ（アルファ付きを含む）も GPU でデコードします。アルファは合成で使わず、不透明で出します（v0.5.x と同じ）
 - 4K の CPU デコードは GPU の約 2.3 倍のメモリを使います（開発機の実測: 1.55 GB 対 0.68 GB）。CPU になるのは `proResGpu=off` のときと、GPU で開けなかったときです
 - `decodeMode=software` のときは CPU のデコードが先に試されるので、`proResGpu` が `auto`・`on` でも ProRes は CPU で開きます
-- 壊れたフレームがあっても再生は止まりません（そのフレームは捨てるか、そのまま出して続けます）。`tcs-gst-*.log` に `decode.warning` が 1 行と、件数の `decode.warnings` が出ます
+- 壊れたフレームがあっても再生は止まりません（そのフレームは捨てるか、そのまま出して続けます）。`erytheia-gst-*.log` に `decode.warning` が 1 行と、件数の `decode.warnings` が出ます
 - プラグインは VC++ の再頒布パッケージ「Microsoft Visual C++ v14 Redistributable (x64)」（旧称 Microsoft Visual C++ 2015-2022）の 14.50.35710 以上が要ります。インストーラーは古いときだけ入れます（zip の利用者は手で入れてください）。VC++ が 14.50 より古い PC では、インストールの途中で一度だけ管理者の確認（UAC）が出ます。無人でインストールするときは、先にこの再頒布パッケージ（14.50 以上）を入れておいてください。入っていないときは ProRes を CPU でデコードします
 
 ### 環境変数
@@ -381,7 +381,7 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
 | `outputBackend=1`で再生できない | D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では、起動時ダイアログを出して**再生だけを無効**にします（Cpu 合成へはフォールバックしません）。表示された原因とログを確認してください。 |
 | 再生開始に失敗する | GStreamerランタイム未導入、または`tcs_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
 | スクリプトが `cannot be run because it contained a "#requires" statement` で止まる | Windows PowerShell 5.1 で実行しています。`pwsh -File <スクリプト>` で実行してください（「1. 前提環境」）。 |
-| ProRes が CPU（`V:avdec_prores`）で開く | v0.6.5 から既定（`auto`）はどの GPU でも GPU でデコードします（v0.6.4 までは NVIDIA 以外は CPU）。CPU で開くなら、`tcs-gst-*.log` の `prores-gpu:` と `load.skip` / `load.fail` の行で理由を見てください（`proResGpu=off`、プラグインの読み込みの失敗、VC++ が古い、アダプタの不一致など）。1 回失敗するとその起動の間は CPU のままです |
+| ProRes が CPU（`V:avdec_prores`）で開く | v0.6.5 から既定（`auto`）はどの GPU でも GPU でデコードします（v0.6.4 までは NVIDIA 以外は CPU）。CPU で開くなら、`erytheia-gst-*.log` の `prores-gpu:` と `load.skip` / `load.fail` の行で理由を見てください（`proResGpu=off`、プラグインの読み込みの失敗、VC++ が古い、アダプタの不一致など）。1 回失敗するとその起動の間は CPU のままです |
 | コンソール出力やログの日本語が文字化けする | PowerShellのコンソールエンコーディングをUTF-8に設定してください。<br>`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` |
 
 ---

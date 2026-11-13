@@ -23,8 +23,8 @@
 
 ログは次の2つで、どちらも同じlogsフォルダに出る。
 
-- アプリ: `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log`
-- shim（GStreamer）: `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\tcs-gst-YYYYMMDD.log`
+- アプリ: `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log`
+- shim（GStreamer）: `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log`
 
 ---
 
@@ -302,10 +302,10 @@ ffprobeは`ERYTHEIA_FFPROBE`、`ERYTHEIA_FFMPEG`の隣の`ffprobe.exe`、`-Ffmpe
 使ったffprobeは`make-ltc-scenario-project.log`の先頭の`ffprobe: <パス> (<出所>)`の行に出る。
 漏れたかどうかは、アプリの起動のログで決める。
 
-- [ ] 1本目の回の、インストール先の`logs\timecodesyncplayer-YYYYMMDD.log`で、起動の行を数える
+- [ ] 1本目の回の、インストール先の`logs\erytheia-YYYYMMDD.log`で、起動の行を数える
 
 ```powershell
-$logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA\logs') -Filter 'timecodesyncplayer-*.log'
+$logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA\logs') -Filter 'erytheia-2*.log'
 (Select-String -Path $logs.FullName -SimpleMatch 'ffprobe: not found on PATH').Count   # 起動の回数と同じ
 (Select-String -Path $logs.FullName -SimpleMatch 'ffprobe: found on PATH').Count       # 0
 ```

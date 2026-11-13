@@ -30,11 +30,11 @@ $binaries = foreach ($binary in @($appPath, [IO.Path]::ChangeExtension($appPath,
 
 $logDirectory = Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'logs'
 $logOffsets = @{}
-foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue)) { $logOffsets[$logFile.FullName] = $logFile.Length }
+foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { (($_.Name -like 'erytheia-*.log' -and $_.Name -notlike 'erytheia-gst-*.log') -or $_.Name -like 'timecodesyncplayer-*.log') })) { $logOffsets[$logFile.FullName] = $logFile.Length }
 function Save-AppLogDelta {
     $saved = 0
     $hasErrors = $false
-    foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue)) {
+    foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { (($_.Name -like 'erytheia-*.log' -and $_.Name -notlike 'erytheia-gst-*.log') -or $_.Name -like 'timecodesyncplayer-*.log') })) {
         $offset = if ($logOffsets.ContainsKey($logFile.FullName)) { [long]$logOffsets[$logFile.FullName] } else { 0L }
         if ($logFile.Length -eq $offset) { continue }
         $destination = Join-Path $runPath ('app-' + $logFile.Name)

@@ -603,7 +603,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     }
 
     private static string ResolveLogFilePath() =>
-        Path.Combine(AppContext.BaseDirectory, "logs", $"timecodesyncplayer-{DateTime.Now:yyyyMMdd}.log");
+        Path.Combine(AppContext.BaseDirectory, "logs", LogFileNames.AppFileName(DateTime.Now));
 
     private readonly AppSettingsManager _settingsManager;
 

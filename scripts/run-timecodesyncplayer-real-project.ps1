@@ -28,7 +28,7 @@ $logDirectory = Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'logs'
 function Save-AppLogDelta {
     param([string]$Directory, [hashtable]$Offsets)
     $hasErrors = $false
-    foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue)) {
+    foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { (($_.Name -like 'erytheia-*.log' -and $_.Name -notlike 'erytheia-gst-*.log') -or $_.Name -like 'timecodesyncplayer-*.log') })) {
         $offset = if ($Offsets.ContainsKey($logFile.FullName)) { [long]$Offsets[$logFile.FullName] } else { 0L }
         if ($logFile.Length -eq $offset) { continue }
         $destination = Join-Path $Directory ('app-' + $logFile.Name)
@@ -67,7 +67,7 @@ foreach ($original in $ProjectPaths) {
     $failure = $null
     $success = $false
     $logOffsets = @{}
-    foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue)) {
+    foreach ($logFile in @(Get-ChildItem -LiteralPath $logDirectory -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { (($_.Name -like 'erytheia-*.log' -and $_.Name -notlike 'erytheia-gst-*.log') -or $_.Name -like 'timecodesyncplayer-*.log') })) {
         $logOffsets[$logFile.FullName] = $logFile.Length
     }
     try {

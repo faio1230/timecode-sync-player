@@ -40,17 +40,18 @@ try {
     $avInfo = 'exception code c0000005, exception address 00007FFB77D9088F'
 
     # App log of the day: one launch before the run (not counted), then three in the run.
+    # The launch lines mix the old "=== TimecodeSyncPlayer v" and the v0.6.7 "=== ERYTHEIA v" (both count).
     #   L1 22:00:10 reads H.264 first           -> not ProRes GPU first
     #   L2 22:03:10 FetchMetadata proresd3d11dec 1.2 s after the launch -> ProRes GPU first (the crash)
     #   L3 22:06:10 proresd3d11dec 3 s after the launch                  -> not first (over 2 s)
     $appLog = @(
         (AppLine $day.AddHours(-1) '=== TimecodeSyncPlayer v0.6.6 起動 === ログ: C:\app\logs\timecodesyncplayer-.log'),
         (AppLine $day.AddHours(-1).AddSeconds(1) 'FetchMetadata: 3840x2160 59.940fps V:proresd3d11dec A:'),
-        (AppLine $day.AddSeconds(10) '=== TimecodeSyncPlayer v0.6.6 起動 === ログ: C:\app\logs\timecodesyncplayer-.log'),
+        (AppLine $day.AddSeconds(10) '=== ERYTHEIA v0.6.7 起動 === ログ: C:\app\logs\erytheia-.log'),
         (AppLine $day.AddSeconds(11) 'FetchMetadata: 1920x1080 25.000fps V:d3d11h264dec A:aac'),
         (AppLine $day.AddMinutes(3).AddSeconds(10) '=== TimecodeSyncPlayer v0.6.6 起動 === ログ: C:\app\logs\timecodesyncplayer-.log'),
         (AppLine $day.AddMinutes(3).AddSeconds(11.2) 'FetchMetadata: 3840x2160 59.940fps V:proresd3d11dec A:'),
-        (AppLine $day.AddMinutes(6).AddSeconds(10) '=== TimecodeSyncPlayer v0.6.6 起動 === ログ: C:\app\logs\timecodesyncplayer-.log'),
+        (AppLine $day.AddMinutes(6).AddSeconds(10) '=== ERYTHEIA v0.6.7 起動 === ログ: C:\app\logs\erytheia-.log'),
         (AppLine $day.AddMinutes(6).AddSeconds(13) 'FetchMetadata: 3840x2160 59.940fps V:proresd3d11dec A:')
     )
     $trxText = @"
@@ -79,7 +80,7 @@ try {
         $root = Join-Path ([IO.Path]::GetTempPath()) ('tcs-ltc-crash-count-' + $Tag + '-' + [Guid]::NewGuid().ToString('N'))
         $roots.Add($root)
         New-Item -ItemType Directory -Force -Path (Join-Path $root 'app-logs') | Out-Null
-        [IO.File]::WriteAllLines((Join-Path $root 'app-logs\timecodesyncplayer-20261007.log'), $appLog)
+        [IO.File]::WriteAllLines((Join-Path $root 'app-logs\erytheia-20261007.log'), $appLog)
         $trxText | Set-Content -LiteralPath (Join-Path $root 'results.trx') -Encoding UTF8
         if (-not $NoCrashEvents) {
             [ordered]@{ schema = 'ltc-crash-events/1'; fromUtc = (Utc $day); testEndUtc = (Utc $day.AddMinutes(10))

@@ -288,7 +288,8 @@ function ConvertFrom-TcsCrashEventRecord($Record, [string[]]$AppNames = $script:
     return $item
 }
 
-# Launches of the app from its log lines: "=== TimecodeSyncPlayer v<version> 起動" (Information).
+# Launches of the app from its log lines: "=== ERYTHEIA v<version> 起動" (Information; v0.6.6 and older:
+# "=== TimecodeSyncPlayer v<version> 起動").
 # proresGpuFirst: a "FetchMetadata: ... V:proresd3d11dec" line (Information) within
 # ProResWindowSeconds of the launch and before the next launch. Only launches between FromUtc
 # and ToUtc (when given) are returned. [ { atUtc, version, proresGpuFirst } ] in time order.
@@ -297,7 +298,7 @@ function Get-TcsAppLaunches {
     $launches = New-Object System.Collections.Generic.List[object]
     $fetches = New-Object System.Collections.Generic.List[DateTime]
     foreach ($line in $AppLines) {
-        if ($line -match '=== TimecodeSyncPlayer v(\S+) 起動') {
+        if ($line -match '=== (?:ERYTHEIA|TimecodeSyncPlayer) v(\S+) 起動') {
             $version = $matches[1]
             $at = Get-TcsLogLineUtc $line
             if ($null -ne $at) { $launches.Add([pscustomobject]@{ atUtc = $at; version = $version; proresGpuFirst = $false }) }

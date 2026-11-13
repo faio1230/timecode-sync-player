@@ -328,7 +328,8 @@ internal static class GstNativeLibraryResolver
     /// <summary>
     /// D15/O1: shim（tcs_gstreamer.dll）の LOG 出力先（ERYTHEIA_LOG_FILE）を logs ディレクトリへ設定する。
     /// GStreamer を初期化する前に呼ぶ。利用者が既に設定していれば上書きしない。
-    /// ログの肥大を避けるため、7 日より古い tcs-gst-*.log を消す。
+    /// ログの肥大を避けるため、7 日より古い shim のログ（erytheia-gst-*.log と旧の tcs-gst-*.log）と
+    /// v0.6.6 までのアプリのログ（timecodesyncplayer-*.log）を消す。
     /// </summary>
     public static void ConfigureLogFile(string logsDirectory)
     {
@@ -338,7 +339,7 @@ internal static class GstNativeLibraryResolver
             {
                 System.IO.Directory.CreateDirectory(logsDirectory);
                 Environment.SetEnvironmentVariable("ERYTHEIA_LOG_FILE",
-                    System.IO.Path.Combine(logsDirectory, $"tcs-gst-{DateTime.Now:yyyyMMdd}.log"));
+                    System.IO.Path.Combine(logsDirectory, LogFileNames.ShimFileName(DateTime.Now)));
             }
 
             PruneOldLogFiles(logsDirectory, TimeSpan.FromDays(7));
@@ -378,7 +379,7 @@ internal static class GstNativeLibraryResolver
             return;
 
         DateTime cutoffUtc = DateTime.UtcNow - retention;
-        foreach (string path in System.IO.Directory.EnumerateFiles(logsDirectory, "tcs-gst-*.log"))
+        foreach (string path in System.IO.Directory.EnumerateFiles(logsDirectory, "*.log").Where(LogFileNames.IsPrunedAtStartup))
         {
             try
             {

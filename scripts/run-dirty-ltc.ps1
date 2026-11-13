@@ -83,7 +83,7 @@ for ($i = 1; $i -le $Repeats; $i++) {
     if (Test-Path -LiteralPath $appLogDir) {
         foreach ($log in @(Get-ChildItem -LiteralPath $appLogDir -File -ErrorAction SilentlyContinue |
             Where-Object {
-                ($_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
+                ($_.Name -like 'erytheia-*.log' -or $_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
                 $_.LastWriteTime -ge $testStart.AddMinutes(-2)
             })) {
             Copy-Item -LiteralPath $log.FullName -Destination $appLogDest -Force
