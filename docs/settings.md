@@ -86,7 +86,7 @@ Set these before starting the app. Most exist for measurement; only `ERYTHEIA_GO
 
 v0.6.7 renamed the variables from `TIMECODE_SYNC_PLAYER_*` and `TCS_*` to `ERYTHEIA_*` (same suffix, for example `TCS_GOP_SCAN` → `ERYTHEIA_GOP_SCAN`). During v0.6.x the old names are still read when the new one is not set, with one warning line per variable in the log; when both are set, the new one is used (also with one line). The old names will no longer be read from v0.7.0. The variables read only by the tests and the runner scripts take the new names only, except `ERYTHEIA_FFMPEG` and `ERYTHEIA_FFPROBE`.
 
-v0.6.7で、環境変数の名前を`TIMECODE_SYNC_PLAYER_*`・`TCS_*`から`ERYTHEIA_*`に変えました（後ろの部分は同じ。例: `TCS_GOP_SCAN`→`ERYTHEIA_GOP_SCAN`）。v0.6.xの間は、新しい名前が無ければ旧の名前も読み、変数ごとにWarningをログに1行出します。両方があれば新しい名前を使い、その旨も1行出します。v0.7.0からは旧の名前を読みません。
+v0.6.7で、環境変数の名前を`TIMECODE_SYNC_PLAYER_*`・`TCS_*`から`ERYTHEIA_*`に変えました（後ろの部分は同じ。例: `TCS_GOP_SCAN`→`ERYTHEIA_GOP_SCAN`）。v0.6.xの間は、新しい名前が無ければ旧の名前も読み、変数ごとにWarningをログに1行出します。両方があれば新しい名前を使い、その旨も1行出します。v0.7.0からは旧の名前を読みません。試験とランナーのスクリプトだけが読む変数は、`ERYTHEIA_FFMPEG`と`ERYTHEIA_FFPROBE`を除いて新しい名前だけを読みます。
 
 | Variable | Default | Effect / 効果 |
 | --- | --- | --- |
