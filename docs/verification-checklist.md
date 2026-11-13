@@ -184,8 +184,8 @@ runnerの`-PlayerBackend`は既定の`Gstreamer`のままでよい（v0.4から�
 ## 事後確認
 
 - [ ] アプリのログに`ERR` / `FTL` / `Exception` / `success=False`が0件であること
-- [ ] 診断レポートを作る: `pwsh -File scripts\run-timecodesyncplayer-diagnostics.ps1`
-      →`artifacts\diagnostics\timecodesyncplayer-diagnostics-*.md`を確かめる
+- [ ] 診断レポートを作る: `pwsh -File scripts\run-erytheia-diagnostics.ps1`
+      →`artifacts\diagnostics\erytheia-diagnostics-*.md`を確かめる
 - [ ] `Playback perf warning`が出ていたら、診断レポートの文脈の分類（Track switch aftermath / Gap exit aftermath / Normal playback）を見て、Normal playbackの警告が無いことを確かめる
 
 ## 結果記録

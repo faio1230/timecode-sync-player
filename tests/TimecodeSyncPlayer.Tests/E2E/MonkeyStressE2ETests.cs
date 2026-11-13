@@ -14,7 +14,7 @@ public sealed class MonkeyStressE2ETests
     public async Task SeededCableLoop_RecoversFromMixedOperations_AndClosesCleanly()
     {
         MonkeyTestConfiguration configuration = MonkeyTestConfiguration.FromCurrentEnvironment();
-        Skip.IfNot(configuration.IsEnabled, "Use scripts/run-timecodesyncplayer-monkey.ps1 to enable the hardware stress test.");
+        Skip.IfNot(configuration.IsEnabled, "Use scripts/run-erytheia-monkey.ps1 to enable the hardware stress test.");
         Directory.CreateDirectory(configuration.ReportDirectory);
         using var journal = new MonkeyJournal(Path.Combine(configuration.ReportDirectory, "monkey.jsonl"), configuration.Seed);
         var summary = new MonkeyRunSummary

@@ -187,7 +187,8 @@ function Get-PreviousReportPath {
         return $null
     }
 
-    $previous = Get-ChildItem -LiteralPath $Directory -Filter "timecodesyncplayer-diagnostics-*.md" |
+    $previous = @(Get-ChildItem -LiteralPath $Directory -Filter "erytheia-diagnostics-*.md") +
+        @(Get-ChildItem -LiteralPath $Directory -Filter "timecodesyncplayer-diagnostics-*.md") |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
 
@@ -1135,7 +1136,7 @@ if ($TreatWarningsAsFailure) {
 
 $verdict = if ($reasons.Count -eq 0) { "OK" } elseif ($failedCommands.Count -gt 0 -or $criticalErrors -gt 0 -or $gapTimeouts -gt 0) { "FAIL" } else { "WARN" }
 $endedAt = Get-Date
-$reportName = "timecodesyncplayer-diagnostics-{0}.md" -f $startedAt.ToString("yyyyMMdd-HHmmss")
+$reportName = "erytheia-diagnostics-{0}.md" -f $startedAt.ToString("yyyyMMdd-HHmmss")
 $reportPath = Join-Path $ReportDirectory $reportName
 
 Write-Report `

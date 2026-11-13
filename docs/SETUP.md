@@ -230,7 +230,7 @@ VB-CABLEを使った乱操作・耐久試験は [MONKEY-TESTING.md](MONKEY-TESTI
 ビルド・非E2Eテスト・E2Eテストをまとめて実行する検証スクリプトが `scripts/` に用意されています。
 
 ```powershell
-pwsh -File scripts\run-timecodesyncplayer-verification.ps1 -Profile Strict
+pwsh -File scripts\run-erytheia-verification.ps1 -Profile Strict
 ```
 
 主なプロファイル:

@@ -20,8 +20,8 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$diagnosticsScript = Join-Path $PSScriptRoot "run-timecodesyncplayer-diagnostics.ps1"
-$diagnosticsSelfTestScript = Join-Path $PSScriptRoot "test-timecodesyncplayer-diagnostics.ps1"
+$diagnosticsScript = Join-Path $PSScriptRoot "run-erytheia-diagnostics.ps1"
+$diagnosticsSelfTestScript = Join-Path $PSScriptRoot "test-erytheia-diagnostics.ps1"
 if (-not (Test-Path -LiteralPath $diagnosticsScript)) {
     throw "Diagnostics runner was not found: $diagnosticsScript"
 }

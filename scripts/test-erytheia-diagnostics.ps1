@@ -29,7 +29,7 @@ try {
         "2026-05-25 10:00:06.200 [WRN] SpoutDX.dll のハッシュが ABI 検証済みと異なります: 0123abcd"
     ) | Set-Content -Encoding UTF8 -LiteralPath $logPath
 
-    & (Join-Path $repoRoot "scripts\run-timecodesyncplayer-diagnostics.ps1") `
+    & (Join-Path $repoRoot "scripts\run-erytheia-diagnostics.ps1") `
         -SkipBuild -SkipNonE2E -SkipE2E `
         -LogPath $logPath `
         -ReportDirectory $reportDir | Out-Host
@@ -38,7 +38,7 @@ try {
         throw "Diagnostics runner exited with $LASTEXITCODE."
     }
 
-    $report = Get-ChildItem -LiteralPath $reportDir -Filter "timecodesyncplayer-diagnostics-*.md" |
+    $report = Get-ChildItem -LiteralPath $reportDir -Filter "erytheia-diagnostics-*.md" |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if ($null -eq $report) {
