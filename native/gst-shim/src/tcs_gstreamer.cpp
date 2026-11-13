@@ -4182,7 +4182,7 @@ tcs_player_create (const char* sender_name, void* external_d3d11_device,
   gst_init_once ();
 
   TcsPlayer* p = new TcsPlayer ();
-  p->sender_name = (sender_name && sender_name[0]) ? sender_name : "TimecodeSyncPlayer";
+  p->sender_name = (sender_name && sender_name[0]) ? sender_name : "ERYTHEIA";
   p->position_trace = env_flag (kOutputTraceEnv);
   LARGE_INTEGER qpc_freq;
   if (QueryPerformanceFrequency (&qpc_freq))

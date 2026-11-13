@@ -23,9 +23,9 @@ public class GstBackendStateTests
     }
 
     [Theory]
-    [InlineData(null, "TimecodeSyncPlayer")]
-    [InlineData("", "TimecodeSyncPlayer")]
-    [InlineData("   ", "TimecodeSyncPlayer")]
+    [InlineData(null, "ERYTHEIA")]
+    [InlineData("", "ERYTHEIA")]
+    [InlineData("   ", "ERYTHEIA")]
     [InlineData("  Stage A  ", "Stage A")]
     [InlineData("StageB", "StageB")]
     public void SenderName_FromEnvironment_IsTheSameOnBothSides(string? value, string expected)

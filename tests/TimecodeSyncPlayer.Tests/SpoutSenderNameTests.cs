@@ -12,10 +12,10 @@ namespace TimecodeSyncPlayer.Tests;
 public class SpoutSenderNameTests
 {
     [Theory]
-    [InlineData(null, "TimecodeSyncPlayer")]
-    [InlineData("", "TimecodeSyncPlayer")]
-    [InlineData("   ", "TimecodeSyncPlayer")]
-    [InlineData("\t \r\n", "TimecodeSyncPlayer")]
+    [InlineData(null, "ERYTHEIA")]
+    [InlineData("", "ERYTHEIA")]
+    [InlineData("   ", "ERYTHEIA")]
+    [InlineData("\t \r\n", "ERYTHEIA")]
     [InlineData("  Stage A  ", "Stage A")]
     [InlineData("\tStageB\n", "StageB")]
     [InlineData("StageB", "StageB")]
@@ -29,7 +29,7 @@ public class SpoutSenderNameTests
     public void ResolveSenderName_NameWithoutOuterWhitespace_IsUnchanged()
     {
         // 前後に空白が無い名前は、以前の 2 か所のどちらの決め方とも同じ値になる（送る名前は変わらない）。
-        foreach (string name in new[] { "TimecodeSyncPlayer", "TCS-Main", "日本語の名前", "a b c" })
+        foreach (string name in new[] { "ERYTHEIA", "TCS-Main", "日本語の名前", "a b c" })
         {
             SpoutDefaults.ResolveSenderName(name).Should().Be(name);
             LegacyOutputEngineSide(name).Should().Be(name);
@@ -74,9 +74,9 @@ public class SpoutSenderNameTests
     [Fact]
     public void StatusText_OnShowsName_OffIsEmpty()
     {
-        SpoutStatusFormatter.Format(true, "TimecodeSyncPlayer").Should().Be("Spout: TimecodeSyncPlayer");
+        SpoutStatusFormatter.Format(true, "ERYTHEIA").Should().Be("Spout: ERYTHEIA");
         SpoutStatusFormatter.Format(true, "Stage A").Should().Be("Spout: Stage A");
-        SpoutStatusFormatter.Format(false, "TimecodeSyncPlayer").Should().BeEmpty();
+        SpoutStatusFormatter.Format(false, "ERYTHEIA").Should().BeEmpty();
     }
 
     [Fact]
@@ -88,15 +88,15 @@ public class SpoutSenderNameTests
 
         vm.SpoutStatusText.Should().BeEmpty("起動時は Spout OFF");
 
-        vm.SetSpoutStatus(true, "TimecodeSyncPlayer");
-        vm.SpoutStatusText.Should().Be("Spout: TimecodeSyncPlayer");
+        vm.SetSpoutStatus(true, "ERYTHEIA");
+        vm.SpoutStatusText.Should().Be("Spout: ERYTHEIA");
 
-        vm.SetSpoutStatus(false, "TimecodeSyncPlayer");
+        vm.SetSpoutStatus(false, "ERYTHEIA");
         vm.SpoutStatusText.Should().BeEmpty();
 
         changed.Should().Equal(nameof(OutputControlViewModel.SpoutStatusText), nameof(OutputControlViewModel.SpoutStatusText));
 
-        vm.SetSpoutStatus(false, "TimecodeSyncPlayer");
+        vm.SetSpoutStatus(false, "ERYTHEIA");
         changed.Should().HaveCount(2, "値が変わらなければ知らせない");
     }
 

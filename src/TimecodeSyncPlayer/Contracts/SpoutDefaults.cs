@@ -4,7 +4,7 @@ namespace TimecodeSyncPlayer.Contracts;
 public static class SpoutDefaults
 {
     /// <summary>Spout 送信名の既定値。環境変数があればそちらが優先される。</summary>
-    public const string DefaultSenderName = "TimecodeSyncPlayer";
+    public const string DefaultSenderName = "ERYTHEIA";
 
     /// <summary>Spout 送信名を変える環境変数。</summary>
     public const string SenderNameEnvironmentVariable = "ERYTHEIA_SPOUT_NAME";

@@ -31,7 +31,7 @@ Spout2 2.007.017 の固定ソースを先に取得する。
 
 ```powershell
 & .\scripts\SpoutContinuityProbe\bin\Debug\x64\SpoutContinuityProbe.exe `
-  --sender TimecodeSyncPlayer `
+  --sender ERYTHEIA `
   --output D:\outside-git\spout-receiver.jsonl `
   --stop-file D:\outside-git\spout-receiver.stop `
   --duration 120 --poll-ms 1 --sample-ms 1000

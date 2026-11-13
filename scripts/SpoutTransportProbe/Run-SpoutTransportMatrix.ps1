@@ -140,7 +140,7 @@ try {
         $stopPath = Join-Path $runDirectory 'receiver.stop'
         try {
             if ($ReceiverExe) {
-                $receiverProcess = Start-OwnedProbe $ReceiverExe @('--sender', 'TimecodeSyncPlayer', '--output',
+                $receiverProcess = Start-OwnedProbe $ReceiverExe @('--sender', 'ERYTHEIA', '--output',
                     (Join-Path $runDirectory 'receiver.jsonl'), '--duration', '50', '--poll-ms', '8', '--stop-file', $stopPath) `
                     (Join-Path $runDirectory 'receiver')
                 $record.receiverPid = $receiverProcess.Id
