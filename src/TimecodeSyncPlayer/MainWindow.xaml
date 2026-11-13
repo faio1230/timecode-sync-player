@@ -84,7 +84,7 @@
                                 <Trigger Property="IsEnabled" Value="False">
                                     <Setter TargetName="Bd" Property="Background" Value="#0A0A0A"/>
                                     <Setter TargetName="Bd" Property="BorderBrush" Value="#252525"/>
-                                    <Setter Property="Foreground" Value="#5A5A5A"/>
+                                    <Setter Property="Foreground" Value="#7A7A7A"/>
                                     <Setter Property="Cursor" Value="Arrow"/>
                                 </Trigger>
                                 <MultiTrigger>
