@@ -1269,6 +1269,27 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         }
     }
 
+    private void Sidebar_SizeChanged(object sender, SizeChangedEventArgs e) => FitPlaylistToSidebar();
+
+    /// <summary>
+    /// v0.6.7 #45 案 B: 一覧の上限の高さを「右の欄の高さ − 一覧以外の行の高さ」にする（下限は MinHeight）。
+    /// 一覧以外の行は Auto なので、行の ActualHeight の和がそのまま中身の高さになる（一覧の行は * で、
+    /// 欄の MinHeight で余った分も入るため数えない）。
+    /// </summary>
+    private void FitPlaylistToSidebar()
+    {
+        int listRow = System.Windows.Controls.Grid.GetRow(PlaylistList);
+        double other = 0;
+        for (int i = 0; i < SidebarContent.RowDefinitions.Count; i++)
+        {
+            if (i != listRow)
+                other += SidebarContent.RowDefinitions[i].ActualHeight;
+        }
+        double max = Math.Max(PlaylistList.MinHeight, SidebarHost.ActualHeight - other);
+        if (double.IsInfinity(PlaylistList.MaxHeight) || Math.Abs(PlaylistList.MaxHeight - max) > 0.5)
+            PlaylistList.MaxHeight = max;
+    }
+
     private void PlaylistList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         // D39 K2: 長さの更新は行を差し替えるため、選択中の行が外れる（SelectedIndex=-1）。
