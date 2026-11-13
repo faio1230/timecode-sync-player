@@ -223,7 +223,7 @@ internal sealed class SyncViewModel : INotifyPropertyChanged
             : TimecodeFpsMode.Auto;
 
     /// <summary>
-    /// v0.6.4: Auto の間だけ「Auto は確認用です。本番は固定にしてください」を出す。
+    /// v0.6.4: Auto の間だけ注記を出す（v0.6.7 の UI の改修から文言は「AUTO：確認用」。元の説明はツールチップ）。
     /// 補正の状態と同じ行に重ねて置くので、補正の状態が出ている間はそちらを優先して隠す（行の高さを変えない）。
     /// </summary>
     public bool ShowLtcFpsAutoNote =>
