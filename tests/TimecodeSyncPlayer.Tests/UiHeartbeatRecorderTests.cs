@@ -123,5 +123,40 @@ public class UiHeartbeatRecorderTests
         recorder.Stop(Ms(50), "closing");
 
         summaries.Should().ContainSingle().Which.FirstLateMs.Should().Be(double.NaN);
+        summaries[0].MaxLateAfterFirstMs.Should().Be(double.NaN);
+        summaries[0].MedianLateMs.Should().Be(double.NaN);
+    }
+
+    // v0.6.7 #44: 起動の 1 回目を除いた最大と、全 tick の中央値。最大（MaxLateMs）は起動の 1 回目のまま。
+    [Fact]
+    public void Finish_ReportsTheMaxAfterTheFirstTickAndTheMedian()
+    {
+        var summaries = new List<UiHeartbeatSummary>();
+        var recorder = new UiHeartbeatRecorder(_ => { }, summaries.Add);
+        recorder.Start(Ms(0));
+        recorder.Tick(Ms(900));    // seq=1: 800ms 遅れ（起動の直後）
+        recorder.Tick(Ms(1010));   // 10
+        recorder.Tick(Ms(1450));   // 340（区間の中の 1 秒未満の止まり）
+        recorder.Tick(Ms(1570));   // 20
+        recorder.Stop(Ms(1600), "closing");
+
+        UiHeartbeatSummary summary = summaries.Should().ContainSingle().Subject;
+        summary.MaxLateMs.Should().BeApproximately(800.0, 1e-6);
+        summary.MaxLateAfterFirstMs.Should().BeApproximately(340.0, 1e-6);
+        summary.MedianLateMs.Should().BeApproximately(180.0, 1e-6);   // (20 + 340) / 2
+    }
+
+    [Fact]
+    public void Finish_WithOneTick_ReportsNaNForTheMaxAfterTheFirst()
+    {
+        var summaries = new List<UiHeartbeatSummary>();
+        var recorder = new UiHeartbeatRecorder(_ => { }, summaries.Add);
+        recorder.Start(Ms(0));
+        recorder.Tick(Ms(150));
+        recorder.Stop(Ms(200), "closing");
+
+        UiHeartbeatSummary summary = summaries.Should().ContainSingle().Subject;
+        summary.MaxLateAfterFirstMs.Should().Be(double.NaN);
+        summary.MedianLateMs.Should().BeApproximately(50.0, 1e-6);
     }
 }

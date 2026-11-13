@@ -279,11 +279,12 @@ public sealed class LtcInputMeterE2ETests : IClassFixture<TimecodeSyncPlayerFixt
 /// <summary>
 /// v0.6.6 R-13: LTC を流している間の UI の heartbeat の遅れ（メーターあり）。heartbeat は MainWindow の構築から
 /// 30 秒だけ記録され、区間の終わりに Information の要約「UI heartbeat summary: firstLateMs=… maxLateMs=… ticks=…
-/// elapsedMs=… reason=…」が 1 行出る。起動したらすぐ LTC を始め、その要約で判定する。
+/// elapsedMs=… reason=… maxLateAfterFirstMs=… medianLateMs=…」が 1 行出る。起動したらすぐ LTC を始め、その要約で判定する。
 /// 試験基盤の束 1（2026-10）: 1 tick ごとの ui.heartbeat の行は Debug で、Release の構成では出ないので使わない。
-/// 判定は 2 つ: (1) maxLateMs が起動の 1 回目（firstLateMs）と同じか、1000ms 未満。(2) reason=window かつ ticks が 200 以上。
-/// 要約の maxLateMs はほぼ常に起動の 1 回目（中央 838ms、230 件中 8 件が 1000ms 以上）なので、受信中の窓に限った
-/// 数字は取れない。Release の構成では、受信中の 1 秒未満の止まりは見ていない（ticks の床で見えるのは数秒の止まり）。
+/// 判定は 2 つ: (1) 起動の 1 回目を除いた最大（maxLateAfterFirstMs）が 1000ms 未満。(2) reason=window かつ ticks が 200 以上。
+/// v0.6.7 #44: 要約の maxLateMs はほぼ常に起動の 1 回目（中央 838ms、230 件中 8 件が 1000ms 以上）なので、
+/// 前は (1) を「maxLateMs が firstLateMs と同じか 1000ms 未満」とし、受信中の 1 秒未満の止まりを見ていなかった。
+/// 今は 1 回目を除いた最大で見る（起動の 1 回目の遅れは判定に入れない）。
 /// 環境変数 TCS_R13_REPORT_DIR を置くと、要約を heartbeat.txt に書く。
 /// </summary>
 [Trait("Category", "E2E")]
@@ -291,7 +292,8 @@ public sealed class LtcInputMeterE2ETests : IClassFixture<TimecodeSyncPlayerFixt
 public sealed class LtcInputMeterHeartbeatE2ETests
 {
     private static readonly Regex SummaryLine = new(
-        @"UI heartbeat summary: firstLateMs=(-?[0-9.]+|NaN) maxLateMs=(-?[0-9.]+) ticks=(\d+) elapsedMs=([0-9.]+) reason=(\w+)",
+        @"UI heartbeat summary: firstLateMs=(-?[0-9.]+|NaN) maxLateMs=(-?[0-9.]+) ticks=(\d+) elapsedMs=([0-9.]+) reason=(\w+)" +
+        @" maxLateAfterFirstMs=(-?[0-9.]+|NaN) medianLateMs=(-?[0-9.]+|NaN)",
         RegexOptions.Compiled);
 
     /// <summary>
@@ -366,11 +368,15 @@ public sealed class LtcInputMeterHeartbeatE2ETests
             double max = double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
             long ticks = long.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
             string summaryReason = match.Groups[5].Value;
-            bool maxIsFirstTick = firstText == match.Groups[2].Value;
+            string maxAfterFirstText = match.Groups[6].Value;
+            string medianText = match.Groups[7].Value;
+            double maxAfterFirst = maxAfterFirstText == "NaN"
+                ? double.NaN
+                : double.Parse(maxAfterFirstText, CultureInfo.InvariantCulture);
 
             string summary = string.Create(CultureInfo.InvariantCulture,
                 $"heartbeat summary (window from MainWindow construction): firstLateMs={firstText} maxLateMs={max:F1} " +
-                $"ticks={ticks} reason={summaryReason} maxIsFirstTick={maxIsFirstTick} " +
+                $"ticks={ticks} reason={summaryReason} maxLateAfterFirstMs={maxAfterFirstText} medianLateMs={medianText} " +
                 $"ltcStartToReceivingMs={(receivingLocal - ltcStartedLocal).TotalMilliseconds:F0}");
             _output.WriteLine(summary);
             string? reportDirectory = Environment.GetEnvironmentVariable("TCS_R13_REPORT_DIR");
@@ -383,8 +389,9 @@ public sealed class LtcInputMeterHeartbeatE2ETests
 
             summaryReason.Should().Be("window", "30 秒の区間を終わりまで回った");
             ticks.Should().BeGreaterThanOrEqualTo(MinTicksInWindow, "区間の中で UI が数秒止まっていない");
-            (maxIsFirstTick || max < 1000.0).Should().BeTrue(
-                $"起動の 1 回目より後の tick の遅れが 1000ms 未満（maxLateMs={max:F1} firstLateMs={firstText}）");
+            (maxAfterFirst < 1000.0).Should().BeTrue(
+                $"起動の 1 回目より後の tick の遅れが 1000ms 未満（maxLateAfterFirstMs={maxAfterFirstText} " +
+                $"maxLateMs={max:F1} firstLateMs={firstText}）");
         }
         finally
         {

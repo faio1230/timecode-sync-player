@@ -3160,11 +3160,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     // 起動から 30 秒、100ms ごとに Debug で 1 行。区間の後はタイマーを捨てる。
     // 優先度 Normal: Background の描画更新や OnTick に埋もれず、UI スレッドが回っているかを見る。
     // v0.6.3 段 1: 区間の終わりに要約を Information で 1 行（配布ビルドでも起動の直後の停止を数えられるように）。
+    // v0.6.7 #44: 起動の 1 回目を除いた最大と中央値を行の末尾に足す（前の項目の名前と並びは変えない）。
     private readonly UiHeartbeatRecorder _uiHeartbeat =
         new(fields => Log.Debug("ui.heartbeat {Fields}", fields),
             summary => Log.Information(
-                "UI heartbeat summary: firstLateMs={FirstLateMs:F1} maxLateMs={MaxLateMs:F1} ticks={Ticks} elapsedMs={ElapsedMs:F1} reason={Reason}",
-                summary.FirstLateMs, summary.MaxLateMs, summary.Ticks, summary.ElapsedMs, summary.Reason));
+                "UI heartbeat summary: firstLateMs={FirstLateMs:F1} maxLateMs={MaxLateMs:F1} ticks={Ticks} elapsedMs={ElapsedMs:F1} reason={Reason} maxLateAfterFirstMs={MaxLateAfterFirstMs:F1} medianLateMs={MedianLateMs:F1}",
+                summary.FirstLateMs, summary.MaxLateMs, summary.Ticks, summary.ElapsedMs, summary.Reason,
+                summary.MaxLateAfterFirstMs, summary.MedianLateMs));
     private DispatcherTimer? _uiHeartbeatTimer;
 
     // v0.6.4 段 6（設計書 3-2、#15）: 起動の区間の要約 `Startup timing: …`（起動 1 回に 1 行、観測だけ）。

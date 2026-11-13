@@ -25,6 +25,9 @@ internal sealed class UiHeartbeatRecorder
     private long _seq;
     private double _maxLateMs;
     private double _firstLateMs = double.NaN;
+    private double _maxLateAfterFirstMs = double.NaN;
+    // v0.6.7 #44: 中央値のための各 tick の遅れ（30 秒の区間で 300 前後）。
+    private readonly List<double> _lateMs = new();
     private bool _active;
     private bool _finished;
 
@@ -61,6 +64,9 @@ internal sealed class UiHeartbeatRecorder
         _maxLateMs = Math.Max(_maxLateMs, lateMs);
         if (_seq == 1)
             _firstLateMs = lateMs;
+        else
+            _maxLateAfterFirstMs = double.IsNaN(_maxLateAfterFirstMs) ? lateMs : Math.Max(_maxLateAfterFirstMs, lateMs);
+        _lateMs.Add(lateMs);
         _write("seq=" + _seq + " lateMs=" + Format(lateMs));
         if (now - _startedAt < Window) return true;
         Finish(now, "window");
@@ -81,7 +87,17 @@ internal sealed class UiHeartbeatRecorder
         double elapsedMs = (now - _startedAt).TotalMilliseconds;
         _write("end reason=" + reason + " ticks=" + _seq + " maxLateMs=" + Format(_maxLateMs) +
             " elapsedMs=" + Format(elapsedMs));
-        _onFinished?.Invoke(new UiHeartbeatSummary(reason, _seq, _firstLateMs, _maxLateMs, elapsedMs));
+        _onFinished?.Invoke(new UiHeartbeatSummary(
+            reason, _seq, _firstLateMs, _maxLateMs, elapsedMs, _maxLateAfterFirstMs, Median(_lateMs)));
+    }
+
+    private static double Median(List<double> values)
+    {
+        if (values.Count == 0) return double.NaN;
+        var sorted = values.ToArray();
+        Array.Sort(sorted);
+        int mid = sorted.Length / 2;
+        return sorted.Length % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0;
     }
 
     private static string Format(double value) =>
@@ -90,5 +106,9 @@ internal sealed class UiHeartbeatRecorder
 
 /// <summary>
 /// v0.6.3 段 1: 起動直後の UI スレッドの生存記録の要約。FirstLateMs は seq=1 の遅れ（tick が 1 度も無ければ NaN）。
+/// v0.6.7 #44: MaxLateAfterFirstMs は seq=1 を除いた最大（seq=2 が無ければ NaN）。MaxLateMs はほぼ常に起動の
+/// 1 回目の値なので、区間の中の 1 秒未満の止まりはこちらで見る。MedianLateMs は全 tick の中央値（tick が無ければ NaN）。
 /// </summary>
-internal sealed record UiHeartbeatSummary(string Reason, long Ticks, double FirstLateMs, double MaxLateMs, double ElapsedMs);
+internal sealed record UiHeartbeatSummary(
+    string Reason, long Ticks, double FirstLateMs, double MaxLateMs, double ElapsedMs,
+    double MaxLateAfterFirstMs, double MedianLateMs);
