@@ -290,7 +290,7 @@ GStreamer shim（`erytheia_gstreamer.dll`）のログは同じ `logs\` に `eryt
 | JSONキー | 値 | 既定 | 内容 |
 |---|---|---|---|
 | `outputBackend` | `1` = Gpu | `1` | 映像出力バックエンド。`0`（Cpu）は v0.3 の設定で、v0.4 は無視して `1`（Gpu）で起動します（警告ログ 1 行、設定ファイルは書き換えません） |
-| `proResGpu` | `auto` / `on` / `off` | `auto` | ProRes の GPU デコード（v0.6.0）。`auto` と `on` はどの GPU でも使います（v0.6.5 から。v0.6.4 までは `auto` は NVIDIA だけ。NVIDIA 以外は未検証）。`off` は常に CPU。内蔵の GPU で 4K60 の ProRes が追いつかないときは `off` にします。**変更はアプリの再起動の後に反映**（起動時に 1 回だけ読み、GPU の復旧でも起動時の値のまま）。画面の「ProRes の GPU デコード」でも選べます。不正値は `auto` として扱い、警告ログを出します |
+| `proResGpu` | `auto` / `on` / `off` | `auto` | ProRes の GPU デコード（v0.6.0）。`auto` と `on` はどの GPU でも使います（v0.6.5 から。v0.6.4 までは `auto` は NVIDIA だけ。NVIDIA 以外は未検証）。`off` は常に CPU。内蔵の GPU で 4K60 の ProRes が追いつかないときは `off` にします。**変更はアプリの再起動の後に反映**（起動時に 1 回だけ読み、GPU の復旧でも起動時の値のまま）。画面の「ProRes GPU:」でも選べます。不正値は `auto` として扱い、警告ログを出します |
 | `decodeMode` | `hardware` / `software` | `hardware` | デコード方式。`software`はCPUデコーダを優先し、GPUデコーダは最後の手段として使います（GPUに落ちた場合は警告ログ）。**変更はアプリの再起動が必要です**（プレイヤー生成時に1回だけ読みます）。不正値は`hardware`として扱い、警告ログを出します |
 
 - v0.3 の `backend` キーは v0.4 で廃止しました（再生バックエンドは GStreamer 固定）。
