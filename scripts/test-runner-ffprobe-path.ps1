@@ -101,7 +101,7 @@ try {
     $before = $env:PATH
     $message = ''
     try {
-        & $makeProject -MediaDir $mediaDir -Out (Join-Path $outDir 'p.tsp') -FfmpegDir $argDir *> $null
+        & $makeProject -MediaDir $mediaDir -Out (Join-Path $outDir 'p.erytheia') -FfmpegDir $argDir *> $null
     } catch { $message = $_.Exception.Message }
     Check ($env:PATH -eq $before) 'make-ltc-scenario-project run in this process leaves PATH as it was'
     Check ($message -like '*fewer than 3 video files*') ('make-ltc-scenario-project got past ffprobe with -FfmpegDir only (' + $message + ')')
@@ -109,7 +109,7 @@ try {
     # Nowhere: stops with where it looked.
     $message = ''
     try {
-        & $makeProject -MediaDir $mediaDir -Out (Join-Path $outDir 'p.tsp') -FfmpegDir $missingDir *> $null
+        & $makeProject -MediaDir $mediaDir -Out (Join-Path $outDir 'p.erytheia') -FfmpegDir $missingDir *> $null
     } catch { $message = $_.Exception.Message }
     Check ($message -like 'ffprobe not found (searched:*' -and $message.Contains((Join-Path $missingDir 'ffprobe.exe'))) 'make-ltc-scenario-project without ffprobe stops and names the places searched'
     Check ($env:PATH -eq $before) 'PATH unchanged after the failed run'
@@ -135,7 +135,7 @@ try {
 
     # make-ltc-scenario-project through the child, with ffprobe only next to ERYTHEIA_FFMPEG.
     $env:ERYTHEIA_FFMPEG = Join-Path $envDir 'ffmpeg.exe'
-    $exit = Invoke-TcsChildScript -ScriptPath $makeProject -Arguments @{ MediaDir = $mediaDir; Out = (Join-Path $outDir 'p.tsp'); FfmpegDir = $missingDir } -LogPath $log
+    $exit = Invoke-TcsChildScript -ScriptPath $makeProject -Arguments @{ MediaDir = $mediaDir; Out = (Join-Path $outDir 'p.erytheia'); FfmpegDir = $missingDir } -LogPath $log
     $text = [IO.File]::ReadAllText($log)
     Check ($exit -ne 0 -and $text.Contains('ffprobe: ' + (Join-Path $envDir 'ffprobe.exe') + ' (next-to-ERYTHEIA_FFMPEG)')) 'child make-ltc-scenario-project logs the ffprobe next to ERYTHEIA_FFMPEG'
     Check ($env:PATH -eq $before) 'PATH unchanged after the child make-ltc-scenario-project'

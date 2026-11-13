@@ -4,13 +4,13 @@
 # The scenario tests never embed media file names: tracks are referred to as
 # M1..M7 by position, and this script writes those symbols as the track names.
 #
-#   pwsh -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out C:\reports\ltc-scenario.tsp
+#   pwsh -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out C:\reports\ltc-scenario.erytheia
 #
 # -Out is written wherever it points (the runner puts it under its report
 # directory). The media folder is user-managed and read-only on the test machine,
 # so the runner first creates one hard link per media file under
 # <ReportDir>\media and passes that folder as -MediaDir. Tracks are then stored as
-# paths relative to the .tsp directory (e.g. media\clip.mp4): ProjectSerializer
+# paths relative to the project directory (e.g. media\clip.mp4): ProjectSerializer
 # only resolves paths inside the project directory. MediaDir must therefore live
 # inside the -Out directory. The runner deletes the generated project and the
 # links after the run (-KeepProject keeps them).

@@ -1367,8 +1367,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            Filter = "TimecodeSyncPlayer Project (*.tsp)|*.tsp",
-            DefaultExt = "tsp",
+            Filter = ProjectFileExtensions.DialogFilter,
+            DefaultExt = ProjectFileExtensions.DialogDefaultExtension,
             Title = "プロジェクトを保存"
         };
 
@@ -1380,8 +1380,8 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Filter = "TimecodeSyncPlayer Project (*.tsp)|*.tsp",
-            DefaultExt = "tsp",
+            Filter = ProjectFileExtensions.DialogFilter,
+            DefaultExt = ProjectFileExtensions.DialogDefaultExtension,
             Title = "プロジェクトを読み込み"
         };
 

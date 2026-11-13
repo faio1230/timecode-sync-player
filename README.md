@@ -27,7 +27,7 @@ ERYTHEIAは、LTC（Linear Timecode）の音声を受信し、プレイリスト
 - LTC信号断時のランスルー／停止の切替
 - 接続ディスプレイを選べる外部モニターのフルスクリーン出力
 - VJツール連携用のSpout2出力
-- プレイリストとプロジェクトの保存・読み込み
+- プレイリストとプロジェクトの保存・読み込み（プロジェクトの拡張子は`.erytheia`。v0.6.6までの`.tsp`も開けます）
 - 純C#のLTCデコーダとGStreamerベースのGPU出力
 - HAP（Hap / Hap Alpha / Hap Q）のGPUデコード（v0.5.0から）
 - ProResのGPUデコード（v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。NVIDIAのGPUで検証し、推奨します。v0.6.5からは既定でほかのGPUでもGPUでデコードしますが、NVIDIA以外は検証機の内蔵AMDのGPUで確かめた範囲です）

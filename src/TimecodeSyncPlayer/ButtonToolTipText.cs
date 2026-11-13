@@ -81,8 +81,8 @@ internal static class ButtonToolTipText
         ButtonToolTipKey.ClearPlaylist => "プレイリストを空にする",
         ButtonToolTipKey.MoveTrackUp => "選んだトラックを 1 つ上へ動かす",
         ButtonToolTipKey.MoveTrackDown => "選んだトラックを 1 つ下へ動かす",
-        ButtonToolTipKey.SaveProject => "プレイリストをプロジェクト（.tsp）として保存する",
-        ButtonToolTipKey.LoadProject => "保存したプロジェクト（.tsp）を読み込む",
+        ButtonToolTipKey.SaveProject => "プレイリストをプロジェクト（.erytheia）として保存する",
+        ButtonToolTipKey.LoadProject => "保存したプロジェクト（.erytheia・.tsp）を読み込む",
         _ => "",
     };
 

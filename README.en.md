@@ -27,7 +27,7 @@ Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show
 - Run-through or Stop behavior when the LTC signal is lost
 - Selectable full-screen output to a connected external display
 - Spout2 output for VJ tool integration
-- Playlist and project save/load
+- Playlist and project save/load (project files use `.erytheia`; `.tsp` files from v0.6.6 and earlier still open)
 - Pure C# LTC decoder and GStreamer-based GPU output
 - GPU decoding of HAP (Hap / Hap Alpha / Hap Q) (since v0.5.0)
 - GPU decoding of ProRes (since v0.6.0, by [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11). Verified and recommended on NVIDIA GPUs. Since v0.6.5, other GPUs also decode on the GPU by default, with non-NVIDIA verification limited to the test machine's integrated AMD GPU)

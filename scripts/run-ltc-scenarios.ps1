@@ -7,7 +7,7 @@
 #   pwsh -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-Media M1,M3,M5] [-KeepProject]
 #       (-Media picks tracks by symbol: M<n> is the n-th video of the folder in name order;
 #        -MediaInOffsetSeconds N starts every track N seconds into its video)
-#       (the project .tsp is generated under the report directory, never in the
+#       (the project .erytheia is generated under the report directory, never in the
 #        media folder, and is removed after the run unless -KeepProject is set)
 #   U-1 (LtcScenarioE2ETests.U1_...) requires a gap-free project: pass -GapSeconds 0
 #   (with a gapped project U-1 reports preflight-invalid instead of judging).
@@ -611,7 +611,7 @@ if ($MediaDir) {
         $createdHardLinks += $linkPath
     }
 
-    $projectPath = Join-Path $ReportDir 'ltc-scenario.tsp'
+    $projectPath = Join-Path $ReportDir 'ltc-scenario.erytheia'  # v0.6.7: the new project extension (.tsp still opens)
     $Media = @($Media -join ',')[0]
     $makeArgs = @{ MediaDir = $linkedMediaDir; Out = $projectPath }
     if ($Media) { $makeArgs.Media = $Media }

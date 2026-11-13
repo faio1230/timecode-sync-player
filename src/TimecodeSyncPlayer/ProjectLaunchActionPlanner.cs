@@ -28,8 +28,7 @@ public static class ProjectLaunchActionPlanner
                 arguments.SaveProjectPath);
         }
 
-        if (arguments.OpenPath != null &&
-            string.Equals(Path.GetExtension(arguments.OpenPath), ".tsp", StringComparison.OrdinalIgnoreCase))
+        if (arguments.OpenPath != null && ProjectFileExtensions.IsProjectFile(arguments.OpenPath))
         {
             return new ProjectLaunchActionPlan(
                 ProjectLaunchStartupAction.LoadProject,
