@@ -271,7 +271,7 @@ dotnet run --project src\Erytheia\Erytheia.csproj
 src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log
 ```
 
-GStreamer shim（`erytheia_gstreamer.dll`）のログは同じ `logs\` に `erytheia-gst-YYYYMMDD.log` として出力されます（環境変数 `ERYTHEIA_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `erytheia-gst-*.log` は削除されます）。
+GStreamer shim（`erytheia_gstreamer.dll`）のログは同じ `logs\` に `erytheia-gst-YYYYMMDD.log` として出力されます（環境変数 `ERYTHEIA_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `erytheia-gst-*.log`（と v0.6.6 までの `tcs-gst-*.log`）は削除されます）。アプリのログは Serilog の既定で 31 ファイル残ります。v0.6.6 までの名前のアプリのログ（`timecodesyncplayer-*.log`）は、最後に書かれてから 31 日を過ぎると起動時に削除されます。
 
 起動後、映像が表示され、LTC入力デバイスがプルダウンに表示されることを確認してください。
 

@@ -57,7 +57,7 @@ src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe
 src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log   # アプリ（Serilog）
 src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log             # shim（erytheia_gstreamer.dll）
 ```
-shim のログの出力先は環境変数 `ERYTHEIA_LOG_FILE`。未設定ならアプリが起動時に上の logs を設定し、7 日より古い `erytheia-gst-*.log` と、v0.6.6 までの名前のログ（`tcs-gst-*.log`・`timecodesyncplayer-*.log`）を消す。
+shim のログの出力先は環境変数 `ERYTHEIA_LOG_FILE`。未設定ならアプリが起動時に上の logs を設定し、7 日より古い `erytheia-gst-*.log`・`tcs-gst-*.log`（v0.6.6 までの shim のログ）と、31 日より古い `timecodesyncplayer-*.log`（v0.6.6 までのアプリのログ）を消す。アプリのログ（`erytheia-*.log`）は Serilog の既定で 31 ファイル残る。
 
 ---
 

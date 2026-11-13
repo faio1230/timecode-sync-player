@@ -34,15 +34,16 @@ internal static class LogFileNames
     }
 
     /// <summary>
-    /// アプリのログを古い順に並べる鍵。名前の日付、同じ日は旧の名前を先（v0.6.6 から上げた日は旧の名前の方が先に書かれる）、
-    /// その後に名前（Serilog が同じ日に作る _001 などの続き）。
+    /// アプリのログを古い順に並べる鍵。名前の日付、同じ日は旧の名前を先（v0.6.6 から上げた日は旧の名前の方が先に書かれる。
+    /// 旧の名前の続き _001 なども新しい名前より先）、その後に日付の後ろ（Serilog が同じ日に作る _001 などの続き）。
     /// </summary>
     public static string AppLogSortKey(string fileName)
     {
         string name = Path.GetFileName(fileName);
         bool legacy = name.StartsWith(LegacyAppPrefix, StringComparison.OrdinalIgnoreCase);
         string rest = name[(legacy ? LegacyAppPrefix.Length : AppPrefix.Length)..];
-        return rest + "|" + (legacy ? "0" : "1");
+        string day = rest.Length >= 8 ? rest[..8] : rest;
+        return day + "|" + (legacy ? "0" : "1") + "|" + rest;
     }
 
     /// <summary>shim のログ（新旧）。</summary>
@@ -54,12 +55,27 @@ internal static class LogFileNames
                 || name.StartsWith(LegacyShimPrefix, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>起動時の掃除で shim のログ（新旧）を残す期間（v0.6.6 から同じ）。</summary>
+    public static readonly TimeSpan ShimLogRetention = TimeSpan.FromDays(7);
+
     /// <summary>
-    /// 起動時の 7 日の掃除の対象。shim のログ（新旧）と、v0.6.6 までのアプリのログ。
-    /// 新しいアプリのログは Serilog が自分で数を保つので入れない。
+    /// 起動時の掃除で v0.6.6 までの名前のアプリのログを残す期間。v0.6.6 までは Serilog の既定（31 ファイル）で
+    /// 残っていた。現場の報告は logs の zip で受け取るので、7 日では消さない（最後に書かれてから 31 日）。
     /// </summary>
-    public static bool IsPrunedAtStartup(string fileName) =>
-        IsShimLog(fileName)
-        || (Path.GetFileName(fileName).StartsWith(LegacyAppPrefix, StringComparison.OrdinalIgnoreCase)
-            && fileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase));
+    public static readonly TimeSpan LegacyAppLogRetention = TimeSpan.FromDays(31);
+
+    /// <summary>
+    /// 起動時の掃除で、最後に書かれてからこの期間を過ぎたら消す。対象でなければ null。
+    /// shim のログ（新旧）は 7 日、v0.6.6 までのアプリのログは 31 日。新しいアプリのログは Serilog が数を保つので対象外。
+    /// </summary>
+    public static TimeSpan? StartupRetention(string fileName)
+    {
+        if (IsShimLog(fileName))
+            return ShimLogRetention;
+        string name = Path.GetFileName(fileName);
+        if (name.StartsWith(LegacyAppPrefix, StringComparison.OrdinalIgnoreCase)
+            && name.EndsWith(".log", StringComparison.OrdinalIgnoreCase))
+            return LegacyAppLogRetention;
+        return null;
+    }
 }

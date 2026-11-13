@@ -15,9 +15,11 @@ public class GstNativeLogFileTests
         Directory.CreateDirectory(dir);
         string oldLog = Path.Combine(dir, "erytheia-gst-20200101.log");
         string freshLog = Path.Combine(dir, "erytheia-gst-yesterday.log");
-        // v0.6.7: v0.6.6 までの名前のログ（shim とアプリ）も 7 日の掃除に入る。新しいアプリのログは Serilog に任せる。
+        // v0.6.7: v0.6.6 までの名前の shim のログも 7 日で消す。v0.6.6 までの名前のアプリのログは 31 日まで残す
+        // （v0.6.6 までは Serilog の既定の 31 ファイルで残っていた）。新しいアプリのログは Serilog に任せる。
         string legacyShimLog = Path.Combine(dir, "tcs-gst-20200101.log");
         string legacyAppLog = Path.Combine(dir, "timecodesyncplayer-20200101.log");
+        string legacyAppLog8Days = Path.Combine(dir, "timecodesyncplayer-20200102.log");
         string newAppLog = Path.Combine(dir, "erytheia-20200101.log");
         try
         {
@@ -26,11 +28,13 @@ public class GstNativeLogFileTests
             File.WriteAllText(freshLog, "fresh");
             File.SetLastWriteTimeUtc(oldLog, DateTime.UtcNow.AddDays(-8));
             File.SetLastWriteTimeUtc(freshLog, DateTime.UtcNow.AddDays(-1));
-            foreach (string path in new[] { legacyShimLog, legacyAppLog, newAppLog })
+            foreach (string path in new[] { legacyShimLog, legacyAppLog8Days, newAppLog })
             {
                 File.WriteAllText(path, "old");
                 File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddDays(-8));
             }
+            File.WriteAllText(legacyAppLog, "old");
+            File.SetLastWriteTimeUtc(legacyAppLog, DateTime.UtcNow.AddDays(-32));
 
             GstNativeLibraryResolver.ConfigureLogFile(dir);
 
@@ -41,7 +45,8 @@ public class GstNativeLogFileTests
             File.Exists(oldLog).Should().BeFalse("7 日より古いログは起動時に消す");
             File.Exists(freshLog).Should().BeTrue();
             File.Exists(legacyShimLog).Should().BeFalse("旧の名前の shim のログも消す");
-            File.Exists(legacyAppLog).Should().BeFalse("旧の名前のアプリのログも消す");
+            File.Exists(legacyAppLog8Days).Should().BeTrue("8 日前の旧の名前のアプリのログは残す（31 日まで）");
+            File.Exists(legacyAppLog).Should().BeFalse("31 日より古い旧の名前のアプリのログは消す");
             File.Exists(newAppLog).Should().BeTrue("新しいアプリのログは Serilog が数を保つ");
         }
         finally

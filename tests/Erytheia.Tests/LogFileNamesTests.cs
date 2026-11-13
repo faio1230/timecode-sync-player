@@ -7,18 +7,19 @@ namespace Erytheia.Tests;
 public class LogFileNamesTests
 {
     [Theory]
-    [InlineData("erytheia-20261113.log", true, false, false)]
-    [InlineData("erytheia-20261113_001.log", true, false, false)]
-    [InlineData("erytheia-gst-20261113.log", false, true, true)]
-    [InlineData("timecodesyncplayer-20261113.log", true, false, true)]
-    [InlineData("tcs-gst-20261113.log", false, true, true)]
-    [InlineData("erytheia-20261113.txt", false, false, false)]
-    [InlineData("other.log", false, false, false)]
-    public void Classifies_TheLogFiles(string name, bool app, bool shim, bool pruned)
+    [InlineData("erytheia-20261113.log", true, false, 0)]
+    [InlineData("erytheia-20261113_001.log", true, false, 0)]
+    [InlineData("erytheia-gst-20261113.log", false, true, 7)]
+    [InlineData("timecodesyncplayer-20261113.log", true, false, 31)]
+    [InlineData("tcs-gst-20261113.log", false, true, 7)]
+    [InlineData("erytheia-20261113.txt", false, false, 0)]
+    [InlineData("other.log", false, false, 0)]
+    public void Classifies_TheLogFiles(string name, bool app, bool shim, int retentionDays)
     {
+        // retentionDays 0: 起動時の掃除の対象でない。
         LogFileNames.IsAppLog(name).Should().Be(app);
         LogFileNames.IsShimLog(name).Should().Be(shim);
-        LogFileNames.IsPrunedAtStartup(name).Should().Be(pruned);
+        LogFileNames.StartupRetention(name).Should().Be(retentionDays == 0 ? null : TimeSpan.FromDays(retentionDays));
     }
 
     [Fact]
@@ -37,6 +38,7 @@ public class LogFileNamesTests
         {
             "erytheia-20261113_001.log",
             "erytheia-20261113.log",
+            "timecodesyncplayer-20261113_001.log",
             "timecodesyncplayer-20261113.log",
             "erytheia-20261112.log",
             "timecodesyncplayer-20261111.log",
@@ -46,6 +48,7 @@ public class LogFileNamesTests
             "timecodesyncplayer-20261111.log",
             "erytheia-20261112.log",
             "timecodesyncplayer-20261113.log",
+            "timecodesyncplayer-20261113_001.log",
             "erytheia-20261113.log",
             "erytheia-20261113_001.log");
     }
