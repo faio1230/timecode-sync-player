@@ -1,6 +1,100 @@
 # Changelog
 
-All notable changes to TimecodeSyncPlayer are documented in this file.
+All notable changes to ERYTHEIA are documented in this file.
+
+## 0.6.7 - 2026-11-14
+
+The application is renamed ERYTHEIA (up to 0.6.6 it was TimecodeSyncPlayer): the executable, installer,
+distribution files, settings location, logs, default Spout sender name, project extension and environment variable names
+change. During 0.6.x the old settings, project files and environment variable names are still read. The UI is restyled,
+and the playlist now scrolls inside its own list. The sync rules, gates and constants are the same as 0.6.6.
+
+### Migration note
+
+- Settings are saved to `%LOCALAPPDATA%\ERYTHEIA\settings.json`. When the new location has no settings and
+  `%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json` exists, the first start copies it there (one Information line). The
+  old file is kept, so going back to 0.6.6 still works. If the copy fails, the app starts with default settings and logs
+  one Warning; the next save creates the new file, so the copy is not tried again. The old file can be copied by hand.
+- The default Spout sender name is now `ERYTHEIA` (was `TimecodeSyncPlayer`). To keep the old name, set
+  `ERYTHEIA_SPOUT_NAME=TimecodeSyncPlayer`, or select the new name on the receiver.
+- Environment variables are renamed from `TIMECODE_SYNC_PLAYER_*` and `TCS_*` to `ERYTHEIA_*` (same suffix, e.g.
+  `TCS_GOP_SCAN` → `ERYTHEIA_GOP_SCAN`). During 0.6.x the old name is read when the new one is not set, with one Warning
+  per variable; when both are set, the new one is used. The old names will no longer be read from 0.7.0.
+- Projects are saved as `.erytheia` by default; `.tsp` files still open (same format).
+- Log files are named `erytheia-YYYYMMDD.log` (app) and `erytheia-gst-YYYYMMDD.log` (playback engine), still in the
+  `logs` folder next to the app.
+
+### Installation folder
+
+- A new installation goes to `%LOCALAPPDATA%\Programs\ERYTHEIA`. The installer keeps the same application identity as
+  0.6.6, so on a PC with 0.6.6 or earlier it updates in place and keeps the previous folder
+  (`%LOCALAPPDATA%\Programs\TimecodeSyncPlayer`). The update removes the old executable and its files (dll, deps.json,
+  runtimeconfig.json) and the old shim (`tcs_gstreamer.dll`), and leaves one Start menu entry, ERYTHEIA. The installation folder, the
+  old-name files and the Start menu entry were checked on the test machine by installing the 0.6.7 candidate over an
+  installation of the released 0.6.6. Settings are copied at the first start (see the migration note).
+
+### Changed
+
+- Name: window title "ERYTHEIA v0.6.7" (fullscreen window "ERYTHEIA Fullscreen"); executable `ERYTHEIA.exe`; shim
+  `erytheia_gstreamer.dll`; distribution files `ERYTHEIA-v0.6.7-setup.exe` and `ERYTHEIA-v0.6.7-win-x64.zip`. The
+  GStreamer registry cache is rebuilt under `%LOCALAPPDATA%\ERYTHEIA` (not copied).
+- Log cleanup at startup: app logs with the old name (`timecodesyncplayer-*.log`) are deleted 31 days after their last
+  write, so about a month of app logs is kept as in 0.6.6. Playback engine logs (old and new names) are deleted after
+  7 days as before.
+- Display: black and red color scheme, Yu Gothic UI, tidier spacing, borders and text. Hover shows a red border, pressed
+  is dark red, corners are square and the focus frame is red; ON buttons stay green and turn red while pressed. The
+  background of disabled buttons is darker. Labels are shorter and the previous descriptions moved to tooltips ("開く",
+  "適用", "自動オフセット", "ProRes GPU:", "AUTO：確認用"); the offset note moved into the slider tooltip.
+- Test card: grid, circle, hue and gray bands, a detail wedge, resolution text and an 8-second gradient. The 24-bit
+  update counter of the 0.6.6 card is removed.
+- Playlist: the right-hand column still scrolls, and the list is capped at the remaining height of the column. With a
+  tall enough window the list and the row below it fit, and the list shows its own scroll bar. With a low window the
+  list shrinks to its minimum height (120) and the column scrolls. At the default window size about one row is visible
+  at a time.
+- The "video" file type in the Open and Add to playlist dialogs no longer lists `.avi` and `.mkv`, which the bundled
+  GStreamer cannot open.
+
+### Observability
+
+- `UI heartbeat summary` gets `maxLateAfterFirstMs` (maximum excluding the first tick) and `medianLateMs` at the end of
+  the line; existing fields and their order are unchanged.
+- New startup line: `GStreamer: root=… source=bundled|env|programfiles`.
+- Startup and exit lines are `=== ERYTHEIA v… 起動 ===` and `=== ERYTHEIA 終了 ===`.
+- One line per old-name environment variable read (and when both names are set), and one line when settings are copied
+  from the old location.
+
+### Known issues
+
+- None within the recommended media (same as 0.6.6).
+
+### Known limitations
+
+- The "decode behind" warning is judged from how many render notifications the UI thread handled. While the UI is busy,
+  it can appear even when decoding keeps up. Same as 0.6.6; not changed in this release.
+- Uninstalling also removes the `logs` folder in the application folder (as since 0.1.0). Copy the logs first if needed.
+- Installing without a registered previous installation puts the app in the new folder
+  (`%LOCALAPPDATA%\Programs\ERYTHEIA`) and leaves the old folder (`%LOCALAPPDATA%\Programs\TimecodeSyncPlayer`) as is
+  (by design).
+- The bundled GStreamer has no Matroska or AVI demuxer, so .mkv/.webm and .avi files cannot be opened. The recommended
+  containers are mp4 and mov (same as 0.6.6; .avi is added to this note in this release).
+- Others are the same as 0.6.6.
+
+### Known intermittent issues
+
+- Same as 0.6.6. In addition, in the development machine's E2E runs, fullscreen on the working display did not close on
+  Esc once in 20 runs; the app log shows no close either, and the cause is unknown.
+- After a manual seek right after loading and pausing, the position display stayed 5 frames past the target for about
+  4 seconds once on the test machine. The same sign appeared in the 0.6.4 and 0.6.5 verification. Whether the picture
+  shown at that time was the target is not confirmed. It did not appear in LTC sync.
+
+### Verification
+
+- On the test machine: the three standard scenarios (passed), continuous chase with six real media runs (passed), the
+  integrated AMD GPU run (passed), an update over v0.6.6 (installation folder, old-name files and Start menu entry
+  checked), and E2E (58 E2E tests: 44 passed, 1 failed, 13 skipped; the failure is the missing Matroska and AVI demux noted above; 11 more E2E tests that had been missed were rerun and passed; the 14 LTC hardware-loop tests passed in the standard runs). In the first track-switch run there were 0 failures; the maximum frame shortfall of
+  0.053 s was above the previous release's range (0.017-0.027), and the GPU publication shortfall was within the range
+  (0.017). The second track-switch run and part of the basic UI tests were still running at release time; their results
+  will be added to the release notes on GitHub.
 
 ## 0.6.6 - 2026-10-08
 
