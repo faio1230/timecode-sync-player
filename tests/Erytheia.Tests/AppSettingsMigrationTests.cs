@@ -32,6 +32,31 @@ public class AppSettingsMigrationTests
     }
 
     [Fact]
+    public void ScriptsKeepTheV066Name_WithTheExactLetterCase()
+    {
+        // 同じ置換で化けうる所: インストーラーの旧の名前（旧の exe・ショートカットを消す）と、start-isolated の
+        // 利用者の旧の設定の場所。大文字小文字を区別して、ファイルの中の文字列を固定で見る。
+        string installer = File.ReadAllText(RepoPath("scripts", "installer.iss"));
+        // FluentAssertions の Contain は大文字小文字を区別する。
+        installer.Should().Contain("#define LegacyAppName \"TimecodeSyncPlayer\"",
+            "インストーラーの旧の名前は v0.6.6 の TimecodeSyncPlayer");
+        installer.Should().NotContain("LegacyAppName \"Erytheia\"").And.NotContain("LegacyAppName \"ERYTHEIA\"");
+
+        string startIsolated = File.ReadAllText(RepoPath("scripts", "start-isolated.ps1"));
+        startIsolated.Should().Contain("@('ERYTHEIA', 'TimecodeSyncPlayer')",
+            "start-isolated は新旧の両方の利用者の settings.json を指させない");
+    }
+
+    private static string RepoPath(params string[] parts)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Erytheia.slnx")))
+            dir = dir.Parent;
+        if (dir is null) throw new InvalidOperationException("リポジトリルートが見つかりません。");
+        return Path.Combine([dir.FullName, .. parts]);
+    }
+
+    [Fact]
     public async Task LoadAsync_OnlyLegacySettings_CopiesThemAndKeepsTheLegacyFile()
     {
         using var dirs = new MigrationDirectories();
