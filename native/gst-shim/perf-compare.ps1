@@ -8,7 +8,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
-$exe = Join-Path $repo "src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/TimecodeSyncPlayer.exe"
+$exe = Join-Path $repo "src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/ERYTHEIA.exe"
 if (-not (Test-Path $exe)) { throw "アプリを先にビルドしてください: $exe" }
 if (-not (Test-Path (Join-Path $repo $Media))) { throw "メディアが無い: $Media" }
 

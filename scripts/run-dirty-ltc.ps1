@@ -34,7 +34,7 @@ if (-not $TestProject) {
     $TestProject = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
 }
 if (-not $AppExe) {
-    $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
+    $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 if (-not (Test-Path -LiteralPath $AppExe)) { throw "App exe not found: $AppExe (pass -AppExe)" }
 $AppExe = (Resolve-Path -LiteralPath $AppExe).Path
@@ -117,7 +117,7 @@ try {
     Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
 }
 
-$leftover = @(Get-Process -Name TimecodeSyncPlayer -ErrorAction SilentlyContinue)
+$leftover = @(Get-Process -Name ERYTHEIA -ErrorAction SilentlyContinue)
 $failedRuns = @($exitCodes | Where-Object { $_ -ne 0 }).Count
 Write-Output ('SUMMARY test_exit=' + ($exitCodes -join ',') + ' failed_runs=' + $failedRuns +
     ' leftover=' + $leftover.Count + ' reports=' + ($reports -join ';'))

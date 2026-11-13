@@ -55,7 +55,7 @@ if (-not $LogRoot) {
 # The E2E harness resolves the app under test from this variable; point it at the
 # same worktree's Debug build when the caller did not set one.
 if (-not $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH) {
-    $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
+    $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 
 $runs = @()

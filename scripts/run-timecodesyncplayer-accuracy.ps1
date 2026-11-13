@@ -7,7 +7,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath 'src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/TimecodeSyncPlayer.exe'))
+$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath 'src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/ERYTHEIA.exe'))
 $testProject = Join-Path $repoPath 'tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj'
 $dotnet = (Get-Command dotnet).Source
 $python = (Get-Command python).Source

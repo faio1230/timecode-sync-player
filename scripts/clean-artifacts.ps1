@@ -69,7 +69,7 @@ $releaseDir = Join-Path $root 'artifacts\release'
 if (Test-Path -LiteralPath $releaseDir) {
     Get-ChildItem -LiteralPath $releaseDir -File -Force | Where-Object {
         $name = $_.Name
-        -not ($publishedVersions | Where-Object { $name -like "TimecodeSyncPlayer-$_-*" })
+        -not ($publishedVersions | Where-Object { $name -like "ERYTHEIA-$_-*" -or $name -like "TimecodeSyncPlayer-$_-*" })
     } | ForEach-Object { $candidates.Add($_) }
 }
 

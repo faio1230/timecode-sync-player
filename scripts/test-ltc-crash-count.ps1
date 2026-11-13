@@ -64,11 +64,13 @@ try {
   </Results>
 </TestRun>
 "@
-    # Records that never count: a TimecodeSyncPlayer 1026 / 1000 before the window, and another
-    # application's 1026 / 1000 inside the window.
+    # Records that never count: an app 1026 / 1000 before the window (the old exe name
+    # TimecodeSyncPlayer.exe and the v0.6.7 name ERYTHEIA.exe), and another application's 1026 / 1000
+    # inside the window.
     $outsideAndOthers = @(
         (Ev1026 $day.AddMinutes(-30) 'TimecodeSyncPlayer.exe' $avInfo),
         (Ev1000 $day.AddMinutes(-30).AddMilliseconds(100) 'TimecodeSyncPlayer.exe' 'tcs_gstreamer.dll' 'c0000005' '0x00000000000a1b2c' 1111),
+        (Ev1026 $day.AddMinutes(-20) 'ERYTHEIA.exe' $avInfo),
         (Ev1026 $day.AddMinutes(4) 'shot.exe' 'System.TimeoutException: wait timeout'),
         (Ev1000 $day.AddMinutes(4).AddMilliseconds(100) 'shot.exe' 'KERNELBASE.dll' 'e0434352' '0x00000000000c41ca' 2222)
     )
@@ -99,7 +101,7 @@ try {
 
     # ---- no crash: only records that must not count ----
     $zero = New-FakeReport 'zero' $outsideAndOthers @()
-    Check ($zero.crashes.count -eq 0) 'zero: crashes.count 0 (a TimecodeSyncPlayer 1026 outside the window and another app 1026 in it are not counted)'
+    Check ($zero.crashes.count -eq 0) 'zero: crashes.count 0 (an app 1026 outside the window and another app 1026 in it are not counted)'
     Check ($zero.crashes.collected -eq $true) 'zero: crashes.collected true'
     Check ($zero.crashes.dotnetRuntime1026 -eq 0 -and $zero.crashes.applicationError1000 -eq 0) 'zero: 1026 / 1000 counts 0'
     Check (@($zero.crashes.items).Count -eq 0) 'zero: no crash items'
@@ -110,14 +112,15 @@ try {
         'zero: verdict fail from the failed test only (failReasons tests, no crash)'
 
     # ---- one crash: a 1026 and a 1000 of the same crash, 3 s after the ProRes GPU first launch ----
+    # (the v0.6.7 exe name ERYTHEIA.exe)
     $crashAt = $day.AddMinutes(3).AddSeconds(13)
     $oneEvents = @($outsideAndOthers) + @(
-        (Ev1026 $crashAt 'TimecodeSyncPlayer.exe' $avInfo),
-        (Ev1000 $crashAt.AddMilliseconds(120) 'TimecodeSyncPlayer.exe' 'tcs_gstreamer.dll' 'c0000005' '0x000000000009088f' 4242)
+        (Ev1026 $crashAt 'ERYTHEIA.exe' $avInfo),
+        (Ev1000 $crashAt.AddMilliseconds(120) 'ERYTHEIA.exe' 'tcs_gstreamer.dll' 'c0000005' '0x000000000009088f' 4242)
     )
     $one = New-FakeReport 'one' $oneEvents @('tsp-4242.dmp', 'tsp-9999.dmp')
     Check ($one.crashes.count -eq 1) 'one: crashes.count 1 (the 1026 and the 1000 of the same crash are one)'
-    Check ($one.crashes.dotnetRuntime1026 -eq 1 -and $one.crashes.applicationError1000 -eq 1) 'one: 1026 = 1, 1000 = 1 (TimecodeSyncPlayer in the window only)'
+    Check ($one.crashes.dotnetRuntime1026 -eq 1 -and $one.crashes.applicationError1000 -eq 1) 'one: 1026 = 1, 1000 = 1 (the app in the window only)'
     $item = @($one.crashes.items)[0]
     Check ($item.code -eq 'c0000005' -and $item.address -eq '00007FFB77D9088F') 'one: exception code and address from the 1026'
     Check ($item.module -eq 'tcs_gstreamer.dll' -and $item.offset -eq '000000000009088f' -and $item.pid -eq 4242) 'one: module, offset and pid from the 1000'
@@ -139,7 +142,8 @@ try {
 
     # ---- the functions directly ----
     # A 1000 with no 1026 (a crash the runtime did not see) is a crash of its own; its dump is
-    # found by time when the pid has none.
+    # found by time when the pid has none. The old exe name TimecodeSyncPlayer.exe (v0.6.6 and older)
+    # still counts.
     $only1000 = Get-TcsCrashSummary -Records @(
         (Ev1000 $day.AddMinutes(7) 'TimecodeSyncPlayer.exe' 'ntdll.dll' 'c0000374' '0x0000000000100000' 5555)
     ) -FromUtc $day.ToUniversalTime() -ToUtc $day.AddMinutes(10).ToUniversalTime() -AppLines $appLog `
@@ -150,9 +154,9 @@ try {
     Check ($c.proresGpuFirstLaunch -eq $false) 'function: assigned to the launch at 22:06:10 (not ProRes GPU first)'
     # Two crashes a moment apart each with its 1026: both counted, one 1000 pairs with the nearer one.
     $two = Get-TcsCrashSummary -Records @(
-        (Ev1026 $day.AddMinutes(1) 'TimecodeSyncPlayer.exe' $avInfo),
-        (Ev1026 $day.AddMinutes(1).AddSeconds(4) 'TimecodeSyncPlayer.exe' $avInfo),
-        (Ev1000 $day.AddMinutes(1).AddSeconds(4.1) 'TimecodeSyncPlayer.exe' 'x.dll' 'c0000005' '0x1' 6666)
+        (Ev1026 $day.AddMinutes(1) 'ERYTHEIA.exe' $avInfo),
+        (Ev1026 $day.AddMinutes(1).AddSeconds(4) 'ERYTHEIA.exe' $avInfo),
+        (Ev1000 $day.AddMinutes(1).AddSeconds(4.1) 'ERYTHEIA.exe' 'x.dll' 'c0000005' '0x1' 6666)
     ) -FromUtc $day.ToUniversalTime() -ToUtc $day.AddMinutes(10).ToUniversalTime()
     Check ($two.crashes.count -eq 2) 'function: two 1026 are two crashes'
     Check (@($two.crashes.items)[1].pid -eq 6666 -and $null -eq @($two.crashes.items)[0].pid) 'function: the 1000 pairs with the nearer 1026'

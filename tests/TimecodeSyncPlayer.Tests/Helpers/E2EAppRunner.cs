@@ -300,7 +300,7 @@ internal sealed class E2EAppRunner : IDisposable
         try
         {
             process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("TimecodeSyncPlayer.exe の起動に失敗しました。");
+                ?? throw new InvalidOperationException("ERYTHEIA.exe の起動に失敗しました。");
         }
         catch
         {
@@ -389,7 +389,7 @@ internal sealed class E2EAppRunner : IDisposable
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
             return env;
 
-        string sameDir = Path.Combine(AppContext.BaseDirectory, "TimecodeSyncPlayer.exe");
+        string sameDir = Path.Combine(AppContext.BaseDirectory, "ERYTHEIA.exe");
         if (File.Exists(sameDir))
             return sameDir;
 
@@ -400,7 +400,7 @@ internal sealed class E2EAppRunner : IDisposable
             {
                 string candidate = Path.Combine(
                     dir.FullName, "src", "TimecodeSyncPlayer", "bin", config,
-                    "net8.0-windows", "TimecodeSyncPlayer.exe");
+                    "net8.0-windows", "ERYTHEIA.exe");
                 if (File.Exists(candidate))
                     return candidate;
             }
@@ -409,7 +409,7 @@ internal sealed class E2EAppRunner : IDisposable
         }
 
         throw new FileNotFoundException(
-            "TimecodeSyncPlayer.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
+            "ERYTHEIA.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
     }
 
     /// <summary>

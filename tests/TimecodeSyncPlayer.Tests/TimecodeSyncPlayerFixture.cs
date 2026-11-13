@@ -10,7 +10,7 @@ using TimecodeSyncPlayer.Tests.Helpers;
 namespace TimecodeSyncPlayer.Tests;
 
 /// <summary>
-/// テストクラス単位で TimecodeSyncPlayer.exe を起動し、FlaUI のウィンドウハンドルを提供する。
+/// テストクラス単位で ERYTHEIA.exe を起動し、FlaUI のウィンドウハンドルを提供する。
 /// xUnit の IClassFixture&lt;TimecodeSyncPlayerFixture&gt; として使用する。
 /// </summary>
 public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
@@ -77,7 +77,7 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
         try
         {
             _process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("TimecodeSyncPlayer.exe の起動に失敗しました。");
+                ?? throw new InvalidOperationException("ERYTHEIA.exe の起動に失敗しました。");
         }
         catch
         {
@@ -191,7 +191,7 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
             return env;
 
         // テストバイナリと同じディレクトリ（CI でコピーした場合）
-        string sameDir = Path.Combine(AppContext.BaseDirectory, "TimecodeSyncPlayer.exe");
+        string sameDir = Path.Combine(AppContext.BaseDirectory, "ERYTHEIA.exe");
         if (File.Exists(sameDir)) return sameDir;
 
         // リポジトリルートからの相対パス探索
@@ -202,14 +202,14 @@ public sealed class TimecodeSyncPlayerFixture : IAsyncLifetime
             {
                 string candidate = Path.Combine(
                     dir.FullName, "src", "TimecodeSyncPlayer", "bin", config,
-                    "net8.0-windows", "TimecodeSyncPlayer.exe");
+                    "net8.0-windows", "ERYTHEIA.exe");
                 if (File.Exists(candidate)) return candidate;
             }
             dir = dir.Parent;
         }
 
         throw new FileNotFoundException(
-            "TimecodeSyncPlayer.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
+            "ERYTHEIA.exe が見つかりません。src/TimecodeSyncPlayer をビルドするか TIMECODE_SYNC_PLAYER_E2E_APP_PATH を設定してください。");
     }
 
     private async Task PausePlaybackIfNeeded()

@@ -2810,7 +2810,7 @@ public sealed partial class LtcScenarioE2ETests
         }
 
         private Process[] FindResidualProcesses() =>
-            Process.GetProcessesByName("TimecodeSyncPlayer")
+            Process.GetProcessesByName("ERYTHEIA")
                 .Where(process =>
                 {
                     try { return process.StartTime >= _startedAt.AddSeconds(-2); }

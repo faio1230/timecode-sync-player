@@ -296,6 +296,15 @@ try {
         throw "v0.4 の配布物に mpv は含めません。Release 出力に残っています: $names。製品側の mpv 除去が反映されたビルドを使用してください。"
     }
 
+    # v0.6.7: exe とアセンブリの名前は ERYTHEIA。前のビルドの TimecodeSyncPlayer.exe・.dll などが Release 出力に
+    # 残っていたら黙って同梱せず失敗させる（exe が 2 つ入った配布物にしない）。
+    $staleOldNameFiles = @(Get-ChildItem -LiteralPath $releaseDirectory -File |
+        Where-Object { $_.Name -like "TimecodeSyncPlayer.*" })
+    if ($staleOldNameFiles.Count -gt 0) {
+        $names = ($staleOldNameFiles | ForEach-Object { $_.Name }) -join ", "
+        throw "Release 出力に旧の名前のファイルが残っています: $names。bin\Release を消してからビルドし直してください。"
+    }
+
     Get-ChildItem -LiteralPath $releaseDirectory -File | ForEach-Object {
         if ($_.Extension -eq ".pdb") {
             return
@@ -303,7 +312,7 @@ try {
         Copy-Item -LiteralPath $_.FullName -Destination $stagingDirectory
     }
 
-    $requiredRuntimeFiles = @("TimecodeSyncPlayer.exe", "TimecodeSyncPlayer.dll", "SpoutDX.dll", "tcs_gstreamer.dll")
+    $requiredRuntimeFiles = @("ERYTHEIA.exe", "ERYTHEIA.dll", "SpoutDX.dll", "tcs_gstreamer.dll")
     foreach ($requiredFile in $requiredRuntimeFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $stagingDirectory $requiredFile) -PathType Leaf)) {
             throw "Required runtime file is missing from Release output: $requiredFile"

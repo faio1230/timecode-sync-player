@@ -2,7 +2,7 @@
 # Run the LTC E2E scenarios against one app (installed or a local Debug build)
 # with a single command, and leave the evidence in one report directory.
 #
-#   pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe <path to TimecodeSyncPlayer.exe>
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe <path to ERYTHEIA.exe>
 #   pwsh -File scripts\run-ltc-scenarios.ps1 -Filter "FullyQualifiedName~NoSuchTest"   # dry run
 #   pwsh -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-Media M1,M3,M5] [-KeepProject]
 #       (-Media picks tracks by symbol: M<n> is the n-th video of the folder in name order;
@@ -39,9 +39,10 @@
 #
 # Crashes (test infrastructure 2026-10, item 2): after the tests the runner reads the .NET Runtime
 # 1026 and Application Error 1000 records of the Application event log in the run's window
-# (crash-events.json), and ltc-run-report.ps1 counts the TimecodeSyncPlayer crashes, the launches
-# and the launches that read ProRes on the GPU first into run-result.json (crashes, launches,
-# proresGpuFirstLaunches). One crash fails the run (failReasons "crash", SUMMARY crashes=N).
+# (crash-events.json), and ltc-run-report.ps1 counts the app crashes (ERYTHEIA.exe, and the old
+# TimecodeSyncPlayer.exe of v0.6.6 and older), the launches and the launches that read ProRes on
+# the GPU first into run-result.json (crashes, launches, proresGpuFirstLaunches).
+# One crash fails the run (failReasons "crash", SUMMARY crashes=N).
 # The test processes inherit DOTNET_DbgEnableMiniDump=1 / DOTNET_DbgMiniDumpType (-MiniDumpType,
 # default 2; 4 = full, over 1 GB, only when chasing a crash) / DOTNET_DbgMiniDumpName =
 # <ReportDir>/dumps/tsp-%p.dmp, so a crashed app leaves its dump in the report directory.
@@ -113,7 +114,7 @@ $testProj = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlay
 
 $appExeGiven = -not [string]::IsNullOrWhiteSpace($AppExe)
 if (-not $AppExe) {
-    $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
+    $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 if (-not (Test-Path -LiteralPath $AppExe)) {
     throw "App exe not found: $AppExe (pass -AppExe)"
@@ -800,7 +801,7 @@ $copiedLogs = @()
 # Log folders to collect: the folder next to the app exe (copied to app-logs\).
 # Without -AppExe, also the test output folder (copied to app-logs\test-bin\): an E2E
 # started without TIMECODE_SYNC_PLAYER_E2E_APP_PATH (for example a plain dotnet test)
-# prefers the TimecodeSyncPlayer.exe copied next to the test assembly, and its logs go
+# prefers the ERYTHEIA.exe copied next to the test assembly, and its logs go
 # to that folder.
 $logSources = @(@{ Dir = (Join-Path $appDir 'logs'); Sub = '' })
 if (-not $appExeGiven) {
@@ -860,8 +861,8 @@ Copy-RecentFiles $testTempRoot 'test-temp'
 # ---- crash records (test infrastructure 2026-10, item 2) --------------------
 # The .NET Runtime 1026 and Application Error 1000 records of the run's window (from the test start
 # to now, at least 3 s after the tests so WER has written its record), all applications;
-# ltc-run-report.ps1 keeps the TimecodeSyncPlayer ones. A read failure is recorded
-# (crashes.count becomes null).
+# ltc-run-report.ps1 keeps the app ones (ERYTHEIA.exe and the old TimecodeSyncPlayer.exe). A read
+# failure is recorded (crashes.count becomes null).
 $crashWindowTo = Get-Date
 $sinceTestEndMs = ($crashWindowTo - $testEnd).TotalMilliseconds
 if ($sinceTestEndMs -lt 3000) {
@@ -914,7 +915,7 @@ foreach ($name in $copiedLogs) {
     }
 }
 
-$leftover = @(Get-Process -Name TimecodeSyncPlayer -ErrorAction SilentlyContinue)
+$leftover = @(Get-Process -Name ERYTHEIA -ErrorAction SilentlyContinue)
 # Result JSON (run-result.json) and the retention rules (delete a passed run's output-trace and leftover media links).
 # A failure here must not change the test result. It runs before the SUMMARY line, which takes the crash count from it.
 try {

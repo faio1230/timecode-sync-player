@@ -17,11 +17,11 @@ Get-TcsFfmpegLogLines $ffmpeg | ForEach-Object { Write-Host $_ }
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($AppPath)) {
-    $AppPath = Join-Path $projectRoot "src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe"
+    $AppPath = Join-Path $projectRoot "src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe"
 }
 $AppPath = [System.IO.Path]::GetFullPath($AppPath)
 if (-not (Test-Path -LiteralPath $AppPath -PathType Leaf)) {
-    throw "TimecodeSyncPlayer.exe was not found: $AppPath`nBuild the Debug configuration first or pass -AppPath."
+    throw "ERYTHEIA.exe was not found: $AppPath`nBuild the Debug configuration first or pass -AppPath."
 }
 
 $captureDirectory = Join-Path $env:TEMP ("timecode-sync-player-capture-" + [Guid]::NewGuid().ToString("N"))
@@ -68,7 +68,7 @@ finally {
     $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH = $previousSettingsPath
 }
 
-Write-Host "TimecodeSyncPlayer is ready for a client-side screenshot."
+Write-Host "ERYTHEIA is ready for a client-side screenshot."
 Write-Host "Use the RDP client or local OS screenshot function; this script does not capture the screen."
 Write-Host "Save the final PNG as: $(Join-Path $projectRoot 'assets\screenshot.png')"
 

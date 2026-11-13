@@ -8,7 +8,7 @@ public class AppLaunchArgumentsTests
     public void Parse_ReadsOpenAndPlaylistPaths()
     {
         AppLaunchArguments result = AppLaunchArguments.Parse([
-            "TimecodeSyncPlayer.exe",
+            "ERYTHEIA.exe",
             "--open", @"C:\media\one.mp4",
             "--playlist", @"C:\media\two.mp4", @"C:\media\three.mp4"
         ]);
@@ -21,7 +21,7 @@ public class AppLaunchArgumentsTests
     public void Parse_ReadsLoadAndSaveProjectWithSeparateValues()
     {
         AppLaunchArguments result = AppLaunchArguments.Parse([
-            "TimecodeSyncPlayer.exe",
+            "ERYTHEIA.exe",
             "--load-project", @"C:\projects\show.tsp",
             "--save-project", @"C:\projects\out.tsp"
         ]);
@@ -34,7 +34,7 @@ public class AppLaunchArgumentsTests
     public void Parse_ReadsLoadAndSaveProjectWithEqualsValues()
     {
         AppLaunchArguments result = AppLaunchArguments.Parse([
-            "TimecodeSyncPlayer.exe",
+            "ERYTHEIA.exe",
             @"--load-project=C:\projects\show.tsp",
             @"--save-project=C:\projects\out.tsp"
         ]);
@@ -47,7 +47,7 @@ public class AppLaunchArgumentsTests
     public void InitialPlaylistPaths_PrependsOpenPathWhenPlaylistIsSpecified()
     {
         AppLaunchArguments result = AppLaunchArguments.Parse([
-            "TimecodeSyncPlayer.exe",
+            "ERYTHEIA.exe",
             "--open", @"C:\media\one.mp4",
             "--playlist", @"C:\media\two.mp4"
         ]);

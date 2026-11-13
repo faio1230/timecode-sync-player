@@ -19,7 +19,7 @@
     prores（ProRes のロードの profile の内訳 prores-gpu / prores-cpu と decoder-adapter-mismatch の発火の回数。
     この回の trx の開始より前のログ行は数えない）。
     試験基盤の束 2026-10 の 2 の追加（落ちの自動の集計）:
-    crashes（回の窓の中の、イベントログの .NET Runtime 1026 と Application Error 1000 のうち TimecodeSyncPlayer の行から
+    crashes（回の窓の中の、イベントログの .NET Runtime 1026 と Application Error 1000 のうちアプリ（ERYTHEIA.exe と旧の TimecodeSyncPlayer.exe）の行から
     数えた落ち。各件の時刻・例外の番号・番地・シナリオ・直前の起動・ダンプのファイル名と、ReportDir\dumps のダンプの数と名前。
     ランナーが集めた crash-events.json が無い回は count が null）、
     launches（窓の中の起動の数、「=== TimecodeSyncPlayer v… 起動」の行）、

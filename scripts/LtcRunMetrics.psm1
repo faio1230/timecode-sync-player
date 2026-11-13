@@ -211,7 +211,9 @@ function Get-TcsSystemCommitFreeGb {
 # run-result.json "crashes", "launches" and "proresGpuFirstLaunches" (Get-TcsCrashSummary).
 # One crash fails the run.
 
-$script:TcsCrashAppName = 'TimecodeSyncPlayer.exe'
+# v0.6.7: the exe is ERYTHEIA.exe. The records of the old TimecodeSyncPlayer.exe (v0.6.6 and older)
+# still count, so a run of the old build can be compared with the same report.
+$script:TcsCrashAppNames = @('ERYTHEIA.exe', 'TimecodeSyncPlayer.exe')
 
 # One Application-log record (EventLogRecord) as a plain object for crash-events.json:
 # { timeCreated (local ISO with offset), provider, id, values (the event properties as strings) }.
@@ -225,7 +227,7 @@ function ConvertTo-TcsCrashEventRecord($Event) {
 }
 
 # The .NET Runtime 1026 and Application Error 1000 records of the Application log between
-# FromUtc and ToUtc (all applications; Get-TcsCrashSummary keeps TimecodeSyncPlayer only).
+# FromUtc and ToUtc (all applications; Get-TcsCrashSummary keeps the app only).
 function Read-TcsCrashEventLog([DateTime]$FromUtc, [DateTime]$ToUtc) {
     $filter = @{
         LogName = 'Application'
@@ -245,13 +247,13 @@ function Read-TcsCrashEventLog([DateTime]$FromUtc, [DateTime]$ToUtc) {
 }
 
 # A crash-events.json record as { atUtc, source ('1026' | '1000'), app, code, address, module,
-# offset, pid, exception }, or $null when it is not a crash record of TimecodeSyncPlayer.exe.
+# offset, pid, exception }, or $null when it is not a crash record of one of AppNames.
 #   1026 (.NET Runtime): one property, the message: "Application: <exe>" and
 #        "Exception Info: exception code c0000005, exception address 00007FFB77D9088F"
 #        (a managed exception has "Exception Info: System.X: ..." instead).
 #   1000 (Application Error): properties 0 app, 3 module, 6 code, 7 offset, 8 process id
 #        (read by position, so the localized message text does not matter).
-function ConvertFrom-TcsCrashEventRecord($Record, [string]$AppName = $script:TcsCrashAppName) {
+function ConvertFrom-TcsCrashEventRecord($Record, [string[]]$AppNames = $script:TcsCrashAppNames) {
     if ($null -eq $Record) { return $null }
     $at = ConvertTo-TcsUtc (Get-TcsField $Record 'timeCreated')
     if ($null -eq $at) { return $null }
@@ -282,7 +284,7 @@ function ConvertFrom-TcsCrashEventRecord($Record, [string]$AppName = $script:Tcs
     } else {
         return $null
     }
-    if (-not [string]::Equals($item.app, $AppName, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    if ($AppNames -notcontains $item.app) { return $null }  # -notcontains ignores case
     return $item
 }
 
@@ -372,12 +374,12 @@ function Get-TcsCrashSummary {
         [string]$CollectError = '',
         [double]$PairSeconds = 10,
         [double]$DumpSeconds = 120,
-        [string]$AppName = 'TimecodeSyncPlayer.exe'
+        [string[]]$AppNames = $script:TcsCrashAppNames
     )
     $from = ConvertTo-TcsUtc $FromUtc
     $to = ConvertTo-TcsUtc $ToUtc
     $events = @(foreach ($r in $Records) {
-        $e = ConvertFrom-TcsCrashEventRecord $r $AppName
+        $e = ConvertFrom-TcsCrashEventRecord $r $AppNames
         if ($null -eq $e) { continue }
         if ($null -ne $from -and $e.atUtc -lt $from) { continue }
         if ($null -ne $to -and $e.atUtc -gt $to) { continue }

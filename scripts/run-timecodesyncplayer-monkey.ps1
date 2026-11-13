@@ -13,7 +13,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath "src/TimecodeSyncPlayer/bin/$Configuration/net8.0-windows/TimecodeSyncPlayer.exe"))
+$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath "src/TimecodeSyncPlayer/bin/$Configuration/net8.0-windows/ERYTHEIA.exe"))
 $testProject = Join-Path $repoPath 'tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj'
 $dotnetPath = (Get-Command dotnet -ErrorAction Stop).Source
 if ($Seeds.Count -eq 0) { throw 'At least one seed is required.' }
@@ -35,7 +35,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
 $binaryEvidence = @()
 foreach ($binary in @(
     $appPath,
-    (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'TimecodeSyncPlayer.dll'),
+    (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'ERYTHEIA.dll'),
     (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'libmpv-2.dll'),
     (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'mpv-2.dll'),
     (Join-Path $repoPath "tests/TimecodeSyncPlayer.Tests/bin/$Configuration/net8.0-windows/TimecodeSyncPlayer.Tests.dll")

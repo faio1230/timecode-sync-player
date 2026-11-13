@@ -62,7 +62,7 @@ $ErrorActionPreference = 'Stop'
 
 # Repo-relative defaults: any worktree runs its own build and writes its own TestResults.
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe' }
+if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe' }
 if (-not $LogRoot) { $LogRoot = Join-Path $repoRoot 'TestResults\gpu-app' }
 if ($OverallTimeoutSeconds -le 0) { $OverallTimeoutSeconds = $Seconds + 90 }
 
@@ -139,7 +139,7 @@ public static class AppOutputCapture {
 $receiverExe = Join-Path $env:USERPROFILE 'Downloads\Spout-SDK-examples_2-007-017\Spout-SDK-examples\Examples_2-007-017\SpoutDX\WinSpoutDXreceiver.exe'
 $session = (query session 2>$null | Select-String '>console') -ne $null
 if (-not $session) { throw 'Not a console session; refusing to run a display test.' }
-$busy = Get-Process | Where-Object { $_.ProcessName -match '^(TimecodeSyncPlayer|GpuOutputProbe|WinSpoutDXreceiver|gst-launch-1.0|tcs-shim-test)$' }
+$busy = Get-Process | Where-Object { $_.ProcessName -match '^(ERYTHEIA|GpuOutputProbe|WinSpoutDXreceiver|gst-launch-1.0|tcs-shim-test)$' }
 if ($busy) { throw "GPU test process already running: $($busy.ProcessName -join ',')" }
 $run = Join-Path $LogRoot ('{0}-{1}' -f [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'), $Label)
 New-Item -ItemType Directory -Path $run | Out-Null
@@ -152,7 +152,7 @@ $json = '{"outputBackend":1,"fullscreenDisplayDeviceName":"' + $escapedDevice + 
 if ($DecodeMode) { $json += ',"decodeMode":"' + $DecodeMode + '"' }
 $json += '}'
 [IO.File]::WriteAllText($settings, $json, [Text.UTF8Encoding]::new($false))
-$hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'TimecodeSyncPlayer.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'tcs_gstreamer.dll'), $receiverExe, $MediaPath) |
+$hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'ERYTHEIA.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'tcs_gstreamer.dll'), $receiverExe, $MediaPath) |
     Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { Get-FileHash $_ -Algorithm SHA256 | Select-Object Path, Hash }
 $hashes | ConvertTo-Json | Set-Content (Join-Path $run 'inputs.json') -Encoding UTF8
 $result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; decodeMode=$(if ($DecodeMode) { $DecodeMode } else { $null }); media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; audioProbe=$null; completedNormally=$false; receiverMode=$(if ($NoSpout) { 'none' } else { 'official' }); steps=@() }

@@ -8,7 +8,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath 'src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/TimecodeSyncPlayer.exe'))
+$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath 'src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/ERYTHEIA.exe'))
 $project = Join-Path $repoPath 'tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj'
 $dotnet = (Get-Command dotnet).Source
 if (-not $ReportDirectory) { $ReportDirectory = Join-Path $repoPath 'TestResults/real-project' }
