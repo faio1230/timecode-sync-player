@@ -20,6 +20,18 @@ public class AppSettingsMigrationTests
     }
 
     [Fact]
+    public void FolderNames_AreTheV066NameAndTheNewName_DifferingBeyondLetterCase()
+    {
+        // v0.6.7 の名前空間の置換で旧の名前が "Erytheia" に化けたことがある。Windows はフォルダの名前の
+        // 大文字小文字を区別しないので、それだと新しい場所（ERYTHEIA）と同じフォルダになり、引き継ぎが黙って壊れる。
+        string.Equals(AppSettingsManager.LegacyAppDataDirectoryName, "TimecodeSyncPlayer", StringComparison.Ordinal)
+            .Should().BeTrue("旧の場所は v0.6.6 までの %LOCALAPPDATA%\\TimecodeSyncPlayer（大文字小文字まで同じ）");
+        string.Equals(AppSettingsManager.AppDataDirectoryName, "ERYTHEIA", StringComparison.Ordinal).Should().BeTrue();
+        string.Equals(AppSettingsManager.LegacyAppDataDirectoryName, AppSettingsManager.AppDataDirectoryName,
+            StringComparison.OrdinalIgnoreCase).Should().BeFalse("大文字小文字を無視しても新旧は別のフォルダ");
+    }
+
+    [Fact]
     public async Task LoadAsync_OnlyLegacySettings_CopiesThemAndKeepsTheLegacyFile()
     {
         using var dirs = new MigrationDirectories();
