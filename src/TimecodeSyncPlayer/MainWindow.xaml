@@ -325,12 +325,20 @@
         <!-- Playlist -->
         <Border x:Name="SidebarHost" Grid.Row="0" Grid.Column="1" Grid.RowSpan="5"
                 Background="#000000">
-            <ScrollViewer x:Name="SidebarScroll" VerticalScrollBarVisibility="Auto"
+            <!-- v0.6.7 #45 案 A: 右の欄全体のスクロールをやめ、上（LTC・出力）と下（Playlist）に分ける。
+                 上は中身の高さまで取り、窓が低いときだけ上だけがスクロールする。下は残りを全部使い、
+                 一覧は自前のスクロールバーを出す。下の最小の高さ（270）は、見出し・ボタン・1 行・n/N の行が入る高さ。 -->
+            <Grid x:Name="SidebarLayout">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="1000*" MaxHeight="{Binding ActualHeight, ElementName=SidebarTop}"/>
+                    <RowDefinition Height="*" MinHeight="270"/>
+                </Grid.RowDefinitions>
+            <ScrollViewer x:Name="SidebarScroll" Grid.Row="0" VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
                 <ScrollViewer.Resources>
                     <Style TargetType="ScrollBar" BasedOn="{StaticResource ConsoleScrollBar}"/>
                 </ScrollViewer.Resources>
-            <Grid MinHeight="{Binding ActualHeight, ElementName=SidebarHost}">
+            <Grid x:Name="SidebarTop">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>  <!-- LTCタイトル -->
                     <RowDefinition Height="Auto"/>  <!-- デバイス選択 -->
@@ -340,12 +348,6 @@
                     <RowDefinition Height="Auto"/>  <!-- タイムコード表示 -->
                     <RowDefinition Height="Auto"/>  <!-- 出力タイトル -->
                     <RowDefinition Height="Auto"/>  <!-- 出力設定 -->
-                    <RowDefinition Height="Auto"/>  <!-- Playlistタイトル -->
-                    <RowDefinition Height="Auto"/>  <!-- 自動オフセットチェックボックス -->
-                    <RowDefinition Height="Auto"/>  <!-- Playlistボタン -->
-                    <RowDefinition Height="Auto"/>  <!-- 保存/読み込みボタン -->
-                    <RowDefinition Height="*"/>     <!-- Playlistリスト -->
-                    <RowDefinition Height="Auto"/>  <!-- CurrentTrackLabel -->
                 </Grid.RowDefinitions>
 
                 <TextBlock Text="LTC" Style="{StaticResource PanelHeading}"
@@ -747,14 +749,26 @@
                             Click="BtnGpuRetry_Click"
                             AutomationProperties.AutomationId="BtnGpuRetry"/>
                 </StackPanel>
+            </Grid>
+            </ScrollViewer>
 
-                <TextBlock Grid.Row="8"
+            <Grid Grid.Row="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>  <!-- Playlistタイトル -->
+                    <RowDefinition Height="Auto"/>  <!-- 自動オフセットチェックボックス -->
+                    <RowDefinition Height="Auto"/>  <!-- Playlistボタン -->
+                    <RowDefinition Height="Auto"/>  <!-- 保存/読み込みボタン -->
+                    <RowDefinition Height="*"/>     <!-- Playlistリスト -->
+                    <RowDefinition Height="Auto"/>  <!-- CurrentTrackLabel -->
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0"
                            Text="Playlist"
                            Style="{StaticResource PanelHeading}"
                            Margin="0,0,0,8"/>
 
                 <CheckBox x:Name="AutoOffsetCheckBox"
-                          Grid.Row="9"
+                          Grid.Row="1"
                           Content="自動オフセット"
                           ToolTip="クリップを追加すると、直前のクリップの後ろに配置します"
                           Foreground="#BBBBBB"
@@ -765,7 +779,7 @@
                           Unchecked="AutoOffsetCheckBox_Changed"
                           AutomationProperties.AutomationId="AutoOffsetCheckBox"/>
 
-                <UniformGrid Grid.Row="10" Columns="3" Margin="-3,0,-3,6">
+                <UniformGrid Grid.Row="2" Columns="3" Margin="-3,0,-3,6">
                     <Button Content="追加" Height="28"
                             Margin="3" Click="BtnAddToPlaylist_Click"
                             ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=AddToPlaylist}"
@@ -788,7 +802,7 @@
                             AutomationProperties.AutomationId="BtnMoveTrackDown"/>
                 </UniformGrid>
 
-                <UniformGrid Grid.Row="11" Columns="2" Margin="-3,0,-3,6">
+                <UniformGrid Grid.Row="3" Columns="2" Margin="-3,0,-3,6">
                     <Button Content="保存" Height="28"
                             Margin="3" Click="BtnSaveProject_Click"
                             ToolTip="{Binding IsEnabled, RelativeSource={RelativeSource Self}, Converter={StaticResource ButtonToolTip}, ConverterParameter=SaveProject}"
@@ -800,9 +814,8 @@
                 </UniformGrid>
 
                 <ListBox Margin="0,0,0,0" x:Name="PlaylistList"
-                         Grid.Row="12"
-                         MinHeight="120"
-                         MaxHeight="{Binding ActualHeight, ElementName=SidebarHost}"
+                         Grid.Row="4"
+                         MinHeight="72"
                          AutomationProperties.AutomationId="PlaylistList"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          AllowDrop="True"
@@ -930,14 +943,14 @@
                 </ListBox>
 
                 <TextBlock x:Name="CurrentTrackLabel"
-                           Grid.Row="13"
+                           Grid.Row="5"
                            AutomationProperties.AutomationId="CurrentTrackLabel"
                            Foreground="#BBBBBB"
                             Text="{Binding Playlist.CurrentTrackLabel}"
                            TextTrimming="CharacterEllipsis"
                            Margin="0,6,0,0"/>
             </Grid>
-            </ScrollViewer>
+            </Grid>
         </Border>
     </Grid>
     </Border>
