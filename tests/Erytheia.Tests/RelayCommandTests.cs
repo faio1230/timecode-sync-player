@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Windows.Input;
 using FluentAssertions;
+using Xunit.Abstractions;
 using Erytheia;
 
 namespace Erytheia.Tests;
@@ -48,6 +50,10 @@ public class RelayCommandTests
 
 public class AsyncRelayCommandTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public AsyncRelayCommandTests(ITestOutputHelper output) => _output = output;
+
     [Fact]
     public async Task Execute_RunsAndCompletesAsync()
     {
@@ -90,7 +96,14 @@ public class AsyncRelayCommandTests
         cmd.Execute(null);
         await lambdaStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cmd.Cancel();
-        await Task.Delay(100);
+
+        // 取り消しの後、実行が終わって CanExecute が戻るまでを待つ。固定の 100 ms の待ちは一式で重いときに
+        // 足りなかったので、上限 2 秒で、満たしたら抜ける待ちにする（確かめる中身は変えない）。
+        var stopwatch = Stopwatch.StartNew();
+        while (!(cancelled && cmd.CanExecute(null)) && stopwatch.Elapsed < TimeSpan.FromSeconds(2))
+            await Task.Delay(5);
+        _output.WriteLine($"Cancel_StopsRunningOperation: waited {stopwatch.Elapsed.TotalMilliseconds:F1} ms " +
+            $"(cancelled={cancelled}, canExecute={cmd.CanExecute(null)})");
 
         cancelled.Should().BeTrue();
         cmd.CanExecute(null).Should().BeTrue();
