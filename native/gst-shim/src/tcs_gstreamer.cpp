@@ -132,16 +132,7 @@ env_format_warning (char* out, size_t size, const char* name, bool legacy_used)
 
 /* O1: LOG writes to stderr and, when ERYTHEIA_LOG_FILE names a path, appends the
  * same line to that file (flushed per line). The open is lazy; failures are
- * ignored. The log volume still follows ERYTHEIA_LEASE_LOG / ERYTHEIA_FRAME_LOG.
- *
- * v0.6.7: the static initializers of this file read environment variables and
- * LOG (seek-method, pump-budget, the warnings about old variable names) while
- * the DLL loads, inside the loader lock. The log file is not opened there: the
- * lines go to stderr and are kept, and the first LOG after the load opens the
- * file and writes the kept lines first (g_in_static_init, cleared by the last
- * static initializer at the end of this file). */
-static bool g_in_static_init = true;
-
+ * ignored. The log volume still follows ERYTHEIA_LEASE_LOG / ERYTHEIA_FRAME_LOG. */
 static void
 log_sink_write (const char* line)
 {
@@ -156,12 +147,7 @@ log_sink_write (const char* line)
   static std::mutex log_file_mutex;
   static FILE* log_file = nullptr;
   static bool log_file_tried = false;
-  static std::vector<std::string> kept_while_loading;
   std::lock_guard<std::mutex> g (log_file_mutex);
-  if (g_in_static_init) {
-    kept_while_loading.emplace_back (stamped);
-    return;
-  }
   if (!log_file_tried) {
     log_file_tried = true;
     char path[1024];
@@ -178,10 +164,6 @@ log_sink_write (const char* line)
       if (log_file)
         fputs (warning, log_file);
     }
-    if (log_file)
-      for (const std::string& kept : kept_while_loading)
-        fputs (kept.c_str (), log_file);
-    kept_while_loading.clear ();
   }
   if (log_file) {
     fputs (stamped, log_file);
@@ -5609,7 +5591,3 @@ tcs_probe_duration (const char* utf8_path, int32_t timeout_ms, double* out_sec)
 
 } /* extern C */
 
-
-/* v0.6.7: the last dynamic initializer of this file. The ones above it (the environment
- * variables read while the DLL loads) have run; LOG may open the log file now (log_sink_write). */
-static const bool g_static_init_done = (g_in_static_init = false, true);
