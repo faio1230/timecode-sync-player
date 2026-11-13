@@ -65,22 +65,35 @@
 #include <cstring>
 #include <cmath>
 
-/* v0.6.7: the environment variables were renamed from TCS_* to ERYTHEIA_*.
+/* v0.6.7: the environment variables were renamed from TCS_* (and the one
+ * TIMECODE_SYNC_PLAYER_OUTPUT_TRACE the shim also reads) to ERYTHEIA_*.
  * During v0.6.x the old name is still read (removed in v0.7.0). env_read_raw
  * reads the new name and, when it is unset, the old one; *legacy_used and
  * *both_set tell the caller which happened (env_get below logs it once per
  * variable). Same return value as GetEnvironmentVariableA. */
+static const char kEnvPrefix[] = "ERYTHEIA_";
+
+/* The old name of an ERYTHEIA_* variable. */
+static void
+env_legacy_name (const char* name, char* out, size_t size)
+{
+  const char* suffix = name + sizeof (kEnvPrefix) - 1;
+  if (strcmp (suffix, "OUTPUT_TRACE") == 0)
+    snprintf (out, size, "TIMECODE_SYNC_PLAYER_%s", suffix);
+  else
+    snprintf (out, size, "TCS_%s", suffix);
+}
+
 static DWORD
 env_read_raw (const char* name, char* buf, DWORD size, bool* legacy_used, bool* both_set)
 {
   *legacy_used = false;
   *both_set = false;
   DWORD n = GetEnvironmentVariableA (name, buf, size);
-  static const char kPrefix[] = "ERYTHEIA_";
-  if (strncmp (name, kPrefix, sizeof (kPrefix) - 1) != 0)
+  if (strncmp (name, kEnvPrefix, sizeof (kEnvPrefix) - 1) != 0)
     return n;
   char legacy[128];
-  snprintf (legacy, sizeof (legacy), "TCS_%s", name + sizeof (kPrefix) - 1);
+  env_legacy_name (name, legacy, sizeof (legacy));
   if (n > 0) {
     *both_set = GetEnvironmentVariableA (legacy, nullptr, 0) > 0;
     return n;
@@ -107,13 +120,14 @@ env_first_report (const char* name)
 static void
 env_format_warning (char* out, size_t size, const char* name, bool legacy_used)
 {
-  const char* suffix = name + strlen ("ERYTHEIA_");
+  char legacy[128];
+  env_legacy_name (name, legacy, sizeof (legacy));
   if (legacy_used)
-    snprintf (out, size, "[tcs-gst] WARNING: read the old environment variable TCS_%s; "
-        "rename it to %s (the old name is read during v0.6.x only)\n", suffix, name);
+    snprintf (out, size, "[tcs-gst] WARNING: read the old environment variable %s; "
+        "rename it to %s (the old name is read during v0.6.x only)\n", legacy, name);
   else
-    snprintf (out, size, "[tcs-gst] WARNING: both %s and the old TCS_%s are set; "
-        "using %s (the old name is read during v0.6.x only)\n", name, suffix, name);
+    snprintf (out, size, "[tcs-gst] WARNING: both %s and the old %s are set; "
+        "using %s (the old name is read during v0.6.x only)\n", name, legacy, name);
 }
 
 /* O1: LOG writes to stderr and, when ERYTHEIA_LOG_FILE names a path, appends the
