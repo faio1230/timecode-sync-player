@@ -62,7 +62,7 @@ $ErrorActionPreference = 'Stop'
 
 # Repo-relative defaults: any worktree runs its own build and writes its own TestResults.
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe' }
+if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe' }
 if (-not $LogRoot) { $LogRoot = Join-Path $repoRoot 'TestResults\gpu-app' }
 if ($OverallTimeoutSeconds -le 0) { $OverallTimeoutSeconds = $Seconds + 90 }
 

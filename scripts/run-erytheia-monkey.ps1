@@ -13,8 +13,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath "src/TimecodeSyncPlayer/bin/$Configuration/net8.0-windows/ERYTHEIA.exe"))
-$testProject = Join-Path $repoPath 'tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj'
+$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath "src/Erytheia/bin/$Configuration/net8.0-windows/ERYTHEIA.exe"))
+$testProject = Join-Path $repoPath 'tests/Erytheia.Tests/Erytheia.Tests.csproj'
 $dotnetPath = (Get-Command dotnet -ErrorAction Stop).Source
 if ($Seeds.Count -eq 0) { throw 'At least one seed is required.' }
 if ([string]::IsNullOrWhiteSpace($ReportDirectory)) {
@@ -38,7 +38,7 @@ foreach ($binary in @(
     (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'ERYTHEIA.dll'),
     (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'libmpv-2.dll'),
     (Join-Path ([IO.Path]::GetDirectoryName($appPath)) 'mpv-2.dll'),
-    (Join-Path $repoPath "tests/TimecodeSyncPlayer.Tests/bin/$Configuration/net8.0-windows/TimecodeSyncPlayer.Tests.dll")
+    (Join-Path $repoPath "tests/Erytheia.Tests/bin/$Configuration/net8.0-windows/Erytheia.Tests.dll")
 )) {
     if (Test-Path -LiteralPath $binary) {
         $binaryEvidence += [pscustomobject]@{ path = $binary; sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash }

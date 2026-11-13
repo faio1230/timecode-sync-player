@@ -17,7 +17,7 @@ Get-TcsFfmpegLogLines $ffmpeg | ForEach-Object { Write-Host $_ }
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($AppPath)) {
-    $AppPath = Join-Path $projectRoot "src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe"
+    $AppPath = Join-Path $projectRoot "src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe"
 }
 $AppPath = [System.IO.Path]::GetFullPath($AppPath)
 if (-not (Test-Path -LiteralPath $AppPath -PathType Leaf)) {

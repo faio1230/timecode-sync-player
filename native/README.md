@@ -33,7 +33,7 @@ Get-FileHash -Algorithm SHA256 -LiteralPath native\gst-shim\build-debug\tcs_gstr
 ```
 
 `native\tcs_gstreamer.dll`へ置くか、`build-debug`に出力したままにすると、本体のビルド時に
-`src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\`へ自動コピーされます。
+`src\Erytheia\bin\Debug\net8.0-windows\`へ自動コピーされます。
 
 標準のインストール先でも、shimのビルド時には上の環境変数が必要です。`native\`にDLLが残っている場合はそちらが優先されます。`TCS0001`で止まった場合も現在のソースから再ビルドし、配置先のSHA-256が一致することを確認してください。Debug／Releaseの切替とテスト出力先の確認は[セットアップ手順](../docs/SETUP.md)にまとめています。
 

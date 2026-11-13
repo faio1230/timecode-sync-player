@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Erytheia/Erytheia.csproj" />
+  <Project Path="tests/Erytheia.Tests/Erytheia.Tests.csproj" />
+</Solution>

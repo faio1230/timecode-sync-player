@@ -1,0 +1,345 @@
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using System.Threading;
+
+namespace Erytheia;
+
+public enum LtcSignalLossMode
+{
+    RunThrough,
+    Stop
+}
+
+/// <summary>
+/// 映像出力バックエンド。Gpu のみ（CPU 合成は v0.4 で除去）。値 1 は v0.3 の
+/// 設定ファイル（Gpu=1）と同じで、0 は廃止した Cpu を表す。
+/// </summary>
+public enum OutputBackend
+{
+    Gpu = 1
+}
+
+/// <summary>
+/// アプリケーション設定の不変レコード。
+/// </summary>
+public sealed record AppSettings
+{
+    public const int DefaultLtcSignalLossTimeoutMs = 250;
+    public const int MinimumLtcSignalLossTimeoutMs = 100;
+    public const int MaximumLtcSignalLossTimeoutMs = 5000;
+    public const int DefaultLtcSignalResumeFrames = 5;
+
+    public SyncMode SyncMode { get; init; } = SyncMode.Single;
+    public GapBehavior GapBehavior { get; init; } = GapBehavior.Freeze;
+    public TimecodeFpsMode TimecodeFpsMode { get; init; } = TimecodeFpsMode.Auto;
+    public string LastOpenedProjectPath { get; init; } = "";
+    public string LtcDeviceName { get; init; } = "";
+    public double? WindowLeft { get; init; }
+    public double? WindowTop { get; init; }
+    public double? WindowWidth { get; init; }
+    public double? WindowHeight { get; init; }
+    public bool IsTimelineVisible { get; init; }
+    public bool AutoOffsetOnAdd { get; init; } = true;
+    public LtcSignalLossMode LtcSignalLossMode { get; init; } = LtcSignalLossMode.RunThrough;
+    public int LtcSignalLossTimeoutMs { get; init; } = DefaultLtcSignalLossTimeoutMs;
+    public int LtcSignalResumeFrames { get; init; } = DefaultLtcSignalResumeFrames;
+    public bool ShowDebugOsd { get; init; }
+    public string FullscreenDisplayDeviceName { get; init; } = "";
+    public bool IsMuted { get; init; }
+    public double Volume { get; init; } = 100;
+    public OutputBackend OutputBackend { get; init; } = OutputBackend.Gpu;
+    /// <summary>"hardware"（既定）/ "software"。不正値は hardware として扱い警告する。変更には再起動が必要。</summary>
+    public string DecodeMode { get; init; } = DecodeModePolicy.HardwareValue;
+    /// <summary>v0.6.0: "auto"（既定）/ "on" / "off"。不正値は auto として扱い警告する。変更には再起動が必要。</summary>
+    public string ProResGpu { get; init; } = ProResGpuPolicy.AutoValue;
+    /// <summary>T5: 同期補正モード。既定はフィードバック（レート微調整）。</summary>
+    public SyncCorrectionMode SyncCorrectionMode { get; init; } = SyncCorrectionMode.Smooth;
+    /// <summary>
+    /// T3: 全体に効く同期オフセット（ms）。プラスで映像が先行し、入力側と下流（LED 等）の
+    /// 遅延をまとめて補正する。既定 0（現行と同一挙動）。範囲は SyncOffsetPolicy が clamp する。
+    /// </summary>
+    public double SyncOffsetMs { get; init; } = SyncOffsetPolicy.DefaultMilliseconds;
+
+    public static AppSettings Default => new();
+}
+
+/// <summary>
+/// アプリケーション設定の永続化を担当する。
+/// </summary>
+public sealed class AppSettingsManager
+{
+    public const string SettingsPathEnvironmentVariable = "ERYTHEIA_SETTINGS_PATH";
+
+    /// <summary>v0.6.7: 設定と GStreamer のレジストリのキャッシュを置く %LOCALAPPDATA% の下のフォルダの名前。</summary>
+    internal const string AppDataDirectoryName = "ERYTHEIA";
+
+    /// <summary>
+    /// v0.6.6 までのフォルダの名前。v0.6.x の間は、新しい場所に settings.json が無いときだけここから写す
+    /// （旧の場所は消さない。v0.6.6 に戻した人がそのまま使えるように）。
+    /// </summary>
+    internal const string LegacyAppDataDirectoryName = "TimecodeSyncPlayer";
+
+    internal static string AppDataDirectory { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        AppDataDirectoryName);
+
+    private static readonly string LegacySettingsFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        LegacyAppDataDirectoryName,
+        "settings.json");
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    private static AppSettingsManager? _instance;
+    private static readonly object _lock = new();
+
+    private readonly string _settingsFilePath;
+    private readonly IAtomicFileOperations? _fileOperations;
+    private readonly string? _legacySettingsFilePath;
+    private readonly SemaphoreSlim _updateSemaphore = new(1, 1);
+
+    public AppSettings Current { get; private set; } = AppSettings.Default;
+
+    public static AppSettingsManager Instance
+    {
+        get
+        {
+            if (_instance == null)
+            {
+                lock (_lock)
+                {
+                    // 試験用の経路（ERYTHEIA_SETTINGS_PATH）が付いているときは旧の場所から写さない。
+                    string? overridePath = EnvironmentVariables.Get(SettingsPathEnvironmentVariable);
+                    _instance ??= new AppSettingsManager(
+                        ResolveSettingsFilePath(overridePath),
+                        legacySettingsFilePath: string.IsNullOrWhiteSpace(overridePath) ? LegacySettingsFilePath : null);
+                }
+            }
+            return _instance;
+        }
+    }
+
+    public static void ResetForTesting()
+    {
+        lock (_lock)
+        {
+            _instance = null;
+        }
+    }
+
+    internal AppSettingsManager(
+        string settingsFilePath,
+        IAtomicFileOperations? fileOperations = null,
+        string? legacySettingsFilePath = null)
+    {
+        _settingsFilePath = settingsFilePath;
+        _fileOperations = fileOperations;
+        _legacySettingsFilePath = legacySettingsFilePath;
+    }
+
+    internal static string ResolveSettingsFilePath()
+    {
+        string? overridePath = EnvironmentVariables.Get(SettingsPathEnvironmentVariable);
+        return ResolveSettingsFilePath(overridePath);
+    }
+
+    internal static string ResolveSettingsFilePath(string? overridePath)
+    {
+        return string.IsNullOrWhiteSpace(overridePath)
+            ? Path.Combine(AppDataDirectory, "settings.json")
+            : Path.GetFullPath(overridePath);
+    }
+
+    /// <summary>旧の場所の設定を新しい場所へ写した結果。</summary>
+    internal enum LegacySettingsMigrationResult
+    {
+        Copied,
+        NewSettingsExist,
+        NoLegacySettings,
+        Failed
+    }
+
+    /// <summary>
+    /// v0.6.7: 新しい場所に settings.json が無く、旧の場所（v0.6.6 まで）にあるときだけ写す。旧の場所は消さない。
+    /// 写すのに失敗したら新しい場所には何も残さず（既定の設定で起動する）、Warning を 1 行出す。
+    /// </summary>
+    internal static LegacySettingsMigrationResult MigrateLegacySettings(
+        string settingsFilePath,
+        string legacySettingsFilePath)
+    {
+        if (File.Exists(settingsFilePath))
+            return LegacySettingsMigrationResult.NewSettingsExist;
+        if (!File.Exists(legacySettingsFilePath))
+            return LegacySettingsMigrationResult.NoLegacySettings;
+
+        // 途中で失敗したとき壊れた settings.json を残さないよう、一時の名前へ写してから置く。
+        string temporaryPath = settingsFilePath + ".migrating";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(settingsFilePath))!);
+            File.Copy(legacySettingsFilePath, temporaryPath, overwrite: true);
+            File.Move(temporaryPath, settingsFilePath);
+            Serilog.Log.Information(
+                "旧の場所の設定を新しい場所へ写しました（旧の場所は残します）: {LegacyPath} → {Path}",
+                legacySettingsFilePath, settingsFilePath);
+            return LegacySettingsMigrationResult.Copied;
+        }
+        catch (Exception ex)
+        {
+            try { File.Delete(temporaryPath); } catch { /* 消せなくても既定の設定で起動する */ }
+            Serilog.Log.Warning(ex,
+                "旧の場所の設定を写せませんでした。既定の設定で起動します: {LegacyPath} → {Path}",
+                legacySettingsFilePath, settingsFilePath);
+            return LegacySettingsMigrationResult.Failed;
+        }
+    }
+
+    public async Task LoadAsync()
+    {
+        if (_legacySettingsFilePath != null)
+            MigrateLegacySettings(_settingsFilePath, _legacySettingsFilePath);
+
+        try
+        {
+            if (!File.Exists(_settingsFilePath))
+            {
+                return;
+            }
+
+            string json = await File.ReadAllTextAsync(_settingsFilePath, System.Text.Encoding.UTF8)
+                .ConfigureAwait(false);
+            // v0.3 の設定ファイル互換: backend（mpv=0）と outputBackend=Cpu は v0.4 で廃止した。
+            // 値は無視して出荷構成で起動し、設定ファイルは書き換えない（警告は 1 行）。
+            bool hasLegacyBackendKey = false;
+            bool hasLegacyCpuOutput = false;
+            using (var document = JsonDocument.Parse(json))
+            {
+                hasLegacyBackendKey = document.RootElement.TryGetProperty("backend", out _);
+                hasLegacyCpuOutput =
+                    document.RootElement.TryGetProperty("outputBackend", out JsonElement outputBackend)
+                    && outputBackend.ValueKind == JsonValueKind.Number
+                    && outputBackend.TryGetInt32(out int outputBackendValue)
+                    && outputBackendValue == 0; // v0.3 の Cpu（enum からは除去済み）
+            }
+            var loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
+            if (loaded != null)
+            {
+                Current = ValidateSettings(loaded);
+                if (hasLegacyCpuOutput)
+                    Current = Current with { OutputBackend = OutputBackend.Gpu };
+                if (hasLegacyBackendKey || hasLegacyCpuOutput)
+                {
+                    Serilog.Log.Warning(
+                        "v0.3 の廃止された設定を無視します（backend は GStreamer 固定、outputBackend=Cpu の場合は Gpu を使用）。" +
+                        "設定ファイルは書き換えません");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to load settings, using defaults");
+            Current = AppSettings.Default;
+        }
+    }
+
+    internal static AppSettings ValidateSettings(AppSettings settings)
+    {
+        if (settings.WindowWidth is <= 0 or > 7680) settings = settings with { WindowWidth = null };
+        if (settings.WindowHeight is <= 0 or > 4320) settings = settings with { WindowHeight = null };
+        if (settings.WindowLeft is < -7680 or > 7680) settings = settings with { WindowLeft = null };
+        if (settings.WindowTop is < -4320 or > 4320) settings = settings with { WindowTop = null };
+        if (!Enum.IsDefined(settings.SyncMode))
+            settings = settings with { SyncMode = AppSettings.Default.SyncMode };
+        if (!Enum.IsDefined(settings.GapBehavior))
+            settings = settings with { GapBehavior = AppSettings.Default.GapBehavior };
+        if (!Enum.IsDefined(settings.LtcSignalLossMode))
+            settings = settings with { LtcSignalLossMode = LtcSignalLossMode.RunThrough };
+        if (!Enum.IsDefined(settings.OutputBackend))
+            settings = settings with { OutputBackend = AppSettings.Default.OutputBackend };
+        if (!Enum.IsDefined(settings.SyncCorrectionMode))
+            settings = settings with { SyncCorrectionMode = SyncCorrectionMode.Smooth };
+        if (SyncOffsetPolicy.IsOutOfRange(settings.SyncOffsetMs))
+        {
+            Serilog.Log.Warning(
+                "SyncOffsetMs {Value} は範囲外 [{Min}, {Max}] ms のため clamp しました",
+                settings.SyncOffsetMs, SyncOffsetPolicy.MinimumMilliseconds, SyncOffsetPolicy.MaximumMilliseconds);
+            settings = settings with { SyncOffsetMs = SyncOffsetPolicy.Clamp(settings.SyncOffsetMs) };
+        }
+        settings = settings with
+        {
+            LtcSignalLossTimeoutMs = Math.Clamp(
+                settings.LtcSignalLossTimeoutMs,
+                AppSettings.MinimumLtcSignalLossTimeoutMs,
+                AppSettings.MaximumLtcSignalLossTimeoutMs),
+            LtcSignalResumeFrames = settings.LtcSignalResumeFrames > 0
+                ? settings.LtcSignalResumeFrames
+                : AppSettings.DefaultLtcSignalResumeFrames,
+            Volume = double.IsFinite(settings.Volume) ? Math.Clamp(settings.Volume, 0, 100) : 100,
+        };
+
+        return settings;
+    }
+
+    public async Task SaveAsync()
+    {
+        await SaveAsync(Current);
+    }
+
+    public async Task SaveAsync(AppSettings settings)
+    {
+        // U1 計測: コンボ変更ハンドラから呼ばれる設定保存。直列化と書き込みの呼び出しは
+        // UI スレッド側で走り得るため、両区間を分けて記録する。
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            string directory = Path.GetDirectoryName(Path.GetFullPath(_settingsFilePath))!;
+            Directory.CreateDirectory(directory);
+            long serializeStarted = Stopwatch.GetTimestamp();
+            string json = JsonSerializer.Serialize(settings, JsonOptions);
+            double serializeMs = Stopwatch.GetElapsedTime(serializeStarted).TotalMilliseconds;
+            long writeStarted = Stopwatch.GetTimestamp();
+            await AtomicFileWriter.WriteAllTextAsync(
+                _settingsFilePath,
+                json,
+                System.Text.Encoding.UTF8,
+                _fileOperations);
+            Current = settings;
+            Serilog.Log.Debug(
+                "settings.save: serializeMs={SerializeMs:F1} writeMs={WriteMs:F1} totalMs={TotalMs:F1}",
+                serializeMs, Stopwatch.GetElapsedTime(writeStarted).TotalMilliseconds,
+                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Failed to save settings");
+        }
+    }
+
+    public void Update(Func<AppSettings, AppSettings> modifier)
+    {
+        _ = UpdateAsync(modifier);
+    }
+
+    public async Task UpdateAsync(Func<AppSettings, AppSettings> modifier)
+    {
+        // U1 計測: WaitAsync の同期待ち＋保存完了までの合計（UI スレッドの占有時間を含む）。
+        long started = Stopwatch.GetTimestamp();
+        await _updateSemaphore.WaitAsync();
+        try
+        {
+            Current = modifier(Current);
+            await SaveAsync(Current);
+        }
+        finally
+        {
+            _updateSemaphore.Release();
+        }
+        Serilog.Log.Debug("settings.update: totalMs={TotalMs:F1}",
+            Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+    }
+}

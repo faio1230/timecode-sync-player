@@ -1,7 +1,7 @@
 #requires -Version 7.0
 # Shared ffmpeg resolution and version record for the scripts that make test media
 # (make-e2e-media.ps1, make-heavy-media.ps1, capture-setup.ps1) and the LTC runner.
-# The C# fixtures use the same order (tests\TimecodeSyncPlayer.Tests\Helpers\FfmpegTool.cs).
+# The C# fixtures use the same order (tests\Erytheia.Tests\Helpers\FfmpegTool.cs).
 #
 # Order (test infrastructure 2026-10, item 8; one rule for every script and test):
 #   1. ERYTHEIA_FFMPEG     - full path of ffmpeg.exe

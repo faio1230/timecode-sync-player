@@ -6,7 +6,7 @@
 #   pwsh -File scripts\run-dirty-ltc.ps1 -Condition A-noise -Repeats 2 -Label near-limit
 #
 # One run = one condition; the levels are played back to back inside the run by
-# tests\TimecodeSyncPlayer.Tests\E2E\DirtyLtcE2ETests.cs. The plan json lives in
+# tests\Erytheia.Tests\E2E\DirtyLtcE2ETests.cs. The plan json lives in
 # scripts\m6-plans\, the app under test is unchanged, and all signal conditioning
 # is done on the test side.
 # With -Repeats N the condition is run N times into separate report dirs and the
@@ -31,10 +31,10 @@ if (-not (Test-Path -LiteralPath $planPath)) { throw "plan not found: $planPath"
 if ($Repeats -lt 1) { throw "-Repeats must be >= 1" }
 if ($Repeats -gt 1 -and $ReportDir) { throw "-ReportDir cannot be combined with -Repeats > 1" }
 if (-not $TestProject) {
-    $TestProject = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
+    $TestProject = Join-Path $repoRoot 'tests\Erytheia.Tests\Erytheia.Tests.csproj'
 }
 if (-not $AppExe) {
-    $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe'
+    $AppExe = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 if (-not (Test-Path -LiteralPath $AppExe)) { throw "App exe not found: $AppExe (pass -AppExe)" }
 $AppExe = (Resolve-Path -LiteralPath $AppExe).Path

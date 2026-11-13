@@ -47,7 +47,7 @@ $fpsToken = $LtcFps -replace '\.', '_'
 # Defaults are repo-relative, so any worktree runs its own test project and writes
 # TestResults\v3 under that same worktree.
 if (-not $TestProject) {
-    $TestProject = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
+    $TestProject = Join-Path $repoRoot 'tests\Erytheia.Tests\Erytheia.Tests.csproj'
 }
 if (-not $LogRoot) {
     $LogRoot = Join-Path $repoRoot 'TestResults\v3'
@@ -55,7 +55,7 @@ if (-not $LogRoot) {
 # The E2E harness resolves the app under test from this variable; point it at the
 # same worktree's Debug build when the caller did not set one.
 if (-not $env:ERYTHEIA_E2E_APP_PATH) {
-    $env:ERYTHEIA_E2E_APP_PATH = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe'
+    $env:ERYTHEIA_E2E_APP_PATH = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 
 $runs = @()

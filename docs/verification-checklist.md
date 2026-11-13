@@ -23,8 +23,8 @@
 
 ログは次の2つで、どちらも同じlogsフォルダに出る。
 
-- アプリ: `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log`
-- shim（GStreamer）: `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log`
+- アプリ: `src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log`
+- shim（GStreamer）: `src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log`
 
 ---
 

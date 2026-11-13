@@ -1,0 +1,171 @@
+namespace Erytheia;
+
+/// <summary>
+/// v0.5.2 段 2b: 入力（LTC）の軸の状態。LtcSyncController にあった 15 個のフィールドをここへ移した。
+/// 書き換えはメソッドに集め、読み取りはプロパティにする。各メソッドが触る値と順番は、移す前の
+/// 代入そのまま（振る舞いは段 2b の前と同じ）。
+/// </summary>
+internal sealed class LtcInputState
+{
+    /// <summary>
+    /// 最後に受理したフレーム（同期に使う実効値・生値・フレーム終端）。v0.6.1 D1: 受信時刻はフレーム終端が無いとき
+    /// （サンプル時計の無い経路）の経過時間に使う。
+    /// </summary>
+    internal readonly record struct AcceptedFrame(
+        double EffectiveSeconds, double RawSeconds, long FrameEndTimestamp, long ReceivedAt = 0);
+
+    /// <summary>同期要求の再送用の保留（評価が Deferred のときだけ持つ）。</summary>
+    internal readonly record struct PendingSync(double EffectiveSeconds, double RawSeconds, long FrameEndTimestamp);
+
+    /// <summary>最後に受理したフレーム。null なら未受理。</summary>
+    public AcceptedFrame? Accepted { get; private set; }
+
+    /// <summary>同期要求の再送用の保留。null なら保留なし。</summary>
+    public PendingSync? Pending { get; private set; }
+
+    // PendingJump は 3 つ組の record にしない（v0.5.2 段 2b の確認）。今のコードは
+    // 未確認 Jump の確認で _pendingJumpSeconds を null にした後、_pendingJumpFrameEndTimestamp と
+    // _pendingJumpReceivedAt を読む（LtcSyncController の受信経路）。まとめると null と同時に
+    // 残り 2 つが消え、その読みが変わるため、3 つを別々に持つ。
+
+    /// <summary>
+    /// D30: 未確認の Jump。写像がギャップ／別トラック、または Fixed モードでデコーダ推定 fps が
+    /// 食い違う Jump を保持し、次の 1 フレームの連続（同値 Duplicate か +1 フレーム）で確認して
+    /// から適用する。誤デコード 1 枚でギャップ進入・トラック切替・保持復帰を起こさない。
+    /// </summary>
+    public double? PendingJumpSeconds { get; private set; }
+
+    /// <summary>未確認 Jump を受けた時刻（ミリ秒）。確認の窓の壁時計側に使う。</summary>
+    public long PendingJumpReceivedAt { get; private set; }
+
+    /// <summary>未確認 Jump のフレーム終端（サンプル時計）。確認の窓の優先側に使う。</summary>
+    public long PendingJumpFrameEndTimestamp { get; private set; }
+
+    /// <summary>D20-b: 同期へ実際に適用した最後の値（保持値の変更判定に使う）。</summary>
+    public double? LastAppliedLtcSeconds { get; private set; }
+
+    /// <summary>
+    /// D27-d: 保持（Duplicate）として届いた最後の値。停止時の着地目標は保持値そのものにし、
+    /// 保持直前の受理値（1 フレーム手前になり得る）を使わない。Normal/Initial で解除する。
+    /// </summary>
+    public double? LastHeldEffectiveSeconds { get; private set; }
+
+    /// <summary>
+    /// D31-b: 保持損失中に着地シークを発行した保持値。この値から保持値が変わったら 1 回だけ
+    /// 新しい保持値へ着地する（同じ保持値の連続では発行しない）。損失が明けたら解除する。
+    /// </summary>
+    public double? HeldLossLandingSeconds { get; private set; }
+
+    /// <summary>D20-b: 保持値の変更で 1 回だけ適用したことを示すラッチ（Normal/Initial で解除）。</summary>
+    public bool HeldReapplyDone { get; private set; }
+
+    /// <summary>
+    /// v0.5.4（規則 4 の入口の数え方）: 入口に数える保持の連続（直前のフレームから続けて届いた同値の
+    /// Duplicate の枚数）。別の値・Jump の保留・fps の疑わしいフレームが挟まったら数え直す。
+    /// </summary>
+    public int HeldRunLength { get; private set; }
+
+    private double? _heldRunSeconds;
+
+    /// <summary>
+    /// 受けたフレームごとに呼ぶ。countedSeconds は入口に数える Duplicate の値（数えないフレームは null）。
+    /// 直前のフレームも数えた Duplicate で、値の差が sameValueSeconds 以内なら連続を 1 伸ばす。
+    /// </summary>
+    public int ObserveHeldRun(double? countedSeconds, double sameValueSeconds)
+    {
+        if (countedSeconds is not double seconds)
+        {
+            HeldRunLength = 0;
+            _heldRunSeconds = null;
+            return 0;
+        }
+
+        HeldRunLength = _heldRunSeconds is double previous && Math.Abs(seconds - previous) <= sameValueSeconds
+            ? HeldRunLength + 1
+            : 1;
+        _heldRunSeconds = seconds;
+        return HeldRunLength;
+    }
+
+    /// <summary>v0.6.1（3-5 節 (iii)）: 這う前進。数える保持の連続の長さを保ったまま、同値の比べる相手を新しい値へ移す。</summary>
+    public int MoveHeldRunTo(double seconds)
+    {
+        if (HeldRunLength > 0)
+            _heldRunSeconds = seconds;
+        return HeldRunLength;
+    }
+
+    /// <summary>監視の開始・停止で、受けたフレームの記録と 1 回適用のラッチを捨てる（移す前の ClearFrameHistory）。</summary>
+    public void ClearFrameHistory()
+    {
+        ObserveHeldRun(null, 0.0);
+        Accepted = null;
+        LastAppliedLtcSeconds = null;
+        LastHeldEffectiveSeconds = null;
+        HeldLossLandingSeconds = null;
+        Pending = null;
+        DiscardPendingJump();
+        HeldReapplyDone = false;
+    }
+
+    /// <summary>未確認 Jump の秒とフレーム終端を捨てる（受信時刻は今のコードと同じく残す）。</summary>
+    public void DiscardPendingJump()
+    {
+        PendingJumpSeconds = null;
+        PendingJumpFrameEndTimestamp = 0;
+    }
+
+    /// <summary>未確認 Jump の秒だけを下ろす（確認の分岐。フレーム終端と受信時刻は読むために残す）。</summary>
+    public void ClearPendingJumpSeconds() => PendingJumpSeconds = null;
+
+    /// <summary>未確認 Jump を 3 つとも立てる。</summary>
+    public void HoldPendingJump(double seconds, long receivedAt, long frameEndTimestamp)
+    {
+        PendingJumpSeconds = seconds;
+        PendingJumpReceivedAt = receivedAt;
+        PendingJumpFrameEndTimestamp = frameEndTimestamp;
+    }
+
+    /// <summary>同期要求の再送用の保留を捨てる。</summary>
+    public void DiscardPendingSync() => Pending = null;
+
+    /// <summary>同期要求の再送用の保留を立てる（評価が Deferred のとき）。</summary>
+    public void HoldPendingSync(double effectiveSeconds, double rawSeconds, long frameEndTimestamp)
+        => Pending = new PendingSync(effectiveSeconds, rawSeconds, frameEndTimestamp);
+
+    /// <summary>保持（Duplicate）として届いた最後の値を覚える。</summary>
+    public void MarkHeldEffective(double seconds) => LastHeldEffectiveSeconds = seconds;
+
+    /// <summary>保持（Duplicate）の値を捨てる（値が進むフレームで保持が明けたとき）。</summary>
+    public void ClearHeldEffective() => LastHeldEffectiveSeconds = null;
+
+    /// <summary>保持値の 1 回適用のラッチを立てる。</summary>
+    public void MarkHeldReapplied() => HeldReapplyDone = true;
+
+    /// <summary>保持値の 1 回適用のラッチを下ろす。</summary>
+    public void ClearHeldReapplied() => HeldReapplyDone = false;
+
+    /// <summary>値が進むフレームで、保持値の 1 回適用のラッチと保持値 2 つを下ろす。</summary>
+    public void OnNormalFrame()
+    {
+        HeldReapplyDone = false;
+        LastHeldEffectiveSeconds = null;
+        HeldLossLandingSeconds = null;
+    }
+
+    /// <summary>損失中の保持着地のラッチを下ろす。</summary>
+    public void ClearHeldLossLanding() => HeldLossLandingSeconds = null;
+
+    /// <summary>損失中の保持着地のラッチを立てる（着地を試みた保持値）。</summary>
+    public void MarkHeldLossLanding(double seconds) => HeldLossLandingSeconds = seconds;
+
+    /// <summary>最後に受理したフレームを覚え、同期へ適用した最後の値も同じ実効値にする。</summary>
+    public void AcceptFrame(double effectiveSeconds, double rawSeconds, long frameEndTimestamp, long receivedAt = 0)
+    {
+        Accepted = new AcceptedFrame(effectiveSeconds, rawSeconds, frameEndTimestamp, receivedAt);
+        LastAppliedLtcSeconds = effectiveSeconds;
+    }
+
+    /// <summary>同期へ適用した最後の値だけを書く（保持値からの適用・ロード解除の再適用）。</summary>
+    public void MarkLastApplied(double? seconds) => LastAppliedLtcSeconds = seconds;
+}

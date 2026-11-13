@@ -1,6 +1,6 @@
 #requires -Version 7.0
-# TimecodeSyncPlayer diagnostics runner.
-# Runs build/tests, analyzes the latest TimecodeSyncPlayer log, and writes a Markdown report.
+# Erytheia diagnostics runner.
+# Runs build/tests, analyzes the latest Erytheia log, and writes a Markdown report.
 
 [CmdletBinding()]
 param(
@@ -34,11 +34,11 @@ $repoRootPath = $repoRoot.Path
 if ([string]::IsNullOrWhiteSpace($ReportDirectory)) {
     $ReportDirectory = Join-Path $repoRootPath "artifacts\diagnostics"
 }
-$projectPath = Join-Path $repoRootPath "src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj"
-$testProjectPath = Join-Path $repoRootPath "tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj"
+$projectPath = Join-Path $repoRootPath "src\Erytheia\Erytheia.csproj"
+$testProjectPath = Join-Path $repoRootPath "tests\Erytheia.Tests\Erytheia.Tests.csproj"
 $logDirectories = @(
-    (Join-Path $repoRootPath "tests\TimecodeSyncPlayer.Tests\bin\$Configuration\net8.0-windows\logs"),
-    (Join-Path $repoRootPath "src\TimecodeSyncPlayer\bin\$Configuration\net8.0-windows\logs")
+    (Join-Path $repoRootPath "tests\Erytheia.Tests\bin\$Configuration\net8.0-windows\logs"),
+    (Join-Path $repoRootPath "src\Erytheia\bin\$Configuration\net8.0-windows\logs")
 )
 $startedAt = Get-Date
 
@@ -342,7 +342,7 @@ function Get-PlaybackPerfWarningOriginClassification {
 
     $warnings = @($Lines | Select-String -Pattern "Playback perf warning" | ForEach-Object { $_.Line })
     $normalizedPath = $AnalyzedLogPath.Replace("/", "\")
-    $isAutomatedE2ELog = $normalizedPath -match "\\tests\\TimecodeSyncPlayer\.Tests\\bin\\"
+    $isAutomatedE2ELog = $normalizedPath -match "\\tests\\Erytheia\.Tests\\bin\\"
 
     $e2eLikely = @()
     $actionable = @()
@@ -788,7 +788,7 @@ function Write-Report {
     )
 
     $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.Add("# TimecodeSyncPlayer Diagnostics Report")
+    $lines.Add("# Erytheia Diagnostics Report")
     $lines.Add("")
     $lines.Add("- Started: $($Started.ToString("yyyy-MM-dd HH:mm:ss zzz"))")
     $lines.Add("- Ended: $($Ended.ToString("yyyy-MM-dd HH:mm:ss zzz"))")

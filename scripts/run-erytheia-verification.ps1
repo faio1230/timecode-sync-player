@@ -1,5 +1,5 @@
 #requires -Version 7.0
-# TimecodeSyncPlayer verification wrapper.
+# Erytheia verification wrapper.
 # Provides short profiles for automated pre-checks and log-only diagnostics.
 
 [CmdletBinding()]
@@ -40,14 +40,14 @@ if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
 
 switch ($Profile) {
     "Full" {
-        Write-Host "Running TimecodeSyncPlayer verification: Full"
+        Write-Host "Running Erytheia verification: Full"
     }
     "Quick" {
-        Write-Host "Running TimecodeSyncPlayer verification: Quick"
+        Write-Host "Running Erytheia verification: Quick"
         $diagnosticsArgs += "-SkipE2E"
     }
     "Strict" {
-        Write-Host "Running TimecodeSyncPlayer verification: Strict"
+        Write-Host "Running Erytheia verification: Strict"
         if (Test-Path -LiteralPath $diagnosticsSelfTestScript) {
             & pwsh -NoProfile -ExecutionPolicy Bypass -File $diagnosticsSelfTestScript
             if ($LASTEXITCODE -ne 0) {
@@ -62,7 +62,7 @@ switch ($Profile) {
         )
     }
     "LogOnly" {
-        Write-Host "Running TimecodeSyncPlayer verification: LogOnly"
+        Write-Host "Running Erytheia verification: LogOnly"
         $diagnosticsArgs += @(
             "-SkipBuild",
             "-SkipNonE2E",

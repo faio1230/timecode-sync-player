@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="src/TimecodeSyncPlayer/TimecodeSyncPlayer.csproj" />
-  <Project Path="tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj" />
-</Solution>

@@ -1,5 +1,5 @@
 #requires -Version 7.0
-# src\TimecodeSyncPlayer\NativeShimGuard.targets の自己試験（v0.6.6、棚卸しの #37）。
+# src\Erytheia\NativeShimGuard.targets の自己試験（v0.6.6、棚卸しの #37）。
 # 一時フォルダに偽の DLL 2 つ（native 側と build 側）を置いて更新時刻を変え、target だけを
 # dotnet msbuild で呼ぶ。リポジトリの native\ には触らない。アプリは起動しない。終わりに一時フォルダを消す。
 #
@@ -11,7 +11,7 @@ param()
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$targets = Join-Path $repoRoot 'src\TimecodeSyncPlayer\NativeShimGuard.targets'
+$targets = Join-Path $repoRoot 'src\Erytheia\NativeShimGuard.targets'
 $targetName = 'TcsCheckStaleNativeShim'
 
 $failures = New-Object System.Collections.Generic.List[string]

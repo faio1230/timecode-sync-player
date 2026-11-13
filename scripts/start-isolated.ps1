@@ -14,7 +14,7 @@
 #   pwsh -File scripts\start-isolated.ps1 --playlist <プレイリスト>
 #   pwsh -File scripts\start-isolated.ps1 -ExePath <exe> -SettingsTemplate <元にする settings.json> --playlist <プレイリスト>
 #
-# -ExePath          : 既定は src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe
+# -ExePath          : 既定は src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe
 # -SettingsDirectory: 一時フォルダの代わりに使うフォルダ（既定は %TEMP% の下に毎回新しく作る）
 # -SettingsTemplate : 一時の settings.json の元にするファイル（写すだけで、元のファイルには書かない）
 # 残りの引数（--playlist など、アプリの引数は -- で始まる）はそのまま exe へ渡す。
@@ -47,7 +47,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $settingsVariable = 'ERYTHEIA_SETTINGS_PATH'
 
 if ([string]::IsNullOrWhiteSpace($ExePath)) {
-    $ExePath = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe'
+    $ExePath = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 $ExePath = [IO.Path]::GetFullPath($ExePath)
 if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {

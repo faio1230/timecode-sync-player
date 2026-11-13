@@ -1,6 +1,6 @@
 # セットアップ手順
 
-このドキュメントは、別マシンで本リポジトリをクローンしてから TimecodeSyncPlayer をビルド・実行・検証するまでの手順をまとめたものです。
+このドキュメントは、別マシンで本リポジトリをクローンしてから ERYTHEIA をビルド・実行・検証するまでの手順をまとめたものです。
 
 ---
 
@@ -59,12 +59,12 @@ Copy-Item scripts\hooks\pre-commit .git\hooks\pre-commit
 
 ```
 timecode-sync-player/
-├── src/TimecodeSyncPlayer/         # アプリ本体 (net8.0-windows, WPF, x64)
-├── tests/TimecodeSyncPlayer.Tests/ # xUnit + FlaUI テスト
+├── src/Erytheia/         # アプリ本体 (net8.0-windows, WPF, x64)
+├── tests/Erytheia.Tests/ # xUnit + FlaUI テスト
 ├── native/                         # ネイティブDLL置き場（gitignore済み、自分で配置する）
 ├── scripts/                        # ビルド・診断・検証スクリプト
 ├── docs/                           # ドキュメント（本ファイルもここ）
-└── TimecodeSyncPlayer.slnx         # ソリューションファイル（.NET SDK形式）
+└── Erytheia.slnx         # ソリューションファイル（.NET SDK形式）
 ```
 
 ---
@@ -133,7 +133,7 @@ Copy-Item -LiteralPath native\gst-shim\build-release\tcs_gstreamer.dll -Destinat
 MSVCP140D / ucrtbased に依存するため配布できません。
 
 `tcs_gstreamer.dll`は`native\tcs_gstreamer.dll`へ置くか、`build-debug`に出力したままにすると、
-本体のビルド時に`src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\`へ自動コピーされます
+本体のビルド時に`src\Erytheia\bin\Debug\net8.0-windows\`へ自動コピーされます
 （`native\tcs_gstreamer.dll`が優先）。GStreamerランタイムのパスが通っていないとDLLを
 ロードできないため、先にランタイムを導入してください。
 
@@ -146,13 +146,13 @@ MSVCP140D / ucrtbased に依存するため配布できません。
 ## 4. ビルド
 
 ```powershell
-dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
+dotnet build src\Erytheia\Erytheia.csproj
 ```
 
 ビルド時に`native/`のDLLを本体の出力先へコピーします。shimは`native\tcs_gstreamer.dll`が無い場合だけ`native\gst-shim\build-debug\tcs_gstreamer.dll`を使います。テストプロジェクトのビルド後は、テストの出力先も含めてSHA-256を確認できます。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath native\tcs_gstreamer.dll, src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\tcs_gstreamer.dll, tests\TimecodeSyncPlayer.Tests\bin\Debug\net8.0-windows\tcs_gstreamer.dll
+Get-FileHash -Algorithm SHA256 -LiteralPath native\tcs_gstreamer.dll, src\Erytheia\bin\Debug\net8.0-windows\tcs_gstreamer.dll, tests\Erytheia.Tests\bin\Debug\net8.0-windows\tcs_gstreamer.dll
 ```
 
 **注意:** `tcs_gstreamer.dll`や`SpoutDX.dll`が無くてもビルド自体は成功します。ただし
@@ -175,7 +175,7 @@ Spout 出力を利用できません（Spout を有効にすると送信 worker 
 
 ```powershell
 $verificationRun = Join-Path 'artifacts\verification' (Get-Date -Format 'yyyyMMdd-HHmmss')
-dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj -c Debug --filter "FullyQualifiedName!~E2ETests" --logger "trx;LogFileName=non-e2e.trx" --results-directory $verificationRun
+dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj -c Debug --filter "FullyQualifiedName!~E2ETests" --logger "trx;LogFileName=non-e2e.trx" --results-directory $verificationRun
 ```
 
 合格数・失敗数・スキップ数とスキップ理由をTRXで確認してください。DLLが無いCIで成功しても、ネイティブやGPUの動作を確認できたとは限りません。
@@ -195,7 +195,7 @@ FlaUIによるUI自動操作テストのため、以下が必須です。
 1 版に複数の項目を入れるときは、項目を入れるたびに非E2E を全部回すのに加え、見せ方に触れた項目を入れた後は、それより前に入れた項目の UI の E2E を回し直し、候補を作る前に E2E の一式（LTC シナリオ以外）を Release の exe で一度回してください（v0.6.6 で、LTC のメーターの領域がプレイリストの一覧を縮め、先に入れた並べ替えの E2E が開発機で落ちるようになったのに気づかなかった）。
 
 ```powershell
-dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~E2ETests"
+dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj --filter "FullyQualifiedName~E2ETests"
 ```
 
 LTC シナリオのランナー（`scripts\run-ltc-scenarios.ps1`）は、回の間のアプリの落ち（イベントログの .NET Runtime 1026 と Application Error 1000）を自動で数えて run-result.json の `crashes` に出し、1 回でも落ちがあればその回を失敗にします。落ちたアプリのダンプは `<ReportDir>\dumps` に残ります（既定は `DOTNET_DbgMiniDumpType=2`、full は `-MiniDumpType 4`）。
@@ -252,13 +252,13 @@ GStreamer ランタイムと`tcs_gstreamer.dll`が利用可能）を満たした
 ビルド後、以下のEXEを実行します。
 
 ```powershell
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe
+src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe
 ```
 
 または `dotnet run` でも起動できます。
 
 ```powershell
-dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
+dotnet run --project src\Erytheia\Erytheia.csproj
 ```
 
 実機ロードなどで手でアプリを起動するときは `pwsh -File scripts\start-isolated.ps1` を使います（利用者の設定を書き換えないため。一時フォルダの settings.json を `ERYTHEIA_SETTINGS_PATH` で渡して起動し、その場所と PID を表示します。`--playlist` などの引数はそのまま渡ります）。
@@ -266,7 +266,7 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 実行時のログは以下に出力されます。
 
 ```
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log
+src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log
 ```
 
 GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `erytheia-gst-YYYYMMDD.log` として出力されます（環境変数 `ERYTHEIA_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `erytheia-gst-*.log` は削除されます）。

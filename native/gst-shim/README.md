@@ -198,10 +198,10 @@ NV12 と診断の拡張は今後の課題（BC はv0.5.0のHAPの経路で対応
 
 （2026-09時点の設計メモ）
 
-本体側 `src/TimecodeSyncPlayer/Output/GStreamerSource.cs` は
+本体側 `src/Erytheia/Output/GStreamerSource.cs` は
 `tcs_player_acquire` / `tcs_player_ring_info` / `tcs_player_release` を
 `IVideoSource`（docs/GPU-SOURCE-CONTRACT-SPEC.md）へ適合させる薄いアダプター。
-管理テスト（`tests/TimecodeSyncPlayer.Tests/GStreamerSourceTests.cs`）は fake で契約規則を検証する。
+管理テスト（`tests/Erytheia.Tests/GStreamerSourceTests.cs`）は fake で契約規則を検証する。
 
 shim と契約の差はアダプター側で次のように吸収する（契約テストで固定）:
 

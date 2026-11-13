@@ -110,11 +110,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$testProj = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
+$testProj = Join-Path $repoRoot 'tests\Erytheia.Tests\Erytheia.Tests.csproj'
 
 $appExeGiven = -not [string]::IsNullOrWhiteSpace($AppExe)
 if (-not $AppExe) {
-    $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe'
+    $AppExe = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 if (-not (Test-Path -LiteralPath $AppExe)) {
     throw "App exe not found: $AppExe (pass -AppExe)"
@@ -444,9 +444,9 @@ if (-not $filterGiven) {
 #   'no'       - the filter does not select the test
 #   'yes'      - it selects the test and a positive term names it (L3_, ProductionDay, ...)
 #   'possible' - it selects the test through a wider term (the whole class, a category, ...)
-$ltcL1Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L1_Single_ContinuousFollow_DoesNotStall';
+$ltcL1Test = @{ Fqn = 'Erytheia.Tests.E2E.LtcScenarioE2ETests.L1_Single_ContinuousFollow_DoesNotStall';
     Name = 'L1_Single_ContinuousFollow_DoesNotStall'; Categories = @('E2E'); NamePattern = 'L1_|ContinuousFollow' }
-$ltcL3Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow';
+$ltcL3Test = @{ Fqn = 'Erytheia.Tests.E2E.LtcScenarioE2ETests.L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow';
     Name = 'L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow'; Categories = @('E2E'); NamePattern = 'L3_|ProductionDay' }
 
 function Test-LtcFilterTerm([string]$Term, [hashtable]$Test) {
@@ -729,7 +729,7 @@ if (-not $KeepAppLogs) {
     $archiveDir = Join-Path $repoRoot ('artifacts\analysis-data\logs-' + $archiveStamp.ToString('yyyyMMdd-HHmmss'))
     $archiveSources = @(@{ Dir = (Join-Path $appDir 'logs'); Sub = 'app' })
     if (-not $appExeGiven) {
-        $archiveTestBin = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\bin\Debug\net8.0-windows\logs'
+        $archiveTestBin = Join-Path $repoRoot 'tests\Erytheia.Tests\bin\Debug\net8.0-windows\logs'
         if (-not [string]::Equals([IO.Path]::GetFullPath($archiveTestBin),
                 [IO.Path]::GetFullPath($archiveSources[0].Dir), [StringComparison]::OrdinalIgnoreCase)) {
             $archiveSources += @{ Dir = $archiveTestBin; Sub = 'test-bin' }
@@ -807,7 +807,7 @@ $copiedLogs = @()
 # to that folder.
 $logSources = @(@{ Dir = (Join-Path $appDir 'logs'); Sub = '' })
 if (-not $appExeGiven) {
-    $testBinLogs = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\bin\Debug\net8.0-windows\logs'
+    $testBinLogs = Join-Path $repoRoot 'tests\Erytheia.Tests\bin\Debug\net8.0-windows\logs'
     if (-not [string]::Equals([IO.Path]::GetFullPath($testBinLogs), [IO.Path]::GetFullPath($logSources[0].Dir),
             [StringComparison]::OrdinalIgnoreCase)) {
         $logSources += @{ Dir = $testBinLogs; Sub = 'test-bin' }
@@ -857,7 +857,7 @@ try {
     $sha.Dispose()
 }
 $token = ([BitConverter]::ToString($hashBytes) -replace '-', '').ToLowerInvariant()
-$testTempRoot = Join-Path $env:TEMP ('TimecodeSyncPlayer.Tests\' + $token.Substring(0, 12))
+$testTempRoot = Join-Path $env:TEMP ('Erytheia.Tests\' + $token.Substring(0, 12))
 Copy-RecentFiles $testTempRoot 'test-temp'
 
 # ---- crash records (test infrastructure 2026-10, item 2) --------------------

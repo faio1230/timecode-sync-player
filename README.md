@@ -80,8 +80,8 @@ GStreamerのランタイムは同梱しています。詳細は[セットアッ�
 ```powershell
 git clone https://github.com/faio1230/timecode-sync-player.git
 cd timecode-sync-player
-dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
-dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
+dotnet build src\Erytheia\Erytheia.csproj
+dotnet run --project src\Erytheia\Erytheia.csproj
 ```
 
 ソースからのビルドには、GStreamer 1.28.2 MSVC x64のランタイムと`tcs_gstreamer.dll`も必要です（配布パッケージには同梱しています）。ProResのGPUデコードのプラグインは`scripts\get-prores-plugin.ps1`で取得します。Spout出力を使う場合は、x64版の`SpoutDX.dll`を`native`フォルダーに置きます。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
@@ -107,7 +107,7 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 実機のE2Eテストは[VB-CABLE](https://vb-audio.com/Cable/)を使い、`CABLE Input`へLTCを出力して`CABLE Output`から取り込みます。両方の端点が見えるWindowsのローカル音声セッションで実行してください。ffmpegも必要です。
 
 ```powershell
-dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
+dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
 ```
 
 前提がそろっていない環境では、実機テストは自動的にスキップされます。

@@ -80,8 +80,8 @@ The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) is required.
 ```powershell
 git clone https://github.com/faio1230/timecode-sync-player.git
 cd timecode-sync-player
-dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
-dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
+dotnet build src\Erytheia\Erytheia.csproj
+dotnet run --project src\Erytheia\Erytheia.csproj
 ```
 
 Building from source also requires the GStreamer 1.28.2 MSVC x64 runtime and `tcs_gstreamer.dll` (release packages bundle them). The ProRes GPU decoding plugin is fetched with `scripts\get-prores-plugin.ps1`. Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder. See the [setup guide](docs/SETUP.md) for details.
@@ -107,7 +107,7 @@ The [documentation guide](docs/README.md) (Japanese) separates current instructi
 The hardware E2E suite sends LTC to `CABLE Input` and captures it from `CABLE Output` through [VB-CABLE](https://vb-audio.com/Cable/). Run it from a local Windows audio session where both endpoints are visible. ffmpeg is also required.
 
 ```powershell
-dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
+dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
 ```
 
 Hardware tests skip automatically when the prerequisites are unavailable.

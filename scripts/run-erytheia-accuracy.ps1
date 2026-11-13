@@ -7,8 +7,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath 'src/TimecodeSyncPlayer/bin/Debug/net8.0-windows/ERYTHEIA.exe'))
-$testProject = Join-Path $repoPath 'tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj'
+$appPath = [IO.Path]::GetFullPath((Join-Path $repoPath 'src/Erytheia/bin/Debug/net8.0-windows/ERYTHEIA.exe'))
+$testProject = Join-Path $repoPath 'tests/Erytheia.Tests/Erytheia.Tests.csproj'
 $dotnet = (Get-Command dotnet).Source
 $python = (Get-Command python).Source
 $null = Get-Command ffmpeg
@@ -22,7 +22,7 @@ if (-not $SkipBuild) {
     & $dotnet build $testProject -c Debug -v minimal
     if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 }
-$binaries = foreach ($binary in @($appPath, [IO.Path]::ChangeExtension($appPath, '.dll'), (Join-Path $repoPath 'tests/TimecodeSyncPlayer.Tests/bin/Debug/net8.0-windows/TimecodeSyncPlayer.Tests.dll'))) {
+$binaries = foreach ($binary in @($appPath, [IO.Path]::ChangeExtension($appPath, '.dll'), (Join-Path $repoPath 'tests/Erytheia.Tests/bin/Debug/net8.0-windows/Erytheia.Tests.dll'))) {
     [pscustomobject]@{ path = $binary; sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash }
 }
 [pscustomobject]@{ startedUtc = [DateTimeOffset]::UtcNow.ToString('O'); revision = (& git -C $repoPath rev-parse HEAD); binaries = @($binaries); timeoutMinutes = $TimeoutMinutes; idleSeconds = 60; startupSeconds = 120 } |
