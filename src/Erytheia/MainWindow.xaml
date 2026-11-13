@@ -323,14 +323,20 @@
                 BorderBrush="#3A3A3A" BorderThickness="0,1,0,0"/>
 
         <!-- Playlist -->
+        <!-- v0.6.7 #45 案 B: 右の欄のスクロールは残し、一覧の上限の高さを「欄の高さ − ほかの行の高さ」にする
+             （MainWindow.xaml.cs の FitPlaylistToSidebar）。窓が十分高ければ一覧と n/N の行が欄に収まり、
+             一覧は自前のスクロールバーを出す。窓が低いときは一覧が MinHeight まで縮み、欄がスクロールする。 -->
         <Border x:Name="SidebarHost" Grid.Row="0" Grid.Column="1" Grid.RowSpan="5"
-                Background="#000000">
+                Background="#000000"
+                SizeChanged="Sidebar_SizeChanged">
             <ScrollViewer x:Name="SidebarScroll" VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
                 <ScrollViewer.Resources>
                     <Style TargetType="ScrollBar" BasedOn="{StaticResource ConsoleScrollBar}"/>
                 </ScrollViewer.Resources>
-            <Grid MinHeight="{Binding ActualHeight, ElementName=SidebarHost}">
+            <Grid x:Name="SidebarContent"
+                  MinHeight="{Binding ActualHeight, ElementName=SidebarHost}"
+                  SizeChanged="Sidebar_SizeChanged">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>  <!-- LTCタイトル -->
                     <RowDefinition Height="Auto"/>  <!-- デバイス選択 -->
@@ -802,7 +808,6 @@
                 <ListBox Margin="0,0,0,0" x:Name="PlaylistList"
                          Grid.Row="12"
                          MinHeight="120"
-                         MaxHeight="{Binding ActualHeight, ElementName=SidebarHost}"
                          AutomationProperties.AutomationId="PlaylistList"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          AllowDrop="True"
