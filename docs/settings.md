@@ -1,13 +1,17 @@
 # Settings reference / 設定リファレンス
 
-TimecodeSyncPlayer stores per-user settings as JSON at
-`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`. For isolated automation, the
+ERYTHEIA stores per-user settings as JSON at
+`%LOCALAPPDATA%\ERYTHEIA\settings.json` (v0.6.7 and later). When that file does not exist and the
+settings of v0.6.6 and earlier, `%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`, do, the first
+start copies them to the new location and keeps the original. For isolated automation, the
 `TIMECODE_SYNC_PLAYER_SETTINGS_PATH` environment variable can override this with an absolute or
-relative file path. Relative override paths are resolved against the process working directory.
+relative file path (then nothing is copied from the old location). Relative override paths are resolved against the process working directory.
 
-TimecodeSyncPlayerはユーザーごとの設定を
-`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`へJSONで保存します。自動テストなどで隔離する
-場合は、環境変数`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`に絶対または相対ファイルパスを指定できます。
+ERYTHEIAはユーザーごとの設定を
+`%LOCALAPPDATA%\ERYTHEIA\settings.json`へJSONで保存します（v0.6.7から）。そのファイルが無く、
+v0.6.6までの`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`があるときは、最初の起動で新しい場所へ
+写します（元のファイルは残します）。自動テストなどで隔離する
+場合は、環境変数`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`に絶対または相対ファイルパスを指定できます（このときは旧の場所から写しません）。
 相対パスはプロセスの作業ディレクトリを基準に絶対化されます。
 
 The installer intentionally retains this settings file during uninstall so that a later reinstall

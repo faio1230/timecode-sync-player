@@ -13,11 +13,9 @@ ERYTHEIAは、LTC（Linear Timecode）の音声を受信し、プレイリスト
 
 ## ダウンロード
 
-現在の配布ファイル・実行ファイル・スタートメニューの名称は、引き続き`TimecodeSyncPlayer`です。
-
 インストーラーとzipは[GitHub Releasesの最新の安定版（Latest）](https://github.com/faio1230/timecode-sync-player/releases/latest)からダウンロードできます。安定版はv0.6.xの最新で、v0.6.1から安定版の扱いにしています。「Pre-release」と付いた版は検証中なので、本番では使わないでください。
 
-通常は、管理者権限が要らないインストーラー`TimecodeSyncPlayer-v<版>-setup.exe`を使ってください。展開して使う場合は`TimecodeSyncPlayer-v<版>-win-x64.zip`を選びます。`<版>`には最新の安定版の版番号が入ります（例: `v0.6.6`）。GStreamer 1.28.2のランタイムは同梱しているので、別に入れる必要はありません。
+通常は、管理者権限が要らないインストーラー`ERYTHEIA-v<版>-setup.exe`を使ってください。展開して使う場合は`ERYTHEIA-v<版>-win-x64.zip`を選びます。`<版>`には最新の安定版の版番号が入ります（例: `v0.6.7`）。v0.6.6までの配布物の名前は`TimecodeSyncPlayer-v<版>-…`です。GStreamer 1.28.2のランタイムは同梱しているので、別に入れる必要はありません。
 
 本番の前に[現場準備ガイド](docs/USER-MANUAL.md)を読んでください。素材の書き出し方しだいで、同期の安定性が大きく変わります。
 
@@ -50,16 +48,20 @@ ProResのGPUデコードはNVIDIA（RTX級）のGPUで検証し、推奨して�
 
 ## インストーラーの使い方
 
-1. Releasesから`TimecodeSyncPlayer-v<版>-setup.exe`を実行します。ユーザー単位で入るため、管理者権限は要りません。Visual C++再頒布可能パッケージが入っていないか古いPCでは、その導入のために一度だけ管理者の確認（UAC）が出ます。
-2. スタートメニューからTimecodeSyncPlayerを起動します。
+1. Releasesから`ERYTHEIA-v<版>-setup.exe`を実行します。ユーザー単位で入るため、管理者権限は要りません。Visual C++再頒布可能パッケージが入っていないか古いPCでは、その導入のために一度だけ管理者の確認（UAC）が出ます。
+2. スタートメニューからERYTHEIAを起動します。
 
-アンインストールでは、アプリ本体、ログ、ショートカットを削除します。ユーザー設定`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`は、再インストール時に復元できるよう意図して残しています。完全に消す場合は手動で削除してください。
+v0.6.6以前が入っているPCでは、上書きの更新になります。インストール先は前と同じフォルダーのままで、旧の名前の実行ファイルとスタートメニューの項目はインストーラーが消します。
+
+アンインストールでは、アプリ本体、ログ、ショートカットを削除します。ユーザー設定`%LOCALAPPDATA%\ERYTHEIA\settings.json`は、再インストール時に復元できるよう意図して残しています。完全に消す場合は手動で削除してください。
+
+v0.6.6までの設定は`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`にあります。新しい場所に設定が無いときだけ、最初の起動で新しい場所へ写します。元のファイルは消さないので、v0.6.6に戻してもそのまま使えます。
 
 ## zipの使い方
 
-1. `TimecodeSyncPlayer-v<版>-win-x64.zip`を、書き込みできるフォルダーへ展開します。
+1. `ERYTHEIA-v<版>-win-x64.zip`を、書き込みできるフォルダーへ展開します。
 2. Microsoft Visual C++ v14再頒布可能パッケージ（x64）14.50以上が入っていなければ、[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を実行してください。
-3. `TimecodeSyncPlayer.exe`を起動します。
+3. `ERYTHEIA.exe`を起動します。
 
 GStreamerのランタイムは同梱しています。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
 

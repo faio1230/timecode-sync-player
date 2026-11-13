@@ -49,7 +49,7 @@ dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj
 
 **EXE の場所（ビルド後）:**
 ```
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe
+src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe
 ```
 
 **ログの場所（実行後）:**

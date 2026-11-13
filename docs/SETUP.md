@@ -252,7 +252,7 @@ GStreamer ランタイムと`tcs_gstreamer.dll`が利用可能）を満たした
 ビルド後、以下のEXEを実行します。
 
 ```powershell
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe
+src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\ERYTHEIA.exe
 ```
 
 または `dotnet run` でも起動できます。
@@ -279,8 +279,8 @@ GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `tcs-gst-Y
 
 ### OutputBackend
 
-設定は`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`（`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`で
-上書き可）の次のキーで選びます。変更後はアプリを再起動してください（`decodeMode`も同様に、
+設定は`%LOCALAPPDATA%\ERYTHEIA\settings.json`（`TIMECODE_SYNC_PLAYER_SETTINGS_PATH`で
+上書き可。v0.6.6までの`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`は、新しい場所に無いときだけ最初の起動で写します）の次のキーで選びます。変更後はアプリを再起動してください（`decodeMode`も同様に、
 プレイヤー生成時に読むため再起動しないと反映されません）。
 
 | JSONキー | 値 | 既定 | 内容 |

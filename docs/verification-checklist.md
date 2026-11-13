@@ -114,7 +114,7 @@ runnerの`-PlayerBackend`は既定の`Gstreamer`のままでよい（v0.4から�
 - [ ] `settings.json`は既定の`"outputBackend": 1`のままでよい（v0.3の`"backend"`キーは無視され、警告ログが1行出る）
 - [ ] `native\tcs_gstreamer.dll`とGStreamer 1.28.2ランタイムを配置する（[SETUP.md](SETUP.md)）
 - [ ] Spoutを確かめるときは`native\SpoutDX.dll`と公式のWinSpoutDXreceiverを用意する
-- [ ] consoleセッション（`query session`で`>console`）で、ほかにTimecodeSyncPlayer／WinSpoutDXreceiver／
+- [ ] consoleセッション（`query session`で`>console`）で、ほかにERYTHEIA（v0.6.6までのTimecodeSyncPlayerも）／WinSpoutDXreceiver／
       GpuOutputProbe／gst-launch-1.0／tcs-shim-testが動いていないこと
 - [ ] 4Kの確認では、4Kの表示先（例: `\\.\DISPLAY2`）をrunnerの`-DisplayDeviceName`に指定する
 
@@ -251,7 +251,9 @@ $env:PATH -split ';' | Where-Object { $_ -and (
 [Environment]::GetEnvironmentVariable('GSTREAMER_1_0_ROOT_MSVC_X86_64')
 # 3) 試験の道具の環境変数が無い（空であること）
 $env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE; $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH; $env:TCS_FFMPEG
-# 4) 設定とインストールが無い（どちらも False）
+# 4) 設定とインストールが無い（4 つとも False）。v0.6.7 から名前は ERYTHEIA。旧の名前の場所も見る
+Test-Path (Join-Path $env:LOCALAPPDATA 'ERYTHEIA')
+Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA')
 Test-Path (Join-Path $env:LOCALAPPDATA 'TimecodeSyncPlayer')
 Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 ```
@@ -262,7 +264,7 @@ Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 ### インストール
 
 - [ ] 候補の`setup.exe`のSHA-256が、親から渡された値と一致することを確かめる（`Get-FileHash`）
-- [ ] そのユーザーで`setup.exe`を実行して入れる（ユーザー単位のインストールで、入る先は`%LOCALAPPDATA%\Programs\TimecodeSyncPlayer`。UACは出ない）
+- [ ] そのユーザーで`setup.exe`を実行して入れる（ユーザー単位のインストールで、入る先は`%LOCALAPPDATA%\Programs\ERYTHEIA`。UACは出ない）
 - [ ] インストール先に`gstreamer\bin`（同梱のGStreamer）と`tcs_gstreamer.dll`があることを確かめる
 
 ### 試験のソースとランナーの準備
@@ -274,7 +276,7 @@ Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 
 ```powershell
 $env:TCS_FFMPEG = '<ffmpeg.exe のフルパス>'
-$app = Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer\TimecodeSyncPlayer.exe'
+$app = Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA\ERYTHEIA.exe'
 ```
 
 ### 回す（2本、直列に1本ずつ）
@@ -303,7 +305,7 @@ ffprobeは`TCS_FFPROBE`、`TCS_FFMPEG`の隣の`ffprobe.exe`、`-FfmpegDir`（�
 - [ ] 1本目の回の、インストール先の`logs\timecodesyncplayer-YYYYMMDD.log`で、起動の行を数える
 
 ```powershell
-$logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer\logs') -Filter 'timecodesyncplayer-*.log'
+$logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA\logs') -Filter 'timecodesyncplayer-*.log'
 (Select-String -Path $logs.FullName -SimpleMatch 'ffprobe: not found on PATH').Count   # 起動の回数と同じ
 (Select-String -Path $logs.FullName -SimpleMatch 'ffprobe: found on PATH').Count       # 0
 ```
