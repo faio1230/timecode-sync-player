@@ -1,7 +1,8 @@
 #requires -Version 7.0
 # scripts\start-isolated.ps1 の自己試験（v0.6.6、棚卸しの #37）。アプリは起動しない。
 # exe の代わりに pwsh で小さな probe スクリプトを起動し、受け取った環境変数と引数を JSON に書かせて確かめる。
-# 利用者の %LOCALAPPDATA%\TimecodeSyncPlayer\settings.json が前後で変わらないことも見る。
+# 利用者の %LOCALAPPDATA%\ERYTHEIA\settings.json と旧の %LOCALAPPDATA%\TimecodeSyncPlayer\settings.json が
+# 前後で変わらないことも見る。
 # 終わりに一時フォルダを消す。
 #
 #   pwsh -NoProfile -File scripts\test-start-isolated.ps1
@@ -41,8 +42,10 @@ function Wait-Child($Result) {
     }
 }
 
-$userSettings = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TimecodeSyncPlayer\settings.json'
+$userSettings = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ERYTHEIA\settings.json'
 $userStampBefore = Get-FileStamp $userSettings
+$legacyUserSettings = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TimecodeSyncPlayer\settings.json'
+$legacyUserStampBefore = Get-FileStamp $legacyUserSettings
 $sessionValueBefore = [Environment]::GetEnvironmentVariable($settingsVariable)
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('tcs-start-isolated-test-' + [Guid]::NewGuid().ToString('N'))
@@ -104,6 +107,14 @@ $out = $args[0]
     Check ($r.ExitCode -ne 0) '利用者の場所: 止まる'
     Check ($null -eq $r.ChildPid -and -not (Test-Path -LiteralPath $out3)) '利用者の場所: 起動しない'
 
+    # 3b. v0.6.6 までの利用者の場所（引き継ぎの元）を指しても起動しない
+    $legacyUserDir = Split-Path -Parent $legacyUserSettings
+    $out3b = Join-Path $root 'out3b.json'
+    $r = Invoke-StartIsolated @('-ExePath', $pwshPath, '-SettingsDirectory', $legacyUserDir, '-NoProfile', '-File', $probe, $out3b)
+    Wait-Child $r
+    Check ($r.ExitCode -ne 0) '旧の利用者の場所: 止まる'
+    Check ($null -eq $r.ChildPid -and -not (Test-Path -LiteralPath $out3b)) '旧の利用者の場所: 起動しない'
+
     # 4. exe が無いと止まる
     $r = Invoke-StartIsolated @('-ExePath', (Join-Path $root 'missing.exe'))
     Check ($r.ExitCode -ne 0 -and $null -eq $r.ChildPid) 'exe が無い: 止まる'
@@ -113,6 +124,7 @@ finally {
 }
 
 Check ((Get-FileStamp $userSettings) -eq $userStampBefore) '利用者の settings.json は前後で変わらない'
+Check ((Get-FileStamp $legacyUserSettings) -eq $legacyUserStampBefore) '旧の利用者の settings.json は前後で変わらない'
 Check ([Environment]::GetEnvironmentVariable($settingsVariable) -eq $sessionValueBefore) 'このシェルの環境変数は変わらない'
 
 if ($failures.Count -gt 0) {

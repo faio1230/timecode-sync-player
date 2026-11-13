@@ -408,9 +408,8 @@ internal static class GstNativeLibraryResolver
             Environment.SetEnvironmentVariable("GST_PLUGIN_PATH", plugins);
             Environment.SetEnvironmentVariable("GST_PLUGIN_SYSTEM_PATH", plugins);
 
-            string cacheDirectory = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "TimecodeSyncPlayer");
+            // v0.6.7: 設定と同じ %LOCALAPPDATA%\ERYTHEIA。旧の場所のキャッシュは写さない（GStreamer が作り直す）。
+            string cacheDirectory = AppSettingsManager.AppDataDirectory;
             System.IO.Directory.CreateDirectory(cacheDirectory);
             Environment.SetEnvironmentVariable("GST_REGISTRY",
                 System.IO.Path.Combine(cacheDirectory, "gstreamer-registry-x86_64.bin"));

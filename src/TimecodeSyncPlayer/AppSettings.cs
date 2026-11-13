@@ -71,9 +71,23 @@ public sealed class AppSettingsManager
 {
     public const string SettingsPathEnvironmentVariable = "TIMECODE_SYNC_PLAYER_SETTINGS_PATH";
 
-    private static readonly string DefaultSettingsDirectory = Path.Combine(
+    /// <summary>v0.6.7: 設定と GStreamer のレジストリのキャッシュを置く %LOCALAPPDATA% の下のフォルダの名前。</summary>
+    internal const string AppDataDirectoryName = "ERYTHEIA";
+
+    /// <summary>
+    /// v0.6.6 までのフォルダの名前。v0.6.x の間は、新しい場所に settings.json が無いときだけここから写す
+    /// （旧の場所は消さない。v0.6.6 に戻した人がそのまま使えるように）。
+    /// </summary>
+    internal const string LegacyAppDataDirectoryName = "TimecodeSyncPlayer";
+
+    internal static string AppDataDirectory { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "TimecodeSyncPlayer");
+        AppDataDirectoryName);
+
+    private static readonly string LegacySettingsFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        LegacyAppDataDirectoryName,
+        "settings.json");
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -86,6 +100,7 @@ public sealed class AppSettingsManager
 
     private readonly string _settingsFilePath;
     private readonly IAtomicFileOperations? _fileOperations;
+    private readonly string? _legacySettingsFilePath;
     private readonly SemaphoreSlim _updateSemaphore = new(1, 1);
 
     public AppSettings Current { get; private set; } = AppSettings.Default;
@@ -98,7 +113,11 @@ public sealed class AppSettingsManager
             {
                 lock (_lock)
                 {
-                    _instance ??= new AppSettingsManager(ResolveSettingsFilePath());
+                    // 試験用の経路（TIMECODE_SYNC_PLAYER_SETTINGS_PATH）が付いているときは旧の場所から写さない。
+                    string? overridePath = Environment.GetEnvironmentVariable(SettingsPathEnvironmentVariable);
+                    _instance ??= new AppSettingsManager(
+                        ResolveSettingsFilePath(overridePath),
+                        legacySettingsFilePath: string.IsNullOrWhiteSpace(overridePath) ? LegacySettingsFilePath : null);
                 }
             }
             return _instance;
@@ -115,10 +134,12 @@ public sealed class AppSettingsManager
 
     internal AppSettingsManager(
         string settingsFilePath,
-        IAtomicFileOperations? fileOperations = null)
+        IAtomicFileOperations? fileOperations = null,
+        string? legacySettingsFilePath = null)
     {
         _settingsFilePath = settingsFilePath;
         _fileOperations = fileOperations;
+        _legacySettingsFilePath = legacySettingsFilePath;
     }
 
     internal static string ResolveSettingsFilePath()
@@ -130,12 +151,59 @@ public sealed class AppSettingsManager
     internal static string ResolveSettingsFilePath(string? overridePath)
     {
         return string.IsNullOrWhiteSpace(overridePath)
-            ? Path.Combine(DefaultSettingsDirectory, "settings.json")
+            ? Path.Combine(AppDataDirectory, "settings.json")
             : Path.GetFullPath(overridePath);
+    }
+
+    /// <summary>旧の場所の設定を新しい場所へ写した結果。</summary>
+    internal enum LegacySettingsMigrationResult
+    {
+        Copied,
+        NewSettingsExist,
+        NoLegacySettings,
+        Failed
+    }
+
+    /// <summary>
+    /// v0.6.7: 新しい場所に settings.json が無く、旧の場所（v0.6.6 まで）にあるときだけ写す。旧の場所は消さない。
+    /// 写すのに失敗したら新しい場所には何も残さず（既定の設定で起動する）、Warning を 1 行出す。
+    /// </summary>
+    internal static LegacySettingsMigrationResult MigrateLegacySettings(
+        string settingsFilePath,
+        string legacySettingsFilePath)
+    {
+        if (File.Exists(settingsFilePath))
+            return LegacySettingsMigrationResult.NewSettingsExist;
+        if (!File.Exists(legacySettingsFilePath))
+            return LegacySettingsMigrationResult.NoLegacySettings;
+
+        // 途中で失敗したとき壊れた settings.json を残さないよう、一時の名前へ写してから置く。
+        string temporaryPath = settingsFilePath + ".migrating";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(settingsFilePath))!);
+            File.Copy(legacySettingsFilePath, temporaryPath, overwrite: true);
+            File.Move(temporaryPath, settingsFilePath);
+            Serilog.Log.Information(
+                "旧の場所の設定を新しい場所へ写しました（旧の場所は残します）: {LegacyPath} → {Path}",
+                legacySettingsFilePath, settingsFilePath);
+            return LegacySettingsMigrationResult.Copied;
+        }
+        catch (Exception ex)
+        {
+            try { File.Delete(temporaryPath); } catch { /* 消せなくても既定の設定で起動する */ }
+            Serilog.Log.Warning(ex,
+                "旧の場所の設定を写せませんでした。既定の設定で起動します: {LegacyPath} → {Path}",
+                legacySettingsFilePath, settingsFilePath);
+            return LegacySettingsMigrationResult.Failed;
+        }
     }
 
     public async Task LoadAsync()
     {
+        if (_legacySettingsFilePath != null)
+            MigrateLegacySettings(_settingsFilePath, _legacySettingsFilePath);
+
         try
         {
             if (!File.Exists(_settingsFilePath))
