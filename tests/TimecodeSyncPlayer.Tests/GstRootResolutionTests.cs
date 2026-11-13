@@ -58,4 +58,12 @@ public class GstRootResolutionTests
         GstNativeLibraryResolver.ResolveRoot("", BundledRoot, ProgramFilesRoot, path => path == ProgramFilesRoot)
             .Should().Be(new GstRoot(ProgramFilesRoot, GstRootSource.ProgramFiles));
     }
+
+    // v0.6.7 #49: 起動のログの「GStreamer: root=… source=…」の出所の名前。
+    [Theory]
+    [InlineData(nameof(GstRootSource.Bundled), "bundled")]
+    [InlineData(nameof(GstRootSource.EnvironmentVariable), "env")]
+    [InlineData(nameof(GstRootSource.ProgramFiles), "programfiles")]
+    public void SourceLogName_NamesEachSource(string source, string expected) =>
+        GstNativeLibraryResolver.SourceLogName(Enum.Parse<GstRootSource>(source)).Should().Be(expected);
 }

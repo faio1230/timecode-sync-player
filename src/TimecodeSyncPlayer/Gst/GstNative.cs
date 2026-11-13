@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Serilog;
 
 namespace TimecodeSyncPlayer.Gst;
 
@@ -307,6 +308,17 @@ internal static class GstNativeLibraryResolver
         (System.IO.File.Exists(System.IO.Path.Combine(dir, "bin", "gstreamer-1.0-0.dll"))
          || System.IO.File.Exists(System.IO.Path.Combine(dir, "bin", "gstreamer-1.0.dll")));
 
+    /// <summary>v0.6.7 #49: 起動のログの「GStreamer: root=… source=…」の出所の名前。</summary>
+    internal static string SourceLogName(GstRootSource source) => source switch
+    {
+        GstRootSource.Bundled => "bundled",
+        GstRootSource.EnvironmentVariable => "env",
+        GstRootSource.ProgramFiles => "programfiles",
+        _ => source.ToString()
+    };
+
+    private static int _rootLogged;
+
     public static string? FindGstBinDirectory()
     {
         GstRoot? root = FindGstRoot();
@@ -467,6 +479,11 @@ internal static class GstNativeLibraryResolver
         string self = System.IO.Path.Combine(AppContext.BaseDirectory, GstNative.Lib);
         if (!System.IO.File.Exists(self))
             return IntPtr.Zero;
+
+        // v0.6.7 #49: 現場のログで GStreamer の取り違えを見分けるため、使う場所と出所を起動に 1 回だけ出す。
+        if (System.Threading.Interlocked.Exchange(ref _rootLogged, 1) == 0)
+            Log.Information("GStreamer: root={Root:l} source={Source:l}",
+                root.Value.Path, SourceLogName(root.Value.Source));
 
         if (root.Value.Source == GstRootSource.Bundled)
             ApplyBundledPluginEnvironment(root.Value.Path);
