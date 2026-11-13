@@ -23,16 +23,10 @@ public class ContainerSupportConsistencyTests
         ["avidemux"] = "gstavi.dll",
     };
 
-    /// <summary>
-    /// ファイルの選択の型に出ていて、同梱に demux が無いことを既知とする拡張子。
-    /// 次の製品の版で型から外す（docs/design/v0.6.4-inventory.md の #46）。外したらここからも外す。
-    /// </summary>
-    private static readonly string[] KnownUnbundledInFileDialog = [".avi", ".mkv"];
-
     private const string ManualSectionHeading = "### 1-6. 容器の対応";
 
     [Fact]
-    public void FileDialogExtensions_WithoutBundledDemux_AreExactlyTheKnownOnes()
+    public void FileDialogExtensions_AllHaveBundledDemux()
     {
         IReadOnlyDictionary<string, string> shim = ReadShimTable(out _);
         IReadOnlySet<string> bundled = ReadBundledPluginDlls();
@@ -46,8 +40,8 @@ public class ContainerSupportConsistencyTests
             .OrderBy(ext => ext, StringComparer.Ordinal)
             .ToArray();
 
-        unbundled.Should().Equal(KnownUnbundledInFileDialog.OrderBy(ext => ext, StringComparer.Ordinal),
-            "選べるのに同梱に demux が無い拡張子は既知の 2 つだけ（増えたら文書と型を見直す）");
+        // v0.6.7 #46: 前は .avi・.mkv を既知として許していた。型から外したので、同梱に demux が無い拡張子は 0。
+        unbundled.Should().BeEmpty("ファイルの選択の型に、選べても開けない拡張子を出さない");
     }
 
     [Fact]

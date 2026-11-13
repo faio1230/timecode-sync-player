@@ -1000,7 +1000,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
             Title  = "動画ファイルを選択",
-            Filter = "動画|*.mp4;*.mov;*.avi;*.mkv;*.mxf;*.ts;*.m2ts|すべて|*.*"
+            Filter = "動画|*.mp4;*.mov;*.mxf;*.ts;*.m2ts|すべて|*.*"
         };
         if (dlg.ShowDialog() != true) return;
         _ = ReplacePlaylistAndLoadAsyncSingle(dlg.FileName);
@@ -1013,7 +1013,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
             Title       = "Playlist に追加する動画ファイルを選択",
-            Filter      = "動画|*.mp4;*.mov;*.avi;*.mkv;*.mxf;*.ts;*.m2ts|すべて|*.*",
+            Filter      = "動画|*.mp4;*.mov;*.mxf;*.ts;*.m2ts|すべて|*.*",
             Multiselect = true
         };
         if (dlg.ShowDialog() != true) return;
