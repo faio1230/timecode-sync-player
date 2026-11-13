@@ -138,8 +138,8 @@ internal sealed class E2EAppRunner : IDisposable
         }
 
         string exeDir = Path.GetDirectoryName(exe)!;
-        if (!File.Exists(Path.Combine(exeDir, "tcs_gstreamer.dll")))
-            return (exe, $"tcs_gstreamer.dll が見つかりません（build-shim を実行してください）: {exeDir}");
+        if (!File.Exists(Path.Combine(exeDir, "erytheia_gstreamer.dll")))
+            return (exe, $"erytheia_gstreamer.dll が見つかりません（build-shim を実行してください）: {exeDir}");
 
         if (GstRuntimeBinDirectory(exeDir) is null)
             return (exe, "GStreamer ランタイムが見つかりません（同梱の gstreamer\\bin か GSTREAMER_1_0_ROOT_MSVC_X86_64 を確認してください）。");

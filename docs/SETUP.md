@@ -76,7 +76,7 @@ timecode-sync-player/
 | ファイル | 必須/任意 | 入手方法 |
 |---------|---------|---------|
 | `native/SpoutDX.dll` | Spout 出力を使う場合に必要 | Spout 送信に使います。[Spout2](https://github.com/leadedge/Spout2)のSDK内SpoutDXプロジェクトをビルドして配置します。配布zip／インストーラーには同梱済みです。 |
-| `native/tcs_gstreamer.dll` | **必須** | 動画再生に使います。下記「GStreamer 1.28.2」を参照して`native/gst-shim`からビルドします。 |
+| `native/erytheia_gstreamer.dll` | **必須** | 動画再生に使います。下記「GStreamer 1.28.2」を参照して`native/gst-shim`からビルドします。 |
 | `native/gst-prores/`（`gstproresd3d11.dll`と`prores_*.cso`6個） | ProResをGPUでデコードする場合に必要 | ProResのGPUデコードのプラグイン（gst-prores-d3d11）です。`pwsh -File scripts\get-prores-plugin.ps1`を実行すると、版を固定したzipを取得してSHA-256を照合し、`native\gst-prores`に置きます。本体のビルド時に、出力先の`gst-extra-plugins\`へコピーされます。無いときはProResをCPUでデコードします。配布zip／インストーラーには同梱済みです。 |
 
 詳細は [native/README.md](../native/README.md) を参照してください。
@@ -99,7 +99,7 @@ MSVC x64用の1.28.2ランタイムをインストールし、`bin`に`gstreamer
 #### native/gst-shim のビルド
 
 `native/gst-shim`は、GStreamerのデコード結果をD3D11テクスチャのリースAPIとして
-合成層へ公開するshimです。`tcs_gstreamer.dll`は配布物にも含まれます。次の手順でビルドします。
+合成層へ公開するshimです。`erytheia_gstreamer.dll`は配布物にも含まれます。次の手順でビルドします。
 
 ビルドにはVisual Studio Build ToolsのC++ x64ツール、CMake、Ninjaと、GStreamer 1.28.2 MSVC x64の開発用SDKが必要です。ランタイムだけではヘッダーとリンク用ライブラリが揃いません。アプリは標準のインストール先を探索しますが、shimのビルドには標準の場所でも環境変数を指定します。以下はリポジトリのルートで、同じPowerShell 7セッションから実行してください。
 
@@ -114,8 +114,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Spout2の取得に失敗しました。' }
 # 現在のソースからDebug版を作り、優先される配置先も更新する
 pwsh -File native\gst-shim\build-shim.ps1 -Config Debug
 if ($LASTEXITCODE -ne 0) { throw 'shimのビルドに失敗しました。' }
-Copy-Item -LiteralPath native\gst-shim\build-debug\tcs_gstreamer.dll -Destination native\tcs_gstreamer.dll -Force -ErrorAction Stop
-Get-FileHash -Algorithm SHA256 -LiteralPath native\gst-shim\build-debug\tcs_gstreamer.dll, native\tcs_gstreamer.dll
+Copy-Item -LiteralPath native\gst-shim\build-debug\erytheia_gstreamer.dll -Destination native\erytheia_gstreamer.dll -Force -ErrorAction Stop
+Get-FileHash -Algorithm SHA256 -LiteralPath native\gst-shim\build-debug\erytheia_gstreamer.dll, native\erytheia_gstreamer.dll
 ```
 
 2つのSHA-256が同じことを確認します。環境変数はこのPowerShellセッションと子プロセスだけに設定されます。
@@ -125,19 +125,21 @@ Get-FileHash -Algorithm SHA256 -LiteralPath native\gst-shim\build-debug\tcs_gstr
 ```powershell
 pwsh -File native\gst-shim\build-shim.ps1 -Config Release
 if ($LASTEXITCODE -ne 0) { throw 'shimのReleaseビルドに失敗しました。' }
-Copy-Item -LiteralPath native\gst-shim\build-release\tcs_gstreamer.dll -Destination native\tcs_gstreamer.dll -Force -ErrorAction Stop
+Copy-Item -LiteralPath native\gst-shim\build-release\erytheia_gstreamer.dll -Destination native\erytheia_gstreamer.dll -Force -ErrorAction Stop
 ```
 
-配布物（`scripts\package-release.ps1`）は `native\gst-shim\build-release\tcs_gstreamer.dll` と
+配布物（`scripts\package-release.ps1`）は `native\gst-shim\build-release\erytheia_gstreamer.dll` と
 同じ内容の DLL が Release 出力にあることを検査します。Debug ビルドの DLL は
 MSVCP140D / ucrtbased に依存するため配布できません。
 
-`tcs_gstreamer.dll`は`native\tcs_gstreamer.dll`へ置くか、`build-debug`に出力したままにすると、
+`erytheia_gstreamer.dll`は`native\erytheia_gstreamer.dll`へ置くか、`build-debug`に出力したままにすると、
 本体のビルド時に`src\Erytheia\bin\Debug\net8.0-windows\`へ自動コピーされます
-（`native\tcs_gstreamer.dll`が優先）。GStreamerランタイムのパスが通っていないとDLLを
+（`native\erytheia_gstreamer.dll`が優先）。GStreamerランタイムのパスが通っていないとDLLを
 ロードできないため、先にランタイムを導入してください。
 
-`TCS0001`でビルドが止まったときは、`native\tcs_gstreamer.dll`よりビルド出力の方が新しい状態です。上の手順で現在のソースから作り直し、配置とSHA-256を確認してから再実行してください。更新時刻の比較だけでは、どちらのDLLも現在のソースに合っているとは確認できません。Release構成では`build-release`と比較します。
+`TCS0001`でビルドが止まったときは、`native\erytheia_gstreamer.dll`よりビルド出力の方が新しい状態です。上の手順で現在のソースから作り直し、配置とSHA-256を確認してから再実行してください。更新時刻の比較だけでは、どちらのDLLも現在のソースに合っているとは確認できません。Release構成では`build-release`と比較します。
+
+`TCS0003`でビルドが止まったときは、`native\`にv0.6.6までの名前のshim（`tcs_gstreamer.dll`）が残っています。v0.6.7からshimは`erytheia_gstreamer.dll`で、旧のDLLは使われません。旧のDLLを消し、上の手順で`erytheia_gstreamer.dll`を作ってください。
 
 `-p:AllowStaleNativeShim=true`は、古いDLLでの挙動を意図的に調べるための指定です。通常の検証では使いません。DebugとReleaseを切り替えたときも、配置したDLLの構成を確認してください。
 
@@ -149,14 +151,14 @@ MSVCP140D / ucrtbased に依存するため配布できません。
 dotnet build src\Erytheia\Erytheia.csproj
 ```
 
-ビルド時に`native/`のDLLを本体の出力先へコピーします。shimは`native\tcs_gstreamer.dll`が無い場合だけ`native\gst-shim\build-debug\tcs_gstreamer.dll`を使います。テストプロジェクトのビルド後は、テストの出力先も含めてSHA-256を確認できます。
+ビルド時に`native/`のDLLを本体の出力先へコピーします。shimは`native\erytheia_gstreamer.dll`が無い場合だけ`native\gst-shim\build-debug\erytheia_gstreamer.dll`を使います。テストプロジェクトのビルド後は、テストの出力先も含めてSHA-256を確認できます。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath native\tcs_gstreamer.dll, src\Erytheia\bin\Debug\net8.0-windows\tcs_gstreamer.dll, tests\Erytheia.Tests\bin\Debug\net8.0-windows\tcs_gstreamer.dll
+Get-FileHash -Algorithm SHA256 -LiteralPath native\erytheia_gstreamer.dll, src\Erytheia\bin\Debug\net8.0-windows\erytheia_gstreamer.dll, tests\Erytheia.Tests\bin\Debug\net8.0-windows\erytheia_gstreamer.dll
 ```
 
-**注意:** `tcs_gstreamer.dll`や`SpoutDX.dll`が無くてもビルド自体は成功します。ただし
-`tcs_gstreamer.dll`とGStreamerランタイムが無い場合は動画再生ができません。`SpoutDX.dll`が無い場合は
+**注意:** `erytheia_gstreamer.dll`や`SpoutDX.dll`が無くてもビルド自体は成功します。ただし
+`erytheia_gstreamer.dll`とGStreamerランタイムが無い場合は動画再生ができません。`SpoutDX.dll`が無い場合は
 Spout 出力を利用できません（Spout を有効にすると送信 worker の起動に失敗します）。
 
 ---
@@ -187,7 +189,7 @@ dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj -c Debug --filter "FullyQ
 FlaUIによるUI自動操作テストのため、以下が必須です。
 
 - **デスクトップセッションが必要**（リモートデスクトップの切断状態やヘッドレスCI環境では実行できません）
-- `native/tcs_gstreamer.dll`とGStreamerランタイムが配置されていること
+- `native/erytheia_gstreamer.dll`とGStreamerランタイムが配置されていること
 - **テスト実行中に実際にアプリウィンドウが開閉します**（フォーカスを奪う可能性があるため、実行中は他の操作を避けてください）
 
 試験を足すときは、E2E とランナーの確かめ（判定・数え・待ち）を、アプリのログの Information 以上の行だけで行ってください。アプリは Release ではログの最小の段階が Information で、Debug の行は配布物の構成では出ません。単体・結合の試験のメモリのシンクは対象外です。
@@ -243,7 +245,7 @@ pwsh -File scripts\run-erytheia-verification.ps1 -Profile Strict
 | `LogOnly` | ビルド・テストを行わず、既存ログのみ診断 |
 
 `Strict` / `Full` プロファイルはE2Eテストを含むため、5.2の実行前提（デスクトップセッション必須・
-GStreamer ランタイムと`tcs_gstreamer.dll`が利用可能）を満たした状態で実行してください。
+GStreamer ランタイムと`erytheia_gstreamer.dll`が利用可能）を満たした状態で実行してください。
 
 ---
 
@@ -269,7 +271,7 @@ dotnet run --project src\Erytheia\Erytheia.csproj
 src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log
 ```
 
-GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `erytheia-gst-YYYYMMDD.log` として出力されます（環境変数 `ERYTHEIA_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `erytheia-gst-*.log` は削除されます）。
+GStreamer shim（`erytheia_gstreamer.dll`）のログは同じ `logs\` に `erytheia-gst-YYYYMMDD.log` として出力されます（環境変数 `ERYTHEIA_LOG_FILE` を設定するとそのパスへ出力。アプリが起動時に設定し、既に設定済みなら変更しません。起動時に 7 日より古い `erytheia-gst-*.log` は削除されます）。
 
 起動後、映像が表示され、LTC入力デバイスがプルダウンに表示されることを確認してください。
 
@@ -291,7 +293,7 @@ GStreamer shim（`tcs_gstreamer.dll`）のログは同じ `logs\` に `erytheia-
 
 - v0.3 の `backend` キーは v0.4 で廃止しました（再生バックエンドは GStreamer 固定）。
   値があっても無視して警告ログを 1 行出し、設定ファイルは書き換えません。
-- 再生には `tcs_gstreamer.dll` と GStreamer ランタイムが必要です。
+- 再生には `erytheia_gstreamer.dll` と GStreamer ランタイムが必要です。
 - `outputBackend=1`で D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では、
   起動時にダイアログを出し、**再生だけを無効**にします（アプリは開いたまま。Cpu 合成へは
   フォールバックしません。設定ファイルは書き換えません）。
@@ -376,10 +378,10 @@ LTC 欄の「補正」で選べます（既定は **Smooth**）。
 
 | 症状 | 原因・対処 |
 |---|---|
-| 映像が表示されない | `native/tcs_gstreamer.dll`またはGStreamerランタイムが未配置です。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
+| 映像が表示されない | `native/erytheia_gstreamer.dll`またはGStreamerランタイムが未配置です。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
 | Spout出力ボタンが押せない（無効化されている） | `native/SpoutDX.dll` が無いだけです。Spout出力を使わないなら正常な動作であり、修正不要です。 |
 | `outputBackend=1`で再生できない | D3D11.4（`ID3D11Device5` / `ID3D11DeviceContext4`）が使えない環境では、起動時ダイアログを出して**再生だけを無効**にします（Cpu 合成へはフォールバックしません）。表示された原因とログを確認してください。 |
-| 再生開始に失敗する | GStreamerランタイム未導入、または`tcs_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
+| 再生開始に失敗する | GStreamerランタイム未導入、または`erytheia_gstreamer.dll`の配置漏れです。「GStreamer 1.28.2」の節に従って導入・ビルドしてください。 |
 | スクリプトが `cannot be run because it contained a "#requires" statement` で止まる | Windows PowerShell 5.1 で実行しています。`pwsh -File <スクリプト>` で実行してください（「1. 前提環境」）。 |
 | ProRes が CPU（`V:avdec_prores`）で開く | v0.6.5 から既定（`auto`）はどの GPU でも GPU でデコードします（v0.6.4 までは NVIDIA 以外は CPU）。CPU で開くなら、`erytheia-gst-*.log` の `prores-gpu:` と `load.skip` / `load.fail` の行で理由を見てください（`proResGpu=off`、プラグインの読み込みの失敗、VC++ が古い、アダプタの不一致など）。1 回失敗するとその起動の間は CPU のままです |
 | コンソール出力やログの日本語が文字化けする | PowerShellのコンソールエンコーディングをUTF-8に設定してください。<br>`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` |

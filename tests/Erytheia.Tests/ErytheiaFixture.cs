@@ -29,10 +29,10 @@ public sealed class ErytheiaFixture : IAsyncLifetime
         string exePath = LocateExe();
         string exeDir  = Path.GetDirectoryName(exePath)!;
 
-        if (!File.Exists(Path.Combine(exeDir, "tcs_gstreamer.dll")))
+        if (!File.Exists(Path.Combine(exeDir, "erytheia_gstreamer.dll")))
         {
             Skipped    = true;
-            SkipReason = $"tcs_gstreamer.dll が見つかりません（build-shim を実行してください）: {exeDir}";
+            SkipReason = $"erytheia_gstreamer.dll が見つかりません（build-shim を実行してください）: {exeDir}";
             return;
         }
 

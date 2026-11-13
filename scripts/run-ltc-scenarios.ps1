@@ -31,7 +31,7 @@
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg 6 or later (the pinned
 # test build: pwsh -File scripts\get-ffmpeg.ps1; an older one stops here), .NET SDK, the
-# target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
+# target exe with erytheia_gstreamer.dll, and a GStreamer runtime (bundled
 # gstreamer\bin next to the exe, GSTREAMER_1_0_ROOT_MSVC_X86_64, Program Files,
 # or PATH). D18 makes the bundled runtime work without the environment variable.
 #
@@ -334,8 +334,8 @@ if ($MaxLoadMilliseconds -le 0) { $problems += 'MaxLoadMilliseconds must be grea
 if ($HealthSampleSeconds -le 0) { $problems += 'HealthSampleSeconds must be greater than zero' }
 if ($MaxPrivateGrowthMbPerHour -lt 0) { $problems += 'MaxPrivateGrowthMbPerHour must be zero or greater' }
 if ($MaxHandleGrowthPerHour -lt 0) { $problems += 'MaxHandleGrowthPerHour must be zero or greater' }
-if (-not (Test-Path -LiteralPath (Join-Path $appDir 'tcs_gstreamer.dll'))) {
-    $problems += "tcs_gstreamer.dll is missing next to the exe (run build-shim): $appDir"
+if (-not (Test-Path -LiteralPath (Join-Path $appDir 'erytheia_gstreamer.dll'))) {
+    $problems += "erytheia_gstreamer.dll is missing next to the exe (run build-shim): $appDir"
 }
 if ($EnableSpout -and -not (Test-Path -LiteralPath (Join-Path $appDir 'SpoutDX.dll'))) {
     $problems += 'SpoutDX.dll is missing next to the exe while EnableSpout is set'

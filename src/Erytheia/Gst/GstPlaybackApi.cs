@@ -481,7 +481,7 @@ internal sealed class GstPlaybackApi : IPlaybackApi
         catch (DllNotFoundException)
         {
             _probeDurationUnavailable = true;
-            Log.Warning("GstPlaybackApi: tcs_gstreamer.dll が無いため、クリップの長さを読めません");
+            Log.Warning("GstPlaybackApi: erytheia_gstreamer.dll が無いため、クリップの長さを読めません");
             return null;
         }
     }

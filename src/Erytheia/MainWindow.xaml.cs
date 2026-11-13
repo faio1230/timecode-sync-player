@@ -926,7 +926,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         string detail = error switch
         {
             WindowLoadedSessionInitializationError.PlaybackInitializeFailed =>
-                "再生エンジンの初期化に失敗しました。GStreamer ランタイムと tcs_gstreamer.dll を確認してください。",
+                "再生エンジンの初期化に失敗しました。GStreamer ランタイムと erytheia_gstreamer.dll を確認してください。",
             WindowLoadedSessionInitializationError.RenderContextCreateFailed =>
                 "レンダーコンテキストの作成に失敗しました。",
             _ => "初期化に失敗しました。"

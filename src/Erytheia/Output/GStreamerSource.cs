@@ -98,7 +98,7 @@ internal abstract class RingResourcesLifetime : IGstRingResources
 }
 
 /// <summary>
-/// tcs_gstreamer.dll のリース API（acquire / leased_texture / release）を IVideoSource へ適合させる薄いアダプター。
+/// erytheia_gstreamer.dll のリース API（acquire / leased_texture / release）を IVideoSource へ適合させる薄いアダプター。
 /// shim の差を吸収する:
 /// - position は受け取らず「現世代の latest 1 枚」を返すため、返却画像の pts を Stamp.PositionSeconds とする。
 /// - リース保持中の acquire は同じ画像を返すため、参照カウント付きの共有リースとして同一 Stamp を返す。

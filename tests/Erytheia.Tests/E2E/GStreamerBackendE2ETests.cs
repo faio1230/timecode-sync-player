@@ -312,8 +312,8 @@ public sealed class GStreamerBackendE2ETests
         var (exePath, skipReason) = E2EAppRunner.ResolvePrereqs();
         Skip.If(!string.IsNullOrEmpty(skipReason), skipReason ?? "");
         exeDir = Path.GetDirectoryName(exePath)!;
-        Skip.If(!File.Exists(Path.Combine(exeDir, "tcs_gstreamer.dll")),
-            "tcs_gstreamer.dll が出力に無い (build-shim 未実行)");
+        Skip.If(!File.Exists(Path.Combine(exeDir, "erytheia_gstreamer.dll")),
+            "erytheia_gstreamer.dll が出力に無い (build-shim 未実行)");
         Skip.If(!GstRuntimePresent(), "GStreamer ランタイムが見つからない");
         return (exePath, FindRepoRoot());
     }

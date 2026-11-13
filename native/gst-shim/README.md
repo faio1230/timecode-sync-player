@@ -363,7 +363,7 @@ seek: diag stalled ... （3 秒以上ゲートが開かないときの状態ダ�
 # vendor/Spout2 (tag 2.007.017 / commit 固定) を取得（git 管理外）
 pwsh -File native/gst-shim/get-spout.ps1
 pwsh -File native/gst-shim/build-shim.ps1 -Config Debug
-# 出力: build-debug/tcs_gstreamer.dll, build-debug/tcs-shim-test.exe
+# 出力: build-debug/erytheia_gstreamer.dll, build-debug/tcs-shim-test.exe
 
 $env:PATH = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin;" + $env:PATH
 native\gst-shim\build-debug\tcs-shim-test.exe artifacts\media\test_1080p60.mp4 2
@@ -422,7 +422,7 @@ Spout 受信側の目視検証は proto の recv モード
 - GStreamerは配布物に同梱する（v0.4.0から）。`scripts/package-release.ps1`が、公式のMSVC x64ランタイム1.28.2から必要なDLL（bin）とプラグイン（`lib\gstreamer-1.0`）、ライセンス文書を、配布物の`gstreamer\`フォルダへ写す。利用者がGStreamerを入れる必要はない。
 - アプリはGStreamerを、環境変数`GSTREAMER_1_0_ROOT_MSVC_X86_64`、配布物の`gstreamer\`、既定のインストール先（`Program Files\gstreamer\1.0\msvc_x86_64`）の順で探す（`GstNativeLibraryResolver`）。開発ではインストールしたランタイムを使う。
 - ProResのGPUデコーダのプラグインgst-prores-d3d11（v0.2.3、LGPL-2.1）は、`scripts/get-prores-plugin.ps1`でDLLのSHA-256と`.cso`の`SHA256SUMS.txt`を照合してから、同梱のGStreamerの`lib\gstreamer-1.0`へDLLとシェーダーを置く。ライセンス文書は`gstreamer\share\licenses\gst-prores-d3d11`。照合できないときはパッケージの作成を止める。
-- shimとして配布物に含めるのは `tcs_gstreamer.dll`（自作 MIT + Spout2 BSD-2 を静的組み込み）。
+- shimとして配布物に含めるのは `erytheia_gstreamer.dll`（自作 MIT + Spout2 BSD-2 を静的組み込み）。
   ライセンス表記はリポジトリ直下の `THIRD-PARTY-NOTICES.md` を参照。
 - 再現ビルド: `native/gst-shim/get-spout.ps1`（Spout2 をタグ 2.007.017 / コミット固定で取得）
   → `native/gst-shim/build-shim.ps1`。GStreamer SDK は上記ランタイムに同梱の SDK を使用。

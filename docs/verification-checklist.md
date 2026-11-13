@@ -8,7 +8,7 @@
 
 ## 事前準備
 
-- [ ] 現在のソースからshimのDebug版をビルドし、`native\tcs_gstreamer.dll`へ配置する（SDK・環境変数・手順は[SETUP.md](SETUP.md)）。Spoutも確かめるときは`SpoutDX.dll`も置く
+- [ ] 現在のソースからshimのDebug版をビルドし、`native\erytheia_gstreamer.dll`へ配置する（SDK・環境変数・手順は[SETUP.md](SETUP.md)）。Spoutも確かめるときは`SpoutDX.dll`も置く
 - [ ] 本体とテストをDebug構成でビルドし、実行先のshimのSHA-256がビルドしたDLLと一致することを確かめる。`TCS0001`で停止した場合は再ビルド・配置を確認する
 - [ ] コミット、構成、DLLのSHA-256、機材・依存ツールの版、実行した試験と未実施範囲を結果と一緒に残す（[記録例](reports/2026-10-14-development-baseline.md)）。配布候補を確かめる回は、後述の手順に従い対象のRelease版exeと同梱DLLを使う
 - [ ] ProResを確かめるときは、ソースからのビルドでは`pwsh -File scripts\get-prores-plugin.ps1`でgst-prores-d3d11を`native\gst-prores`に置く（インストーラーとzipには同梱）
@@ -112,7 +112,7 @@ runnerの`-PlayerBackend`は既定の`Gstreamer`のままでよい（v0.4から�
 ### 事前準備（GPU）
 
 - [ ] `settings.json`は既定の`"outputBackend": 1`のままでよい（v0.3の`"backend"`キーは無視され、警告ログが1行出る）
-- [ ] `native\tcs_gstreamer.dll`とGStreamer 1.28.2ランタイムを配置する（[SETUP.md](SETUP.md)）
+- [ ] `native\erytheia_gstreamer.dll`とGStreamer 1.28.2ランタイムを配置する（[SETUP.md](SETUP.md)）
 - [ ] Spoutを確かめるときは`native\SpoutDX.dll`と公式のWinSpoutDXreceiverを用意する
 - [ ] consoleセッション（`query session`で`>console`）で、ほかにERYTHEIA（v0.6.6までのTimecodeSyncPlayerも）／WinSpoutDXreceiver／
       GpuOutputProbe／gst-launch-1.0／tcs-shim-testが動いていないこと
@@ -265,12 +265,12 @@ Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 
 - [ ] 候補の`setup.exe`のSHA-256が、親から渡された値と一致することを確かめる（`Get-FileHash`）
 - [ ] そのユーザーで`setup.exe`を実行して入れる（ユーザー単位のインストールで、入る先は`%LOCALAPPDATA%\Programs\ERYTHEIA`。UACは出ない）
-- [ ] インストール先に`gstreamer\bin`（同梱のGStreamer）と`tcs_gstreamer.dll`があることを確かめる
+- [ ] インストール先に`gstreamer\bin`（同梱のGStreamer）と`erytheia_gstreamer.dll`があることを確かめる
 
 ### 試験のソースとランナーの準備
 
 - [ ] 候補と同じSHAの試験のソースを、そのユーザーのフォルダに展開する（親が渡したtarなど）
-- [ ] インストール先の`tcs_gstreamer.dll`を、試験のソースの`native\`に写す。ffprobeを外した長さの試験は、試験のプロセスでも長さを読む関数を呼ぶため、試験のbinにshimが要る（棚卸しの#43）
+- [ ] インストール先の`erytheia_gstreamer.dll`を、試験のソースの`native\`に写す。ffprobeを外した長さの試験は、試験のプロセスでも長さを読む関数を呼ぶため、試験のbinにshimが要る（棚卸しの#43）
 - [ ] アプリには同梱のGStreamerだけで起動させる（試験が足した変数は渡さない）。試験のプロセスにGStreamer（インストール先の`gstreamer\bin`をPATHの先頭、`GSTREAMER_1_0_ROOT_MSVC_X86_64`）を足しても、exeの隣に同梱があれば、試験はその変数とPATHのGStreamerの`bin`をアプリに渡さない（試験基盤の9）。試験の出力の`app-env:`の行が`GSTREAMER_1_0_ROOT_MSVC_X86_64=<not passed>`、`app-gstreamer:`の行が`origin=bundled`であることを確かめる
 - [ ] ランナーが素材とLTCのwavを作るffmpegは、`ERYTHEIA_FFMPEG`（ffmpeg.exeのフルパス。同じフォルダに`ffprobe.exe`があるもの）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
 

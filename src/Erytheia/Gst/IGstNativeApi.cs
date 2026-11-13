@@ -3,7 +3,7 @@ using System;
 namespace Erytheia.Gst;
 
 /// <summary>
-/// tcs_gstreamer.dll の薄いラッパ。テストでは fake を注入する。
+/// erytheia_gstreamer.dll の薄いラッパ。テストでは fake を注入する。
 /// 戻り値の規約はネイティブ側のヘッダ (tcs_gstreamer.h) と同じ。
 /// </summary>
 internal interface IGstNativeApi

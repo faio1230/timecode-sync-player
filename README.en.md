@@ -84,7 +84,7 @@ dotnet build src\Erytheia\Erytheia.csproj
 dotnet run --project src\Erytheia\Erytheia.csproj
 ```
 
-Building from source also requires the GStreamer 1.28.2 MSVC x64 runtime and `tcs_gstreamer.dll` (release packages bundle them). The ProRes GPU decoding plugin is fetched with `scripts\get-prores-plugin.ps1`. Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder. See the [setup guide](docs/SETUP.md) for details.
+Building from source also requires the GStreamer 1.28.2 MSVC x64 runtime and `erytheia_gstreamer.dll` (release packages bundle them). The ProRes GPU decoding plugin is fetched with `scripts\get-prores-plugin.ps1`. Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder. See the [setup guide](docs/SETUP.md) for details.
 
 ## Documentation
 

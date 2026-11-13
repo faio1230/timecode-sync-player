@@ -210,10 +210,10 @@ public sealed class MediaDurationProbeFixture
 
     public MediaDurationProbeFixture()
     {
-        // アプリの DllImport の解決（tcs_gstreamer.dll と GStreamer の bin）は App の静的コンストラクタで登録する。
+        // アプリの DllImport の解決（erytheia_gstreamer.dll と GStreamer の bin）は App の静的コンストラクタで登録する。
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(App).TypeHandle);
         if (!File.Exists(Path.Combine(AppContext.BaseDirectory, GstNative.Lib)))
-            _nativeSkipReason = "tcs_gstreamer.dll is not next to the tests";
+            _nativeSkipReason = "erytheia_gstreamer.dll is not next to the tests";
         else if (GstNativeLibraryResolver.FindGstRoot() is null)
             _nativeSkipReason = "GStreamer runtime is not installed";
     }

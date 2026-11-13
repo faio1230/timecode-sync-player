@@ -152,7 +152,7 @@ $json = '{"outputBackend":1,"fullscreenDisplayDeviceName":"' + $escapedDevice + 
 if ($DecodeMode) { $json += ',"decodeMode":"' + $DecodeMode + '"' }
 $json += '}'
 [IO.File]::WriteAllText($settings, $json, [Text.UTF8Encoding]::new($false))
-$hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'ERYTHEIA.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'tcs_gstreamer.dll'), $receiverExe, $MediaPath) |
+$hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'ERYTHEIA.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'erytheia_gstreamer.dll'), $receiverExe, $MediaPath) |
     Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { Get-FileHash $_ -Algorithm SHA256 | Select-Object Path, Hash }
 $hashes | ConvertTo-Json | Set-Content (Join-Path $run 'inputs.json') -Encoding UTF8
 $result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; decodeMode=$(if ($DecodeMode) { $DecodeMode } else { $null }); media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; audioProbe=$null; completedNormally=$false; receiverMode=$(if ($NoSpout) { 'none' } else { 'official' }); steps=@() }

@@ -117,14 +117,14 @@ try {
     $crashAt = $day.AddMinutes(3).AddSeconds(13)
     $oneEvents = @($outsideAndOthers) + @(
         (Ev1026 $crashAt 'ERYTHEIA.exe' $avInfo),
-        (Ev1000 $crashAt.AddMilliseconds(120) 'ERYTHEIA.exe' 'tcs_gstreamer.dll' 'c0000005' '0x000000000009088f' 4242)
+        (Ev1000 $crashAt.AddMilliseconds(120) 'ERYTHEIA.exe' 'erytheia_gstreamer.dll' 'c0000005' '0x000000000009088f' 4242)
     )
     $one = New-FakeReport 'one' $oneEvents @('tsp-4242.dmp', 'tsp-9999.dmp')
     Check ($one.crashes.count -eq 1) 'one: crashes.count 1 (the 1026 and the 1000 of the same crash are one)'
     Check ($one.crashes.dotnetRuntime1026 -eq 1 -and $one.crashes.applicationError1000 -eq 1) 'one: 1026 = 1, 1000 = 1 (the app in the window only)'
     $item = @($one.crashes.items)[0]
     Check ($item.code -eq 'c0000005' -and $item.address -eq '00007FFB77D9088F') 'one: exception code and address from the 1026'
-    Check ($item.module -eq 'tcs_gstreamer.dll' -and $item.offset -eq '000000000009088f' -and $item.pid -eq 4242) 'one: module, offset and pid from the 1000'
+    Check ($item.module -eq 'erytheia_gstreamer.dll' -and $item.offset -eq '000000000009088f' -and $item.pid -eq 4242) 'one: module, offset and pid from the 1000'
     Check ((@($item.sources) -join ',') -eq '1026,1000') 'one: sources 1026,1000'
     Check ($item.scenario -eq 'S2_Second') 'one: scenario from the trx start..end'
     Check ($item.proresGpuFirstLaunch -eq $true) 'one: assigned to the ProRes GPU first launch'

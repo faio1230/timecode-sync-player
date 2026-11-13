@@ -38,14 +38,14 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>SpoutDX.dll</Link>
     </Content>
-    <Content Include="..\..\native\tcs_gstreamer.dll" Condition="Exists('..\..\native\tcs_gstreamer.dll')">
+    <Content Include="..\..\native\erytheia_gstreamer.dll" Condition="Exists('..\..\native\erytheia_gstreamer.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>tcs_gstreamer.dll</Link>
+      <Link>erytheia_gstreamer.dll</Link>
     </Content>
-    <Content Include="..\..\native\gst-shim\build-debug\tcs_gstreamer.dll"
-             Condition="!Exists('..\..\native\tcs_gstreamer.dll') And Exists('..\..\native\gst-shim\build-debug\tcs_gstreamer.dll')">
+    <Content Include="..\..\native\gst-shim\build-debug\erytheia_gstreamer.dll"
+             Condition="!Exists('..\..\native\erytheia_gstreamer.dll') And Exists('..\..\native\gst-shim\build-debug\erytheia_gstreamer.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>tcs_gstreamer.dll</Link>
+      <Link>erytheia_gstreamer.dll</Link>
     </Content>
     <!-- v0.6.0: scripts\get-prores-plugin.ps1 が置く ProRes の GPU 復号プラグイン（DLL と .cso）。
          同梱でないとき GstNativeLibraryResolver が GST_PLUGIN_PATH に足す。

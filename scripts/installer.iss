@@ -73,6 +73,8 @@ Type: files; Name: "{app}\{#LegacyAppName}.dll"
 Type: files; Name: "{app}\{#LegacyAppName}.deps.json"
 Type: files; Name: "{app}\{#LegacyAppName}.runtimeconfig.json"
 Type: files; Name: "{userprograms}\{#LegacyAppName}.lnk"
+; The shim of v0.6.6 and older (v0.6.7 renamed it to erytheia_gstreamer.dll).
+Type: files; Name: "{app}\tcs_gstreamer.dll"
 
 [Icons]
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

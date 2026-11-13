@@ -24,8 +24,8 @@ try {
     $nativeDir = Join-Path $root 'native'
     $buildDir = Join-Path $root 'native\gst-shim\build-debug'
     New-Item -ItemType Directory -Force -Path $nativeDir, $buildDir | Out-Null
-    $nativeShim = Join-Path $nativeDir 'tcs_gstreamer.dll'
-    $builtShim = Join-Path $buildDir 'tcs_gstreamer.dll'
+    $nativeShim = Join-Path $nativeDir 'erytheia_gstreamer.dll'
+    $builtShim = Join-Path $buildDir 'erytheia_gstreamer.dll'
     [IO.File]::WriteAllBytes($nativeShim, [byte[]](1, 2, 3))
     [IO.File]::WriteAllBytes($builtShim, [byte[]](4, 5, 6))
 
@@ -87,6 +87,16 @@ try {
     $releaseDir = (& dotnet msbuild $project -nologo '-getProperty:TcsShimBuildDirName' '-p:Configuration=Release' | Out-String).Trim()
     Check ($debugDir -eq 'build-debug') "既定の構成: 比べる相手は build-debug（$debugDir）"
     Check ($releaseDir -eq 'build-release') "Release: 比べる相手は build-release（$releaseDir）"
+
+    # 7. v0.6.7: native\ に旧の名前の shim（tcs_gstreamer.dll）があると止まる。無ければ通る
+    $legacyShim = Join-Path $nativeDir 'tcs_gstreamer.dll'
+    $legacyArgs = @('msbuild', $project, '-t:TcsCheckLegacyNativeShim', '-nologo', '-v:minimal',
+        "-p:TcsLegacyNativeShimPath=$legacyShim")
+    $out = (& dotnet @legacyArgs 2>&1 | Out-String); $code = $LASTEXITCODE
+    Check ($code -eq 0 -and -not ($out -match 'TCS0003')) '旧の名前の shim が無い: 通る'
+    [IO.File]::WriteAllBytes($legacyShim, [byte[]](7, 8, 9))
+    $out = (& dotnet @legacyArgs 2>&1 | Out-String); $code = $LASTEXITCODE
+    Check ($code -ne 0 -and $out -match 'TCS0003' -and $out.Contains($legacyShim)) '旧の名前の shim がある: TCS0003 で止まり、パスを書く'
 }
 finally {
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }

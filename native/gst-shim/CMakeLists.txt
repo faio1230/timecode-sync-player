@@ -45,12 +45,12 @@ set(TCS_COMMON_INCLUDES
 #--------------------------------------
 # the shim DLL (C ABI)
 #--------------------------------------
-add_library(tcs_gstreamer SHARED src/tcs_gstreamer.cpp src/tcs_hap_gpu.cpp ${SPOUT_SOURCES})
-target_compile_definitions(tcs_gstreamer PRIVATE
+add_library(erytheia_gstreamer SHARED src/tcs_gstreamer.cpp src/tcs_hap_gpu.cpp ${SPOUT_SOURCES})
+target_compile_definitions(erytheia_gstreamer PRIVATE
   TCS_GST_BUILDING_DLL SPOUT_BUILD_STATIC GST_USE_UNSTABLE_API)
-target_include_directories(tcs_gstreamer PRIVATE ${TCS_COMMON_INCLUDES})
-target_link_directories(tcs_gstreamer PRIVATE "${GST_SDK_DIR}/lib")
-target_link_libraries(tcs_gstreamer PRIVATE
+target_include_directories(erytheia_gstreamer PRIVATE ${TCS_COMMON_INCLUDES})
+target_link_directories(erytheia_gstreamer PRIVATE "${GST_SDK_DIR}/lib")
+target_link_libraries(erytheia_gstreamer PRIVATE
   ${GST_LIBS}
   opengl32 d3d9 d3d11 dxgi user32 gdi32 shell32 ole32 uuid winmm version advapi32)
 
@@ -59,5 +59,5 @@ target_link_libraries(tcs_gstreamer PRIVATE
 #--------------------------------------
 add_executable(tcs-shim-test test/shim_test.cpp)
 target_link_directories(tcs-shim-test PRIVATE "${GST_SDK_DIR}/lib")
-target_link_libraries(tcs-shim-test PRIVATE tcs_gstreamer ${GST_LIBS} d3d11 dxgi)
+target_link_libraries(tcs-shim-test PRIVATE erytheia_gstreamer ${GST_LIBS} d3d11 dxgi)
 target_include_directories(tcs-shim-test PRIVATE ${TCS_COMMON_INCLUDES})

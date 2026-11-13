@@ -297,9 +297,10 @@ try {
     }
 
     # v0.6.7: exe とアセンブリの名前は ERYTHEIA。前のビルドの TimecodeSyncPlayer.exe・.dll などが Release 出力に
-    # 残っていたら黙って同梱せず失敗させる（exe が 2 つ入った配布物にしない）。
+    # 残っていたら黙って同梱せず失敗させる（exe が 2 つ入った配布物にしない）。旧の名前の shim
+    # （tcs_gstreamer.dll。v0.6.7 から erytheia_gstreamer.dll）も同じ。
     $staleOldNameFiles = @(Get-ChildItem -LiteralPath $releaseDirectory -File |
-        Where-Object { $_.Name -like "TimecodeSyncPlayer.*" })
+        Where-Object { $_.Name -like "TimecodeSyncPlayer.*" -or $_.Name -like "tcs_gstreamer.*" })
     if ($staleOldNameFiles.Count -gt 0) {
         $names = ($staleOldNameFiles | ForEach-Object { $_.Name }) -join ", "
         throw "Release 出力に旧の名前のファイルが残っています: $names。bin\Release を消してからビルドし直してください。"
@@ -312,7 +313,7 @@ try {
         Copy-Item -LiteralPath $_.FullName -Destination $stagingDirectory
     }
 
-    $requiredRuntimeFiles = @("ERYTHEIA.exe", "ERYTHEIA.dll", "SpoutDX.dll", "tcs_gstreamer.dll")
+    $requiredRuntimeFiles = @("ERYTHEIA.exe", "ERYTHEIA.dll", "SpoutDX.dll", "erytheia_gstreamer.dll")
     foreach ($requiredFile in $requiredRuntimeFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $stagingDirectory $requiredFile) -PathType Leaf)) {
             throw "Required runtime file is missing from Release output: $requiredFile"
@@ -320,16 +321,16 @@ try {
     }
 
     # 配布する shim は Release ビルドでなければならない（Debug ビルドは MSVCP140D / ucrtbased に依存し、
-    # 利用者環境で動かない）。native\tcs_gstreamer.dll に置いたものも含め、Release ビルドと一致するかを見る。
-    $releaseShim = Join-Path $projectRoot "native\gst-shim\build-release\tcs_gstreamer.dll"
+    # 利用者環境で動かない）。native\erytheia_gstreamer.dll に置いたものも含め、Release ビルドと一致するかを見る。
+    $releaseShim = Join-Path $projectRoot "native\gst-shim\build-release\erytheia_gstreamer.dll"
     if (-not (Test-Path -LiteralPath $releaseShim -PathType Leaf)) {
-        throw "Release ビルドの tcs_gstreamer.dll がありません。先に native\gst-shim\build-shim.ps1 -Config Release を実行してください: $releaseShim"
+        throw "Release ビルドの erytheia_gstreamer.dll がありません。先に native\gst-shim\build-shim.ps1 -Config Release を実行してください: $releaseShim"
     }
-    $stagedShim = Join-Path $stagingDirectory "tcs_gstreamer.dll"
+    $stagedShim = Join-Path $stagingDirectory "erytheia_gstreamer.dll"
     $expectedHash = (Get-FileHash -LiteralPath $releaseShim -Algorithm SHA256).Hash
     $actualHash = (Get-FileHash -LiteralPath $stagedShim -Algorithm SHA256).Hash
     if ($actualHash -ne $expectedHash) {
-        throw "配布物の tcs_gstreamer.dll が Release ビルドと一致しません。native\tcs_gstreamer.dll（または native\gst-shim\build-debug の出力）が Release ビルドで上書きされているか確認してください。"
+        throw "配布物の erytheia_gstreamer.dll が Release ビルドと一致しません。native\erytheia_gstreamer.dll（または native\gst-shim\build-debug の出力）が Release ビルドで上書きされているか確認してください。"
     }
 
     # GStreamer ランタイム（必要 DLL とライセンス文書）を同梱する。

@@ -55,7 +55,7 @@ src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe
 **ログの場所（実行後）:**
 ```
 src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log   # アプリ（Serilog）
-src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log             # shim（tcs_gstreamer.dll）
+src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log             # shim（erytheia_gstreamer.dll）
 ```
 shim のログの出力先は環境変数 `ERYTHEIA_LOG_FILE`。未設定ならアプリが起動時に上の logs を設定し、7 日より古い `erytheia-gst-*.log` と、v0.6.6 までの名前のログ（`tcs-gst-*.log`・`timecodesyncplayer-*.log`）を消す。
 
@@ -115,7 +115,7 @@ timecode-sync-player/
                                              ↓
                                    SyncDecisionEngine.Decide()
                                              ↓ （Seek / None）
-                              IPlaybackApi（GstPlaybackApi）→ tcs_gstreamer.dll
+                              IPlaybackApi（GstPlaybackApi）→ erytheia_gstreamer.dll
                                              ↓
                               shim の共有リング（GPU テクスチャ）+ 共有フェンス
                                              ↓
@@ -174,7 +174,7 @@ E2E とランナーの確かめ（判定・数え・待ち）は、アプリの�
 
 | ファイル | 用途 | 入手方法 |
 |---------|------|---------|
-| `tcs_gstreamer.dll` | 映像ソース（GStreamer shim）。`native/gst-shim/build-shim.ps1` でビルド | `native/gst-shim/README.md` |
+| `erytheia_gstreamer.dll` | 映像ソース（GStreamer shim）。`native/gst-shim/build-shim.ps1` でビルド | `native/gst-shim/README.md` |
 | `SpoutDX.dll` | Spout2送信（Spout 出力を使う場合に必要） | https://github.com/leadedge/Spout2 |
 
 GStreamer ランタイム（`GSTREAMER_1_0_ROOT_MSVC_X86_64` または `Program Files\gstreamer`）が必要です。

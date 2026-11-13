@@ -7,13 +7,13 @@ using Serilog;
 namespace Erytheia.Gst;
 
 /// <summary>
-/// tcs_gstreamer.dll の P/Invoke とロード解決。
+/// erytheia_gstreamer.dll の P/Invoke とロード解決。
 /// DLL 自体はアプリの出力ディレクトリ、GStreamer の実行時 DLL は
 /// GSTREAMER_1_0_ROOT_MSVC_X86_64（または既定のインストール先）の bin から解決する。
 /// </summary>
 internal static class GstNative
 {
-    internal const string Lib = "tcs_gstreamer.dll";
+    internal const string Lib = "erytheia_gstreamer.dll";
     internal const int TcsErrEnded = -6;
     /* tcs_gstreamer.h の TCS_ERR_TIMEOUT（tcs_probe_duration の待ちの上限切れ、v0.6.6）。 */
     internal const int TcsErrTimeout = -8;
@@ -261,7 +261,7 @@ internal static class GstNative
 /// <summary>
 
 /// <summary>
-/// tcs_gstreamer.dll と GStreamer ランタイム DLL の検索経路。
+/// erytheia_gstreamer.dll と GStreamer ランタイム DLL の検索経路。
 /// アセンブリ共通の DllImportResolver は NativeLibraryResolver が所有するため、
 /// ここでは判定と個別ロードだけを提供する。
 /// </summary>
@@ -326,7 +326,7 @@ internal static class GstNativeLibraryResolver
     }
 
     /// <summary>
-    /// D15/O1: shim（tcs_gstreamer.dll）の LOG 出力先（ERYTHEIA_LOG_FILE）を logs ディレクトリへ設定する。
+    /// D15/O1: shim（erytheia_gstreamer.dll）の LOG 出力先（ERYTHEIA_LOG_FILE）を logs ディレクトリへ設定する。
     /// GStreamer を初期化する前に呼ぶ。利用者が既に設定していれば上書きしない。
     /// ログの肥大を避けるため、7 日より古い shim のログ（erytheia-gst-*.log と旧の tcs-gst-*.log）と
     /// v0.6.6 までのアプリのログ（timecodesyncplayer-*.log）を消す。

@@ -84,7 +84,7 @@ dotnet build src\Erytheia\Erytheia.csproj
 dotnet run --project src\Erytheia\Erytheia.csproj
 ```
 
-ソースからのビルドには、GStreamer 1.28.2 MSVC x64のランタイムと`tcs_gstreamer.dll`も必要です（配布パッケージには同梱しています）。ProResのGPUデコードのプラグインは`scripts\get-prores-plugin.ps1`で取得します。Spout出力を使う場合は、x64版の`SpoutDX.dll`を`native`フォルダーに置きます。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
+ソースからのビルドには、GStreamer 1.28.2 MSVC x64のランタイムと`erytheia_gstreamer.dll`も必要です（配布パッケージには同梱しています）。ProResのGPUデコードのプラグインは`scripts\get-prores-plugin.ps1`で取得します。Spout出力を使う場合は、x64版の`SpoutDX.dll`を`native`フォルダーに置きます。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
 
 ## ドキュメント
 

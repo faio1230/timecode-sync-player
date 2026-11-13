@@ -1,7 +1,7 @@
 <Project>
   <!--
     v0.6.6（棚卸しの #37）: 古い native\ の shim でビルドが進む罠を止める。
-    csproj は native\tcs_gstreamer.dll があればそれを出力へ写し、build-debug の出力は native\ に DLL が
+    csproj は native\erytheia_gstreamer.dll があればそれを出力へ写し、build-debug の出力は native\ に DLL が
     無いときだけ使う。native\ に古い DLL が残っていると、shim を作り直してもアプリは古い shim で走る。
     両方に DLL があり、比べる相手（Debug は build-debug、Release は build-release）の方が新しいとき
     ビルドを止める。
@@ -14,13 +14,25 @@
     WPF の 2 回目のマークアップのコンパイル（*_wpftmp.csproj。_TargetAssemblyProjectName が付く）では動かさない
     （同じ判定を 2 回出さない）。
     試験: scripts\test-native-shim-guard.ps1（パスのプロパティを一時フォルダへ向けてこの target だけを呼ぶ）。
+
+    v0.6.7: shim の DLL の名前を tcs_gstreamer.dll から erytheia_gstreamer.dll に変えた。native\ に旧の名前の
+    DLL が残っていると、アプリは読まないのに新しい shim を置き忘れたことに気付きにくいので、ビルドを止める
+    （TCS0003。旧の DLL を消せば通る）。
   -->
   <PropertyGroup>
-    <TcsNativeShimPath Condition="'$(TcsNativeShimPath)' == ''">$(MSBuildThisFileDirectory)..\..\native\tcs_gstreamer.dll</TcsNativeShimPath>
+    <TcsNativeShimPath Condition="'$(TcsNativeShimPath)' == ''">$(MSBuildThisFileDirectory)..\..\native\erytheia_gstreamer.dll</TcsNativeShimPath>
     <TcsShimBuildDirName Condition="'$(TcsShimBuildDirName)' == '' And '$(Configuration)' == 'Release'">build-release</TcsShimBuildDirName>
     <TcsShimBuildDirName Condition="'$(TcsShimBuildDirName)' == ''">build-debug</TcsShimBuildDirName>
-    <TcsBuiltShimPath Condition="'$(TcsBuiltShimPath)' == ''">$(MSBuildThisFileDirectory)..\..\native\gst-shim\$(TcsShimBuildDirName)\tcs_gstreamer.dll</TcsBuiltShimPath>
+    <TcsBuiltShimPath Condition="'$(TcsBuiltShimPath)' == ''">$(MSBuildThisFileDirectory)..\..\native\gst-shim\$(TcsShimBuildDirName)\erytheia_gstreamer.dll</TcsBuiltShimPath>
+    <TcsLegacyNativeShimPath Condition="'$(TcsLegacyNativeShimPath)' == ''">$(MSBuildThisFileDirectory)..\..\native\tcs_gstreamer.dll</TcsLegacyNativeShimPath>
   </PropertyGroup>
+
+  <Target Name="TcsCheckLegacyNativeShim"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(_TargetAssemblyProjectName)' == '' And Exists('$(TcsLegacyNativeShimPath)')">
+    <Error Code="TCS0003"
+           Text="native\ に旧の名前の shim が残っています: $([System.IO.Path]::GetFullPath('$(TcsLegacyNativeShimPath)'))。v0.6.7 から shim は erytheia_gstreamer.dll で、旧の DLL は使われません。旧の DLL を消し、native\gst-shim\build-shim.ps1 で作った erytheia_gstreamer.dll を使ってください（native\ に置くか、build-debug の出力をそのまま使う）。" />
+  </Target>
 
   <Target Name="TcsCheckStaleNativeShim"
           BeforeTargets="PrepareForBuild"
@@ -37,7 +49,7 @@
 
     <Error Condition="'$(_TcsBuiltShimIsNewer)' == '1' And '$(AllowStaleNativeShim)' != 'true'"
            Code="TCS0001"
-           Text="native\ の tcs_gstreamer.dll が $(TcsShimBuildDirName) の出力より古いため、ビルドを止めます（native\ の DLL が優先されるので、このままでは古い shim で走ります）。native\: $(_TcsNativeShimFull)（更新 $(_TcsNativeShimTime)）／$(TcsShimBuildDirName): $(_TcsBuiltShimFull)（更新 $(_TcsBuiltShimTime)）。解き方: native\ の DLL を消す（$(TcsShimBuildDirName) の出力が使われる）か、$(TcsShimBuildDirName) の DLL を native\ へ写す。わざと古い shim で走らせるときは -p:AllowStaleNativeShim=true。" />
+           Text="native\ の erytheia_gstreamer.dll が $(TcsShimBuildDirName) の出力より古いため、ビルドを止めます（native\ の DLL が優先されるので、このままでは古い shim で走ります）。native\: $(_TcsNativeShimFull)（更新 $(_TcsNativeShimTime)）／$(TcsShimBuildDirName): $(_TcsBuiltShimFull)（更新 $(_TcsBuiltShimTime)）。解き方: native\ の DLL を消す（$(TcsShimBuildDirName) の出力が使われる）か、$(TcsShimBuildDirName) の DLL を native\ へ写す。わざと古い shim で走らせるときは -p:AllowStaleNativeShim=true。" />
 
     <Warning Condition="'$(_TcsBuiltShimIsNewer)' == '1' And '$(AllowStaleNativeShim)' == 'true'"
              Code="TCS0002"
