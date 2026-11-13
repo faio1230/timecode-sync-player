@@ -51,7 +51,7 @@ ProRes GPU decoding is verified and recommended on NVIDIA (RTX class) GPUs. The 
 1. Run `ERYTHEIA-v<version>-setup.exe` from Releases. It installs per user and does not require administrator privileges. On a PC where the Visual C++ Redistributable is missing or older, it asks once for administrator approval (UAC) to install it.
 2. Start ERYTHEIA from the Start menu.
 
-On a PC with v0.6.6 or earlier, the installer updates it in place. It keeps the previous installation folder and removes the executable and the Start menu entry with the old name.
+A new installation goes to `%LOCALAPPDATA%\Programs\ERYTHEIA`. On a PC with v0.6.6 or earlier, the installer treats it as an update and is expected to keep the previous installation folder (`%LOCALAPPDATA%\Programs\TimecodeSyncPlayer`). It removes the executable and the Start menu entry with the old name.
 
 Uninstalling removes the application, logs, and shortcuts. The per-user settings file `%LOCALAPPDATA%\ERYTHEIA\settings.json` is intentionally kept so that it can be restored on reinstallation. Delete it manually to remove the settings completely.
 
