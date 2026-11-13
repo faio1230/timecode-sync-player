@@ -42,9 +42,7 @@ public sealed class SystemScenarioE2ETests
                 () => playlist.Items[0].Name.Contains(Path.GetFileNameWithoutExtension(alternateCopy), StringComparison.Ordinal),
                 TimeSpan.FromSeconds(5));
 
-            TextBox offset = playlist.Items[0]
-                .FindFirstDescendant(cf => cf.ByAutomationId("TimelineOffsetTextBox"))!
-                .AsTextBox();
+            TextBox offset = WaitForOffsetBox(playlist, 0);
             offset.Focus();
             offset.Text = "00:00:10:00";
             app.Button("BtnSaveProject").Focus();
@@ -68,9 +66,7 @@ public sealed class SystemScenarioE2ETests
 
             playlist.Items[0].Name.Should().Contain(Path.GetFileNameWithoutExtension(alternateCopy));
             playlist.Items[1].Name.Should().Contain(Path.GetFileNameWithoutExtension(videoCopy));
-            playlist.Items[0]
-                .FindFirstDescendant(cf => cf.ByAutomationId("TimelineOffsetTextBox"))!
-                .AsTextBox().Text.Should().StartWith("00:00:10");
+            WaitForOffsetBox(playlist, 0).Text.Should().StartWith("00:00:10");
             app.Combo("SyncModeCombo").SelectedItem?.Name.Should().Contain("Continue");
             app.Combo("GapBehaviorCombo").SelectedItem?.Name.Should().Contain("Freeze");
 
@@ -265,6 +261,55 @@ public sealed class SystemScenarioE2ETests
 
         string message = $"K2 の疑い（待っても無効）: {buttonId} が {timeout.TotalSeconds:0} 秒待っても有効にならない。" +
             Environment.NewLine + string.Join(Environment.NewLine, state);
+        _output.WriteLine(message);
+        throw new InvalidOperationException(message);
+    }
+
+    /// <summary>
+    /// 行のオフセットの欄を、見つかるまで最大 5 秒待って返す。行を動かしたり読み込んだりすると行の入れ物が
+    /// 作り直され、行の名前は先に変わっても、中の欄は次のレイアウトまで UIA に出てこないことがある
+    /// （v0.6.7 の統合の一式で 1 回、欄が null のまま Focus して落ちた）。待った時間を出力に書く。
+    /// 待っても無ければ、行の状態を書いて失敗する（製品の側の原因を隠さない）。
+    /// </summary>
+    private TextBox WaitForOffsetBox(ListBox playlist, int index)
+    {
+        var waited = Stopwatch.StartNew();
+        TimeSpan timeout = TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            AutomationElement? box = null;
+            try
+            {
+                AutomationElement[] items = playlist.Items;
+                if (items.Length > index)
+                    box = items[index].FindFirstDescendant(cf => cf.ByAutomationId("TimelineOffsetTextBox"));
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or COMException)
+            {
+                // 入れ物の作り直しの途中。次の回で読み直す。
+            }
+            if (box != null)
+            {
+                _output.WriteLine($"TimelineOffsetTextBox[{index}]: found after {waited.ElapsedMilliseconds} ms");
+                return box.AsTextBox();
+            }
+            if (waited.Elapsed >= timeout)
+                break;
+            Thread.Sleep(50);
+        }
+
+        string rows;
+        try
+        {
+            rows = string.Join(Environment.NewLine, playlist.Items.Select((item, i) =>
+                $"item[{i}] name=\"{item.Name}\" offscreen={item.IsOffscreen} rect={item.BoundingRectangle}"));
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or COMException)
+        {
+            rows = $"playlist read failed: {ex.Message}";
+        }
+        string message = $"行 {index} の TimelineOffsetTextBox が {timeout.TotalSeconds:0} 秒待っても見つからない（waited={waited.ElapsedMilliseconds} ms）。" +
+            Environment.NewLine + rows;
         _output.WriteLine(message);
         throw new InvalidOperationException(message);
     }
