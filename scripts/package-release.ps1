@@ -70,9 +70,9 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 }
 
 $releaseDirectory = Join-Path (Split-Path -Parent $projectPath) "bin\Release\net8.0-windows"
-$zipName = "TimecodeSyncPlayer-v$Version-win-x64.zip"
+$zipName = "ERYTHEIA-v$Version-win-x64.zip"
 $zipPath = Join-Path $OutputDirectory $zipName
-$setupName = "TimecodeSyncPlayer-v$Version-setup.exe"
+$setupName = "ERYTHEIA-v$Version-setup.exe"
 $setupPath = Join-Path $OutputDirectory $setupName
 $stagingDirectory = Join-Path $OutputDirectory (".package-stage-" + [Guid]::NewGuid().ToString("N"))
 
@@ -263,7 +263,7 @@ if (-not $SkipInstaller) {
 }
 
 if (-not $SkipBuild) {
-    Write-Host "Building TimecodeSyncPlayer $Version (Release)..."
+    Write-Host "Building ERYTHEIA $Version (Release)..."
     & dotnet build $projectPath -c Release -v minimal
     if ($LASTEXITCODE -ne 0) {
         throw "Release build failed with exit code $LASTEXITCODE."
@@ -374,7 +374,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot "CHANGELOG.md") -Destination $stagingDirectory
 
     $readme = @"
-TimecodeSyncPlayer v$Version (Windows x64)
+ERYTHEIA v$Version (Windows x64)
 
 Requirements
 - Windows 10/11 x64
@@ -386,7 +386,7 @@ Requirements
 - An audio input device carrying LTC
 
 Setup
-1. Start TimecodeSyncPlayer.exe.
+1. Start ERYTHEIA.exe.
 2. Select the LTC capture device and press START.
 3. Load media, then press Sync ON.
 
