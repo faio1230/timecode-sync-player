@@ -23,6 +23,6 @@ public sealed class ApplicationVersionTests
     {
         // 0.6.6への固定は、リリース成果物の意図しないバージョン変更を検出するリリースゲート。
         ApplicationVersion.Current.Should().Be("0.6.6");
-        ApplicationVersion.WindowTitle.Should().Be("Timecode Sync Player v0.6.6");
+        ApplicationVersion.WindowTitle.Should().Be("ERYTHEIA v0.6.6");
     }
 }

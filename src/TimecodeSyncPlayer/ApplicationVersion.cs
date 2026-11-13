@@ -4,7 +4,7 @@ namespace TimecodeSyncPlayer;
 
 internal static class ApplicationVersion
 {
-    private const string ProductTitle = "Timecode Sync Player";
+    private const string ProductTitle = "ERYTHEIA";
 
     public static string Current { get; } = ReadFrom(typeof(App).Assembly);
 
