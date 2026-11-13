@@ -47,15 +47,15 @@ $fpsToken = $LtcFps -replace '\.', '_'
 # Defaults are repo-relative, so any worktree runs its own test project and writes
 # TestResults\v3 under that same worktree.
 if (-not $TestProject) {
-    $TestProject = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
+    $TestProject = Join-Path $repoRoot 'tests\Erytheia.Tests\Erytheia.Tests.csproj'
 }
 if (-not $LogRoot) {
     $LogRoot = Join-Path $repoRoot 'TestResults\v3'
 }
 # The E2E harness resolves the app under test from this variable; point it at the
 # same worktree's Debug build when the caller did not set one.
-if (-not $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH) {
-    $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
+if (-not $env:ERYTHEIA_E2E_APP_PATH) {
+    $env:ERYTHEIA_E2E_APP_PATH = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 
 $runs = @()
@@ -77,15 +77,15 @@ foreach ($backend in $Backends) {
         # breakdown (analyze-v3-spread-stages.py and analyze-v3-seek-breakdown.py read
         # events.jsonl from the run root). No name clash: OutputTrace writes
         # manifest.json / events.jsonl / summary.json, none of which the harness writes.
-        $env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE = $report
-        $env:TCS_V3_LTC_FPS = $LtcFps
-        $env:TCS_V3_LTC_FPS_MODE = $LtcFpsMode
+        $env:ERYTHEIA_OUTPUT_TRACE = $report
+        $env:ERYTHEIA_V3_LTC_FPS = $LtcFps
+        $env:ERYTHEIA_V3_LTC_FPS_MODE = $LtcFpsMode
         & dotnet test $TestProject -c Debug --no-build --filter 'FullyQualifiedName~SyncAccuracy' 2>&1 |
             Select-String -Pattern 'Passed!|Failed!|:\s+\d+' | Select-Object -Last 1 | ForEach-Object { '    ' + $_.ToString().Trim() }
         Remove-Item Env:TIMECODE_ACCURACY_REPORT_DIR -ErrorAction SilentlyContinue
-        Remove-Item Env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE -ErrorAction SilentlyContinue
-        Remove-Item Env:TCS_V3_LTC_FPS -ErrorAction SilentlyContinue
-        Remove-Item Env:TCS_V3_LTC_FPS_MODE -ErrorAction SilentlyContinue
+        Remove-Item Env:ERYTHEIA_OUTPUT_TRACE -ErrorAction SilentlyContinue
+        Remove-Item Env:ERYTHEIA_V3_LTC_FPS -ErrorAction SilentlyContinue
+        Remove-Item Env:ERYTHEIA_V3_LTC_FPS_MODE -ErrorAction SilentlyContinue
 
         # analysis\ = official reference (auto: sample when sampleTicks exist, since 2026-09-16).
         # analysis-receipt\ = legacy receipt reference, kept for comparison with runs before T2.

@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $MediaDir) { $MediaDir = Join-Path $repoRoot 'artifacts\media\v1' }
-if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe' }
+if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe' }
 if (-not $LogRoot) { $LogRoot = Join-Path $repoRoot 'TestResults\v1' }
 if (-not (Test-Path $MediaDir)) { throw "MediaDir not found: $MediaDir. Copy the V1 set from <archive>\media\v1-set\v1 or pass -MediaDir." }
 $runner = Join-Path $PSScriptRoot 'Invoke-AppGpuTrial.ps1'

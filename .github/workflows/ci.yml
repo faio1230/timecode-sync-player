@@ -15,9 +15,9 @@ jobs:
         with:
           dotnet-version: '8.0.x'
       - name: Build
-        run: dotnet build src/TimecodeSyncPlayer/TimecodeSyncPlayer.csproj -c Debug -v minimal
+        run: dotnet build src/Erytheia/Erytheia.csproj -c Debug -v minimal
       - name: Test (non-E2E)
-        run: dotnet test tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj -c Debug --filter "FullyQualifiedName!~E2ETests" --collect:"XPlat Code Coverage" --results-directory TestResults -v minimal
+        run: dotnet test tests/Erytheia.Tests/Erytheia.Tests.csproj -c Debug --filter "FullyQualifiedName!~E2ETests" --collect:"XPlat Code Coverage" --results-directory TestResults -v minimal
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         # テスト失敗時にもカバレッジを回収するため always() を指定する。

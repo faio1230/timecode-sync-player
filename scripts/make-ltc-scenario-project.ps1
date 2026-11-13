@@ -4,13 +4,13 @@
 # The scenario tests never embed media file names: tracks are referred to as
 # M1..M7 by position, and this script writes those symbols as the track names.
 #
-#   pwsh -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out C:\reports\ltc-scenario.tsp
+#   pwsh -File scripts\make-ltc-scenario-project.ps1 -MediaDir D:\media -Out C:\reports\ltc-scenario.erytheia
 #
 # -Out is written wherever it points (the runner puts it under its report
 # directory). The media folder is user-managed and read-only on the test machine,
 # so the runner first creates one hard link per media file under
 # <ReportDir>\media and passes that folder as -MediaDir. Tracks are then stored as
-# paths relative to the .tsp directory (e.g. media\clip.mp4): ProjectSerializer
+# paths relative to the project directory (e.g. media\clip.mp4): ProjectSerializer
 # only resolves paths inside the project directory. MediaDir must therefore live
 # inside the -Out directory. The runner deletes the generated project and the
 # links after the run (-KeepProject keeps them).
@@ -82,13 +82,13 @@ if (-not $MediaDir.StartsWith($outDirPrefix, [System.StringComparison]::OrdinalI
 # to append -FfmpegDir to PATH; the runner ran it in its own process, so the folder
 # stayed on the runner's PATH and reached the app, which then saw ffprobe in a run
 # that was meant to have none. Order (scripts\TcsFfmpeg.psm1, Resolve-TcsFfprobe):
-# TCS_FFPROBE, ffprobe.exe next to TCS_FFMPEG, tools\ffmpeg\ffprobe.exe (item 8),
+# ERYTHEIA_FFPROBE, ffprobe.exe next to ERYTHEIA_FFMPEG, tools\ffmpeg\ffprobe.exe (item 8),
 # -FfmpegDir\ffprobe.exe, PATH.
 Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
 $ffprobeResolved = Resolve-TcsFfprobe -FfmpegDir $FfmpegDir
 if (-not $ffprobeResolved.Ffprobe) {
     throw ('ffprobe not found (searched: ' + ($ffprobeResolved.Searched -join '; ') +
-        '). Run pwsh -File scripts\get-ffmpeg.ps1, set TCS_FFMPEG to an ffmpeg.exe with ffprobe.exe next to it, pass -FfmpegDir, or put ffprobe on PATH')
+        '). Run pwsh -File scripts\get-ffmpeg.ps1, set ERYTHEIA_FFMPEG to an ffmpeg.exe with ffprobe.exe next to it, pass -FfmpegDir, or put ffprobe on PATH')
 }
 $ffprobePath = $ffprobeResolved.Ffprobe
 Write-Output ('ffprobe: ' + $ffprobePath + ' (' + $ffprobeResolved.Source + ')')

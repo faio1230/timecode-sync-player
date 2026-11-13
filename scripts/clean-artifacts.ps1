@@ -7,7 +7,7 @@
   対象（すべて .gitignore 済みで、スクリプトやビルドで作り直せるもの）:
     - artifacts\media*         生成素材（scripts\make-e2e-media.ps1 で作り直せる）
     - artifacts\ltc-scenarios  シナリオの成果物
-    - artifacts\output-trace   出力トレース（TIMECODE_SYNC_PLAYER_OUTPUT_TRACE の置き場）
+    - artifacts\output-trace   出力トレース（ERYTHEIA_OUTPUT_TRACE の置き場）
     - artifacts\analysis-data  検証機から受け取った解析用の一式
     - TestResults              テストの結果と写し
     - artifacts\release        候補ビルド（公開済みの版＝git のタグにある版の zip / setup.exe は残す）
@@ -69,7 +69,7 @@ $releaseDir = Join-Path $root 'artifacts\release'
 if (Test-Path -LiteralPath $releaseDir) {
     Get-ChildItem -LiteralPath $releaseDir -File -Force | Where-Object {
         $name = $_.Name
-        -not ($publishedVersions | Where-Object { $name -like "TimecodeSyncPlayer-$_-*" })
+        -not ($publishedVersions | Where-Object { $name -like "ERYTHEIA-$_-*" -or $name -like "TimecodeSyncPlayer-$_-*" })
     } | ForEach-Object { $candidates.Add($_) }
 }
 

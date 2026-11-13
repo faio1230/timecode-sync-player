@@ -57,7 +57,7 @@ try {
         (ShimLine $day.AddMinutes(1) 'load.summary path=C:\m\h.mp4 paused=1 total_ms=9.0 attempt=0 profile=h264-gpu'),
         (ShimLine $day.AddMinutes(1) 'load.skip path=C:\m\h.mp4 attempt=0 profile=h264-gpu reason=decoder-adapter-mismatch shim_luid=0:1')
     )
-    [IO.File]::WriteAllLines((Join-Path $root 'app-logs\tcs-gst-20260930.log'), $shimDaily)
+    [IO.File]::WriteAllLines((Join-Path $root 'app-logs\erytheia-gst-20260930.log'), $shimDaily)
 
     function Scenario([string]$Name, [object[]]$Events, [string[]]$RawShim) {
         $dir = Join-Path $root ('scenarios\' + $Name)

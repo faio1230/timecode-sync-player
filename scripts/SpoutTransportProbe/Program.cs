@@ -6,7 +6,7 @@ using System.Text.Json;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
-using TimecodeSyncPlayer;
+using Erytheia;
 
 // Exercise the product transport directly, without starting WPF, mpv or LTC.
 const int width = 3840, height = 2160, fps = 60, seconds = 30;

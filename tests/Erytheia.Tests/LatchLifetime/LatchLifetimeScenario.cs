@@ -1,0 +1,294 @@
+using Erytheia.Tests.Helpers;
+using Erytheia.Tests.Integration;
+
+namespace Erytheia.Tests.LatchLifetime;
+
+/// <summary>
+/// v0.5.2 段 0: ラッチを立てる手順と、できごとを起こす手順をそれぞれ 1 か所に置く。
+/// できごとは MainWindow が呼んでいるのと同じ公開／internal メソッドで起こす（下の Fire の各分岐に、
+/// MainWindow 側の呼び出し元を書く）。ラッチの読み取りは各クラスの LatchSnapshot だけを使う
+/// （フィールドをリフレクションで読まない）。
+/// </summary>
+internal sealed class LatchLifetimeScenario
+{
+    /// <summary>Continue の配置: [0,30) と [40,70) の 2 トラック。30〜40 がギャップ。</summary>
+    private const double GapSeconds = 35.0;
+    private const double FrameSeconds = 0.04;
+
+    private LatchLifetimeScenario(SyncScenarioHarness harness, ManualTimeProvider clock, double lastLtc)
+    {
+        Harness = harness;
+        Clock = clock;
+        LastLtc = lastLtc;
+    }
+
+    public SyncScenarioHarness Harness { get; }
+    public ManualTimeProvider Clock { get; }
+
+    /// <summary>最後に供給した LTC（秒）。NormalFrame などはここから 1 フレーム進める。</summary>
+    public double LastLtc { get; private set; }
+
+    public SyncMode Mode => Harness.Mode;
+
+    public bool Read(LatchId latch)
+    {
+        IReadOnlyDictionary<string, bool> snapshot = latch.Owner switch
+        {
+            LatchOwner.LtcSyncController => Harness.Controller.LatchSnapshot(),
+            LatchOwner.TimecodeSyncService => Harness.SyncService.LatchSnapshot(),
+            LatchOwner.SingleModeSyncCoordinator => Harness.Single.LatchSnapshot(),
+            LatchOwner.LtcSignalLossPolicy => Harness.Controller.SignalLossLatchSnapshot(),
+            LatchOwner.TimecodeSyncSeekState =>
+                ((TimecodeSyncSeekState)Harness.SeekState).LatchSnapshot(Clock.GetUtcNow().UtcDateTime),
+            _ => throw new ArgumentOutOfRangeException(nameof(latch)),
+        };
+        return snapshot.TryGetValue(latch.Name, out bool value)
+            ? value
+            : throw new KeyNotFoundException($"{latch.Owner} の LatchSnapshot に {latch.Name} が無い");
+    }
+
+    // ─── 供給 ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// v0.6.1 段 A: 実時間の LTC の口（<see cref="SyncScenarioHarness.DeliverLtcFrame"/>）へ値だけを送る。状態の引数は
+    /// ハーネスへ渡さない（層 1 の診断が値から決める）。LastLtc の記録にだけ使う（台本の直しは段 A の後）。
+    /// </summary>
+    public void Frame(double seconds, TimecodeFrameDiagnosticStatus status = TimecodeFrameDiagnosticStatus.Normal)
+    {
+        Harness.DeliverLtcFrame(seconds);
+        if (status != TimecodeFrameDiagnosticStatus.Jump)
+            LastLtc = seconds;
+    }
+
+    /// <summary>再生と LTC を 1 フレームずつ進めた通常フレーム（時計も 40ms 進める）。</summary>
+    public void NextNormalFrame()
+    {
+        Clock.Advance(TimeSpan.FromMilliseconds(40));
+        Harness.AdvancePlayback(Harness.PlaybackSeconds + FrameSeconds, 1);
+        Frame(LastLtc + FrameSeconds);
+    }
+
+    /// <summary>
+    /// 同値の保持（Duplicate）を 40ms ごとに 8 枚（320ms、timeout 250ms を超える）送り、毎回 UI タイマーの Tick を
+    /// 回す（保持が理由の損失にする）。v0.6.1 段 A: 実機の保持と同じく、同値が 40ms ごとに届く列にした。
+    /// </summary>
+    public void HeldPastTimeout()
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            Frame(LastLtc, TimecodeFrameDiagnosticStatus.Duplicate);
+            Harness.AdvanceMilliseconds(0);
+        }
+    }
+
+    /// <summary>
+    /// v0.6.1 段 A: 値を飛ばす（Jump と、確認の +1 フレーム）。実機の LTC の位置の飛びと同じく、飛んだ先の値と、
+    /// 次の 1 フレームの続きを送る。
+    /// </summary>
+    public void JumpTo(double seconds)
+    {
+        Frame(seconds, TimecodeFrameDiagnosticStatus.Jump);
+        Frame(seconds + FrameSeconds);
+    }
+
+    /// <summary>v0.6.1 段 A: 再生と LTC を <paramref name="frames"/> フレームぶん 40ms ごとに進める（追従）。</summary>
+    public void FollowFrames(int frames)
+    {
+        for (int i = 0; i < frames; i++)
+            NextNormalFrame();
+    }
+
+    /// <summary>無音のまま 100ms ずつ 3 回（timeout 250ms を超える）。</summary>
+    public void SilencePastTimeout()
+    {
+        for (int i = 0; i < 3; i++)
+            Harness.Tick100Milliseconds();
+    }
+
+    // ─── 配置 ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Continue の基本配置: 2 トラック、LTC 12.0 で 1 本目を読み込み、ロードの解除まで進める。
+    /// 解除の回収待ち（fileLoadReleasePending）は 2 秒進めて鮮度切れにしておく。
+    /// </summary>
+    public static LatchLifetimeScenario Continue(LtcSignalLossMode lossMode = LtcSignalLossMode.RunThrough)
+    {
+        LatchLifetimeScenario s = Create(lossMode);
+        SyncScenarioHarness h = s.Harness;
+        h.AddTrack("first", 0, 30);
+        h.AddTrack("second", 40, 30);
+        h.ManualPlay();
+        s.Frame(12.0);                    // 1 本目へ切替（ロード開始）
+        // v0.6.1 段 A: LTC は 40ms ごとに +1 フレーム進む。再生と描画が進んだフレームでロード解除、
+        // 続けて 2 秒追従して解除の回収待ち（fileLoadReleasePending）を鮮度切れにしておく。
+        s.FollowFrames(5);
+        s.FollowFrames(50);
+        return s;
+    }
+
+    /// <summary>
+    /// Single の基本配置: 1 トラックを一時停止で読み込み（読み込み済みトラックを持つ）、尺 20 秒、
+    /// 再生 12.0・LTC 12.0。読み込みのゲートは最初のフレームで解除させ、回収待ちは 2 秒進めて
+    /// 鮮度切れにしておく。
+    /// </summary>
+    public static LatchLifetimeScenario Single(LtcSignalLossMode lossMode = LtcSignalLossMode.RunThrough)
+    {
+        LatchLifetimeScenario s = Create(lossMode);
+        SyncScenarioHarness h = s.Harness;
+        h.AddTrack("first", 0, 30);
+        h.ReloadProject();                // 一時停止の読み込み（MainWindow は LoadFilePaused）
+        h.BeginManualFileLoad();          // LoadFilePaused → BeginSyncFileLoad(0)
+        h.SetDurationSeconds(20);
+        h.ChangeMode(SyncMode.Single);
+        h.ManualPlay();
+        h.AdvancePlayback(12.0, 5);
+        s.Clock.Advance(TimeSpan.FromMilliseconds(200));
+        s.Frame(12.0);                    // 再生と描画が進んだのでロード解除
+        // v0.6.1 段 A: LTC は 40ms ごとに +1 フレーム進む。2 秒追従して回収待ちを鮮度切れにしておく。
+        s.FollowFrames(50);
+        return s;
+    }
+
+    private static LatchLifetimeScenario Create(LtcSignalLossMode lossMode)
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 24, 0, 0, 0, TimeSpan.Zero));
+        var h = new SyncScenarioHarness(clock, enableCorrection: true, sampleClockEnabled: false)
+        {
+            SignalLossMode = lossMode,
+        };
+        return new LatchLifetimeScenario(h, clock, 0.0);
+    }
+
+    // ─── できごと ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// できごとの前提（その状態でしか起きないもの）を作り、前提ができたかを返す。ラッチはこの後も
+    /// 立ったままのはず（消えたら、または前提ができなければ、その行は NotApplicable）。
+    /// </summary>
+    public bool Prepare(LifecycleEvent evt)
+    {
+        switch (evt)
+        {
+            case LifecycleEvent.SyncEnabledOn:
+                Harness.SetSyncEnabled(false);
+                return !Harness.SyncEnabled;
+            case LifecycleEvent.MonitoringStarted:
+                StopMonitoring();
+                return !Harness.IsMonitoring;
+            case LifecycleEvent.GapExit:
+                JumpTo(GapSeconds);
+                return Harness.IsGapActive;
+            case LifecycleEvent.SignalRecovered:
+                SilencePastTimeout();
+                return IsSignalLost;
+            case LifecycleEvent.JumpRecovery:
+                HeldPastTimeout();
+                return IsSignalLost;
+            default:
+                return true;
+        }
+    }
+
+    private bool IsSignalLost => Harness.Controller.SignalLossLatchSnapshot()["lost"];
+
+    public void Fire(LifecycleEvent evt)
+    {
+        SyncScenarioHarness h = Harness;
+        switch (evt)
+        {
+            case LifecycleEvent.FileLoad:
+                // MainWindow: PlaybackOperationsCoordinator.LoadFile（位置なし）/ LoadFilePaused →
+                // BeginSyncFileLoad → TimecodeSyncService.BeginFileLoad（MainWindow.xaml.cs:1666）。
+                h.BeginManualFileLoad();
+                break;
+            case LifecycleEvent.FileLoadWithoutBegin:
+                // ギャップの 2 経路（LoadPausedAt / GapFreezePathGuard）の読み込み。読み込みの後に
+                // ロード中の印を立てない口（BeginGapFreezeLoad、source load-paused-at）を通る。
+                h.LoadCurrentFile();
+                break;
+            case LifecycleEvent.SyncModeChanged:
+                // MainWindow.xaml.cs:446 → LtcSyncController.SyncModeChanged。
+                h.ChangeMode(h.Mode == SyncMode.Single ? SyncMode.Continue : SyncMode.Single);
+                break;
+            case LifecycleEvent.SyncEnabledOff:
+                // MainWindow.xaml.cs:433 → LtcSyncController.SyncEnabledChanged。
+                h.SetSyncEnabled(false);
+                break;
+            case LifecycleEvent.SyncEnabledOn:
+                h.SetSyncEnabled(true);
+                break;
+            case LifecycleEvent.MonitoringStopped:
+                StopMonitoring();
+                break;
+            case LifecycleEvent.MonitoringStarted:
+                // SyncViewModel が IsLtcRunning = true → MainWindow.xaml.cs:492 → MonitoringChanged。
+                h.IsMonitoring = true;
+                break;
+            case LifecycleEvent.ManualSeek:
+                // シークバー: MouseDown（MainWindow.xaml.cs:1977）と確定（:2642）で CancelPendingSync。
+                h.BeginSeekBarInteraction();
+                h.EndSeekBarInteraction(h.PlaybackSeconds);
+                break;
+            case LifecycleEvent.StopPlayback:
+                // MainWindow.StopPlayback（MainWindow.xaml.cs:1536）→ PlaybackStopped（段 0 では CorrectionReset）。
+                h.Controller.PlaybackStopped();
+                h.StopPlayback();
+                break;
+            case LifecycleEvent.GapEnter:
+                JumpTo(GapSeconds);
+                break;
+            case LifecycleEvent.GapExit:
+                // 同じトラックへ戻る（次のトラックへ出ると読み込みが混ざるため）。
+                JumpTo(29.0);
+                break;
+            case LifecycleEvent.SignalRecovered:
+                // 有効フレーム 3 枚（resumeFrames=3）。v0.6.1 β (A): 無音の後の 1 枚目は這う前進で数えないので 4 枚送る。
+                for (int i = 0; i < 4; i++)
+                    NextNormalFrame();
+                break;
+            case LifecycleEvent.JumpRecovery:
+            {
+                // 保持が理由の損失中に、値が動いた Jump で復帰する（D27-b/c）。
+                // v0.5.4 B7: Jump はすべて次の 1 フレームの値の連続性で確かめるので、+1 フレームで確認する
+                // （確認した時点で ApplyConfirmedJump が復帰させる）。
+                JumpTo(LastLtc + 3.0);
+                break;
+            }
+            case LifecycleEvent.NormalFrame:
+                NextNormalFrame();
+                break;
+            case LifecycleEvent.FpsModeChanged:
+                // MainWindow.xaml.cs:467 → LtcSyncController.FpsModeChanged。
+                h.Controller.FpsModeChanged();
+                break;
+            case LifecycleEvent.CorrectionModeChanged:
+                // MainWindow.xaml.cs:470-476: 設定の保存とログ。段 1 から同期側の入口
+                // （CorrectionModeChanged）を呼び、段 3h で補正状態を捨て、倍率を 1.0 に戻す（§6 の 8）。
+                h.CorrectionMode = h.CorrectionMode == SyncCorrectionMode.Smooth
+                    ? SyncCorrectionMode.Jump : SyncCorrectionMode.Smooth;
+                h.Controller.CorrectionModeChanged();
+                break;
+            case LifecycleEvent.SignalLossModeChanged:
+                // MainWindow.xaml.cs:484-490: 設定の保存とログ。段 1 から同期側の入口
+                // （SignalLossModeChanged）を呼び、段 3i でランスルーへの変更のとき信号断の
+                // 一時停止を解く（§6 の 9。ほかの持ち主が止めていれば再開しない）。
+                h.SignalLossMode = h.SignalLossMode == LtcSignalLossMode.Stop
+                    ? LtcSignalLossMode.RunThrough : LtcSignalLossMode.Stop;
+                h.Controller.SignalLossModeChanged();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(evt));
+        }
+    }
+
+    /// <summary>
+    /// 利用者の停止: SyncViewModel が _ltcMonitor.Stop() の後に IsLtcRunning = false
+    /// （MainWindow.xaml.cs:492 → MonitoringChanged）、続いてモニターの Stopped が
+    /// MainWindow.xaml.cs:1157 → MonitorStopped(null) に届く。
+    /// </summary>
+    private void StopMonitoring()
+    {
+        Harness.IsMonitoring = false;
+        Harness.Controller.MonitorStopped(null);
+    }
+}

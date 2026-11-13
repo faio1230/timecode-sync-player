@@ -150,7 +150,7 @@ $probeReceiverSamples = [Collections.Generic.List[object]]::new()
 $probeRunnerMutex = $null
 $probeRunnerMutexOwned = $false
 try {
-    $probeRunnerMutex = [Threading.Mutex]::new($false, 'Local\TimecodeSyncPlayerGpuOutputProbeHarness')
+    $probeRunnerMutex = [Threading.Mutex]::new($false, 'Local\ErytheiaGpuOutputProbeHarness')
     try { $probeRunnerMutexOwned = $probeRunnerMutex.WaitOne(0) }
     catch [Threading.AbandonedMutexException] { $probeRunnerMutexOwned = $true }
     if (-not $probeRunnerMutexOwned) { throw 'Another GPU probe runner is active. Nothing started.' }

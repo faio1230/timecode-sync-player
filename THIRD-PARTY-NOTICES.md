@@ -1,11 +1,11 @@
 # Third-Party Notices
 
-TimecodeSyncPlayer uses the following third-party components at runtime. Test-only dependencies
+ERYTHEIA uses the following third-party components at runtime. Test-only dependencies
 are not part of the distributed application and are intentionally omitted.
 
 ## GStreamer 1.28.2
 
-A subset of the official GStreamer 1.28.2 MSVC x64 runtime is **included** in the TimecodeSyncPlayer
+A subset of the official GStreamer 1.28.2 MSVC x64 runtime is **included** in the ERYTHEIA
 release packages under the `gstreamer` folder: the DLLs and plugins this application actually loads,
 together with the license texts shipped by the official runtime
 (`gstreamer\share\licenses`). The application prefers the bundled runtime over any system
@@ -16,7 +16,7 @@ from `GSTREAMER_1_0_ROOT_MSVC_X86_64` or the default install location.
 - License: GNU Lesser General Public License for the core libraries and plugins bundled here, as
   reported by `gst-inspect-1.0` ("LGPL") and by the license texts bundled with the official runtime
   (`LGPL-2.0-or-later.txt` for GStreamer/GLib components, `LGPL-2.1-or-later.txt` for FFmpeg).
-  TimecodeSyncPlayer links to the GStreamer shared libraries dynamically and does not modify them.
+  ERYTHEIA links to the GStreamer shared libraries dynamically and does not modify them.
 - License texts: bundled under `gstreamer\share\licenses\<component>\`
 - Source code: [gstreamer.freedesktop.org/src](https://gstreamer.freedesktop.org/src/) and the
   upstream projects of the bundled components.
@@ -33,17 +33,17 @@ plugin-loading log):
 | gst-libav | `gstlibav` (avdec_prores, avdec_aac) | LGPL; links FFmpeg libraries (`ffmpeg/LGPL-2.1-or-later.txt`) |
 | glib (gio), proxy-libintl, orc, libffi, pcre2, zlib, bzip2, dav1d | runtime dependencies (GLib, i18n, SIMD, FFI, regex, compression, AV1 decoder) | each component's license text is bundled under `gstreamer\share\licenses\` |
 
-The official runtime also contains plugins that TimecodeSyncPlayer does not load (for example
+The official runtime also contains plugins that ERYTHEIA does not load (for example
 nvcodec and GPL components such as x264-based encoders). Those plugins and their DLLs are not
 bundled. This list is a record of the measured loading behavior; it is not a legal assessment.
 
 ## gst-prores-d3d11 v0.2.3
 
 A GStreamer plugin that decodes Apple ProRes on the GPU with Direct3D 11 (`proresd3d11dec`). The
-unmodified binaries of the v0.2.3 release are **included** in the TimecodeSyncPlayer release
+unmodified binaries of the v0.2.3 release are **included** in the ERYTHEIA release
 packages under `gstreamer\lib\gstreamer-1.0`: `gstproresd3d11.dll` and the six compiled shaders
 `prores_*.cso` (`prores_alpha.cso`, `prores_idct_unorm.cso`, `prores_pack_alpha.cso`,
-`prores_rgb.cso`, `prores_rgb_alpha.cso`, `prores_vld.cso`). TimecodeSyncPlayer loads the plugin
+`prores_rgb.cso`, `prores_rgb_alpha.cso`, `prores_vld.cso`). ERYTHEIA loads the plugin
 through GStreamer at runtime and does not link to it.
 
 - Project: [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11), release tag
@@ -57,7 +57,7 @@ through GStreamer at runtime and does not link to it.
 
 ## SpoutDX / Spout2
 
-`SpoutDX.dll` is included in the TimecodeSyncPlayer release packages. `tcs_gstreamer.dll`
+`SpoutDX.dll` is included in the ERYTHEIA release packages. `erytheia_gstreamer.dll`
 additionally contains the Spout2 SDK DirectX sources (`spoutDX`, compiled in from the pinned
 upstream tag 2.007.017); the same BSD-2-Clause notice below applies to that binary as well.
 

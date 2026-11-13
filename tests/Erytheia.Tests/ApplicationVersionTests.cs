@@ -1,0 +1,28 @@
+using FluentAssertions;
+
+namespace Erytheia.Tests;
+
+public sealed class ApplicationVersionTests
+{
+    [Fact]
+    public void Normalize_UsesInformationalVersionWithoutBuildMetadata()
+    {
+        ApplicationVersion.Normalize("0.3.0+abcdef", new Version(9, 9, 9, 9))
+            .Should().Be("0.3.0");
+    }
+
+    [Fact]
+    public void Normalize_UsesThreePartAssemblyVersionAsFallback()
+    {
+        ApplicationVersion.Normalize(null, new Version(1, 2, 3, 4))
+            .Should().Be("1.2.3");
+    }
+
+    [Fact]
+    public void CurrentVersionAndWindowTitle_ComeFromApplicationAssembly()
+    {
+        // 0.6.7への固定は、リリース成果物の意図しないバージョン変更を検出するリリースゲート。
+        ApplicationVersion.Current.Should().Be("0.6.7");
+        ApplicationVersion.WindowTitle.Should().Be("ERYTHEIA v0.6.7");
+    }
+}

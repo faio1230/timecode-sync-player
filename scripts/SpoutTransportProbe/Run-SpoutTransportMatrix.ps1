@@ -34,7 +34,7 @@ function Write-NewJson([string]$Path, $Value) {
 }
 
 function Assert-NoConflictingProcesses {
-    $names = @('TimecodeSyncPlayer', 'SpoutTransportProbe', 'PureSpoutSender',
+    $names = @('ERYTHEIA', 'SpoutTransportProbe', 'PureSpoutSender',
         [System.IO.Path]::GetFileNameWithoutExtension($SenderExe)) + $AdditionalConflictProcessNames
     if ($ReceiverExe) { $names += [System.IO.Path]::GetFileNameWithoutExtension($ReceiverExe) }
     $conflicts = @(Get-Process | Where-Object { $_.ProcessName -in $names })
@@ -47,7 +47,7 @@ function Assert-NoConflictingProcesses {
 function Get-BinaryHashes {
     $senderDirectory = Split-Path -Parent $SenderExe
     $paths = @($SenderExe, (Join-Path $senderDirectory 'SpoutTransportProbe.dll'),
-        (Join-Path $senderDirectory 'TimecodeSyncPlayer.dll'), (Join-Path $senderDirectory 'SpoutDX.dll'))
+        (Join-Path $senderDirectory 'ERYTHEIA.dll'), (Join-Path $senderDirectory 'SpoutDX.dll'))
     if ($ReceiverExe) { $paths += $ReceiverExe }
     foreach ($path in $paths) {
         $item = Get-Item -LiteralPath $path
@@ -140,7 +140,7 @@ try {
         $stopPath = Join-Path $runDirectory 'receiver.stop'
         try {
             if ($ReceiverExe) {
-                $receiverProcess = Start-OwnedProbe $ReceiverExe @('--sender', 'TimecodeSyncPlayer', '--output',
+                $receiverProcess = Start-OwnedProbe $ReceiverExe @('--sender', 'ERYTHEIA', '--output',
                     (Join-Path $runDirectory 'receiver.jsonl'), '--duration', '50', '--poll-ms', '8', '--stop-file', $stopPath) `
                     (Join-Path $runDirectory 'receiver')
                 $record.receiverPid = $receiverProcess.Id

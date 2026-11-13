@@ -1,0 +1,388 @@
+﻿using FluentAssertions;
+using Erytheia.Tests.Helpers;
+
+namespace Erytheia.Tests;
+
+/// <summary>L-1: 連続追従の窓集計（純関数）の固定。</summary>
+public sealed class ContinuousFollowAuditTests
+{
+    private static readonly Func<double, double> Identity = ltc => ltc;
+
+    private static List<FollowSample> Samples(double seconds, double step, Func<double, double> position)
+    {
+        var samples = new List<FollowSample>();
+        int count = (int)Math.Floor(seconds / step);
+        for (int i = 0; i < count; i++)
+        {
+            double t = i * step;
+            samples.Add(new FollowSample(t, 10.0 + t, position(t)));
+        }
+        return samples;
+    }
+
+    private static List<FollowPerfSegment> Perfs(double seconds, double window, Func<int, int> updates)
+    {
+        var segments = new List<FollowPerfSegment>();
+        int index = 0;
+        for (double at = window; at <= seconds; at += window)
+            segments.Add(new FollowPerfSegment(at, window, updates(index++)));
+        return segments;
+    }
+
+    [Fact]
+    public void Summarize_HealthyFollow_ReportsNoStalls()
+    {
+        List<FollowSample> samples = Samples(10.0, 0.2, t => 10.0 + t + 0.01);
+        List<FollowPerfSegment> perf = Perfs(10.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 10.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows.Should().HaveCount(5);
+        summary.StallUpdateWindows.Should().Be(0);
+        summary.StallAdvanceWindows.Should().Be(0);
+        summary.MeanFrameUpdates.Should().BeApproximately(60.0, 0.001);
+        summary.MaxAbsError.Should().BeApproximately(0.01, 0.001);
+        summary.WorstUpdates!.Value.FrameUpdates.Should().Be(60);
+        summary.WorstAdvance!.Value.PositionAdvance.Should().BeGreaterThan(1.5);
+        // 2 秒窓に 0.2 秒刻みで 10 サンプル。進みは前の窓の最後を起点にするため、
+        // 2 本目以降はちょうど 2.0 秒、LTC も同じだけ進む。
+        summary.Windows[0].Samples.Should().Be(10);
+        summary.Windows[0].LtcAdvance.Should().BeApproximately(1.8, 0.001);
+        summary.Windows[1].Samples.Should().Be(10);
+        summary.Windows[1].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.WindowsWithoutPerf.Should().Be(0);
+        summary.SeekSpans.Should().BeEmpty();
+        summary.SeekSecondsTotal.Should().Be(0.0);
+    }
+
+    [Fact]
+    public void Summarize_ZeroUpdateWindow_IsCountedAsStalled()
+    {
+        List<FollowSample> samples = Samples(8.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf =
+        [
+            new FollowPerfSegment(2.0, 2.0, 60),
+            new FollowPerfSegment(4.0, 2.0, 0),   // 3 本目の窓（2.0〜4.0）で 0 更新
+            new FollowPerfSegment(6.0, 2.0, 60),
+            new FollowPerfSegment(8.0, 2.0, 60),
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 8.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows.Should().HaveCount(4);
+        summary.StallUpdateWindows.Should().Be(1);
+        summary.WorstUpdates!.Value.Index.Should().Be(1);
+        summary.StallAdvanceWindows.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_WindowWithoutAnyPerfLine_IsReportedSeparatelyFromStall()
+    {
+        // アプリの 2 秒タイマーが滑ると Playback perf 行自体が出ない。行が無い窓は
+        // 「アプリが 0 更新と報告した」わけではないので、凍結として数えず別枠に残す。
+        List<FollowSample> samples = Samples(6.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf =
+        [
+            new FollowPerfSegment(2.0, 2.0, 60),
+            new FollowPerfSegment(6.0, 2.0, 60),   // 2.0〜4.0 の行が無い
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[1].PerfSegments.Should().Be(0);
+        summary.WindowsWithoutPerf.Should().Be(1);
+        summary.StallUpdateWindows.Should().Be(0, "行が無い窓は 0 更新と報告された値ではない");
+        summary.WorstUpdates!.Value.Index.Should().Be(0, "最悪更新の報告は perf 行のある窓から選ぶ");
+    }
+
+    [Fact]
+    public void Summarize_RealZeroUpdateWithPerfLine_IsStillCountedNextToMissingPerfWindows()
+    {
+        List<FollowSample> samples = Samples(8.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf =
+        [
+            new FollowPerfSegment(2.0, 2.0, 60),   // 窓 0
+            new FollowPerfSegment(4.0, 2.0, 0),    // 窓 1: 本物の 0 更新
+            new FollowPerfSegment(8.0, 2.0, 60),   // 窓 3（窓 2 は行なし）
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 8.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.StallUpdateWindows.Should().Be(1, "perf 行があり updates=0 の窓は凍結として数える");
+        summary.WorstUpdates!.Value.Index.Should().Be(1);
+        summary.WindowsWithoutPerf.Should().Be(1);
+        summary.Windows[2].PerfSegments.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_SeekSpans_AreOverlappedPerWindowAndReported()
+    {
+        List<FollowSample> samples = Samples(6.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+        List<FollowSeekSpan> seeks =
+        [
+            new FollowSeekSpan(1.0, 1.5),   // 窓 0 に 1.0s、窓 1 に 0.5s
+            new FollowSeekSpan(4.5, 1.0),   // 窓 2 に 1.0s
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity,
+            seeks: seeks);
+
+        summary.Windows[0].SeekSeconds.Should().BeApproximately(1.0, 0.001);
+        summary.Windows[0].LongestSeekSeconds.Should().BeApproximately(1.5, 0.001);
+        summary.Windows[1].SeekSeconds.Should().BeApproximately(0.5, 0.001);
+        summary.Windows[2].SeekSeconds.Should().BeApproximately(1.0, 0.001);
+        summary.Windows[2].LongestSeekSeconds.Should().BeApproximately(1.0, 0.001);
+        summary.SeekSpans.Should().HaveCount(2);
+        summary.SeekSecondsTotal.Should().BeApproximately(2.5, 0.001);
+        summary.LongestSeekSeconds.Should().BeApproximately(1.5, 0.001);
+    }
+
+    [Fact]
+    public void Summarize_LongestSeekInWindow_IsNotClippedToTheWindow()
+    {
+        // 窓 1 にかかっているのが後半 0.5 秒でも、シーク 1 回の長さは 4.0 秒として報告する
+        // （しきい値を実測の着地時間から決められるように）。
+        List<FollowSample> samples = Samples(6.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+        List<FollowSeekSpan> seeks = [new FollowSeekSpan(0.5, 4.0)];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity,
+            seeks: seeks);
+
+        summary.Windows[0].SeekSeconds.Should().BeApproximately(1.5, 0.001);
+        summary.Windows[1].SeekSeconds.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[1].LongestSeekSeconds.Should().BeApproximately(4.0, 0.001);
+        summary.SeekSecondsTotal.Should().BeApproximately(4.0, 0.001);
+        summary.LongestSeekSeconds.Should().BeApproximately(4.0, 0.001);
+    }
+
+    [Fact]
+    public void Summarize_NoPositionAdvance_IsCountedAsStalled()
+    {
+        List<FollowSample> samples = Samples(6.0, 0.2, t => t < 2.0 || t >= 4.0 ? 10.0 + t : 12.0);
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.StallAdvanceWindows.Should().Be(1);
+        summary.WorstAdvance!.Value.Index.Should().Be(1);
+        summary.StallUpdateWindows.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_ErrorIsMaxPerWindow_AndWorstWindowIsReported()
+    {
+        List<FollowSample> samples = Samples(6.0, 0.2, t => t < 4.0 ? 10.0 + t : 10.0 + t + 0.5);
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[0].MaxAbsError.Should().BeApproximately(0.0, 0.001);
+        summary.Windows[2].MaxAbsError.Should().BeApproximately(0.5, 0.001);
+        summary.MaxAbsError.Should().BeApproximately(0.5, 0.001);
+        summary.WorstError!.Value.Index.Should().Be(2);
+    }
+
+    [Fact]
+    public void Summarize_NonFiniteSamples_AreIgnoredForErrorAndAdvance()
+    {
+        List<FollowSample> samples =
+        [
+            new FollowSample(0.0, 10.0, 10.0),
+            new FollowSample(0.5, double.NaN, 10.5),
+            new FollowSample(1.0, 11.0, double.NaN),
+            new FollowSample(1.5, 11.5, 11.5),
+        ];
+        List<FollowPerfSegment> perf = [new FollowPerfSegment(2.0, 2.0, 60)];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 2.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows.Should().HaveCount(1);
+        summary.MaxAbsError.Should().Be(0.0);
+        summary.Windows[0].PositionAdvance.Should().BeApproximately(1.5, 0.001);
+        summary.Windows[0].LtcAdvance.Should().BeApproximately(1.5, 0.001);
+        summary.Windows[0].Samples.Should().Be(4);
+        summary.StallAdvanceWindows.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_SparseSamples_CarryAdvanceFromThePreviousWindow()
+    {
+        // UIA の読み取りが遅く 2 秒窓に 1 サンプルしか入らない場合でも、前の窓の最後の値から
+        // 進みを測る（窓の中だけで差を取ると、再生が正常でも 0 に見えてしまう）。
+        List<FollowSample> samples =
+        [
+            new FollowSample(0.0, 10.0, 10.0),
+            new FollowSample(1.9, 11.9, 11.9),
+            new FollowSample(3.9, 13.9, 13.9),
+            new FollowSample(5.9, 15.9, 15.9),
+        ];
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[0].Samples.Should().Be(2);
+        summary.Windows[1].Samples.Should().Be(1);
+        summary.Windows[2].Samples.Should().Be(1);
+        summary.Windows[1].PositionAdvance.Should().BeApproximately(2.0, 0.001); // 13.9 − 11.9
+        summary.Windows[2].PositionAdvance.Should().BeApproximately(2.0, 0.001); // 15.9 − 13.9
+        summary.Windows[1].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[2].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[1].IntervalSeconds.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[1].Sparse.Should().BeFalse("実測区間が窓長の半分以上ある");
+        summary.StallAdvanceWindows.Should().Be(0);
+        summary.SparseWindowCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_SparseSamplesEarlyInWindow_IsExcludedFromAdvanceJudgment()
+    {
+        // サンプルが窓の先頭に 1 個だけの場合、前の窓の最後からの実測区間は 0.1 秒しかなく、
+        // 進みの判定には使えない（Sparse として判定から外し、報告には残す）。
+        List<FollowSample> samples =
+        [
+            new FollowSample(0.0, 10.0, 10.0),
+            new FollowSample(1.9, 11.9, 11.9),
+            new FollowSample(2.0, 12.0, 12.0),
+            new FollowSample(4.0, 14.0, 14.0),
+        ];
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[1].Samples.Should().Be(1);
+        summary.Windows[1].PositionAdvance.Should().BeApproximately(0.1, 0.001);
+        summary.Windows[1].LtcAdvance.Should().BeApproximately(0.1, 0.001);
+        summary.Windows[1].IntervalSeconds.Should().BeApproximately(0.1, 0.001);
+        summary.Windows[1].Sparse.Should().BeTrue();
+        summary.Windows[2].PositionAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.SparseWindowCount.Should().Be(1);
+        summary.StallAdvanceWindows.Should().Be(0, "Sparse は進みの判定から外す");
+    }
+
+    [Fact]
+    public void Summarize_EmptyWindow_IsSparseAndCarrySurvives()
+    {
+        // サンプルが 1 つも入らない窓は Sparse。キャリーは残り、次の窓の実測区間は
+        // 最大 1.5 窓で頭打ちにして次の窓へ帰属する。
+        List<FollowSample> samples =
+        [
+            new FollowSample(0.0, 10.0, 10.0),
+            new FollowSample(1.9, 11.9, 11.9),
+            new FollowSample(5.9, 15.9, 15.9),
+        ];
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[1].Samples.Should().Be(0);
+        summary.Windows[1].Sparse.Should().BeTrue();
+        summary.Windows[2].PositionAdvance.Should().BeApproximately(4.0, 0.001); // 15.9 − 11.9
+        summary.Windows[2].IntervalSeconds.Should().BeApproximately(3.0, 0.001); // 1.5 窓で上限
+        summary.Windows[2].Sparse.Should().BeFalse();
+        summary.SparseWindowCount.Should().Be(1);
+        summary.StallAdvanceWindows.Should().Be(0);
+    }
+
+    [Fact]
+    public void Summarize_PlaybackStallRequiresLtcAdvance_DisplayFreezeIsNotCounted()
+    {
+        // 窓 1: LTC は 2 秒進むが位置が 0.2 秒しか進まない → 再生側の停滞。
+        // 窓 2: LTC も位置も止まる（表示側の同時停止）→ 再生側の停滞には数えない。
+        List<FollowSample> samples = Samples(6.0, 0.2, _ => 0.0);
+        for (int i = 0; i < samples.Count; i++)
+        {
+            double t = samples[i].WallSeconds;
+            double ltc = t < 4.0 ? 10.0 + t : 13.8;
+            double position = t < 2.0 ? 10.0 + t : 12.0;
+            samples[i] = new FollowSample(t, ltc, position);
+        }
+        List<FollowPerfSegment> perf = Perfs(6.0, 2.0, _ => 60);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 6.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows[1].PositionAdvance.Should().BeApproximately(0.2, 0.001);
+        summary.Windows[1].LtcAdvance.Should().BeApproximately(2.0, 0.001);
+        summary.Windows[1].Sparse.Should().BeFalse();
+        summary.Windows[2].LtcAdvance.Should().BeApproximately(0.0, 0.001, "表示側が同時に止まった窓");
+        summary.StallAdvanceWindows.Should().Be(1, "LTC が進んだのに位置が進まない窓だけを数える");
+        summary.WorstAdvance!.Value.Index.Should().Be(2, "生の最小進みは表示側が同時に止まった窓（停滞判定とは別）");
+    }
+
+    [Fact]
+    public void Summarize_SettlingWindows_AreReportedButNotJudged()
+    {
+        // 先頭 4 秒（2 窓）は追従直後の過渡。0 更新・大誤差でも判定に数えず、集計には残す。
+        // 位置は t=4 で連続になるよう 1.0 秒から徐々に誤差が減る形にする（進みの起点が
+        // 前の窓の最後になるため、不連続な合成データを避ける）。
+        List<FollowSample> samples = Samples(8.0, 0.2, t => 10.0 + t + Math.Max(0.0, 1.0 - t / 4.0));
+        List<FollowPerfSegment> perf =
+        [
+            new FollowPerfSegment(2.0, 2.0, 0),
+            new FollowPerfSegment(4.0, 2.0, 0),
+            new FollowPerfSegment(6.0, 2.0, 60),
+            new FollowPerfSegment(8.0, 2.0, 60),
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 8.0, windowSeconds: 2.0, expectedPosition: Identity,
+            settlingSeconds: 4.0);
+
+        summary.Windows.Should().HaveCount(4);
+        summary.Windows.Count(window => window.Settling).Should().Be(2);
+        summary.SettlingWindowCount.Should().Be(2);
+        summary.SettlingMaxAbsError.Should().BeApproximately(1.0, 0.001);
+        summary.StallUpdateWindows.Should().Be(0, "除外した窓は判定に数えない");
+        summary.MaxAbsError.Should().BeApproximately(0.0, 0.001);
+        summary.MeanFrameUpdates.Should().BeApproximately(60.0, 0.001);
+    }
+
+    [Fact]
+    public void Summarize_SettlingExclusion_DoesNotHideAuditedStalls()
+    {
+        List<FollowSample> samples = Samples(8.0, 0.2, t => 10.0 + t);
+        List<FollowPerfSegment> perf =
+        [
+            new FollowPerfSegment(2.0, 2.0, 0),   // settling（除外）
+            new FollowPerfSegment(4.0, 2.0, 0),   // 判定対象で 0 更新
+            new FollowPerfSegment(6.0, 2.0, 60),
+            new FollowPerfSegment(8.0, 2.0, 60),
+        ];
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, perf, durationSeconds: 8.0, windowSeconds: 2.0, expectedPosition: Identity,
+            settlingSeconds: 2.0);
+
+        summary.SettlingWindowCount.Should().Be(1);
+        summary.StallUpdateWindows.Should().Be(1);
+        summary.WorstUpdates!.Value.Index.Should().Be(1);
+    }
+
+    [Fact]
+    public void Summarize_ShorterThanOneWindow_ReturnsNoWindows()
+    {
+        List<FollowSample> samples = Samples(1.0, 0.2, t => 10.0 + t);
+
+        ContinuousFollowSummary summary = ContinuousFollowAudit.Summarize(
+            samples, [], durationSeconds: 1.0, windowSeconds: 2.0, expectedPosition: Identity);
+
+        summary.Windows.Should().BeEmpty();
+        summary.StallUpdateWindows.Should().Be(0);
+        summary.StallAdvanceWindows.Should().Be(0);
+        summary.MeanFrameUpdates.Should().Be(0.0);
+    }
+}

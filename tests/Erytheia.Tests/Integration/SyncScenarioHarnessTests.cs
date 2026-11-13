@@ -1,0 +1,120 @@
+using FluentAssertions;
+
+namespace Erytheia.Tests.Integration;
+
+public class SyncScenarioHarnessTests
+{
+    [Fact]
+    public void SignalLossAndRecovery_RecordsLtcDisplayTransitions()
+    {
+        var harness = new SyncScenarioHarness
+        {
+            SignalLossMode = LtcSignalLossMode.RunThrough,
+        };
+        harness.AddTrack("track-1", timelineIn: 0);
+
+        harness.SupplyLtc(1);
+        harness.Tick100Milliseconds(3);
+        // v0.6.1 段 A: 信号が戻った後の LTC は 40ms ごとの +1 フレーム（25fps）。以前の 1.1・1.2・1.3 は 1 枚で
+        // 2.5 フレーム進み、実の受信経路の診断では最初の 1 枚が Jump になって有効フレームに数えられない。
+        // v0.6.1 β (A): 止まった位置からの再開の 1 枚目は這う前進で、復帰の有効フレームに数えない（等速の 3 枚で復帰するので 4 枚送る）。
+        harness.SupplyLtc(1.04);
+        harness.SupplyLtc(1.08);
+        harness.SupplyLtc(1.12);
+        harness.SupplyLtc(1.16);
+
+        harness.DisplayStates.Should().ContainInOrder(
+            new ScenarioLtcDisplayState("Fixed: 25 fps  detect: 25 fps", "#55D86A"),
+            new ScenarioLtcDisplayState("NO SIGNAL", "#666666"),
+            new ScenarioLtcDisplayState("Fixed: 25 fps  detect: 25 fps", "#55D86A"));
+    }
+
+    [Fact]
+    public void StopModeSignalLossAndRecovery_RecordsPolicyOwnedPauseReasonTransitions()
+    {
+        var harness = new SyncScenarioHarness();
+        harness.AddTrack("track-1", timelineIn: 0);
+        harness.ManualPlay();
+
+        harness.SupplyLtc(1);
+        harness.Tick100Milliseconds(3);
+        // v0.6.1 段 A: 信号が戻った後の LTC は 40ms ごとの +1 フレーム（25fps）。以前の 1.1・1.2・1.3 は 1 枚で
+        // 2.5 フレーム進み、実の受信経路の診断では最初の 1 枚が Jump になって有効フレームに数えられない。
+        // v0.6.1 β (A): 止まった位置からの再開の 1 枚目は這う前進で、復帰の有効フレームに数えない（等速の 3 枚で復帰するので 4 枚送る）。
+        harness.SupplyLtc(1.04);
+        harness.SupplyLtc(1.08);
+        harness.SupplyLtc(1.12);
+        harness.SupplyLtc(1.16);
+
+        harness.DisplayStates.Should().ContainInOrder(
+            new ScenarioLtcDisplayState("NO SIGNAL", "#666666", "信号断で停止中"),
+            new ScenarioLtcDisplayState("Fixed: 25 fps  detect: 25 fps", "#55D86A", ""));
+    }
+
+    [Fact]
+    public void StopModeSignalLossThenManualPlay_ClearsPauseReasonWhileSignalRemainsLost()
+    {
+        var harness = new SyncScenarioHarness();
+        harness.AddTrack("track-1", timelineIn: 0);
+        harness.ManualPlay();
+        harness.SupplyLtc(1);
+        harness.Tick100Milliseconds(3);
+
+        harness.ManualPlay();
+        harness.Tick100Milliseconds();
+
+        harness.DisplayStates.Should().ContainInOrder(
+            new ScenarioLtcDisplayState("NO SIGNAL", "#666666", "信号断で停止中"),
+            new ScenarioLtcDisplayState("NO SIGNAL", "#666666", ""));
+    }
+
+    [Fact]
+    public void GapEntryAndExit_RecordsCurrentTrackLabelTransitions()
+    {
+        var harness = new SyncScenarioHarness { GapBehavior = GapBehavior.Black };
+        harness.AddTrack("track-1", timelineIn: 0, duration: 5);
+        harness.AddTrack("track-2", timelineIn: 8, duration: 5);
+        harness.SupplyLtc(1);
+
+        // ギャップへ Jump して走り（確認の +1 フレーム）、次に track-2 へ Jump して走る。
+        harness.SupplyLtc(6);
+        harness.SupplyLtc(6.04);
+        harness.SupplyLtc(9);
+        harness.SupplyLtc(9.04);
+
+        harness.CurrentTrackLabels.Should().ContainInOrder(
+            "Gap: Black → track-2 @ 00:00:08",
+            "Sync: track-2");
+    }
+
+    [Fact]
+    public void HarnessSelfTest_LtcOnTrack_UsesRealPlaylistAndCoordinatorToLoadTrack()
+    {
+        var harness = new SyncScenarioHarness();
+        PlaylistTrack track = harness.AddTrack("track-1", timelineIn: 0);
+
+        harness.SupplyLtc(1);
+
+        harness.LoadedTrackId.Should().Be(track.Id);
+        harness.Operations.Should().ContainSingle(operation =>
+            operation.Name == "loadfile" && operation.Text == track.FilePath && operation.Value == 1);
+    }
+
+    [Fact]
+    public void ManualPause_RemainsPaused_WhenReturningFromFreezeGap()
+    {
+        var harness = new SyncScenarioHarness { GapBehavior = GapBehavior.Freeze };
+        harness.AddTrack("track-1", timelineIn: 0, duration: 5);
+        harness.AddTrack("track-2", timelineIn: 8, duration: 5);
+        harness.SupplyLtc(1);
+        harness.ManualPause();
+
+        harness.SupplyLtc(6);
+        harness.IsPaused.Should().BeTrue("gap pause must not take ownership from a manual pause");
+        harness.CompleteFreezeCapture();
+
+        harness.SupplyLtc(9);
+
+        harness.IsPaused.Should().BeTrue("manual playback control must always win");
+    }
+}

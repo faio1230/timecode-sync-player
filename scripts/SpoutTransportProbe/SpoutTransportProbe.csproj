@@ -7,6 +7,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/TimecodeSyncPlayer/TimecodeSyncPlayer.csproj" />
+    <ProjectReference Include="../../src/Erytheia/Erytheia.csproj" />
   </ItemGroup>
 </Project>

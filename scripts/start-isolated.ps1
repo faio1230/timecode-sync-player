@@ -1,8 +1,9 @@
 #requires -Version 7.0
 # アプリを使い捨ての設定で起動する（v0.6.6、棚卸しの #37）。実機ロードなどで手でアプリを起動するときに使う。
-# 利用者の %LOCALAPPDATA%\TimecodeSyncPlayer\settings.json を書き換えないため。
+# 利用者の %LOCALAPPDATA%\ERYTHEIA\settings.json（と v0.6.6 までの %LOCALAPPDATA%\TimecodeSyncPlayer\settings.json）を
+# 書き換えないため。
 #
-# 一時フォルダを作り、その中の settings.json を TIMECODE_SYNC_PLAYER_SETTINGS_PATH
+# 一時フォルダを作り、その中の settings.json を ERYTHEIA_SETTINGS_PATH
 # （AppSettingsManager.SettingsPathEnvironmentVariable）で exe に渡して起動する。
 # - 環境変数は起動する子プロセスにだけ渡す（このシェルの環境は変えない）。
 # - 設定ファイルのパスが利用者の既定の settings.json と同じになるときは起動しない。
@@ -13,7 +14,7 @@
 #   pwsh -File scripts\start-isolated.ps1 --playlist <プレイリスト>
 #   pwsh -File scripts\start-isolated.ps1 -ExePath <exe> -SettingsTemplate <元にする settings.json> --playlist <プレイリスト>
 #
-# -ExePath          : 既定は src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe
+# -ExePath          : 既定は src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe
 # -SettingsDirectory: 一時フォルダの代わりに使うフォルダ（既定は %TEMP% の下に毎回新しく作る）
 # -SettingsTemplate : 一時の settings.json の元にするファイル（写すだけで、元のファイルには書かない）
 # 残りの引数（--playlist など、アプリの引数は -- で始まる）はそのまま exe へ渡す。
@@ -43,10 +44,10 @@ for ($i = 0; $i -lt $args.Count; $i++) {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$settingsVariable = 'TIMECODE_SYNC_PLAYER_SETTINGS_PATH'
+$settingsVariable = 'ERYTHEIA_SETTINGS_PATH'
 
 if ([string]::IsNullOrWhiteSpace($ExePath)) {
-    $ExePath = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
+    $ExePath = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 $ExePath = [IO.Path]::GetFullPath($ExePath)
 if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
@@ -61,9 +62,12 @@ $SettingsDirectory = [IO.Path]::GetFullPath($SettingsDirectory)
 $settingsPath = Join-Path $SettingsDirectory 'settings.json'
 
 # 利用者の既定の settings.json（AppSettingsManager の既定と同じ場所）を指していないことを確かめる。
-$userSettingsPath = [IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TimecodeSyncPlayer\settings.json'))
-if ([string]::Equals($settingsPath, $userSettingsPath, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "設定ファイルが利用者の settings.json と同じ場所です。別のフォルダを指定してください: $settingsPath"
+# v0.6.7 から既定は ERYTHEIA。v0.6.6 までの TimecodeSyncPlayer の場所（引き継ぎの元）も指させない。
+foreach ($userFolder in @('ERYTHEIA', 'TimecodeSyncPlayer')) {
+    $userSettingsPath = [IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "$userFolder\settings.json"))
+    if ([string]::Equals($settingsPath, $userSettingsPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "設定ファイルが利用者の settings.json と同じ場所です。別のフォルダを指定してください: $settingsPath"
+    }
 }
 
 New-Item -ItemType Directory -Force -Path $SettingsDirectory | Out-Null

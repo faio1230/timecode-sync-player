@@ -14,7 +14,7 @@ GStreamerランタイムの案内です。
 - 別の場所へインストールした場合: 環境変数`GSTREAMER_1_0_ROOT_MSVC_X86_64`にルート
   （`bin`の親ディレクトリ）を設定します。
 
-## tcs_gstreamer.dll（必須）
+## erytheia_gstreamer.dll（必須）
 
 GStreamerのデコード結果をD3D11テクスチャのリースAPIとして合成層へ公開するshimです。
 ビルドにはVisual Studio Build ToolsのC++ x64ツール、CMake、Ninja、GStreamerの開発用SDKが必要です。ランタイムだけではビルドできません。リポジトリのルートからPowerShell 7で実行します。
@@ -28,12 +28,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Spout2の取得に失敗しました。' }
 # Debugビルド
 pwsh -File native\gst-shim\build-shim.ps1 -Config Debug
 if ($LASTEXITCODE -ne 0) { throw 'shimのビルドに失敗しました。' }
-Copy-Item -LiteralPath native\gst-shim\build-debug\tcs_gstreamer.dll -Destination native\tcs_gstreamer.dll -Force -ErrorAction Stop
-Get-FileHash -Algorithm SHA256 -LiteralPath native\gst-shim\build-debug\tcs_gstreamer.dll, native\tcs_gstreamer.dll
+Copy-Item -LiteralPath native\gst-shim\build-debug\erytheia_gstreamer.dll -Destination native\erytheia_gstreamer.dll -Force -ErrorAction Stop
+Get-FileHash -Algorithm SHA256 -LiteralPath native\gst-shim\build-debug\erytheia_gstreamer.dll, native\erytheia_gstreamer.dll
 ```
 
-`native\tcs_gstreamer.dll`へ置くか、`build-debug`に出力したままにすると、本体のビルド時に
-`src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\`へ自動コピーされます。
+`native\erytheia_gstreamer.dll`へ置くか、`build-debug`に出力したままにすると、本体のビルド時に
+`src\Erytheia\bin\Debug\net8.0-windows\`へ自動コピーされます。
 
 標準のインストール先でも、shimのビルド時には上の環境変数が必要です。`native\`にDLLが残っている場合はそちらが優先されます。`TCS0001`で止まった場合も現在のソースから再ビルドし、配置先のSHA-256が一致することを確認してください。Debug／Releaseの切替とテスト出力先の確認は[セットアップ手順](../docs/SETUP.md)にまとめています。
 
@@ -50,7 +50,7 @@ x64版`SpoutDX.dll`を用意し、このフォルダへ配置してください�
 ```text
 timecode-sync-player/
 └── native/
-    ├── tcs_gstreamer.dll  # 必須（ソースビルド時）
+    ├── erytheia_gstreamer.dll  # 必須（ソースビルド時）
     └── SpoutDX.dll        # Spout出力を使う場合
 ```
 

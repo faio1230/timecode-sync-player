@@ -2,12 +2,12 @@
 # Run the LTC E2E scenarios against one app (installed or a local Debug build)
 # with a single command, and leave the evidence in one report directory.
 #
-#   pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe <path to TimecodeSyncPlayer.exe>
+#   pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe <path to ERYTHEIA.exe>
 #   pwsh -File scripts\run-ltc-scenarios.ps1 -Filter "FullyQualifiedName~NoSuchTest"   # dry run
 #   pwsh -File scripts\run-ltc-scenarios.ps1 -MediaDir <real media folder> [-Media M1,M3,M5] [-KeepProject]
 #       (-Media picks tracks by symbol: M<n> is the n-th video of the folder in name order;
 #        -MediaInOffsetSeconds N starts every track N seconds into its video)
-#       (the project .tsp is generated under the report directory, never in the
+#       (the project .erytheia is generated under the report directory, never in the
 #        media folder, and is removed after the run unless -KeepProject is set)
 #   U-1 (LtcScenarioE2ETests.U1_...) requires a gap-free project: pass -GapSeconds 0
 #   (with a gapped project U-1 reports preflight-invalid instead of judging).
@@ -31,7 +31,7 @@
 #
 # Prerequisites: VB-CABLE (CABLE Input / Output active), ffmpeg 6 or later (the pinned
 # test build: pwsh -File scripts\get-ffmpeg.ps1; an older one stops here), .NET SDK, the
-# target exe with tcs_gstreamer.dll, and a GStreamer runtime (bundled
+# target exe with erytheia_gstreamer.dll, and a GStreamer runtime (bundled
 # gstreamer\bin next to the exe, GSTREAMER_1_0_ROOT_MSVC_X86_64, Program Files,
 # or PATH). D18 makes the bundled runtime work without the environment variable.
 #
@@ -39,9 +39,10 @@
 #
 # Crashes (test infrastructure 2026-10, item 2): after the tests the runner reads the .NET Runtime
 # 1026 and Application Error 1000 records of the Application event log in the run's window
-# (crash-events.json), and ltc-run-report.ps1 counts the TimecodeSyncPlayer crashes, the launches
-# and the launches that read ProRes on the GPU first into run-result.json (crashes, launches,
-# proresGpuFirstLaunches). One crash fails the run (failReasons "crash", SUMMARY crashes=N).
+# (crash-events.json), and ltc-run-report.ps1 counts the app crashes (ERYTHEIA.exe, and the old
+# TimecodeSyncPlayer.exe of v0.6.6 and older), the launches and the launches that read ProRes on
+# the GPU first into run-result.json (crashes, launches, proresGpuFirstLaunches).
+# One crash fails the run (failReasons "crash", SUMMARY crashes=N).
 # The test processes inherit DOTNET_DbgEnableMiniDump=1 / DOTNET_DbgMiniDumpType (-MiniDumpType,
 # default 2; 4 = full, over 1 GB, only when chasing a crash) / DOTNET_DbgMiniDumpName =
 # <ReportDir>/dumps/tsp-%p.dmp, so a crashed app leaves its dump in the report directory.
@@ -93,12 +94,12 @@ param(
     [ValidateSet(24, 25, 30)]
     [double]$LtcFps = 25,
     [switch]$KeepProject,
-    # Each scenario only runs its preflight checks and then skips (dry run; TCS_PREFLIGHT_ONLY=1).
+    # Each scenario only runs its preflight checks and then skips (dry run; ERYTHEIA_PREFLIGHT_ONLY=1).
     [switch]$PreflightOnly,
     # Keep output-trace even for a passed run (default: delete it when failed=0 and invalid=0).
     [switch]$KeepTrace,
     [switch]$SkipBuild,
-    # v0.6.4: by default today's app logs (timecodesyncplayer-<today>*.log) are MOVED (never deleted) to
+    # v0.6.4: by default today's app logs (erytheia-<today>*.log, old timecodesyncplayer-<today>*.log) are MOVED (never deleted) to
     # artifacts\analysis-data\logs-<yyyyMMdd>-<HHmmss>\ before the run, so the tests do not read a log
     # that grew over earlier runs of the day (25.9 -> 48.5 MB made the test setup about 2.2 s slower,
     # design 9-2). -KeepAppLogs leaves them in place.
@@ -109,11 +110,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$testProj = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
+$testProj = Join-Path $repoRoot 'tests\Erytheia.Tests\Erytheia.Tests.csproj'
 
 $appExeGiven = -not [string]::IsNullOrWhiteSpace($AppExe)
 if (-not $AppExe) {
-    $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
+    $AppExe = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 if (-not (Test-Path -LiteralPath $AppExe)) {
     throw "App exe not found: $AppExe (pass -AppExe)"
@@ -262,7 +263,7 @@ Remove-LinkedMediaArtifacts
 # ---- prerequisites ---------------------------------------------------------
 $problems = @()
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { $problems += 'dotnet is not on PATH' }
-# The ffmpeg make-e2e-media.ps1 and the tests will use (TCS_FFMPEG, tools\ffmpeg, its default
+# The ffmpeg make-e2e-media.ps1 and the tests will use (ERYTHEIA_FFMPEG, tools\ffmpeg, its default
 # -FfmpegDir, PATH; scripts\TcsFfmpeg.psm1). Its version is the first line of make-e2e-media.log.
 Import-Module (Join-Path $PSScriptRoot 'TcsFfmpeg.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'TcsChildScript.psm1') -Force
@@ -333,8 +334,8 @@ if ($MaxLoadMilliseconds -le 0) { $problems += 'MaxLoadMilliseconds must be grea
 if ($HealthSampleSeconds -le 0) { $problems += 'HealthSampleSeconds must be greater than zero' }
 if ($MaxPrivateGrowthMbPerHour -lt 0) { $problems += 'MaxPrivateGrowthMbPerHour must be zero or greater' }
 if ($MaxHandleGrowthPerHour -lt 0) { $problems += 'MaxHandleGrowthPerHour must be zero or greater' }
-if (-not (Test-Path -LiteralPath (Join-Path $appDir 'tcs_gstreamer.dll'))) {
-    $problems += "tcs_gstreamer.dll is missing next to the exe (run build-shim): $appDir"
+if (-not (Test-Path -LiteralPath (Join-Path $appDir 'erytheia_gstreamer.dll'))) {
+    $problems += "erytheia_gstreamer.dll is missing next to the exe (run build-shim): $appDir"
 }
 if ($EnableSpout -and -not (Test-Path -LiteralPath (Join-Path $appDir 'SpoutDX.dll'))) {
     $problems += 'SpoutDX.dll is missing next to the exe while EnableSpout is set'
@@ -443,9 +444,9 @@ if (-not $filterGiven) {
 #   'no'       - the filter does not select the test
 #   'yes'      - it selects the test and a positive term names it (L3_, ProductionDay, ...)
 #   'possible' - it selects the test through a wider term (the whole class, a category, ...)
-$ltcL1Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L1_Single_ContinuousFollow_DoesNotStall';
+$ltcL1Test = @{ Fqn = 'Erytheia.Tests.E2E.LtcScenarioE2ETests.L1_Single_ContinuousFollow_DoesNotStall';
     Name = 'L1_Single_ContinuousFollow_DoesNotStall'; Categories = @('E2E'); NamePattern = 'L1_|ContinuousFollow' }
-$ltcL3Test = @{ Fqn = 'TimecodeSyncPlayer.Tests.E2E.LtcScenarioE2ETests.L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow';
+$ltcL3Test = @{ Fqn = 'Erytheia.Tests.E2E.LtcScenarioE2ETests.L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow';
     Name = 'L3_ProductionDay_KeepsOneProcessStableAcrossRehearsalBreakAndShow'; Categories = @('E2E'); NamePattern = 'L3_|ProductionDay' }
 
 function Test-LtcFilterTerm([string]$Term, [hashtable]$Test) {
@@ -610,7 +611,7 @@ if ($MediaDir) {
         $createdHardLinks += $linkPath
     }
 
-    $projectPath = Join-Path $ReportDir 'ltc-scenario.tsp'
+    $projectPath = Join-Path $ReportDir 'ltc-scenario.erytheia'  # v0.6.7: the new project extension (.tsp still opens)
     $Media = @($Media -join ',')[0]
     $makeArgs = @{ MediaDir = $linkedMediaDir; Out = $projectPath }
     if ($Media) { $makeArgs.Media = $Media }
@@ -622,7 +623,7 @@ if ($MediaDir) {
         ' media_in_offset=' + $MediaInOffsetSeconds.ToString([Globalization.CultureInfo]::InvariantCulture))
     # #43: a child pwsh, so nothing the project script does to its process (PATH above all)
     # stays on the runner and reaches the test host and the app. Its ffprobe is resolved in
-    # the same order as the ffmpeg of the prerequisites (TCS_FFMPEG, -FfmpegDir, PATH;
+    # the same order as the ffmpeg of the prerequisites (ERYTHEIA_FFMPEG, -FfmpegDir, PATH;
     # scripts\TcsFfmpeg.psm1) and called by its full path.
     $makeArgs.FfmpegDir = $ffmpegDefaultDir
     $makeExit = Invoke-TcsChildScript -ScriptPath $makeProject -Arguments $makeArgs -LogPath (Join-Path $ReportDir 'make-ltc-scenario-project.log')
@@ -640,10 +641,10 @@ if ($MediaDir) {
 # The filter itself is decided in the prerequisites (L-1 / L-3 rule).
 Write-Output "filter=$Filter"
 
-$env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe
-$env:TCS_LTC_FPS = $LtcFps.ToString([Globalization.CultureInfo]::InvariantCulture)
-if ($PreflightOnly) { $env:TCS_PREFLIGHT_ONLY = '1'; Write-Output 'preflight_only=1' } else { Remove-Item Env:TCS_PREFLIGHT_ONLY -ErrorAction SilentlyContinue }
-Write-Output ('ltc_fps=' + $env:TCS_LTC_FPS)
+$env:ERYTHEIA_E2E_APP_PATH = $AppExe
+$env:ERYTHEIA_LTC_FPS = $LtcFps.ToString([Globalization.CultureInfo]::InvariantCulture)
+if ($PreflightOnly) { $env:ERYTHEIA_PREFLIGHT_ONLY = '1'; Write-Output 'preflight_only=1' } else { Remove-Item Env:ERYTHEIA_PREFLIGHT_ONLY -ErrorAction SilentlyContinue }
+Write-Output ('ltc_fps=' + $env:ERYTHEIA_LTC_FPS)
 # D23-d: the scenario tests write their journals and frame images under
 # artifacts\ltc-scenarios unless this is set, which the evidence copy below does
 # not look at. Keep them inside the report directory.
@@ -652,74 +653,74 @@ New-Item -ItemType Directory -Force -Path $scenarioReport | Out-Null
 $env:TIMECODE_LTC_SCENARIO_REPORT_DIR = $scenarioReport
 if ($Cycles -gt 0) { $env:TIMECODE_LTC_SCENARIO_CYCLES = [string]$Cycles }
 # L-1: continuous-follow audit parameters (empty/0 keeps the test defaults).
-if ($FollowSeconds -gt 0) { $env:TCS_L1_FOLLOW_SECONDS = [string]$FollowSeconds }
-if (-not [string]::IsNullOrWhiteSpace($FollowTracks)) { $env:TCS_L1_TRACKS = $FollowTracks }
+if ($FollowSeconds -gt 0) { $env:ERYTHEIA_L1_FOLLOW_SECONDS = [string]$FollowSeconds }
+if (-not [string]::IsNullOrWhiteSpace($FollowTracks)) { $env:ERYTHEIA_L1_TRACKS = $FollowTracks }
 if ($FollowWindowSeconds -gt 0) {
-    $env:TCS_L1_WINDOW_SECONDS = $FollowWindowSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $env:ERYTHEIA_L1_WINDOW_SECONDS = $FollowWindowSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 }
 if ($FollowSettlingSeconds -gt 0) {
-    $env:TCS_L1_SETTLING_SECONDS = $FollowSettlingSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $env:ERYTHEIA_L1_SETTLING_SECONDS = $FollowSettlingSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 }
 if ($FollowStartGateSeconds -gt 0) {
-    $env:TCS_L1_START_GATE_SECONDS = $FollowStartGateSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $env:ERYTHEIA_L1_START_GATE_SECONDS = $FollowStartGateSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 }
 if ($FollowSeconds -gt 0 -or -not [string]::IsNullOrWhiteSpace($FollowTracks) -or $FollowWindowSeconds -gt 0 -or
     $FollowSettlingSeconds -gt 0 -or $FollowStartGateSeconds -gt 0) {
-    Write-Output ('l1: follow_seconds=' + $env:TCS_L1_FOLLOW_SECONDS + ' tracks=' + $env:TCS_L1_TRACKS +
-        ' window_seconds=' + $env:TCS_L1_WINDOW_SECONDS + ' settling_seconds=' + $env:TCS_L1_SETTLING_SECONDS +
-        ' start_gate_seconds=' + $env:TCS_L1_START_GATE_SECONDS)
+    Write-Output ('l1: follow_seconds=' + $env:ERYTHEIA_L1_FOLLOW_SECONDS + ' tracks=' + $env:ERYTHEIA_L1_TRACKS +
+        ' window_seconds=' + $env:ERYTHEIA_L1_WINDOW_SECONDS + ' settling_seconds=' + $env:ERYTHEIA_L1_SETTLING_SECONDS +
+        ' start_gate_seconds=' + $env:ERYTHEIA_L1_START_GATE_SECONDS)
 }
 
 # L-2: machine-observed continuity, load timing, and process health limits.
-$env:TCS_L2_ENABLE_SPOUT = if ($EnableSpout) { '1' } else { '0' }
-$env:TCS_L2_MAX_FRAME_DEFICIT_SECONDS = $MaxFrameDeficitSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L2_MAX_POSITION_STALL_SECONDS = $MaxPositionStallSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L2_MAX_SPOUT_RECEIVER_GAP_MS = $MaxSpoutReceiverGapMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L2_PROBE_INTERVAL_MS = $L2ProbeIntervalMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L2_MAX_LOAD_MILLISECONDS = $MaxLoadMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L2_HEALTH_SAMPLE_SECONDS = $HealthSampleSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L3_REHEARSAL_SECONDS = ($ProductionRehearsalHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L3_BREAK_SECONDS = ($ProductionBreakHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L3_SHOW_SECONDS = ($ProductionShowHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
-$env:TCS_L3_POST_IDLE_SECONDS = ($ProductionPostIdleHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L2_ENABLE_SPOUT = if ($EnableSpout) { '1' } else { '0' }
+$env:ERYTHEIA_L2_MAX_FRAME_DEFICIT_SECONDS = $MaxFrameDeficitSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L2_MAX_POSITION_STALL_SECONDS = $MaxPositionStallSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L2_MAX_SPOUT_RECEIVER_GAP_MS = $MaxSpoutReceiverGapMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L2_PROBE_INTERVAL_MS = $L2ProbeIntervalMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L2_MAX_LOAD_MILLISECONDS = $MaxLoadMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L2_HEALTH_SAMPLE_SECONDS = $HealthSampleSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L3_REHEARSAL_SECONDS = ($ProductionRehearsalHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L3_BREAK_SECONDS = ($ProductionBreakHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L3_SHOW_SECONDS = ($ProductionShowHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
+$env:ERYTHEIA_L3_POST_IDLE_SECONDS = ($ProductionPostIdleHours * 3600).ToString([Globalization.CultureInfo]::InvariantCulture)
 if ($MaxPrivateGrowthMbPerHour -gt 0) {
-    $env:TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR = $MaxPrivateGrowthMbPerHour.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $env:ERYTHEIA_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR = $MaxPrivateGrowthMbPerHour.ToString([Globalization.CultureInfo]::InvariantCulture)
 } else {
-    Remove-Item Env:TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR -ErrorAction SilentlyContinue
 }
 if ($MaxHandleGrowthPerHour -gt 0) {
-    $env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR = $MaxHandleGrowthPerHour.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $env:ERYTHEIA_L2_MAX_HANDLE_GROWTH_PER_HOUR = $MaxHandleGrowthPerHour.ToString([Globalization.CultureInfo]::InvariantCulture)
 } else {
-    Remove-Item Env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_L2_MAX_HANDLE_GROWTH_PER_HOUR -ErrorAction SilentlyContinue
 }
 if ($EnableExternalSpoutAudit) {
     $spoutSenderName = 'TCS_Endurance_' + [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $env:TIMECODE_SYNC_PLAYER_SPOUT_NAME = $spoutSenderName
-    $env:TCS_L2_SPOUT_SENDER_NAME = $spoutSenderName
-    $env:TCS_L2_SPOUT_RECEIVER_EXE = $SpoutReceiverExe
-    $env:TCS_L2_REQUIRE_EXTERNAL_SPOUT = '1'
-    $env:TCS_L2_SPOUT_PIXEL_SAMPLE_MS = [string]$SpoutPixelSampleMilliseconds
+    $env:ERYTHEIA_SPOUT_NAME = $spoutSenderName
+    $env:ERYTHEIA_L2_SPOUT_SENDER_NAME = $spoutSenderName
+    $env:ERYTHEIA_L2_SPOUT_RECEIVER_EXE = $SpoutReceiverExe
+    $env:ERYTHEIA_L2_REQUIRE_EXTERNAL_SPOUT = '1'
+    $env:ERYTHEIA_L2_SPOUT_PIXEL_SAMPLE_MS = [string]$SpoutPixelSampleMilliseconds
 } else {
-    Remove-Item Env:TCS_L2_SPOUT_SENDER_NAME -ErrorAction SilentlyContinue
-    Remove-Item Env:TCS_L2_SPOUT_RECEIVER_EXE -ErrorAction SilentlyContinue
-    Remove-Item Env:TCS_L2_REQUIRE_EXTERNAL_SPOUT -ErrorAction SilentlyContinue
-    Remove-Item Env:TCS_L2_SPOUT_PIXEL_SAMPLE_MS -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_L2_SPOUT_SENDER_NAME -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_L2_SPOUT_RECEIVER_EXE -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_L2_REQUIRE_EXTERNAL_SPOUT -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_L2_SPOUT_PIXEL_SAMPLE_MS -ErrorAction SilentlyContinue
 }
-Write-Output ('l2: spout=' + $env:TCS_L2_ENABLE_SPOUT +
+Write-Output ('l2: spout=' + $env:ERYTHEIA_L2_ENABLE_SPOUT +
     ' external_spout_audit=' + [bool]$EnableExternalSpoutAudit +
-    ' max_frame_deficit_seconds=' + $env:TCS_L2_MAX_FRAME_DEFICIT_SECONDS +
-    ' max_position_stall_seconds=' + $env:TCS_L2_MAX_POSITION_STALL_SECONDS +
-    ' max_spout_receiver_gap_ms=' + $env:TCS_L2_MAX_SPOUT_RECEIVER_GAP_MS +
-    ' spout_pixel_sample_ms=' + $env:TCS_L2_SPOUT_PIXEL_SAMPLE_MS +
-    ' probe_interval_ms=' + $env:TCS_L2_PROBE_INTERVAL_MS +
-    ' max_load_milliseconds=' + $env:TCS_L2_MAX_LOAD_MILLISECONDS +
-    ' health_sample_seconds=' + $env:TCS_L2_HEALTH_SAMPLE_SECONDS +
-    ' max_private_growth_mb_per_hour=' + $env:TCS_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR +
-    ' max_handle_growth_per_hour=' + $env:TCS_L2_MAX_HANDLE_GROWTH_PER_HOUR)
+    ' max_frame_deficit_seconds=' + $env:ERYTHEIA_L2_MAX_FRAME_DEFICIT_SECONDS +
+    ' max_position_stall_seconds=' + $env:ERYTHEIA_L2_MAX_POSITION_STALL_SECONDS +
+    ' max_spout_receiver_gap_ms=' + $env:ERYTHEIA_L2_MAX_SPOUT_RECEIVER_GAP_MS +
+    ' spout_pixel_sample_ms=' + $env:ERYTHEIA_L2_SPOUT_PIXEL_SAMPLE_MS +
+    ' probe_interval_ms=' + $env:ERYTHEIA_L2_PROBE_INTERVAL_MS +
+    ' max_load_milliseconds=' + $env:ERYTHEIA_L2_MAX_LOAD_MILLISECONDS +
+    ' health_sample_seconds=' + $env:ERYTHEIA_L2_HEALTH_SAMPLE_SECONDS +
+    ' max_private_growth_mb_per_hour=' + $env:ERYTHEIA_L2_MAX_PRIVATE_GROWTH_MB_PER_HOUR +
+    ' max_handle_growth_per_hour=' + $env:ERYTHEIA_L2_MAX_HANDLE_GROWTH_PER_HOUR)
 
 # ---- archive today's app logs (v0.6.4) --------------------------------------
 # The E2E waits read the app log of the run from its start time; a log that grew over earlier runs
-# of the day made every wait slower (design 9-2). Move today's timecodesyncplayer-*.log out of the
+# of the day made every wait slower (design 9-2). Move today's app logs (erytheia-*.log, old timecodesyncplayer-*.log) out of the
 # log folders the run writes to (the folder next to the app exe, and without -AppExe the test output
 # folder). Move, never delete. A file that cannot be moved (open in a running app) is left in place
 # with a warning; the run itself is not stopped.
@@ -728,18 +729,20 @@ if (-not $KeepAppLogs) {
     $archiveDir = Join-Path $repoRoot ('artifacts\analysis-data\logs-' + $archiveStamp.ToString('yyyyMMdd-HHmmss'))
     $archiveSources = @(@{ Dir = (Join-Path $appDir 'logs'); Sub = 'app' })
     if (-not $appExeGiven) {
-        $archiveTestBin = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\bin\Debug\net8.0-windows\logs'
+        $archiveTestBin = Join-Path $repoRoot 'tests\Erytheia.Tests\bin\Debug\net8.0-windows\logs'
         if (-not [string]::Equals([IO.Path]::GetFullPath($archiveTestBin),
                 [IO.Path]::GetFullPath($archiveSources[0].Dir), [StringComparison]::OrdinalIgnoreCase)) {
             $archiveSources += @{ Dir = $archiveTestBin; Sub = 'test-bin' }
         }
     }
-    $todayPattern = 'timecodesyncplayer-' + $archiveStamp.ToString('yyyyMMdd') + '*.log'
+    # v0.6.7: the app log is erytheia-<day>*.log (old timecodesyncplayer-<day>*.log); the shim log
+    # erytheia-gst-*.log does not match (the day comes right after the prefix).
+    $todayPatterns = @('erytheia-', 'timecodesyncplayer-') | ForEach-Object { $_ + $archiveStamp.ToString('yyyyMMdd') + '*.log' }
     $movedLogs = 0
     $movedBytes = 0
     foreach ($source in $archiveSources) {
         if (-not (Test-Path -LiteralPath $source.Dir)) { continue }
-        foreach ($log in @(Get-ChildItem -LiteralPath $source.Dir -File -Filter $todayPattern -ErrorAction SilentlyContinue)) {
+        foreach ($log in @($todayPatterns | ForEach-Object { Get-ChildItem -LiteralPath $source.Dir -File -Filter $_ -ErrorAction SilentlyContinue })) {
             $dest = Join-Path $archiveDir $source.Sub
             try {
                 New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -799,12 +802,12 @@ New-Item -ItemType Directory -Force -Path $appLogDest | Out-Null
 $copiedLogs = @()
 # Log folders to collect: the folder next to the app exe (copied to app-logs\).
 # Without -AppExe, also the test output folder (copied to app-logs\test-bin\): an E2E
-# started without TIMECODE_SYNC_PLAYER_E2E_APP_PATH (for example a plain dotnet test)
-# prefers the TimecodeSyncPlayer.exe copied next to the test assembly, and its logs go
+# started without ERYTHEIA_E2E_APP_PATH (for example a plain dotnet test)
+# prefers the ERYTHEIA.exe copied next to the test assembly, and its logs go
 # to that folder.
 $logSources = @(@{ Dir = (Join-Path $appDir 'logs'); Sub = '' })
 if (-not $appExeGiven) {
-    $testBinLogs = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\bin\Debug\net8.0-windows\logs'
+    $testBinLogs = Join-Path $repoRoot 'tests\Erytheia.Tests\bin\Debug\net8.0-windows\logs'
     if (-not [string]::Equals([IO.Path]::GetFullPath($testBinLogs), [IO.Path]::GetFullPath($logSources[0].Dir),
             [StringComparison]::OrdinalIgnoreCase)) {
         $logSources += @{ Dir = $testBinLogs; Sub = 'test-bin' }
@@ -817,7 +820,7 @@ foreach ($source in $logSources) {
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     $logs = @(Get-ChildItem -LiteralPath $source.Dir -File -ErrorAction SilentlyContinue |
         Where-Object {
-            ($_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
+            ($_.Name -like 'erytheia-*.log' -or $_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
             $_.LastWriteTime -ge $testStart.AddMinutes(-2)
         })
     foreach ($log in $logs) {
@@ -854,14 +857,14 @@ try {
     $sha.Dispose()
 }
 $token = ([BitConverter]::ToString($hashBytes) -replace '-', '').ToLowerInvariant()
-$testTempRoot = Join-Path $env:TEMP ('TimecodeSyncPlayer.Tests\' + $token.Substring(0, 12))
+$testTempRoot = Join-Path $env:TEMP ('Erytheia.Tests\' + $token.Substring(0, 12))
 Copy-RecentFiles $testTempRoot 'test-temp'
 
 # ---- crash records (test infrastructure 2026-10, item 2) --------------------
 # The .NET Runtime 1026 and Application Error 1000 records of the run's window (from the test start
 # to now, at least 3 s after the tests so WER has written its record), all applications;
-# ltc-run-report.ps1 keeps the TimecodeSyncPlayer ones. A read failure is recorded
-# (crashes.count becomes null).
+# ltc-run-report.ps1 keeps the app ones (ERYTHEIA.exe and the old TimecodeSyncPlayer.exe). A read
+# failure is recorded (crashes.count becomes null).
 $crashWindowTo = Get-Date
 $sinceTestEndMs = ($crashWindowTo - $testEnd).TotalMilliseconds
 if ($sinceTestEndMs -lt 3000) {
@@ -902,7 +905,8 @@ if (Test-Path -LiteralPath $trxPath) {
 
 $errFtl = 0
 foreach ($name in $copiedLogs) {
-    if ((Split-Path $name -Leaf) -notlike 'timecodesyncplayer-*.log') { continue }
+    $leaf = Split-Path $name -Leaf
+    if (-not (($leaf -like 'erytheia-*.log' -and $leaf -notlike 'erytheia-gst-*.log') -or $leaf -like 'timecodesyncplayer-*.log')) { continue }
     $path = Join-Path $appLogDest $name
     foreach ($line in (Get-Content -LiteralPath $path)) {
         if ($line -notmatch '\[(ERR|FTL)\]') { continue }
@@ -914,7 +918,7 @@ foreach ($name in $copiedLogs) {
     }
 }
 
-$leftover = @(Get-Process -Name TimecodeSyncPlayer -ErrorAction SilentlyContinue)
+$leftover = @(Get-Process -Name ERYTHEIA -ErrorAction SilentlyContinue)
 # Result JSON (run-result.json) and the retention rules (delete a passed run's output-trace and leftover media links).
 # A failure here must not change the test result. It runs before the SUMMARY line, which takes the crash count from it.
 try {

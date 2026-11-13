@@ -62,7 +62,7 @@ $ErrorActionPreference = 'Stop'
 
 # Repo-relative defaults: any worktree runs its own build and writes its own TestResults.
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe' }
+if (-not $AppExe) { $AppExe = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe' }
 if (-not $LogRoot) { $LogRoot = Join-Path $repoRoot 'TestResults\gpu-app' }
 if ($OverallTimeoutSeconds -le 0) { $OverallTimeoutSeconds = $Seconds + 90 }
 
@@ -139,7 +139,7 @@ public static class AppOutputCapture {
 $receiverExe = Join-Path $env:USERPROFILE 'Downloads\Spout-SDK-examples_2-007-017\Spout-SDK-examples\Examples_2-007-017\SpoutDX\WinSpoutDXreceiver.exe'
 $session = (query session 2>$null | Select-String '>console') -ne $null
 if (-not $session) { throw 'Not a console session; refusing to run a display test.' }
-$busy = Get-Process | Where-Object { $_.ProcessName -match '^(TimecodeSyncPlayer|GpuOutputProbe|WinSpoutDXreceiver|gst-launch-1.0|tcs-shim-test)$' }
+$busy = Get-Process | Where-Object { $_.ProcessName -match '^(ERYTHEIA|GpuOutputProbe|WinSpoutDXreceiver|gst-launch-1.0|tcs-shim-test)$' }
 if ($busy) { throw "GPU test process already running: $($busy.ProcessName -join ',')" }
 $run = Join-Path $LogRoot ('{0}-{1}' -f [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'), $Label)
 New-Item -ItemType Directory -Path $run | Out-Null
@@ -152,7 +152,7 @@ $json = '{"outputBackend":1,"fullscreenDisplayDeviceName":"' + $escapedDevice + 
 if ($DecodeMode) { $json += ',"decodeMode":"' + $DecodeMode + '"' }
 $json += '}'
 [IO.File]::WriteAllText($settings, $json, [Text.UTF8Encoding]::new($false))
-$hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'TimecodeSyncPlayer.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'tcs_gstreamer.dll'), $receiverExe, $MediaPath) |
+$hashes = @($AppExe, $ProjectPath, (Join-Path (Split-Path $AppExe) 'ERYTHEIA.dll'), (Join-Path (Split-Path $AppExe) 'libmpv-2.dll'), (Join-Path (Split-Path $AppExe) 'SpoutDX.dll'), (Join-Path (Split-Path $AppExe) 'erytheia_gstreamer.dll'), $receiverExe, $MediaPath) |
     Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { Get-FileHash $_ -Algorithm SHA256 | Select-Object Path, Hash }
 $hashes | ConvertTo-Json | Set-Content (Join-Path $run 'inputs.json') -Encoding UTF8
 $result = [ordered]@{ receiverKilledDeliberately=$false; label=$Label; playerBackend=$PlayerBackend; spout=(-not $NoSpout); project=$ProjectPath; exitDialog=$ExitDialog; simulateDeviceLoss=$SimulateDeviceLoss; decodeMode=$(if ($DecodeMode) { $DecodeMode } else { $null }); media=$MediaPath; seconds=$Seconds; sender=$sender; display=$DisplayDeviceName; startedUtc=[DateTime]::UtcNow.ToString('o'); app=$null; receiver=$null; appExit=$null; receiverExit=$null; receiverForced=$false; error=$null; cpuSeconds=$null; audioProbe=$null; completedNormally=$false; receiverMode=$(if ($NoSpout) { 'none' } else { 'official' }); steps=@() }
@@ -228,10 +228,10 @@ try {
     $psi.WorkingDirectory = Split-Path $AppExe; $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
-    $psi.Environment['TIMECODE_SYNC_PLAYER_SETTINGS_PATH'] = $settings
-    $psi.Environment['TIMECODE_SYNC_PLAYER_SPOUT_NAME'] = $sender
-    if (-not $NoOutputTrace) { $psi.Environment['TIMECODE_SYNC_PLAYER_OUTPUT_TRACE'] = $trace }
-    if ($SimulateDeviceLoss) { $psi.Environment['TIMECODE_SYNC_PLAYER_SIMULATE_DEVICE_LOSS'] = $SimulateDeviceLoss }
+    $psi.Environment['ERYTHEIA_SETTINGS_PATH'] = $settings
+    $psi.Environment['ERYTHEIA_SPOUT_NAME'] = $sender
+    if (-not $NoOutputTrace) { $psi.Environment['ERYTHEIA_OUTPUT_TRACE'] = $trace }
+    if ($SimulateDeviceLoss) { $psi.Environment['ERYTHEIA_SIMULATE_DEVICE_LOSS'] = $SimulateDeviceLoss }
 $app = [System.Diagnostics.Process]::Start($psi)
 $null = $app.Handle
 [AppOutputCapture]::Attach($app, (Join-Path $run 'app-stdout.txt'), (Join-Path $run 'app-stderr.txt'))
@@ -460,7 +460,7 @@ finally {
     $result.completedNormally = ($null -eq $result.error) -and ($null -ne $result.appExit)
     $result.endedUtc = [DateTime]::UtcNow.ToString('o')
     $logDir = Join-Path (Split-Path $AppExe) 'logs'
-    $latest = Get-ChildItem $logDir -Filter 'timecodesyncplayer-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+    $latest = Get-ChildItem $logDir -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { (($_.Name -like 'erytheia-*.log' -and $_.Name -notlike 'erytheia-gst-*.log') -or $_.Name -like 'timecodesyncplayer-*.log') } | Sort-Object LastWriteTime | Select-Object -Last 1
     if ($latest) { Get-Content $latest.FullName -Tail 400 | Set-Content (Join-Path $run 'app-log-tail.txt') -Encoding UTF8 }
     $result | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $run 'runner-result.json') -Encoding UTF8
 }

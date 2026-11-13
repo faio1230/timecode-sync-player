@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- v0.6.7: exe とアセンブリの名前は ERYTHEIA（利用者の決定）。名前空間とプロジェクトは .NET の慣例の綴りの Erytheia。 -->
+    <AssemblyName>ERYTHEIA</AssemblyName>
+    <RootNamespace>Erytheia</RootNamespace>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PlatformTarget>x64</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>0.6.7</Version>
+    <AssemblyVersion>0.5.0.0</AssemblyVersion>
+    <FileVersion>0.5.0.0</FileVersion>
+    <Product>ERYTHEIA</Product>
+    <Authors>Studio Sandix</Authors>
+    <Copyright>Copyright (c) 2026 Studio Sandix</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/faio1230/timecode-sync-player</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="Serilog" Version="4.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.6.2" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+    <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\native\SpoutDX.dll" Condition="Exists('..\..\native\SpoutDX.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>SpoutDX.dll</Link>
+    </Content>
+    <Content Include="..\..\native\erytheia_gstreamer.dll" Condition="Exists('..\..\native\erytheia_gstreamer.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>erytheia_gstreamer.dll</Link>
+    </Content>
+    <Content Include="..\..\native\gst-shim\build-debug\erytheia_gstreamer.dll"
+             Condition="!Exists('..\..\native\erytheia_gstreamer.dll') And Exists('..\..\native\gst-shim\build-debug\erytheia_gstreamer.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>erytheia_gstreamer.dll</Link>
+    </Content>
+    <!-- v0.6.0: scripts\get-prores-plugin.ps1 が置く ProRes の GPU 復号プラグイン（DLL と .cso）。
+         同梱でないとき GstNativeLibraryResolver が GST_PLUGIN_PATH に足す。
+         licenses\（LICENSE・README.txt・SHA256SUMS.txt）は bin に入れない（配布物へは package-release.ps1 が置く）。 -->
+    <Content Include="..\..\native\gst-prores\*.dll;..\..\native\gst-prores\*.cso" Condition="Exists('..\..\native\gst-prores')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>gst-extra-plugins\%(Filename)%(Extension)</Link>
+    </Content>
+  </ItemGroup>
+
+  <!-- v0.6.6: native\ の shim が build-debug（Release では build-release）より古いときビルドを止める。 -->
+  <Import Project="NativeShimGuard.targets" />
+
+</Project>

@@ -13,11 +13,9 @@ ERYTHEIA is a live-show video player for Windows. It receives LTC (Linear Timeco
 
 ## Download
 
-Current release files, the executable, and the Start menu entry still use the name `TimecodeSyncPlayer`.
-
 The installer and the zip are on the [latest stable release (Latest) on GitHub Releases](https://github.com/faio1230/timecode-sync-player/releases/latest). The stable release is the latest v0.6.x, starting with v0.6.1. Releases marked "Pre-release" are still being verified. Do not use them for a show.
 
-For most users, use the per-user installer `TimecodeSyncPlayer-v<version>-setup.exe`, which does not require administrator privileges. For a portable extracted copy, choose `TimecodeSyncPlayer-v<version>-win-x64.zip`. `<version>` is the latest stable release, for example `v0.6.6`. The GStreamer 1.28.2 runtime is included, so no separate GStreamer installation is needed.
+For most users, use the per-user installer `ERYTHEIA-v<version>-setup.exe`, which does not require administrator privileges. For a portable extracted copy, choose `ERYTHEIA-v<version>-win-x64.zip`. `<version>` is the latest stable release, for example `v0.6.7`. Releases up to v0.6.6 are named `TimecodeSyncPlayer-v<version>-…`. The GStreamer 1.28.2 runtime is included, so no separate GStreamer installation is needed.
 
 Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show. How the material is exported makes a large difference to sync stability.
 
@@ -29,7 +27,7 @@ Read the [field preparation guide](docs/USER-MANUAL.md) (Japanese) before a show
 - Run-through or Stop behavior when the LTC signal is lost
 - Selectable full-screen output to a connected external display
 - Spout2 output for VJ tool integration
-- Playlist and project save/load
+- Playlist and project save/load (project files use `.erytheia`; `.tsp` files from v0.6.6 and earlier still open)
 - Pure C# LTC decoder and GStreamer-based GPU output
 - GPU decoding of HAP (Hap / Hap Alpha / Hap Q) (since v0.5.0)
 - GPU decoding of ProRes (since v0.6.0, by [gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11). Verified and recommended on NVIDIA GPUs. Since v0.6.5, other GPUs also decode on the GPU by default, with non-NVIDIA verification limited to the test machine's integrated AMD GPU)
@@ -50,16 +48,20 @@ ProRes GPU decoding is verified and recommended on NVIDIA (RTX class) GPUs. The 
 
 ## Using the installer
 
-1. Run `TimecodeSyncPlayer-v<version>-setup.exe` from Releases. It installs per user and does not require administrator privileges. On a PC where the Visual C++ Redistributable is missing or older, it asks once for administrator approval (UAC) to install it.
-2. Start TimecodeSyncPlayer from the Start menu.
+1. Run `ERYTHEIA-v<version>-setup.exe` from Releases. It installs per user and does not require administrator privileges. On a PC where the Visual C++ Redistributable is missing or older, it asks once for administrator approval (UAC) to install it.
+2. Start ERYTHEIA from the Start menu.
 
-Uninstalling removes the application, logs, and shortcuts. The per-user settings file `%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json` is intentionally kept so that it can be restored on reinstallation. Delete it manually to remove the settings completely.
+A new installation goes to `%LOCALAPPDATA%\Programs\ERYTHEIA`. On a PC with v0.6.6 or earlier, the installer treats it as an update and keeps the previous installation folder (`%LOCALAPPDATA%\Programs\TimecodeSyncPlayer`). It removes the old-name executable and its files, the old shim (`tcs_gstreamer.dll`), and the Start menu entry with the old name.
+
+Uninstalling removes the application, logs, and shortcuts. The per-user settings file `%LOCALAPPDATA%\ERYTHEIA\settings.json` is intentionally kept so that it can be restored on reinstallation. Delete it manually to remove the settings completely.
+
+Up to v0.6.6 the settings were in `%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`. When the new location has no settings, the first start copies them there. The original file is kept, so going back to v0.6.6 still works.
 
 ## Using the zip
 
-1. Extract `TimecodeSyncPlayer-v<version>-win-x64.zip` to a writable folder.
+1. Extract `ERYTHEIA-v<version>-win-x64.zip` to a writable folder.
 2. If the Microsoft Visual C++ v14 Redistributable (x64) 14.50 or later is not installed, run [vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe).
-3. Start `TimecodeSyncPlayer.exe`.
+3. Start `ERYTHEIA.exe`.
 
 The GStreamer runtime is included. See the [setup guide](docs/SETUP.md) for details.
 
@@ -78,11 +80,11 @@ The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) is required.
 ```powershell
 git clone https://github.com/faio1230/timecode-sync-player.git
 cd timecode-sync-player
-dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
-dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
+dotnet build src\Erytheia\Erytheia.csproj
+dotnet run --project src\Erytheia\Erytheia.csproj
 ```
 
-Building from source also requires the GStreamer 1.28.2 MSVC x64 runtime and `tcs_gstreamer.dll` (release packages bundle them). The ProRes GPU decoding plugin is fetched with `scripts\get-prores-plugin.ps1`. Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder. See the [setup guide](docs/SETUP.md) for details.
+Building from source also requires the GStreamer 1.28.2 MSVC x64 runtime and `erytheia_gstreamer.dll` (release packages bundle them). The ProRes GPU decoding plugin is fetched with `scripts\get-prores-plugin.ps1`. Spout output additionally requires an x64 `SpoutDX.dll` in the `native` folder. See the [setup guide](docs/SETUP.md) for details.
 
 ## Documentation
 
@@ -105,7 +107,7 @@ The [documentation guide](docs/README.md) (Japanese) separates current instructi
 The hardware E2E suite sends LTC to `CABLE Input` and captures it from `CABLE Output` through [VB-CABLE](https://vb-audio.com/Cable/). Run it from a local Windows audio session where both endpoints are visible. ffmpeg is also required.
 
 ```powershell
-dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
+dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
 ```
 
 Hardware tests skip automatically when the prerequisites are unavailable.

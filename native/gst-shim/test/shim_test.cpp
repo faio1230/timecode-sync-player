@@ -694,7 +694,7 @@ run_gop_policy_tests ()
 }
 
 /* --gop-warn <file> [max_secs]: real-media check of the 0.4.5-C detector.
- * Loads the file PLAYING (audio off via TCS_NO_AUDIO), polls
+ * Loads the file PLAYING (audio off via ERYTHEIA_NO_AUDIO), polls
  * tcs_player_get_gop_status every 20 ms and prints the wall time from load
  * return to the warning latch and to the first confirmed keyframe interval.
  * Prints a single GOP-WARN summary line for the evidence log. */
@@ -803,7 +803,7 @@ run_prores_gpu_policy_tests ()
       "prores-gpu skip: off -> prores-gpu-off (any vendor)");
   check (tcs_prores_gpu_skip_reason (TCS_PRORES_GPU_ON, 0u) == nullptr,
       "prores-gpu skip: on -> no skip (unknown vendor too)");
-  /* TCS_PRORES_GPU values */
+  /* ERYTHEIA_PRORES_GPU values */
   check (tcs_prores_gpu_mode_parse ("auto") == TCS_PRORES_GPU_AUTO &&
          tcs_prores_gpu_mode_parse ("ON") == TCS_PRORES_GPU_ON &&
          tcs_prores_gpu_mode_parse ("Off") == TCS_PRORES_GPU_OFF,
@@ -1049,7 +1049,7 @@ run_seek_loop (int argc, char** argv)
 static unsigned
 pump_budget_ms_env (void)
 {
-  const char* v = getenv ("TCS_PUMP_BUDGET_MS");
+  const char* v = getenv ("ERYTHEIA_PUMP_BUDGET_MS");
   if (v && *v) {
     long ms = atol (v);
     if (ms > 0 && ms <= 60000)
@@ -1220,7 +1220,7 @@ run_paused_seek (int argc, char** argv)
   /* The deterministic test hook deliberately holds frame_lock inside the
    * prepare phase, so the wall time of the call is not a product measurement
    * while it is set. */
-  const char* seek_hold = getenv ("TCS_TEST_HOLD_SEEK_LOCK_MS");
+  const char* seek_hold = getenv ("ERYTHEIA_TEST_HOLD_SEEK_LOCK_MS");
   bool seek_hold_on = seek_hold != nullptr && atoi (seek_hold) > 0;
   check (seek_hold_on || paused_call_ms < 20.0, "paused seek returns without blocking");
   /* D24: the deadline is the pump budget, not a fixed 250ms. A GOP whose
@@ -1566,7 +1566,7 @@ paused_reference_rgb (TcsPlayer* p, double target, double frame_s, unsigned budg
  * seeks. Then, per iteration, the player is parked paused at body_sec, plays
  * briefly (so a sample is in flight) and pauses + seeks to tail_sec: the
  * FIRST lease of that seek must land on tail_sec AND show the tail color,
- * never the pre-seek picture. Run with TCS_TEST_HOLD_SEEK_LOCK_MS=300 to make
+ * never the pre-seek picture. Run with ERYTHEIA_TEST_HOLD_SEEK_LOCK_MS=300 to make
  * the in-flight-sample race deterministic. */
 static int
 run_paused_seek_pixels (int argc, char** argv)
@@ -1582,7 +1582,7 @@ run_paused_seek_pixels (int argc, char** argv)
   double body_sec = argc > 4 ? atof (argv[4]) : 5.0;
   double tail_sec = argc > 5 ? atof (argv[5]) : 19.967;
   unsigned budget_ms = pump_budget_ms_env ();
-  const char* hold = getenv ("TCS_TEST_HOLD_SEEK_LOCK_MS");
+  const char* hold = getenv ("ERYTHEIA_TEST_HOLD_SEEK_LOCK_MS");
   printf ("  file=%s iters=%d body=%.3f tail=%.3f budget=%ums hold_seek_lock=%s\n",
       file, iters, body_sec, tail_sec, budget_ms,
       (hold && atoi (hold) > 0) ? hold : "(unset)");
@@ -1667,7 +1667,7 @@ run_paused_seek_pixels (int argc, char** argv)
      * the pre-seek picture is the body. The tail seek follows a pause
      * immediately (the reference-capture pattern); a sample still in flight
      * from playback must not be published as the tail frame. With
-     * TCS_TEST_HOLD_SEEK_LOCK_MS the in-flight sample is caught
+     * ERYTHEIA_TEST_HOLD_SEEK_LOCK_MS the in-flight sample is caught
      * deterministically. */
     tcs_player_release (p);
     uint64_t g_park = tcs_player_seek (p, body_sec);
@@ -1798,7 +1798,7 @@ run_reload_seq (int argc, char** argv)
 }
 
 /* --seek-method-check <file> [seeks]: C1(b) verification. The process runs
- * with TCS_SEEK_METHOD from the environment (the shim reads it once at load),
+ * with ERYTHEIA_SEEK_METHOD from the environment (the shim reads it once at load),
  * so this mode is executed once per value. Every seek must produce a frame
  * that lands on the first frame at/after the target (the keyunit gate drops
  * the pre-target snap frames; accurate lands within one frame). */
@@ -1813,8 +1813,8 @@ run_seek_method_check (int argc, char** argv)
   int seeks = argc > 3 ? atoi (argv[3]) : 5;
   if (seeks < 1)
     seeks = 1;
-  const char* method_env = getenv ("TCS_SEEK_METHOD");
-  printf ("  TCS_SEEK_METHOD=%s\n", method_env ? method_env : "(unset)");
+  const char* method_env = getenv ("ERYTHEIA_SEEK_METHOD");
+  printf ("  ERYTHEIA_SEEK_METHOD=%s\n", method_env ? method_env : "(unset)");
 
   char err[512] = "";
   TcsPlayer* p = tcs_player_create ("TCSGstShimSeekMethod", nullptr, err, sizeof (err));
@@ -2282,7 +2282,7 @@ run_instant_rate_held_after_seek (int argc, char** argv)
  * 300ms までに 2 枚以上なら「2 枚」、300ms の後に増えたら「PAUSED の後の配信」とする。
  * consumer=1 は GPU worker の代わりに別スレッドが 1ms ごとに acquire/release する（実機の形）。
  * 2 枚目の発生は tick の遅れ次第なので、決定的に赤を見るときは
- * TCS_TEST_PUMP_TICK_DELAY_MS=50 を付けて回す。 */
+ * ERYTHEIA_TEST_PUMP_TICK_DELAY_MS=50 を付けて回す。 */
 static std::atomic<uint64_t> g_osf_gen{0};
 static std::atomic<int> g_osf_count{0};
 static std::atomic<bool> g_osf_consumer_run{false};
@@ -2308,7 +2308,7 @@ run_paused_seek_one_frame (int argc, char** argv)
     iters = 1;
   bool consumer = argc > 4 && atoi (argv[4]) != 0;
   unsigned budget_ms = pump_budget_ms_env ();
-  const char* tick_delay = getenv ("TCS_TEST_PUMP_TICK_DELAY_MS");
+  const char* tick_delay = getenv ("ERYTHEIA_TEST_PUMP_TICK_DELAY_MS");
 
   char err[512] = "";
   TcsPlayer* p = tcs_player_create ("TCSGstShimPausedSeekOneFrame", nullptr, err, sizeof (err));
@@ -2704,7 +2704,7 @@ main (int argc, char** argv)
   char err[512] = "";
   /* T6: position snapshots are only recorded while the owner's output trace
    * is on; enable it before create so the snapshot path is exercised. */
-  _putenv_s ("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", "1");
+  _putenv_s ("ERYTHEIA_OUTPUT_TRACE", "1");
   TcsPlayer* p = tcs_player_create ("TCSGstShimTest", nullptr, err, sizeof (err));
   check (p != nullptr, "create (internal device)");
   if (!p) { printf ("  err=%s\n", err); return 1; }
@@ -2801,10 +2801,10 @@ main (int argc, char** argv)
       double frame_s = media_fps > 0.0 ? 1.0 / media_fps : 0.0167;
       printf ("  pacing-median=%.2fms frame=%.2fms samples=%u\n",
           median * 1000.0, frame_s * 1000.0, n);
-      const char* frame_hold = getenv ("TCS_TEST_HOLD_FRAME_LOCK_MS");
+      const char* frame_hold = getenv ("ERYTHEIA_TEST_HOLD_FRAME_LOCK_MS");
       bool frame_hold_on = frame_hold != nullptr && atoi (frame_hold) > 0;
       if (frame_hold_on)
-        printf ("  pacing check skipped (TCS_TEST_HOLD_FRAME_LOCK_MS set)\n");
+        printf ("  pacing check skipped (ERYTHEIA_TEST_HOLD_FRAME_LOCK_MS set)\n");
       else
         check (median > frame_s * 0.7 && median < frame_s * 1.3,
             "normal playback pacing matches media frame period");
@@ -2890,7 +2890,7 @@ main (int argc, char** argv)
   tcs_player_release (p);
 
   /* hold playback after the seek (compositor-like acquire/release) so the
-   * A/V diagnostics window (TCS_SEEK_DIAG=1) can sample both streams */
+   * A/V diagnostics window (ERYTHEIA_SEEK_DIAG=1) can sample both streams */
   for (int h = 0; h < 200; h++) {
     TcsFrameInfo fi = {};
     if (tcs_player_acquire (p, gen, &fi) == 1)
@@ -2974,7 +2974,7 @@ main (int argc, char** argv)
     if (SUCCEEDED (hr)) {
       /* T6: with the output trace off at create, tcs_player_get_time_pos must
        * not append a position snapshot. */
-      _putenv_s ("TIMECODE_SYNC_PLAYER_OUTPUT_TRACE", "");
+      _putenv_s ("ERYTHEIA_OUTPUT_TRACE", "");
       TcsPlayer* p2 = tcs_player_create ("TCSGstShimTest", dev, err, sizeof (err));
       check (p2 != nullptr, "create (external device)");
       if (p2) {

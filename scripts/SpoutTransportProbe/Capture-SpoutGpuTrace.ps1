@@ -25,7 +25,7 @@ function Write-Json([string]$Name, $Value) {
 try {
     $administrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     $result['administrator'] = $administrator
-    $processes = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(obs64|obs32|SpoutTransportProbe|SpoutReceiverProbePixels|SpoutReceiverProbe|TimecodeSyncPlayer|PureSpoutSender|LtcProbe|LtcGenerator)\.exe$' } | Select-Object ProcessId,Name,ExecutablePath,CreationDate)
+    $processes = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(obs64|obs32|SpoutTransportProbe|SpoutReceiverProbePixels|SpoutReceiverProbe|ERYTHEIA|PureSpoutSender|LtcProbe|LtcGenerator)\.exe$' } | Select-Object ProcessId,Name,ExecutablePath,CreationDate)
     Write-Json 'processes-before.json' $processes
     $status = @(& wpr.exe -status 2>&1)
     $statusExit = $LASTEXITCODE
@@ -34,7 +34,7 @@ try {
     $detailExit = $LASTEXITCODE
     $detail | Set-Content -LiteralPath (Join-Path $output 'wpr-profile.txt')
     if ($detailExit -ne 0) { throw 'WPR rejected the profile; no native process started.' }
-    $hashPaths = @($probe, [IO.Path]::ChangeExtension($probe,'.dll'), (Join-Path (Split-Path $probe) 'TimecodeSyncPlayer.dll'), (Join-Path (Split-Path $probe) 'SpoutDX.dll'), $profile, $PSCommandPath)
+    $hashPaths = @($probe, [IO.Path]::ChangeExtension($probe,'.dll'), (Join-Path (Split-Path $probe) 'ERYTHEIA.dll'), (Join-Path (Split-Path $probe) 'SpoutDX.dll'), $profile, $PSCommandPath)
     Write-Json 'binaries-before.json' @($hashPaths | ForEach-Object { Get-FileHash -LiteralPath $_ -Algorithm SHA256 | Select-Object Path,Hash })
     if ($Condition -eq 'SenderOnly') {
         if ($processes.Count) { throw 'SenderOnly requires no existing OBS/player/probe/audio test process.' }

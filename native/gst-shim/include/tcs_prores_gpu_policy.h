@@ -2,7 +2,7 @@
  * mismatch rule (design 3-2, stage 2).
  *
  * The gate decides whether the prores-gpu profile may be tried, from the
- * mode (tcs_player_set_prores_gpu / TCS_PRORES_GPU) and the PCI vendor id of
+ * mode (tcs_player_set_prores_gpu / ERYTHEIA_PRORES_GPU) and the PCI vendor id of
  * the adapter the shim device runs on (the adapter that actually decodes):
  *
  *   mode \ vendor | NVIDIA (0x10DE) | other | unknown (0)
@@ -13,7 +13,7 @@
  *   "other" and "unknown" with auto / on are logged as unverified.
  *
  * v0.6.5 (design B2): auto no longer gates on the vendor and behaves the
- * same as on (TCS_PRORES_GPU, when set, wins over the setting either way).
+ * same as on (ERYTHEIA_PRORES_GPU, when set, wins over the setting either way).
  * A GPU that cannot open ProRes still falls back to prores-cpu through the
  * D34 gates (caps-missing / preroll-timeout / chain-fail /
  * decoder-adapter-mismatch).

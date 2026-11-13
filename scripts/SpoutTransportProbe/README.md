@@ -38,7 +38,7 @@ GPU完了を確認できた応答は、観測までに100ms以上かかってい
 
 `attemptedFrames` は送信APIの呼び出し回数です。終了コード0でも予定スロット欠落はあり得るため、`missedScheduledSlots` と `sendOverBudget` を確認してください。`SendFrame` は戻り値を返さず、受信結果も取得しないため、`transportMisses` は `null` です。送信側の定量結果だけでは、受信の成功、全画素の一致、全フレームの到達を保証できません。3色の繰り返しだけでは、受信側で任意のフレーム欠落を一意に判定することもできません。
 
-要求する送信名は `TimecodeSyncPlayer` ですが、同名の送信元が複数あるとSpout側で接尾辞が付く場合があります。製品アプリなど他の送信元を停止するか、受信側でこのプローブに対応する実際の送信名を確認してください。標準出力や要求名だけを見てOBSがこのプローブを受信したと判定しないでください。
+要求する送信名は `ERYTHEIA` ですが、同名の送信元が複数あるとSpout側で接尾辞が付く場合があります。製品アプリなど他の送信元を停止するか、受信側でこのプローブに対応する実際の送信名を確認してください。標準出力や要求名だけを見てOBSがこのプローブを受信したと判定しないでください。
 
 OBSによる受信、録画、画素・フレームの解析は別途必要です。OBSの private-copy 対策は本番導入済みとして扱いません。このプローブはOBSのプラグインや受信処理を変更しません。
 
@@ -80,7 +80,7 @@ profileはCPUスケジュール／stackとDxgKrnl・D3D11・DXGIを記録し、�
 $LASTEXITCODE
 ```
 
-`-SenderExe` で別のビルド済み製品プローブを指定できます。受信付きでは指定した実行ファイルへ `--sender TimecodeSyncPlayer --output <新規receiver.jsonl> --duration 50 --poll-ms 8 --stop-file <新規receiver.stop>` を渡します。送信終了後にstopファイルを作成し、受信終了を最大10秒待ちます。送信watchdogは既定45秒です。試験間は既定2秒待ち、前の所有プロセスが終了してから次を起動します。新しいウィンドウは表示しません。
+`-SenderExe` で別のビルド済み製品プローブを指定できます。受信付きでは指定した実行ファイルへ `--sender ERYTHEIA --output <新規receiver.jsonl> --duration 50 --poll-ms 8 --stop-file <新規receiver.stop>` を渡します。送信終了後にstopファイルを作成し、受信終了を最大10秒待ちます。送信watchdogは既定45秒です。試験間は既定2秒待ち、前の所有プロセスが終了してから次を起動します。新しいウィンドウは表示しません。
 
 結果は `TestResults/obs-clean/runs/<日時>-<Label>-<GUID>/` に保存します。`-ResultsRoot` で親ディレクトリを指定できます。既存結果は上書きせず、各 `run-NNN` に送受信のJSONL、stdout/stderr、開始時manifest、終了時resultを残します。結果にはUTC開始終了時刻、所有PID、終了コード、watchdogの判定、元のsummary、Warning/Error件数、受信サンプル混在数を保存します。バッチのmanifestと結果に加え、送信exe・プローブDLL・製品DLL・SpoutDX.dll、指定時には受信exeのSHA256を記録し、反復間と最終終了時のバイナリ変更を拒否します。
 

@@ -7,7 +7,7 @@ param(
     # Empty defaults resolve to this repository, like Invoke-AppGpuTrial.ps1.
     [string]$LogRoot = '',
     [Parameter(Mandatory)][string]$Label,
-    [string]$ProcessName = 'TimecodeSyncPlayer',
+    [string]$ProcessName = 'ERYTHEIA',
     [int]$SampleSeconds = 60,
     [int]$StartupTimeoutSeconds = 900,
     [int]$RunDirSearchSeconds = 120,

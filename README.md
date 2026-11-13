@@ -13,11 +13,9 @@ ERYTHEIAは、LTC（Linear Timecode）の音声を受信し、プレイリスト
 
 ## ダウンロード
 
-現在の配布ファイル・実行ファイル・スタートメニューの名称は、引き続き`TimecodeSyncPlayer`です。
-
 インストーラーとzipは[GitHub Releasesの最新の安定版（Latest）](https://github.com/faio1230/timecode-sync-player/releases/latest)からダウンロードできます。安定版はv0.6.xの最新で、v0.6.1から安定版の扱いにしています。「Pre-release」と付いた版は検証中なので、本番では使わないでください。
 
-通常は、管理者権限が要らないインストーラー`TimecodeSyncPlayer-v<版>-setup.exe`を使ってください。展開して使う場合は`TimecodeSyncPlayer-v<版>-win-x64.zip`を選びます。`<版>`には最新の安定版の版番号が入ります（例: `v0.6.6`）。GStreamer 1.28.2のランタイムは同梱しているので、別に入れる必要はありません。
+通常は、管理者権限が要らないインストーラー`ERYTHEIA-v<版>-setup.exe`を使ってください。展開して使う場合は`ERYTHEIA-v<版>-win-x64.zip`を選びます。`<版>`には最新の安定版の版番号が入ります（例: `v0.6.7`）。v0.6.6までの配布物の名前は`TimecodeSyncPlayer-v<版>-…`です。GStreamer 1.28.2のランタイムは同梱しているので、別に入れる必要はありません。
 
 本番の前に[現場準備ガイド](docs/USER-MANUAL.md)を読んでください。素材の書き出し方しだいで、同期の安定性が大きく変わります。
 
@@ -29,7 +27,7 @@ ERYTHEIAは、LTC（Linear Timecode）の音声を受信し、プレイリスト
 - LTC信号断時のランスルー／停止の切替
 - 接続ディスプレイを選べる外部モニターのフルスクリーン出力
 - VJツール連携用のSpout2出力
-- プレイリストとプロジェクトの保存・読み込み
+- プレイリストとプロジェクトの保存・読み込み（プロジェクトの拡張子は`.erytheia`。v0.6.6までの`.tsp`も開けます）
 - 純C#のLTCデコーダとGStreamerベースのGPU出力
 - HAP（Hap / Hap Alpha / Hap Q）のGPUデコード（v0.5.0から）
 - ProResのGPUデコード（v0.6.0から。[gst-prores-d3d11](https://github.com/faio1230/gst-prores-d3d11)による。NVIDIAのGPUで検証し、推奨します。v0.6.5からは既定でほかのGPUでもGPUでデコードしますが、NVIDIA以外は検証機の内蔵AMDのGPUで確かめた範囲です）
@@ -50,16 +48,20 @@ ProResのGPUデコードはNVIDIA（RTX級）のGPUで検証し、推奨して�
 
 ## インストーラーの使い方
 
-1. Releasesから`TimecodeSyncPlayer-v<版>-setup.exe`を実行します。ユーザー単位で入るため、管理者権限は要りません。Visual C++再頒布可能パッケージが入っていないか古いPCでは、その導入のために一度だけ管理者の確認（UAC）が出ます。
-2. スタートメニューからTimecodeSyncPlayerを起動します。
+1. Releasesから`ERYTHEIA-v<版>-setup.exe`を実行します。ユーザー単位で入るため、管理者権限は要りません。Visual C++再頒布可能パッケージが入っていないか古いPCでは、その導入のために一度だけ管理者の確認（UAC）が出ます。
+2. スタートメニューからERYTHEIAを起動します。
 
-アンインストールでは、アプリ本体、ログ、ショートカットを削除します。ユーザー設定`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`は、再インストール時に復元できるよう意図して残しています。完全に消す場合は手動で削除してください。
+新しく入れると、`%LOCALAPPDATA%\Programs\ERYTHEIA`に入ります。v0.6.6以前が入っているPCでは上書きの更新として扱われ、インストール先は前の場所（`%LOCALAPPDATA%\Programs\TimecodeSyncPlayer`）を引き継ぎます。旧の名前の実行ファイルと関連のファイル、旧のshim（`tcs_gstreamer.dll`）、旧の名前のスタートメニューの項目は、インストーラーが消します。
+
+アンインストールでは、アプリ本体、ログ、ショートカットを削除します。ユーザー設定`%LOCALAPPDATA%\ERYTHEIA\settings.json`は、再インストール時に復元できるよう意図して残しています。完全に消す場合は手動で削除してください。
+
+v0.6.6までの設定は`%LOCALAPPDATA%\TimecodeSyncPlayer\settings.json`にあります。新しい場所に設定が無いときだけ、最初の起動で新しい場所へ写します。元のファイルは消さないので、v0.6.6に戻してもそのまま使えます。
 
 ## zipの使い方
 
-1. `TimecodeSyncPlayer-v<版>-win-x64.zip`を、書き込みできるフォルダーへ展開します。
+1. `ERYTHEIA-v<版>-win-x64.zip`を、書き込みできるフォルダーへ展開します。
 2. Microsoft Visual C++ v14再頒布可能パッケージ（x64）14.50以上が入っていなければ、[vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)を実行してください。
-3. `TimecodeSyncPlayer.exe`を起動します。
+3. `ERYTHEIA.exe`を起動します。
 
 GStreamerのランタイムは同梱しています。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
 
@@ -78,11 +80,11 @@ GStreamerのランタイムは同梱しています。詳細は[セットアッ�
 ```powershell
 git clone https://github.com/faio1230/timecode-sync-player.git
 cd timecode-sync-player
-dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
-dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
+dotnet build src\Erytheia\Erytheia.csproj
+dotnet run --project src\Erytheia\Erytheia.csproj
 ```
 
-ソースからのビルドには、GStreamer 1.28.2 MSVC x64のランタイムと`tcs_gstreamer.dll`も必要です（配布パッケージには同梱しています）。ProResのGPUデコードのプラグインは`scripts\get-prores-plugin.ps1`で取得します。Spout出力を使う場合は、x64版の`SpoutDX.dll`を`native`フォルダーに置きます。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
+ソースからのビルドには、GStreamer 1.28.2 MSVC x64のランタイムと`erytheia_gstreamer.dll`も必要です（配布パッケージには同梱しています）。ProResのGPUデコードのプラグインは`scripts\get-prores-plugin.ps1`で取得します。Spout出力を使う場合は、x64版の`SpoutDX.dll`を`native`フォルダーに置きます。詳細は[セットアップ手順](docs/SETUP.md)を参照してください。
 
 ## ドキュメント
 
@@ -105,7 +107,7 @@ dotnet run --project src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
 実機のE2Eテストは[VB-CABLE](https://vb-audio.com/Cable/)を使い、`CABLE Input`へLTCを出力して`CABLE Output`から取り込みます。両方の端点が見えるWindowsのローカル音声セッションで実行してください。ffmpegも必要です。
 
 ```powershell
-dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
+dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj --filter "FullyQualifiedName~LtcHardwareLoop"
 ```
 
 前提がそろっていない環境では、実機テストは自動的にスキップされます。

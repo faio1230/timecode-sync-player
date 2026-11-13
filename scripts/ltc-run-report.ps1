@@ -19,10 +19,10 @@
     prores（ProRes のロードの profile の内訳 prores-gpu / prores-cpu と decoder-adapter-mismatch の発火の回数。
     この回の trx の開始より前のログ行は数えない）。
     試験基盤の束 2026-10 の 2 の追加（落ちの自動の集計）:
-    crashes（回の窓の中の、イベントログの .NET Runtime 1026 と Application Error 1000 のうち TimecodeSyncPlayer の行から
+    crashes（回の窓の中の、イベントログの .NET Runtime 1026 と Application Error 1000 のうちアプリ（ERYTHEIA.exe と旧の TimecodeSyncPlayer.exe）の行から
     数えた落ち。各件の時刻・例外の番号・番地・シナリオ・直前の起動・ダンプのファイル名と、ReportDir\dumps のダンプの数と名前。
     ランナーが集めた crash-events.json が無い回は count が null）、
-    launches（窓の中の起動の数、「=== TimecodeSyncPlayer v… 起動」の行）、
+    launches（窓の中の起動の数、「=== ERYTHEIA v… 起動」の行。v0.6.6 までは「=== TimecodeSyncPlayer v… 起動」）、
     proresGpuFirstLaunches（起動から 2 秒以内に「FetchMetadata: … V:proresd3d11dec」が出た起動の数）、
     verdict / failReasons（失敗した試験があれば tests、落ちが 1 回でもあれば crash。どちらかがあれば fail）。
   所見（3 行）は人が書くので、ここでは作らない。
@@ -140,8 +140,10 @@ $shimLines = @()
 $shimLinesByScenario = @{}
 if (Test-Path -LiteralPath $appLogDir) {
     foreach ($f in Get-ChildItem -LiteralPath $appLogDir -File -Recurse) {
-        if ($f.Name -like 'timecodesyncplayer-*.log') { $appLines += [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8) }
-        elseif ($f.Name -like 'tcs-gst-*.log') { $shimLines += [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8) }
+        # v0.6.7: shim erytheia-gst-*.log (old tcs-gst-*.log), app erytheia-*.log (old timecodesyncplayer-*.log).
+        # The shim names are checked first: erytheia-*.log also matches the shim log.
+        if ($f.Name -like 'erytheia-gst-*.log' -or $f.Name -like 'tcs-gst-*.log') { $shimLines += [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8) }
+        elseif ($f.Name -like 'erytheia-*.log' -or $f.Name -like 'timecodesyncplayer-*.log') { $appLines += [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8) }
     }
 }
 foreach ($f in Get-ChildItem -LiteralPath (Join-Path $ReportDir 'scenarios') -Filter 'tcs-gst-raw.log' -File -Recurse -ErrorAction SilentlyContinue) {

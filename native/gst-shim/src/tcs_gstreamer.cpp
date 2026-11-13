@@ -65,9 +65,74 @@
 #include <cstring>
 #include <cmath>
 
-/* O1: LOG writes to stderr and, when TCS_LOG_FILE names a path, appends the
+/* v0.6.7: the environment variables were renamed from TCS_* (and the one
+ * TIMECODE_SYNC_PLAYER_OUTPUT_TRACE the shim also reads) to ERYTHEIA_*.
+ * During v0.6.x the old name is still read (removed in v0.7.0). env_read_raw
+ * reads the new name and, when it is unset, the old one; *legacy_used and
+ * *both_set tell the caller which happened (env_get below logs it once per
+ * variable). Same return value as GetEnvironmentVariableA. */
+static const char kEnvPrefix[] = "ERYTHEIA_";
+
+/* The old name of an ERYTHEIA_* variable. */
+static void
+env_legacy_name (const char* name, char* out, size_t size)
+{
+  const char* suffix = name + sizeof (kEnvPrefix) - 1;
+  if (strcmp (suffix, "OUTPUT_TRACE") == 0)
+    snprintf (out, size, "TIMECODE_SYNC_PLAYER_%s", suffix);
+  else
+    snprintf (out, size, "TCS_%s", suffix);
+}
+
+static DWORD
+env_read_raw (const char* name, char* buf, DWORD size, bool* legacy_used, bool* both_set)
+{
+  *legacy_used = false;
+  *both_set = false;
+  DWORD n = GetEnvironmentVariableA (name, buf, size);
+  if (strncmp (name, kEnvPrefix, sizeof (kEnvPrefix) - 1) != 0)
+    return n;
+  char legacy[128];
+  env_legacy_name (name, legacy, sizeof (legacy));
+  if (n > 0) {
+    *both_set = GetEnvironmentVariableA (legacy, nullptr, 0) > 0;
+    return n;
+  }
+  n = GetEnvironmentVariableA (legacy, buf, size);
+  *legacy_used = n > 0;
+  return n;
+}
+
+/* True the first time a variable is reported (one warning line per variable). */
+static bool
+env_first_report (const char* name)
+{
+  static std::mutex reported_mutex;
+  static std::vector<std::string> reported;
+  std::lock_guard<std::mutex> g (reported_mutex);
+  for (const std::string& r : reported)
+    if (r == name)
+      return false;
+  reported.emplace_back (name);
+  return true;
+}
+
+static void
+env_format_warning (char* out, size_t size, const char* name, bool legacy_used)
+{
+  char legacy[128];
+  env_legacy_name (name, legacy, sizeof (legacy));
+  if (legacy_used)
+    snprintf (out, size, "[tcs-gst] WARNING: read the old environment variable %s; "
+        "rename it to %s (the old name is read during v0.6.x only)\n", legacy, name);
+  else
+    snprintf (out, size, "[tcs-gst] WARNING: both %s and the old %s are set; "
+        "using %s (the old name is read during v0.6.x only)\n", name, legacy, name);
+}
+
+/* O1: LOG writes to stderr and, when ERYTHEIA_LOG_FILE names a path, appends the
  * same line to that file (flushed per line). The open is lazy; failures are
- * ignored. The log volume still follows TCS_LEASE_LOG / TCS_FRAME_LOG. */
+ * ignored. The log volume still follows ERYTHEIA_LEASE_LOG / ERYTHEIA_FRAME_LOG. */
 static void
 log_sink_write (const char* line)
 {
@@ -86,9 +151,19 @@ log_sink_write (const char* line)
   if (!log_file_tried) {
     log_file_tried = true;
     char path[1024];
-    DWORD n = GetEnvironmentVariableA ("TCS_LOG_FILE", path, sizeof (path));
+    bool legacy_used = false, both_set = false;
+    DWORD n = env_read_raw ("ERYTHEIA_LOG_FILE", path, sizeof (path), &legacy_used, &both_set);
     if (n > 0 && n < sizeof (path))
       log_file = fopen (path, "a");
+    /* LOG cannot be used here (this is LOG, and the lock is held): the warning
+     * about the old name goes straight to the sinks. */
+    if ((legacy_used || both_set) && env_first_report ("ERYTHEIA_LOG_FILE")) {
+      char warning[512];
+      env_format_warning (warning, sizeof (warning), "ERYTHEIA_LOG_FILE", legacy_used);
+      fputs (warning, stderr);
+      if (log_file)
+        fputs (warning, log_file);
+    }
   }
   if (log_file) {
     fputs (stamped, log_file);
@@ -103,11 +178,27 @@ log_sink_write (const char* line)
     log_sink_write (tcs_log_line); \
   } while (0)
 
+/* Reads an ERYTHEIA_* variable (the old TCS_* name when it is unset, see
+ * env_read_raw) and logs one warning line per variable when the old name was
+ * read or both were set. Same return value as GetEnvironmentVariableA. */
+static DWORD
+env_get (const char* name, char* buf, DWORD size)
+{
+  bool legacy_used = false, both_set = false;
+  DWORD n = env_read_raw (name, buf, size, &legacy_used, &both_set);
+  if ((legacy_used || both_set) && env_first_report (name)) {
+    char warning[512];
+    env_format_warning (warning, sizeof (warning), name, legacy_used);
+    log_sink_write (warning);
+  }
+  return n;
+}
+
 static std::once_flag g_gst_once;
 
 /* v0.6.0 stage 2: GLib WARNING / CRITICAL / ERROR (every domain) also go to
  * the shim log, flushed per line, so a native abort leaves its last message
- * in TCS_LOG_FILE. The message is then handed to the previous default
+ * in ERYTHEIA_LOG_FILE. The message is then handed to the previous default
  * handler unchanged: fatal messages still abort there (behavior unchanged;
  * G_DEBUG=fatal-criticals is not set). Domains with their own handler
  * (g_log_set_handler) do not reach the default handler. */
@@ -217,14 +308,14 @@ static bool
 env_flag (const char* name)
 {
   char buf[8];
-  return GetEnvironmentVariableA (name, buf, sizeof (buf)) > 0;
+  return env_get (name, buf, sizeof (buf)) > 0;
 }
 
 static int
 env_int (const char* name, int fallback)
 {
   char buf[32];
-  DWORD n = GetEnvironmentVariableA (name, buf, sizeof (buf));
+  DWORD n = env_get (name, buf, sizeof (buf));
   if (n == 0 || n >= sizeof (buf))
     return fallback;
   return atoi (buf);
@@ -241,14 +332,14 @@ static double
 resolve_gop_warn_seconds (void)
 {
   char buf[32];
-  DWORD n = GetEnvironmentVariableA ("TCS_GOP_WARN_SECONDS", buf, sizeof (buf));
+  DWORD n = env_get ("ERYTHEIA_GOP_WARN_SECONDS", buf, sizeof (buf));
   if (n == 0 || n >= sizeof (buf))
     return kGopWarnSecondsDefault;
   char* end = nullptr;
   double value = strtod (buf, &end);
   if (end == buf || !(value > 0.0) || !(value < 3600.0))
     {
-      LOG ("gop warn: invalid TCS_GOP_WARN_SECONDS '%s' -> %.1f",
+      LOG ("gop warn: invalid ERYTHEIA_GOP_WARN_SECONDS '%s' -> %.1f",
           buf, kGopWarnSecondsDefault);
       return kGopWarnSecondsDefault;
     }
@@ -256,24 +347,24 @@ resolve_gop_warn_seconds (void)
 }
 
 /* diagnostics: dump every delivered sample (pacing analysis) */
-static bool frame_log = env_flag ("TCS_FRAME_LOG");
+static bool frame_log = env_flag ("ERYTHEIA_FRAME_LOG");
 
 /* D10: log once when the segment is unavailable and reported positions fall
  * back to the raw buffer PTS. */
 static std::atomic<bool> stream_time_fallback_logged{false};
 
 /* D8 diagnostics: log lease acquire/release and the ring dimension fallback.
- * Off by default; the D8 measurement sets TCS_LEASE_LOG=1. Logs are emitted
+ * Off by default; the D8 measurement sets ERYTHEIA_LEASE_LOG=1. Logs are emitted
  * with no lock held (state changes are recorded under frame_lock and printed
  * after release). */
-static bool lease_log = env_flag ("TCS_LEASE_LOG");
+static bool lease_log = env_flag ("ERYTHEIA_LEASE_LOG");
 
 /* The owner enables the output trace (events.jsonl) by setting the app's
- * TIMECODE_SYNC_PLAYER_OUTPUT_TRACE. tcs_player_get_time_pos appends a
+ * ERYTHEIA_OUTPUT_TRACE. tcs_player_get_time_pos appends a
  * position snapshot to the delivery ring only when that variable was set at
  * create time: with the trace off the default path must not pay for a QPC
  * read or a ring write. */
-static const char* kOutputTraceEnv = "TIMECODE_SYNC_PLAYER_OUTPUT_TRACE";
+static const char* kOutputTraceEnv = "ERYTHEIA_OUTPUT_TRACE";
 
 /* TcsDeliveryEvent.flags bit 3: not a frame arrival but the snapshot
  * tcs_player_get_time_pos records while the output trace is enabled.
@@ -286,18 +377,18 @@ enum { kDeliveryFlagPosition = 8, kDeliveryFlagPositionFallback = 16,
 /* D2 diagnostics: pipeline/sink state around seeks, pause changes and steps.
  * The paused-seek bug is about state, so the report needs the state at each
  * boundary, not just arrival times. */
-static bool paused_seek_diag = env_flag ("TCS_PAUSED_SEEK_DIAG");
+static bool paused_seek_diag = env_flag ("ERYTHEIA_PAUSED_SEEK_DIAG");
 
 /* D2 rework test hook: hold frame_lock in on_new_sample for the first few
  * samples, widening the streaming-thread window that a state change under
  * frame_lock deadlocks with. No effect when unset. */
-static int test_hold_frame_lock_ms = env_int ("TCS_TEST_HOLD_FRAME_LOCK_MS", 0);
+static int test_hold_frame_lock_ms = env_int ("ERYTHEIA_TEST_HOLD_FRAME_LOCK_MS", 0);
 static std::atomic<int> test_hold_budget{test_hold_frame_lock_ms > 0 ? 40 : 0};
 
 /* Same idea for the seek path: hold frame_lock inside seek_locked before the
  * seek event is sent, so on_new_sample queues on frame_lock while the flush
  * seek needs the streaming thread. No effect when unset. */
-static int test_hold_seek_lock_ms = env_int ("TCS_TEST_HOLD_SEEK_LOCK_MS", 0);
+static int test_hold_seek_lock_ms = env_int ("ERYTHEIA_TEST_HOLD_SEEK_LOCK_MS", 0);
 static std::atomic<int> test_seek_hold_budget{test_hold_seek_lock_ms > 0 ? 8 : 0};
 
 /* v0.6.3 段 5 の試験用フック: 一時停止中のシークのポンプで、bus スレッドの tick が
@@ -305,7 +396,7 @@ static std::atomic<int> test_seek_hold_budget{test_hold_seek_lock_ms > 0 ? 8 : 0
  * （実機で見た「1 枚目の後 約 19ms、tick が来なかった」を決定的に作る）。shim_test の
  * --paused-seek-one-frame だけが使う。製品（アプリ・LTC シナリオ・E2E）はこの変数を設定せず、
  * 既定の 0 では tick は何も待たない（製品の既定で効かない）。 */
-static int test_pump_tick_delay_ms = env_int ("TCS_TEST_PUMP_TICK_DELAY_MS", 0);
+static int test_pump_tick_delay_ms = env_int ("ERYTHEIA_TEST_PUMP_TICK_DELAY_MS", 0);
 
 /* C1(b) measurement switch: seek method. auto keeps the container default
  * (tsdemux -> KEY_UNIT|SNAP_BEFORE, others -> ACCURATE). accurate/keyunit
@@ -323,7 +414,7 @@ static int
 resolve_seek_method (void)
 {
   char buf[32];
-  DWORD n = GetEnvironmentVariableA ("TCS_SEEK_METHOD", buf, sizeof (buf));
+  DWORD n = env_get ("ERYTHEIA_SEEK_METHOD", buf, sizeof (buf));
   int method = kSeekMethodAuto;
   if (n > 0 && n < sizeof (buf)) {
     if (_stricmp (buf, "accurate") == 0)
@@ -346,7 +437,7 @@ static int seek_method = resolve_seek_method ();
 /* D24: the paused-seek pump deadline is only an upper bound. An accurate seek
  * decodes from the previous keyframe up to the target, so a long GOP (e.g. a
  * 10s keyframe interval) legitimately takes longer than the old fixed 500ms.
- * Default 4000ms; TCS_PUMP_BUDGET_MS overrides it (1..60000). */
+ * Default 4000ms; ERYTHEIA_PUMP_BUDGET_MS overrides it (1..60000). */
 static const ULONGLONG kPumpBudgetDefaultMs = 4000;
 static const ULONGLONG kPumpBudgetMaxMs = 60000;
 
@@ -354,7 +445,7 @@ static ULONGLONG
 resolve_pump_budget_ms (void)
 {
   char buf[32];
-  DWORD n = GetEnvironmentVariableA ("TCS_PUMP_BUDGET_MS", buf, sizeof (buf));
+  DWORD n = env_get ("ERYTHEIA_PUMP_BUDGET_MS", buf, sizeof (buf));
   ULONGLONG ms = kPumpBudgetDefaultMs;
   if (n > 0 && n < sizeof (buf)) {
     long long v = _strtoi64 (buf, nullptr, 10);
@@ -419,7 +510,7 @@ struct TcsPlayer {
    * value and the environment value are kept apart; the environment wins.
    * Control thread only (like decode_mode). */
   int prores_gpu_setting = -1;                 /* tcs_player_set_prores_gpu, -1 = not called */
-  int prores_gpu_env = -1;                     /* TCS_PRORES_GPU at create, -1 = unset/invalid */
+  int prores_gpu_env = -1;                     /* ERYTHEIA_PRORES_GPU at create, -1 = unset/invalid */
   unsigned adapter_vendor_id = 0;              /* DXGI_ADAPTER_DESC.VendorId of the shim device */
   bool prores_mode_logged = false;             /* the per-load mode line was written */
   /* Streaming thread -> control thread (no lock): the demux exposed
@@ -581,7 +672,7 @@ struct TcsPlayer {
   uint64_t pump_frames_at_arm = 0;       /* frame_lock (D24 diagnostics) */
   bool pump_muted = false;               /* frame_lock */
   uint64_t pump_faults = 0;              /* frame_lock (diagnostics) */
-  ULONGLONG pump_test_seen_ms = 0;       /* frame_lock (TCS_TEST_PUMP_TICK_DELAY_MS) */
+  ULONGLONG pump_test_seen_ms = 0;       /* frame_lock (ERYTHEIA_TEST_PUMP_TICK_DELAY_MS) */
   /* v0.6.3 段 5: ポンプの配信の門。ポンプの世代の 1 枚目を配信した時点で on_new_sample が
    * 閉じ、PAUSED が効くまでに届いた同じ世代のフレームを配信しない。pump_active とは別に持つ
    * （pump_active は tick が PAUSED を出す前に false にするので、門を兼ねると間に合わない）。
@@ -1969,17 +2060,17 @@ profile_is_prores_gpu (int idx)
   return idx >= 0 && idx < kProfileCount && g_strcmp0 (g_profiles[idx].name, "prores-gpu") == 0;
 }
 
-/* v0.5.0: HAP の経路を通すか（既定で有効。TCS_HAP=off のときだけ無効）。 */
+/* v0.5.0: HAP の経路を通すか（既定で有効。ERYTHEIA_HAP=off のときだけ無効）。 */
 static bool
 hap_enabled ()
 {
   static const bool enabled = [] {
-    /* v0.5.0: 検証機で全条件に通ったので既定で有効。TCS_HAP=off のときだけ無効にする
+    /* v0.5.0: 検証機で全条件に通ったので既定で有効。ERYTHEIA_HAP=off のときだけ無効にする
      * （無効のときは従来どおり、CPU の展開へは流さずに読み込みを断る）。 */
     char buf[16] = {};
-    DWORD n = GetEnvironmentVariableA ("TCS_HAP", buf, sizeof (buf));
+    DWORD n = env_get ("ERYTHEIA_HAP", buf, sizeof (buf));
     bool off = n > 0 && n < sizeof (buf) && _stricmp (buf, "off") == 0;
-    LOG ("hap: %s (TCS_HAP=off で無効)", off ? "disabled" : "enabled");
+    LOG ("hap: %s (ERYTHEIA_HAP=off で無効)", off ? "disabled" : "enabled");
     return !off;
   } ();
   return enabled;
@@ -2054,7 +2145,7 @@ adapter_supports_profile (TcsPlayer* p, int idx)
   const GUID* want = profile_decoder_guid (idx);
   if (!want)
     return true;
-  if (env_flag ("TCS_FORCE_DECODER_ADAPTER_MISMATCH"))
+  if (env_flag ("ERYTHEIA_FORCE_DECODER_ADAPTER_MISMATCH"))
     return false;  /* test hook: exercise the CPU fallback */
   ID3D11VideoDevice* vd = nullptr;
   if (!p->device ||
@@ -2091,7 +2182,7 @@ decoder_matches_shim_adapter (TcsPlayer* p, int idx, std::string* name_out)
   if (!device_luid (p->device, &luid))
     return true;   /* cannot tell: keep the previous behavior */
   const gint64 want = gst_d3d11_luid_to_int64 (&luid);
-  const bool force = env_flag ("TCS_FORCE_DECODER_LUID_MISMATCH");
+  const bool force = env_flag ("ERYTHEIA_FORCE_DECODER_LUID_MISMATCH");
   char candidate[64];
   for (int i = 0; i < 8; i++) {
     if (i == 0) {
@@ -2133,9 +2224,9 @@ apply_decode_thread_env (GstElement* dec)
   if (!dec)
     return;
   char type[16];
-  DWORD type_n = GetEnvironmentVariableA ("TCS_DECODE_THREAD_TYPE", type, sizeof (type));
+  DWORD type_n = env_get ("ERYTHEIA_DECODE_THREAD_TYPE", type, sizeof (type));
   char threads[16];
-  DWORD threads_n = GetEnvironmentVariableA ("TCS_DECODE_MAX_THREADS", threads, sizeof (threads));
+  DWORD threads_n = env_get ("ERYTHEIA_DECODE_MAX_THREADS", threads, sizeof (threads));
   if (type_n == 0 && threads_n == 0)
     return;
   GObjectClass* klass = G_OBJECT_GET_CLASS (dec);
@@ -2574,7 +2665,7 @@ static uint32_t
 appsink_max_buffers ()
 {
   char buf[16];
-  DWORD n = GetEnvironmentVariableA ("TCS_APPSINK_MAX_BUFFERS", buf, sizeof (buf));
+  DWORD n = env_get ("ERYTHEIA_APPSINK_MAX_BUFFERS", buf, sizeof (buf));
   if (n == 0 || n >= sizeof (buf))
     return 4u;
   int value = atoi (buf);
@@ -2606,7 +2697,7 @@ create_appsink_tail (TcsPlayer* p, gboolean d3d, const char* caps_override)
   g_object_set (p->appsink, "emit-signals", TRUE, "sync", sync_pacing, "drop", FALSE,
       "max-buffers", (guint) max_buffers, nullptr);
   if (max_buffers != 4u)
-    LOG ("appsink max-buffers: %u (TCS_APPSINK_MAX_BUFFERS)", (unsigned) max_buffers);
+    LOG ("appsink max-buffers: %u (ERYTHEIA_APPSINK_MAX_BUFFERS)", (unsigned) max_buffers);
   GstPad* sinkpad = gst_element_get_static_pad (p->appsink, "sink");
   if (sinkpad) {
     gst_pad_add_probe (sinkpad,
@@ -2635,7 +2726,7 @@ on_video_pad (TcsPlayer* p, GstPad* pad, GstCaps* caps)
   }
   if (caps_is_hap (caps)) {
     /* v0.5.0: 圧縮テクスチャのまま受ける経路（hap-gpu）。**CPU デコーダには決して渡さない。**
-     * 既定で有効で、TCS_HAP=off のときだけ断る（hap_enabled）。 */
+     * 既定で有効で、ERYTHEIA_HAP=off のときだけ断る（hap_enabled）。 */
     if (!hap_enabled ()) {
       p->rejected = true;
       set_error (p, "video/x-hap requires the reserved compressed-texture branch (refusing decodebin/avdec)");
@@ -3150,7 +3241,7 @@ rate_hold_tick (TcsPlayer* p)
       reason = "expectation-cleared";   /* 失敗したシーク・D25 の打ち切り */
     else if (waited_ms >= pump_budget_ms)
       /* 新しい定数は足さない。上限は一時停止中のシークのポンプと同じ pump_budget_ms
-       * （アプリは TCS_PUMP_BUDGET_MS で「着地の時間切れ − 0.5 秒」= 2.5 秒を渡す）。
+       * （アプリは ERYTHEIA_PUMP_BUDGET_MS で「着地の時間切れ − 0.5 秒」= 2.5 秒を渡す）。
        * その時間で segment が届かないシークは、アプリの側でも着地の時間切れになるので、
        * 保留をそれより長く続ける理由が無い。開発機では、音声の尺の外へのシークでも音声の
        * sink に segment は届いた（待ちは最大 16ms、shim_test --instant-rate-past-audio）ので、
@@ -3392,9 +3483,9 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
   p->frames.clear ();
   p->pending_update = false;
   p->gate_target_ns = (uint64_t) (seconds * (double) GST_SECOND);
-  /* A/V diagnostics window (TCS_SEEK_DIAG=1): the gate-open frame is always
+  /* A/V diagnostics window (ERYTHEIA_SEEK_DIAG=1): the gate-open frame is always
    * logged, the decimated window follows the seek for both TS and MP4. */
-  p->av_log_left = env_flag ("TCS_SEEK_DIAG") ? 900 : 0;
+  p->av_log_left = env_flag ("ERYTHEIA_SEEK_DIAG") ? 900 : 0;
   p->av_log_stride = 15;
   p->av_log_seq = p->frames_decoded;
   if (p->eos) {
@@ -3434,15 +3525,15 @@ seek_prepare_locked (TcsPlayer* p, double seconds, double rate, SeekRequest* out
      * pipeline prerolls on the target; the seek seqnum identifies it. */
     p->rebase_armed = true;
     ensure_sink_segment_rewrites (p);
-    p->seg_diag_left = env_flag ("TCS_SEEK_DIAG") ? 5 : 0;
+    p->seg_diag_left = env_flag ("ERYTHEIA_SEEK_DIAG") ? 5 : 0;
     p->gate_diag_done = false;
     guint32 seq = gst_util_seqnum_next ();
     GstEvent* sev = gst_event_new_seek (rate > 0.0 ? rate : 1.0,
         GST_FORMAT_TIME, flags, GST_SEEK_TYPE_SET,
         (gint64) (seconds * GST_SECOND), GST_SEEK_TYPE_NONE, -1);
     gst_event_set_seqnum (sev, seq);
-    /* TCS_NO_SEGMENT_REWRITE=1 is a debug escape hatch back to method 5 */
-    p->rebase_seek_seqnum = env_flag ("TCS_NO_SEGMENT_REWRITE") ? 0 : seq;
+    /* ERYTHEIA_NO_SEGMENT_REWRITE=1 is a debug escape hatch back to method 5 */
+    p->rebase_seek_seqnum = env_flag ("ERYTHEIA_NO_SEGMENT_REWRITE") ? 0 : seq;
     out->event = sev;
     out->seq = seq;
   } else {
@@ -3499,19 +3590,19 @@ seek_send (TcsPlayer* p, const SeekRequest& req)
   return ok != FALSE;
 }
 
-/* v0.6.0 stage 2: TCS_PRORES_GPU (auto / on / off, case-insensitive; a test
+/* v0.6.0 stage 2: ERYTHEIA_PRORES_GPU (auto / on / off, case-insensitive; a test
  * switch that wins over the setter). Read once per player at create. An
  * invalid value is ignored with one warning line. */
 static int
 read_prores_gpu_env (void)
 {
   char buf[32];
-  DWORD n = GetEnvironmentVariableA ("TCS_PRORES_GPU", buf, sizeof (buf));
+  DWORD n = env_get ("ERYTHEIA_PRORES_GPU", buf, sizeof (buf));
   if (n == 0)
     return -1;
   int mode = n < sizeof (buf) ? tcs_prores_gpu_mode_parse (buf) : -1;
   if (mode < 0)
-    LOG ("prores-gpu: TCS_PRORES_GPU=%s is not auto|on|off; ignored",
+    LOG ("prores-gpu: ERYTHEIA_PRORES_GPU=%s is not auto|on|off; ignored",
         n < sizeof (buf) ? buf : "(too long)");
   return mode;
 }
@@ -3807,7 +3898,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
     bool done = false;
     bool current_gen_frame = false;
     bool caps_ready = false;
-    int wait_iters = env_flag ("TCS_ONE_ATTEMPT") ? 60 : 300;
+    int wait_iters = env_flag ("ERYTHEIA_ONE_ATTEMPT") ? 60 : 300;
     for (int i = 0; i < wait_iters; i++) {
       {
         std::lock_guard<std::mutex> g (p->frame_lock);
@@ -3830,12 +3921,12 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
      * (same=0, set by the decoder src probe on the streaming thread) or a
      * read-back LUID that differs after a frame of this attempt fails the
      * attempt, before the D34 gate, so the order moves on to prores-cpu.
-     * TCS_FORCE_DECODER_LUID_MISMATCH (the D16-b test hook) forces it. No
+     * ERYTHEIA_FORCE_DECODER_LUID_MISMATCH (the D16-b test hook) forces it. No
      * shim lock is held here; teardown runs outside frame_lock. */
     if (tcs_video_profile_sets_adapter_luid (idx) && p->vdec) {
       const int same = p->prores_out_same.load (std::memory_order_acquire);
       const gint64 want = shim_device_luid_int64 (p);
-      const bool forced = env_flag ("TCS_FORCE_DECODER_LUID_MISMATCH");
+      const bool forced = env_flag ("ERYTHEIA_FORCE_DECODER_LUID_MISMATCH");
       if (forced || tcs_prores_gpu_adapter_mismatch (same, current_gen_frame ? 1 : 0,
               (long long) luid_read, (long long) want)) {
         log_attempt ("decoder-adapter-mismatch");
@@ -3915,7 +4006,7 @@ build_pipeline (TcsPlayer* p, const char* utf8_path, double start_sec, int pause
       LOG ("attempt %s/%s failed: %s", container,
           idx >= 0 ? g_profiles[idx].name : "decodebin-fallback",
           err.empty () ? "preroll timeout / caps mismatch" : err.c_str ());
-      if (env_flag ("TCS_ONE_ATTEMPT")) break;
+      if (env_flag ("ERYTHEIA_ONE_ATTEMPT")) break;
       continue;
     }
 
@@ -4105,7 +4196,7 @@ tcs_player_create (const char* sender_name, void* external_d3d11_device,
   gst_init_once ();
 
   TcsPlayer* p = new TcsPlayer ();
-  p->sender_name = (sender_name && sender_name[0]) ? sender_name : "TimecodeSyncPlayer";
+  p->sender_name = (sender_name && sender_name[0]) ? sender_name : "ERYTHEIA";
   p->position_trace = env_flag (kOutputTraceEnv);
   LARGE_INTEGER qpc_freq;
   if (QueryPerformanceFrequency (&qpc_freq))
@@ -4114,10 +4205,10 @@ tcs_player_create (const char* sender_name, void* external_d3d11_device,
 
   demote_foreign_gpu_decoders ();
   p->prores_gpu_env = read_prores_gpu_env ();
-  p->audioEnabled = !env_flag ("TCS_NO_AUDIO");
+  p->audioEnabled = !env_flag ("ERYTHEIA_NO_AUDIO");
   p->use_fakesink = p->audioEnabled &&
-      (env_flag ("TCS_FAKE_AUDIO") || !audio_sink_usable ());
-  LOG ("audio: %s", !p->audioEnabled ? "disabled (TCS_NO_AUDIO)"
+      (env_flag ("ERYTHEIA_FAKE_AUDIO") || !audio_sink_usable ());
+  LOG ("audio: %s", !p->audioEnabled ? "disabled (ERYTHEIA_NO_AUDIO)"
       : (p->use_fakesink ? "autoaudiosink unusable -> fakesink sync=true" : "autoaudiosink"));
 
   if (!create_or_adopt_device (p, (ID3D11Device*) external_d3d11_device)) {
@@ -4301,7 +4392,7 @@ tcs_player_set_prores_gpu (TcsPlayer* player, int mode)
     return TCS_ERR_GENERIC;
   player->prores_gpu_setting = mode;
   if (player->prores_gpu_env >= 0 && player->prores_gpu_env != mode)
-    LOG ("prores-gpu: setting=%s is overridden by TCS_PRORES_GPU=%s",
+    LOG ("prores-gpu: setting=%s is overridden by ERYTHEIA_PRORES_GPU=%s",
         tcs_prores_gpu_mode_name (mode), tcs_prores_gpu_mode_name (player->prores_gpu_env));
   return TCS_OK;
 }

@@ -29,7 +29,7 @@ Windows PowerShell、MSVC、Debug x64を使用します。Spout vendor sourceを
 以下はwatchdogが所有プロセスとして起動する際の引数例です。`--external-watchdog` は呼出側がwatchdogを設置したことの宣言で、プローブがwatchdogを作成する指定ではありません。
 
 ```text
-SpoutReceiverProbe.exe --sender TimecodeSyncPlayer --output NEW_PATH.jsonl --mode locked --external-watchdog --duration 50 --poll-ms 8 --stop-file OWNED_STOP_PATH
+SpoutReceiverProbe.exe --sender ERYTHEIA --output NEW_PATH.jsonl --mode locked --external-watchdog --duration 50 --poll-ms 8 --stop-file OWNED_STOP_PATH
 ```
 
 `--mode baseline` では外側mutexを追加しません。raw JSONLの `frame.accepted`、`mutexMs`、`receiveMs`、`copyAndMapMs` と各QPCを送信記録に合わせます。`summary.errors=0` でも画像整合や60fpsを保証しません。終了0はサンプルありの正常終了、2はサンプルなし、1は失敗です。失敗時は `error.accepted=false` と失敗stageを記録し、正常summaryは出しません。`--self-test` はGPUを作成しないマーカー解析検証です。

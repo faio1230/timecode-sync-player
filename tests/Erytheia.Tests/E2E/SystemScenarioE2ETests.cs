@@ -1,0 +1,518 @@
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using FluentAssertions;
+using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
+using FlaUI.Core.Exceptions;
+using Erytheia.Tests.Helpers;
+using Xunit.Abstractions;
+
+namespace Erytheia.Tests.E2E;
+
+[Trait("Category", "E2E")]
+[Collection("E2E")]
+public sealed class SystemScenarioE2ETests
+{
+    private readonly ITestOutputHelper _output;
+
+    public SystemScenarioE2ETests(ITestOutputHelper output) => _output = output;
+
+    [Fact]
+    public void ProjectRoundTrip_RestoresPlaylistOrderOffsetModeAndPlayback()
+    {
+        (string exe, string video) = RequirePrerequisites();
+        string videoCopy = CreateDialogFileCopy(video, "roundtrip_a");
+        string alternateCopy = CreateDialogFileCopy(
+            TestVideoFactory.GetOrCreateVariant("system_roundtrip"), "roundtrip_b");
+        string projectPath = CreateDialogProjectFile("roundtrip");
+
+        try
+        {
+            using var app = E2EAppRunner.Start(exe, "--vo null");
+            AddPlaylistFiles(app, videoCopy, alternateCopy);
+            ListBox playlist = Playlist(app);
+            E2EAssert.WaitUntil(() => playlist.Items.Length == 2, TimeSpan.FromSeconds(8));
+            EnsurePaused(app);
+
+            SelectPlaylistItem(playlist, 1, Path.GetFileNameWithoutExtension(alternateCopy));
+            WaitForMoveButtonEnabled(app, playlist, "BtnMoveTrackUp");
+            app.Button("BtnMoveTrackUp").Invoke();
+            E2EAssert.WaitUntil(
+                () => playlist.Items[0].Name.Contains(Path.GetFileNameWithoutExtension(alternateCopy), StringComparison.Ordinal),
+                TimeSpan.FromSeconds(5));
+
+            TextBox offset = WaitForOffsetBox(playlist, 0);
+            offset.Focus();
+            offset.Text = "00:00:10:00";
+            app.Button("BtnSaveProject").Focus();
+            E2EAssert.WaitUntil(() => offset.Text.StartsWith("00:00:10", StringComparison.Ordinal), TimeSpan.FromSeconds(3));
+
+            app.Combo("SyncModeCombo").Select(1);
+            E2EAssert.WaitUntil(() => app.Combo("GapBehaviorCombo").IsEnabled, TimeSpan.FromSeconds(3));
+            app.Combo("GapBehaviorCombo").Select(1);
+
+            InvokeFileDialog(app, "BtnSaveProject", projectPath, confirmOverwrite: true);
+            E2EAssert.WaitUntil(() => File.Exists(projectPath) && new FileInfo(projectPath).Length > 0, TimeSpan.FromSeconds(8));
+
+            app.Button("BtnClearPlaylist").Invoke();
+            E2EAssert.WaitUntil(() => playlist.Items.Length == 0, TimeSpan.FromSeconds(5));
+            InvokeFileDialog(app, "BtnLoadProject", projectPath);
+            E2EAssert.WaitUntil(() => playlist.Items.Length == 2, TimeSpan.FromSeconds(8));
+            WaitForDuration(app);
+            E2EAssert.WaitUntil(
+                () => app.Button("BtnPlay").Name == "▶",
+                TimeSpan.FromSeconds(3));
+
+            playlist.Items[0].Name.Should().Contain(Path.GetFileNameWithoutExtension(alternateCopy));
+            playlist.Items[1].Name.Should().Contain(Path.GetFileNameWithoutExtension(videoCopy));
+            WaitForOffsetBox(playlist, 0).Text.Should().StartWith("00:00:10");
+            app.Combo("SyncModeCombo").SelectedItem?.Name.Should().Contain("Continue");
+            app.Combo("GapBehaviorCombo").SelectedItem?.Name.Should().Contain("Freeze");
+
+            app.Slider("SeekBar").Patterns.RangeValue.Pattern.SetValue(0.25);
+            E2EAssert.WaitUntil(() => CurrentSeconds(app) > 0, TimeSpan.FromSeconds(5));
+            double beforePlay = CurrentSeconds(app);
+            EnsurePlaying(app);
+            E2EAssert.WaitUntil(() => CurrentSeconds(app) > beforePlay, TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            DeleteDialogFile(projectPath);
+            DeleteDialogFile(videoCopy);
+            DeleteDialogFile(alternateCopy);
+        }
+    }
+
+    [Fact]
+    public void ModeSwitchWorkflow_PreservesPlaybackAndTimelineState()
+    {
+        (string exe, string video) = RequirePrerequisites();
+        using var app = E2EAppRunner.Start(exe, $"--vo null --playlist \"{video}\"");
+        WaitForDuration(app);
+        SeekToEarlyPosition(app);
+        app.Button("BtnTimeline").Invoke();
+        string timelineLabel = app.Button("BtnTimeline").Name;
+        EnsurePlaying(app);
+        double start = CurrentSeconds(app);
+
+        app.Combo("SyncModeCombo").Select(1);
+        E2EAssert.WaitUntil(() => app.Combo("GapBehaviorCombo").IsEnabled, TimeSpan.FromSeconds(3));
+        E2EAssert.WaitUntil(() => CurrentSeconds(app) > start, TimeSpan.FromSeconds(5));
+        double afterContinue = CurrentSeconds(app);
+
+        app.Combo("SyncModeCombo").Select(0);
+        E2EAssert.WaitUntil(() => !app.Combo("GapBehaviorCombo").IsEnabled, TimeSpan.FromSeconds(3));
+        E2EAssert.WaitUntil(() => CurrentSeconds(app) >= afterContinue, TimeSpan.FromSeconds(3));
+
+        app.Combo("SyncModeCombo").SelectedItem?.Name.Should().Contain("Single");
+        double finalPosition = CurrentSeconds(app);
+        double finalDuration = DurationSeconds(app);
+        // TimeLabel is rendered at whole-second precision. Treat its final displayed
+        // second as the natural end so the assertion does not depend on sub-second mpv state.
+        bool reachedEnd = finalPosition >= finalDuration - 1.0;
+        app.Button("BtnPlay").Name.Should().Be(reachedEnd ? "▶" : "⏸",
+            $"the play button must match playback state; start={start}, afterContinue={afterContinue}, final={finalPosition}, duration={finalDuration}");
+        app.Button("BtnTimeline").Name.Should().Be(timelineLabel);
+    }
+
+    [Fact]
+    public void FullscreenDuringPlayback_TwoCyclesPreservePlaybackAndSpoutState()
+    {
+        (string exe, string video) = RequirePrerequisites();
+        using var app = E2EAppRunner.Start(exe, $"--vo null --playlist \"{video}\"");
+        WaitForDuration(app);
+        SeekToEarlyPosition(app);
+        E2EAssert.WaitUntil(() => app.Button("BtnFullscreen").IsEnabled, TimeSpan.FromSeconds(5));
+        string spoutLabel = app.Button("BtnSpout").Name;
+        EnsurePlaying(app);
+        double start = CurrentSeconds(app);
+
+        for (int cycle = 0; cycle < 2; cycle++)
+        {
+            // v0.6.6 R-8: 主画面なら確認の画面が出るので「出す」を押す。
+            E2EFullscreen.Open(app.MainWindow);
+            E2EAssert.WaitUntil(
+                () => app.Button("BtnFullscreen").Name == "EXIT FULLSCREEN",
+                TimeSpan.FromSeconds(5));
+            E2EAssert.WaitUntil(() => FullscreenWindow(app) != null, TimeSpan.FromSeconds(5));
+            app.Button("BtnFullscreen").Name.Should().Be("EXIT FULLSCREEN");
+
+            app.Button("BtnFullscreen").Invoke();
+            E2EAssert.WaitUntil(() => FullscreenWindow(app) == null, TimeSpan.FromSeconds(5));
+            app.Button("BtnFullscreen").Name.Should().Be("FULLSCREEN");
+        }
+
+        E2EAssert.WaitUntil(() => CurrentSeconds(app) > start, TimeSpan.FromSeconds(5));
+        app.Button("BtnPlay").Name.Should().Be("⏸");
+        app.Button("BtnSpout").Name.Should().Be(spoutLabel);
+    }
+
+    [Fact]
+    public void CorruptProjectLoad_ShowsErrorAndApplicationRemainsUsable()
+    {
+        (string exe, string video) = RequirePrerequisites();
+        string projectPath = CreateDialogProjectFile("corrupt");
+        File.WriteAllText(projectPath, "{\"tracks\":[");
+
+        try
+        {
+            using var app = E2EAppRunner.Start(exe, $"--vo null --playlist \"{video}\"");
+            InvokeFileDialog(app, "BtnLoadProject", projectPath, expectFollowupDialog: true);
+
+            Window error = WaitForModalWindow(app, window => window.Name.Contains("エラー", StringComparison.Ordinal));
+            error.Name.Should().Contain("エラー");
+            Button ok = error.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .Select(element => element.AsButton())
+                .First();
+            ok.Invoke();
+            E2EAssert.WaitUntil(() => app.MainWindow.ModalWindows.Length == 0, TimeSpan.FromSeconds(5));
+
+            app.Process.HasExited.Should().BeFalse();
+            EnsurePlaying(app);
+            EnsurePaused(app);
+        }
+        finally
+        {
+            DeleteDialogFile(projectPath);
+        }
+    }
+
+    internal static (string ExePath, string VideoPath) RequirePrerequisites()
+    {
+        (string exePath, string? reason) = E2EAppRunner.ResolvePrereqs();
+        reason.Should().BeNull("V9 is a mandatory no-Skip E2E gate");
+        return (exePath, TestVideoFactory.GetOrCreate());
+    }
+
+    internal static ListBox Playlist(E2EAppRunner app) =>
+        app.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList"))!.AsListBox();
+
+    /// <summary>
+    /// UIA の SelectionItemPattern.Select は、要素が仮想化・破棄されていると
+    /// 0x80040201 (UIA_E_ELEMENTNOTAVAILABLE) で失敗する。追加直後は duration 補完などで
+    /// 項目が作り直されることがあるため、毎回 Items[index] を取り直して実在と期待名の反映を待ち、
+    /// ScrollIntoView → Focus の後に Select する。Select 自体も同じ条件で再試行する。
+    /// </summary>
+    internal static void SelectPlaylistItem(ListBox playlist, int index, string expectedNamePart)
+    {
+        E2EAssert.WaitUntil(() =>
+        {
+            AutomationElement[] items = playlist.Items;
+            if (items.Length <= index || !items[index].Name.Contains(expectedNamePart, StringComparison.Ordinal))
+                return false;
+            AutomationElement item = items[index];
+            try
+            {
+                item.Patterns.ScrollItem.PatternOrDefault?.ScrollIntoView();
+                item.Focus();
+                item.Patterns.SelectionItem.Pattern.Select();
+                return true;
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or COMException)
+            {
+                return false;
+            }
+        }, TimeSpan.FromSeconds(8));
+    }
+
+    /// <summary>
+    /// 行を選んだ直後の「上へ」「下へ」は、WPF のコマンドの有効化（CanExecute の再評価）が非同期なので、
+    /// ボタンが有効になるまで最大 3 秒待つ。有効になれば待った時間を出力に書く（テストのタイミングの証拠）。
+    /// 待っても無効なら、一覧の行・選択・ボタンの状態を書いて失敗する（v0.5.4 K2: 長さの更新で行が置き換わり
+    /// 選択が外れる件の漏れの疑い。検証機の v0.5.5 で 10 回中 4 回 ElementNotEnabledException）。
+    /// </summary>
+    private void WaitForMoveButtonEnabled(E2EAppRunner app, ListBox playlist, string buttonId)
+    {
+        var waited = Stopwatch.StartNew();
+        TimeSpan timeout = TimeSpan.FromSeconds(3);
+        while (true)
+        {
+            if (ReadIsEnabled(app, buttonId) == true)
+            {
+                _output.WriteLine($"{buttonId}: enabled after {waited.ElapsedMilliseconds} ms");
+                return;
+            }
+            if (waited.Elapsed >= timeout)
+                break;
+            Thread.Sleep(50);
+        }
+
+        var state = new List<string> { $"waited={waited.ElapsedMilliseconds} ms" };
+        try
+        {
+            AutomationElement[] items = playlist.Items;
+            int selected = 0;
+            for (int i = 0; i < items.Length; i++)
+            {
+                bool? isSelected = items[i].Patterns.SelectionItem.PatternOrDefault?.IsSelected.ValueOrDefault;
+                if (isSelected == true) selected++;
+                state.Add($"item[{i}] name=\"{items[i].Name}\" isSelected={isSelected?.ToString() ?? "n/a"}");
+            }
+            int? selectionCount = playlist.Patterns.Selection.PatternOrDefault?.Selection.ValueOrDefault?.Length;
+            state.Add($"items={items.Length} selectedItems={selected} selectionPattern={selectionCount?.ToString() ?? "n/a"}");
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or COMException)
+        {
+            state.Add($"playlist read failed: {ex.Message}");
+        }
+        state.Add($"BtnMoveTrackUp.IsEnabled={ReadIsEnabled(app, "BtnMoveTrackUp")?.ToString() ?? "n/a"}");
+        state.Add($"BtnMoveTrackDown.IsEnabled={ReadIsEnabled(app, "BtnMoveTrackDown")?.ToString() ?? "n/a"}");
+
+        string message = $"K2 の疑い（待っても無効）: {buttonId} が {timeout.TotalSeconds:0} 秒待っても有効にならない。" +
+            Environment.NewLine + string.Join(Environment.NewLine, state);
+        _output.WriteLine(message);
+        throw new InvalidOperationException(message);
+    }
+
+    /// <summary>
+    /// 行のオフセットの欄を、見つかるまで最大 5 秒待って返す。行を動かしたり読み込んだりすると行の入れ物が
+    /// 作り直され、行の名前は先に変わっても、中の欄は次のレイアウトまで UIA に出てこないことがある
+    /// （v0.6.7 の統合の一式で 1 回、欄が null のまま Focus して落ちた）。待った時間を出力に書く。
+    /// 待っても無ければ、行の状態を書いて失敗する（製品の側の原因を隠さない）。
+    /// </summary>
+    private TextBox WaitForOffsetBox(ListBox playlist, int index)
+    {
+        var waited = Stopwatch.StartNew();
+        TimeSpan timeout = TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            AutomationElement? box = null;
+            try
+            {
+                AutomationElement[] items = playlist.Items;
+                if (items.Length > index)
+                    box = items[index].FindFirstDescendant(cf => cf.ByAutomationId("TimelineOffsetTextBox"));
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or COMException)
+            {
+                // 入れ物の作り直しの途中。次の回で読み直す。
+            }
+            if (box != null)
+            {
+                _output.WriteLine($"TimelineOffsetTextBox[{index}]: found after {waited.ElapsedMilliseconds} ms");
+                return box.AsTextBox();
+            }
+            if (waited.Elapsed >= timeout)
+                break;
+            Thread.Sleep(50);
+        }
+
+        string rows;
+        try
+        {
+            rows = string.Join(Environment.NewLine, playlist.Items.Select((item, i) =>
+                $"item[{i}] name=\"{item.Name}\" offscreen={item.IsOffscreen} rect={item.BoundingRectangle}"));
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or COMException)
+        {
+            rows = $"playlist read failed: {ex.Message}";
+        }
+        string message = $"行 {index} の TimelineOffsetTextBox が {timeout.TotalSeconds:0} 秒待っても見つからない（waited={waited.ElapsedMilliseconds} ms）。" +
+            Environment.NewLine + rows;
+        _output.WriteLine(message);
+        throw new InvalidOperationException(message);
+    }
+
+    private static bool? ReadIsEnabled(E2EAppRunner app, string automationId)
+    {
+        try
+        {
+            return app.Button(automationId).IsEnabled;
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or COMException or NullReferenceException)
+        {
+            return null;
+        }
+    }
+
+    internal static void AddPlaylistFiles(E2EAppRunner app, params string[] paths) =>
+        InvokeFileDialog(app, "BtnAddToPlaylist", paths);
+
+    private static void InvokeFileDialog(
+        E2EAppRunner app,
+        string buttonAutomationId,
+        string path,
+        bool confirmOverwrite = false,
+        bool expectFollowupDialog = false) =>
+        InvokeFileDialog(app, buttonAutomationId, [path], confirmOverwrite, expectFollowupDialog);
+
+    private static void InvokeFileDialog(
+        E2EAppRunner app,
+        string buttonAutomationId,
+        IReadOnlyList<string> paths,
+        bool confirmOverwrite = false,
+        bool expectFollowupDialog = false)
+    {
+        Button button = app.Button(buttonAutomationId);
+        Task invokeTask = Task.Run(button.Invoke);
+        Window dialog = WaitForModalWindow(app, _ => true);
+        NavigateToVideosFolder(dialog);
+        for (int index = 0; index < paths.Count; index++)
+        {
+            string fileName = Path.GetFileName(paths[index]);
+            AutomationElement? fileItem = null;
+            E2EAssert.WaitUntil(() =>
+            {
+                fileItem = dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem))
+                    .FirstOrDefault(element => element.Name == fileName);
+                return fileItem != null;
+            }, TimeSpan.FromSeconds(5));
+            if (index == 0)
+                fileItem!.Patterns.SelectionItem.Pattern.Select();
+            else
+                fileItem!.Patterns.SelectionItem.Pattern.AddToSelection();
+        }
+        AutomationElement accept = dialog.FindAllDescendants()
+            .Single(element =>
+                element.Properties.AutomationId.ValueOrDefault == "1" &&
+                element.ControlType is ControlType.Button or ControlType.SplitButton);
+        nint dialogHandle = dialog.Properties.NativeWindowHandle.ValueOrDefault;
+        accept.Patterns.Invoke.Pattern.Invoke();
+
+        if (confirmOverwrite)
+        {
+            Window? confirmation = null;
+            E2EAssert.WaitUntil(() =>
+            {
+                Window[] modals = app.MainWindow.ModalWindows;
+                confirmation = modals.FirstOrDefault(window =>
+                    window.Properties.NativeWindowHandle.ValueOrDefault != dialogHandle);
+                return confirmation != null || modals.All(window =>
+                    window.Properties.NativeWindowHandle.ValueOrDefault != dialogHandle);
+            }, TimeSpan.FromSeconds(8));
+            confirmation.Should().NotBeNull("an existing project file requires overwrite confirmation");
+            Button yes = confirmation!.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .Select(element => element.AsButton())
+                .First(button => button.Name.StartsWith("はい", StringComparison.Ordinal));
+            yes.Invoke();
+        }
+
+        E2EAssert.WaitUntil(
+            () => app.MainWindow.ModalWindows.All(window =>
+                window.Properties.NativeWindowHandle.ValueOrDefault != dialogHandle),
+            TimeSpan.FromSeconds(8));
+
+        if (!expectFollowupDialog)
+        {
+            E2EAssert.WaitUntil(() => app.MainWindow.ModalWindows.Length == 0, TimeSpan.FromSeconds(8));
+            E2EAssert.WaitUntil(() => invokeTask.IsCompleted, TimeSpan.FromSeconds(8));
+            invokeTask.GetAwaiter().GetResult();
+        }
+    }
+
+    private static void NavigateToVideosFolder(Window dialog)
+    {
+        AutomationElement? videos = null;
+        try
+        {
+            E2EAssert.WaitUntil(() =>
+            {
+                videos = dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.TreeItem))
+                    .Concat(dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem)))
+                    .FirstOrDefault(element =>
+                        element.Name.StartsWith("Videos", StringComparison.Ordinal) ||
+                        element.Name.StartsWith("ビデオ", StringComparison.Ordinal));
+                return videos != null;
+            }, TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException ex)
+        {
+            string available = string.Join(" | ", dialog.FindAllDescendants()
+                .Select(element => $"{element.ControlType}:{element.Name}")
+                .Where(value => !value.EndsWith(':'))
+                .Distinct());
+            throw new TimeoutException($"Videos navigation item was unavailable. Elements: {available}", ex);
+        }
+        videos!.Patterns.SelectionItem.Pattern.Select();
+    }
+
+    private static Window WaitForModalWindow(E2EAppRunner app, Func<Window, bool> predicate)
+    {
+        Window? result = null;
+        E2EAssert.WaitUntil(() =>
+        {
+            result = app.MainWindow.ModalWindows.FirstOrDefault(predicate);
+            return result != null;
+        }, TimeSpan.FromSeconds(8));
+        return result!;
+    }
+
+    private static Window? FullscreenWindow(E2EAppRunner app) =>
+        app.MainWindow.Automation.GetDesktop()
+            .FindFirstDescendant(cf => cf.ByAutomationId("FullscreenOutputWindow"))
+            ?.AsWindow();
+
+    internal static string CreateDialogFileCopy(string sourcePath, string suffix)
+    {
+        string directory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(
+            directory,
+            $"000-tsp-v9-{suffix}-{Guid.NewGuid():N}{Path.GetExtension(sourcePath)}");
+        File.Copy(sourcePath, path);
+        return path;
+    }
+
+    private static string CreateDialogProjectFile(string suffix)
+    {
+        string directory = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, $"000-tsp-v9-{suffix}-{Guid.NewGuid():N}.tsp");
+        File.WriteAllText(path, "{}");
+        return path;
+    }
+
+    internal static void DeleteDialogFile(string path)
+    {
+        if (File.Exists(path))
+            File.Delete(path);
+    }
+
+    private static void WaitForDuration(E2EAppRunner app) =>
+        E2EAssert.WaitUntil(() => app.Text("TimeLabel").Contains('/'), TimeSpan.FromSeconds(8));
+
+    private static void SeekToEarlyPosition(E2EAppRunner app)
+    {
+        app.Slider("SeekBar").Patterns.RangeValue.Pattern.SetValue(0.1);
+        E2EAssert.WaitUntil(
+            () => CurrentSeconds(app) is > 0 and < 5,
+            TimeSpan.FromSeconds(5));
+    }
+
+    private static void EnsurePlaying(E2EAppRunner app)
+    {
+        Button play = app.Button("BtnPlay");
+        if (play.Name == "▶")
+            play.Invoke();
+        E2EAssert.WaitUntil(() => play.Name == "⏸", TimeSpan.FromSeconds(3));
+    }
+
+    private static void EnsurePaused(E2EAppRunner app)
+    {
+        Button play = app.Button("BtnPlay");
+        if (play.Name == "⏸")
+            play.Invoke();
+        E2EAssert.WaitUntil(() => play.Name == "▶", TimeSpan.FromSeconds(3));
+    }
+
+    private static double CurrentSeconds(E2EAppRunner app)
+    {
+        string current = app.Text("TimeLabel").Split('/')[0].Trim();
+        string[] parts = current.Split(':');
+        return parts.Length < 3
+            ? 0
+            : int.Parse(parts[0]) * 3600 + int.Parse(parts[1]) * 60 + double.Parse(parts[2]);
+    }
+
+    internal static double DurationSeconds(E2EAppRunner app)
+    {
+        string[] sides = app.Text("TimeLabel").Split('/');
+        if (sides.Length < 2)
+            return 0;
+        string[] parts = sides[1].Trim().Split(':');
+        return parts.Length < 3
+            ? 0
+            : int.Parse(parts[0]) * 3600 + int.Parse(parts[1]) * 60 + double.Parse(parts[2]);
+    }
+}

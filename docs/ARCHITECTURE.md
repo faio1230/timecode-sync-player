@@ -1,6 +1,6 @@
 # アーキテクチャ
 
-TimecodeSyncPlayer の内部構造について、データフロー・スレッドモデル・主要コンポーネント・
+ERYTHEIA の内部構造について、データフロー・スレッドモデル・主要コンポーネント・
 GStreamer 連携やLTC同期の実装上の要点をまとめる。
 
 構成を図から把握する場合は、[4ページの構成図と読み方](diagrams/README.md)を参照。
@@ -25,7 +25,7 @@ GStreamer 連携やLTC同期の実装上の要点をまとめる。
                                              ↓
                                    SyncDecisionEngine.Decide()
                                              ↓ （Seek / None）
-                              IPlaybackApi（GstPlaybackApi）→ tcs_gstreamer.dll
+                              IPlaybackApi（GstPlaybackApi）→ erytheia_gstreamer.dll
                                              ↓
                         共有リング（GPU テクスチャ）+ 共有フェンス
                                              ↓
@@ -165,11 +165,11 @@ GStreamer shim ─ フレーム通知（コールバック）──────�
 | `Contracts/IPlaybackApi.cs`, `Contracts/PlaybackResult.cs`, `Contracts/IRenderUpdateSource.cs` | 再生操作・失敗結果・フレーム更新通知の型付き契約。文字列コマンドとプロパティ名を境界から排除する |
 | `Output/OutputEngine.cs` | GPU出力層。GPU workerとSpout workerを所有し、pool・全画面swapchain・合成・プレビュー・デバイス消失復旧・終了を管理する |
 | `Output/ComposeLayer.cs` | 固定キャンバスへの合成。Held（最後に確定した画像）・Freeze・Black・GapFreeze・テストカードと、配置の選択規則（`ComposeLayerPolicy`）を持つ |
-| `Gst/GstBackendState.cs` | shim（`tcs_gstreamer.dll`）のプレイヤーハンドル・pause ミラー・フレーム通知デリゲートの寿命を所有する |
+| `Gst/GstBackendState.cs` | shim（`erytheia_gstreamer.dll`）のプレイヤーハンドル・pause ミラー・フレーム通知デリゲートの寿命を所有する |
 | `Gst/GstNativeApi.cs` / `Gst/IGstNativeApi.cs` | shim の C ABI（`tcs_player_*`）の薄いラッパ。テストでは fake を注入する |
 | `Gst/GstPlaybackApi.cs` | `IPlaybackApi` の GStreamer 実装。shim を直接呼び、セッション初期化（player 生成と `pause=yes` 相当）とシーク中判定（`GstSeekingTracker`）を持つ |
 | `Gst/GstRenderUpdateSource.cs` | `IRenderUpdateSource` の GStreamer 実装。フレーム通知の登録・解除とコンテキスト寿命だけを担う |
-| `Output/GStreamerSource.cs` | tcs_gstreamer.dllのリースAPIを`IVideoSource`へ適合する。共有リング3枚＋共有フェンスを合成デバイス上で一度だけ開く |
+| `Output/GStreamerSource.cs` | erytheia_gstreamer.dllのリースAPIを`IVideoSource`へ適合する。共有リング3枚＋共有フェンスを合成デバイス上で一度だけ開く |
 | `Output/SpoutSender.cs` | Spout送信workerの送信機。別デバイスで保持テクスチャへコピーし、アクセスmutexを要求8msで取得して送信する |
 | `Output/TimelineOutputState.cs` | UIがmailboxでGPU workerへ渡すタイムライン状態（世代・Gap・テストカード・キャンバス・配置・位置） |
 | `Output/VblankDisplayGate.cs`, `Output/SwapchainTarget.cs` | DXGI統計からのvblank予測・表示判断と、子HWNDへのswapchain Present |
@@ -180,7 +180,7 @@ GStreamer shim ─ フレーム通知（コールバック）──────�
 
 ## 4. GStreamer shim 連携とレンダー境界の要点
 
-- **再生は shim（`tcs_gstreamer.dll`）が唯一のバックエンド**: shim は自前の D3D11 デバイスで
+- **再生は shim（`erytheia_gstreamer.dll`）が唯一のバックエンド**: shim は自前の D3D11 デバイスで
   デコードし、NT 共有の 3 枚リングと共有フェンスで合成層へ渡す。合成デバイス（`OutputEngine` の
   もの）とは別で、context は共有しない。
 - **再生操作は型付き API（`GstPlaybackApi`）が shim を直接呼ぶ**: `Load` / `Seek` / `Stop` /
@@ -236,7 +236,7 @@ GStreamer shim ─ フレーム通知（コールバック）──────�
   受信済みフレームからの制御を共用し、再生・表示の境界を記録する。生LTCフレームの診断と
   同期抑止、停止通知の再入、デバイス列挙エラー表示の維持はcontrollerの振る舞いで検証する。
 - **E2Eテスト（FlaUI）**: FlaUIを用いて実際にアプリケーションを起動し、UI操作を通じて
-  エンドツーエンドの挙動を検証する。実行には `native/tcs_gstreamer.dll` と GStreamer ランタイム、
+  エンドツーエンドの挙動を検証する。実行には `native/erytheia_gstreamer.dll` と GStreamer ランタイム、
   必要に応じて `SpoutDX.dll` などのネイティブDLLと実機環境が必要（[SETUP.md](SETUP.md)）。
 - **GPU出力の管理テスト**: 合成poolの読み書き規則、vblank判断、lead学習、キャンバス世代の
   破棄規則、GStreamerリングのリース規則、復旧手順、終了状態遷移はGPU非依存の純粋規則として

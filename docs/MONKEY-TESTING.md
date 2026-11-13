@@ -21,16 +21,16 @@
 
 ```powershell
 # 標準: 3種類のseed、それぞれ250操作。1回の上限15分。
-./scripts/run-timecodesyncplayer-monkey.ps1
+./scripts/run-erytheia-monkey.ps1
 
 # 最初の接続確認
-./scripts/run-timecodesyncplayer-monkey.ps1 -Seeds 4242 -Actions 20
+./scripts/run-erytheia-monkey.ps1 -Seeds 4242 -Actions 20
 
 # 同じ操作列を再実行（失敗したseed・操作数を指定）
-./scripts/run-timecodesyncplayer-monkey.ps1 -Seeds 4242 -Actions 250
+./scripts/run-erytheia-monkey.ps1 -Seeds 4242 -Actions 250
 
 # 操作数を増やす。これは実行例であり、実施済みの保証ではありません。
-./scripts/run-timecodesyncplayer-monkey.ps1 -Seeds 4242,1701,9001 -Actions 10000 -TimeoutMinutes 120
+./scripts/run-erytheia-monkey.ps1 -Seeds 4242,1701,9001 -Actions 10000 -TimeoutMinutes 120
 ```
 
 通常の `dotnet test` ではこの長時間試験はスキップします。スクリプトは明示的に有効化し、Monkey分類だけを実行します。有効化したのに前提不足で実行できなかった場合や、スキップ・結果欠落は成功になりません。各試験は別プロセスで、設定も通常利用から隔離します。上記の長時間例は操作数ベースであり、指定分数だけ走り続ける意味ではありません。

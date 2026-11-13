@@ -16,7 +16,7 @@
 # the hap encoder (libsnappy) and prores_ks, and libx264 / libx265 / libaom.
 #
 # The tests and the scripts look for ffmpeg in this order (scripts\TcsFfmpeg.psm1,
-# tests Helpers\FfmpegTool.cs): TCS_FFMPEG, tools\ffmpeg, C:\Program Files\ffmpeg\bin,
+# tests Helpers\FfmpegTool.cs): ERYTHEIA_FFMPEG, tools\ffmpeg, C:\Program Files\ffmpeg\bin,
 # PATH. A build older than 6 stops the LTC runner and the tests before they start.
 #
 # Usage (from the repository root):

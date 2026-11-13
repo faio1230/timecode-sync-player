@@ -35,29 +35,29 @@ LTC（Linear Timecode）を受信し、プレイリスト上の動画クリッ�
 # 初回だけ: shim のビルドに使う Spout2 SDK（タグ 2.007.017・コミット固定）を vendor/Spout2 へ取得（git 管理外）
 pwsh -File native\gst-shim\get-spout.ps1
 pwsh -File native\gst-shim\build-shim.ps1 -Config Debug
-dotnet build src\TimecodeSyncPlayer\TimecodeSyncPlayer.csproj
-dotnet test tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj
+dotnet build src\Erytheia\Erytheia.csproj
+dotnet test tests\Erytheia.Tests\Erytheia.Tests.csproj
 ```
 
 **スクリプトは PowerShell 7 専用（v0.6.0 から）:** `scripts\`・`native\gst-shim\` の `.ps1` は `#requires -Version 7.0`。
 `pwsh -File` で実行する（`pwsh` はコマンド名で呼び、絶対パスを埋め込まない）。5.1 の `powershell` では読み込みの時点で止まる。
 例外: 利用者が直接実行する `scripts\inspect-gop.ps1` は 5.1 互換のまま（`#requires` なし、ASCII のみ・BOM なし・CRLF。5.1 と 7 の両方で動かす）。
 
-**ソリューションファイル:** `TimecodeSyncPlayer.slnx`（.NET SDK 形式の `.slnx`、`.sln` ではない）
+**ソリューションファイル:** `Erytheia.slnx`（.NET SDK 形式の `.slnx`、`.sln` ではない）
 
 **テスト数:** `dotnet test` で確認。
 
 **EXE の場所（ビルド後）:**
 ```
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe
+src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe
 ```
 
 **ログの場所（実行後）:**
 ```
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log   # アプリ（Serilog）
-src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\tcs-gst-YYYYMMDD.log             # shim（tcs_gstreamer.dll）
+src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log   # アプリ（Serilog）
+src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log             # shim（erytheia_gstreamer.dll）
 ```
-shim のログの出力先は環境変数 `TCS_LOG_FILE`。未設定ならアプリが起動時に上の logs を設定し、7 日より古い `tcs-gst-*.log` を消す。
+shim のログの出力先は環境変数 `ERYTHEIA_LOG_FILE`。未設定ならアプリが起動時に上の logs を設定し、7 日より古い `erytheia-gst-*.log`・`tcs-gst-*.log`（v0.6.6 までの shim のログ）と、31 日より古い `timecodesyncplayer-*.log`（v0.6.6 までのアプリのログ）を消す。アプリのログ（`erytheia-*.log`）は Serilog の既定で 31 ファイル残る。
 
 ---
 
@@ -65,7 +65,7 @@ shim のログの出力先は環境変数 `TCS_LOG_FILE`。未設定ならアプ
 
 ```
 timecode-sync-player/
-├── src/TimecodeSyncPlayer/         # アプリ本体 (net8.0-windows, WPF, x64)
+├── src/Erytheia/         # アプリ本体 (net8.0-windows, WPF, x64)
 │   ├── App.xaml / App.xaml.cs      # 起動・DI・Serilogセットアップ
 │   ├── MainWindow.xaml / .cs       # メインUI（映像・LTC・Playlist）
 │   ├── ViewModels/                 # MVVM ViewModels
@@ -94,7 +94,7 @@ timecode-sync-player/
 │   ├── TimecodeDisplayFormatter.cs # タイムコード表示文字列生成
 │   ├── TimecodeFpsSelector.cs      # FPS自動検出・固定選択
 │   └── TimecodeFrameDiagnostics.cs # タイムコード診断情報
-├── tests/TimecodeSyncPlayer.Tests/ # xUnit + FlaUI テスト (net8.0-windows)
+├── tests/Erytheia.Tests/ # xUnit + FlaUI テスト (net8.0-windows)
 ├── native/                         # ネイティブDLL置き場（gitignore済み）
 │   └── README.md                   # DLL入手方法
 ├── scripts/                        # ビルド・診断・検証スクリプト
@@ -115,7 +115,7 @@ timecode-sync-player/
                                              ↓
                                    SyncDecisionEngine.Decide()
                                              ↓ （Seek / None）
-                              IPlaybackApi（GstPlaybackApi）→ tcs_gstreamer.dll
+                              IPlaybackApi（GstPlaybackApi）→ erytheia_gstreamer.dll
                                              ↓
                               shim の共有リング（GPU テクスチャ）+ 共有フェンス
                                              ↓
@@ -174,7 +174,7 @@ E2E とランナーの確かめ（判定・数え・待ち）は、アプリの�
 
 | ファイル | 用途 | 入手方法 |
 |---------|------|---------|
-| `tcs_gstreamer.dll` | 映像ソース（GStreamer shim）。`native/gst-shim/build-shim.ps1` でビルド | `native/gst-shim/README.md` |
+| `erytheia_gstreamer.dll` | 映像ソース（GStreamer shim）。`native/gst-shim/build-shim.ps1` でビルド | `native/gst-shim/README.md` |
 | `SpoutDX.dll` | Spout2送信（Spout 出力を使う場合に必要） | https://github.com/leadedge/Spout2 |
 
 GStreamer ランタイム（`GSTREAMER_1_0_ROOT_MSVC_X86_64` または `Program Files\gstreamer`）が必要です。

@@ -6,7 +6,7 @@
 #   pwsh -File scripts\run-dirty-ltc.ps1 -Condition A-noise -Repeats 2 -Label near-limit
 #
 # One run = one condition; the levels are played back to back inside the run by
-# tests\TimecodeSyncPlayer.Tests\E2E\DirtyLtcE2ETests.cs. The plan json lives in
+# tests\Erytheia.Tests\E2E\DirtyLtcE2ETests.cs. The plan json lives in
 # scripts\m6-plans\, the app under test is unchanged, and all signal conditioning
 # is done on the test side.
 # With -Repeats N the condition is run N times into separate report dirs and the
@@ -31,10 +31,10 @@ if (-not (Test-Path -LiteralPath $planPath)) { throw "plan not found: $planPath"
 if ($Repeats -lt 1) { throw "-Repeats must be >= 1" }
 if ($Repeats -gt 1 -and $ReportDir) { throw "-ReportDir cannot be combined with -Repeats > 1" }
 if (-not $TestProject) {
-    $TestProject = Join-Path $repoRoot 'tests\TimecodeSyncPlayer.Tests\TimecodeSyncPlayer.Tests.csproj'
+    $TestProject = Join-Path $repoRoot 'tests\Erytheia.Tests\Erytheia.Tests.csproj'
 }
 if (-not $AppExe) {
-    $AppExe = Join-Path $repoRoot 'src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\TimecodeSyncPlayer.exe'
+    $AppExe = Join-Path $repoRoot 'src\Erytheia\bin\Debug\net8.0-windows\ERYTHEIA.exe'
 }
 if (-not (Test-Path -LiteralPath $AppExe)) { throw "App exe not found: $AppExe (pass -AppExe)" }
 $AppExe = (Resolve-Path -LiteralPath $AppExe).Path
@@ -60,14 +60,14 @@ for ($i = 1; $i -le $Repeats; $i++) {
     # Gpu compositor + smooth correction, same as the V3 harness (backend key is obsolete).
     '{"outputBackend":1,"syncCorrectionMode":0}' | Set-Content (Join-Path $runReport 'settings.json') -Encoding UTF8
 
-    $env:TIMECODE_SYNC_PLAYER_E2E_APP_PATH = $AppExe
+    $env:ERYTHEIA_E2E_APP_PATH = $AppExe
     $env:TIMECODE_ACCURACY_REPORT_DIR = $runReport
-    $env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE = $runReport
-    $env:TCS_M6_DIRTY_PLAN = (Resolve-Path -LiteralPath $planPath).Path
+    $env:ERYTHEIA_OUTPUT_TRACE = $runReport
+    $env:ERYTHEIA_M6_DIRTY_PLAN = (Resolve-Path -LiteralPath $planPath).Path
 
     Write-Output "app=$AppExe"
     Write-Output "report=$runReport"
-    Write-Output "plan=$($env:TCS_M6_DIRTY_PLAN)"
+    Write-Output "plan=$($env:ERYTHEIA_M6_DIRTY_PLAN)"
 
     $testStart = Get-Date
     & dotnet test $TestProject -c Debug --no-build --filter 'FullyQualifiedName~DirtyLtc' `
@@ -83,7 +83,7 @@ for ($i = 1; $i -le $Repeats; $i++) {
     if (Test-Path -LiteralPath $appLogDir) {
         foreach ($log in @(Get-ChildItem -LiteralPath $appLogDir -File -ErrorAction SilentlyContinue |
             Where-Object {
-                ($_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
+                ($_.Name -like 'erytheia-*.log' -or $_.Name -like 'timecodesyncplayer-*.log' -or $_.Name -like 'tcs-gst-*.log') -and
                 $_.LastWriteTime -ge $testStart.AddMinutes(-2)
             })) {
             Copy-Item -LiteralPath $log.FullName -Destination $appLogDest -Force
@@ -91,8 +91,8 @@ for ($i = 1; $i -le $Repeats; $i++) {
     }
 
     Remove-Item Env:TIMECODE_ACCURACY_REPORT_DIR -ErrorAction SilentlyContinue
-    Remove-Item Env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE -ErrorAction SilentlyContinue
-    Remove-Item Env:TCS_M6_DIRTY_PLAN -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_OUTPUT_TRACE -ErrorAction SilentlyContinue
+    Remove-Item Env:ERYTHEIA_M6_DIRTY_PLAN -ErrorAction SilentlyContinue
 }
 
 # Analysis runs offline (no machine needed).
@@ -117,7 +117,7 @@ try {
     Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
 }
 
-$leftover = @(Get-Process -Name TimecodeSyncPlayer -ErrorAction SilentlyContinue)
+$leftover = @(Get-Process -Name ERYTHEIA -ErrorAction SilentlyContinue)
 $failedRuns = @($exitCodes | Where-Object { $_ -ne 0 }).Count
 Write-Output ('SUMMARY test_exit=' + ($exitCodes -join ',') + ' failed_runs=' + $failedRuns +
     ' leftover=' + $leftover.Count + ' reports=' + ($reports -join ';'))

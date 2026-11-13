@@ -25,7 +25,10 @@ def run_start(report):
 
 
 def read_samples(report, start):
-    log = next((report / "app-logs").glob("timecodesyncplayer-*.log"), None)
+    # v0.6.7: the app log is erytheia-*.log (old timecodesyncplayer-*.log); erytheia-gst-*.log is the shim log.
+    log = next((p for p in sorted((report / "app-logs").glob("*.log"))
+                if (p.name.startswith("erytheia-") and not p.name.startswith("erytheia-gst-"))
+                or p.name.startswith("timecodesyncplayer-")), None)
     if log is None:
         return []
     samples = []

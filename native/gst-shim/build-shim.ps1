@@ -1,5 +1,5 @@
 #requires -Version 7.0
-# Build script for tcs_gstreamer shim (DLL + native smoke test).
+# Build script for the erytheia_gstreamer shim (DLL + native smoke test).
 # Usage: pwsh -File build-shim.ps1 [-Config Debug|Release]
 param(
     [string]$Config = "Debug"
@@ -17,4 +17,4 @@ $buildDir = Join-Path $proj "build-$($Config.ToLower())"
 $cmd = "`"$vcvars`" && cmake -S `"$proj`" -B `"$buildDir`" -G Ninja -DCMAKE_BUILD_TYPE=$Config && cmake --build `"$buildDir`""
 cmd /c $cmd
 if ($LASTEXITCODE -ne 0) { throw "native build failed (exit $LASTEXITCODE)" }
-Write-Host "OK: $buildDir\tcs_gstreamer.dll"
+Write-Host "OK: $buildDir\erytheia_gstreamer.dll"

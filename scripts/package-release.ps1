@@ -53,7 +53,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 
-$projectPath = Join-Path (Join-Path (Join-Path $projectRoot "src") "TimecodeSyncPlayer") "TimecodeSyncPlayer.csproj"
+$projectPath = Join-Path (Join-Path (Join-Path $projectRoot "src") "Erytheia") "Erytheia.csproj"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     [xml]$projectXml = Get-Content -LiteralPath $projectPath -Raw
@@ -70,9 +70,9 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 }
 
 $releaseDirectory = Join-Path (Split-Path -Parent $projectPath) "bin\Release\net8.0-windows"
-$zipName = "TimecodeSyncPlayer-v$Version-win-x64.zip"
+$zipName = "ERYTHEIA-v$Version-win-x64.zip"
 $zipPath = Join-Path $OutputDirectory $zipName
-$setupName = "TimecodeSyncPlayer-v$Version-setup.exe"
+$setupName = "ERYTHEIA-v$Version-setup.exe"
 $setupPath = Join-Path $OutputDirectory $setupName
 $stagingDirectory = Join-Path $OutputDirectory (".package-stage-" + [Guid]::NewGuid().ToString("N"))
 
@@ -263,7 +263,7 @@ if (-not $SkipInstaller) {
 }
 
 if (-not $SkipBuild) {
-    Write-Host "Building TimecodeSyncPlayer $Version (Release)..."
+    Write-Host "Building ERYTHEIA $Version (Release)..."
     & dotnet build $projectPath -c Release -v minimal
     if ($LASTEXITCODE -ne 0) {
         throw "Release build failed with exit code $LASTEXITCODE."
@@ -296,6 +296,16 @@ try {
         throw "v0.4 の配布物に mpv は含めません。Release 出力に残っています: $names。製品側の mpv 除去が反映されたビルドを使用してください。"
     }
 
+    # v0.6.7: exe とアセンブリの名前は ERYTHEIA。前のビルドの TimecodeSyncPlayer.exe・.dll などが Release 出力に
+    # 残っていたら黙って同梱せず失敗させる（exe が 2 つ入った配布物にしない）。旧の名前の shim
+    # （tcs_gstreamer.dll。v0.6.7 から erytheia_gstreamer.dll）も同じ。
+    $staleOldNameFiles = @(Get-ChildItem -LiteralPath $releaseDirectory -File |
+        Where-Object { $_.Name -like "TimecodeSyncPlayer.*" -or $_.Name -like "tcs_gstreamer.*" })
+    if ($staleOldNameFiles.Count -gt 0) {
+        $names = ($staleOldNameFiles | ForEach-Object { $_.Name }) -join ", "
+        throw "Release 出力に旧の名前のファイルが残っています: $names。bin\Release を消してからビルドし直してください。"
+    }
+
     Get-ChildItem -LiteralPath $releaseDirectory -File | ForEach-Object {
         if ($_.Extension -eq ".pdb") {
             return
@@ -303,7 +313,7 @@ try {
         Copy-Item -LiteralPath $_.FullName -Destination $stagingDirectory
     }
 
-    $requiredRuntimeFiles = @("TimecodeSyncPlayer.exe", "TimecodeSyncPlayer.dll", "SpoutDX.dll", "tcs_gstreamer.dll")
+    $requiredRuntimeFiles = @("ERYTHEIA.exe", "ERYTHEIA.dll", "SpoutDX.dll", "erytheia_gstreamer.dll")
     foreach ($requiredFile in $requiredRuntimeFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $stagingDirectory $requiredFile) -PathType Leaf)) {
             throw "Required runtime file is missing from Release output: $requiredFile"
@@ -311,16 +321,16 @@ try {
     }
 
     # 配布する shim は Release ビルドでなければならない（Debug ビルドは MSVCP140D / ucrtbased に依存し、
-    # 利用者環境で動かない）。native\tcs_gstreamer.dll に置いたものも含め、Release ビルドと一致するかを見る。
-    $releaseShim = Join-Path $projectRoot "native\gst-shim\build-release\tcs_gstreamer.dll"
+    # 利用者環境で動かない）。native\erytheia_gstreamer.dll に置いたものも含め、Release ビルドと一致するかを見る。
+    $releaseShim = Join-Path $projectRoot "native\gst-shim\build-release\erytheia_gstreamer.dll"
     if (-not (Test-Path -LiteralPath $releaseShim -PathType Leaf)) {
-        throw "Release ビルドの tcs_gstreamer.dll がありません。先に native\gst-shim\build-shim.ps1 -Config Release を実行してください: $releaseShim"
+        throw "Release ビルドの erytheia_gstreamer.dll がありません。先に native\gst-shim\build-shim.ps1 -Config Release を実行してください: $releaseShim"
     }
-    $stagedShim = Join-Path $stagingDirectory "tcs_gstreamer.dll"
+    $stagedShim = Join-Path $stagingDirectory "erytheia_gstreamer.dll"
     $expectedHash = (Get-FileHash -LiteralPath $releaseShim -Algorithm SHA256).Hash
     $actualHash = (Get-FileHash -LiteralPath $stagedShim -Algorithm SHA256).Hash
     if ($actualHash -ne $expectedHash) {
-        throw "配布物の tcs_gstreamer.dll が Release ビルドと一致しません。native\tcs_gstreamer.dll（または native\gst-shim\build-debug の出力）が Release ビルドで上書きされているか確認してください。"
+        throw "配布物の erytheia_gstreamer.dll が Release ビルドと一致しません。native\erytheia_gstreamer.dll（または native\gst-shim\build-debug の出力）が Release ビルドで上書きされているか確認してください。"
     }
 
     # GStreamer ランタイム（必要 DLL とライセンス文書）を同梱する。
@@ -365,7 +375,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot "CHANGELOG.md") -Destination $stagingDirectory
 
     $readme = @"
-TimecodeSyncPlayer v$Version (Windows x64)
+ERYTHEIA v$Version (Windows x64)
 
 Requirements
 - Windows 10/11 x64
@@ -377,7 +387,7 @@ Requirements
 - An audio input device carrying LTC
 
 Setup
-1. Start TimecodeSyncPlayer.exe.
+1. Start ERYTHEIA.exe.
 2. Select the LTC capture device and press START.
 3. Load media, then press Sync ON.
 

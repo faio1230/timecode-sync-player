@@ -17,8 +17,8 @@
 
 ## 版ごとの記録と過去の計画
 
-公開内容は[CHANGELOG](../CHANGELOG.md)と[リリースノート](release-notes/)に記録しています。現行安定版は[v0.6.6](release-notes/v0.6.6.md)で、前の版は[v0.6.5](release-notes/v0.6.5.md)です。
+公開内容は[CHANGELOG](../CHANGELOG.md)と[リリースノート](release-notes/)に記録しています。現行安定版は[v0.6.6](release-notes/v0.6.6.md)で、前の版は[v0.6.5](release-notes/v0.6.5.md)です。[v0.6.7](release-notes/v0.6.7.md)は2026-11-14に試験版（Pre-release）として公開しました。v0.6.7から、アプリの名前はERYTHEIAです（v0.6.6まではTimecodeSyncPlayer）。
 
-設計の経過は[design/](design/)にあります。[v0.6.6の現場修正](design/v0.6.6-field-fixes.md)にはその版の決定と持ち越した報告、[2026年10月の試験基盤](design/test-infra-2026-10.md)には試験の改善と実施結果を残しています。実施済みの項目と未決定の候補は、各文書の記録で区別してください。
+設計の経過は[design/](design/)にあります。[v0.6.7の設計](design/v0.6.7-erytheia.md)には名前の変更と表示の改修の決定、[v0.6.7の検証機の回の手順](design/v0.6.7-test-machine-run.md)には検証機の回の手順と、利用者の決定で外した範囲、[v0.6.6の現場修正](design/v0.6.6-field-fixes.md)にはその版の決定と持ち越した報告、[2026年10月の試験基盤](design/test-infra-2026-10.md)には試験の改善と実施結果を残しています。実施済みの項目と未決定の候補は、各文書の記録で区別してください。
 
 [テストカバレッジ拡充ロードマップ](test-coverage-roadmap.md)、[拡充進捗](test-coverage-progress.md)、[テスト強化プラン](test-hardening-plan.md)は2026年7月の計画・経過です。当時のルールと件数は本文に保存しています。現在の開発手順と最新の検証結果は、上の現行文書を参照してください。

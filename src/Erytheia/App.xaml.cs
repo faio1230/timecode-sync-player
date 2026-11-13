@@ -1,0 +1,158 @@
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Threading;
+using Microsoft.Extensions.DependencyInjection;
+using Serilog;
+using Erytheia.Contracts;
+using Erytheia.Gst;
+using Erytheia.Output;
+
+namespace Erytheia;
+
+public partial class App : Application
+{
+    static App() => NativeLibraryResolver.Register();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetDllDirectory(string lpPathName);
+
+    private IServiceProvider? _services;
+
+    public IServiceProvider? Services => _services;
+
+    internal static void ConfigureServices(IServiceCollection services)
+    {
+        // Native wrappers. 出荷構成（GStreamer + Gpu）の実装を直接解決する。
+        services.AddSingleton<GstNativeApi>();
+        services.AddSingleton<IGstNativeApi>(sp => sp.GetRequiredService<GstNativeApi>());
+        services.AddSingleton<GstBackendState>();
+        services.AddSingleton<GstPlaybackApi>();
+        services.AddSingleton<GstRenderUpdateSource>();
+        services.AddSingleton<GstSpoutOutput>();
+        services.AddSingleton<IPlaybackApi>(sp => sp.GetRequiredService<GstPlaybackApi>());
+        services.AddSingleton<IRenderUpdateSource>(sp => sp.GetRequiredService<GstRenderUpdateSource>());
+
+        // Core services
+        // v0.6.6 F-7: クリップの長さは shim の軽い関数（容器の長さ）で読む。ffprobe は使わない。
+        services.AddSingleton<IMediaDurationReader, GstMediaDurationReader>();
+        services.AddSingleton<ILtcMonitor, LtcAudioMonitor>();
+        services.AddSingleton<PlaylistState>();
+        services.AddSingleton<SeekLatencyCompensator>();
+        services.AddSingleton<ISyncDecisionEngine>(sp => new SyncDecisionEngine(
+            new SyncDecisionOptions(),
+            sp.GetRequiredService<SeekLatencyCompensator>()));
+        services.AddSingleton<ITimecodeSyncSeekState, TimecodeSyncSeekState>();
+        services.AddSingleton(sp => new TimecodeSyncService(
+            sp.GetRequiredService<ISyncDecisionEngine>(),
+            sp.GetRequiredService<ITimecodeSyncSeekState>(),
+            null,
+            sp.GetRequiredService<SeekLatencyCompensator>()));
+        services.AddSingleton<PlaylistDurationBackfillService>();
+        services.AddSingleton<PlaylistLoadCoordinator>();
+        services.AddSingleton<GapPlaybackCommandExecutor>();
+        services.AddSingleton<ITimecodeFpsSelector, TimecodeFpsSelector>();
+        services.AddSingleton<TimecodeFrameDiagnostics>();
+        services.AddSingleton<LtcFrameProcessor>();
+        services.AddSingleton<GapFreezeHandler>();
+        services.AddSingleton<ProjectLoadApplicator>();
+
+        // State & utilities
+        services.AddSingleton(_ => AppSettingsManager.Instance);
+        services.AddSingleton(_ => new PlaybackPerformanceStats(TimeSpan.FromSeconds(2)));
+        services.AddSingleton<ISpoutOutput>(sp => sp.GetRequiredService<GstSpoutOutput>());
+        services.AddSingleton<OutputBackendState>();
+
+        // MainWindow (resolved via DI)
+        services.AddSingleton<MainWindow>();
+    }
+
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        var services = new ServiceCollection();
+        ConfigureServices(services);
+        _services = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = false
+        });
+
+        // DLL Hijacking 防止: DLL検索パスをアプリケーションディレクトリに制限
+        SetDllDirectory(AppContext.BaseDirectory);
+
+        string logDir  = Path.Combine(AppContext.BaseDirectory, "logs");
+        Directory.CreateDirectory(logDir);
+        // D15/O1: shim の LOG 出力先（ERYTHEIA_LOG_FILE）を同じ logs ディレクトリへ固定する（GStreamer 初期化前）。
+        GstNativeLibraryResolver.ConfigureLogFile(logDir);
+        // v0.5.4 K3 (3): shim のポンプの予算（着地の時間切れ − 0.5 秒）を DLL ロード前に渡す。
+        GstNativeLibraryResolver.ConfigurePumpBudget();
+        string logPath = LogFileNames.SerilogPath(logDir);
+
+#if DEBUG
+        var minLevel = Serilog.Events.LogEventLevel.Debug;
+#else
+        var minLevel = Serilog.Events.LogEventLevel.Information;
+#endif
+
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Is(minLevel)
+            .WriteTo.File(logPath,
+                rollingInterval: RollingInterval.Day,
+                flushToDiskInterval: TimeSpan.FromSeconds(1))
+            .CreateLogger();
+        // v0.6.7: Serilog を作る前に読んだ旧の名前の環境変数（shim のログの出力先など）の Warning を出す。
+        EnvironmentVariables.FlushPendingWarnings();
+
+        SyncAccuracyTrace.Current = SyncAccuracyTrace.Create(
+            Environment.GetEnvironmentVariable(SyncAccuracyTrace.EnvironmentVariable));
+
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            Log.Fatal(args.ExceptionObject as Exception, "UnhandledException");
+            Log.CloseAndFlush();
+        };
+        DispatcherUnhandledException += (_, args) =>
+        {
+            Log.Fatal(args.Exception, "DispatcherUnhandledException");
+            MessageBox.Show(
+                "予期しないエラーが発生しました。アプリケーションを終了します。",
+                "エラー",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            args.Handled = true;
+            Log.CloseAndFlush();
+            Shutdown();
+        };
+
+        Log.Information(
+            "=== ERYTHEIA v{Version} 起動 === ログ: {Path}",
+            ApplicationVersion.Current,
+            logPath);
+        // v0.6.6 F-7: 現場のログで ffprobe の有無が分かるように 1 行（長さには使わない）。
+        Log.Information(FfprobePresence.Describe(
+            FfprobePresence.FindOnPath(Environment.GetEnvironmentVariable("PATH"))));
+
+        var settingsManager = _services.GetRequiredService<AppSettingsManager>();
+        settingsManager.LoadAsync().GetAwaiter().GetResult();
+
+        var outputBackendState = _services.GetRequiredService<OutputBackendState>();
+        outputBackendState.Initialize(settingsManager.Current.OutputBackend);
+
+        var mainWindow = _services.GetRequiredService<MainWindow>();
+        mainWindow.Show();
+
+        base.OnStartup(e);
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        SyncAccuracyTrace.Current.Dispose();
+        SyncAccuracyTrace.Current = SyncAccuracyTrace.Disabled;
+        // MainWindow owns ordered shutdown of its RenderSession and the shared LTC/Spout services.
+        // Keep the provider rooted until process exit; disposing it here would bypass that order
+        // and retry native resources whose release may have failed in Window_Closing.
+        Log.Information("=== ERYTHEIA 終了 ===");
+        Log.CloseAndFlush();
+        base.OnExit(e);
+    }
+}

@@ -21,11 +21,16 @@
   #error VcMinBld must be supplied by package-release.ps1
 #endif
 
-#define MyAppName "TimecodeSyncPlayer"
+#define MyAppName "ERYTHEIA"
 #define MyAppPublisher "Studio Sandix"
-#define MyAppExeName "TimecodeSyncPlayer.exe"
+#define MyAppExeName "ERYTHEIA.exe"
+; The name up to v0.6.6. [InstallDelete] removes its exe and shortcut on an update.
+#define LegacyAppName "TimecodeSyncPlayer"
 
 [Setup]
+; v0.6.7: AppId stays the old one so that v0.6.7 installs as an update of v0.6.6. An update keeps
+; the previous folder (Programs\TimecodeSyncPlayer) through UsePreviousAppDir (default yes).
+; A new install goes to Programs\ERYTHEIA (DefaultDirName).
 AppId=StudioSandix.TimecodeSyncPlayer
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -39,7 +44,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputBaseFilename=TimecodeSyncPlayer-v{#MyAppVersion}-setup
+OutputBaseFilename={#MyAppName}-v{#MyAppVersion}-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -59,6 +64,17 @@ Source: "{#ProjectRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectRoot}\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectRoot}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#VcRedistFile}"; DestDir: "{tmp}"; DestName: "vc_redist.x64.exe"; Flags: deleteafterinstall
+
+[InstallDelete]
+; The exe and assembly of v0.6.6 and older (left in the same folder on an update, there would be
+; two exes), and the shortcut with the old name.
+Type: files; Name: "{app}\{#LegacyAppName}.exe"
+Type: files; Name: "{app}\{#LegacyAppName}.dll"
+Type: files; Name: "{app}\{#LegacyAppName}.deps.json"
+Type: files; Name: "{app}\{#LegacyAppName}.runtimeconfig.json"
+Type: files; Name: "{userprograms}\{#LegacyAppName}.lnk"
+; The shim of v0.6.6 and older (v0.6.7 renamed it to erytheia_gstreamer.dll).
+Type: files; Name: "{app}\tcs_gstreamer.dll"
 
 [Icons]
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

@@ -8,7 +8,7 @@
 
 ## 事前準備
 
-- [ ] 現在のソースからshimのDebug版をビルドし、`native\tcs_gstreamer.dll`へ配置する（SDK・環境変数・手順は[SETUP.md](SETUP.md)）。Spoutも確かめるときは`SpoutDX.dll`も置く
+- [ ] 現在のソースからshimのDebug版をビルドし、`native\erytheia_gstreamer.dll`へ配置する（SDK・環境変数・手順は[SETUP.md](SETUP.md)）。Spoutも確かめるときは`SpoutDX.dll`も置く
 - [ ] 本体とテストをDebug構成でビルドし、実行先のshimのSHA-256がビルドしたDLLと一致することを確かめる。`TCS0001`で停止した場合は再ビルド・配置を確認する
 - [ ] コミット、構成、DLLのSHA-256、機材・依存ツールの版、実行した試験と未実施範囲を結果と一緒に残す（[記録例](reports/2026-10-14-development-baseline.md)）。配布候補を確かめる回は、後述の手順に従い対象のRelease版exeと同梱DLLを使う
 - [ ] ProResを確かめるときは、ソースからのビルドでは`pwsh -File scripts\get-prores-plugin.ps1`でgst-prores-d3d11を`native\gst-prores`に置く（インストーラーとzipには同梱）
@@ -18,13 +18,13 @@
 - [ ] テスト用プレイリストを用意する。短い動画2本（例: 各20〜30秒）で、Track2のTimelineOffsetはTrack1の直後か、少しGapを空けた位置にする
 - [ ] アプリを起動し、LTCデバイスを選んでSTARTを押し、LTCタイムコードの表示が進むことを確かめる
 - [ ] ModeはContinue、SyncはONにする
-- [ ] FPSはLTCと同じ値に固定する（24 / 25 / 29.97 DF / 30）。Autoのままだと画面に「Auto は確認用です。本番は固定にしてください」と出る。Autoは確認用なので、合否はこの固定の設定で判定する。Autoで回したときは、結果の表のメモ欄にそう書く
+- [ ] FPSはLTCと同じ値に固定する（24 / 25 / 29.97 DF / 30）。Autoのままだと画面に「AUTO：確認用」と出る（説明はツールチップ）。Autoは確認用なので、合否はこの固定の設定で判定する。Autoで回したときは、結果の表のメモ欄にそう書く
 - [ ] 信号断時は、ケース4までは既定の「ランスルー」のままにする
 
 ログは次の2つで、どちらも同じlogsフォルダに出る。
 
-- アプリ: `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\timecodesyncplayer-YYYYMMDD.log`
-- shim（GStreamer）: `src\TimecodeSyncPlayer\bin\Debug\net8.0-windows\logs\tcs-gst-YYYYMMDD.log`
+- アプリ: `src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-YYYYMMDD.log`
+- shim（GStreamer）: `src\Erytheia\bin\Debug\net8.0-windows\logs\erytheia-gst-YYYYMMDD.log`
 
 ---
 
@@ -77,12 +77,12 @@
 
 NVIDIA（RTX級）のGPUで確かめる。ProResの素材をプレイリストに入れて使う。
 
-- [ ] 「ProRes の GPU デコード」を「自動」にしてProResの素材を開く
+- [ ] 「ProRes GPU」を「自動」にしてProResの素材を開く
 - [ ] 期待する挙動: 画面のメタデータ行のデコーダ名が`V:proresd3d11dec`になる
 - [ ] 期待するログ（shim）
   - `prores-gpu: mode=auto source=... vendor=0x10de -> enabled`
   - `loaded (...)`の行に`decoder=proresd3d11dec`
-- [ ] 「ProRes の GPU デコード」を「無効」に変える。画面に「再起動の後に反映」と出るので、アプリを再起動してから同じ素材を開く
+- [ ] 「ProRes GPU」を「無効」に変える。画面に「再起動の後に反映」と出るので、アプリを再起動してから同じ素材を開く
 - [ ] 期待する挙動: デコーダ名が`V:avdec_prores`になる
 - [ ] 期待するログ
   - アプリ: `ProRes: CPU でデコード（proResGpu=off、理由は tcs-gst のログ）`
@@ -112,9 +112,9 @@ runnerの`-PlayerBackend`は既定の`Gstreamer`のままでよい（v0.4から�
 ### 事前準備（GPU）
 
 - [ ] `settings.json`は既定の`"outputBackend": 1`のままでよい（v0.3の`"backend"`キーは無視され、警告ログが1行出る）
-- [ ] `native\tcs_gstreamer.dll`とGStreamer 1.28.2ランタイムを配置する（[SETUP.md](SETUP.md)）
+- [ ] `native\erytheia_gstreamer.dll`とGStreamer 1.28.2ランタイムを配置する（[SETUP.md](SETUP.md)）
 - [ ] Spoutを確かめるときは`native\SpoutDX.dll`と公式のWinSpoutDXreceiverを用意する
-- [ ] consoleセッション（`query session`で`>console`）で、ほかにTimecodeSyncPlayer／WinSpoutDXreceiver／
+- [ ] consoleセッション（`query session`で`>console`）で、ほかにERYTHEIA（v0.6.6までのTimecodeSyncPlayerも）／WinSpoutDXreceiver／
       GpuOutputProbe／gst-launch-1.0／tcs-shim-testが動いていないこと
 - [ ] 4Kの確認では、4Kの表示先（例: `\\.\DISPLAY2`）をrunnerの`-DisplayDeviceName`に指定する
 
@@ -184,8 +184,8 @@ runnerの`-PlayerBackend`は既定の`Gstreamer`のままでよい（v0.4から�
 ## 事後確認
 
 - [ ] アプリのログに`ERR` / `FTL` / `Exception` / `success=False`が0件であること
-- [ ] 診断レポートを作る: `pwsh -File scripts\run-timecodesyncplayer-diagnostics.ps1`
-      →`artifacts\diagnostics\timecodesyncplayer-diagnostics-*.md`を確かめる
+- [ ] 診断レポートを作る: `pwsh -File scripts\run-erytheia-diagnostics.ps1`
+      →`artifacts\diagnostics\erytheia-diagnostics-*.md`を確かめる
 - [ ] `Playback perf warning`が出ていたら、診断レポートの文脈の分類（Track switch aftermath / Gap exit aftermath / Normal playback）を見て、Normal playbackの警告が無いことを確かめる
 
 ## 結果記録
@@ -250,8 +250,10 @@ $env:PATH -split ';' | Where-Object { $_ -and (
 # 2) GStreamer の環境変数が無い（空であること）。あるとアプリは同梱の GStreamer より先にそれを使う
 [Environment]::GetEnvironmentVariable('GSTREAMER_1_0_ROOT_MSVC_X86_64')
 # 3) 試験の道具の環境変数が無い（空であること）
-$env:TIMECODE_SYNC_PLAYER_OUTPUT_TRACE; $env:TIMECODE_SYNC_PLAYER_SETTINGS_PATH; $env:TCS_FFMPEG
-# 4) 設定とインストールが無い（どちらも False）
+$env:ERYTHEIA_OUTPUT_TRACE; $env:ERYTHEIA_SETTINGS_PATH; $env:ERYTHEIA_FFMPEG
+# 4) 設定とインストールが無い（4 つとも False）。v0.6.7 から名前は ERYTHEIA。旧の名前の場所も見る
+Test-Path (Join-Path $env:LOCALAPPDATA 'ERYTHEIA')
+Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA')
 Test-Path (Join-Path $env:LOCALAPPDATA 'TimecodeSyncPlayer')
 Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 ```
@@ -262,19 +264,19 @@ Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer')
 ### インストール
 
 - [ ] 候補の`setup.exe`のSHA-256が、親から渡された値と一致することを確かめる（`Get-FileHash`）
-- [ ] そのユーザーで`setup.exe`を実行して入れる（ユーザー単位のインストールで、入る先は`%LOCALAPPDATA%\Programs\TimecodeSyncPlayer`。UACは出ない）
-- [ ] インストール先に`gstreamer\bin`（同梱のGStreamer）と`tcs_gstreamer.dll`があることを確かめる
+- [ ] そのユーザーで`setup.exe`を実行して入れる（ユーザー単位のインストールで、入る先は`%LOCALAPPDATA%\Programs\ERYTHEIA`。UACは出ない）
+- [ ] インストール先に`gstreamer\bin`（同梱のGStreamer）と`erytheia_gstreamer.dll`があることを確かめる
 
 ### 試験のソースとランナーの準備
 
 - [ ] 候補と同じSHAの試験のソースを、そのユーザーのフォルダに展開する（親が渡したtarなど）
-- [ ] インストール先の`tcs_gstreamer.dll`を、試験のソースの`native\`に写す。ffprobeを外した長さの試験は、試験のプロセスでも長さを読む関数を呼ぶため、試験のbinにshimが要る（棚卸しの#43）
+- [ ] インストール先の`erytheia_gstreamer.dll`を、試験のソースの`native\`に写す。ffprobeを外した長さの試験は、試験のプロセスでも長さを読む関数を呼ぶため、試験のbinにshimが要る（棚卸しの#43）
 - [ ] アプリには同梱のGStreamerだけで起動させる（試験が足した変数は渡さない）。試験のプロセスにGStreamer（インストール先の`gstreamer\bin`をPATHの先頭、`GSTREAMER_1_0_ROOT_MSVC_X86_64`）を足しても、exeの隣に同梱があれば、試験はその変数とPATHのGStreamerの`bin`をアプリに渡さない（試験基盤の9）。試験の出力の`app-env:`の行が`GSTREAMER_1_0_ROOT_MSVC_X86_64=<not passed>`、`app-gstreamer:`の行が`origin=bundled`であることを確かめる
-- [ ] ランナーが素材とLTCのwavを作るffmpegは、`TCS_FFMPEG`（ffmpeg.exeのフルパス。同じフォルダに`ffprobe.exe`があるもの）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
+- [ ] ランナーが素材とLTCのwavを作るffmpegは、`ERYTHEIA_FFMPEG`（ffmpeg.exeのフルパス。同じフォルダに`ffprobe.exe`があるもの）でランナーのプロセスにだけ渡す。ユーザーのPATHには足さない
 
 ```powershell
-$env:TCS_FFMPEG = '<ffmpeg.exe のフルパス>'
-$app = Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer\TimecodeSyncPlayer.exe'
+$env:ERYTHEIA_FFMPEG = '<ffmpeg.exe のフルパス>'
+$app = Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA\ERYTHEIA.exe'
 ```
 
 ### 回す（2本、直列に1本ずつ）
@@ -295,15 +297,15 @@ pwsh -File scripts\run-ltc-scenarios.ps1 -AppExe $app -ReportDir <報告のフ�
 
 `-MediaDir`を付けると、ランナーは`scripts\make-ltc-scenario-project.ps1`でプロジェクトを作る。
 このスクリプトはffprobeでクリップの長さを読む。
-ffprobeは`TCS_FFPROBE`、`TCS_FFMPEG`の隣の`ffprobe.exe`、`-FfmpegDir`（ランナーは`Program Files`の`ffmpeg\bin`を渡す）の`ffprobe.exe`、PATHの順で探し、フルパスで呼ぶ。PATHには足さない。
+ffprobeは`ERYTHEIA_FFPROBE`、`ERYTHEIA_FFMPEG`の隣の`ffprobe.exe`、`-FfmpegDir`（ランナーは`Program Files`の`ffmpeg\bin`を渡す）の`ffprobe.exe`、PATHの順で探し、フルパスで呼ぶ。PATHには足さない。
 ランナーはこのスクリプトを子のプロセス（`pwsh -NoProfile -File`）で呼ぶので、スクリプトの中の変更はランナーに残らない（棚卸しの#43、試験基盤の束で直した）。
 使ったffprobeは`make-ltc-scenario-project.log`の先頭の`ffprobe: <パス> (<出所>)`の行に出る。
 漏れたかどうかは、アプリの起動のログで決める。
 
-- [ ] 1本目の回の、インストール先の`logs\timecodesyncplayer-YYYYMMDD.log`で、起動の行を数える
+- [ ] 1本目の回の、インストール先の`logs\erytheia-YYYYMMDD.log`で、起動の行を数える
 
 ```powershell
-$logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer\logs') -Filter 'timecodesyncplayer-*.log'
+$logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\ERYTHEIA\logs') -Filter 'erytheia-2*.log'
 (Select-String -Path $logs.FullName -SimpleMatch 'ffprobe: not found on PATH').Count   # 起動の回数と同じ
 (Select-String -Path $logs.FullName -SimpleMatch 'ffprobe: found on PATH').Count       # 0
 ```
@@ -311,7 +313,7 @@ $logs = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\TimecodeSyncPlayer\
 - 起動の行は`ffprobe: not found on PATH (not used; clip durations come from the media container)`。起動の回数は`run-result.json`の`launches`と比べる
 - 0時をまたいだ回は、前日のログのファイルも数える
 - [ ] `ffprobe: found on PATH`が1行でもあれば、ffmpegがアプリのプロセスに漏れている。この回は無効として、漏れた事実（行の数、`make-ltc-scenario-project.log`の内容、使った`-FfmpegDir`の場所）を記録して止め、親へ報告する。ランナーの写しを手で直して回し直すことはしない
-- [ ] `make-ltc-scenario-project.ps1`が`ffprobe not found (searched: ...)`で止まったときも、同じく記録して止め、親へ報告する（探した場所が文言に出る。`TCS_FFMPEG`の隣に`ffprobe.exe`があるかを先に確かめる）
+- [ ] `make-ltc-scenario-project.ps1`が`ffprobe not found (searched: ...)`で止まったときも、同じく記録して止め、親へ報告する（探した場所が文言に出る。`ERYTHEIA_FFMPEG`の隣に`ffprobe.exe`があるかを先に確かめる）
 
 ### 合否
 

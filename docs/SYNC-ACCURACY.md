@@ -55,7 +55,7 @@ VB-CABLEで25fpsのLTCを送り、アプリが受信した時刻と、映像をW
 Windowsの操作可能なデスクトップ、.NET 8、PowerShell 7.2以降、Python 3、ffmpeg/ffprobe、`tcs_gstreamer.dll` と GStreamer ランタイム（v0.4 で mpv DLL から置き換え）、VB-CABLEが必要。このPCでは利用可能。試験中は対象アプリを操作せず、PCをロック・スリープさせない。既存のプロジェクトや動画を準備し直す必要はない。
 
 ```powershell
-./scripts/run-timecodesyncplayer-accuracy.ps1
+./scripts/run-erytheia-accuracy.ps1
 ```
 
 通常のテストでは専用の実機試験をスキップする。専用実行ではスキップ・強制終了・記録欠落を成功と扱わない。生成動画、測定ログ、CSV、集計、アプリログ追記分、バイナリハッシュを結果フォルダへ保存する。
@@ -127,7 +127,7 @@ Freezeの最終保持画像は24fps=239、29.97fps=299、60fps=599。末尾の�
 ### 修正後の回帰検証
 
 - 内部テスト1,351件、解析器テスト24件が成功。描画がUI待ちで止まる経路、画像コピーの失敗・古い非同期処理、停止中の最終通知後の再試行、シーク中の誤った完了判定を検査する。
-- 最終版の既存E2Eは50件成功、失敗・スキップ0件、約3分7秒。記録は`tests/TimecodeSyncPlayer.Tests/TestResults/frame-follow-final-e2e.trx`。
+- 最終版の既存E2Eは50件成功、失敗・スキップ0件、約3分7秒。記録は`tests/Erytheia.Tests/TestResults/frame-follow-final-e2e.trx`。
 - 保存済みの`20260518_test.tsp`と`20260518_test_2.tsp`を実素材で検証。境界は13地点と11地点の計24地点、LTC停止中の判定切替、Black/Freeze、再生・同期への復帰を確認し、両方成功した。所要30.38 / 32.26秒、アプリの正常終了コード0、ERR/FTL 0件。原プロジェクトの試験前後ハッシュも一致した。記録は`TestResults/real-project/20260907-182805-c7eb38f1`。
 - 最終版で乱操作を3パターン×250回、計750回試行した。実行可能な操作711回、ボタン無効などで実行不可39回を区別して記録。3パターンともLTC・手動再生・同期への復帰と入力中の正常終了を確認し、クラッシュ・ERR/FTLは0件。所要67.46 / 70.85 / 73.75秒。記録は`TestResults/monkey/20260907-183547-566b3735`。無期限の運用や全素材での無故障を保証する試験ではない。
 
@@ -240,7 +240,7 @@ RequestSync(seconds);   // ← 経過時間を足さず、生の LTC 値を渡�
 ### 改善余地 → **T2 で実施済み（2026-09-16）**
 
 T2（`docs/prompts/2026-09-16-T2-ltc-sample-clock.md`）で、LTC フレームの終端時刻を音声サンプル位置と最小値フィルタのアンカーから出し、
-同期の目標に経過時間（age）を足すようにした（既定 on、`TCS_LTC_SAMPLE_CLOCK=off` で従来動作）。バッファ待ちの 0〜50ms の揺れは消え、
+同期の目標に経過時間（age）を足すようにした（既定 on、`ERYTHEIA_LTC_SAMPLE_CLOCK=off` で従来動作）。バッファ待ちの 0〜50ms の揺れは消え、
 残差の標準偏差は 15.5 → 2ms。**「80 ビットの完成待ち 40ms」の定数は足していない**（`SyncOffset` の領分。2026-09-16 利用者の決定: 足さない。測定の基準は sample 解析を正式とする）。
 以下は実施前の記述。
 
