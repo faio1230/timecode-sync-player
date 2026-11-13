@@ -24,7 +24,7 @@
 
 ## 3. 実装内容と依存バージョン
 
-- `native/gst-shim/erytheia_gstreamer.dll`（自作 MIT、C ABI）: GStreamer デコード→GPU 色変換→
+- `native/gst-shim/tcs_gstreamer.dll`（自作 MIT、C ABI）: GStreamer デコード→GPU 色変換→
   D3D11 テクスチャを「世代付きリース」で合成層へ供給するフレームソース。
   `video/x-hap` は専用分岐の実装まで拒否、未知コーデックは既定拒否。
 - C# 接続層（`src/TimecodeSyncPlayer/Gst/` 9 ファイル + SpoutFramePublisher 分岐）:
@@ -105,9 +105,9 @@ dotnet test tests/TimecodeSyncPlayer.Tests/TimecodeSyncPlayer.Tests.csproj --fil
 | --- | --- | --- |
 | `src/.../App.xaml.cs` | DI をバックエンド別ファクトリへ | session-refactor が App/DI を触る場合は競合注意 |
 | `src/.../AppSettings.cs` | `PlayerBackend` enum + `backend` キー + 検証 | 追加のみ。既存キーは不変 |
-| `src/.../MpvLibraryNameResolver.cs` | 同一アセンブリ resolver に erytheia_gstreamer.dll を委譲 | resolver は 1 本のため二重登録不可。他変更と要マージ |
+| `src/.../MpvLibraryNameResolver.cs` | 同一アセンブリ resolver に tcs_gstreamer.dll を委譲 | resolver は 1 本のため二重登録不可。他変更と要マージ |
 | `src/.../SpoutFramePublisher.cs` | `IGpuSpoutPublisher` 実装時は GPU 送信を優先 | 出力契約の refactor と衝突しやすい箇所 |
-| `src/.../TimecodeSyncPlayer.csproj` | `erytheia_gstreamer.dll` の出力コピー条件 | 追加のみ |
+| `src/.../TimecodeSyncPlayer.csproj` | `tcs_gstreamer.dll` の出力コピー条件 | 追加のみ |
 | `tests/.../SpoutFramePublisherTests.cs` | GPU 分岐テスト追加 | 追加のみ |
 | `THIRD-PARTY-NOTICES.md` | GStreamer 節 + Spout 注記 | 追記。他の追記と要マージ |
 | `.gitignore` | vendor/、build 出力 | 追加のみ |
