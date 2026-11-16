@@ -137,12 +137,11 @@ public class GpuPlacementPolicyTests
     {
         GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default).Should().Be(
             "⚠ 内蔵 GPU で動いています。Windows の「設定 → ディスプレイ → グラフィック」で ERYTHEIA.exe を「高パフォーマンス」にして、再起動してください。");
-        GpuPlacementPolicy.WarningText(GpuDeviceOrigin.SavedDisplay).Should().Be(
-            "⚠ 内蔵 GPU で動いています。全画面の出力先のディスプレイが内蔵 GPU につながっています。高性能の GPU 側の出力先に変えて、再起動してください。");
+        // saved-display も、今は default と同じ文（検証機で指定の後に RTX で動いた 1 回の観測。設計書 12.7）。
+        GpuPlacementPolicy.WarningText(GpuDeviceOrigin.SavedDisplay)
+            .Should().Be(GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default));
         GpuPlacementPolicy.WarningText(GpuDeviceOrigin.RecoveryDefault).Should().Be(
             "⚠ GPU の復旧で内蔵 GPU に移りました。区切りのよいところで再起動してください。");
-        GpuPlacementPolicy.WarningText(GpuDeviceOrigin.SavedDisplay).Should().NotContain("高パフォーマンス",
-            "保存された出力先で選ばれたときは Windows の指定が効かない");
     }
 
     /// <summary>全角を 2、半角を 1 と数えた幅（画面の折り返しの目安）。</summary>
@@ -165,7 +164,7 @@ public class GpuPlacementPolicyTests
         tip.Should().EndWith("全画面の出力先が内蔵 GPU の側のディスプレイのときは、出力先も見直してください。");
 
         GpuPlacementPolicy.WarningToolTip("A", "B", GpuDeviceOrigin.SavedDisplay)
-            .Should().EndWith("Windows の「高パフォーマンス」の指定だけでは直りません。");
+            .Should().EndWith("それでも消えないときは、ディスプレイを高性能の GPU 側の端子につなぐか、全画面の出力先を見直してください。");
         GpuPlacementPolicy.WarningToolTip("A", "B", GpuDeviceOrigin.RecoveryDefault)
             .Should().Contain("4K60 の素材はカクつくことがあります。");
     }

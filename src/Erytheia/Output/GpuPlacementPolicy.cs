@@ -129,22 +129,22 @@ internal static class GpuPlacementPolicy
         order?.Adapters.FirstOrDefault(adapter => adapter.Luid == luid);
 
     /// <summary>
-    /// 画面の警告の枠の文面（設計書 5.2。仮）。選ばれ方（origin）で分け、その場合に効く直し方を 1 つだけ出す
-    /// （saved-display では GpuDevice が保存された出力先のアダプターで作るので、Windows の指定は効かない）。
-    /// GPU の名前と 4K60 の話はツールチップ（<see cref="WarningToolTip"/>）へ。最終の文面は検証機で出力先を入れ替える回で決める。
-    /// 文面はこの 1 か所（と WarningToolTip）にまとめる。
+    /// 画面の警告の枠の文面（設計書 5.2・12.7。仮）。選ばれ方（origin）を受け取り、その場合に効く直し方を 1 つだけ出す。
+    /// 今は default と saved-display が同じ文。saved-display でも、ハイブリッドの機体では指定で出力を並べるアダプターが
+    /// 変わりうる（11-16 の 1 回の観測）。最終は検証機の回で分け直すので、場合ごとの枝は残す。
+    /// GPU の名前と 4K60 の話はツールチップ（<see cref="WarningToolTip"/>）へ。文面はこの 1 か所（と WarningToolTip）にまとめる。
     /// </summary>
     public static string WarningText(GpuDeviceOrigin origin) => origin switch
     {
-        GpuDeviceOrigin.SavedDisplay =>
-            "⚠ 内蔵 GPU で動いています。全画面の出力先のディスプレイが内蔵 GPU につながっています。" +
-            "高性能の GPU 側の出力先に変えて、再起動してください。",
+        GpuDeviceOrigin.SavedDisplay => HighPerformancePreferenceText,
         GpuDeviceOrigin.RecoveryDefault =>
             "⚠ GPU の復旧で内蔵 GPU に移りました。区切りのよいところで再起動してください。",
-        _ =>
-            "⚠ 内蔵 GPU で動いています。Windows の「設定 → ディスプレイ → グラフィック」で ERYTHEIA.exe を" +
-            "「高パフォーマンス」にして、再起動してください。",
+        _ => HighPerformancePreferenceText,
     };
+
+    private const string HighPerformancePreferenceText =
+        "⚠ 内蔵 GPU で動いています。Windows の「設定 → ディスプレイ → グラフィック」で ERYTHEIA.exe を" +
+        "「高パフォーマンス」にして、再起動してください。";
 
     /// <summary>警告の枠の文に付けるツールチップ。2 つの GPU の名前、4K60 の話、もう一方の直し方。</summary>
     public static string WarningToolTip(string usedName, string highPerformanceName, GpuDeviceOrigin origin) =>
@@ -152,7 +152,7 @@ internal static class GpuPlacementPolicy
         origin switch
         {
             GpuDeviceOrigin.SavedDisplay =>
-                "保存された全画面の出力先のアダプターで動くので、Windows の「高パフォーマンス」の指定だけでは直りません。",
+                "それでも消えないときは、ディスプレイを高性能の GPU 側の端子につなぐか、全画面の出力先を見直してください。",
             GpuDeviceOrigin.RecoveryDefault =>
                 "再起動すると、全画面の出力先か Windows の指定に従って GPU を選び直します。",
             _ =>
