@@ -795,28 +795,51 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
     private readonly bool _gpuPlacementForced =
         GpuPlacementPolicy.IsForced(EnvironmentVariables.Get(GpuPlacementPolicy.ForceWarningEnvironmentVariable));
 
+    // 判定は起動も復旧も壊さない（設計書 4.4）。起動はコンストラクターの中、復旧は BeginInvoke のラムダの中で、
+    // 抜けると起動の失敗か DispatcherUnhandledException の Shutdown になるので、呼び出し口の関数ごと囲む
+    // （起動・Recovered・× の呼び出しはすべてこの 2 つの関数を通る）。例外のときは表示を触らずに先へ進む。
     private void EvaluateGpuPlacement(GpuPlacementTiming timing, bool deviceReady)
     {
-        OutputEngine? engine = _outputEngine;
-        GpuPlacementReport report = GpuPlacementJudge.Run(
-            timing, engine != null, deviceReady, () => engine?.DeviceIdentity,
-            new DxgiGpuAdapterOrderSource(), DxgiGpuAdapterOrderSource.IsRemoteSession, _gpuPlacementForced);
-        foreach (GpuPlacementLogEntry entry in report.Logs)
+        try
         {
-            if (entry.Level == GpuPlacementLogLevel.Warning)
-                Log.Warning("{Line:l}", entry.Text);
-            else
-                Log.Information("{Line:l}", entry.Text);
+            OutputEngine? engine = _outputEngine;
+            GpuPlacementReport report = GpuPlacementJudge.Run(
+                timing, engine != null, deviceReady, () => engine?.DeviceIdentity,
+                new DxgiGpuAdapterOrderSource(), DxgiGpuAdapterOrderSource.IsRemoteSession, _gpuPlacementForced);
+            foreach (GpuPlacementLogEntry entry in report.Logs)
+            {
+                if (entry.Level == GpuPlacementLogLevel.Warning)
+                    Log.Warning("{Line:l}", entry.Text);
+                else
+                    Log.Information("{Line:l}", entry.Text);
+            }
+            _gpuPlacementDisplay.Apply(report);
         }
-        _gpuPlacementDisplay.Apply(report);
+        catch (Exception e)
+        {
+            LogGpuPlacementFailure(e);
+        }
     }
 
     private void ApplyGpuPlacementDisplay()
     {
-        GpuPlacementWarningText.Text = _gpuPlacementDisplay.WarningText ?? "";
-        GpuPlacementWarningPanel.Visibility = _gpuPlacementDisplay.WarningVisible ? Visibility.Visible : Visibility.Collapsed;
-        GpuAdapterNameText.Text = _gpuPlacementDisplay.NameText ?? "";
-        GpuAdapterNameText.Visibility = _gpuPlacementDisplay.NameVisible ? Visibility.Visible : Visibility.Collapsed;
+        try
+        {
+            GpuPlacementWarningText.Text = _gpuPlacementDisplay.WarningText ?? "";
+            GpuPlacementWarningPanel.Visibility = _gpuPlacementDisplay.WarningVisible ? Visibility.Visible : Visibility.Collapsed;
+            GpuAdapterNameText.Text = _gpuPlacementDisplay.NameText ?? "";
+            GpuAdapterNameText.Visibility = _gpuPlacementDisplay.NameVisible ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch (Exception e)
+        {
+            LogGpuPlacementFailure(e);
+        }
+    }
+
+    private static void LogGpuPlacementFailure(Exception e)
+    {
+        try { Log.Warning("GPU placement failed: {Type:l}: {Message:l}", e.GetType().Name, e.Message); }
+        catch { /* ログの失敗でも起動と復旧を止めない */ }
     }
 
     private void BtnDismissGpuPlacementWarning_Click(object sender, RoutedEventArgs e)

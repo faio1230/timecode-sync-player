@@ -305,6 +305,60 @@ public class GpuPlacementPolicyTests
         Lines(report, GpuPlacementLogLevel.Information).Single().Should().EndWith("verdict=NotJudged reason=error");
     }
 
+    /// <summary>許した回数を超えて列挙すると例外を投げる一覧（Evaluate の 2 回の後、行の組み立てで投げる）。</summary>
+    private sealed class ThrowingAfterList(IReadOnlyList<GpuAdapterInfo> inner, int allowed) : IReadOnlyList<GpuAdapterInfo>
+    {
+        private int enumerations;
+        public GpuAdapterInfo this[int index] => inner[index];
+        public int Count => inner.Count;
+        public IEnumerator<GpuAdapterInfo> GetEnumerator() =>
+            ++enumerations > allowed ? throw new InvalidOperationException("late enumeration") : inner.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    [Fact]
+    public void Run_ThrowsWhileBuildingText_IsNotJudgedErrorAndDoesNotThrow()
+    {
+        var adapters = new ThrowingAfterList([AmdAdapter, RtxAdapter], allowed: 2);
+        GpuAdapterOrder order = new(adapters, Rtx, Amd);
+        Func<GpuPlacementReport> act = () => Run(order, Device(Amd));
+
+        GpuPlacementReport report = act.Should().NotThrow().Subject;
+
+        report.Result.Should().Be(new GpuPlacementResult(GpuPlacementVerdict.NotJudged, "error"));
+        report.WarningText.Should().BeNull();
+        report.NameText.Should().BeNull();
+        Lines(report, GpuPlacementLogLevel.Warning).Should().ContainSingle()
+            .Which.Should().Be("GPU placement failed: InvalidOperationException: late enumeration");
+        Lines(report, GpuPlacementLogLevel.Information).Single().Should().EndWith("verdict=NotJudged reason=error");
+    }
+
+    [Fact]
+    public void Run_NullEmptyAndUnlistedNames_DoNotThrow()
+    {
+        var empty = new GpuAdapterInfo(Amd, "", 0x1002, false);
+        foreach (GpuDeviceIdentity device in new[]
+                 {
+                     new GpuDeviceIdentity(Amd, GpuDeviceOrigin.Default, null, null, null),
+                     new GpuDeviceIdentity(Amd, GpuDeviceOrigin.Default, "", null, null),
+                     new GpuDeviceIdentity(999, GpuDeviceOrigin.RecoveryDefault, null, null, null),
+                 })
+        {
+            foreach (GpuAdapterOrder order in new[]
+                     {
+                         Order(Rtx, Amd, empty, RtxAdapter),
+                         Order(Rtx, 888, empty, RtxAdapter),
+                         Order(777, Amd, empty, RtxAdapter),
+                         Order(null, null),
+                     })
+            {
+                GpuPlacementReport report = Run(order, device);
+                report.Result.Reason.Should().NotBe("error");
+                report.Logs.Should().Contain(entry => entry.Text.StartsWith(GpuPlacementPolicy.LogPrefix));
+            }
+        }
+    }
+
     [Fact]
     public void Run_OrderThrows_NameStillShownFromDevice()
     {

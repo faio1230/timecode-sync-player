@@ -24,11 +24,39 @@ internal interface IGpuAdapterOrderSource
 /// <summary>
 /// v0.6.8: 材料を集めて <see cref="GpuPlacementPolicy.Evaluate"/> を呼び、ログの行と表示の文字を作る。
 /// 呼ぶのは起動（WaitForDevice の後）と Recovered の後の UI のスレッドの 1 回だけ（合成の周期には入れない）。
-/// 材料の取得のどこで例外が出ても NotJudged（error）にして、起動と再生は続ける。
+/// 材料の取得から文字の組み立てまで、どこで例外が出ても NotJudged（error）にして、起動と再生は続ける。
+/// 表示の反映とログの書き出しは呼び出し側（MainWindow）なので、そちらでも囲む。
 /// </summary>
 internal static class GpuPlacementJudge
 {
     public static GpuPlacementReport Run(
+        GpuPlacementTiming timing,
+        bool playbackAvailable,
+        bool deviceReady,
+        Func<GpuDeviceIdentity?> readDevice,
+        IGpuAdapterOrderSource orders,
+        Func<bool> isRemoteSession,
+        bool forced)
+    {
+        try
+        {
+            return RunCore(timing, playbackAvailable, deviceReady, readDevice, orders, isRemoteSession, forced);
+        }
+        catch (Exception e)
+        {
+            // 材料の後（行・名前・文面の組み立て）の例外。材料を持たない入力で行を作り直す。
+            var input = new GpuPlacementInput(timing, playbackAvailable, deviceReady, null, null, false, forced);
+            GpuPlacementResult result = GpuPlacementPolicy.Failed();
+            return new(input, result,
+            [
+                new(GpuPlacementLogLevel.Warning, $"GPU placement failed: {e.GetType().Name}: {e.Message}"),
+                new(GpuPlacementLogLevel.Information,
+                    GpuPlacementPolicy.LogPrefix + GpuPlacementPolicy.FormatLogFields(input, result)),
+            ], null, null);
+        }
+    }
+
+    private static GpuPlacementReport RunCore(
         GpuPlacementTiming timing,
         bool playbackAvailable,
         bool deviceReady,
