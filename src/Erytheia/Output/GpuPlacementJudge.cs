@@ -13,7 +13,8 @@ internal sealed record GpuPlacementReport(
     GpuPlacementResult Result,
     IReadOnlyList<GpuPlacementLogEntry> Logs,
     string? WarningText,
-    string? NameText);
+    string? NameText,
+    string? WarningToolTip = null);
 
 /// <summary>アダプターの一覧と 2 つの並び。UI の側で、合成のデバイスとは別の DXGI の Factory を作って取る。</summary>
 internal interface IGpuAdapterOrderSource
@@ -108,18 +109,20 @@ internal static class GpuPlacementJudge
         }
 
         string? warningText = null;
+        string? warningToolTip = null;
         if (result.Verdict == GpuPlacementVerdict.IntegratedInUse && input.Device is { } used)
         {
             string highPerformanceName =
                 GpuPlacementPolicy.AdapterName(input.Order, input.Order?.HighPerformanceLuid) ?? "名前不明";
-            warningText = GpuPlacementPolicy.WarningText(usedName ?? "名前不明", highPerformanceName, used.Origin);
+            warningText = GpuPlacementPolicy.WarningText(used.Origin);
+            warningToolTip = GpuPlacementPolicy.WarningToolTip(usedName ?? "名前不明", highPerformanceName, used.Origin);
             logs.Add(new(GpuPlacementLogLevel.Warning,
                 $"GPU placement warning shown: at={(timing == GpuPlacementTiming.Startup ? "startup" : "recovery")} " +
                 $"used=\"{usedName}\" highPerformance=\"{highPerformanceName}\" origin={GpuPlacementPolicy.OriginText(used.Origin)} reason={result.Reason}"));
         }
 
         return new(input, result, logs, warningText,
-            usedName is null ? null : GpuPlacementPolicy.NameText(usedName));
+            usedName is null ? null : GpuPlacementPolicy.NameText(usedName), warningToolTip);
     }
 }
 
@@ -130,6 +133,7 @@ internal static class GpuPlacementJudge
 internal sealed class GpuPlacementDisplay
 {
     public string? WarningText { get; private set; }
+    public string? WarningToolTip { get; private set; }
     public string? NameText { get; private set; }
     public bool Dismissed { get; private set; }
 
@@ -139,6 +143,7 @@ internal sealed class GpuPlacementDisplay
     public void Apply(GpuPlacementReport report)
     {
         WarningText = report.WarningText;
+        WarningToolTip = report.WarningToolTip;
         NameText = report.NameText;
         Dismissed = false;
     }

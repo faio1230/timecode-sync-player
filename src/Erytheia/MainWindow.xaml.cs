@@ -826,9 +826,13 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         try
         {
             GpuPlacementWarningText.Text = _gpuPlacementDisplay.WarningText ?? "";
+            GpuPlacementWarningText.ToolTip = _gpuPlacementDisplay.WarningToolTip;
             GpuPlacementWarningPanel.Visibility = _gpuPlacementDisplay.WarningVisible ? Visibility.Visible : Visibility.Collapsed;
             GpuAdapterNameText.Text = _gpuPlacementDisplay.NameText ?? "";
             GpuAdapterNameText.Visibility = _gpuPlacementDisplay.NameVisible ? Visibility.Visible : Visibility.Collapsed;
+            // 警告の枠が出入りしても右の欄の大きさは変わらない（SidebarContent の MinHeight＝欄の高さ）ので、
+            // SizeChanged が来ず一覧の上限（MaxHeight）が古いまま残る。並べ直しの後に計り直す（v0.6.7 #45）。
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, FitPlaylistToSidebar);
         }
         catch (Exception e)
         {

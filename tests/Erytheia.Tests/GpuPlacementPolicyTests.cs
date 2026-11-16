@@ -133,23 +133,54 @@ public class GpuPlacementPolicyTests
     // ── 文面と名前 ───────────────────────────────────────────────
 
     [Fact]
-    public void WarningText_InsertsUsedAndHighPerformanceNames()
+    public void WarningText_GivesOneFixMatchingTheOrigin()
     {
-        string text = GpuPlacementPolicy.WarningText("AMD Radeon(TM) Graphics", "NVIDIA GeForce RTX 4070 Laptop GPU", GpuDeviceOrigin.Default);
+        GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default).Should().Be(
+            "⚠ 内蔵 GPU で動いています。Windows の「設定 → ディスプレイ → グラフィック」で ERYTHEIA.exe を「高パフォーマンス」にして、再起動してください。");
+        GpuPlacementPolicy.WarningText(GpuDeviceOrigin.SavedDisplay).Should().Be(
+            "⚠ 内蔵 GPU で動いています。全画面の出力先のディスプレイが内蔵 GPU につながっています。高性能の GPU 側の出力先に変えて、再起動してください。");
+        GpuPlacementPolicy.WarningText(GpuDeviceOrigin.RecoveryDefault).Should().Be(
+            "⚠ GPU の復旧で内蔵 GPU に移りました。区切りのよいところで再起動してください。");
+        GpuPlacementPolicy.WarningText(GpuDeviceOrigin.SavedDisplay).Should().NotContain("高パフォーマンス",
+            "保存された出力先で選ばれたときは Windows の指定が効かない");
+    }
 
-        text.Should().StartWith("⚠ 内蔵 GPU（AMD Radeon(TM) Graphics）で動いています。高性能の GPU（NVIDIA GeForce RTX 4070 Laptop GPU）があります。");
-        text.Should().Contain("ERYTHEIA.exe を「高パフォーマンス」にして、アプリを再起動してください。");
-        text.Should().Contain("出力先も見直してください。");
+    /// <summary>全角を 2、半角を 1 と数えた幅（画面の折り返しの目安）。</summary>
+    private static int DisplayWidth(string text) => text.Sum(c => c <= 0x7F ? 1 : c == '⚠' ? 1 : 2);
+
+    [Fact]
+    public void WarningText_NoneIsLongerThanTheDefaultMeasuredInE2E()
+    {
+        // 開発機の E2E（選ばれ方は default）で枠の高さと一覧の高さを測った。ほかの文面がそれより長いと、測った数を超える。
+        int measured = DisplayWidth(GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default));
+        foreach (GpuDeviceOrigin origin in Enum.GetValues<GpuDeviceOrigin>())
+            DisplayWidth(GpuPlacementPolicy.WarningText(origin)).Should().BeLessThanOrEqualTo(measured, origin.ToString());
     }
 
     [Fact]
-    public void WarningText_IsSameForEveryOriginForNow()
+    public void WarningToolTip_HasNamesStutterNoteAndTheOtherFix()
     {
+        string tip = GpuPlacementPolicy.WarningToolTip("AMD Radeon(TM) Graphics", "NVIDIA GeForce RTX 4070 Laptop GPU", GpuDeviceOrigin.Default);
+        tip.Should().StartWith("いま使っている GPU: AMD Radeon(TM) Graphics\n高性能の GPU: NVIDIA GeForce RTX 4070 Laptop GPU\n4K60 の素材はカクつくことがあります。\n");
+        tip.Should().EndWith("全画面の出力先が内蔵 GPU の側のディスプレイのときは、出力先も見直してください。");
+
+        GpuPlacementPolicy.WarningToolTip("A", "B", GpuDeviceOrigin.SavedDisplay)
+            .Should().EndWith("Windows の「高パフォーマンス」の指定だけでは直りません。");
+        GpuPlacementPolicy.WarningToolTip("A", "B", GpuDeviceOrigin.RecoveryDefault)
+            .Should().Contain("4K60 の素材はカクつくことがあります。");
+    }
+
+    [Fact]
+    public void Run_UsesTheDeviceOriginForTheText_AndForceDoesNotChooseTheOrigin()
+    {
+        GpuAdapterOrder order = Order(Rtx, Amd, AmdAdapter, RtxAdapter);
         foreach (GpuDeviceOrigin origin in Enum.GetValues<GpuDeviceOrigin>())
         {
-            GpuPlacementPolicy.WarningText("A", "B", origin)
-                .Should().Be(GpuPlacementPolicy.WarningText("A", "B", GpuDeviceOrigin.Default));
+            Run(order, Device(Amd, origin)).WarningText.Should().Be(GpuPlacementPolicy.WarningText(origin));
         }
+        // 注入はデバイスの選ばれ方をそのまま使う（選ばれ方を指定する口は無い）。
+        Run(Order(Rtx, Rtx, RtxAdapter), Device(Rtx, GpuDeviceOrigin.Default), forced: true)
+            .WarningText.Should().Be(GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default));
     }
 
     [Theory]
@@ -168,7 +199,7 @@ public class GpuPlacementPolicyTests
         var nameless = new GpuAdapterInfo(Amd, "", 0x1002, false);
         GpuPlacementReport report = Run(Order(Rtx, Amd, nameless, RtxAdapter), Device(Amd));
 
-        report.WarningText.Should().StartWith("⚠ 内蔵 GPU（名前不明 0x1002）で動いています。");
+        report.WarningToolTip.Should().StartWith("いま使っている GPU: 名前不明 0x1002\n");
         report.NameText.Should().Be("GPU: 名前不明 0x1002");
     }
 
@@ -256,7 +287,8 @@ public class GpuPlacementPolicyTests
         Lines(report, GpuPlacementLogLevel.Warning).Should().ContainSingle().Which.Should().Be(
             "GPU placement warning shown: at=startup used=\"AMD Radeon(TM) Graphics\" " +
             "highPerformance=\"NVIDIA GeForce RTX 4070 Laptop GPU\" origin=default reason=minimum-power-head-in-use");
-        report.WarningText.Should().StartWith("⚠ 内蔵 GPU（AMD Radeon(TM) Graphics）");
+        report.WarningText.Should().Be(GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default));
+        report.WarningToolTip.Should().Contain("いま使っている GPU: AMD Radeon(TM) Graphics");
     }
 
     [Fact]
@@ -268,7 +300,8 @@ public class GpuPlacementPolicyTests
             line.StartsWith("検証用の注入: ERYTHEIA_FORCE_GPU_WARNING により"));
         Lines(report, GpuPlacementLogLevel.Information).Single().Should().EndWith("verdict=IntegratedInUse reason=forced");
         Lines(report, GpuPlacementLogLevel.Warning).Should().Contain(line => line.StartsWith("GPU placement warning shown: "));
-        report.WarningText.Should().StartWith("⚠ 内蔵 GPU（NVIDIA GeForce RTX 4070 Laptop GPU）");
+        report.WarningText.Should().StartWith("⚠ 内蔵 GPU で動いています。");
+        report.WarningToolTip.Should().Contain("いま使っている GPU: NVIDIA GeForce RTX 4070 Laptop GPU");
     }
 
     [Fact]

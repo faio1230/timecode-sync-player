@@ -3,6 +3,7 @@ using FlaUI.Core.AutomationElements;
 using FluentAssertions;
 using Erytheia.Output;
 using Erytheia.Tests.Helpers;
+using Xunit.Abstractions;
 
 namespace Erytheia.Tests.E2E;
 
@@ -14,7 +15,7 @@ namespace Erytheia.Tests.E2E;
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection("E2E")]
-public sealed class GpuPlacementE2ETests
+public sealed class GpuPlacementE2ETests(ITestOutputHelper output)
 {
     private const string StartupLine = "GPU placement: at=startup ";
     private const string RecoveryLine = "GPU placement: at=recovery ";
@@ -47,6 +48,7 @@ public sealed class GpuPlacementE2ETests
             E2EAssert.WaitUntil(() => app.Text("GpuAdapterNameText").StartsWith("GPU: ", StringComparison.Ordinal),
                 TimeSpan.FromSeconds(10));
             FindById(app, "GpuPlacementWarningText").Should().BeNull("想定の機体では警告を出さない（発火 0）");
+            WriteLayout(app, "normal");
 
             // 復旧の後に判定し直す。名前は残り、警告は出ない。
             WaitForLine(tail, RecoveryLine, TimeSpan.FromSeconds(40));
@@ -91,20 +93,19 @@ public sealed class GpuPlacementE2ETests
 
             WaitForLine(tail, WarningShown, TimeSpan.FromSeconds(20));
             E2EAssert.WaitUntil(() => FindById(app, "GpuPlacementWarningText") != null, TimeSpan.FromSeconds(10));
-            app.Text("GpuPlacementWarningText").Should().StartWith("⚠ 内蔵 GPU（")
-                .And.Contain("ERYTHEIA.exe を「高パフォーマンス」にして");
-            FindById(app, "GpuAdapterNameText").Should().BeNull("警告が見えている間は名前の行を隠す");
+            // 一覧の高さは画面の大きさで変わるので、最大化して測る（開発機は 1920x1080）。
+            app.MainWindow.Patterns.Window.Pattern.SetWindowVisualState(FlaUI.Core.Definitions.WindowVisualState.Maximized);
+            Thread.Sleep(800);
+            // 開発機の選ばれ方は default（出力先を保存していない）。
+            app.Text("GpuPlacementWarningText").Should().Be(GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default));
+            FindById(app, "GpuAdapterNameText").Should().BeNull("警告が見えている間は名前を隠す");
+            var shownLayout = WriteLayout(app, "warning-shown");
 
-            // 操作を止めない: 窓を新しく出さず、主窓は操作できる。再生のボタンが押せる。
+            // 操作を止めない: 窓を新しく出さず、主窓は操作できる（再生のボタンを押すのは復旧の試験で行う。
+            // 再生すると LTC の欄の状態の行が出入りして、一覧の高さの比べが揺れるため）。
             app.MainWindow.ModalWindows.Should().BeEmpty("警告はモーダルの画面を出さない");
             app.MainWindow.IsEnabled.Should().BeTrue();
-            Button play = app.Button("BtnPlay");
-            E2EAssert.WaitUntil(() => play.IsEnabled, TimeSpan.FromSeconds(15));
-            play.Invoke();
-            Thread.Sleep(500);
-            play.Invoke();
-            app.Process.HasExited.Should().BeFalse();
-            app.MainWindow.ModalWindows.Should().BeEmpty();
+            E2EAssert.WaitUntil(() => app.Button("BtnPlay").IsEnabled, TimeSpan.FromSeconds(15));
 
             // ×でその起動の間だけ消える。名前の行が出る。
             app.Button("BtnDismissGpuPlacementWarning").Invoke();
@@ -112,6 +113,24 @@ public sealed class GpuPlacementE2ETests
             E2EAssert.WaitUntil(() => app.Text("GpuAdapterNameText").StartsWith("GPU: ", StringComparison.Ordinal),
                 TimeSpan.FromSeconds(5));
             WaitForLine(tail, Dismissed, TimeSpan.FromSeconds(5));
+            Thread.Sleep(300);
+            var dismissedLayout = WriteLayout(app, "warning-dismissed");
+
+            // 警告が出ている間も、一覧は 1 行以上の高さがあり、行がある。消すと、警告の枠の分だけ一覧が戻る
+            // （名前は見出しの行にあるので、消した後の一覧の高さは平常の起動と同じ）。
+            shownLayout.PlaylistHeight.Should().BeGreaterThanOrEqualTo(shownLayout.RowHeight,
+                "警告が出ている間も一覧は 1 行以上見える");
+            if (shownLayout.WindowHeight >= 1000)
+            {
+                shownLayout.PlaylistHeight.Should().BeGreaterThan(PlaylistMinHeight,
+                    "1920x1080 の最大化で、警告が出ていても一覧が最小の高さに当たらない（設計書 5.2）");
+            }
+            shownLayout.Rows.Should().BeGreaterThan(0);
+            // 一覧の最小の高さ（MinHeight=120）で止まるときは、戻る量はそこまで。
+            int expectedGain = Math.Min(shownLayout.WarningHeight + 6, dismissedLayout.PlaylistHeight - PlaylistMinHeight);
+            shownLayout.WarningHeight.Should().BeGreaterThan(0);
+            (dismissedLayout.PlaylistHeight - shownLayout.PlaylistHeight)
+                .Should().BeCloseTo(expectedGain, 2, "×で消すと警告の枠（上の余白 6 を含む）の分だけ一覧が戻る");
 
             app.ExitNormally(TimeSpan.FromSeconds(20)).Should().BeTrue("the application should exit normally");
             IReadOnlyList<string> lines = ReadAll(tail);
@@ -149,6 +168,16 @@ public sealed class GpuPlacementE2ETests
                 Path.Combine(workDir, "settings.json"), environment: environment);
 
             E2EAssert.WaitUntil(() => FindById(app, "GpuPlacementWarningText") != null, TimeSpan.FromSeconds(20));
+
+            // 操作を止めない: 警告が出ている間に再生のボタンが押せて、窓は増えない。
+            Button play = app.Button("BtnPlay");
+            E2EAssert.WaitUntil(() => play.IsEnabled, TimeSpan.FromSeconds(15));
+            play.Invoke();
+            Thread.Sleep(500);
+            play.Invoke();
+            app.Process.HasExited.Should().BeFalse();
+            app.MainWindow.ModalWindows.Should().BeEmpty("警告はモーダルの画面を出さない");
+
             app.Button("BtnDismissGpuPlacementWarning").Invoke();
             E2EAssert.WaitUntil(() => FindById(app, "GpuPlacementWarningText") == null, TimeSpan.FromSeconds(5));
             Count(ReadAll(tail), RecoveryLine).Should().Be(0, "消したのは復旧より前（模擬の消失は起動から 8 秒）");
@@ -169,6 +198,25 @@ public sealed class GpuPlacementE2ETests
         {
             E2ESettingsIsolation.Delete(workDir);
         }
+    }
+
+    private const int PlaylistMinHeight = 120;
+
+    private sealed record Layout(int PlaylistHeight, int RowHeight, int Rows, int WarningHeight, int WindowHeight);
+
+    /// <summary>一覧の高さと警告の枠の高さを記録する（設計書 5.4 の一覧の見える行数の比べ）。</summary>
+    private Layout WriteLayout(E2EAppRunner app, string label)
+    {
+        ListBox playlist = app.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("PlaylistList")).AsListBox();
+        AutomationElement[] items = playlist.Items;
+        var rect = playlist.BoundingRectangle;
+        int rowHeight = items.Length > 0 ? items[0].BoundingRectangle.Height : 0;
+        int warningHeight = FindById(app, "GpuPlacementWarningText")?.BoundingRectangle.Height ?? 0; // Grid は UIA に出ないので、文の高さ
+        var window = app.MainWindow.BoundingRectangle;
+        string state = app.MainWindow.Patterns.Window.Pattern.WindowVisualState.ValueOrDefault.ToString();
+        output.WriteLine($"layout {label}: window={window.Width}x{window.Height} state={state} playlist={rect} " +
+                         $"rows={items.Length} rowHeight={rowHeight} warningPanel={warningHeight} playlistOffscreen={playlist.IsOffscreen}");
+        return new(rect.Height, rowHeight, items.Length, warningHeight, window.Height);
     }
 
     private static AutomationElement? FindById(E2EAppRunner app, string automationId)

@@ -129,13 +129,35 @@ internal static class GpuPlacementPolicy
         order?.Adapters.FirstOrDefault(adapter => adapter.Luid == luid);
 
     /// <summary>
-    /// 画面の警告の文面（設計書 5.2 の仮の 2 文）。最終の文面は検証機で出力先を入れ替える回の結果で決めるので、
-    /// 文面はこの 1 か所にまとめる。選ばれ方（origin）は今は文面を分けない。
+    /// 画面の警告の枠の文面（設計書 5.2。仮）。選ばれ方（origin）で分け、その場合に効く直し方を 1 つだけ出す
+    /// （saved-display では GpuDevice が保存された出力先のアダプターで作るので、Windows の指定は効かない）。
+    /// GPU の名前と 4K60 の話はツールチップ（<see cref="WarningToolTip"/>）へ。最終の文面は検証機で出力先を入れ替える回で決める。
+    /// 文面はこの 1 か所（と WarningToolTip）にまとめる。
     /// </summary>
-    public static string WarningText(string usedName, string highPerformanceName, GpuDeviceOrigin origin) =>
-        $"⚠ 内蔵 GPU（{usedName}）で動いています。高性能の GPU（{highPerformanceName}）があります。4K60 の素材はカクつくことがあります。\n" +
-        "Windows の「設定 → システム → ディスプレイ → グラフィック」で ERYTHEIA.exe を「高パフォーマンス」にして、アプリを再起動してください。" +
-        "全画面の出力先が内蔵 GPU の側のディスプレイのときは、出力先も見直してください。";
+    public static string WarningText(GpuDeviceOrigin origin) => origin switch
+    {
+        GpuDeviceOrigin.SavedDisplay =>
+            "⚠ 内蔵 GPU で動いています。全画面の出力先のディスプレイが内蔵 GPU につながっています。" +
+            "高性能の GPU 側の出力先に変えて、再起動してください。",
+        GpuDeviceOrigin.RecoveryDefault =>
+            "⚠ GPU の復旧で内蔵 GPU に移りました。区切りのよいところで再起動してください。",
+        _ =>
+            "⚠ 内蔵 GPU で動いています。Windows の「設定 → ディスプレイ → グラフィック」で ERYTHEIA.exe を" +
+            "「高パフォーマンス」にして、再起動してください。",
+    };
+
+    /// <summary>警告の枠の文に付けるツールチップ。2 つの GPU の名前、4K60 の話、もう一方の直し方。</summary>
+    public static string WarningToolTip(string usedName, string highPerformanceName, GpuDeviceOrigin origin) =>
+        $"いま使っている GPU: {usedName}\n高性能の GPU: {highPerformanceName}\n4K60 の素材はカクつくことがあります。\n" +
+        origin switch
+        {
+            GpuDeviceOrigin.SavedDisplay =>
+                "保存された全画面の出力先のアダプターで動くので、Windows の「高パフォーマンス」の指定だけでは直りません。",
+            GpuDeviceOrigin.RecoveryDefault =>
+                "再起動すると、全画面の出力先か Windows の指定に従って GPU を選び直します。",
+            _ =>
+                "全画面の出力先が内蔵 GPU の側のディスプレイのときは、出力先も見直してください。",
+        };
 
     /// <summary>常時表示の名前の行（設計書 5.4）。</summary>
     public static string NameText(string usedName) => "GPU: " + usedName;
