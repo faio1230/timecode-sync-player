@@ -663,10 +663,25 @@
                     </Grid>
                 </StackPanel>
 
-                <TextBlock Grid.Row="6"
-                           Text="出力"
-                           Style="{StaticResource PanelHeading}"
-                           Margin="0,0,0,8"/>
+                <!-- v0.6.8: 見出しの行の右に、いま使っている GPU の名前（行を増やさない。一覧の高さを変えないため）。
+                     見出しは Auto、名前は * の別の列で、長い名前は省略して見出しの字に被らない。全文はツールチップ。 -->
+                <Grid Grid.Row="6" Height="30" Margin="0,0,0,8" Background="#D7192D">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="出力"
+                               Style="{StaticResource PanelHeading}"
+                               Margin="0"/>
+                    <TextBlock x:Name="GpuAdapterNameText" Grid.Column="1"
+                               AutomationProperties.AutomationId="GpuAdapterNameText"
+                               Foreground="#F2D3D6" FontSize="11"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
+                               Visibility="Collapsed"
+                               Margin="8,0,8,0"/>
+                </Grid>
 
                 <StackPanel Grid.Row="7" x:Name="CanvasGroup" Margin="0,0,0,10"
                             ToolTipService.ShowOnDisabled="True" Grid.IsSharedSizeScope="True">
@@ -740,6 +755,27 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    <!-- v0.6.8: 内蔵 GPU で動いているときの警告（操作を止めない。×でその起動の間だけ消す）。
+                         出ているときだけ高さを使う。名前は「出力」の見出しの行の右（警告が見えている間は隠す）。
+                         全画面と Spout には出さない。 -->
+                    <Grid x:Name="GpuPlacementWarningPanel" Margin="0,6,0,0" Visibility="Collapsed"
+                          AutomationProperties.AutomationId="GpuPlacementWarningPanel">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="GpuPlacementWarningText"
+                                   Style="{StaticResource StatusNote}"
+                                   AutomationProperties.AutomationId="GpuPlacementWarningText"
+                                   Foreground="#D7A24B" FontSize="11"
+                                   TextWrapping="Wrap"/>
+                        <Button x:Name="BtnDismissGpuPlacementWarning" Grid.Column="1"
+                                Content="×" Width="22" Height="22" Padding="0" FontSize="11"
+                                VerticalAlignment="Top" Margin="6,0,0,0"
+                                ToolTip="この起動の間だけ警告を消す（次の起動でまた判定する）"
+                                Click="BtnDismissGpuPlacementWarning_Click"
+                                AutomationProperties.AutomationId="BtnDismissGpuPlacementWarning"/>
+                    </Grid>
                     <TextBlock x:Name="GpuStatusText"
                                Style="{StaticResource StatusNote}"
                                AutomationProperties.AutomationId="GpuStatusText"

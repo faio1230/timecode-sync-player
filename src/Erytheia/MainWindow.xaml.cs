@@ -260,6 +260,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _playbackPerformanceStats,
             action => Dispatcher.BeginInvoke(DispatcherPriority.Background, action));
         _renderSession.FrameUpdate = ProcessRenderFrameUpdateAsync;
+        bool gpuDeviceReady = false;
         if (outputBackendState.IsInitialized && outputBackendState.PlaybackAvailable)
         {
             // プレビューは OutputEngine の読み戻しで更新する。
@@ -289,11 +290,14 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             _startupTiming.Mark(StartupTimingPoint.WaitForDeviceStart, DateTime.UtcNow);
             bool deviceReady = _outputEngine.WaitForDevice(TimeSpan.FromSeconds(5));
             _startupTiming.Mark(StartupTimingPoint.WaitForDeviceEnd, DateTime.UtcNow);
+            gpuDeviceReady = deviceReady;
             if (deviceReady)
                 _gstBackendState.SetExternalDevice(_outputEngine.DevicePointer);
             else
                 Log.Error("OutputEngine: デバイス初期化がタイムアウトし、GStreamer shim へ Adopt できません");
         }
+        // v0.6.8: GPU の置き場の判定（再生が無効の起動でも行を 1 行出す）。
+        EvaluateGpuPlacement(GpuPlacementTiming.Startup, gpuDeviceReady);
         // D4: 表示経路に到達したフレーム数は GPU 合成の公開数だけを見る。
         _syncGateRenderedFrames = new RenderedFrameCounter(
             gpuPublishedFrames: () => _outputEngine?.PublishedFrameCount ?? 0);
@@ -565,6 +569,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // 処理済みでも受け取り、つかんだまま動かせるようにする（捕捉とスクラブの開始）。
         SeekBar.AddHandler(PreviewMouseDownEvent, new System.Windows.Input.MouseButtonEventHandler(Seek_MouseDown), handledEventsToo: true);
         Title = ApplicationVersion.WindowTitle;
+        ApplyGpuPlacementDisplay();
         LoadCanvasInputsFromState();
         UpdateCanvasUiState();
     }
@@ -770,12 +775,87 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                         UpdateGpuStatus("GPU 出力停止。再試行", retryVisible: true, resetAfter: null);
                         break;
                 }
+                // v0.6.8: 復旧で別のアダプターへ移ることがあるので、Recovered の後に判定し直す（Failed では残す）。
+                if (GpuPlacementPolicy.ShouldReevaluate(status))
+                {
+                    EvaluateGpuPlacement(GpuPlacementTiming.Recovery, deviceReady: true);
+                    ApplyGpuPlacementDisplay();
+                }
             });
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "GPU 状態通知の受信に失敗");
         }
+    }
+
+    // v0.6.8: GPU の置き場の判定（設計書 docs/design/v0.6.8-gpu-warning.md）。UI のスレッドで、起動と Recovered の後に 1 回ずつ。
+    // 合成のデバイスには触らず、OutputEngine が作った直後に読んだ DeviceIdentity と、別の DXGI の Factory の一覧で判定する。
+    private readonly GpuPlacementDisplay _gpuPlacementDisplay = new();
+    private readonly bool _gpuPlacementForced =
+        GpuPlacementPolicy.IsForced(EnvironmentVariables.Get(GpuPlacementPolicy.ForceWarningEnvironmentVariable));
+
+    // 判定は起動も復旧も壊さない（設計書 4.4）。起動はコンストラクターの中、復旧は BeginInvoke のラムダの中で、
+    // 抜けると起動の失敗か DispatcherUnhandledException の Shutdown になるので、呼び出し口の関数ごと囲む
+    // （起動・Recovered・× の呼び出しはすべてこの 2 つの関数を通る）。例外のときは表示を触らずに先へ進む。
+    private void EvaluateGpuPlacement(GpuPlacementTiming timing, bool deviceReady)
+    {
+        try
+        {
+            OutputEngine? engine = _outputEngine;
+            GpuPlacementReport report = GpuPlacementJudge.Run(
+                timing, engine != null, deviceReady, () => engine?.DeviceIdentity,
+                new DxgiGpuAdapterOrderSource(), DxgiGpuAdapterOrderSource.IsRemoteSession, _gpuPlacementForced);
+            foreach (GpuPlacementLogEntry entry in report.Logs)
+            {
+                if (entry.Level == GpuPlacementLogLevel.Warning)
+                    Log.Warning("{Line:l}", entry.Text);
+                else
+                    Log.Information("{Line:l}", entry.Text);
+            }
+            _gpuPlacementDisplay.Apply(report);
+        }
+        catch (Exception e)
+        {
+            LogGpuPlacementFailure(e);
+        }
+    }
+
+    private void ApplyGpuPlacementDisplay()
+    {
+        try
+        {
+            GpuPlacementWarningText.Text = _gpuPlacementDisplay.WarningText ?? "";
+            GpuPlacementWarningText.ToolTip = _gpuPlacementDisplay.WarningToolTip;
+            GpuPlacementWarningPanel.Visibility = _gpuPlacementDisplay.WarningVisible ? Visibility.Visible : Visibility.Collapsed;
+            GpuAdapterNameText.Text = _gpuPlacementDisplay.NameText ?? "";
+            GpuAdapterNameText.Visibility = _gpuPlacementDisplay.NameVisible ? Visibility.Visible : Visibility.Collapsed;
+            // 警告の枠が出入りしても右の欄の大きさは変わらない（SidebarContent の MinHeight＝欄の高さ）ので、
+            // SizeChanged が来ず一覧の上限（MaxHeight）が古いまま残る。並べ直しの後に計り直す（v0.6.7 #45）。
+            // 後で走るので、この try の外。判定と表示の例外はアプリに出さない決まりに揃えて、ここでも囲む。
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+            {
+                try { FitPlaylistToSidebar(); }
+                catch (Exception e) { LogGpuPlacementFailure(e); }
+            });
+        }
+        catch (Exception e)
+        {
+            LogGpuPlacementFailure(e);
+        }
+    }
+
+    private static void LogGpuPlacementFailure(Exception e)
+    {
+        try { Log.Warning("GPU placement failed: {Type:l}: {Message:l}", e.GetType().Name, e.Message); }
+        catch { /* ログの失敗でも起動と復旧を止めない */ }
+    }
+
+    private void BtnDismissGpuPlacementWarning_Click(object sender, RoutedEventArgs e)
+    {
+        _gpuPlacementDisplay.Dismiss();
+        ApplyGpuPlacementDisplay();
+        Log.Information("GPU placement warning dismissed");
     }
 
     private void UpdateGpuStatus(string text, bool retryVisible, TimeSpan? resetAfter)
