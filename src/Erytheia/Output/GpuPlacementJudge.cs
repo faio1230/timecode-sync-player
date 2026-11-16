@@ -159,3 +159,38 @@ internal sealed class DxgiGpuAdapterOrderSource : IGpuAdapterOrderSource
     /// <summary>リモートのセッションか（GetSystemMetrics(SM_REMOTESESSION)）。</summary>
     public static bool IsRemoteSession() => GetSystemMetrics(SmRemoteSession) != 0;
 }
+
+/// <summary>
+/// 合成のデバイスを作った直後（GPU worker の起動と、復旧の作り直しの直後。合成の周期の外）に 1 回だけ呼ぶ。
+/// 名前・ベンダー・UMA の読みが失敗しても null（ログでは ?）で続け、デバイス作りを失敗にしない。
+/// </summary>
+internal static class GpuDeviceIdentityReader
+{
+    public static GpuDeviceIdentity Read(GpuDevice device, GpuDeviceOrigin origin)
+    {
+        string? name = null;
+        uint? vendor = null;
+        bool? uma = null;
+        try
+        {
+            AdapterDescription1 description = device.Adapter.Description1;
+            name = description.Description;
+            vendor = description.VendorId;
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Warning("GPU placement adapter read failed: {Type}: {Message}", e.GetType().Name, e.Message);
+        }
+        try
+        {
+            Vortice.Direct3D11.FeatureDataD3D11Options2 options = default;
+            if (device.Device.CheckFeatureSupport(Vortice.Direct3D11.Feature.D3D11Options2, ref options))
+                uma = options.UnifiedMemoryArchitecture;
+        }
+        catch (Exception e)
+        {
+            Serilog.Log.Warning("GPU placement uma read failed: {Type}: {Message}", e.GetType().Name, e.Message);
+        }
+        return new(device.Luid, origin, name, vendor, uma);
+    }
+}

@@ -221,6 +221,16 @@ internal sealed class OutputEngine : IDisposable
     public IntPtr DevicePointer => Volatile.Read(ref devicePointer);
 
     /// <summary>
+    /// v0.6.8: 合成のデバイスの LUID・選ばれ方・名前・UMA。デバイスを作った直後に GPU worker が 1 回だけ読んだ
+    /// 変更できない値で、UI はこれを読むだけ（合成のデバイスには触らない）。未初期化なら null。
+    /// </summary>
+    public GpuDeviceIdentity? DeviceIdentity => Volatile.Read(ref deviceIdentity);
+    private GpuDeviceIdentity? deviceIdentity;
+
+    private void PublishDeviceIdentity(GpuDevice device, GpuDeviceOrigin origin)
+        => Volatile.Write(ref deviceIdentity, GpuDeviceIdentityReader.Read(device, origin));
+
+    /// <summary>
     /// D4: 合成プール（表示経路）へ公開したフレーム数。CPU 合成の
     /// PlaybackPerformanceStats.TotalRenderedFrames に相当し、GPU 合成のロード安定ゲートが読む。
     /// </summary>
@@ -556,6 +566,7 @@ internal sealed class OutputEngine : IDisposable
     private void InitializeGpuResources(bool initial)
     {
         gpu = new GpuDevice(settings.AdapterLuid, Fault, fenceSync: true);
+        PublishDeviceIdentity(gpu, GpuPlacementPolicy.StartupOrigin(settings.AdapterLuid));
         // GStreamer shim の Adopt 用に、デバイス確定を起動側へ知らせる。
         Volatile.Write(ref devicePointer, gpu.Device.NativePointer);
         deviceReady.Set();
@@ -704,6 +715,7 @@ internal sealed class OutputEngine : IDisposable
             device = new GpuDevice(null, Fault, fenceSync: true);
         }
         gpu = device;
+        PublishDeviceIdentity(device, GpuPlacementPolicy.RecoveryOrigin(settings.AdapterLuid, device.Luid));
         Volatile.Write(ref devicePointer, device.Device.NativePointer);
         deviceReady.Set();
         settings.Trace.Add("lifecycle", "GPU", detail: "gpu.device.recreated");
