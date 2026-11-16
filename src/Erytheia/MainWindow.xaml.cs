@@ -569,6 +569,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
         // 処理済みでも受け取り、つかんだまま動かせるようにする（捕捉とスクラブの開始）。
         SeekBar.AddHandler(PreviewMouseDownEvent, new System.Windows.Input.MouseButtonEventHandler(Seek_MouseDown), handledEventsToo: true);
         Title = ApplicationVersion.WindowTitle;
+        ApplyGpuPlacementDisplay();
         LoadCanvasInputsFromState();
         UpdateCanvasUiState();
     }
@@ -776,7 +777,10 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
                 }
                 // v0.6.8: 復旧で別のアダプターへ移ることがあるので、Recovered の後に判定し直す（Failed では残す）。
                 if (GpuPlacementPolicy.ShouldReevaluate(status))
+                {
                     EvaluateGpuPlacement(GpuPlacementTiming.Recovery, deviceReady: true);
+                    ApplyGpuPlacementDisplay();
+                }
             });
         }
         catch (Exception ex)
@@ -787,6 +791,7 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
 
     // v0.6.8: GPU の置き場の判定（設計書 docs/design/v0.6.8-gpu-warning.md）。UI のスレッドで、起動と Recovered の後に 1 回ずつ。
     // 合成のデバイスには触らず、OutputEngine が作った直後に読んだ DeviceIdentity と、別の DXGI の Factory の一覧で判定する。
+    private readonly GpuPlacementDisplay _gpuPlacementDisplay = new();
     private readonly bool _gpuPlacementForced =
         GpuPlacementPolicy.IsForced(EnvironmentVariables.Get(GpuPlacementPolicy.ForceWarningEnvironmentVariable));
 
@@ -803,6 +808,22 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             else
                 Log.Information("{Line:l}", entry.Text);
         }
+        _gpuPlacementDisplay.Apply(report);
+    }
+
+    private void ApplyGpuPlacementDisplay()
+    {
+        GpuPlacementWarningText.Text = _gpuPlacementDisplay.WarningText ?? "";
+        GpuPlacementWarningPanel.Visibility = _gpuPlacementDisplay.WarningVisible ? Visibility.Visible : Visibility.Collapsed;
+        GpuAdapterNameText.Text = _gpuPlacementDisplay.NameText ?? "";
+        GpuAdapterNameText.Visibility = _gpuPlacementDisplay.NameVisible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void BtnDismissGpuPlacementWarning_Click(object sender, RoutedEventArgs e)
+    {
+        _gpuPlacementDisplay.Dismiss();
+        ApplyGpuPlacementDisplay();
+        Log.Information("GPU placement warning dismissed");
     }
 
     private void UpdateGpuStatus(string text, bool retryVisible, TimeSpan? resetAfter)
