@@ -142,6 +142,8 @@ public class GpuPlacementPolicyTests
             .Should().Be(GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default));
         GpuPlacementPolicy.WarningText(GpuDeviceOrigin.RecoveryDefault).Should().Be(
             "⚠ GPU の復旧で内蔵 GPU に移りました。区切りのよいところで再起動してください。");
+        GpuPlacementPolicy.WarningText(GpuDeviceOrigin.RecoveryDefault)
+            .Should().NotBe(GpuPlacementPolicy.WarningText(GpuDeviceOrigin.Default));
     }
 
     /// <summary>全角を 2、半角を 1 と数えた幅（画面の折り返しの目安）。</summary>
@@ -164,7 +166,8 @@ public class GpuPlacementPolicyTests
         tip.Should().EndWith("全画面の出力先が内蔵 GPU の側のディスプレイのときは、出力先も見直してください。");
 
         GpuPlacementPolicy.WarningToolTip("A", "B", GpuDeviceOrigin.SavedDisplay)
-            .Should().EndWith("それでも消えないときは、ディスプレイを高性能の GPU 側の端子につなぐか、全画面の出力先を見直してください。");
+            .Should().EndWith("それでも消えないときは、ディスプレイを高性能の GPU 側の端子につなぐか、全画面の出力先を見直してください。")
+            .And.Contain("端子").And.Contain("全画面の出力先を見直して");
         GpuPlacementPolicy.WarningToolTip("A", "B", GpuDeviceOrigin.RecoveryDefault)
             .Should().Contain("4K60 の素材はカクつくことがあります。");
     }

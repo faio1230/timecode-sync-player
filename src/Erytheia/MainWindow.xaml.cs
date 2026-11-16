@@ -832,7 +832,12 @@ public partial class MainWindow : Window, IDisposable, IPlaybackController
             GpuAdapterNameText.Visibility = _gpuPlacementDisplay.NameVisible ? Visibility.Visible : Visibility.Collapsed;
             // 警告の枠が出入りしても右の欄の大きさは変わらない（SidebarContent の MinHeight＝欄の高さ）ので、
             // SizeChanged が来ず一覧の上限（MaxHeight）が古いまま残る。並べ直しの後に計り直す（v0.6.7 #45）。
-            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, FitPlaylistToSidebar);
+            // 後で走るので、この try の外。判定と表示の例外はアプリに出さない決まりに揃えて、ここでも囲む。
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+            {
+                try { FitPlaylistToSidebar(); }
+                catch (Exception e) { LogGpuPlacementFailure(e); }
+            });
         }
         catch (Exception e)
         {

@@ -120,17 +120,20 @@ public sealed class GpuPlacementE2ETests(ITestOutputHelper output)
             // （名前は見出しの行にあるので、消した後の一覧の高さは平常の起動と同じ）。
             shownLayout.PlaylistHeight.Should().BeGreaterThanOrEqualTo(shownLayout.RowHeight,
                 "警告が出ている間も一覧は 1 行以上見える");
-            if (shownLayout.WindowHeight >= 1000)
+            if (shownLayout.WindowHeight / shownLayout.Scale >= 1000)
             {
-                shownLayout.PlaylistHeight.Should().BeGreaterThan(PlaylistMinHeight,
+                (shownLayout.PlaylistHeight / shownLayout.Scale).Should().BeGreaterThan(PlaylistMinHeight,
                     "1920x1080 の最大化で、警告が出ていても一覧が最小の高さに当たらない（設計書 5.2）");
             }
             shownLayout.Rows.Should().BeGreaterThan(0);
-            // 一覧の最小の高さ（MinHeight=120）で止まるときは、戻る量はそこまで。
-            int expectedGain = Math.Min(shownLayout.WarningHeight + 6, dismissedLayout.PlaylistHeight - PlaylistMinHeight);
+            // 一覧の最小の高さ（MinHeight=120）で止まるときは、戻る量はそこまで。UIA の矩形は物理ピクセルなので、
+            // 論理の値（120・余白 6・許し 2）に倍率を掛けて比べる。
+            double scale = shownLayout.Scale;
+            int expectedGain = (int)Math.Round(Math.Min(shownLayout.WarningHeight + 6 * scale,
+                dismissedLayout.PlaylistHeight - PlaylistMinHeight * scale));
             shownLayout.WarningHeight.Should().BeGreaterThan(0);
             (dismissedLayout.PlaylistHeight - shownLayout.PlaylistHeight)
-                .Should().BeCloseTo(expectedGain, 2, "×で消すと警告の枠（上の余白 6 を含む）の分だけ一覧が戻る");
+                .Should().BeCloseTo(expectedGain, (uint)Math.Ceiling(2 * scale), "×で消すと警告の枠（上の余白 6 を含む）の分だけ一覧が戻る");
 
             app.ExitNormally(TimeSpan.FromSeconds(20)).Should().BeTrue("the application should exit normally");
             IReadOnlyList<string> lines = ReadAll(tail);
@@ -202,7 +205,11 @@ public sealed class GpuPlacementE2ETests(ITestOutputHelper output)
 
     private const int PlaylistMinHeight = 120;
 
-    private sealed record Layout(int PlaylistHeight, int RowHeight, int Rows, int WarningHeight, int WindowHeight);
+    /// <summary>矩形は物理ピクセル。Scale は窓の DPI ÷ 96（100% で 1）。</summary>
+    private sealed record Layout(int PlaylistHeight, int RowHeight, int Rows, int WarningHeight, int WindowHeight, double Scale);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr handle);
 
     /// <summary>一覧の高さと警告の枠の高さを記録する（設計書 5.4 の一覧の見える行数の比べ）。</summary>
     private Layout WriteLayout(E2EAppRunner app, string label)
@@ -214,9 +221,11 @@ public sealed class GpuPlacementE2ETests(ITestOutputHelper output)
         int warningHeight = FindById(app, "GpuPlacementWarningText")?.BoundingRectangle.Height ?? 0; // Grid は UIA に出ないので、文の高さ
         var window = app.MainWindow.BoundingRectangle;
         string state = app.MainWindow.Patterns.Window.Pattern.WindowVisualState.ValueOrDefault.ToString();
+        uint dpi = GetDpiForWindow(app.MainWindow.Properties.NativeWindowHandle.Value);
+        double scale = dpi > 0 ? dpi / 96.0 : 1.0;
         output.WriteLine($"layout {label}: window={window.Width}x{window.Height} state={state} playlist={rect} " +
-                         $"rows={items.Length} rowHeight={rowHeight} warningPanel={warningHeight} playlistOffscreen={playlist.IsOffscreen}");
-        return new(rect.Height, rowHeight, items.Length, warningHeight, window.Height);
+                         $"rows={items.Length} rowHeight={rowHeight} warningPanel={warningHeight} playlistOffscreen={playlist.IsOffscreen} dpi={dpi} scale={scale:F2}");
+        return new(rect.Height, rowHeight, items.Length, warningHeight, window.Height, scale);
     }
 
     private static AutomationElement? FindById(E2EAppRunner app, string automationId)
