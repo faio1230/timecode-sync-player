@@ -129,7 +129,7 @@ internal static class GpuPlacementPolicy
         order?.Adapters.FirstOrDefault(adapter => adapter.Luid == luid);
 
     /// <summary>
-    /// 画面の警告の枠の文面（設計書 5.2・12.7。仮）。選ばれ方（origin）を受け取り、その場合に効く直し方を 1 つだけ出す。
+    /// 画面の警告の枠の文面（設計書 5.2・12.7）。選ばれ方（origin）を受け取り、その場合に効く直し方を 1 つだけ出す。
     /// 今は default と saved-display が同じ文。saved-display でも、ハイブリッドの機体では指定で出力を並べるアダプターが
     /// 変わりうる（11-16 の 1 回の観測）。最終は検証機の回で分け直すので、場合ごとの枝は残す。
     /// GPU の名前と 4K60 の話はツールチップ（<see cref="WarningToolTip"/>）へ。文面はこの 1 か所（と WarningToolTip）にまとめる。
