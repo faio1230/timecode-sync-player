@@ -2,6 +2,71 @@
 
 All notable changes to ERYTHEIA are documented in this file.
 
+## 0.6.8 - 2026-11-18
+
+Pre-release. A warning is shown when the app runs on an integrated GPU while a higher-performance GPU is present, and
+the name of the GPU in use is shown. The sync rules, gates and constants, and the sync and LTC code, are the same as
+0.6.7. Settings and projects are unchanged from 0.6.7.
+
+### Added
+
+- Integrated-GPU warning: at startup, when the app runs on an integrated GPU and a higher-performance GPU is present,
+  a warning appears in the Output section of the right-hand column: "⚠ 内蔵 GPU で動いています。Windows の「設定 → ディスプレイ →
+  グラフィック」で ERYTHEIA.exe を「高パフォーマンス」にして、再起動してください。" When GPU recovery moves the app to an
+  integrated GPU, the text is "⚠ GPU の復旧で内蔵 GPU に移りました。区切りのよいところで再起動してください。" The tooltip shows
+  the name of the GPU in use and of the higher-performance GPU, a note that 4K60 media may stutter, and the other fix
+  (check the fullscreen output display, or the connector the display is plugged into).
+- The warning does not block operation: no dialog, and it is not drawn on the fullscreen output or the Spout image.
+  "×" hides it until the next start; the next start judges again. After GPU recovery the app judges again and shows
+  the warning again if it is on an integrated GPU, even if it was hidden.
+- The judgment uses the GPU order Windows provides (high-performance order and minimum-power order), not the vendor
+  name. It is not judged in a Remote Desktop session, on a software renderer, or when playback is unavailable.
+- GPU name: "GPU: name" at the right of the Output heading. It is hidden while the warning is shown, and updated after
+  GPU recovery.
+- Log: one Information line at startup and after GPU recovery,
+  `GPU placement: at=… used=… origin=… highPerformance=… minimumPower=… verdict=… reason=…`, and one Warning line
+  `GPU placement warning shown: …` when the warning is shown.
+
+### Known limitations
+
+- **With the "Power saving" preference, no warning is shown. Check the GPU name at the right of the heading.** When
+  ERYTHEIA.exe is set to "Power saving" in Windows Graphics settings, both orders start with the integrated GPU, so the
+  app does not warn even on the integrated GPU.
+- **On a laptop whose external display is connected to the integrated GPU's side, the fullscreen output can drop to
+  about 30 fps periodically.** Composing on the higher-performance GPU and showing fullscreen on a display connected to
+  the integrated GPU's side, the output to the display was about 30 fps for about 7 minutes of each roughly 20-minute
+  cycle (2 of 2 runs, 4K external display). Composition stayed at 60 fps. A 1080p display was not measured. This comes
+  from the fullscreen display timing prediction that has been in place since 0.4.0, and is planned to be fixed in the
+  next release. Following this release's warning and setting "High performance" puts some PCs into this configuration.
+- On a PC with two discrete GPUs, depending on how Windows orders them, the warning can appear while running on the
+  first GPU of the minimum-power order (no such PC was available to check).
+- The "decode behind" warning is counted the same way as in 0.6.7; not changed in this release.
+- Others are the same as 0.6.7.
+
+### Known intermittent issues
+
+- Same as 0.6.7.
+
+### Verification
+
+- Development machine (2026-11-16 to 18, one RTX-class GPU): non-E2E tests 3,419 passed, 0 failed, 2 skipped. E2E
+  (excluding LTC scenarios): 103 tests, 84 passed, 3 failed, 16 skipped; the 3 failures also failed in the 0.6.7
+  candidate runs. Of the 60 starts in the E2E run, the starts without the test switch showed no warning (expected with
+  one GPU); the warning, "×" and the re-show after recovery were checked with the test switch. Startup: the span that
+  contains the judgment was about 6 ms longer at the median than the previous release, within run-to-run variation.
+  Fullscreen to a 4K display for 6 minutes: about 60 fps throughout.
+- Test machine (2026-11-16 to 17, a laptop with an integrated AMD GPU and an RTX-class GPU): with no GPU preference
+  the app ran on the integrated GPU and showed the warning ("×" hid it and the name appeared); with "Power saving" it
+  ran on the integrated GPU and showed no warning (the limitation above); with "High performance" it ran on the RTX and
+  showed no warning. The three new GPU E2E tests passed. One standard scenario run (RTX): 38 passed, 0 failed, 1 invalid
+  (known gap); two counts (hold entries and the sum of three counts) were below the predetermined range, and the
+  reason is not yet explained. Two E2E classes: 1 failure, because the bundled GStreamer has no Matroska or AVI demuxer
+  (the same known limitation as 0.6.7). Fullscreen to a 4K external display (composed on the RTX, display on the
+  integrated GPU's side): the about-30-fps periods in the limitation above appeared in both runs.
+- Kept as a Pre-release because two standard-scenario counts were below the predetermined range without an
+  explanation. The difference from 0.6.7 contains no sync or LTC code, and there were no failures. Rebuilding the
+  ranges and a standard scenario run in a quiet state are planned for the next release's verification.
+
 ## 0.6.7 - 2026-11-14
 
 The application is renamed ERYTHEIA (up to 0.6.6 it was TimecodeSyncPlayer): the executable, installer,
